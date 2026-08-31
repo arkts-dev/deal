@@ -44,6 +44,42 @@ import deal.semantic.ir.SemanticIrValidator;
 import deal.semantic.ir.SemanticProfile;
 import deal.semantic.ir.SyncInvocationEntry;
 
+import deal.ast.ArrayLiteralExpr;
+import deal.ast.AssignmentExpr;
+import deal.ast.AwaitExpression;
+import deal.ast.BinaryExpr;
+import deal.ast.Block;
+import deal.ast.CallExpr;
+import deal.ast.Either;
+import deal.ast.ExportDeclaration;
+import deal.ast.ExpressionNode;
+import deal.ast.ExpressionStatement;
+import deal.ast.FunctionDeclaration;
+import deal.ast.FunctionExpr;
+import deal.ast.HasExpr;
+import deal.ast.IfStatement;
+import deal.ast.IndexExpr;
+import deal.ast.MemberAccessExpr;
+import deal.ast.ObjectLiteralExpr;
+import deal.ast.ProgramNode;
+import deal.ast.Property;
+import deal.ast.ReturnStatement;
+import deal.ast.Span;
+import deal.ast.StatementNode;
+import deal.ast.TemplateLiteralExpr;
+import deal.ast.UnaryExpr;
+import deal.ast.VariableDeclaration;
+import deal.lexer.LexResult;
+import deal.lexer.Lexer;
+import deal.module.DealConfig;
+import deal.parser.ParseResult;
+import deal.parser.Parser;
+import deal.semantic.SharedValueSemantics;
+import deal.semantic.ir.AnchorId;
+import deal.semantic.ir.SourceOrigin;
+import deal.semantic.ir.SourceOriginKind;
+import deal.semantic.ir.SourceSpan;
+
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.PrintStream;
@@ -130,6 +166,26 @@ import java.util.stream.Stream;
  *       phase 3.7 and returns an all-LEGACY route plan with empty
  *       {@code shadowModules} (provider + record guard + planner guard +
  *       F4 rules through the real orchestrator).</li>
+ *   <li>SignedInt32 integration verification (ISSUE-0398; design name
+ *       {@code SignedInt32IntegrationTest}, I6 part 4 + Verification 6):
+ *       the fixed {@link SignedInt32Corpus} runs on all four
+ *       constituents — the profile-aware parser, the shared
+ *       value-semantics primitive, the retained LuaJIT subprocess, and
+ *       the retained JVM subprocess — and every case agrees per the
+ *       pinned outcome (code + origin compared; canonical
+ *       {@code int out of range} for the shared primitive and retained
+ *       {@code int out of safe range} for the retained routes; raw
+ *       messages never compared across sides). The armed-state gate
+ *       facts are asserted (armed at {@code PRE_ACTIVATION}, the public
+ *       build of an int-using module derives {@code LEGACY_SAFE_INT}
+ *       with an all-LEGACY plan and empty shadowModules, an internal
+ *       {@code V1_2_ACTIVE} construction derives
+ *       {@code DEAL_V1_2_INT32}, the flip is exactly the one
+ *       {@code ReleaseConfiguration} constant edit and is not
+ *       performed), and each named constituent — parser, shared
+ *       semantics, LuaJIT route, JVM route, provider matrix, release
+ *       configuration, catalog, harness seam — is faulted in turn and
+ *       proven to fail the verification (no hollow pass).</li>
  * </ol>
  */
 public class FoundationIntegrationTest {
@@ -163,6 +219,7 @@ public class FoundationIntegrationTest {
             testArmedStateAndRollbackOwnedHalves();
             testCommonShadowPreActivationWiringProof();
             testProfileAwareParserWiringProof();
+            SignedInt32IntegrationTest.runAll();
         } catch (Throwable t) {
             failed++;
             System.err.println("FAIL: unexpected " + t);
@@ -1462,5 +1519,1848 @@ public class FoundationIntegrationTest {
         } finally {
             deleteRecursively(tmp);
         }
+    }
+
+    // =========================================================================
+    // 10. SignedInt32 integration verification (ISSUE-0398): fixed corpus,
+    // four-way agreement, armed-state gate facts, fault-injection matrix
+    // =========================================================================
+
+    /**
+     * The final decomposition task of the signed-int32 epic (I6 part 4 and
+     * Verification 6 of both design pages; design name
+     * {@code SignedInt32IntegrationTest}). It runs the fixed
+     * {@link SignedInt32Corpus} on all four constituents — the
+     * profile-aware parser, the shared value-semantics primitive, the
+     * retained LuaJIT subprocess, and the retained JVM subprocess — and
+     * asserts per-case agreement with the pinned outcome: code + origin
+     * compared, the canonical {@code int out of range} template for the
+     * shared primitive and the pinned retained
+     * {@code int out of safe range} template for both retained routes,
+     * raw messages never compared across sides. Then it asserts the
+     * armed-state gate facts (A2) and faults each named constituent in
+     * turn — parser, shared semantics, LuaJIT route, JVM route, provider
+     * matrix, release configuration, catalog, harness seam — proving the
+     * verification fails when any constituent is broken (anti-hollow).
+     */
+    static final class SignedInt32IntegrationTest {
+
+        // =====================================================================
+        // Driver configuration: the named fault seams, exactly one per probe
+        // =====================================================================
+
+        private static final class CorpusConfig {
+            SemanticProfile parserProfile = SemanticProfile.DEAL_V1_2_INT32;
+            /** Fault PARSE: the legacy parse contract (no E1036 int32 gate). */
+            boolean legacyParserConstructor = false;
+            /** Fault SEMANTICS: a wrong int-conversion range row. */
+            boolean tamperConversionRow = false;
+            /** Fault LUAJIT: the emitted int32 gate is flipped back to legacy. */
+            boolean tamperLuaInt32Flag = false;
+            /** Fault SEAM (LuaJIT lane): the legacy-regression invocation. */
+            boolean legacyLuaInvocation = false;
+            /** Fault JVM: the legacy invocation (legacy helpers, raw Math.pow). */
+            boolean legacyJvmInvocation = false;
+            /** Fault PROVIDER: a flipped provider matrix (rejected combination). */
+            boolean flipProviderMatrix = false;
+        }
+
+        /** One verification run's summary; never touches the global counters. */
+        private record AgreementReport(int casesRun, int disagreements) {}
+
+        /** One LuaJIT batch case outcome. */
+        private record LuaCaseRun(boolean ok, String code, String message,
+                                  String file, Integer line, Integer column) {}
+
+        /** One JVM batch case outcome. */
+        private record JvmCaseRun(boolean ok, String code, String message) {}
+
+        /** One parser-driver outcome. */
+        private record ParserOutcome(boolean parsed, List<CompilerDiagnostic> diagnostics,
+                                     Integer locatedLine, Integer locatedColumn) {}
+
+        /** One semantics-row outcome. */
+        private record SemRowOutcome(String value, String failCode, String failTemplate) {}
+
+        static void runAll() throws Exception {
+            testCorpusFourWayAgreement();
+            testArmedStateGateFacts();
+            testFaultMatrix();
+        }
+
+        // =====================================================================
+        // Invocations and compilation
+        // =====================================================================
+
+        private static CompilerInvocation v12Invocation() {
+            return CompilerProfileProvider.resolveCommonShadow(
+                SemanticProfile.DEAL_V1_2_INT32, ReleaseState.PRE_ACTIVATION,
+                CapabilityRegistry.releaseRegistry());
+        }
+
+        private static CompilerInvocation legacyRegressionInvocation() {
+            return CompilerProfileProvider.resolveLegacyRegression(
+                SemanticProfile.LEGACY_SAFE_INT, ReleaseState.PRE_ACTIVATION,
+                CapabilityRegistry.releaseRegistry());
+        }
+
+        private static CompilerInvocation publicBuildInvocation(ReleaseState state) {
+            return CompilerProfileProvider.resolve(state,
+                CapabilityRegistry.releaseRegistry());
+        }
+
+        private static Path stdlibDir() {
+            return Path.of("std").toAbsolutePath().normalize();
+        }
+
+        /** One orchestrator compile; returns null on failure. */
+        private static CompilationOrchestrator compile(Path entry, Path out,
+                Backend backend, List<Path> roots, CompilerInvocation invocation,
+                DealConfig config) throws IOException {
+            CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+                entry, out, false, false, false, false, backend, config, roots,
+                stdlibDir(), null, invocation);
+            orchestrator.compile();
+            return orchestrator;
+        }
+
+        /** The JVM class name for a corpus case file stem (the emitter rule). */
+        private static String jvmClassName(String name) {
+            return Character.toUpperCase(name.charAt(0)) + name.substring(1);
+        }
+
+        // =====================================================================
+        // Parser driver (T3)
+        // =====================================================================
+
+        private static ParserOutcome runParserDriver(SignedInt32Corpus.Case c,
+                                                     CorpusConfig config) {
+            String file = c.name() + ".deal";
+            LexResult lex = new Lexer(c.source(), file).tokenize();
+            if (lex.hasErrors()) {
+                return new ParserOutcome(false, lex.diagnostics(), null, null);
+            }
+            ParseResult result = config.legacyParserConstructor
+                ? new Parser(lex.tokens(), file).parse()
+                : new Parser(lex.tokens(), file, config.parserProfile).parse();
+            Integer locatedLine = null;
+            Integer locatedColumn = null;
+            if (!result.hasErrors() && c.expected()
+                    instanceof SignedInt32Corpus.RuntimeOutcome out
+                    && out.opKind() != SignedInt32Corpus.OpKind.NONE) {
+                int[] located = locateOperationOrigin(result.program(), out.opKind(),
+                    out.originLine(), out.originColumn());
+                if (located != null) {
+                    locatedLine = located[0];
+                    locatedColumn = located[1];
+                }
+            }
+            return new ParserOutcome(!result.hasErrors(), result.diagnostics(),
+                locatedLine, locatedColumn);
+        }
+
+        /**
+         * The span start of the pinned operation node in source order; for
+         * the descriptor-tail boundary the origin the emitters forward is
+         * the declaration's type-annotation span.
+         */
+        private static int[] locateOperationOrigin(ProgramNode program,
+                SignedInt32Corpus.OpKind kind, Integer originLine, Integer originColumn) {
+            if (kind == SignedInt32Corpus.OpKind.DECL_TYPE) {
+                for (StatementNode stmt : allStatements(program)) {
+                    if (stmt instanceof VariableDeclaration v
+                            && v.typeAnnotation().isPresent()) {
+                        Span span = v.typeAnnotation().get().span();
+                        if (span.startLine() == originLine
+                                && span.startColumn() == originColumn) {
+                            return new int[]{span.startLine(), span.startColumn()};
+                        }
+                    }
+                }
+                return null;
+            }
+            List<ExpressionNode> collected = new ArrayList<>();
+            collectStatements(program.statements(), collected);
+            for (ExpressionNode node : collected) {
+                boolean match = switch (kind) {
+                    case BINARY -> node instanceof BinaryExpr;
+                    case UNARY -> node instanceof UnaryExpr;
+                    case CALL -> node instanceof CallExpr;
+                    case MEMBER -> node instanceof MemberAccessExpr;
+                    case DECL_TYPE, NONE -> false;
+                };
+                if (match) {
+                    return new int[]{node.span().startLine(), node.span().startColumn()};
+                }
+            }
+            return null;
+        }
+
+        private static List<StatementNode> allStatements(ProgramNode program) {
+            List<StatementNode> flat = new ArrayList<>();
+            collectAllStatements(program.statements(), flat);
+            return flat;
+        }
+
+        private static void collectAllStatements(List<StatementNode> statements,
+                                                 List<StatementNode> out) {
+            for (StatementNode stmt : statements) {
+                out.add(stmt);
+                switch (stmt) {
+                    case ExportDeclaration e ->
+                        collectAllStatements(List.of(e.declaration()), out);
+                    case FunctionDeclaration f ->
+                        collectAllStatements(f.body().statements(), out);
+                    case IfStatement i -> {
+                        collectAllStatements(i.thenBlock().statements(), out);
+                        i.elseBranch().ifPresent(branch -> {
+                            if (branch instanceof Either.Left<?, ?> left) {
+                                collectAllStatements(List.of((IfStatement) left.value()), out);
+                            } else if (branch instanceof Either.Right<?, ?> right) {
+                                collectAllStatements(((Block) right.value()).statements(), out);
+                            }
+                        });
+                    }
+                    case Block b -> collectAllStatements(b.statements(), out);
+                    default -> { }
+                }
+            }
+        }
+
+        private static void collectStatements(List<StatementNode> statements,
+                                              List<ExpressionNode> out) {
+            for (StatementNode stmt : statements) {
+                switch (stmt) {
+                    case ExportDeclaration e ->
+                        collectStatements(List.of(e.declaration()), out);
+                    case FunctionDeclaration f ->
+                        collectStatements(f.body().statements(), out);
+                    case ReturnStatement r ->
+                        r.expr().ifPresent(e -> collectExpr(e, out));
+                    case ExpressionStatement es -> collectExpr(es.expr(), out);
+                    case IfStatement i -> {
+                        collectExpr(i.condition(), out);
+                        collectStatements(i.thenBlock().statements(), out);
+                        i.elseBranch().ifPresent(branch -> {
+                            if (branch instanceof Either.Left<?, ?> left) {
+                                collectStatements(List.of((IfStatement) left.value()), out);
+                            } else if (branch instanceof Either.Right<?, ?> right) {
+                                collectStatements(((Block) right.value()).statements(), out);
+                            }
+                        });
+                    }
+                    case VariableDeclaration v -> collectExpr(v.initializer(), out);
+                    case Block b -> collectStatements(b.statements(), out);
+                    default -> { }
+                }
+            }
+        }
+
+        private static void collectExpr(ExpressionNode node, List<ExpressionNode> out) {
+            switch (node) {
+                case BinaryExpr b -> {
+                    out.add(b);
+                    collectExpr(b.left(), out);
+                    collectExpr(b.right(), out);
+                }
+                case UnaryExpr u -> {
+                    out.add(u);
+                    collectExpr(u.expr(), out);
+                }
+                case CallExpr c -> {
+                    out.add(c);
+                    collectExpr(c.callee(), out);
+                    for (ExpressionNode arg : c.args()) {
+                        collectExpr(arg, out);
+                    }
+                }
+                case MemberAccessExpr m -> {
+                    out.add(m);
+                    collectExpr(m.object(), out);
+                }
+                case IndexExpr ix -> {
+                    collectExpr(ix.array(), out);
+                    collectExpr(ix.index(), out);
+                }
+                case ArrayLiteralExpr al -> {
+                    for (ExpressionNode element : al.elements()) {
+                        collectExpr(element, out);
+                    }
+                }
+                case ObjectLiteralExpr ol -> {
+                    for (Property property : ol.properties()) {
+                        collectExpr(property.value(), out);
+                    }
+                }
+                case AssignmentExpr a -> collectExpr(a.value(), out);
+                case HasExpr h -> collectExpr(h.object(), out);
+                case AwaitExpression aw -> collectExpr(aw.callee(), out);
+                case FunctionExpr fe -> collectStatements(fe.body().statements(), out);
+                case TemplateLiteralExpr t -> {
+                    for (ExpressionNode part : t.parts()) {
+                        collectExpr(part, out);
+                    }
+                }
+                default -> { }
+            }
+        }
+
+        // =====================================================================
+        // Shared value-semantics driver (T2)
+        // =====================================================================
+
+        private static SourceOrigin pinnedOrigin(SignedInt32Corpus.Case c) {
+            int line = 1;
+            int column = 1;
+            if (c.expected() instanceof SignedInt32Corpus.RuntimeOutcome out
+                    && out.originLine() != null) {
+                line = out.originLine();
+                column = out.originColumn();
+            }
+            return new SourceOrigin(c.name() + ".deal",
+                new SourceSpan(c.name() + ".deal", line, column, line, column),
+                SourceOriginKind.USER, new AnchorId(1), null);
+        }
+
+        /** The conversion row with the injected fault: out-of-range returns 0. */
+        private static SharedValueSemantics.Int32Result intFromNumberSeam(double value,
+                SourceOrigin origin, boolean tamper) {
+            SharedValueSemantics.Int32Result result =
+                SharedValueSemantics.intFromNumber(value, origin);
+            if (tamper && result instanceof SharedValueSemantics.Int32Result.Fail fail
+                    && "E8004".equals(fail.code().code())) {
+                return SharedValueSemantics.Int32Result.value(0);
+            }
+            return result;
+        }
+
+        private static String numberText(double value) {
+            if (Double.isNaN(value)) {
+                return "NaN";
+            }
+            if (value == Double.POSITIVE_INFINITY) {
+                return "Infinity";
+            }
+            if (value == Double.NEGATIVE_INFINITY) {
+                return "-Infinity";
+            }
+            if (value == 0.0 && Double.doubleToRawLongBits(value) != 0L) {
+                return "-0.0";
+            }
+            return Double.toString(value);
+        }
+
+        private static SemRowOutcome runSemRow(SignedInt32Corpus.SemRow row,
+                SourceOrigin origin, boolean tamper) {
+            switch (row) {
+                case SignedInt32Corpus.SemInt32Binary b -> {
+                    SharedValueSemantics.Int32Result r = switch (b.op()) {
+                        case "add" -> SharedValueSemantics.int32Add(b.a(), b.b(), origin);
+                        case "sub" -> SharedValueSemantics.int32Sub(b.a(), b.b(), origin);
+                        case "mul" -> SharedValueSemantics.int32Mul(b.a(), b.b(), origin);
+                        case "div" -> SharedValueSemantics.int32Div(b.a(), b.b(), origin);
+                        case "mod" -> SharedValueSemantics.int32Mod(b.a(), b.b(), origin);
+                        case "pow" -> SharedValueSemantics.int32Pow(b.a(), b.b(), origin);
+                        default -> throw new IllegalArgumentException("unknown int32 op " + b.op());
+                    };
+                    return int32Text(r);
+                }
+                case SignedInt32Corpus.SemInt32Unary u -> {
+                    return int32Text(SharedValueSemantics.int32Neg(u.a(), origin));
+                }
+                case SignedInt32Corpus.SemIntFromNumber n -> {
+                    return int32Text(intFromNumberSeam(n.value(), origin, tamper));
+                }
+                case SignedInt32Corpus.SemInt32Integral i -> {
+                    return int32Text(
+                        SharedValueSemantics.checkInt32Integral(i.value(), origin));
+                }
+                case SignedInt32Corpus.SemNumberBinary b -> {
+                    double v = switch (b.op()) {
+                        case "add" -> SharedValueSemantics.numberAdd(b.a(), b.b());
+                        case "sub" -> SharedValueSemantics.numberSub(b.a(), b.b());
+                        case "mul" -> SharedValueSemantics.numberMul(b.a(), b.b());
+                        case "div" -> SharedValueSemantics.numberDiv(b.a(), b.b());
+                        case "mod" -> SharedValueSemantics.numberModFloor(b.a(), b.b());
+                        default -> throw new IllegalArgumentException("unknown number op " + b.op());
+                    };
+                    return new SemRowOutcome(numberText(v), null, null);
+                }
+                case SignedInt32Corpus.SemNumberUnary u -> {
+                    double v = switch (u.op()) {
+                        case "neg" -> SharedValueSemantics.numberNeg(u.a());
+                        default -> throw new IllegalArgumentException("unknown number unary " + u.op());
+                    };
+                    return new SemRowOutcome(numberText(v), null, null);
+                }
+                case SignedInt32Corpus.SemNumberCompare cmp -> {
+                    boolean v = switch (cmp.op()) {
+                        case "eq" -> SharedValueSemantics.numberEq(cmp.a(), cmp.b());
+                        case "ne" -> SharedValueSemantics.numberNe(cmp.a(), cmp.b());
+                        case "lt" -> SharedValueSemantics.numberLt(cmp.a(), cmp.b());
+                        case "le" -> SharedValueSemantics.numberLe(cmp.a(), cmp.b());
+                        case "gt" -> SharedValueSemantics.numberGt(cmp.a(), cmp.b());
+                        case "ge" -> SharedValueSemantics.numberGe(cmp.a(), cmp.b());
+                        default -> throw new IllegalArgumentException("unknown compare op " + cmp.op());
+                    };
+                    return new SemRowOutcome(Boolean.toString(v), null, null);
+                }
+                case SignedInt32Corpus.SemNumberPow p -> {
+                    return new SemRowOutcome(
+                        numberText(SharedValueSemantics.numberPow(p.a(), p.b())),
+                        null, null);
+                }
+            }
+        }
+
+        private static SemRowOutcome int32Text(SharedValueSemantics.Int32Result result) {
+            if (result instanceof SharedValueSemantics.Int32Result.Value v) {
+                return new SemRowOutcome(Integer.toString(v.value()), null, null);
+            }
+            SharedValueSemantics.Int32Result.Fail f =
+                (SharedValueSemantics.Int32Result.Fail) result;
+            return new SemRowOutcome(null, f.code().code(), f.template());
+        }
+
+        // =====================================================================
+        // Retained LuaJIT subprocess driver (T4)
+        // =====================================================================
+
+        private static boolean luajitAvailable;
+
+        static {
+            luajitAvailable = false;
+            try {
+                Process probe = new ProcessBuilder("luajit", "-v").start();
+                probe.waitFor();
+                luajitAvailable = probe.exitValue() == 0;
+            } catch (Exception ignored) {
+                luajitAvailable = false;
+            }
+        }
+
+        private static final String LUA_RUNNER = """
+            package.path = './?.lua;./std/?.lua;' .. package.path
+            local ok, err = xpcall(function()
+              local m = require(arg[1])
+              m.main.f()
+            end, function(e) return e end)
+            if ok then
+              print("RUNTIME_OK")
+            else
+              if type(err) == "table" and err.code ~= nil then
+                print("CODE: " .. tostring(err.code))
+                print("MESSAGE: " .. tostring(err.message))
+                print("FILE: " .. tostring(err.file))
+                print("LINE: " .. tostring(err.line))
+                print("COLUMN: " .. tostring(err.column))
+              else
+                print("RAW: " .. tostring(err))
+              end
+            end
+            """;
+
+        private static LuaCaseRun runLuaCase(Path outDir, String caseName) {
+            if (!luajitAvailable) {
+                return null; // environmental: the lane cannot execute
+            }
+            try {
+                Path runner = outDir.resolve("runner.lua");
+                Files.writeString(runner, LUA_RUNNER);
+                ProcessBuilder pb = new ProcessBuilder("luajit", "runner.lua", caseName);
+                pb.directory(outDir.toFile());
+                pb.redirectErrorStream(true);
+                Process p = pb.start();
+                String output = new String(p.getInputStream().readAllBytes(),
+                    StandardCharsets.UTF_8).trim();
+                p.waitFor();
+                Map<String, String> fields = parseFieldOutput(output);
+                if (output.contains("RUNTIME_OK")) {
+                    return new LuaCaseRun(true, null, null, null, null, null);
+                }
+                String code = fields.get("CODE");
+                if (code == null) {
+                    return new LuaCaseRun(false, null, null, "raw: " + output, null, null);
+                }
+                return new LuaCaseRun(false, code, fields.get("MESSAGE"),
+                    fields.get("FILE"), intOrNull(fields.get("LINE")),
+                    intOrNull(fields.get("COLUMN")));
+            } catch (Exception e) {
+                return new LuaCaseRun(false, null, null, "exception: " + e, null, null);
+            }
+        }
+
+        /** The pinned LuaJIT gate check — the host-boundary replacement. */
+        private static LuaCaseRun runLuaGateScript(Path outDir, String script,
+                String caseName) {
+            if (!luajitAvailable) {
+                return null;
+            }
+            try {
+                Path file = outDir.resolve("gate_" + caseName + ".lua");
+                Files.writeString(file, script);
+                ProcessBuilder pb = new ProcessBuilder("luajit", file.getFileName().toString());
+                pb.directory(outDir.toFile());
+                pb.redirectErrorStream(true);
+                Process p = pb.start();
+                String output = new String(p.getInputStream().readAllBytes(),
+                    StandardCharsets.UTF_8).trim();
+                p.waitFor();
+                Map<String, String> fields = parseFieldOutput(output);
+                String code = fields.get("CODE");
+                if (code == null) {
+                    return new LuaCaseRun(false, null, null, "raw: " + output, null, null);
+                }
+                return new LuaCaseRun(false, code, fields.get("MESSAGE"),
+                    fields.get("FILE"), intOrNull(fields.get("LINE")),
+                    intOrNull(fields.get("COLUMN")));
+            } catch (Exception e) {
+                return new LuaCaseRun(false, null, null, "exception: " + e, null, null);
+            }
+        }
+
+        private static Map<String, String> parseFieldOutput(String output) {
+            Map<String, String> fields = new LinkedHashMap<>();
+            for (String line : output.split("\n")) {
+                int colon = line.indexOf(": ");
+                if (colon > 0) {
+                    fields.put(line.substring(0, colon), line.substring(colon + 2).trim());
+                }
+            }
+            return fields;
+        }
+
+        private static Integer intOrNull(String text) {
+            if (text == null || "nil".equals(text)) {
+                return null;
+            }
+            try {
+                return Integer.valueOf(text);
+            } catch (NumberFormatException e) {
+                return null;
+            }
+        }
+
+        // =====================================================================
+        // Retained JVM subprocess driver (T5)
+        // =====================================================================
+
+        private static final String JVM_RUNNER = """
+            public final class CorpusJvmRunner {
+                public static void main(String[] args) {
+                    for (String cn : args) {
+                        try {
+                            Class<?> c = Class.forName(cn);
+                            c.getMethod("main").invoke(null);
+                            System.out.println("CASE " + cn + " RUNTIME_OK");
+                        } catch (Throwable e) {
+                            Throwable t = e;
+                            while (t instanceof ExceptionInInitializerError && t.getCause() != null) {
+                                t = t.getCause();
+                            }
+                            if (t instanceof java.lang.reflect.InvocationTargetException
+                                    && t.getCause() != null) {
+                                t = t.getCause();
+                            }
+                            String code = null;
+                            if ("DealError".equals(t.getClass().getSimpleName())) {
+                                try {
+                                    java.lang.reflect.Field f =
+                                        t.getClass().getDeclaredField("code");
+                                    f.setAccessible(true);
+                                    code = String.valueOf(f.get(t));
+                                } catch (ReflectiveOperationException ignored) { }
+                            }
+                            if (code != null) {
+                                System.out.println("CASE " + cn + " CODE: " + code);
+                                System.out.println("CASE " + cn + " MESSAGE: " + t.getMessage());
+                            } else {
+                                System.out.println("CASE " + cn + " RAW: " + t);
+                            }
+                        }
+                    }
+                }
+            }
+            """;
+
+        private static JvmCaseRun runJvmCase(Path outDir, String caseName) {
+            try {
+                ProcessBuilder pb = new ProcessBuilder("java", "-cp",
+                    outDir.toString(), "CorpusJvmRunner", jvmClassName(caseName));
+                pb.directory(outDir.toFile());
+                pb.redirectErrorStream(true);
+                Process p = pb.start();
+                String output = new String(p.getInputStream().readAllBytes(),
+                    StandardCharsets.UTF_8).trim();
+                int exitCode = p.waitFor();
+                String okLine = "CASE " + jvmClassName(caseName) + " RUNTIME_OK";
+                if (output.contains(okLine)) {
+                    return new JvmCaseRun(true, null, null);
+                }
+                Map<String, String> fields = new LinkedHashMap<>();
+                String prefix = "CASE " + jvmClassName(caseName) + " ";
+                for (String line : output.split("\n")) {
+                    if (line.startsWith(prefix)) {
+                        int colon = line.indexOf(": ");
+                        if (colon > 0) {
+                            fields.put(line.substring(prefix.length(), colon),
+                                line.substring(colon + 2).trim());
+                        }
+                    }
+                }
+                String code = fields.get("CODE");
+                if (code == null) {
+                    return new JvmCaseRun(false, null,
+                        "jvm exit " + exitCode + ": " + output);
+                }
+                return new JvmCaseRun(false, code, fields.get("MESSAGE"));
+            } catch (Exception e) {
+                return new JvmCaseRun(false, null, "exception: " + e);
+            }
+        }
+
+        // =====================================================================
+        // The batch project: one compile per retained backend for every case
+        // =====================================================================
+
+        /**
+         * Writes every corpus module of the run into {@code src}, plus the
+         * synthetic entry module that imports and calls each case's
+         * {@code test()} (compile-time closure only — the runners never
+         * execute the entry), plus the host declaration and deal.json for
+         * the host-boundary case. Returns the entry file.
+         */
+        private static Path writeBatchProject(Path src,
+                List<SignedInt32Corpus.Case> moduleCases) throws IOException {
+            Files.createDirectories(src);
+            StringBuilder entry = new StringBuilder();
+            List<String> aliases = new ArrayList<>();
+            int index = 0;
+            for (SignedInt32Corpus.Case c : moduleCases) {
+                Files.writeString(src.resolve(c.name() + ".deal"), c.source());
+                String alias = "c" + index;
+                aliases.add(alias);
+                entry.append("import * as ").append(alias)
+                    .append(" from \"./").append(c.name()).append("\"\n");
+                index++;
+            }
+            entry.append("\nexport function main(): null {\n");
+            for (String alias : aliases) {
+                entry.append("  ").append(alias).append(".test();\n");
+            }
+            entry.append("  return null;\n}\n");
+            Files.writeString(src.resolve("all.deal"), entry.toString());
+
+            for (SignedInt32Corpus.Case c : moduleCases) {
+                if (c.host() == null) {
+                    continue;
+                }
+                Path declaration = src.resolve(c.host().declarationPath());
+                Files.createDirectories(declaration.getParent());
+                Files.writeString(declaration, c.host().declarationSource());
+                Files.writeString(src.resolve("deal.json"), """
+                    {
+                      "languageVersion": "1.2",
+                      "externals": {
+                        "%s": { "declaration": "%s" }
+                      }
+                    }
+                    """.formatted(c.host().importPath(),
+                    c.host().declarationPath().replace('\\', '/')));
+            }
+            return src.resolve("all.deal");
+        }
+
+        private static DealConfig loadConfig(Path src) throws IOException {
+            if (!Files.exists(src.resolve("deal.json"))) {
+                return null;
+            }
+            DealConfig.DealConfigParseResult result = DealConfig.load(src);
+            return result.config();
+        }
+
+        /** Returns the output dir when the batch compiled; null on failure. */
+        private static String compileBatch(Path tmp,
+                List<SignedInt32Corpus.Case> moduleCases, CorpusConfig config,
+                String suffix, Backend backend, boolean legacy) throws IOException {
+            Path src = tmp.resolve("src");
+            Path entry = writeBatchProject(src, moduleCases);
+            Path out = tmp.resolve("out-" + suffix);
+            CompilerInvocation invocation;
+            try {
+                invocation = config.flipProviderMatrix
+                    ? CompilerProfileProvider.resolveCommonShadow(
+                        SemanticProfile.LEGACY_SAFE_INT, ReleaseState.PRE_ACTIVATION,
+                        CapabilityRegistry.releaseRegistry())
+                    : legacy ? legacyRegressionInvocation() : v12Invocation();
+            } catch (IllegalArgumentException flipped) {
+                return null; // the flipped provider matrix rejects at resolution
+            }
+            CompilationOrchestrator orchestrator = compile(entry, out, backend,
+                List.of(src.toAbsolutePath()), invocation, loadConfig(src));
+            if (orchestrator == null || orchestrator.checkedProject() == null
+                    || orchestrator.checkedProject().hasErrors()
+                    || !Files.exists(out)) {
+                return null;
+            }
+            if (backend == Backend.LUAJIT && config.tamperLuaInt32Flag) {
+                try (Stream<Path> stream = Files.walk(out)) {
+                    for (Path file : stream.filter(Files::isRegularFile)
+                            .filter(p -> p.toString().endsWith(".lua")).toList()) {
+                        Files.writeString(file,
+                            Files.readString(file)
+                                .replace("__rt.__INT32 = true", "__rt.__INT32 = false"));
+                    }
+                }
+            }
+            return out.toString();
+        }
+
+        private static boolean javacBatch(Path outDir) {
+            List<String> javaFiles = new ArrayList<>();
+            try (Stream<Path> stream = Files.list(outDir)) {
+                stream.filter(p -> p.toString().endsWith(".java"))
+                      .sorted()
+                      .forEach(p -> javaFiles.add(p.getFileName().toString()));
+            } catch (IOException e) {
+                return false;
+            }
+            if (javaFiles.isEmpty()) {
+                return false;
+            }
+            StringBuilder err = new StringBuilder();
+            return BackendConformanceTest.compileWithJavac(outDir, javaFiles, err);
+        }
+
+        // =====================================================================
+        // The corpus verification core
+        // =====================================================================
+
+        private static AgreementReport verifyCorpus(CorpusConfig config,
+                List<SignedInt32Corpus.Case> cases, boolean report, Path tmp)
+                throws IOException {
+            List<SignedInt32Corpus.Case> moduleCases = new ArrayList<>();
+            for (SignedInt32Corpus.Case c : cases) {
+                if (c.expected() instanceof SignedInt32Corpus.RuntimeOutcome) {
+                    moduleCases.add(c);
+                }
+            }
+
+            // Parser driver runs per case in-process.
+            Map<String, ParserOutcome> parserOutcomes = new LinkedHashMap<>();
+            for (SignedInt32Corpus.Case c : cases) {
+                parserOutcomes.put(c.name(), runParserDriver(c, config));
+            }
+
+            // Retained LuaJIT lane: one batched compile + one subprocess.
+            Map<String, LuaCaseRun> luaOutcomes = new LinkedHashMap<>();
+            String luaOutDir = compileBatch(tmp, moduleCases, config, "lua",
+                Backend.LUAJIT, config.legacyLuaInvocation);
+            if (luaOutDir != null) {
+                for (SignedInt32Corpus.Case c : moduleCases) {
+                    if (c.luaGateScript() != null) {
+                        continue; // the gate-script case runs its script instead
+                    }
+                    luaOutcomes.put(c.name(), runLuaCase(Path.of(luaOutDir), c.name()));
+                }
+                for (SignedInt32Corpus.Case c : moduleCases) {
+                    if (c.luaGateScript() == null) {
+                        continue;
+                    }
+                    luaOutcomes.put(c.name(),
+                        runLuaGateScript(Path.of(luaOutDir), c.luaGateScript(), c.name()));
+                }
+            }
+
+            // Retained JVM lane: one batched compile + javac + one subprocess.
+            Map<String, JvmCaseRun> jvmOutcomes = new LinkedHashMap<>();
+            String jvmOutDir = compileBatch(tmp, moduleCases, config, "jvm",
+                Backend.JVM, config.legacyJvmInvocation);
+            if (jvmOutDir != null) {
+                Path jvmDir = Path.of(jvmOutDir);
+                for (SignedInt32Corpus.Case c : moduleCases) {
+                    if (c.host() != null) {
+                        Files.writeString(jvmDir.resolve(hostClassName(c) + ".java"),
+                            c.host().javaSource());
+                    }
+                }
+                Files.writeString(jvmDir.resolve("CorpusJvmRunner.java"), JVM_RUNNER);
+                if (javacBatch(jvmDir)) {
+                    for (SignedInt32Corpus.Case c : moduleCases) {
+                        jvmOutcomes.put(c.name(), runJvmCase(jvmDir, c.name()));
+                    }
+                }
+            }
+
+            int disagreements = 0;
+            for (SignedInt32Corpus.Case c : cases) {
+                int before = disagreements;
+                disagreements += agreeOnCase(c, config, parserOutcomes.get(c.name()),
+                    luaOutcomes.get(c.name()), jvmOutcomes.get(c.name()), report);
+                if (report) {
+                    System.out.println("  corpus " + c.name() + ": "
+                        + (disagreements == before ? "AGREES" : "DISAGREES"));
+                }
+            }
+            return new AgreementReport(cases.size(), disagreements);
+        }
+
+        private static String hostClassName(SignedInt32Corpus.Case c) {
+            String javaSource = c.host().javaSource();
+            java.util.regex.Matcher m = java.util.regex.Pattern.compile(
+                "(?:^|\\s)class\\s+([A-Za-z_$][A-Za-z0-9_$]*)").matcher(javaSource);
+            return m.find() ? m.group(1) : "HostImpl";
+        }
+
+        /**
+         * Asserts one corpus case's agreement across the constituents that
+         * run it; returns the number of detected deviations (also reported
+         * through the global counters when {@code report} is set).
+         */
+        private static int agreeOnCase(SignedInt32Corpus.Case c, CorpusConfig config,
+                ParserOutcome parser, LuaCaseRun lua, JvmCaseRun jvm, boolean report) {
+            int disagreements = 0;
+            String name = c.name();
+            if (c.expected() instanceof SignedInt32Corpus.CompileError expected) {
+                // Parser-only case: the profile-aware parser must reject the
+                // module with exactly the pinned E1036 at the pinned token.
+                boolean ok = parser != null && !parser.parsed()
+                    && parser.diagnostics().stream()
+                        .anyMatch(d -> matchDiagnostic(d, expected));
+                if (report) {
+                    check(ok, "corpus " + name + ": the parser produces exactly the pinned "
+                        + "E1036 '" + expected.message() + "' at " + expected.line() + ":"
+                        + expected.column() + (parser == null ? " (no parser run)"
+                            : "; got " + parser.diagnostics()));
+                }
+                if (!ok) {
+                    disagreement(name, "parser produced no pinned E1036: "
+                        + (parser == null ? "no run" : parser.diagnostics().toString()));
+                    disagreements++;
+                }
+                return disagreements;
+            }
+
+            SignedInt32Corpus.RuntimeOutcome expected =
+                (SignedInt32Corpus.RuntimeOutcome) c.expected();
+            boolean okCase = expected.code() == null;
+
+            // Parser: a runtime case must parse cleanly; for error cases the
+            // pinned operation node's span must equal the pinned origin —
+            // the very span both retained emitters forward to their helper
+            // call sites.
+            if (parser == null || !parser.parsed()) {
+                if (report) {
+                    check(false, "corpus " + name + ": the parser accepts the case source; got "
+                        + (parser == null ? "no run" : parser.diagnostics().toString()));
+                }
+                disagreement(name, "parser did not accept the case source");
+                disagreements++;
+            } else if (expected.opKind() != SignedInt32Corpus.OpKind.NONE) {
+                boolean located = parser.locatedLine() != null
+                    && parser.locatedLine().equals(expected.originLine())
+                    && parser.locatedColumn() != null
+                    && parser.locatedColumn().equals(expected.originColumn());
+                if (report) {
+                    check(located, "corpus " + name + ": the pinned operation node spans "
+                        + expected.originLine() + ":" + expected.originColumn() + "; got "
+                        + (parser.locatedLine() == null ? "no node"
+                            : parser.locatedLine() + ":" + parser.locatedColumn()));
+                }
+                if (!located) {
+                    disagreement(name, "operation node span deviates from the pinned origin");
+                    disagreements++;
+                }
+            }
+
+            // Shared semantics: every pinned row must produce the pinned
+            // outcome (value for ok cases; code + canonical template for
+            // error cases), each failure carrying the caller-supplied origin.
+            SourceOrigin origin = pinnedOrigin(c);
+            for (SignedInt32Corpus.SemRow row : expected.semantics()) {
+                SemRowOutcome outcome = runSemRow(row, origin, config.tamperConversionRow);
+                if (okCase) {
+                    boolean matched = outcome.value() != null
+                        && ("v:" + outcome.value()).equals(rowExpectValue(row));
+                    if (report) {
+                        check(matched, "corpus " + name + ": semantics row " + row
+                            + " yields " + outcome.value() + " (expected "
+                            + rowExpectValue(row) + ")");
+                    }
+                    if (!matched) {
+                        disagreement(name, "semantics row " + row + " yielded "
+                            + outcome.value() + " instead of " + rowExpectValue(row));
+                        disagreements++;
+                    }
+                } else {
+                    boolean matched = expected.code().equals(outcome.failCode())
+                        && expected.canonicalTemplate().equals(outcome.failTemplate());
+                    if (report) {
+                        check(matched, "corpus " + name + ": semantics row " + row
+                            + " fails " + outcome.failCode() + " \""
+                            + outcome.failTemplate() + "\" (expected " + expected.code()
+                            + " \"" + expected.canonicalTemplate() + "\")");
+                    }
+                    if (!matched) {
+                        String actual = outcome.failCode() == null
+                            ? "value " + outcome.value()
+                            : outcome.failCode() + " \"" + outcome.failTemplate() + "\"";
+                        disagreement(name, "semantics row " + row + " yielded " + actual
+                            + " instead of " + expected.code() + " \""
+                            + expected.canonicalTemplate() + "\"");
+                        disagreements++;
+                    }
+                }
+            }
+
+            // Retained LuaJIT lane (module run or the pinned gate script).
+            if (expected.originLine() != null || okCase) {
+                if (lua == null) {
+                    if (!luajitAvailable) {
+                        System.out.println("  corpus " + name
+                            + ": LuaJIT lane SKIP (luajit not available)");
+                    } else {
+                        if (report) {
+                            check(false, "corpus " + name
+                                + ": the LuaJIT lane produced no run");
+                        }
+                        disagreement(name, "LuaJIT lane produced no run");
+                        disagreements++;
+                    }
+                } else if (okCase) {
+                    boolean matched = lua.ok();
+                    if (report) {
+                        check(matched, "corpus " + name + ": the LuaJIT route runs the case "
+                            + "to completion (runtime-ok); got code=" + lua.code()
+                            + " message=" + lua.message());
+                    }
+                    if (!matched) {
+                        disagreement(name, "LuaJIT route failed a runtime-ok case: "
+                            + lua.code() + " " + lua.message());
+                        disagreements++;
+                    }
+                } else {
+                    boolean codeOk = expected.code().equals(lua.code());
+                    boolean messageOk = expected.retainedTemplate().equals(lua.message());
+                    boolean originOk = expected.originLine() == null
+                        || (lua.line() != null && lua.line().equals(expected.originLine())
+                            && lua.column() != null
+                            && lua.column().equals(expected.originColumn()));
+                    boolean fileOk = expected.originLine() == null
+                        || (lua.file() != null
+                            && lua.file().replace(java.io.File.separatorChar, '/')
+                                .endsWith(name + ".deal"));
+                    boolean matched = codeOk && messageOk && originOk && fileOk;
+                    if (report) {
+                        check(matched, "corpus " + name + ": the LuaJIT route raises "
+                            + lua.code() + " \"" + lua.message() + "\" at "
+                            + lua.line() + ":" + lua.column() + " (expected "
+                            + expected.code() + " \"" + expected.retainedTemplate()
+                            + "\" at " + expected.originLine() + ":"
+                            + expected.originColumn() + ")");
+                    }
+                    if (!matched) {
+                        disagreement(name, "LuaJIT route deviation: got " + lua.code()
+                            + " \"" + lua.message() + "\" at " + lua.line() + ":"
+                            + lua.column() + "; expected " + expected.code() + " \""
+                            + expected.retainedTemplate() + "\" at "
+                            + expected.originLine() + ":" + expected.originColumn());
+                        disagreements++;
+                    }
+                }
+            }
+
+            // Retained JVM lane.
+            if (jvm == null) {
+                if (report) {
+                    check(false, "corpus " + name + ": the JVM lane produced no run");
+                }
+                disagreement(name, "JVM lane produced no run");
+                disagreements++;
+            } else if (okCase) {
+                boolean matched = jvm.ok();
+                if (report) {
+                    check(matched, "corpus " + name + ": the JVM route runs the case to "
+                        + "completion (runtime-ok); got code=" + jvm.code()
+                        + " message=" + jvm.message());
+                }
+                if (!matched) {
+                    disagreement(name, "JVM route failed a runtime-ok case: " + jvm.code()
+                        + " " + jvm.message());
+                    disagreements++;
+                }
+            } else {
+                boolean matched = expected.code().equals(jvm.code())
+                    && expected.retainedTemplate().equals(jvm.message());
+                if (report) {
+                    check(matched, "corpus " + name + ": the JVM route raises " + jvm.code()
+                        + " \"" + jvm.message() + "\" (expected " + expected.code()
+                        + " \"" + expected.retainedTemplate() + "\")");
+                }
+                if (!matched) {
+                    disagreement(name, "JVM route deviation: got " + jvm.code() + " \""
+                        + jvm.message() + "\"; expected " + expected.code() + " \""
+                        + expected.retainedTemplate() + "\"");
+                    disagreements++;
+                }
+            }
+            return disagreements;
+        }
+
+        /** Local disagreement accounting (never the global counters). */
+        private static void disagreement(String caseName, String detail) {
+            System.err.println("CORPUS-DISAGREEMENT " + caseName + ": " + detail);
+        }
+
+        private static boolean matchDiagnostic(CompilerDiagnostic d,
+                SignedInt32Corpus.CompileError expected) {
+            return expected.code().equals(d.code())
+                && expected.message().equals(d.message())
+                && d.line() == expected.line()
+                && d.column() == expected.column()
+                && "error".equals(d.severity());
+        }
+
+        private static String rowExpectValue(SignedInt32Corpus.SemRow row) {
+            return switch (row) {
+                case SignedInt32Corpus.SemInt32Binary b -> b.expect();
+                case SignedInt32Corpus.SemInt32Unary u -> u.expect();
+                case SignedInt32Corpus.SemIntFromNumber n -> n.expect();
+                case SignedInt32Corpus.SemNumberBinary b -> b.expect();
+                case SignedInt32Corpus.SemNumberUnary u -> u.expect();
+                case SignedInt32Corpus.SemNumberCompare cmp -> "v:" + Boolean.toString(cmp.expect());
+                case SignedInt32Corpus.SemNumberPow p -> p.expect();
+                case SignedInt32Corpus.SemInt32Integral i -> i.expect();
+            };
+        }
+
+        // =====================================================================
+        // 10.1 Four-way corpus agreement
+        // =====================================================================
+
+        static void testCorpusFourWayAgreement() throws Exception {
+            System.out.println("-- SignedInt32 corpus: four-way agreement (parser / shared "
+                + "semantics / retained LuaJIT / retained JVM) --");
+            Path tmp = Files.createTempDirectory("deal-int32-corpus");
+            try {
+                AgreementReport report = verifyCorpus(new CorpusConfig(),
+                    SignedInt32Corpus.CASES, true, tmp);
+                check(report.casesRun() == SignedInt32Corpus.CASES.size(),
+                    "every corpus case ran exactly once (" + report.casesRun() + " of "
+                        + SignedInt32Corpus.CASES.size() + ")");
+                check(report.disagreements() == 0,
+                    "the four constituents agree on every corpus case; disagreements="
+                        + report.disagreements());
+            } finally {
+                deleteRecursively(tmp);
+            }
+        }
+
+        // =====================================================================
+        // 10.2 Armed-state gate facts (A2)
+        // =====================================================================
+
+        static void testArmedStateGateFacts() throws Exception {
+            System.out.println("-- SignedInt32 armed-state gate facts (A2) --");
+            check(armedStateFactsHold(ReleaseState.PRE_ACTIVATION),
+                "the armed-state gate facts hold (release state PRE_ACTIVATION)");
+            check(!armedStateFactsHold(ReleaseState.V1_2_ACTIVE),
+                "a flipped release constant (V1_2_ACTIVE) fails the armed-state "
+                    + "verification (the flip is E12's action, never performed here)");
+        }
+
+        /**
+         * Every armed-state gate fact as one predicate. Returns true iff all
+         * hold: the release constant is PRE_ACTIVATION (the flip is not
+         * performed), the public build of an int-using module derives
+         * LEGACY_SAFE_INT with an all-LEGACY plan and empty shadowModules
+         * (production SHARED ineligible), an internal V1_2_ACTIVE
+         * construction derives DEAL_V1_2_INT32, the flip is exactly the one
+         * ReleaseConfiguration constant edit, and no CLI/source profile
+         * selection path exists.
+         */
+        private static boolean armedStateFactsHold(ReleaseState assertedState)
+                throws Exception {
+            if (ReleaseConfiguration.CURRENT_RELEASE_STATE != assertedState) {
+                return false;
+            }
+            if (ReleaseConfiguration.CURRENT_RELEASE_STATE != ReleaseState.PRE_ACTIVATION) {
+                return false; // the flip must not have been performed
+            }
+            if (CompilerProfileProvider.publicProfile(ReleaseState.PRE_ACTIVATION)
+                    != SemanticProfile.LEGACY_SAFE_INT) {
+                return false;
+            }
+            if (CompilerProfileProvider.publicProfile(ReleaseState.V1_2_ACTIVE)
+                    != SemanticProfile.DEAL_V1_2_INT32) {
+                return false;
+            }
+            CompilerInvocation active = publicBuildInvocation(ReleaseState.V1_2_ACTIVE);
+            if (active.semanticProfile() != SemanticProfile.DEAL_V1_2_INT32
+                    || active.releaseState() != ReleaseState.V1_2_ACTIVE) {
+                return false;
+            }
+
+            // A public build of an int-using module: LEGACY_SAFE_INT, an
+            // all-LEGACY plan, empty shadowModules (production SHARED
+            // ineligible under PRE_ACTIVATION — F4 rule 3).
+            SignedInt32Corpus.Case intCase = SignedInt32Corpus.CASES.stream()
+                .filter(c -> c.name().equals("add_overflow_max"))
+                .findFirst().orElseThrow();
+            Path tmp = Files.createTempDirectory("deal-int32-armed");
+            try {
+                Path src = tmp.resolve("src");
+                Files.createDirectories(src);
+                Files.writeString(src.resolve("main.deal"), intCase.source());
+                CompilerInvocation publicPre =
+                    publicBuildInvocation(ReleaseState.PRE_ACTIVATION);
+                if (publicPre.semanticProfile() != SemanticProfile.LEGACY_SAFE_INT
+                        || publicPre.releaseState() != ReleaseState.PRE_ACTIVATION) {
+                    return false;
+                }
+                CompilationOrchestrator orchestrator = compile(
+                    src.resolve("main.deal").toAbsolutePath(), tmp.resolve("build"),
+                    Backend.LUAJIT, List.of(src.toAbsolutePath()), publicPre, null);
+                if (orchestrator == null || orchestrator.checkedProject() == null
+                        || orchestrator.checkedProject().hasErrors()) {
+                    return false;
+                }
+                RoutePlanResult plan = orchestrator.routePlan();
+                if (plan == null || plan.hasErrors() || plan.plan() == null) {
+                    return false;
+                }
+                if (!plan.plan().entries().values().stream()
+                        .allMatch(route -> route == ModuleRoute.LEGACY)) {
+                    return false;
+                }
+                if (!plan.plan().shadowModules().isEmpty()) {
+                    return false;
+                }
+                if (orchestrator.invocation().semanticProfile()
+                        != SemanticProfile.LEGACY_SAFE_INT) {
+                    return false;
+                }
+            } finally {
+                deleteRecursively(tmp);
+            }
+
+            // The flip is exactly the one ReleaseConfiguration constant edit:
+            // both former hardcoded sites consume the constant and carry no
+            // release-state selection literal; no CLI/source profile surface.
+            String mainSource = Files.readString(Path.of("deal/Main.java"));
+            String orchestratorSource =
+                Files.readString(Path.of("deal/module/CompilationOrchestrator.java"));
+            if (!mainSource.contains("ReleaseConfiguration.CURRENT_RELEASE_STATE")
+                    || mainSource.contains("ReleaseState.PRE_ACTIVATION")
+                    || mainSource.contains("--profile")) {
+                return false;
+            }
+            if (!orchestratorSource.contains("ReleaseConfiguration.CURRENT_RELEASE_STATE")
+                    || orchestratorSource.contains("ReleaseState.PRE_ACTIVATION")) {
+                return false;
+            }
+            return true;
+        }
+
+        // =====================================================================
+        // 10.3 Fault-injection matrix (each named constituent faulted in turn)
+        // =====================================================================
+
+        static void testFaultMatrix() throws Exception {
+            System.out.println("-- SignedInt32 fault matrix: each named constituent faulted "
+                + "in turn --");
+            Path tmp = Files.createTempDirectory("deal-int32-faults");
+            try {
+                CorpusConfig parserFault = new CorpusConfig();
+                parserFault.legacyParserConstructor = true;
+                check(faultedRunFails("parser", parserFault,
+                        List.of(caseNamed("lit_overflow")), tmp),
+                    "faulted parser (the legacy parse contract — no E1036 int32 gate) "
+                        + "fails the verification");
+
+                CorpusConfig semanticsFault = new CorpusConfig();
+                semanticsFault.tamperConversionRow = true;
+                check(faultedRunFails("shared-semantics", semanticsFault,
+                        List.of(caseNamed("conv_overflow_pos")), tmp),
+                    "faulted shared semantics (a wrong int-conversion range row) fails "
+                        + "the verification");
+
+                CorpusConfig luaFault = new CorpusConfig();
+                luaFault.tamperLuaInt32Flag = true;
+                check(faultedRunFails("luajit-route", luaFault,
+                        List.of(caseNamed("add_overflow_max"), caseNamed("mod_min_neg_one")),
+                        tmp),
+                    "faulted LuaJIT route (the emitted int32 gate flipped back to "
+                        + "legacy) fails the verification");
+
+                CorpusConfig jvmFault = new CorpusConfig();
+                jvmFault.legacyJvmInvocation = true;
+                check(faultedRunFails("jvm-route", jvmFault,
+                        List.of(caseNamed("add_overflow_max"), caseNamed("num_pow_ieee")),
+                        tmp),
+                    "faulted JVM route (legacy helpers + raw Math.pow) fails the "
+                        + "verification");
+
+                CorpusConfig providerFault = new CorpusConfig();
+                providerFault.flipProviderMatrix = true;
+                check(faultedRunFails("provider-matrix", providerFault,
+                        List.of(caseNamed("add_overflow_max")), tmp),
+                    "faulted provider matrix (COMMON_SHADOW + LEGACY_SAFE_INT — the "
+                        + "rejected combination) fails the verification");
+
+                check(!armedStateFactsHold(ReleaseState.V1_2_ACTIVE),
+                    "faulted release configuration (a flipped release constant) fails "
+                        + "the armed-state verification");
+
+                check(catalogAuthorityProbe(tmp, true),
+                    "the intact catalog selects the legacy regression invocation and "
+                        + "the pinned legacy authority holds");
+                check(!catalogAuthorityProbe(tmp, false),
+                    "faulted catalog (the int-convert-range row removed — the v1.2 "
+                        + "seam selection diverges from the pinned legacy authority) "
+                        + "fails the verification");
+
+                CorpusConfig seamFault = new CorpusConfig();
+                seamFault.legacyLuaInvocation = true;
+                check(faultedRunFails("harness-seam", seamFault,
+                        List.of(caseNamed("add_overflow_max"), caseNamed("mod_min_neg_one")),
+                        tmp),
+                    "faulted harness seam (a v1.2-positive corpus case routed through "
+                        + "the legacy-regression invocation) fails the verification");
+            } finally {
+                deleteRecursively(tmp);
+            }
+        }
+
+        private static SignedInt32Corpus.Case caseNamed(String name) {
+            return SignedInt32Corpus.CASES.stream()
+                .filter(c -> c.name().equals(name))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("unknown corpus case " + name));
+        }
+
+        /**
+         * Runs the corpus verification with exactly one faulted seam and
+         * returns true when the faulted run fails (at least one
+         * disagreement) — the anti-hollow proof that the verification
+         * detects a broken constituent.
+         */
+        private static boolean faultedRunFails(String constituent, CorpusConfig config,
+                List<SignedInt32Corpus.Case> probeCases, Path tmp) {
+            try {
+                Path runDir = tmp.resolve("fault-" + constituent);
+                AgreementReport report = verifyCorpus(config, probeCases, false, runDir);
+                return report.disagreements() >= 1;
+            } catch (Throwable e) {
+                return false;
+            }
+        }
+
+        /**
+         * The catalog authority probe: for the catalogued backend-runtime
+         * fixture {@code runtime/int-convert-range.deal}, the intact harness
+         * seam selects LEGACY_REGRESSION + LEGACY_SAFE_INT and the LuaJIT
+         * lane produces the pinned legacy outcome (E8004 with the legacy
+         * template); a removed catalog row would select the v1.2 invocation
+         * whose outcome diverges (E8004 with the retained template) — the
+         * probe returns true iff the pinned legacy authority holds.
+         */
+        private static boolean catalogAuthorityProbe(Path tmp, boolean rowPresent)
+                throws Exception {
+            String locator = "backend-runtime/runtime/int-convert-range.deal";
+            if (LegacyProfileRegressionCatalog.isCatalogued(locator) != rowPresent) {
+                return false;
+            }
+            String source = Files.readString(
+                Path.of("test", "conformance", locator));
+            CompilerInvocation invocation = rowPresent
+                ? LegacyProfileRegressionCatalog.invocationFor(locator)
+                : LegacyProfileRegressionCatalog.frontendInvocation();
+            Path runDir = tmp.resolve("catalog-" + rowPresent);
+            Path src = runDir.resolve("src");
+            Files.createDirectories(src);
+            Files.writeString(src.resolve("int_convert_range.deal"), source);
+            CompilationOrchestrator orchestrator = compile(
+                src.resolve("int_convert_range.deal").toAbsolutePath(),
+                runDir.resolve("out"), Backend.LUAJIT, List.of(src.toAbsolutePath()),
+                invocation, null);
+            if (orchestrator == null || orchestrator.checkedProject() == null
+                    || orchestrator.checkedProject().hasErrors()) {
+                return false;
+            }
+            // The fixture's main does not call the test export: run every
+            // zero-arity export (the conformance runtime-ok runner rule).
+            Path outDir = runDir.resolve("out");
+            Path runner = outDir.resolve("exports_runner.lua");
+            Files.writeString(runner, """
+                package.path = './?.lua;./std/?.lua;' .. package.path
+                local ok, err = xpcall(function()
+                  local m = require(arg[1])
+                  for k, v in pairs(m) do
+                    if type(v) == "table" and v.__kind == "function"
+                        and tostring(v.sig):match("^%(%)") then
+                      v.f()
+                    end
+                  end
+                end, function(e) return e end)
+                if ok then
+                  print("RUNTIME_OK")
+                else
+                  if type(err) == "table" and err.code ~= nil then
+                    print("CODE: " .. tostring(err.code))
+                    print("MESSAGE: " .. tostring(err.message))
+                  else
+                    print("RAW: " .. tostring(err))
+                  end
+                end
+                """);
+            ProcessBuilder pb = new ProcessBuilder("luajit", "exports_runner.lua",
+                "int_convert_range");
+            pb.directory(outDir.toFile());
+            pb.redirectErrorStream(true);
+            Process p = pb.start();
+            String output = new String(p.getInputStream().readAllBytes(),
+                StandardCharsets.UTF_8).trim();
+            p.waitFor();
+            Map<String, String> fields = parseFieldOutput(output);
+            // The pinned legacy authority outcome: E8004 with the legacy
+            // LuaJIT branch template (the landed ISSUE-0332 branch).
+            return "E8004".equals(fields.get("CODE"))
+                && "int out of range".equals(fields.get("MESSAGE"));
+        }
+    }
+}
+
+/**
+ * The fixed signed32/IEEE corpus (signed-int32 foundation I6 part 4): one
+ * entry per area — literal boundaries, arithmetic, conversion, boundaries,
+ * and the IEEE number operations — with per-case source text plus the
+ * pinned expected outcome (result, code, per-side template, origin). For
+ * E8004 cases the expected outcome records the canonical template
+ * {@code int out of range} for the shared primitive and the pinned
+ * retained template {@code int out of safe range} for the retained routes
+ * ({@code LegacyErrorNormalization}: code + origin compared; raw messages
+ * never compared across sides); the E8001 variants are
+ * canonical-equivalent on all four constituents. The corpus is consumed
+ * by the four drivers of {@code SignedInt32IntegrationTest}: the
+ * profile-aware parser, the {@code SharedValueSemantics} unit rows, the
+ * retained LuaJIT subprocess, and the retained JVM subprocess.
+ */
+final class SignedInt32Corpus {
+
+    /** The pinned canonical E8004 template of the shared primitive. */
+    static final String CANONICAL_INT_OUT_OF_RANGE = "int out of range";
+
+    /** The pinned retained E8004 template of both retained routes. */
+    static final String RETAINED_INT_OUT_OF_SAFE_RANGE = "int out of safe range";
+
+    /** The E8001 infinity variant (canonical-equivalent on all four). */
+    static final String E8001_INFINITY = "expected int, got infinity";
+
+    /** The E8001 NaN variant (canonical-equivalent on all four). */
+    static final String E8001_NAN = "expected int, got NaN";
+
+    /** The E8001 fractional variant (canonical-equivalent on all four). */
+    static final String E8001_FRACTIONAL = "expected int, got non-integer number";
+
+    /** The E8005 divisor template (canonical-equivalent on all four). */
+    static final String E8005_DIV_ZERO = "integer division by zero";
+
+    /** The E8006 exponent template (canonical-equivalent on all four). */
+    static final String E8006_NEG_EXP = "integer exponent must be non-negative";
+
+    sealed interface Expected permits CompileError, RuntimeOutcome {}
+
+    /** Parser-only outcome: the pinned E1036 at the offending token. */
+    record CompileError(String code, String message, int line, int column)
+        implements Expected {}
+
+    /**
+     * The four-constituent runtime outcome. {@code code == null} means
+     * runtime-ok (every in-module assertion holds); otherwise the pinned
+     * DEAL code with the canonical template (shared primitive) and the
+     * retained template (both retained routes). The pinned origin is the
+     * operation's AST span start, which the LuaJIT runtime error must
+     * reproduce exactly; the one gate-script case pins the explicit
+     * checker origin instead.
+     */
+    record RuntimeOutcome(String code, String canonicalTemplate, String retainedTemplate,
+                          Integer originLine, Integer originColumn, OpKind opKind,
+                          List<SemRow> semantics) implements Expected {
+        RuntimeOutcome {
+            semantics = List.copyOf(semantics);
+        }
+
+        static RuntimeOutcome ok(List<SemRow> semantics) {
+            return new RuntimeOutcome(null, null, null, null, null, OpKind.NONE, semantics);
+        }
+
+        static RuntimeOutcome error(String code, String canonicalTemplate,
+                String retainedTemplate, int originLine, int originColumn,
+                OpKind opKind, List<SemRow> semantics) {
+            return new RuntimeOutcome(code, canonicalTemplate, retainedTemplate,
+                originLine, originColumn, opKind, semantics);
+        }
+    }
+
+    /**
+     * The operation node kind the parser driver locates for the origin pin;
+     * {@code DECL_TYPE} is the declared-type span the emitters forward for
+     * the descriptor-tail boundary.
+     */
+    enum OpKind { BINARY, UNARY, CALL, MEMBER, DECL_TYPE, NONE }
+
+    /** One shared-semantics operation row mirroring the case's DEAL source. */
+    sealed interface SemRow permits SemInt32Binary, SemInt32Unary, SemIntFromNumber,
+        SemNumberBinary, SemNumberUnary, SemNumberCompare, SemNumberPow, SemInt32Integral {}
+
+    record SemInt32Binary(String op, int a, int b, String expect) implements SemRow {}
+    record SemInt32Unary(String op, int a, String expect) implements SemRow {}
+    record SemIntFromNumber(double value, String expect) implements SemRow {}
+    record SemNumberBinary(String op, double a, double b, String expect) implements SemRow {}
+    record SemNumberUnary(String op, double a, String expect) implements SemRow {}
+    record SemNumberCompare(String op, double a, double b, boolean expect) implements SemRow {}
+    record SemNumberPow(double a, double b, String expect) implements SemRow {}
+    record SemInt32Integral(long value, String expect) implements SemRow {}
+
+    /** The JVM lane's declared host fixture for the host-int-return case. */
+    record HostDef(String importPath, String declarationPath, String declarationSource,
+                   String javaSource) {}
+
+    /**
+     * One fixed corpus case. {@code host} carries the JVM lane's declared
+     * host fixture; {@code luaGateScript} carries the pinned LuaJIT
+     * gate-check script (the host-boundary replacement of the retained
+     * LuaJIT route).
+     */
+    record Case(String name, String source, Expected expected, HostDef host,
+                String luaGateScript) {
+        Case {
+            source = source.stripTrailing() + "\n";
+        }
+
+        static Case compileError(String name, String source, String message,
+                int line, int column) {
+            return new Case(name, source,
+                new CompileError("E1036", message, line, column), null, null);
+        }
+
+        static Case runtime(String name, String source, Expected expected) {
+            return new Case(name, source, expected, null, null);
+        }
+
+        static Case runtimeHost(String name, String source, Expected expected,
+                HostDef host, String luaGateScript) {
+            return new Case(name, source, expected, host, luaGateScript);
+        }
+    }
+
+    // =========================================================================
+    // Semantics row factories
+    // =========================================================================
+
+    private static SemInt32Binary ib(String op, int a, int b, String expect) {
+        return new SemInt32Binary(op, a, b, expect);
+    }
+
+    private static SemInt32Unary iu(String op, int a, String expect) {
+        return new SemInt32Unary(op, a, expect);
+    }
+
+    private static SemIntFromNumber in(double value, String expect) {
+        return new SemIntFromNumber(value, expect);
+    }
+
+    private static SemNumberBinary nb(String op, double a, double b, String expect) {
+        return new SemNumberBinary(op, a, b, expect);
+    }
+
+    private static SemNumberUnary nu(String op, double a, String expect) {
+        return new SemNumberUnary(op, a, expect);
+    }
+
+    private static SemNumberCompare nc(String op, double a, double b, boolean expect) {
+        return new SemNumberCompare(op, a, b, expect);
+    }
+
+    private static SemNumberPow np(double a, double b, String expect) {
+        return new SemNumberPow(a, b, expect);
+    }
+
+    private static SemInt32Integral ii(long value, String expect) {
+        return new SemInt32Integral(value, expect);
+    }
+
+    // =========================================================================
+    // Module templates (uniform layout: test first, main invokes test)
+    // =========================================================================
+
+    private static String moduleReturn(String expression) {
+        return """
+            export function test(): int {
+              return %s
+            }
+
+            export function main(): null {
+              test()
+              return null
+            }
+            """.formatted(expression);
+    }
+
+    private static String moduleAsserts(String... asserts) {
+        StringBuilder body = new StringBuilder();
+        for (String assertion : asserts) {
+            body.append(assertion).append('\n');
+        }
+        return """
+            export function test(): int {
+            %s  return 0
+            }
+
+            export function main(): null {
+              test()
+              return null
+            }
+            """.formatted(body);
+    }
+
+    private static String assertFail(String label, String expression, String message) {
+        return "  if (" + expression + ") { throw { code: \"TEST_FAIL\", message: \""
+            + label + ": " + message + "\" }; }";
+    }
+
+    // =========================================================================
+    // The closed corpus
+    // =========================================================================
+
+    static final List<Case> CASES = List.of(
+        // ---- Literal boundaries (I1 + runtime agreement) ----
+        Case.runtime("lit_max", moduleReturn("2147483647"),
+            RuntimeOutcome.ok(List.of(ii(2147483647L, "v:2147483647")))),
+        Case.runtime("lit_min_immediate", moduleReturn("-2147483648"),
+            RuntimeOutcome.ok(List.of(ii(-2147483648L, "v:-2147483648")))),
+        Case.runtime("lit_double_neg_min", moduleReturn("--2147483648"),
+            RuntimeOutcome.error("E8004", CANONICAL_INT_OUT_OF_RANGE,
+                RETAINED_INT_OUT_OF_SAFE_RANGE, 2, 10, OpKind.UNARY,
+                List.of(iu("neg", -2147483648, "E8004")))),
+        Case.compileError("lit_overflow", moduleReturn("2147483648"),
+            "Integer literal out of range: 2147483648", 2, 10),
+        Case.compileError("lit_parenthesized_min", moduleReturn("-(2147483648)"),
+            "Integer literal out of range: 2147483648", 2, 12),
+        Case.compileError("lit_neg_overflow", moduleReturn("-2147483649"),
+            "Integer literal out of range: 2147483649", 2, 11),
+
+        // ---- Arithmetic: add/sub/mul/neg overflow, both signs ----
+        Case.runtime("add_overflow_max", moduleReturn("2147483647 + 1"),
+            RuntimeOutcome.error("E8004", CANONICAL_INT_OUT_OF_RANGE,
+                RETAINED_INT_OUT_OF_SAFE_RANGE, 2, 10, OpKind.BINARY,
+                List.of(ib("add", 2147483647, 1, "E8004")))),
+        Case.runtime("add_overflow_min", moduleReturn("-2147483648 + -1"),
+            RuntimeOutcome.error("E8004", CANONICAL_INT_OUT_OF_RANGE,
+                RETAINED_INT_OUT_OF_SAFE_RANGE, 2, 10, OpKind.BINARY,
+                List.of(ib("add", -2147483648, -1, "E8004")))),
+        Case.runtime("sub_overflow_min", moduleReturn("-2147483648 - 1"),
+            RuntimeOutcome.error("E8004", CANONICAL_INT_OUT_OF_RANGE,
+                RETAINED_INT_OUT_OF_SAFE_RANGE, 2, 10, OpKind.BINARY,
+                List.of(ib("sub", -2147483648, 1, "E8004")))),
+        Case.runtime("sub_overflow_max", moduleReturn("2147483647 - -1"),
+            RuntimeOutcome.error("E8004", CANONICAL_INT_OUT_OF_RANGE,
+                RETAINED_INT_OUT_OF_SAFE_RANGE, 2, 10, OpKind.BINARY,
+                List.of(ib("sub", 2147483647, -1, "E8004")))),
+        Case.runtime("mul_overflow_max", moduleReturn("2147483647 * 2"),
+            RuntimeOutcome.error("E8004", CANONICAL_INT_OUT_OF_RANGE,
+                RETAINED_INT_OUT_OF_SAFE_RANGE, 2, 10, OpKind.BINARY,
+                List.of(ib("mul", 2147483647, 2, "E8004")))),
+        Case.runtime("mul_overflow_min", moduleReturn("-2147483648 * 2"),
+            RuntimeOutcome.error("E8004", CANONICAL_INT_OUT_OF_RANGE,
+                RETAINED_INT_OUT_OF_SAFE_RANGE, 2, 10, OpKind.BINARY,
+                List.of(ib("mul", -2147483648, 2, "E8004")))),
+        Case.runtime("neg_min", moduleReturn("-(-2147483648)"),
+            RuntimeOutcome.error("E8004", CANONICAL_INT_OUT_OF_RANGE,
+                RETAINED_INT_OUT_OF_SAFE_RANGE, 2, 10, OpKind.UNARY,
+                List.of(iu("neg", -2147483648, "E8004")))),
+
+        // ---- Arithmetic: truncating division/remainder, MIN edge ----
+        Case.runtime("div_trunc", moduleAsserts(
+                assertFail("div_trunc", "5 / -2 !== -2", "5 / -2 must truncate to -2"),
+                assertFail("div_trunc", "-5 / 2 !== -2", "-5 / 2 must truncate to -2")),
+            RuntimeOutcome.ok(List.of(ib("div", 5, -2, "v:-2"),
+                ib("div", -5, 2, "v:-2")))),
+        Case.runtime("div_min_neg_one", moduleReturn("-2147483648 / -1"),
+            RuntimeOutcome.error("E8004", CANONICAL_INT_OUT_OF_RANGE,
+                RETAINED_INT_OUT_OF_SAFE_RANGE, 2, 10, OpKind.BINARY,
+                List.of(ib("div", -2147483648, -1, "E8004")))),
+        Case.runtime("mod_min_neg_one", moduleAsserts(
+                assertFail("mod_min_neg_one", "-2147483648 % -1 !== 0",
+                    "MIN % -1 must be 0")),
+            RuntimeOutcome.ok(List.of(ib("mod", -2147483648, -1, "v:0")))),
+        Case.runtime("mod_trunc_signs", moduleAsserts(
+                assertFail("mod_trunc_signs", "5 % -2 !== 1", "5 % -2 must be 1"),
+                assertFail("mod_trunc_signs", "-5 % 2 !== -1", "-5 % 2 must be -1"),
+                assertFail("mod_trunc_signs", "-5 % -2 !== -1", "-5 % -2 must be -1")),
+            RuntimeOutcome.ok(List.of(ib("mod", 5, -2, "v:1"),
+                ib("mod", -5, 2, "v:-1"), ib("mod", -5, -2, "v:-1")))),
+
+        // ---- Arithmetic: divisor / exponent failures ----
+        Case.runtime("div_zero", moduleReturn("1 / 0"),
+            RuntimeOutcome.error("E8005", E8005_DIV_ZERO, E8005_DIV_ZERO,
+                2, 10, OpKind.BINARY, List.of(ib("div", 1, 0, "E8005")))),
+        Case.runtime("mod_zero", moduleReturn("1 % 0"),
+            RuntimeOutcome.error("E8005", E8005_DIV_ZERO, E8005_DIV_ZERO,
+                2, 10, OpKind.BINARY, List.of(ib("mod", 1, 0, "E8005")))),
+        Case.runtime("pow_neg_exponent", moduleReturn("2 ** -1"),
+            RuntimeOutcome.error("E8006", E8006_NEG_EXP, E8006_NEG_EXP,
+                2, 10, OpKind.BINARY, List.of(ib("pow", 2, -1, "E8006")))),
+
+        // ---- Arithmetic: the pow band (finite 2 ** 62, infinity 2 ** 1024) ----
+        Case.runtime("pow_finite_band", moduleReturn("2 ** 62"),
+            RuntimeOutcome.error("E8004", CANONICAL_INT_OUT_OF_RANGE,
+                RETAINED_INT_OUT_OF_SAFE_RANGE, 2, 10, OpKind.BINARY,
+                List.of(ib("pow", 2, 62, "E8004")))),
+        Case.runtime("pow_infinity_band", moduleReturn("2 ** 1024"),
+            RuntimeOutcome.error("E8001", E8001_INFINITY, E8001_INFINITY,
+                2, 10, OpKind.BINARY, List.of(ib("pow", 2, 1024, "E8001")))),
+        Case.runtime("pow_in_range", moduleAsserts(
+                assertFail("pow_in_range", "0 ** 0 !== 1", "0 ** 0 must be 1"),
+                assertFail("pow_in_range", "(-2) ** 31 !== -2147483648",
+                    "(-2) ** 31 must be -2147483648"),
+                assertFail("pow_in_range", "2 ** 30 !== 1073741824",
+                    "2 ** 30 must be 1073741824")),
+            RuntimeOutcome.ok(List.of(ib("pow", 0, 0, "v:1"),
+                ib("pow", -2, 31, "v:-2147483648"),
+                ib("pow", 2, 30, "v:1073741824")))),
+
+        // ---- Conversion: NaN / infinity / fractional / boundaries / 2^31 ----
+        Case.runtime("conv_nan", moduleReturn("int(0.0 / 0.0)"),
+            RuntimeOutcome.error("E8001", E8001_NAN, E8001_NAN,
+                2, 10, OpKind.CALL, List.of(in(Double.NaN, "E8001")))),
+        Case.runtime("conv_infinity", moduleReturn("int(1.0 / 0.0)"),
+            RuntimeOutcome.error("E8001", E8001_INFINITY, E8001_INFINITY,
+                2, 10, OpKind.CALL,
+                List.of(in(Double.POSITIVE_INFINITY, "E8001")))),
+        Case.runtime("conv_fractional", moduleReturn("int(1.5)"),
+            RuntimeOutcome.error("E8001", E8001_FRACTIONAL, E8001_FRACTIONAL,
+                2, 10, OpKind.CALL, List.of(in(1.5, "E8001")))),
+        Case.runtime("conv_boundaries", moduleAsserts(
+                assertFail("conv_boundaries", "int(2147483647.0) !== 2147483647",
+                    "int(2147483647.0) must be 2147483647"),
+                assertFail("conv_boundaries", "int(-2147483648.0) !== -2147483648",
+                    "int(-2147483648.0) must be -2147483648"),
+                assertFail("conv_boundaries", "int(-0.0) !== 0",
+                    "int(-0.0) must normalize to 0")),
+            RuntimeOutcome.ok(List.of(in(2147483647.0, "v:2147483647"),
+                in(-2147483648.0, "v:-2147483648"), in(-0.0, "v:0")))),
+        Case.runtime("conv_overflow_pos", moduleReturn("int(2147483648.0)"),
+            RuntimeOutcome.error("E8004", CANONICAL_INT_OUT_OF_RANGE,
+                RETAINED_INT_OUT_OF_SAFE_RANGE, 2, 10, OpKind.CALL,
+                List.of(in(2147483648.0, "E8004")))),
+        Case.runtime("conv_overflow_neg", moduleReturn("int(-2147483649.0)"),
+            RuntimeOutcome.error("E8004", CANONICAL_INT_OUT_OF_RANGE,
+                RETAINED_INT_OUT_OF_SAFE_RANGE, 2, 10, OpKind.CALL,
+                List.of(in(-2147483649.0, "E8004")))),
+
+        // ---- Boundaries: array element, class int field, table read ----
+        Case.runtime("boundary_array_element", """
+                export function test(): int {
+                  let xs: int[] = [2147483647 + 1];
+                  return 0;
+                }
+
+                export function main(): null {
+                  test()
+                  return null
+                }
+                """,
+            RuntimeOutcome.error("E8004", CANONICAL_INT_OUT_OF_RANGE,
+                RETAINED_INT_OUT_OF_SAFE_RANGE, 2, 20, OpKind.BINARY,
+                List.of(ib("add", 2147483647, 1, "E8004")))),
+        Case.runtime("boundary_class_field", """
+                class Box { f: int = 0; }
+
+                export function test(): int {
+                  let b: Box = {};
+                  b.f = 2147483647 + 1;
+                  return b.f;
+                }
+
+                export function main(): null {
+                  test()
+                  return null
+                }
+                """,
+            RuntimeOutcome.error("E8004", CANONICAL_INT_OUT_OF_RANGE,
+                RETAINED_INT_OUT_OF_SAFE_RANGE, 5, 9, OpKind.BINARY,
+                List.of(ib("add", 2147483647, 1, "E8004")))),
+        Case.runtime("boundary_table_read", """
+                export function test(): int {
+                  let t: table = { v: 2147483648.0 };
+                  let n: int | null = t.v;
+                  if (n === null) { return 1; }
+                  return 0;
+                }
+
+                export function main(): null {
+                  test()
+                  return null
+                }
+                """,
+            RuntimeOutcome.error("E8004", CANONICAL_INT_OUT_OF_RANGE,
+                RETAINED_INT_OUT_OF_SAFE_RANGE, 3, 10, OpKind.DECL_TYPE,
+                List.of(ii(2147483648L, "E8004")))),
+
+        // ---- Boundary: declared host int return (JVM lane with the real
+        // declared host fixture; the LuaJIT lane runs the pinned gate check
+        // — the host-boundary replacement) ----
+        Case.runtimeHost("boundary_host_int_return", """
+                import * as log from "host/log"
+
+                export function test(): int {
+                  return log.value()
+                }
+
+                export function main(): null {
+                  test()
+                  return null
+                }
+                """,
+            RuntimeOutcome.error("E8004", CANONICAL_INT_OUT_OF_RANGE,
+                RETAINED_INT_OUT_OF_SAFE_RANGE, 4, 10, OpKind.CALL,
+                List.of(ii(2147483648L, "E8004"))),
+            new HostDef("host/log", "bindings/log.d.deal",
+                "export function value(): int;\n",
+                "public final class HostLog {\n"
+                    + "    public static Object value() { return Long.valueOf(2147483648L); }\n"
+                    + "}\n"),
+            """
+                package.path = './?.lua;' .. package.path
+                local __rt = require("deal.runtime")
+                __rt.__INT32 = true
+                local ok, err = pcall(function()
+                  return __rt.check_int(2147483648,
+                    "boundary_host_int_return.deal", 4, 10)
+                end)
+                if ok then
+                  print("GATE_OK")
+                else
+                  print("CODE: " .. tostring(err.code))
+                  print("MESSAGE: " .. tostring(err.message))
+                  print("FILE: " .. tostring(err.file))
+                  print("LINE: " .. tostring(err.line))
+                  print("COLUMN: " .. tostring(err.column))
+                end
+                """),
+
+        // ---- IEEE number operations: NaN equality/relational ----
+        Case.runtime("num_nan_eq_rel", moduleAsserts(
+                assertFail("num_nan_eq_rel", "0.0 / 0.0 === 0.0 / 0.0",
+                    "NaN must not equal NaN"),
+                assertFail("num_nan_eq_rel", "!(0.0 / 0.0 !== 1.0)",
+                    "NaN !== 1.0 must be true"),
+                assertFail("num_nan_eq_rel", "0.0 / 0.0 < 1.0",
+                    "NaN < 1.0 must be false"),
+                assertFail("num_nan_eq_rel", "0.0 / 0.0 <= 1.0",
+                    "NaN <= 1.0 must be false"),
+                assertFail("num_nan_eq_rel", "0.0 / 0.0 > 1.0",
+                    "NaN > 1.0 must be false"),
+                assertFail("num_nan_eq_rel", "0.0 / 0.0 >= 1.0",
+                    "NaN >= 1.0 must be false")),
+            RuntimeOutcome.ok(List.of(
+                nc("eq", Double.NaN, Double.NaN, false),
+                nc("ne", Double.NaN, Double.NaN, true),
+                nc("lt", Double.NaN, 1.0, false),
+                nc("le", Double.NaN, 1.0, false),
+                nc("gt", Double.NaN, 1.0, false),
+                nc("ge", Double.NaN, 1.0, false)))),
+
+        // ---- IEEE number operations: ±0 and division by zero ----
+        Case.runtime("num_zeros", moduleAsserts(
+                assertFail("num_zeros", "-0.0 !== 0.0", "-0.0 must equal 0.0"),
+                assertFail("num_zeros", "0.0 !== -0.0", "0.0 must equal -0.0"),
+                assertFail("num_zeros", "!(1.0 / -0.0 < 0.0)",
+                    "1.0 / -0.0 must be -Infinity"),
+                assertFail("num_zeros", "-(-0.0) !== 0.0",
+                    "-(-0.0) must be +0.0")),
+            RuntimeOutcome.ok(List.of(
+                nc("eq", -0.0, 0.0, true),
+                nb("div", 1.0, -0.0, "v:-Infinity"),
+                nu("neg", -0.0, "v:0.0")))),
+        Case.runtime("num_div_zero", moduleAsserts(
+                assertFail("num_div_zero", "!(1.0 / 0.0 > 0.0)",
+                    "1.0 / 0.0 must be +Infinity"),
+                assertFail("num_div_zero", "!(-1.0 / 0.0 < 0.0)",
+                    "-1.0 / 0.0 must be -Infinity"),
+                assertFail("num_div_zero", "0.0 / 0.0 === 0.0 / 0.0",
+                    "0.0 / 0.0 must be NaN")),
+            RuntimeOutcome.ok(List.of(
+                nb("div", 1.0, 0.0, "v:Infinity"),
+                nb("div", -1.0, 0.0, "v:-Infinity"),
+                nb("div", 0.0, 0.0, "v:NaN")))),
+
+        // ---- IEEE number operations: floor modulo ----
+        Case.runtime("num_mod_floor", moduleAsserts(
+                assertFail("num_mod_floor", "5.0 % -2.0 !== -1.0",
+                    "5.0 % -2.0 must be -1.0"),
+                assertFail("num_mod_floor", "-5.0 % 2.0 !== 1.0",
+                    "-5.0 % 2.0 must be 1.0"),
+                assertFail("num_mod_floor", "-5.0 % -2.0 !== -1.0",
+                    "-5.0 % -2.0 must be -1.0")),
+            RuntimeOutcome.ok(List.of(
+                nb("mod", 5.0, -2.0, "v:-1.0"),
+                nb("mod", -5.0, 2.0, "v:1.0"),
+                nb("mod", -5.0, -2.0, "v:-1.0")))),
+
+        // ---- IEEE number operations: the pinned numberPow special-case table ----
+        Case.runtime("num_pow_ieee", moduleAsserts(
+                assertFail("num_pow_ieee", "2.0 ** 10.0 !== 1024.0",
+                    "2.0 ** 10.0 must be 1024.0"),
+                assertFail("num_pow_ieee", "(-2.0) ** 3.0 !== -8.0",
+                    "(-2.0) ** 3.0 must be -8.0"),
+                assertFail("num_pow_ieee", "0.0 ** 0.0 !== 1.0",
+                    "0.0 ** 0.0 must be 1.0"),
+                assertFail("num_pow_ieee", "0.0 ** -1.0 !== (1.0 / 0.0)",
+                    "0.0 ** -1.0 must be +Infinity"),
+                assertFail("num_pow_ieee", "(-2.0) ** 0.5 === (-2.0) ** 0.5",
+                    "negative-base fractional pow must be NaN"),
+                assertFail("num_pow_ieee", "1.0 ** (0.0 / 0.0) !== 1.0",
+                    "1.0 ** NaN must be 1.0"),
+                assertFail("num_pow_ieee", "(0.0 / 0.0) ** 0.0 !== 1.0",
+                    "NaN ** 0.0 must be 1.0"),
+                assertFail("num_pow_ieee", "(-1.0) ** (1.0 / 0.0) !== 1.0",
+                    "(-1.0) ** Infinity must be 1.0"),
+                assertFail("num_pow_ieee", "2.0 ** 1024.0 !== (1.0 / 0.0)",
+                    "2.0 ** 1024.0 must overflow to +Infinity"),
+                assertFail("num_pow_ieee", "2.0 ** -1075.0 !== 0.0",
+                    "2.0 ** -1075.0 must underflow to +0"),
+                assertFail("num_pow_ieee", "(-0.0) ** -2.0 !== (1.0 / 0.0)",
+                    "(-0.0) ** -2.0 must be +Infinity (even exponent)"),
+                assertFail("num_pow_ieee", "!((-0.0) ** -3.0 < 0.0)",
+                    "(-0.0) ** -3.0 must be -Infinity (negative odd exponent)"),
+                assertFail("num_pow_ieee", "(-0.0) ** 3.0 !== 0.0",
+                    "(-0.0) ** 3.0 must be -0.0 (sign preserved, equals 0.0)"),
+                assertFail("num_pow_ieee", "(-1.0 / 0.0) ** 2.0 !== (1.0 / 0.0)",
+                    "(-Infinity) ** 2.0 must be +Infinity (even exponent)"),
+                assertFail("num_pow_ieee", "!((-1.0 / 0.0) ** 3.0 < 0.0)",
+                    "(-Infinity) ** 3.0 must be -Infinity (odd exponent)")),
+            RuntimeOutcome.ok(List.of(
+                np(2.0, 10.0, "v:1024.0"),
+                np(-2.0, 3.0, "v:-8.0"),
+                np(0.0, 0.0, "v:1.0"),
+                np(0.0, -1.0, "v:Infinity"),
+                np(-2.0, 0.5, "v:NaN"),
+                np(1.0, Double.NaN, "v:1.0"),
+                np(Double.NaN, 0.0, "v:1.0"),
+                np(-1.0, Double.POSITIVE_INFINITY, "v:1.0"),
+                np(2.0, 1024.0, "v:Infinity"),
+                np(2.0, -1075.0, "v:0.0"),
+                np(-0.0, -2.0, "v:Infinity"),
+                np(-0.0, -3.0, "v:-Infinity"),
+                np(-0.0, 3.0, "v:-0.0"),
+                np(Double.NEGATIVE_INFINITY, 2.0, "v:Infinity"),
+                np(Double.NEGATIVE_INFINITY, 3.0, "v:-Infinity"))))
+    );
+
+    private SignedInt32Corpus() {
+        // Fixed test data only; no instances.
     }
 }
