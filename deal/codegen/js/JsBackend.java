@@ -57,6 +57,7 @@ import deal.codegen.SourceMapGenerator;
 import deal.descriptors.CanonicalRuntimeTypeDescriptor;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticCode;
+import deal.identity.CanonicalClassIdentity;
 import deal.identity.CanonicalClassIdentityIndex;
 import deal.identity.CanonicalModuleIdentity;
 import deal.identity.ProjectModuleIdentity;
@@ -364,6 +365,14 @@ public final class JsBackend {
      * descriptor spelling is ever emitted.
      */
     private final CanonicalRuntimeTypeDescriptor descriptors;
+
+    // v1.2 identity carriage (descriptor-identity-propagation D1): the
+    // identity index supplies class descriptor text via
+    // index.descriptorTextFor(identity) and the module-path
+    // classification (the module-identity layer's own surface) builds
+    // local class identities.
+    private final CanonicalClassIdentityIndex identityIndex;
+    private final Function<String, CanonicalModuleIdentity> moduleIdentities;
     // Import classification (raw import path → imported module path /
     // declared export map): consumed by the import-binding and rejection
     // slices (T4/T6); retained here for the module shape.
@@ -501,7 +510,8 @@ public final class JsBackend {
                       Map<String, HostModuleDeclarations> hostModules,
                       Set<String> externCImports,
                       boolean isEntry,
-                      CanonicalRuntimeTypeDescriptor descriptors,
+                      CanonicalClassIdentityIndex identityIndex,
+                      Function<String, CanonicalModuleIdentity> moduleIdentities,
                       SourceMapGenerator sourceMapGenerator,
                       SemanticProfile semanticProfile) {
         this.typeMap = typeMap;
@@ -512,7 +522,9 @@ public final class JsBackend {
         this.hostModules = hostModules;
         this.externCImports = externCImports;
         this.isEntry = isEntry;
-        this.descriptors = descriptors;
+        this.identityIndex = identityIndex;
+        this.moduleIdentities = moduleIdentities;
+        this.descriptors = new CanonicalRuntimeTypeDescriptor(identityIndex);
         this.sourceMapGenerator = sourceMapGenerator;
         this.int32Mode = semanticProfile == SemanticProfile.DEAL_V1_2_INT32;
         localScopes.add(new HashSet<>());
@@ -706,8 +718,7 @@ public final class JsBackend {
         JsBackend backend = new JsBackend(result.typeMap(), result.symbolTable(),
             sourcePath, modulePath, importResolutions, hostModules,
             externCImports, isEntry,
-            new CanonicalRuntimeTypeDescriptor(identityIndex, moduleIdentities),
-            sourceMap, semanticProfile);
+            identityIndex, moduleIdentities, sourceMap, semanticProfile);
         return backend.generateProgram(program);
     }
 
@@ -889,7 +900,10 @@ public final class JsBackend {
         // (js-v12-completion-architecture D3 — the supersession of the
         // v1.1 bare-`Error` spelling).
         String $errorIdentity =
-            descriptors.encode(Types.classType("Error", ""));
+            descriptors.encode(Types.classType("Error",
+                new CanonicalClassIdentity(
+                    CanonicalModuleIdentity.BuiltinModule.INSTANCE,
+                    "Error")));
         out.append("const Error$new = (provided, $file, $line, $column) => "
             + "$rt.makeClass(\"Error\", " + jsStringLiteral($errorIdentity)
             + ", $ErrorDefaults, provided, "
@@ -1289,7 +1303,10 @@ public final class JsBackend {
                 case "number" -> Type.Number.INSTANCE;
                 case "string" -> Type.String.INSTANCE;
                 case "table" -> Type.Table.INSTANCE;
-                case "Error" -> Types.classType("Error", "");
+                case "Error" -> Types.classType("Error",
+                    new CanonicalClassIdentity(
+                        CanonicalModuleIdentity.BuiltinModule.INSTANCE,
+                        "Error"));
                 // v1.2 bytes (js-v12-int32-bytes D3): a bytes-spelled
                 // named type resolves to the canonical Type.Bytes
                 // primitive. bytes is not a DEAL keyword, so a
@@ -1307,17 +1324,17 @@ public final class JsBackend {
                 case "bytes" -> {
                     Symbol sym = symbols.resolve(nt.name());
                     if (sym instanceof Symbol.ClassSymbol cs) {
-                        yield Types.classType(nt.name(), cs.modulePath());
+                        yield Types.classType(nt.name(), cs.identity());
                     }
                     if (innermostFrame(localClassScopes, nt.name()) >= 0) {
-                        yield Types.classType(nt.name(), modulePath);
+                        yield localClassType(nt.name());
                     }
                     yield Type.Bytes.INSTANCE;
                 }
                 default -> {
                     Symbol sym = symbols.resolve(nt.name());
                     if (sym instanceof Symbol.ClassSymbol cs) {
-                        yield Types.classType(nt.name(), cs.modulePath());
+                        yield Types.classType(nt.name(), cs.identity());
                     }
                     yield Type.Error.INSTANCE;
                 }
@@ -1328,7 +1345,7 @@ public final class JsBackend {
                     Type exportType = ms.exports().get(qt.typeName());
                     if (exportType != null) yield exportType;
                 }
-                yield Types.classType(qt.typeName(), qt.moduleName());
+                yield classTypeFor(qt.typeName(), qt.moduleName());
             }
             case ArrayType at -> {
                 Type elem = resolveTypeNode(at.elementType());
@@ -1873,17 +1890,20 @@ public final class JsBackend {
      * imported module's {@code C$fields} export read at decode time).
      */
     private String jsonFieldsRef(Type.Class cls) {
-        String mp = cls.modulePath();
-        if (mp == null || mp.isEmpty() || mp.equals(modulePath)) {
+        // The import alias whose export carries this exact identity wins
+        // first: two files in one directory share the module identity,
+        // so alias presence — never identity locality — distinguishes an
+        // imported class.
+        String alias = findImportAliasForClass(cls.name(), cls.identity());
+        if (alias != null) {
+            return jsName(alias) + "." + cls.name() + "$fields";
+        }
+        if (isIntrinsicError(cls) || isDeclaredInThisModule(cls)) {
             Symbol sym = symbols.resolve(cls.name());
             if (sym instanceof Symbol.ClassSymbol cs) {
                 return jsonFieldsArray(cs.fields());
             }
             return "[]";
-        }
-        String alias = findImportAliasForClass(cls.name(), mp);
-        if (alias != null) {
-            return jsName(alias) + "." + cls.name() + "$fields";
         }
         return cls.name() + "$fields";
     }
@@ -1898,9 +1918,62 @@ public final class JsBackend {
      * standalone single-module surface.
      */
     private String qualifiedClassName(String name) {
+        return identityIndex.descriptorTextFor(localClassIdentity(name));
+    }
+
+    /**
+     * The canonical class identity of a class declared in THIS module:
+     * the module-identity layer's classification of the backend-held
+     * module path plus the class name (v1.2 identity carriage) — never
+     * a locally derived dotted spelling.
+     */
+    private CanonicalClassIdentity localClassIdentity(String name) {
         String mp = modulePath != null ? modulePath : sourcePath;
-        return descriptors.encode(
-            Types.classType(name, mp == null ? "" : mp));
+        CanonicalModuleIdentity moduleIdentity = moduleIdentities.apply(mp);
+        if (moduleIdentity == null) {
+            throw new IllegalStateException(
+                "no canonical public module identity for module path '" + mp
+                    + "': a class there can never be represented "
+                    + "(internal invariant violation)");
+        }
+        return new CanonicalClassIdentity(moduleIdentity, name);
+    }
+
+    /** A Class type for a class declared in this module. */
+    private Type.Class localClassType(String name) {
+        return Types.classType(name, localClassIdentity(name));
+    }
+
+    /** A Class type for a class declared in the given wiring path. */
+    private Type.Class classTypeFor(String name, String wiringPath) {
+        CanonicalModuleIdentity moduleIdentity =
+            moduleIdentities.apply(wiringPath == null ? "" : wiringPath);
+        if (moduleIdentity == null) {
+            throw new IllegalStateException(
+                "no canonical public module identity for module path '"
+                    + wiringPath + "': a class there can never be "
+                    + "represented (internal invariant violation)");
+        }
+        return Types.classType(name,
+            new CanonicalClassIdentity(moduleIdentity, name));
+    }
+
+    /**
+     * True when the class type's identity declares in THIS module
+     * (v1.2 identity carriage): same-module detection replaces the
+     * retired dotted-path comparison.
+     */
+    private boolean isDeclaredInThisModule(Type.Class cls) {
+        String mp = modulePath != null ? modulePath : sourcePath;
+        CanonicalModuleIdentity mine = moduleIdentities.apply(mp);
+        return mine != null
+            && cls.identity().moduleIdentity().equals(mine);
+    }
+
+    /** True for the intrinsic builtin Error class type. */
+    private boolean isIntrinsicError(Type.Class cls) {
+        return cls.identity().moduleIdentity()
+            .equals(CanonicalModuleIdentity.BuiltinModule.INSTANCE);
     }
 
     /**
@@ -3117,16 +3190,17 @@ public final class JsBackend {
      * imported class (T4 materializes the alias binding).
      */
     private String constructionRef(Type.Class cls) {
-        String mp = cls.modulePath();
-        if (mp == null || mp.isEmpty()) {
-            return "Error$new";
-        }
-        if (mp.equals(modulePath)) {
-            return cls.name() + "$new";
-        }
-        String alias = findImportAliasForClass(cls.name(), mp);
+        // The import alias whose export carries this exact identity wins
+        // first (two files in one directory share the module identity).
+        String alias = findImportAliasForClass(cls.name(), cls.identity());
         if (alias != null) {
             return jsName(alias) + "." + cls.name() + "$new";
+        }
+        if (isIntrinsicError(cls)) {
+            return "Error$new";
+        }
+        if (isDeclaredInThisModule(cls)) {
+            return cls.name() + "$new";
         }
         // Defensive fallback (the alias scan covers every
         // checker-accepted import; only checker-error programs reach
@@ -3137,17 +3211,19 @@ public final class JsBackend {
 
     /**
      * Searches the module symbol table for a ModuleSymbol whose exports
-     * include the class with the exact module path; returns the import
-     * alias or {@code null} (the
-     * {@code LuaBackend.findImportAliasForClass} mirror).
+     * include the class with the exact canonical class identity; returns
+     * the import alias or {@code null} (the
+     * {@code LuaBackend.findImportAliasForClass} mirror — v1.2 identity
+     * carriage).
      */
-    private String findImportAliasForClass(String className, String modulePath) {
+    private String findImportAliasForClass(String className,
+                                           CanonicalClassIdentity identity) {
         for (Map.Entry<String, Symbol> entry : symbols.symbols().entrySet()) {
             Symbol sym = entry.getValue();
             if (sym instanceof Symbol.ModuleSymbol ms) {
                 Type exportType = ms.exports().get(className);
                 if (exportType instanceof Type.Class tc
-                        && tc.modulePath().equals(modulePath)) {
+                        && tc.identity().equals(identity)) {
                     return entry.getKey();
                 }
             }

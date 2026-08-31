@@ -4,6 +4,7 @@ import deal.checker.SymbolTable;
 import deal.descriptors.CanonicalRuntimeTypeDescriptor;
 import deal.ir.IrDumper;
 import deal.types.Type;
+import deal.test.IdentityTestFixtures;
 import deal.types.Types;
 
 import java.lang.reflect.Constructor;
@@ -121,7 +122,7 @@ public class TypesBytesTest {
                 new Type.Nullable(Type.Bytes.INSTANCE)),
             "Bytes does not equal Nullable(bytes)");
         check(!Types.equals(Type.Bytes.INSTANCE,
-                new Type.Class("bytes", "")),
+                IdentityTestFixtures.classType("bytes", "")),
             "Bytes does not equal Class(bytes)");
         check(!Types.equals(Type.Bytes.INSTANCE,
                 new Type.Func(List.of(), Type.Bytes.INSTANCE, false)),
@@ -242,7 +243,7 @@ public class TypesBytesTest {
             "!containsBytes(table)");
         check(!Types.containsBytes(Type.Error.INSTANCE),
             "!containsBytes(Error sentinel)");
-        check(!Types.containsBytes(new Type.Class("User", "lib")),
+        check(!Types.containsBytes(IdentityTestFixtures.classType("User", "lib")),
             "!containsBytes(class)");
         check(!Types.containsBytes(new Type.Array(Type.Int.INSTANCE)),
             "!containsBytes([int])");
@@ -416,7 +417,7 @@ public class TypesBytesTest {
             deal.module.ModuleIdentityResolver.buildIndex(
                 Map.of("", deal.identity.CanonicalModuleIdentity.BuiltinModule.INSTANCE));
         CanonicalRuntimeTypeDescriptor service =
-            new CanonicalRuntimeTypeDescriptor(index, index.moduleIdentityLookup());
+            new CanonicalRuntimeTypeDescriptor(index);
         check("bytes".equals(service.encode(Type.Bytes.INSTANCE)),
             "CanonicalRuntimeTypeDescriptor.encode(bytes) == \"bytes\"");
         check("[bytes]".equals(service.encode(

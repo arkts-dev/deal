@@ -3,8 +3,8 @@
 // @expected: runtime-error E8001
 // @features: modules, classes, runtime-errors
 
-import * as LibA from "./modid_lib_a"
-import * as LibB from "./modid_lib_b"
+import * as LibA from "./modid_lib_a/lib_a"
+import * as LibB from "./modid_lib_b/lib_b"
 
 export function test_cross_module_class_identity(): int {
   let holder: table = { item: LibA.make(5) };

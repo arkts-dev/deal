@@ -50,6 +50,7 @@ javac --release 25 -proc:none -d build \
   deal/identity/*.java \
   deal/Main.java \
   test/StubModuleResolver.java \
+  test/IdentityTestFixtures.java \
   test/CheckedProjectBuilderTest.java \
   test/LoweringSupportTest.java \
   test/MigrationPlannerTest.java \

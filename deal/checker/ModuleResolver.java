@@ -3,6 +3,7 @@ package deal.checker;
 import java.util.Map;
 import java.util.Set;
 import deal.ast.TypeNode;
+import deal.identity.CanonicalModuleIdentity;
 import deal.types.Type;
 
 /**
@@ -45,6 +46,50 @@ public interface ModuleResolver {
     Symbol.ClassSymbol resolveClassSymbol(String className, String modulePath,
                                            String importingModule)
         throws ModuleNotFoundException;
+
+    /**
+     * Resolves a class symbol of an imported module by the declaring
+     * module's canonical module identity (the v1.2 identity-carriage
+     * routing — descriptor-identity-propagation D1): imported classes
+     * carry the declaring source's identity, and the resolver routes on
+     * it.  The default returns {@code null} (unsupported); the
+     * production {@code ModuleResolverImpl} and identity-aware harnesses
+     * route by the module-identity classification.
+     *
+     * @param className the simple class name
+     * @param declaringModule the canonical module identity of the
+     *                        declaring module
+     * @param importingModule the module path of the file requesting the
+     *                        symbol
+     * @return the ClassSymbol, or {@code null} when unsupported or not
+     *         found
+     * @throws ModuleNotFoundException if the module cannot be found
+     */
+    default Symbol.ClassSymbol resolveClassSymbol(String className,
+            CanonicalModuleIdentity declaringModule, String importingModule)
+            throws ModuleNotFoundException {
+        return null; // unsupported by default
+    }
+
+    /**
+     * Checks whether a function is exported from the module with the
+     * given canonical module identity.  The default returns
+     * {@code false} (unsupported); identity-aware resolvers route by
+     * the module-identity classification.
+     *
+     * @param declaringModule the canonical module identity of the module
+     *                        that should export the function
+     * @param functionName the function name (e.g. "User$fromJson")
+     * @param importingModule the module path of the file requesting the
+     *                        export
+     * @return true when exported, false when unsupported or absent
+     * @throws ModuleNotFoundException if the module cannot be found
+     */
+    default boolean isFunctionExportedFromModule(
+            CanonicalModuleIdentity declaringModule, String functionName,
+            String importingModule) throws ModuleNotFoundException {
+        return false; // unsupported by default
+    }
 
     /**
      * Resolves a field {@link TypeNode} against the scope of the module

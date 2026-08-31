@@ -1,5 +1,8 @@
 package deal.semantic;
 
+import deal.identity.CanonicalClassIdentity;
+import deal.identity.CanonicalModuleIdentity;
+
 import deal.diagnostics.CompilerDiagnostic;
 import deal.semantic.ir.ClassId;
 import deal.semantic.ir.FailureContractRegistry;
@@ -121,13 +124,42 @@ public final class DescriptorService {
                     + "(bytes value semantics remain ISSUE-0158's) and must never be "
                     + "represented");
             case Type.Class cls -> new RuntimeDescriptor.Class(
-                new ClassId(cls.modulePath(), cls.name()));
+                new ClassId(semanticModulePath(cls.identity()),
+                    cls.name()));
             case Type.Array array -> new RuntimeDescriptor.Array(describe(array.element()));
             case Type.Nullable nullable ->
                 new RuntimeDescriptor.Nullable(describe(nullable.inner()));
             case Type.Func func -> new RuntimeDescriptor.Func(
                 func.paramTypes().stream().map(DescriptorService::describe).toList(),
                 describe(func.returnType()), func.isAsync());
+        };
+    }
+
+    /**
+     * The semantic layer's structural module-path key for a canonical
+     * class identity (the mechanical identity-carriage continuation —
+     * the ISSUE-0233 layer remains its own authority): the builtin
+     * module maps to the empty path, an externals module to
+     * {@code $external/<specifier>}, and a project module to
+     * {@code <configuredRootText>/<relativeComponents>} — so the
+     * layer's {@code @modulePath/ClassName} class text coincides with
+     * the canonical projection byte-for-byte for representable
+     * identities.  Never derived from dotted module paths.
+     */
+    public static String semanticModulePath(CanonicalClassIdentity identity) {
+        return switch (identity.moduleIdentity()) {
+            case CanonicalModuleIdentity.BuiltinModule ignored -> "";
+            case CanonicalModuleIdentity.ExternalModule external ->
+                "$external/" + external.rawImportSpecifier();
+            case CanonicalModuleIdentity.ProjectModule project -> {
+                StringBuilder sb = new StringBuilder(
+                    project.projectIdentity().configuredRootText());
+                for (String component
+                        : project.projectIdentity().relativeModuleComponents()) {
+                    sb.append('/').append(component);
+                }
+                yield sb.toString();
+            }
         };
     }
 

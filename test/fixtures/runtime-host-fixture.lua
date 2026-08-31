@@ -1,8 +1,10 @@
 -- Host-module fixture for the runtime host-loader unit tests (test_runtime.lua).
 -- Returns a raw export table exercised by __rt.load_host end to end:
 -- raw functions, pre-wrapped exports, sync null returns, nullable/array
--- returns, rest params (incl. function elements), async operations, class
--- identity, defaults, and the optional _fields passthrough.
+-- returns, async operations, class identity (canonical
+-- @$external/host.cfg/<Name> atoms), defaults, and the optional _fields
+-- passthrough. v1.2 declares no rest parameters, so the legacy rest
+-- entries are removed, not migrated.
 --
 -- This fixture is a third-party host for unit-testing purposes: it may
 -- require deal.runtime for the __NULL sentinel (documented host contract).
@@ -38,18 +40,6 @@ M.ping = function() return __rt.__NULL end
 -- ()->null — sync null return violating the sentinel contract.
 M.ping_bad = function() return "junk" end
 
--- (string,...string[])->string — rest params.
-M.join = function(sep, ...) return table.concat({ ... }, sep) end
-
--- (string,...[(int)->int])->int — rest of function elements.
-M.apply_rest = function(sep, ...)
-  local total = 0
-  for i = 1, select("#", ...) do
-    total = total + (select(i, ...))(1)
-  end
-  return total
-end
-
 -- (?(int)->int)->null — nullable-function parameter.
 M.register = function(cb)
   if cb ~= __rt.__NULL then
@@ -84,41 +74,43 @@ M.prewrapped_nosig = { __kind = "function", f = function() return 1 end }
 -- Pre-wrapped with a non-function .f (E8011 at load).
 M.prewrapped_badf = { __kind = "function", sig = "()->int", f = 42 }
 
--- Pre-wrapped with the retired bare ...T rest sig (E8011 identity check).
-M.bare_rest_sig = { __kind = "function", sig = "(string,...string)->string",
-  f = function(sep, ...) return sep end }
-
 -- Non-function export for a function descriptor (E8011 at load).
 M.not_a_function = 42
 
 -- Class export with defaults and optional _fields.
-M.ServerConfig = { __kind = "class", __classname = "@host.cfg/ServerConfig" }
+M.ServerConfig = { __kind = "class", __classname = "@$external/host.cfg/ServerConfig" }
 M.ServerConfig_defaults = { port = 80 }
 M.ServerConfig_fields = {
   { name = "port", jtype = "int", nullable = false, optional = false }
 }
 
 -- Class whose meta identity does not match the declared descriptor.
-M.WrongName = { __kind = "class", __classname = "@host.cfg/Other" }
+M.WrongName = { __kind = "class", __classname = "@$external/host.cfg/Other" }
 
 -- Non-class export for a class descriptor (E8011 at load).
 M.not_a_class = { plain = true }
 
 -- Class without a _defaults artifact (E8011 at load).
-M.NoDefaults = { __kind = "class", __classname = "@host.cfg/NoDefaults" }
+M.NoDefaults = { __kind = "class", __classname = "@$external/host.cfg/NoDefaults" }
 
 -- Class with a non-table _defaults artifact (E8011 at load).
-M.BadDefaults = { __kind = "class", __classname = "@host.cfg/BadDefaults" }
+M.BadDefaults = { __kind = "class", __classname = "@$external/host.cfg/BadDefaults" }
 M.BadDefaults_defaults = 42
 
 -- Class with a present-but-non-table _fields artifact (E8011 at load).
-M.BadFields = { __kind = "class", __classname = "@host.cfg/BadFields" }
+M.BadFields = { __kind = "class", __classname = "@$external/host.cfg/BadFields" }
 M.BadFields_defaults = {}
 M.BadFields_fields = 42
 
 -- Class without _fields (absence tolerated).
-M.NoFields = { __kind = "class", __classname = "@host.cfg/NoFields" }
+M.NoFields = { __kind = "class", __classname = "@$external/host.cfg/NoFields" }
 M.NoFields_defaults = {}
+
+-- Class tagged with the retired dotted emission shape: the canonical
+-- declared descriptor never byte-matches it (E8011 identity mismatch —
+-- the dedicated dotted-negative pin).
+M.DottedLegacy = { __kind = "class", __classname = "@host.cfg/DottedLegacy" }
+M.DottedLegacy_defaults = {}
 
 -- Extra export — must be structurally dropped by the loader.
 M.extra_export = 123

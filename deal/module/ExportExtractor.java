@@ -2,8 +2,13 @@ package deal.module;
 
 import deal.ast.*;
 import deal.diagnostics.CompilerDiagnostic;
+import deal.identity.CanonicalClassIdentity;
+import deal.identity.CanonicalModuleIdentity;
+import deal.identity.ProjectModuleIdentity;
 import deal.types.Type;
 import deal.types.Types;
+
+import java.util.function.Function;
 
 import java.util.*;
 import deal.diagnostics.DiagnosticCode;
@@ -40,9 +45,73 @@ public final class ExportExtractor {
      */
     private Map<String, String> importModulePaths = Map.of();
 
+    /**
+     * Legacy convenience constructor: the single-module standalone
+     * classification adapter (module path &rarr; project module with the
+     * path as its configured root text; the empty path &rarr; the
+     * intrinsic builtin module).  Identity-aware callers pass the
+     * compilation's module-path classification.
+     */
     public ExportExtractor(String modulePath, boolean isDeclarationFile) {
+        this(modulePath, isDeclarationFile, standaloneClassification(modulePath));
+    }
+
+    /**
+     * The module-identity-layer-seeded constructor
+     * (descriptor-identity-propagation D1): every class type this
+     * extractor produces obtains its {@link CanonicalClassIdentity}
+     * exclusively through the supplied classification — never from
+     * dotted-path reconstruction.
+     */
+    public ExportExtractor(String modulePath, boolean isDeclarationFile,
+                           Function<String, CanonicalModuleIdentity> moduleClassification) {
         this.modulePath = modulePath;
         this.isDeclarationFile = isDeclarationFile;
+        this.moduleClassification = Objects.requireNonNull(
+            moduleClassification, "moduleClassification must not be null");
+    }
+
+    /** The supplied module-path classification (never null). */
+    private final Function<String, CanonicalModuleIdentity> moduleClassification;
+
+    private static Function<String, CanonicalModuleIdentity> standaloneClassification(
+            String modulePath) {
+        Map<String, CanonicalModuleIdentity> map = new HashMap<>();
+        map.put("", CanonicalModuleIdentity.BuiltinModule.INSTANCE);
+        String effective = modulePath == null ? "" : modulePath;
+        if (!effective.isEmpty()) {
+            map.put(effective,
+                new CanonicalModuleIdentity.ProjectModule(
+                    new ProjectModuleIdentity(effective, effective, List.of())));
+        }
+        return map::get;
+    }
+
+    /**
+     * Builds the class identity for a class declared in the module with
+     * the given wiring path, exclusively through the classification.  A
+     * module without a public identity fails closed.
+     */
+    private CanonicalClassIdentity classIdentityFor(String wiringPath,
+                                                    String className) {
+        String mp = wiringPath == null ? "" : wiringPath;
+        CanonicalModuleIdentity moduleIdentity = moduleClassification.apply(mp);
+        if (moduleIdentity == null) {
+            throw new IllegalStateException(
+                "no canonical public module identity for module path '" + mp
+                    + "': a class there can never carry an identity "
+                    + "(internal invariant violation)");
+        }
+        return new CanonicalClassIdentity(moduleIdentity, className);
+    }
+
+    private Type.Class classTypeFor(String name, String wiringPath) {
+        return Types.classType(name, classIdentityFor(wiringPath, name));
+    }
+
+    private Type.Class errorClassType() {
+        return Types.classType("Error", new CanonicalClassIdentity(
+            CanonicalModuleIdentity.BuiltinModule.INSTANCE, "Error"));
     }
 
     /**
@@ -100,7 +169,7 @@ public final class ExportExtractor {
             if (stmt instanceof ExportDeclaration exp
                     && exp.declaration() instanceof ClassDeclaration cd
                     && cd.isJsonable()) {
-                Type clsType = Types.classType(cd.name(), modulePath);
+                Type clsType = classTypeFor(cd.name(), modulePath);
 
                 // C$fromJson: (string) -> C | null
                 Type.Func fromJsonType = new Type.Func(
@@ -143,7 +212,7 @@ public final class ExportExtractor {
                 exports.put(fd.name(), funcType);
             }
             case ClassDeclaration cd -> {
-                exports.put(cd.name(), Types.classType(cd.name(), modulePath));
+                exports.put(cd.name(), classTypeFor(cd.name(), modulePath));
             }
             default -> {}
         }
@@ -177,7 +246,7 @@ public final class ExportExtractor {
                 // name resolution in Phase 3 with the correct types.
                 String resolvedModulePath = importModulePaths.getOrDefault(
                     qt.moduleName(), qt.moduleName());
-                yield Types.classType(qt.typeName(), resolvedModulePath);
+                yield classTypeFor(qt.typeName(), resolvedModulePath);
             }
             case deal.ast.ArrayType at -> {
                 Type elem = resolveTypeNodeSimple(at.elementType(), classMap);
@@ -214,13 +283,13 @@ public final class ExportExtractor {
             case "string" -> Type.String.INSTANCE;
             case "table" -> Type.Table.INSTANCE;
             case "bytes" -> Type.Bytes.INSTANCE;
-            case "Error" -> Types.classType("Error", "");
+            case "Error" -> errorClassType();
             default -> {
                 if (classMap.containsKey(name)) {
-                    yield Types.classType(name, modulePath);
+                    yield classTypeFor(name, modulePath);
                 }
                 // Unknown type — will be resolved during type checking
-                yield Types.classType(name, "");
+                yield classTypeFor(name, "");
             }
         };
     }

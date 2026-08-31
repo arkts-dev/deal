@@ -4,7 +4,7 @@
 // skips test/conformance/host-fixtures/ entirely.
 // Host fixture declaration for the host-class-export conformance test
 // (host-module-abi D6 + runtime-class-identity D1-D2). The class exports
-// carry the module-qualified identity (@host.cfg/...) and the mandatory
+// carry the canonical externals identity (@$external/host.cfg/...) and the mandatory
 // <C>_defaults tables (construction depends on them); the optional
 // same-module class field exercises the synthesized ClassSymbol resolution
 // (NamedType over a registered host class). Class identity strings equal

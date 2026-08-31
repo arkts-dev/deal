@@ -24,6 +24,7 @@ import deal.semantic.ir.SourceSpan;
 import deal.semantic.ir.ValueId;
 import deal.types.Type;
 import deal.types.Types;
+import deal.test.IdentityTestFixtures;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -242,7 +243,7 @@ public class ComparisonSelectorLoweringTest {
                 Type.Table.INSTANCE),
             BinarySelector.REFERENCE_NE, RuntimeDescriptor.Table.INSTANCE, null, "table !== table");
 
-        Type userClass = Types.classType("User", "app.main");
+        Type userClass = IdentityTestFixtures.classType("User", "app.main");
         RuntimeDescriptor userDescriptor = DescriptorService.describe(userClass);
         checkPayload(
             ComparisonSelectorLowering.payloadOf(BinaryOp.EQ, userClass, userClass),

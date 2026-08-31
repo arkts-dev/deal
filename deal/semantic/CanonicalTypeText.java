@@ -161,7 +161,9 @@ public final class CanonicalTypeText {
                     ? "(" + inner + ") | null"
                     : inner + " | null";
             }
-            case Type.Class cls -> "@" + cls.modulePath() + "/" + cls.name();
+            case Type.Class cls -> "@"
+                + DescriptorService.semanticModulePath(cls.identity())
+                + "/" + cls.name();
             case Type.Func func -> renderFunctionForm(
                 func.paramTypes().stream().map(CanonicalTypeText::render).toList(),
                 render(func.returnType()), func.isAsync());

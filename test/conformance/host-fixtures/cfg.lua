@@ -9,14 +9,14 @@ local rt = require("deal.runtime")
 return {
   Endpoint = {
     __kind = "class",
-    __classname = "@host.cfg/Endpoint",
+    __classname = "@$external/host.cfg/Endpoint",
   },
   Endpoint_defaults = {
     path = "/",
   },
   ServerConfig = {
     __kind = "class",
-    __classname = "@host.cfg/ServerConfig",
+    __classname = "@$external/host.cfg/ServerConfig",
   },
   ServerConfig_defaults = {
     port = 8080,

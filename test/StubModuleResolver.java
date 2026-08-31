@@ -2,6 +2,7 @@ package deal.test;
 
 import deal.checker.ModuleResolver;
 import deal.checker.Symbol;
+import deal.identity.CanonicalModuleIdentity;
 import deal.types.Type;
 
 import java.util.HashMap;
@@ -53,5 +54,46 @@ final class StubModuleResolver implements ModuleResolver {
             cs = classSymbols.get(":" + className);
         }
         return cs;
+    }
+
+    /**
+     * The identity-keyed routing (v1.2 identity carriage): the stub's
+     * registered module paths use the standalone identity convention
+     * ({@link IdentityTestFixtures#moduleIdentityOf(String)}), so the
+     * carried module identity maps back to the registered path.
+     */
+    @Override
+    public Symbol.ClassSymbol resolveClassSymbol(String className,
+            CanonicalModuleIdentity declaringModule, String importingModule)
+            throws ModuleNotFoundException {
+        for (String path : modules.keySet()) {
+            if (IdentityTestFixtures.moduleIdentityOf(path)
+                    .equals(declaringModule)) {
+                Symbol.ClassSymbol cs = classSymbols.get(path + ":"
+                    + className);
+                if (cs != null) {
+                    return cs;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The identity-keyed export check: route the carried module identity
+     * back to the registered path and consult its export map.
+     */
+    @Override
+    public boolean isFunctionExportedFromModule(
+            CanonicalModuleIdentity declaringModule, String functionName,
+            String importingModule) throws ModuleNotFoundException {
+        for (Map.Entry<String, Map<String, Type>> entry
+                : modules.entrySet()) {
+            if (IdentityTestFixtures.moduleIdentityOf(entry.getKey())
+                    .equals(declaringModule)) {
+                return entry.getValue().containsKey(functionName);
+            }
+        }
+        return false;
     }
 }

@@ -1,368 +1,368 @@
 {
-  "version": "1.0",
-  "tests": [
-    {
-      "name": "jvm-jsonable-simple-roundtrip",
-      "description": "@jsonable toJson\u2192fromJson roundtrip preserves primitive fields",
-      "source": "// @jsonable\nexport class Person {\n  name: string = \"\";\n  age: int = 0;\n  active: boolean = true;\n  score: number = 0.0;\n}\nexport function test(): string {\n  let p: Person = { name: \"Carol\", age: 42, active: false, score: 99.5 };\n  let json: string = Person$toJson(p);\n  let p2: Person | null = Person$fromJson(json);\n  if (p2 !== null) {\n    if (p2.name !== \"Carol\") { return \"name\"; }\n    if (p2.age !== 42) { return \"age\"; }\n    if (p2.active !== false) { return \"active\"; }\n    if (p2.score !== 99.5) { return \"score\"; }\n    return \"ok\";\n  }\n  return \"null\";\n}\n",
-      "expectedOutput": "ok",
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "backends": [
-        "jvm"
-      ]
-    },
-    {
-      "name": "jvm-jsonable-fromjson-defaults",
-      "description": "@jsonable fromJson applies declared defaults for omitted keys",
-      "source": "// @jsonable\nexport class Person {\n  name: string = \"\";\n  age: int = 7;\n  active: boolean = true;\n  score: number = 2.5;\n}\nexport function test(): string {\n  let p: Person | null = Person$fromJson(\"{\\\"name\\\":\\\"Ada\\\"}\");\n  if (p !== null) {\n    if (p.name !== \"Ada\") { return \"name\"; }\n    if (p.age !== 7) { return \"age\"; }\n    if (p.active !== true) { return \"active\"; }\n    if (p.score !== 2.5) { return \"score\"; }\n    let empty: Person | null = Person$fromJson(\"{}\");\n    if (empty !== null) {\n      if (empty.name !== \"\" || empty.age !== 7) { return \"empty\"; }\n      return \"ok\";\n    }\n    return \"empty-null\";\n  }\n  return \"null\";\n}\n",
-      "expectedOutput": "ok",
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "backends": [
-        "jvm"
-      ]
-    },
-    {
-      "name": "jvm-jsonable-nested-object-fields",
-      "description": "@jsonable nested class fields serialize and deserialize recursively",
-      "source": "// @jsonable\nexport class Address {\n  city: string = \"\";\n  zip: int = 0;\n}\n// @jsonable\nexport class Person {\n  name: string = \"\";\n  home: Address = {};\n}\nexport function test(): string {\n  let p: Person = { name: \"Dave\", home: { city: \"Paris\", zip: 75001 } };\n  let json: string = Person$toJson(p);\n  let p2: Person | null = Person$fromJson(json);\n  if (p2 !== null) {\n    if (p2.name !== \"Dave\") { return \"name\"; }\n    if (p2.home.city !== \"Paris\") { return \"city\"; }\n    if (p2.home.zip !== 75001) { return \"zip\"; }\n    return \"ok\";\n  }\n  return \"null\";\n}\n",
-      "expectedOutput": "ok",
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "backends": [
-        "jvm"
-      ]
-    },
-    {
-      "name": "jvm-jsonable-array-fields",
-      "description": "@jsonable primitive array fields roundtrip element-wise",
-      "source": "// @jsonable\nexport class Box {\n  xs: int[] = [];\n  tags: string[] = [];\n  flags: boolean[] = [];\n}\nexport function test(): string {\n  let b: Box = { xs: [1, 2, 3], tags: [\"a\", \"b\"], flags: [true, false] };\n  let json: string = Box$toJson(b);\n  let b2: Box | null = Box$fromJson(json);\n  if (b2 !== null) {\n    if (b2.xs[0] !== 1) { return \"x0\"; }\n    if (b2.xs[2] !== 3) { return \"x2\"; }\n    if (b2.tags[1] !== \"b\") { return \"t1\"; }\n    if (b2.flags[1] !== false) { return \"f1\"; }\n    return \"ok\";\n  }\n  return \"null\";\n}\n",
-      "expectedOutput": "ok",
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "backends": [
-        "jvm"
-      ]
-    },
-    {
-      "name": "jvm-jsonable-class-array-fields",
-      "description": "@jsonable arrays of nested class objects roundtrip through the nested fromJson/toJson",
-      "source": "// @jsonable\nexport class Point {\n  x: int = 0;\n  y: int = 0;\n}\n// @jsonable\nexport class Path {\n  points: Point[] = [];\n}\nexport function test(): string {\n  let a: Point = { x: 1, y: 2 };\n  let b: Point = { x: 3, y: 4 };\n  let path: Path = { points: [a, b] };\n  let json: string = Path$toJson(path);\n  let p2: Path | null = Path$fromJson(json);\n  if (p2 !== null) {\n    if (p2.points[1].x !== 3) { return \"x\"; }\n    if (p2.points[0].y !== 2) { return \"y\"; }\n    return \"ok\";\n  }\n  return \"null\";\n}\n",
-      "expectedOutput": "ok",
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "backends": [
-        "jvm"
-      ]
-    },
-    {
-      "name": "jvm-jsonable-nullable-fields",
-      "description": "@jsonable nullable fields preserve explicit JSON null and non-null values",
-      "source": "// @jsonable\nexport class Profile {\n  name: string = \"\";\n  bio: string | null = null;\n  age: int | null = null;\n  score: number | null = null;\n  flag: boolean | null = null;\n}\nexport function test(): string {\n  let p: Profile | null = Profile$fromJson(\"{\\\"name\\\":\\\"Ada\\\",\\\"bio\\\":null,\\\"score\\\":7.5}\");\n  if (p !== null) {\n    if (p.bio !== null) { return \"bio\"; }\n    if (p.age !== null) { return \"age\"; }\n    if (p.flag !== null) { return \"flag\"; }\n    let s: number | null = p.score;\n    if (s !== null) {\n      if (s !== 7.5) { return \"score\"; }\n    } else {\n      return \"score-null\";\n    }\n    let json: string = Profile$toJson(p);\n    let p2: Profile | null = Profile$fromJson(json);\n    if (p2 !== null) {\n      if (p2.bio !== null) { return \"bio2\"; }\n      if (p2.age !== null) { return \"age2\"; }\n      return \"ok\";\n    }\n    return \"null2\";\n  }\n  return \"null\";\n}\n",
-      "expectedOutput": "ok",
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "backends": [
-        "jvm"
-      ]
-    },
-    {
-      "name": "jvm-jsonable-nullable-array-field",
-      "description": "@jsonable T[] | null field roundtrips both the null and the populated states",
-      "source": "// @jsonable\nexport class Bag {\n  xs: int[] | null = null;\n}\nexport function test(): string {\n  let a: Bag | null = Bag$fromJson(\"{\\\"xs\\\":[1,2,3]}\");\n  if (a !== null) {\n    let xs: int[] | null = a.xs;\n    if (xs !== null) {\n      if (xs[2] !== 3) { return \"x2\"; }\n    } else {\n      return \"xs-null\";\n    }\n  } else {\n    return \"null\";\n  }\n  let b: Bag | null = Bag$fromJson(\"{\\\"xs\\\":null}\");\n  if (b !== null) {\n    if (b.xs !== null) { return \"b-not-null\"; }\n    return \"ok\";\n  }\n  return \"null2\";\n}\n",
-      "expectedOutput": "ok",
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "backends": [
-        "jvm"
-      ]
-    },
-    {
-      "name": "jvm-jsonable-nullable-element-array-field",
-      "description": "@jsonable (int | null)[] field roundtrips value, null, and value elements in order",
-      "source": "// @jsonable\nexport class Bag {\n  xs: (int | null)[] = [];\n}\nexport function test(): string {\n  let b: Bag | null = Bag$fromJson(\"{\\\"xs\\\":[1,null,3]}\");\n  if (b !== null) {\n    let x0: int | null = b.xs[0];\n    if (x0 !== null) {\n      if (x0 !== 1) { return \"x0\"; }\n    } else {\n      return \"x0-null\";\n    }\n    let x1: int | null = b.xs[1];\n    if (x1 !== null) { return \"x1-not-null\"; }\n    let x2: int | null = b.xs[2];\n    if (x2 !== null) {\n      if (x2 !== 3) { return \"x2\"; }\n    } else {\n      return \"x2-null\";\n    }\n    let json: string = Bag$toJson(b);\n    let b2: Bag | null = Bag$fromJson(json);\n    if (b2 !== null) {\n      let y1: int | null = b2.xs[1];\n      if (y1 !== null) { return \"y1-not-null\"; }\n      return \"ok\";\n    }\n    return \"null2\";\n  }\n  return \"null\";\n}\n",
-      "expectedOutput": "ok",
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "backends": [
-        "jvm"
-      ]
-    },
-    {
-      "name": "jvm-jsonable-invalid-json-returns-null",
-      "description": "@jsonable fromJson returns the DEAL null for malformed JSON without throwing",
-      "source": "// @jsonable\nexport class User {\n  name: string = \"\";\n}\nexport function test(): int {\n  let u: User | null = User$fromJson(\"{bad json\");\n  if (u === null) {\n    let t: User | null = User$fromJson(\"not json at all\");\n    if (t === null) {\n      return 1;\n    }\n    return 0;\n  }\n  return 0;\n}\n",
-      "expectedOutput": "1",
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "backends": [
-        "jvm"
-      ]
-    },
-    {
-      "name": "jvm-jsonable-extra-key-rejected",
-      "description": "@jsonable fromJson rejects extra keys by returning the DEAL null, not throwing",
-      "source": "// @jsonable\nexport class User {\n  name: string = \"\";\n}\nexport function test(): int {\n  let u: User | null = User$fromJson(\"{\\\"name\\\":\\\"Ada\\\",\\\"extra\\\":1}\");\n  if (u === null) {\n    return 1;\n  }\n  return 0;\n}\n",
-      "expectedOutput": "1",
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "backends": [
-        "jvm"
-      ]
-    },
-    {
-      "name": "jvm-jsonable-type-mismatch-failure",
-      "description": "@jsonable fromJson returns the DEAL null on field type mismatches (fractional int, out-of-safe-range int, wrong-typed string, non-object class value)",
-      "source": "// @jsonable\nexport class Address {\n  city: string = \"\";\n}\n// @jsonable\nexport class Person {\n  name: string = \"\";\n  age: int = 0;\n  home: Address = {};\n}\nexport function test(): int {\n  let a: Person | null = Person$fromJson(\"{\\\"name\\\":\\\"Ada\\\",\\\"age\\\":3.5}\");\n  if (a === null) {\n    let b: Person | null = Person$fromJson(\"{\\\"name\\\":\\\"Ada\\\",\\\"age\\\":9007199254740992}\");\n    if (b === null) {\n      let c: Person | null = Person$fromJson(\"{\\\"name\\\":42,\\\"age\\\":1}\");\n      if (c === null) {\n        let d: Person | null = Person$fromJson(\"{\\\"name\\\":\\\"Ada\\\",\\\"age\\\":1,\\\"home\\\":\\\"not-an-object\\\"}\");\n        if (d === null) {\n  return 1;\n}\n        return 0;\n      }\n      return 0;\n    }\n    return 0;\n  }\n  return 0;\n}\n",
-      "expectedOutput": "1",
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "backends": [
-        "jvm"
-      ]
-    },
-    {
-      "name": "jvm-jsonable-tojson-nan-error",
-      "description": "@jsonable toJson raises E8001 for a NaN number field (std/json.lua encode rejection)",
-      "source": "// @jsonable\nexport class Metric {\n  value: number = 0.0;\n}\nexport function test(): string {\n  let m: Metric = { value: 0.0 / 0.0 };\n  return Metric$toJson(m);\n}\n",
-      "expectedOutput": null,
-      "expectedError": "E8001",
-      "expectedExitCode": 1,
-      "backends": [
-        "jvm"
-      ]
-    },
-    {
-      "name": "jvm-jsonable-non-jsonable-field-rejected",
-      "description": "a @jsonable class field of a class type without generated JSON functions is E4007, rejected before any backend",
-      "source": "class Plain {\n  x: int = 0;\n}\n// @jsonable\nexport class Bad {\n  p: Plain = {};\n}\nexport function test(): int { return 1; }\n",
-      "expectedCompileError": "E4007",
-      "backends": [
-        "jvm"
-      ]
-    },
-    {
-      "name": "jvm-jsonable-cross-module-roundtrip",
-      "description": "cross-module @jsonable helpers: imported fromJson/toJson calls and a nested field of imported class type with module-qualified nominal identity through a table-read boundary",
-      "modules": {
-        "lib.deal": "// @jsonable\nexport class Widget {\n  label: string = \"\";\n  count: int = 0;\n}\n",
-        "main.deal": "import * as Lib from \"./lib\"\n// @jsonable\nexport class Order {\n  id: int = 0;\n  widget: Lib.Widget = {};\n}\nexport function main(): null { return null; }\nexport function test(): string {\n  let o: Order | null = Order$fromJson(\"{\\\"id\\\":7,\\\"widget\\\":{\\\"label\\\":\\\"gizmo\\\",\\\"count\\\":5}}\");\n  if (o !== null) {\n    if (o.id !== 7) { return \"id\"; }\n    if (o.widget.label !== \"gizmo\") { return \"label\"; }\n    let w: Lib.Widget | null = Lib.Widget$fromJson(\"{\\\"label\\\":\\\"x\\\",\\\"count\\\":9}\");\n    if (w !== null) {\n      if (w.label !== \"x\") { return \"wlabel\"; }\n      let json: string = Lib.Widget$toJson(w);\n      let w2: Lib.Widget | null = Lib.Widget$fromJson(json);\n      if (w2 !== null) {\n        if (w2.count !== 9) { return \"wcount\"; }\n        let t: table = { w: o.widget };\n        let back: Lib.Widget = t.w;\n        if (back.count !== 5) { return \"identity\"; }\n        return \"ok\";\n      }\n      return \"w2null\";\n    }\n    return \"wnull\";\n  }\n  return \"null\";\n}\n"
-      },
-      "entry": "main.deal",
-      "expectedOutput": "ok",
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "backends": [
-        "jvm"
-      ]
-    },
-    {
-      "name": "jvm-jsonable-cross-module-identity-failure",
-      "description": "a deserialized instance from another module carries its declaring module's nominal identity \u2014 a local same-name class read through a table boundary fails the nominal check with both module-qualified identities",
-      "modules": {
-        "lib.deal": "// @jsonable\nexport class Item {\n  v: int = 0;\n}\n",
-        "main.deal": "import * as Lib from \"./lib\"\n// @jsonable\nexport class Item {\n  v: int = 0;\n}\nexport function main(): null { return null; }\nexport function test(): int {\n  let theirs: Lib.Item | null = Lib.Item$fromJson(\"{\\\"v\\\":3}\");\n  if (theirs !== null) {\n    let t: table = { i: theirs };\n    let mine: Item = t.i;\n    return mine.v;\n  }\n  return 9;\n}\n"
-      },
-      "entry": "main.deal",
-      "expectedOutput": "expected instance of @main/Item, got @lib/Item",
-      "expectedError": "E8001",
-      "expectedExitCode": 1,
-      "backends": [
-        "jvm"
-      ]
-    },
-    {
-      "name": "jvm-jsonable-optional-three-state",
-      "description": "@jsonable optional-nullable field preserves the three states exactly \u2014 missing omits the key, explicit null emits \"field\": null, and a value emits the value (spec \u00a7Optional-nullable roundtrip); has() reports presence",
-      "source": "// @jsonable\nexport class User {\n  name: string = \"\";\n  nick?: string | null;\n}\nexport function test(): string {\n  let missing: User = { name: \"A\" };\n  let missingJson: string = User$toJson(missing);\n  if (missingJson !== \"{\\\"name\\\":\\\"A\\\"}\") { return \"missing-json\"; }\n  let missing2: User | null = User$fromJson(missingJson);\n  if (missing2 !== null) {\n    if (has(missing2.nick)) { return \"has-missing\"; }\n  } else {\n    return \"missing2-null\";\n  }\n  let explicitNull: User = { name: \"B\", nick: null };\n  let nullJson: string = User$toJson(explicitNull);\n  if (nullJson !== \"{\\\"name\\\":\\\"B\\\",\\\"nick\\\":null}\") { return \"null-json\"; }\n  let null2: User | null = User$fromJson(nullJson);\n  if (null2 !== null) {\n    if (!has(null2.nick) || null2.nick !== null) { return \"null-state\"; }\n  } else {\n    return \"null2-null\";\n  }\n  let value: User = { name: \"C\", nick: \"cee\" };\n  let valueJson: string = User$toJson(value);\n  if (valueJson !== \"{\\\"name\\\":\\\"C\\\",\\\"nick\\\":\\\"cee\\\"}\") { return \"value-json\"; }\n  let value2: User | null = User$fromJson(valueJson);\n  if (value2 !== null) {\n    if (!has(value2.nick)) { return \"no-value\"; }\n    let nick: string | null = value2.nick;\n    if (nick !== null) {\n      if (nick !== \"cee\") { return \"bad-value\"; }\n    } else {\n      return \"nick-null\";\n    }\n  } else {\n    return \"value2-null\";\n  }\n  return \"ok\";\n}\n",
-      "expectedOutput": "ok",
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "backends": [
-        "jvm"
-      ]
-    },
-    {
-      "name": "jvm-jsonable-optional-default-and-write",
-      "description": "@jsonable optional field with a declared default starts present with that default (construction and fromJson), an assignment makes it present, and toJson emits the present default",
-      "source": "// @jsonable\nexport class Config {\n  name: string = \"\";\n  debug?: boolean = false;\n}\nexport function test(): string {\n  let c: Config = { name: \"t\" };\n  if (!has(c.debug)) { return \"no-default-presence\"; }\n  let cj: string = Config$toJson(c);\n  if (cj !== \"{\\\"name\\\":\\\"t\\\",\\\"debug\\\":false}\") { return \"cj\"; }\n  let c2: Config | null = Config$fromJson(cj);\n  if (c2 !== null) {\n    if (!has(c2.debug)) { return \"no-debug\"; }\n    let d: boolean | null = c2.debug;\n    if (d !== null) {\n      if (d !== false) { return \"debug-true\"; }\n    } else {\n      return \"d-null\";\n    }\n  } else {\n    return \"c2-null\";\n  }\n  let c3: Config | null = Config$fromJson(\"{\\\"name\\\":\\\"with\\\",\\\"debug\\\":true}\");\n  if (c3 !== null) {\n    let d3: boolean | null = c3.debug;\n    if (d3 !== null) {\n      if (d3 !== true) { return \"not-true\"; }\n    } else {\n      return \"d3-null\";\n    }\n  } else {\n    return \"c3-null\";\n  }\n  let c4: Config = { name: \"w\" };\n  c4.debug = false;\n  let c5: Config | null = Config$fromJson(Config$toJson(c4));\n  if (c5 !== null) {\n    if (!has(c5.debug)) { return \"no-has-c5\"; }\n  } else {\n    return \"c5-null\";\n  }\n  return \"ok\";\n}\n",
-      "expectedOutput": "ok",
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "backends": [
-        "jvm"
-      ]
-    },
-    {
-      "name": "jvm-jsonable-table-field-roundtrip",
-      "description": "@jsonable table fields roundtrip JSON object values \u2014 nested objects become nested tables, and string-keyed reads cross the table boundary after fromJson",
-      "source": "// @jsonable\nexport class Wrapper {\n  data: table = {};\n}\nexport function test(): string {\n  let w: Wrapper = { data: { count: 3, name: \"deal\", nested: { inner: \"x\" } } };\n  let json: string = Wrapper$toJson(w);\n  let w2: Wrapper | null = Wrapper$fromJson(json);\n  if (w2 !== null) {\n    let name: string = w2.data.name;\n    if (name !== \"deal\") { return \"name\"; }\n    let nested: table = w2.data.nested;\n    let inner: string = nested.inner;\n    if (inner !== \"x\") { return \"inner\"; }\n    return \"ok\";\n  }\n  return \"null\";\n}\n",
-      "expectedOutput": "ok",
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "backends": [
-        "jvm"
-      ]
-    },
-    {
-      "name": "jvm-jsonable-table-nested-arrays",
-      "description": "@jsonable table fields preserve nested JSON arrays: fromJson maps them to array-mode tables, toJson re-emits the identical array shape, and a table-typed read crosses the boundary",
-      "source": "// @jsonable\nexport class Wrapper {\n  data: table = {};\n}\nexport function test(): string {\n  let w: Wrapper | null = Wrapper$fromJson(\"{\\\"data\\\":{\\\"values\\\":[[1,2],[3,4]]}}\");\n  if (w !== null) {\n    let values: table = w.data.values;\n    let json2: string = Wrapper$toJson(w);\n    if (json2 !== \"{\\\"data\\\":{\\\"values\\\":[[1,2],[3,4]]}}\") { return \"json2\"; }\n    let w2: Wrapper | null = Wrapper$fromJson(json2);\n    if (w2 !== null) {\n      let json3: string = Wrapper$toJson(w2);\n      if (json3 !== json2) { return \"json3\"; }\n      return \"ok\";\n    }\n    return \"w2-null\";\n  }\n  return \"w-null\";\n}\n",
-      "expectedOutput": "ok",
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "backends": [
-        "jvm"
-      ]
-    },
-    {
-      "name": "jvm-jsonable-table-fromjson-non-object-rejected",
-      "description": "@jsonable fromJson accepts only a JSON object for a table field \u2014 an array, a number, and a string all fail validation with the DEAL null, never a throw",
-      "source": "// @jsonable\nexport class Wrap {\n  data: table = {};\n}\nexport function test(): int {\n  let a: Wrap | null = Wrap$fromJson(\"{\\\"data\\\":[1,2]}\");\n  if (a === null) {\n    let b: Wrap | null = Wrap$fromJson(\"{\\\"data\\\":42}\");\n    if (b === null) {\n      let c: Wrap | null = Wrap$fromJson(\"{\\\"data\\\":\\\"x\\\"}\");\n      if (c === null) {\n        let d: Wrap | null = Wrap$fromJson(\"{\\\"data\\\":null}\");\n        if (d === null) { return 1; }\n        return 0;\n      }\n      return 0;\n    }\n    return 0;\n  }\n  return 0;\n}\n",
-      "expectedOutput": "1",
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "backends": [
-        "jvm"
-      ]
-    },
-    {
-      "name": "jvm-jsonable-table-tojson-non-json-rejected",
-      "description": "@jsonable toJson raises E8001 for a table field holding a value outside the finite acyclic JSON-shaped set \u2014 a class instance is not a JSON leaf",
-      "source": "// @jsonable\nexport class Point {\n  x: int = 0;\n}\n// @jsonable\nexport class Wrap {\n  data: table = {};\n}\nexport function test(): string {\n  let p: Point = { x: 1 };\n  let w: Wrap = { data: { p: p } };\n  return Wrap$toJson(w);\n}\n",
-      "expectedOutput": null,
-      "expectedError": "E8001",
-      "expectedExitCode": 1,
-      "backends": [
-        "jvm"
-      ]
-    },
-    {
-      "name": "jvm-jsonable-cross-module-optional",
-      "description": "cross-module @jsonable optional fields: the imported helper deserializes into the DECLARING module's Missing-sentinel states \u2014 has() and nullable reads of the imported instance distinguish absent, present null, and present value across the module boundary",
-      "modules": {
-        "lib.deal": "// @jsonable\nexport class User {\n  name: string = \"\";\n  nick?: string | null;\n}\n",
-        "main.deal": "import * as Lib from \"./lib\"\nexport function main(): null { return null; }\nexport function test(): string {\n  let u: Lib.User | null = Lib.User$fromJson(\"{\\\"name\\\":\\\"A\\\"}\");\n  if (u !== null) {\n    if (has(u.nick)) { return \"has-missing\"; }\n    let nick0: string | null = u.nick;\n    if (nick0 !== null) { return \"nick0-not-null\"; }\n  } else {\n    return \"u-null\";\n  }\n  let v: Lib.User | null = Lib.User$fromJson(\"{\\\"name\\\":\\\"B\\\",\\\"nick\\\":null}\");\n  if (v !== null) {\n    if (!has(v.nick)) { return \"no-has-null\"; }\n    if (v.nick !== null) { return \"null-not-preserved\"; }\n  } else {\n    return \"v-null\";\n  }\n  let w: Lib.User | null = Lib.User$fromJson(\"{\\\"name\\\":\\\"C\\\",\\\"nick\\\":\\\"cee\\\"}\");\n  if (w !== null) {\n    if (!has(w.nick)) { return \"no-has-value\"; }\n    let nickw: string | null = w.nick;\n    if (nickw !== null) {\n      if (nickw !== \"cee\") { return \"bad-value\"; }\n    } else {\n      return \"nickw-null\";\n    }\n    let json: string = Lib.User$toJson(w);\n    let w2: Lib.User | null = Lib.User$fromJson(json);\n    if (w2 !== null) {\n      if (!has(w2.nick)) { return \"no-has-roundtrip\"; }\n      return \"ok\";\n    }\n    return \"w2-null\";\n  }\n  return \"w-null\";\n}\n"
-      },
-      "entry": "main.deal",
-      "expectedOutput": "ok",
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "backends": [
-        "jvm"
-      ]
-    },
-    {
-      "name": "jvm-jsonable-optional-nullable-class",
-      "description": "@jsonable optional-nullable nested class field preserves explicit null, value, and missing states \u2014 present null and nested values recurse through the nested fromJson/toJson helpers, the missing state omits the key",
-      "source": "// @jsonable\nexport class Child {\n  value: int = 0;\n}\n// @jsonable\nexport class MaybeChild {\n  child?: Child | null;\n}\nexport function test(): string {\n  let n: MaybeChild | null = MaybeChild$fromJson(\"{\\\"child\\\":null}\");\n  if (n !== null) {\n    if (!has(n.child)) { return \"no-has-null\"; }\n    if (n.child !== null) { return \"not-null\"; }\n  } else {\n    return \"n-null\";\n  }\n  let v: MaybeChild | null = MaybeChild$fromJson(\"{\\\"child\\\":{\\\"value\\\":8}}\");\n  if (v !== null) {\n    if (!has(v.child)) { return \"no-child\"; }\n    let child: Child | null = v.child;\n    if (child !== null) {\n      if (child.value !== 8) { return \"bad\"; }\n    } else {\n      return \"child-null\";\n    }\n    let v2: MaybeChild | null = MaybeChild$fromJson(MaybeChild$toJson(v));\n    if (v2 !== null) {\n      let c2: Child | null = v2.child;\n      if (c2 !== null) {\n        if (c2.value !== 8) { return \"bad2\"; }\n      } else {\n        return \"c2-null\";\n      }\n    } else {\n      return \"v2-null\";\n    }\n  } else {\n    return \"v-null\";\n  }\n  let m: MaybeChild | null = MaybeChild$fromJson(\"{}\");\n  if (m !== null) {\n    if (has(m.child)) { return \"has-missing\"; }\n  } else {\n    return \"m-null\";\n  }\n  return \"ok\";\n}\n",
-      "expectedOutput": "ok",
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "backends": [
-        "jvm"
-      ]
-    },
-    {
-      "name": "jvm-jsonable-optional-table-rejected",
-      "description": "backend-rejection gate: an @jsonable class with an optional table field (`data?: table`) reads as `table | null` \u2014 a value shape the JVM slice keeps out of its typed positions \u2014 so the orchestrator reports E6000 and the rejected entry module writes no artifact, never an artifact javac rejects (the pre-fix emission stored the field as $T and later passed the Missing sentinel into that slot: javac 'incompatible types: Object cannot be converted to $T' after the CLI reported success)",
-      "modules": {
-        "main.deal": "// @jsonable\nexport class Wrap {\n  data?: table;\n}\nexport function main(): null { return null; }\nexport function test(): int { return 1; }\n"
-      },
-      "entry": "main.deal",
-      "expectedOutput": null,
-      "expectedError": null,
-      "expectedExitCode": null,
-      "expectedCompileError": "E6000",
-      "irContains": [],
-      "irNotContains": [],
-      "expectedNotOutput": [],
-      "backends": [
-        "jvm"
-      ]
-    },
-    {
-      "name": "jvm-jsonable-deep-nesting-returns-null",
-      "description": "hostile deep nesting: ~20 KB of 20000 nested '[' ... ']' inside a table field returns the DEAL null \u2014 the emitted parser converts its StackOverflowError to the DEAL null exactly like LuaJIT's pcall(__json_parse, s), never an uncaught stack trace, exit 0",
-      "source": "// @jsonable\nexport class Wrap {\n  data: table = {};\n}\nexport function test(): string {\n  let s: string = \"{\\\"data\\\":\";\n  let i: int = 0;\n  while (i < 20000) { s = s + \"[\"; i = i + 1; }\n  i = 0;\n  while (i < 20000) { s = s + \"]\"; i = i + 1; }\n  s = s + \"}\";\n  let w: Wrap | null = Wrap$fromJson(s);\n  if (w !== null) { return \"not-null\"; }\n  return \"ok\";\n}\n",
-      "expectedOutput": "ok",
-      "expectedNotOutput": [
-        "Exception",
-        "StackOverflow"
-      ],
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "backends": [
-        "jvm"
-      ]
-    },
-    {
-      "name": "jvm-jsonable-table-depth-guard",
-      "description": "bounded depth guard: 600 nested JSON objects inside a table field (past the emitted 512-level limit) are a validation failure \u2014 the table-value conversion's guard throws, the public C$fromJson wrapper converts the throw to the DEAL null, exit 0 (deterministic on any thread-stack size, unlike a StackOverflowError at the recursion limit)",
-      "source": "// @jsonable\nexport class Wrap {\n  data: table = {};\n}\nexport function test(): string {\n  let s: string = \"{\\\"data\\\":\";\n  let i: int = 0;\n  while (i < 600) { s = s + \"{\\\"k\\\":\"; i = i + 1; }\n  s = s + \"{\\\"k\\\":[1]}\";\n  i = 0;\n  while (i < 600) { s = s + \"}\"; i = i + 1; }\n  s = s + \"}\";\n  let w: Wrap | null = Wrap$fromJson(s);\n  if (w !== null) { return \"not-null\"; }\n  return \"ok\";\n}\n",
-      "expectedOutput": "ok",
-      "expectedNotOutput": [
-        "Exception",
-        "StackOverflow"
-      ],
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "backends": [
-        "jvm"
-      ]
-    },
-    {
-      "name": "jvm-jsonable-unpaired-surrogate-returns-null",
-      "description": "unpaired UTF-16 surrogates: a lone high (0xD800) or lone low (0xDC00) surrogate decoded from a JSON backslash-u escape in a string field, and a lone surrogate in a table-field string leaf, are parse failures returning the DEAL null \u2014 the emitted parser scans every decoded JSON string with __hasUnpairedSurrogate exactly like LuaJIT's std/json.lua decoder error inside pcall(__json_parse, s), exit 0, never a throw",
-      "source": "// @jsonable\nexport class User {\n  name: string = \"\";\n}\n// @jsonable\nexport class Wrap {\n  data: table = {};\n}\nexport function test(): string {\n  let hi: User | null = User$fromJson(\"{\\\"name\\\":\\\"\\uD800\\\"}\");\n  if (hi !== null) { return \"hi-accepted\"; }\n  let lo: User | null = User$fromJson(\"{\\\"name\\\":\\\"\\uDC00\\\"}\");\n  if (lo !== null) { return \"lo-accepted\"; }\n  let leaf: Wrap | null = Wrap$fromJson(\"{\\\"data\\\":{\\\"leaf\\\":\\\"\\uD800\\\"}}\");\n  if (leaf !== null) { return \"leaf-accepted\"; }\n  return \"ok\";\n}\n",
-      "expectedOutput": "ok",
-      "expectedNotOutput": [
-        "Exception",
-        "StackOverflow"
-      ],
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "backends": [
-        "jvm"
-      ]
-    },
-    {
-      "name": "jvm-jsonable-invalid-number-spellings-return-null",
-      "description": "invalid JSON number spellings: a leading zero (01, -01), a decimal point without a fraction digit (1.), an exponent without fraction digits (1.e2), and a missing integer part (-.5) are parse failures returning the DEAL null for a typed field and for a table-field string-keyed leaf \u2014 the emitted parser validates the strict RFC 8259 number grammar before Double.parseDouble, exactly like LuaJIT's std/json.lua parse_error (invalid number: leading zero not allowed / expected digit after decimal point) inside pcall(__json_parse, s), exit 0, never a throw \u2014 while valid spellings (42, 2.5, and a plain table-leaf number) still parse and validate",
-      "source": "// @jsonable\nexport class P {\n  age: int = 0;\n  score: number = 0.0;\n}\n// @jsonable\nexport class Wrap {\n  data: table = {};\n}\nexport function test(): string {\n  let a: P | null = P$fromJson(\"{\\\"age\\\":01}\");\n  if (a !== null) { return \"01\"; }\n  let b: P | null = P$fromJson(\"{\\\"age\\\":-01}\");\n  if (b !== null) { return \"-01\"; }\n  let c: P | null = P$fromJson(\"{\\\"score\\\":1.}\");\n  if (c !== null) { return \"1.\"; }\n  let d: P | null = P$fromJson(\"{\\\"score\\\":1.e2}\");\n  if (d !== null) { return \"1.e2\"; }\n  let e: P | null = P$fromJson(\"{\\\"score\\\":-.5}\");\n  if (e !== null) { return \"-.5\"; }\n  let t: Wrap | null = Wrap$fromJson(\"{\\\"data\\\":{\\\"n\\\":01}}\");\n  if (t !== null) { return \"table-01\"; }\n  let t2: Wrap | null = Wrap$fromJson(\"{\\\"data\\\":{\\\"n\\\":-01}}\");\n  if (t2 !== null) { return \"table--01\"; }\n  let t3: Wrap | null = Wrap$fromJson(\"{\\\"data\\\":{\\\"n\\\":1.}}\");\n  if (t3 !== null) { return \"table-1.\"; }\n  let t4: Wrap | null = Wrap$fromJson(\"{\\\"data\\\":{\\\"n\\\":1.e2}}\");\n  if (t4 !== null) { return \"table-1.e2\"; }\n  let t5: Wrap | null = Wrap$fromJson(\"{\\\"data\\\":{\\\"n\\\":-.5}}\");\n  if (t5 !== null) { return \"table--.5\"; }\n  let ok: P | null = P$fromJson(\"{\\\"age\\\":42,\\\"score\\\":2.5}\");\n  if (ok !== null) {\n    if (ok.age !== 42) { return \"age\"; }\n    if (ok.score !== 2.5) { return \"score\"; }\n  } else {\n    return \"ok-null\";\n  }\n  let v: Wrap | null = Wrap$fromJson(\"{\\\"data\\\":{\\\"n\\\":10}}\");\n  if (v === null) { return \"table-10-null\"; }\n  return \"ok\";\n}",
-      "expectedOutput": "ok",
-      "expectedNotOutput": [
-        "Exception",
-        "StackOverflow"
-      ],
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "backends": [
-        "jvm"
-      ]
-    },
-    {
-      "name": "jvm-jsonable-required-nodefault-defaults",
-      "description": "fromJson of a @jsonable class whose required fields carry NO declared default applies the reference defaults table: the per-type primitive zeroes (0 / 0.0 / false / \"\"), a FRESH empty table for a table field (toJson emits {} and a missing-key read yields the DEAL null), and a FRESH empty array for an array field (toJson emits [], .length reads 0, a past-end nullable read yields the DEAL null, and per-call freshness keeps a mutated instance's array separate from the next fromJson) \u2014 never a Java null crossing the non-nullable table/array boundary (the pre-fix emission crashed the first table read with a raw NullPointerException)",
-      "source": "// @jsonable\nexport class Raw {\n  i: int;\n  n: number;\n  b: boolean;\n  s: string;\n  data: table;\n  xs: int[];\n}\nexport function test(): string {\n  let w: Raw | null = Raw$fromJson(\"{}\");\n  if (w !== null) {\n    if (w.i !== 0) { return \"i\"; }\n    if (w.n !== 0.0) { return \"n\"; }\n    if (w.b !== false) { return \"b\"; }\n    if (w.s !== \"\") { return \"s\"; }\n    let j: string = Raw$toJson(w);\n    if (j !== \"{\\\"i\\\":0,\\\"n\\\":0.0,\\\"b\\\":false,\\\"s\\\":\\\"\\\",\\\"data\\\":{},\\\"xs\\\":[]}\") { return \"j:\" + j; }\n    let t: table = w.data;\n    let miss: string | null = t.missing;\n    if (miss !== null) { return \"miss\"; }\n    if (w.xs.length !== 0) { return \"len\"; }\n    let n0: int | null = w.xs[0];\n    if (n0 !== null) { return \"n0\"; }\n    w.xs[w.xs.length] = 7;\n    let w2: Raw | null = Raw$fromJson(\"{}\");\n    if (w2 !== null) {\n      if (w2.xs.length !== 0) { return \"shared\"; }\n      let j2: string = Raw$toJson(w2);\n      if (j2 !== j) { return \"j2\"; }\n    } else {\n      return \"w2-null\";\n    }\n    return \"ok\";\n  }\n  return \"w-null\";\n}\n",
-      "expectedOutput": "ok",
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "backends": [
-        "jvm"
-      ]
-    },
-    {
-      "name": "jvm-jsonable-required-class-field-nodefault",
-      "description": "a required class-typed field with NO declared default: the reference defaults table holds a raw {} placeholder (a plain Lua table, never a class instance) which the typed Java slot cannot represent, so an ABSENT key is a fromJson validation failure (the DEAL null \u2014 the spec's never-throw contract; the pre-fix JVM silently read Java null at a typed read where LuaJIT's check_type raises E8001) while a PRESENT key deserializes the nested instance normally and its declared primitive fields keep the reference zeroes",
-      "source": "// @jsonable\nexport class Child {\n  x: int = 1;\n}\n// @jsonable\nexport class Holder {\n  c: Child;\n  i: int;\n}\nexport function test(): string {\n  let h: Holder | null = Holder$fromJson(\"{}\");\n  if (h !== null) { return \"h-not-null\"; }\n  let h2: Holder | null = Holder$fromJson(\"{\\\"c\\\":{\\\"x\\\":9}}\");\n  if (h2 !== null) {\n    if (h2.c.x !== 9) { return \"x\"; }\n    if (h2.i !== 0) { return \"i\"; }\n    let j: string = Holder$toJson(h2);\n    if (j !== \"{\\\"c\\\":{\\\"x\\\":9},\\\"i\\\":0}\") { return \"j:\" + j; }\n    return \"ok\";\n  }\n  return \"h2-null\";\n}\n",
-      "expectedOutput": "ok",
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "backends": [
-        "jvm"
-      ]
-    }
-  ]
+ "version": "1.0",
+ "tests": [
+  {
+   "name": "jvm-jsonable-simple-roundtrip",
+   "description": "@jsonable toJson\u2192fromJson roundtrip preserves primitive fields",
+   "source": "// @jsonable\nexport class Person {\n  name: string = \"\";\n  age: int = 0;\n  active: boolean = true;\n  score: number = 0.0;\n}\nexport function test(): string {\n  let p: Person = { name: \"Carol\", age: 42, active: false, score: 99.5 };\n  let json: string = Person$toJson(p);\n  let p2: Person | null = Person$fromJson(json);\n  if (p2 !== null) {\n    if (p2.name !== \"Carol\") { return \"name\"; }\n    if (p2.age !== 42) { return \"age\"; }\n    if (p2.active !== false) { return \"active\"; }\n    if (p2.score !== 99.5) { return \"score\"; }\n    return \"ok\";\n  }\n  return \"null\";\n}\n",
+   "expectedOutput": "ok",
+   "expectedError": null,
+   "expectedExitCode": 0,
+   "backends": [
+    "jvm"
+   ]
+  },
+  {
+   "name": "jvm-jsonable-fromjson-defaults",
+   "description": "@jsonable fromJson applies declared defaults for omitted keys",
+   "source": "// @jsonable\nexport class Person {\n  name: string = \"\";\n  age: int = 7;\n  active: boolean = true;\n  score: number = 2.5;\n}\nexport function test(): string {\n  let p: Person | null = Person$fromJson(\"{\\\"name\\\":\\\"Ada\\\"}\");\n  if (p !== null) {\n    if (p.name !== \"Ada\") { return \"name\"; }\n    if (p.age !== 7) { return \"age\"; }\n    if (p.active !== true) { return \"active\"; }\n    if (p.score !== 2.5) { return \"score\"; }\n    let empty: Person | null = Person$fromJson(\"{}\");\n    if (empty !== null) {\n      if (empty.name !== \"\" || empty.age !== 7) { return \"empty\"; }\n      return \"ok\";\n    }\n    return \"empty-null\";\n  }\n  return \"null\";\n}\n",
+   "expectedOutput": "ok",
+   "expectedError": null,
+   "expectedExitCode": 0,
+   "backends": [
+    "jvm"
+   ]
+  },
+  {
+   "name": "jvm-jsonable-nested-object-fields",
+   "description": "@jsonable nested class fields serialize and deserialize recursively",
+   "source": "// @jsonable\nexport class Address {\n  city: string = \"\";\n  zip: int = 0;\n}\n// @jsonable\nexport class Person {\n  name: string = \"\";\n  home: Address = {};\n}\nexport function test(): string {\n  let p: Person = { name: \"Dave\", home: { city: \"Paris\", zip: 75001 } };\n  let json: string = Person$toJson(p);\n  let p2: Person | null = Person$fromJson(json);\n  if (p2 !== null) {\n    if (p2.name !== \"Dave\") { return \"name\"; }\n    if (p2.home.city !== \"Paris\") { return \"city\"; }\n    if (p2.home.zip !== 75001) { return \"zip\"; }\n    return \"ok\";\n  }\n  return \"null\";\n}\n",
+   "expectedOutput": "ok",
+   "expectedError": null,
+   "expectedExitCode": 0,
+   "backends": [
+    "jvm"
+   ]
+  },
+  {
+   "name": "jvm-jsonable-array-fields",
+   "description": "@jsonable primitive array fields roundtrip element-wise",
+   "source": "// @jsonable\nexport class Box {\n  xs: int[] = [];\n  tags: string[] = [];\n  flags: boolean[] = [];\n}\nexport function test(): string {\n  let b: Box = { xs: [1, 2, 3], tags: [\"a\", \"b\"], flags: [true, false] };\n  let json: string = Box$toJson(b);\n  let b2: Box | null = Box$fromJson(json);\n  if (b2 !== null) {\n    if (b2.xs[0] !== 1) { return \"x0\"; }\n    if (b2.xs[2] !== 3) { return \"x2\"; }\n    if (b2.tags[1] !== \"b\") { return \"t1\"; }\n    if (b2.flags[1] !== false) { return \"f1\"; }\n    return \"ok\";\n  }\n  return \"null\";\n}\n",
+   "expectedOutput": "ok",
+   "expectedError": null,
+   "expectedExitCode": 0,
+   "backends": [
+    "jvm"
+   ]
+  },
+  {
+   "name": "jvm-jsonable-class-array-fields",
+   "description": "@jsonable arrays of nested class objects roundtrip through the nested fromJson/toJson",
+   "source": "// @jsonable\nexport class Point {\n  x: int = 0;\n  y: int = 0;\n}\n// @jsonable\nexport class Path {\n  points: Point[] = [];\n}\nexport function test(): string {\n  let a: Point = { x: 1, y: 2 };\n  let b: Point = { x: 3, y: 4 };\n  let path: Path = { points: [a, b] };\n  let json: string = Path$toJson(path);\n  let p2: Path | null = Path$fromJson(json);\n  if (p2 !== null) {\n    if (p2.points[1].x !== 3) { return \"x\"; }\n    if (p2.points[0].y !== 2) { return \"y\"; }\n    return \"ok\";\n  }\n  return \"null\";\n}\n",
+   "expectedOutput": "ok",
+   "expectedError": null,
+   "expectedExitCode": 0,
+   "backends": [
+    "jvm"
+   ]
+  },
+  {
+   "name": "jvm-jsonable-nullable-fields",
+   "description": "@jsonable nullable fields preserve explicit JSON null and non-null values",
+   "source": "// @jsonable\nexport class Profile {\n  name: string = \"\";\n  bio: string | null = null;\n  age: int | null = null;\n  score: number | null = null;\n  flag: boolean | null = null;\n}\nexport function test(): string {\n  let p: Profile | null = Profile$fromJson(\"{\\\"name\\\":\\\"Ada\\\",\\\"bio\\\":null,\\\"score\\\":7.5}\");\n  if (p !== null) {\n    if (p.bio !== null) { return \"bio\"; }\n    if (p.age !== null) { return \"age\"; }\n    if (p.flag !== null) { return \"flag\"; }\n    let s: number | null = p.score;\n    if (s !== null) {\n      if (s !== 7.5) { return \"score\"; }\n    } else {\n      return \"score-null\";\n    }\n    let json: string = Profile$toJson(p);\n    let p2: Profile | null = Profile$fromJson(json);\n    if (p2 !== null) {\n      if (p2.bio !== null) { return \"bio2\"; }\n      if (p2.age !== null) { return \"age2\"; }\n      return \"ok\";\n    }\n    return \"null2\";\n  }\n  return \"null\";\n}\n",
+   "expectedOutput": "ok",
+   "expectedError": null,
+   "expectedExitCode": 0,
+   "backends": [
+    "jvm"
+   ]
+  },
+  {
+   "name": "jvm-jsonable-nullable-array-field",
+   "description": "@jsonable T[] | null field roundtrips both the null and the populated states",
+   "source": "// @jsonable\nexport class Bag {\n  xs: int[] | null = null;\n}\nexport function test(): string {\n  let a: Bag | null = Bag$fromJson(\"{\\\"xs\\\":[1,2,3]}\");\n  if (a !== null) {\n    let xs: int[] | null = a.xs;\n    if (xs !== null) {\n      if (xs[2] !== 3) { return \"x2\"; }\n    } else {\n      return \"xs-null\";\n    }\n  } else {\n    return \"null\";\n  }\n  let b: Bag | null = Bag$fromJson(\"{\\\"xs\\\":null}\");\n  if (b !== null) {\n    if (b.xs !== null) { return \"b-not-null\"; }\n    return \"ok\";\n  }\n  return \"null2\";\n}\n",
+   "expectedOutput": "ok",
+   "expectedError": null,
+   "expectedExitCode": 0,
+   "backends": [
+    "jvm"
+   ]
+  },
+  {
+   "name": "jvm-jsonable-nullable-element-array-field",
+   "description": "@jsonable (int | null)[] field roundtrips value, null, and value elements in order",
+   "source": "// @jsonable\nexport class Bag {\n  xs: (int | null)[] = [];\n}\nexport function test(): string {\n  let b: Bag | null = Bag$fromJson(\"{\\\"xs\\\":[1,null,3]}\");\n  if (b !== null) {\n    let x0: int | null = b.xs[0];\n    if (x0 !== null) {\n      if (x0 !== 1) { return \"x0\"; }\n    } else {\n      return \"x0-null\";\n    }\n    let x1: int | null = b.xs[1];\n    if (x1 !== null) { return \"x1-not-null\"; }\n    let x2: int | null = b.xs[2];\n    if (x2 !== null) {\n      if (x2 !== 3) { return \"x2\"; }\n    } else {\n      return \"x2-null\";\n    }\n    let json: string = Bag$toJson(b);\n    let b2: Bag | null = Bag$fromJson(json);\n    if (b2 !== null) {\n      let y1: int | null = b2.xs[1];\n      if (y1 !== null) { return \"y1-not-null\"; }\n      return \"ok\";\n    }\n    return \"null2\";\n  }\n  return \"null\";\n}\n",
+   "expectedOutput": "ok",
+   "expectedError": null,
+   "expectedExitCode": 0,
+   "backends": [
+    "jvm"
+   ]
+  },
+  {
+   "name": "jvm-jsonable-invalid-json-returns-null",
+   "description": "@jsonable fromJson returns the DEAL null for malformed JSON without throwing",
+   "source": "// @jsonable\nexport class User {\n  name: string = \"\";\n}\nexport function test(): int {\n  let u: User | null = User$fromJson(\"{bad json\");\n  if (u === null) {\n    let t: User | null = User$fromJson(\"not json at all\");\n    if (t === null) {\n      return 1;\n    }\n    return 0;\n  }\n  return 0;\n}\n",
+   "expectedOutput": "1",
+   "expectedError": null,
+   "expectedExitCode": 0,
+   "backends": [
+    "jvm"
+   ]
+  },
+  {
+   "name": "jvm-jsonable-extra-key-rejected",
+   "description": "@jsonable fromJson rejects extra keys by returning the DEAL null, not throwing",
+   "source": "// @jsonable\nexport class User {\n  name: string = \"\";\n}\nexport function test(): int {\n  let u: User | null = User$fromJson(\"{\\\"name\\\":\\\"Ada\\\",\\\"extra\\\":1}\");\n  if (u === null) {\n    return 1;\n  }\n  return 0;\n}\n",
+   "expectedOutput": "1",
+   "expectedError": null,
+   "expectedExitCode": 0,
+   "backends": [
+    "jvm"
+   ]
+  },
+  {
+   "name": "jvm-jsonable-type-mismatch-failure",
+   "description": "@jsonable fromJson returns the DEAL null on field type mismatches (fractional int, out-of-safe-range int, wrong-typed string, non-object class value)",
+   "source": "// @jsonable\nexport class Address {\n  city: string = \"\";\n}\n// @jsonable\nexport class Person {\n  name: string = \"\";\n  age: int = 0;\n  home: Address = {};\n}\nexport function test(): int {\n  let a: Person | null = Person$fromJson(\"{\\\"name\\\":\\\"Ada\\\",\\\"age\\\":3.5}\");\n  if (a === null) {\n    let b: Person | null = Person$fromJson(\"{\\\"name\\\":\\\"Ada\\\",\\\"age\\\":9007199254740992}\");\n    if (b === null) {\n      let c: Person | null = Person$fromJson(\"{\\\"name\\\":42,\\\"age\\\":1}\");\n      if (c === null) {\n        let d: Person | null = Person$fromJson(\"{\\\"name\\\":\\\"Ada\\\",\\\"age\\\":1,\\\"home\\\":\\\"not-an-object\\\"}\");\n        if (d === null) {\n  return 1;\n}\n        return 0;\n      }\n      return 0;\n    }\n    return 0;\n  }\n  return 0;\n}\n",
+   "expectedOutput": "1",
+   "expectedError": null,
+   "expectedExitCode": 0,
+   "backends": [
+    "jvm"
+   ]
+  },
+  {
+   "name": "jvm-jsonable-tojson-nan-error",
+   "description": "@jsonable toJson raises E8001 for a NaN number field (std/json.lua encode rejection)",
+   "source": "// @jsonable\nexport class Metric {\n  value: number = 0.0;\n}\nexport function test(): string {\n  let m: Metric = { value: 0.0 / 0.0 };\n  return Metric$toJson(m);\n}\n",
+   "expectedOutput": null,
+   "expectedError": "E8001",
+   "expectedExitCode": 1,
+   "backends": [
+    "jvm"
+   ]
+  },
+  {
+   "name": "jvm-jsonable-non-jsonable-field-rejected",
+   "description": "a @jsonable class field of a class type without generated JSON functions is E4007, rejected before any backend",
+   "source": "class Plain {\n  x: int = 0;\n}\n// @jsonable\nexport class Bad {\n  p: Plain = {};\n}\nexport function test(): int { return 1; }\n",
+   "expectedCompileError": "E4007",
+   "backends": [
+    "jvm"
+   ]
+  },
+  {
+   "name": "jvm-jsonable-cross-module-roundtrip",
+   "description": "cross-module @jsonable helpers: imported fromJson/toJson calls and a nested field of imported class type with module-qualified nominal identity through a table-read boundary",
+   "modules": {
+    "lib.deal": "// @jsonable\nexport class Widget {\n  label: string = \"\";\n  count: int = 0;\n}\n",
+    "main.deal": "import * as Lib from \"./lib\"\n// @jsonable\nexport class Order {\n  id: int = 0;\n  widget: Lib.Widget = {};\n}\nexport function main(): null { return null; }\nexport function test(): string {\n  let o: Order | null = Order$fromJson(\"{\\\"id\\\":7,\\\"widget\\\":{\\\"label\\\":\\\"gizmo\\\",\\\"count\\\":5}}\");\n  if (o !== null) {\n    if (o.id !== 7) { return \"id\"; }\n    if (o.widget.label !== \"gizmo\") { return \"label\"; }\n    let w: Lib.Widget | null = Lib.Widget$fromJson(\"{\\\"label\\\":\\\"x\\\",\\\"count\\\":9}\");\n    if (w !== null) {\n      if (w.label !== \"x\") { return \"wlabel\"; }\n      let json: string = Lib.Widget$toJson(w);\n      let w2: Lib.Widget | null = Lib.Widget$fromJson(json);\n      if (w2 !== null) {\n        if (w2.count !== 9) { return \"wcount\"; }\n        let t: table = { w: o.widget };\n        let back: Lib.Widget = t.w;\n        if (back.count !== 5) { return \"identity\"; }\n        return \"ok\";\n      }\n      return \"w2null\";\n    }\n    return \"wnull\";\n  }\n  return \"null\";\n}\n"
+   },
+   "entry": "main.deal",
+   "expectedOutput": "ok",
+   "expectedError": null,
+   "expectedExitCode": 0,
+   "backends": [
+    "jvm"
+   ]
+  },
+  {
+   "name": "jvm-jsonable-cross-module-identity-failure",
+   "description": "a deserialized instance from another module carries its declaring module's nominal identity \u2014 a local same-name class read through a table boundary fails the nominal check with both module-qualified identities",
+   "modules": {
+    "main.deal": "import * as Lib from \"./lib/lib\"\n// @jsonable\nexport class Item {\n  v: int = 0;\n}\nexport function main(): null { return null; }\nexport function test(): int {\n  let theirs: Lib.Item | null = Lib.Item$fromJson(\"{\\\"v\\\":3}\");\n  if (theirs !== null) {\n    let t: table = { i: theirs };\n    let mine: Item = t.i;\n    return mine.v;\n  }\n  return 9;\n}\n",
+    "lib/lib.deal": "// @jsonable\nexport class Item {\n  v: int = 0;\n}\n"
+   },
+   "entry": "main.deal",
+   "expectedOutput": "expected instance of @src/Item, got @src/lib/Item",
+   "expectedError": "E8001",
+   "expectedExitCode": 1,
+   "backends": [
+    "jvm"
+   ]
+  },
+  {
+   "name": "jvm-jsonable-optional-three-state",
+   "description": "@jsonable optional-nullable field preserves the three states exactly \u2014 missing omits the key, explicit null emits \"field\": null, and a value emits the value (spec \u00a7Optional-nullable roundtrip); has() reports presence",
+   "source": "// @jsonable\nexport class User {\n  name: string = \"\";\n  nick?: string | null;\n}\nexport function test(): string {\n  let missing: User = { name: \"A\" };\n  let missingJson: string = User$toJson(missing);\n  if (missingJson !== \"{\\\"name\\\":\\\"A\\\"}\") { return \"missing-json\"; }\n  let missing2: User | null = User$fromJson(missingJson);\n  if (missing2 !== null) {\n    if (has(missing2.nick)) { return \"has-missing\"; }\n  } else {\n    return \"missing2-null\";\n  }\n  let explicitNull: User = { name: \"B\", nick: null };\n  let nullJson: string = User$toJson(explicitNull);\n  if (nullJson !== \"{\\\"name\\\":\\\"B\\\",\\\"nick\\\":null}\") { return \"null-json\"; }\n  let null2: User | null = User$fromJson(nullJson);\n  if (null2 !== null) {\n    if (!has(null2.nick) || null2.nick !== null) { return \"null-state\"; }\n  } else {\n    return \"null2-null\";\n  }\n  let value: User = { name: \"C\", nick: \"cee\" };\n  let valueJson: string = User$toJson(value);\n  if (valueJson !== \"{\\\"name\\\":\\\"C\\\",\\\"nick\\\":\\\"cee\\\"}\") { return \"value-json\"; }\n  let value2: User | null = User$fromJson(valueJson);\n  if (value2 !== null) {\n    if (!has(value2.nick)) { return \"no-value\"; }\n    let nick: string | null = value2.nick;\n    if (nick !== null) {\n      if (nick !== \"cee\") { return \"bad-value\"; }\n    } else {\n      return \"nick-null\";\n    }\n  } else {\n    return \"value2-null\";\n  }\n  return \"ok\";\n}\n",
+   "expectedOutput": "ok",
+   "expectedError": null,
+   "expectedExitCode": 0,
+   "backends": [
+    "jvm"
+   ]
+  },
+  {
+   "name": "jvm-jsonable-optional-default-and-write",
+   "description": "@jsonable optional field with a declared default starts present with that default (construction and fromJson), an assignment makes it present, and toJson emits the present default",
+   "source": "// @jsonable\nexport class Config {\n  name: string = \"\";\n  debug?: boolean = false;\n}\nexport function test(): string {\n  let c: Config = { name: \"t\" };\n  if (!has(c.debug)) { return \"no-default-presence\"; }\n  let cj: string = Config$toJson(c);\n  if (cj !== \"{\\\"name\\\":\\\"t\\\",\\\"debug\\\":false}\") { return \"cj\"; }\n  let c2: Config | null = Config$fromJson(cj);\n  if (c2 !== null) {\n    if (!has(c2.debug)) { return \"no-debug\"; }\n    let d: boolean | null = c2.debug;\n    if (d !== null) {\n      if (d !== false) { return \"debug-true\"; }\n    } else {\n      return \"d-null\";\n    }\n  } else {\n    return \"c2-null\";\n  }\n  let c3: Config | null = Config$fromJson(\"{\\\"name\\\":\\\"with\\\",\\\"debug\\\":true}\");\n  if (c3 !== null) {\n    let d3: boolean | null = c3.debug;\n    if (d3 !== null) {\n      if (d3 !== true) { return \"not-true\"; }\n    } else {\n      return \"d3-null\";\n    }\n  } else {\n    return \"c3-null\";\n  }\n  let c4: Config = { name: \"w\" };\n  c4.debug = false;\n  let c5: Config | null = Config$fromJson(Config$toJson(c4));\n  if (c5 !== null) {\n    if (!has(c5.debug)) { return \"no-has-c5\"; }\n  } else {\n    return \"c5-null\";\n  }\n  return \"ok\";\n}\n",
+   "expectedOutput": "ok",
+   "expectedError": null,
+   "expectedExitCode": 0,
+   "backends": [
+    "jvm"
+   ]
+  },
+  {
+   "name": "jvm-jsonable-table-field-roundtrip",
+   "description": "@jsonable table fields roundtrip JSON object values \u2014 nested objects become nested tables, and string-keyed reads cross the table boundary after fromJson",
+   "source": "// @jsonable\nexport class Wrapper {\n  data: table = {};\n}\nexport function test(): string {\n  let w: Wrapper = { data: { count: 3, name: \"deal\", nested: { inner: \"x\" } } };\n  let json: string = Wrapper$toJson(w);\n  let w2: Wrapper | null = Wrapper$fromJson(json);\n  if (w2 !== null) {\n    let name: string = w2.data.name;\n    if (name !== \"deal\") { return \"name\"; }\n    let nested: table = w2.data.nested;\n    let inner: string = nested.inner;\n    if (inner !== \"x\") { return \"inner\"; }\n    return \"ok\";\n  }\n  return \"null\";\n}\n",
+   "expectedOutput": "ok",
+   "expectedError": null,
+   "expectedExitCode": 0,
+   "backends": [
+    "jvm"
+   ]
+  },
+  {
+   "name": "jvm-jsonable-table-nested-arrays",
+   "description": "@jsonable table fields preserve nested JSON arrays: fromJson maps them to array-mode tables, toJson re-emits the identical array shape, and a table-typed read crosses the boundary",
+   "source": "// @jsonable\nexport class Wrapper {\n  data: table = {};\n}\nexport function test(): string {\n  let w: Wrapper | null = Wrapper$fromJson(\"{\\\"data\\\":{\\\"values\\\":[[1,2],[3,4]]}}\");\n  if (w !== null) {\n    let values: table = w.data.values;\n    let json2: string = Wrapper$toJson(w);\n    if (json2 !== \"{\\\"data\\\":{\\\"values\\\":[[1,2],[3,4]]}}\") { return \"json2\"; }\n    let w2: Wrapper | null = Wrapper$fromJson(json2);\n    if (w2 !== null) {\n      let json3: string = Wrapper$toJson(w2);\n      if (json3 !== json2) { return \"json3\"; }\n      return \"ok\";\n    }\n    return \"w2-null\";\n  }\n  return \"w-null\";\n}\n",
+   "expectedOutput": "ok",
+   "expectedError": null,
+   "expectedExitCode": 0,
+   "backends": [
+    "jvm"
+   ]
+  },
+  {
+   "name": "jvm-jsonable-table-fromjson-non-object-rejected",
+   "description": "@jsonable fromJson accepts only a JSON object for a table field \u2014 an array, a number, and a string all fail validation with the DEAL null, never a throw",
+   "source": "// @jsonable\nexport class Wrap {\n  data: table = {};\n}\nexport function test(): int {\n  let a: Wrap | null = Wrap$fromJson(\"{\\\"data\\\":[1,2]}\");\n  if (a === null) {\n    let b: Wrap | null = Wrap$fromJson(\"{\\\"data\\\":42}\");\n    if (b === null) {\n      let c: Wrap | null = Wrap$fromJson(\"{\\\"data\\\":\\\"x\\\"}\");\n      if (c === null) {\n        let d: Wrap | null = Wrap$fromJson(\"{\\\"data\\\":null}\");\n        if (d === null) { return 1; }\n        return 0;\n      }\n      return 0;\n    }\n    return 0;\n  }\n  return 0;\n}\n",
+   "expectedOutput": "1",
+   "expectedError": null,
+   "expectedExitCode": 0,
+   "backends": [
+    "jvm"
+   ]
+  },
+  {
+   "name": "jvm-jsonable-table-tojson-non-json-rejected",
+   "description": "@jsonable toJson raises E8001 for a table field holding a value outside the finite acyclic JSON-shaped set \u2014 a class instance is not a JSON leaf",
+   "source": "// @jsonable\nexport class Point {\n  x: int = 0;\n}\n// @jsonable\nexport class Wrap {\n  data: table = {};\n}\nexport function test(): string {\n  let p: Point = { x: 1 };\n  let w: Wrap = { data: { p: p } };\n  return Wrap$toJson(w);\n}\n",
+   "expectedOutput": null,
+   "expectedError": "E8001",
+   "expectedExitCode": 1,
+   "backends": [
+    "jvm"
+   ]
+  },
+  {
+   "name": "jvm-jsonable-cross-module-optional",
+   "description": "cross-module @jsonable optional fields: the imported helper deserializes into the DECLARING module's Missing-sentinel states \u2014 has() and nullable reads of the imported instance distinguish absent, present null, and present value across the module boundary",
+   "modules": {
+    "lib.deal": "// @jsonable\nexport class User {\n  name: string = \"\";\n  nick?: string | null;\n}\n",
+    "main.deal": "import * as Lib from \"./lib\"\nexport function main(): null { return null; }\nexport function test(): string {\n  let u: Lib.User | null = Lib.User$fromJson(\"{\\\"name\\\":\\\"A\\\"}\");\n  if (u !== null) {\n    if (has(u.nick)) { return \"has-missing\"; }\n    let nick0: string | null = u.nick;\n    if (nick0 !== null) { return \"nick0-not-null\"; }\n  } else {\n    return \"u-null\";\n  }\n  let v: Lib.User | null = Lib.User$fromJson(\"{\\\"name\\\":\\\"B\\\",\\\"nick\\\":null}\");\n  if (v !== null) {\n    if (!has(v.nick)) { return \"no-has-null\"; }\n    if (v.nick !== null) { return \"null-not-preserved\"; }\n  } else {\n    return \"v-null\";\n  }\n  let w: Lib.User | null = Lib.User$fromJson(\"{\\\"name\\\":\\\"C\\\",\\\"nick\\\":\\\"cee\\\"}\");\n  if (w !== null) {\n    if (!has(w.nick)) { return \"no-has-value\"; }\n    let nickw: string | null = w.nick;\n    if (nickw !== null) {\n      if (nickw !== \"cee\") { return \"bad-value\"; }\n    } else {\n      return \"nickw-null\";\n    }\n    let json: string = Lib.User$toJson(w);\n    let w2: Lib.User | null = Lib.User$fromJson(json);\n    if (w2 !== null) {\n      if (!has(w2.nick)) { return \"no-has-roundtrip\"; }\n      return \"ok\";\n    }\n    return \"w2-null\";\n  }\n  return \"w-null\";\n}\n"
+   },
+   "entry": "main.deal",
+   "expectedOutput": "ok",
+   "expectedError": null,
+   "expectedExitCode": 0,
+   "backends": [
+    "jvm"
+   ]
+  },
+  {
+   "name": "jvm-jsonable-optional-nullable-class",
+   "description": "@jsonable optional-nullable nested class field preserves explicit null, value, and missing states \u2014 present null and nested values recurse through the nested fromJson/toJson helpers, the missing state omits the key",
+   "source": "// @jsonable\nexport class Child {\n  value: int = 0;\n}\n// @jsonable\nexport class MaybeChild {\n  child?: Child | null;\n}\nexport function test(): string {\n  let n: MaybeChild | null = MaybeChild$fromJson(\"{\\\"child\\\":null}\");\n  if (n !== null) {\n    if (!has(n.child)) { return \"no-has-null\"; }\n    if (n.child !== null) { return \"not-null\"; }\n  } else {\n    return \"n-null\";\n  }\n  let v: MaybeChild | null = MaybeChild$fromJson(\"{\\\"child\\\":{\\\"value\\\":8}}\");\n  if (v !== null) {\n    if (!has(v.child)) { return \"no-child\"; }\n    let child: Child | null = v.child;\n    if (child !== null) {\n      if (child.value !== 8) { return \"bad\"; }\n    } else {\n      return \"child-null\";\n    }\n    let v2: MaybeChild | null = MaybeChild$fromJson(MaybeChild$toJson(v));\n    if (v2 !== null) {\n      let c2: Child | null = v2.child;\n      if (c2 !== null) {\n        if (c2.value !== 8) { return \"bad2\"; }\n      } else {\n        return \"c2-null\";\n      }\n    } else {\n      return \"v2-null\";\n    }\n  } else {\n    return \"v-null\";\n  }\n  let m: MaybeChild | null = MaybeChild$fromJson(\"{}\");\n  if (m !== null) {\n    if (has(m.child)) { return \"has-missing\"; }\n  } else {\n    return \"m-null\";\n  }\n  return \"ok\";\n}\n",
+   "expectedOutput": "ok",
+   "expectedError": null,
+   "expectedExitCode": 0,
+   "backends": [
+    "jvm"
+   ]
+  },
+  {
+   "name": "jvm-jsonable-optional-table-rejected",
+   "description": "backend-rejection gate: an @jsonable class with an optional table field (`data?: table`) reads as `table | null` \u2014 a value shape the JVM slice keeps out of its typed positions \u2014 so the orchestrator reports E6000 and the rejected entry module writes no artifact, never an artifact javac rejects (the pre-fix emission stored the field as $T and later passed the Missing sentinel into that slot: javac 'incompatible types: Object cannot be converted to $T' after the CLI reported success)",
+   "modules": {
+    "main.deal": "// @jsonable\nexport class Wrap {\n  data?: table;\n}\nexport function main(): null { return null; }\nexport function test(): int { return 1; }\n"
+   },
+   "entry": "main.deal",
+   "expectedOutput": null,
+   "expectedError": null,
+   "expectedExitCode": null,
+   "expectedCompileError": "E6000",
+   "irContains": [],
+   "irNotContains": [],
+   "expectedNotOutput": [],
+   "backends": [
+    "jvm"
+   ]
+  },
+  {
+   "name": "jvm-jsonable-deep-nesting-returns-null",
+   "description": "hostile deep nesting: ~20 KB of 20000 nested '[' ... ']' inside a table field returns the DEAL null \u2014 the emitted parser converts its StackOverflowError to the DEAL null exactly like LuaJIT's pcall(__json_parse, s), never an uncaught stack trace, exit 0",
+   "source": "// @jsonable\nexport class Wrap {\n  data: table = {};\n}\nexport function test(): string {\n  let s: string = \"{\\\"data\\\":\";\n  let i: int = 0;\n  while (i < 20000) { s = s + \"[\"; i = i + 1; }\n  i = 0;\n  while (i < 20000) { s = s + \"]\"; i = i + 1; }\n  s = s + \"}\";\n  let w: Wrap | null = Wrap$fromJson(s);\n  if (w !== null) { return \"not-null\"; }\n  return \"ok\";\n}\n",
+   "expectedOutput": "ok",
+   "expectedNotOutput": [
+    "Exception",
+    "StackOverflow"
+   ],
+   "expectedError": null,
+   "expectedExitCode": 0,
+   "backends": [
+    "jvm"
+   ]
+  },
+  {
+   "name": "jvm-jsonable-table-depth-guard",
+   "description": "bounded depth guard: 600 nested JSON objects inside a table field (past the emitted 512-level limit) are a validation failure \u2014 the table-value conversion's guard throws, the public C$fromJson wrapper converts the throw to the DEAL null, exit 0 (deterministic on any thread-stack size, unlike a StackOverflowError at the recursion limit)",
+   "source": "// @jsonable\nexport class Wrap {\n  data: table = {};\n}\nexport function test(): string {\n  let s: string = \"{\\\"data\\\":\";\n  let i: int = 0;\n  while (i < 600) { s = s + \"{\\\"k\\\":\"; i = i + 1; }\n  s = s + \"{\\\"k\\\":[1]}\";\n  i = 0;\n  while (i < 600) { s = s + \"}\"; i = i + 1; }\n  s = s + \"}\";\n  let w: Wrap | null = Wrap$fromJson(s);\n  if (w !== null) { return \"not-null\"; }\n  return \"ok\";\n}\n",
+   "expectedOutput": "ok",
+   "expectedNotOutput": [
+    "Exception",
+    "StackOverflow"
+   ],
+   "expectedError": null,
+   "expectedExitCode": 0,
+   "backends": [
+    "jvm"
+   ]
+  },
+  {
+   "name": "jvm-jsonable-unpaired-surrogate-returns-null",
+   "description": "unpaired UTF-16 surrogates: a lone high (0xD800) or lone low (0xDC00) surrogate decoded from a JSON backslash-u escape in a string field, and a lone surrogate in a table-field string leaf, are parse failures returning the DEAL null \u2014 the emitted parser scans every decoded JSON string with __hasUnpairedSurrogate exactly like LuaJIT's std/json.lua decoder error inside pcall(__json_parse, s), exit 0, never a throw",
+   "source": "// @jsonable\nexport class User {\n  name: string = \"\";\n}\n// @jsonable\nexport class Wrap {\n  data: table = {};\n}\nexport function test(): string {\n  let hi: User | null = User$fromJson(\"{\\\"name\\\":\\\"\\uD800\\\"}\");\n  if (hi !== null) { return \"hi-accepted\"; }\n  let lo: User | null = User$fromJson(\"{\\\"name\\\":\\\"\\uDC00\\\"}\");\n  if (lo !== null) { return \"lo-accepted\"; }\n  let leaf: Wrap | null = Wrap$fromJson(\"{\\\"data\\\":{\\\"leaf\\\":\\\"\\uD800\\\"}}\");\n  if (leaf !== null) { return \"leaf-accepted\"; }\n  return \"ok\";\n}\n",
+   "expectedOutput": "ok",
+   "expectedNotOutput": [
+    "Exception",
+    "StackOverflow"
+   ],
+   "expectedError": null,
+   "expectedExitCode": 0,
+   "backends": [
+    "jvm"
+   ]
+  },
+  {
+   "name": "jvm-jsonable-invalid-number-spellings-return-null",
+   "description": "invalid JSON number spellings: a leading zero (01, -01), a decimal point without a fraction digit (1.), an exponent without fraction digits (1.e2), and a missing integer part (-.5) are parse failures returning the DEAL null for a typed field and for a table-field string-keyed leaf \u2014 the emitted parser validates the strict RFC 8259 number grammar before Double.parseDouble, exactly like LuaJIT's std/json.lua parse_error (invalid number: leading zero not allowed / expected digit after decimal point) inside pcall(__json_parse, s), exit 0, never a throw \u2014 while valid spellings (42, 2.5, and a plain table-leaf number) still parse and validate",
+   "source": "// @jsonable\nexport class P {\n  age: int = 0;\n  score: number = 0.0;\n}\n// @jsonable\nexport class Wrap {\n  data: table = {};\n}\nexport function test(): string {\n  let a: P | null = P$fromJson(\"{\\\"age\\\":01}\");\n  if (a !== null) { return \"01\"; }\n  let b: P | null = P$fromJson(\"{\\\"age\\\":-01}\");\n  if (b !== null) { return \"-01\"; }\n  let c: P | null = P$fromJson(\"{\\\"score\\\":1.}\");\n  if (c !== null) { return \"1.\"; }\n  let d: P | null = P$fromJson(\"{\\\"score\\\":1.e2}\");\n  if (d !== null) { return \"1.e2\"; }\n  let e: P | null = P$fromJson(\"{\\\"score\\\":-.5}\");\n  if (e !== null) { return \"-.5\"; }\n  let t: Wrap | null = Wrap$fromJson(\"{\\\"data\\\":{\\\"n\\\":01}}\");\n  if (t !== null) { return \"table-01\"; }\n  let t2: Wrap | null = Wrap$fromJson(\"{\\\"data\\\":{\\\"n\\\":-01}}\");\n  if (t2 !== null) { return \"table--01\"; }\n  let t3: Wrap | null = Wrap$fromJson(\"{\\\"data\\\":{\\\"n\\\":1.}}\");\n  if (t3 !== null) { return \"table-1.\"; }\n  let t4: Wrap | null = Wrap$fromJson(\"{\\\"data\\\":{\\\"n\\\":1.e2}}\");\n  if (t4 !== null) { return \"table-1.e2\"; }\n  let t5: Wrap | null = Wrap$fromJson(\"{\\\"data\\\":{\\\"n\\\":-.5}}\");\n  if (t5 !== null) { return \"table--.5\"; }\n  let ok: P | null = P$fromJson(\"{\\\"age\\\":42,\\\"score\\\":2.5}\");\n  if (ok !== null) {\n    if (ok.age !== 42) { return \"age\"; }\n    if (ok.score !== 2.5) { return \"score\"; }\n  } else {\n    return \"ok-null\";\n  }\n  let v: Wrap | null = Wrap$fromJson(\"{\\\"data\\\":{\\\"n\\\":10}}\");\n  if (v === null) { return \"table-10-null\"; }\n  return \"ok\";\n}",
+   "expectedOutput": "ok",
+   "expectedNotOutput": [
+    "Exception",
+    "StackOverflow"
+   ],
+   "expectedError": null,
+   "expectedExitCode": 0,
+   "backends": [
+    "jvm"
+   ]
+  },
+  {
+   "name": "jvm-jsonable-required-nodefault-defaults",
+   "description": "fromJson of a @jsonable class whose required fields carry NO declared default applies the reference defaults table: the per-type primitive zeroes (0 / 0.0 / false / \"\"), a FRESH empty table for a table field (toJson emits {} and a missing-key read yields the DEAL null), and a FRESH empty array for an array field (toJson emits [], .length reads 0, a past-end nullable read yields the DEAL null, and per-call freshness keeps a mutated instance's array separate from the next fromJson) \u2014 never a Java null crossing the non-nullable table/array boundary (the pre-fix emission crashed the first table read with a raw NullPointerException)",
+   "source": "// @jsonable\nexport class Raw {\n  i: int;\n  n: number;\n  b: boolean;\n  s: string;\n  data: table;\n  xs: int[];\n}\nexport function test(): string {\n  let w: Raw | null = Raw$fromJson(\"{}\");\n  if (w !== null) {\n    if (w.i !== 0) { return \"i\"; }\n    if (w.n !== 0.0) { return \"n\"; }\n    if (w.b !== false) { return \"b\"; }\n    if (w.s !== \"\") { return \"s\"; }\n    let j: string = Raw$toJson(w);\n    if (j !== \"{\\\"i\\\":0,\\\"n\\\":0.0,\\\"b\\\":false,\\\"s\\\":\\\"\\\",\\\"data\\\":{},\\\"xs\\\":[]}\") { return \"j:\" + j; }\n    let t: table = w.data;\n    let miss: string | null = t.missing;\n    if (miss !== null) { return \"miss\"; }\n    if (w.xs.length !== 0) { return \"len\"; }\n    let n0: int | null = w.xs[0];\n    if (n0 !== null) { return \"n0\"; }\n    w.xs[w.xs.length] = 7;\n    let w2: Raw | null = Raw$fromJson(\"{}\");\n    if (w2 !== null) {\n      if (w2.xs.length !== 0) { return \"shared\"; }\n      let j2: string = Raw$toJson(w2);\n      if (j2 !== j) { return \"j2\"; }\n    } else {\n      return \"w2-null\";\n    }\n    return \"ok\";\n  }\n  return \"w-null\";\n}\n",
+   "expectedOutput": "ok",
+   "expectedError": null,
+   "expectedExitCode": 0,
+   "backends": [
+    "jvm"
+   ]
+  },
+  {
+   "name": "jvm-jsonable-required-class-field-nodefault",
+   "description": "a required class-typed field with NO declared default: the reference defaults table holds a raw {} placeholder (a plain Lua table, never a class instance) which the typed Java slot cannot represent, so an ABSENT key is a fromJson validation failure (the DEAL null \u2014 the spec's never-throw contract; the pre-fix JVM silently read Java null at a typed read where LuaJIT's check_type raises E8001) while a PRESENT key deserializes the nested instance normally and its declared primitive fields keep the reference zeroes",
+   "source": "// @jsonable\nexport class Child {\n  x: int = 1;\n}\n// @jsonable\nexport class Holder {\n  c: Child;\n  i: int;\n}\nexport function test(): string {\n  let h: Holder | null = Holder$fromJson(\"{}\");\n  if (h !== null) { return \"h-not-null\"; }\n  let h2: Holder | null = Holder$fromJson(\"{\\\"c\\\":{\\\"x\\\":9}}\");\n  if (h2 !== null) {\n    if (h2.c.x !== 9) { return \"x\"; }\n    if (h2.i !== 0) { return \"i\"; }\n    let j: string = Holder$toJson(h2);\n    if (j !== \"{\\\"c\\\":{\\\"x\\\":9},\\\"i\\\":0}\") { return \"j:\" + j; }\n    return \"ok\";\n  }\n  return \"h2-null\";\n}\n",
+   "expectedOutput": "ok",
+   "expectedError": null,
+   "expectedExitCode": 0,
+   "backends": [
+    "jvm"
+   ]
+  }
+ ]
 }

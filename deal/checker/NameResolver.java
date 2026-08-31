@@ -2,8 +2,13 @@ package deal.checker;
 
 import deal.ast.*;
 import deal.diagnostics.CompilerDiagnostic;
+import deal.identity.CanonicalClassIdentity;
+import deal.identity.CanonicalModuleIdentity;
+import deal.identity.ProjectModuleIdentity;
 import deal.types.Type;
 import deal.types.Types;
+
+import java.util.function.Function;
 
 import java.util.*;
 import deal.diagnostics.DiagnosticCode;
@@ -32,6 +37,18 @@ public final class NameResolver {
 
     private final String modulePath;
     private final ModuleResolver moduleResolver;
+
+    /**
+     * The module-path classification supplied by the module-identity
+     * layer (E2's producer): checked module path &rarr; the canonical
+     * public module identity, {@code null} for a module the layer
+     * classified without one.  Every class type and ClassSymbol this
+     * resolver builds obtains its {@link CanonicalClassIdentity}
+     * exclusively from this function — never from dotted-path
+     * reconstruction (descriptor-identity-propagation D1).
+     */
+    private final Function<String, CanonicalModuleIdentity> moduleClassification;
+
     private final SymbolTable root;
     private final List<CompilerDiagnostic> diagnostics = new ArrayList<>();
 
@@ -52,11 +69,100 @@ public final class NameResolver {
 
     public NameResolver(String modulePath, ModuleResolver moduleResolver,
                  Set<String> modulesInProgress) {
+        this(modulePath, moduleResolver, modulesInProgress,
+            standaloneClassification(modulePath));
+    }
+
+    /**
+     * The module-identity-layer-seeded constructor: the production
+     * orchestrator and identity-aware harnesses supply the compilation's
+     * module-path classification so every class identity this resolver
+     * assigns is the layer's own (descriptor-identity-propagation D1).
+     * The two-argument constructor keeps the single-module standalone
+     * adapter default for direct test callers.
+     */
+    public NameResolver(String modulePath, ModuleResolver moduleResolver,
+                 Set<String> modulesInProgress,
+                 Function<String, CanonicalModuleIdentity> moduleClassification) {
         this.modulePath = modulePath;
         this.moduleResolver = moduleResolver;
+        this.moduleClassification = Objects.requireNonNull(
+            moduleClassification, "moduleClassification must not be null");
         this.root = new SymbolTable();
         this.currentScope = root;
         this.modulesInProgress = modulesInProgress;
+    }
+
+    /**
+     * The single-module standalone classification adapter (the
+     * LuaBackend/JsBackend standalone-surface convention): the empty
+     * module path is the intrinsic builtin Error module and the module
+     * path itself is a project module whose configured root text is the
+     * path — byte-identical to the pre-carriage
+     * {@code @<modulePath>/<Name>} single-module shape.
+     */
+    private static Function<String, CanonicalModuleIdentity> standaloneClassification(
+            String modulePath) {
+        Map<String, CanonicalModuleIdentity> map = new HashMap<>();
+        map.put("", CanonicalModuleIdentity.BuiltinModule.INSTANCE);
+        String effective = modulePath == null ? "" : modulePath;
+        if (!effective.isEmpty()) {
+            map.put(effective,
+                new CanonicalModuleIdentity.ProjectModule(
+                    new ProjectModuleIdentity(effective, effective, List.of())));
+        }
+        return map::get;
+    }
+
+    /**
+     * The intrinsic builtin {@code Error} synthesis pinned by E2's
+     * identity layer: {@code CanonicalClassIdentity(BuiltinModule,
+     * "Error")} — the only intrinsic class identity.  Never derived
+     * from text.
+     */
+    public static CanonicalClassIdentity intrinsicErrorIdentity() {
+        return new CanonicalClassIdentity(
+            CanonicalModuleIdentity.BuiltinModule.INSTANCE, "Error");
+    }
+
+    /**
+     * The canonical public module identity of the module being resolved
+     * (the classification of {@link #modulePath}), or {@code null} for a
+     * module the layer classified without one.
+     */
+    public CanonicalModuleIdentity moduleIdentity() {
+        return moduleClassification.apply(modulePath);
+    }
+
+    /**
+     * Builds the canonical class identity for a class declared in the
+     * module with the given wiring path, exclusively through the
+     * module-identity layer's classification.  A module without a public
+     * identity fails closed here (the pinned invariant violation — the
+     * E2010 declaration gate fires before this for published projects).
+     */
+    private CanonicalClassIdentity classIdentityFor(String wiringPath,
+                                                    String className) {
+        String mp = wiringPath == null ? "" : wiringPath;
+        CanonicalModuleIdentity moduleIdentity = moduleClassification.apply(mp);
+        if (moduleIdentity == null) {
+            throw new IllegalStateException(
+                "no canonical public module identity for module path '" + mp
+                    + "': a class there can never carry an identity "
+                    + "(internal invariant violation — the identity "
+                    + "representability gate precedes class typing)");
+        }
+        return new CanonicalClassIdentity(moduleIdentity, className);
+    }
+
+    /** A Class type carrying the layer-resolved identity. */
+    private Type.Class classTypeFor(String name, String wiringPath) {
+        return Types.classType(name, classIdentityFor(wiringPath, name));
+    }
+
+    /** The intrinsic Error class type (E2's synthesis). */
+    private Type.Class errorClassType() {
+        return Types.classType("Error", intrinsicErrorIdentity());
     }
 
     // =======================================================================
@@ -152,7 +258,8 @@ public final class NameResolver {
             new ClassField(synth, "message", false, false,
                 new NamedType(synth, "string"), Optional.of(emptyString))
         );
-        root.define("Error", new Symbol.ClassSymbol("Error", errorFields, ""));
+        root.define("Error", new Symbol.ClassSymbol("Error", errorFields, "",
+            intrinsicErrorIdentity()));
     }
 
     /**
@@ -269,7 +376,8 @@ public final class NameResolver {
                 return;
             }
         }
-        root.define(name, new Symbol.ClassSymbol(name, cd.fields(), modulePath));
+        root.define(name, new Symbol.ClassSymbol(name, cd.fields(), modulePath,
+            classIdentityFor(modulePath, name)));
 
         // Check for $ in field names (E2008). Default value type
         // mismatches are checked by TypeChecker.checkClassDeclaration
@@ -285,7 +393,7 @@ public final class NameResolver {
         // These are added programmatically and never pass through the user-identifier
         // $ prohibition check (checkNoDollar is not called for these names).
         if (cd.isJsonable()) {
-            Type clsType = Types.classType(cd.name(), modulePath);
+            Type clsType = classTypeFor(cd.name(), modulePath);
 
             Type.Func fromJsonType = new Type.Func(
                 List.of(Type.String.INSTANCE),
@@ -530,7 +638,8 @@ public final class NameResolver {
         if (!currentScope.containsLocally(name)) {
             // Not already hoisted (nested class inside a function/block)
             currentScope.define(name,
-                new Symbol.ClassSymbol(name, cd.fields(), modulePath));
+                new Symbol.ClassSymbol(name, cd.fields(), modulePath,
+                    classIdentityFor(modulePath, name)));
         }
     }
 
@@ -709,7 +818,7 @@ public final class NameResolver {
         scopeMap.put(ts, currentScope);
         currentScope.define(ts.catchVar(),
             new Symbol.VariableSymbol(ts.catchVar(),
-                Types.classType("Error", ""), true));
+                errorClassType(), true));
         walkBlock(ts.catchBlock());
         currentScope = saved;
     }
@@ -811,7 +920,7 @@ public final class NameResolver {
             case "number"    -> Type.Number.INSTANCE;
             case "string"    -> Type.String.INSTANCE;
             case "table"     -> Type.Table.INSTANCE;
-            case "Error"     -> Types.classType("Error", "");
+            case "Error"     -> errorClassType();
             // DEAL v1.2: `bytes` is the canonical bytes primitive
             // (Type.Bytes.INSTANCE). bytes is not a DEAL keyword, so a
             // checker-accepted user class named `bytes` resolves to its
@@ -826,14 +935,14 @@ public final class NameResolver {
             case "bytes" -> {
                 Symbol sym = currentScope.resolve(name);
                 if (sym instanceof Symbol.ClassSymbol cs) {
-                    yield Types.classType(cs.name(), cs.modulePath());
+                    yield Types.classType(cs.name(), cs.identity());
                 }
                 yield Type.Bytes.INSTANCE;
             }
             default -> {
                 Symbol sym = currentScope.resolve(name);
                 if (sym instanceof Symbol.ClassSymbol cs) {
-                    yield Types.classType(cs.name(), cs.modulePath());
+                    yield Types.classType(cs.name(), cs.identity());
                 }
                 error(DiagnosticCode.E3004, "Unknown type '" + name + "'", nt.span());
                 yield Type.Error.INSTANCE;
@@ -842,12 +951,44 @@ public final class NameResolver {
     }
 
     /**
-     * Resolves a class symbol from another module.
+     * Resolves the class symbol a {@link Type.Class} names through the
+     * carried canonical identity (descriptor-identity-propagation D1):
+     * a class whose identity's module equals this module's resolves
+     * locally; every other identity routes through the module
+     * resolver's identity-keyed lookup (imported classes carry the
+     * declaring source's identity — never a reconstructed dotted
+     * path).
      *
-     * <p>Used by the type checker when it encounters a {@link Type.Class}
-     * whose module path differs from the current module. The local scope
-     * only contains class symbols for locally-declared classes; imported
-     * classes must be looked up via the module resolver.</p>
+     * @param cls the checked class type carrying its canonical identity
+     * @return the ClassSymbol, or {@code null} if not found
+     */
+    public Symbol.ClassSymbol resolveClassSymbol(Type.Class cls) {
+        CanonicalModuleIdentity mine = moduleIdentity();
+        if (mine != null
+                && cls.identity().moduleIdentity().equals(mine)) {
+            // Local class — look it up in the current scope first (the
+            // name-based local precedence today's behavior has).
+            Symbol sym = currentScope.resolve(cls.name());
+            if (sym instanceof Symbol.ClassSymbol cs) return cs;
+        }
+        // Fall through to the module resolver's identity-keyed routing:
+        // two files in one directory share a module identity (the
+        // relative components exclude the file stem), so a foreign
+        // class's identity can equal this module's — the declaring
+        // module's symbol table is the only authority for it.
+        try {
+            return moduleResolver.resolveClassSymbol(
+                cls.name(), cls.identity().moduleIdentity(), this.modulePath);
+        } catch (ModuleResolver.ModuleNotFoundException e) {
+            return null;
+        }
+    }
+
+    /**
+     * Resolves a class symbol from another module by its wiring path
+     * (retained for the declaration-metadata and legacy routing
+     * consumers that hold the private deployment module id, never
+     * public text).
      *
      * @param className the simple class name
      * @param modulePath the module path where the class is declared
@@ -919,6 +1060,30 @@ public final class NameResolver {
             Map<String, Type> exports = moduleResolver.resolveModule(
                 modulePath, this.modulePath, new HashSet<>());
             return exports.containsKey(functionName);
+        } catch (ModuleResolver.ModuleNotFoundException e) {
+            return false;
+        }
+    }
+
+    /**
+     * Identity-keyed variant of
+     * {@link #isFunctionExportedFromModule(String, String)} for a
+     * class type's declaring module: same-module identities check the
+     * root symbol table; foreign identities route through the module
+     * resolver's identity-keyed export lookup.
+     */
+    public boolean isFunctionExportedFromModule(
+            CanonicalModuleIdentity declaringModule, String functionName) {
+        CanonicalModuleIdentity mine = moduleIdentity();
+        if (mine != null && declaringModule.equals(mine)
+                && root.resolve(functionName) != null) {
+            return true;
+        }
+        // Two files in one directory share the module identity: keep
+        // routing to the module resolver (the declaring file's exports).
+        try {
+            return moduleResolver.isFunctionExportedFromModule(
+                declaringModule, functionName, this.modulePath);
         } catch (ModuleResolver.ModuleNotFoundException e) {
             return false;
         }

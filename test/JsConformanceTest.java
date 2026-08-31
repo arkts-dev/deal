@@ -1299,11 +1299,15 @@ module.exports = {
                 for (StatementNode stmt : parseResult.program().statements()) {
                     if (stmt instanceof ClassDeclaration cd) {
                         symbols.put(cd.name(), new Symbol.ClassSymbol(
-                            cd.name(), cd.fields(), dotted));
+                            cd.name(), cd.fields(), dotted,
+                            IdentityTestFixtures.identityOf(dotted,
+                                cd.name())));
                     } else if (stmt instanceof ExportDeclaration exp
                             && exp.declaration() instanceof ClassDeclaration cd) {
                         symbols.put(cd.name(), new Symbol.ClassSymbol(
-                            cd.name(), cd.fields(), dotted));
+                            cd.name(), cd.fields(), dotted,
+                            IdentityTestFixtures.identityOf(dotted,
+                                cd.name())));
                     }
                 }
             } catch (IOException ignored) { }
@@ -1788,15 +1792,36 @@ module.exports = {
      */
     private static void writeModuleFiles(Path projectRoot, Path entry,
             Map<String, Path> written) throws IOException {
-        copyTransitively(entry, projectRoot, written);
+        copyTransitively(entry,
+            entry.toAbsolutePath().normalize().getParent(),
+            projectRoot, written);
     }
 
-    private static void copyTransitively(Path file, Path projectRoot,
-            Map<String, Path> written) throws IOException {
+    private static void copyTransitively(Path file, Path entryDir,
+            Path projectRoot, Map<String, Path> written)
+            throws IOException {
         Path normalized = file.toAbsolutePath().normalize();
         if (written.containsKey(normalized.toString())) return;
-        Path target = projectRoot.resolve(corpusStem(normalized)
-            + ".deal");
+        // Companions inside the entry's own corpus directory keep their
+        // subdirectory layout (the v1.2 identity carriage: two files in
+        // one directory share the module identity, so nested companions
+        // need their directories preserved to stay nominally distinct);
+        // every other companion keeps the flat stem layout.
+        Path target;
+        try {
+            Path rel = entryDir.relativize(normalized);
+            if (rel.startsWith("..") || rel.getNameCount() <= 1) {
+                target = projectRoot.resolve(corpusStem(normalized)
+                    + ".deal");
+            } else {
+                target = projectRoot.resolve(rel);
+            }
+        } catch (IllegalArgumentException e) {
+            target = projectRoot.resolve(corpusStem(normalized) + ".deal");
+        }
+        if (target.getParent() != null) {
+            Files.createDirectories(target.getParent());
+        }
         Files.copy(normalized, target);
         written.put(normalized.toString(), target);
         materializedCorpusFiles.add(corpusRelOf(normalized));
@@ -1810,7 +1835,7 @@ module.exports = {
             // first), so materialize the companion under that name
             // before the recursive walk.
             copyCompanionAliasIfExplicit(resolved, importPath, projectRoot);
-            copyTransitively(resolved, projectRoot, written);
+            copyTransitively(resolved, entryDir, projectRoot, written);
         }
     }
 

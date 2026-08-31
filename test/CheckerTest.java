@@ -7,6 +7,7 @@ import deal.lexer.*;
 import deal.parser.*;
 import deal.types.Type;
 import deal.types.Types;
+import deal.test.IdentityTestFixtures;
 
 import java.util.*;
 
@@ -2726,12 +2727,12 @@ public class CheckerTest {
         StubModuleResolver resolver = new StubModuleResolver();
         // Register exports for the foreign module including $fromJson/$toJson
         Map<String, Type> exports = new HashMap<>();
-        exports.put("Foreign", Types.classType("Foreign", "./foreign"));
+        exports.put("Foreign", IdentityTestFixtures.classType("Foreign", "./foreign"));
         exports.put("Foreign$fromJson",
             new Type.Func(List.of(Type.String.INSTANCE),
-                Types.nullable(Types.classType("Foreign", "./foreign"))));
+                Types.nullable(IdentityTestFixtures.classType("Foreign", "./foreign"))));
         exports.put("Foreign$toJson",
-            new Type.Func(List.of(Types.classType("Foreign", "./foreign")),
+            new Type.Func(List.of(IdentityTestFixtures.classType("Foreign", "./foreign")),
                 Type.String.INSTANCE));
         resolver.register("./foreign", exports);
 
@@ -2751,7 +2752,7 @@ public class CheckerTest {
         StubModuleResolver resolver = new StubModuleResolver();
         // Register exports WITHOUT $fromJson/$toJson (class is not @jsonable)
         Map<String, Type> exports = new HashMap<>();
-        exports.put("Plain", Types.classType("Plain", "./foreign"));
+        exports.put("Plain", IdentityTestFixtures.classType("Plain", "./foreign"));
         resolver.register("./foreign", exports);
 
         CheckerOutput out = checkProgramWithModule(

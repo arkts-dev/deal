@@ -10,6 +10,7 @@ import deal.checker.SymbolTable;
 import deal.codegen.SourceMapGenerator;
 import deal.descriptors.CanonicalRuntimeTypeDescriptor;
 import deal.diagnostics.CompilerDiagnostic;
+import deal.identity.CanonicalClassIdentity;
 import deal.identity.CanonicalClassIdentityIndex;
 import deal.identity.CanonicalModuleIdentity;
 import deal.identity.ProjectModuleIdentity;
@@ -23,6 +24,7 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
+import java.util.function.Function;
 import deal.diagnostics.DiagnosticCode;
 
 /**
@@ -52,6 +54,17 @@ public final class LuaBackend implements Visitor<Void> {
     // orchestrator-built service; the standalone entry points build the
     // single-module adapter surface below.
     private CanonicalRuntimeTypeDescriptor descriptors;
+
+    // The per-compilation canonical identity surface (v1.2 identity
+    // carriage, descriptor-identity-propagation D1): the identity index
+    // supplies class descriptor text via
+    // {@code index.descriptorTextFor(identity)} and the module-path
+    // classification (the module-identity layer's own surface) builds
+    // the local classes' canonical identities.  Descriptor text is
+    // never computed from the dotted module path.
+    private CanonicalClassIdentityIndex identityIndex;
+    private Function<String, CanonicalModuleIdentity> moduleIdentities =
+        mp -> null;
     private StringBuilder out = new StringBuilder();
     private final List<CompilerDiagnostic> diagnostics = new ArrayList<>();
     private int indent = 0;
@@ -323,7 +336,7 @@ public final class LuaBackend implements Visitor<Void> {
                                               boolean entryModule) {
         return generateWithImports(program, result, sourcePath, modulePath,
             importResolutions, hostModules, entryModule,
-            standaloneDescriptors(modulePath, hostModules));
+            standaloneIdentityIndex(modulePath, hostModules));
     }
 
     /**
@@ -338,9 +351,9 @@ public final class LuaBackend implements Visitor<Void> {
                                               Map<String, String> importResolutions,
                                               Map<String, Map<String, Type>> hostModules,
                                               boolean entryModule,
-                                              CanonicalRuntimeTypeDescriptor descriptors) {
+                                              ModuleIdentityResolver.IdentityIndex identityIndex) {
         return generateResult(program, result, sourcePath, modulePath,
-            importResolutions, hostModules, entryModule, null, descriptors,
+            importResolutions, hostModules, entryModule, null, identityIndex,
             SemanticProfile.LEGACY_SAFE_INT).lua();
     }
 
@@ -358,7 +371,7 @@ public final class LuaBackend implements Visitor<Void> {
                                               SemanticProfile semanticProfile) {
         return generateResult(program, result, sourcePath, modulePath,
             importResolutions, hostModules, entryModule, null,
-            standaloneDescriptors(modulePath, hostModules), semanticProfile)
+            standaloneIdentityIndex(modulePath, hostModules), semanticProfile)
             .lua();
     }
 
@@ -375,7 +388,7 @@ public final class LuaBackend implements Visitor<Void> {
      * (host-module-abi D1/D2). Production callers pass the
      * orchestrator-built per-compilation surface instead.
      */
-    private static CanonicalRuntimeTypeDescriptor standaloneDescriptors(
+    private static ModuleIdentityResolver.IdentityIndex standaloneIdentityIndex(
             String modulePath, Map<String, Map<String, Type>> hostModules) {
         Map<String, CanonicalModuleIdentity> byPath = new LinkedHashMap<>();
         byPath.put("", CanonicalModuleIdentity.BuiltinModule.INSTANCE);
@@ -393,10 +406,7 @@ public final class LuaBackend implements Visitor<Void> {
                         new ProjectModuleIdentity(dotted, dotted, List.of())));
             }
         }
-        ModuleIdentityResolver.IdentityIndex index =
-            ModuleIdentityResolver.buildIndex(byPath);
-        return new CanonicalRuntimeTypeDescriptor(index,
-            index.moduleIdentityLookup());
+        return ModuleIdentityResolver.buildIndex(byPath);
     }
 
     /**
@@ -419,11 +429,13 @@ public final class LuaBackend implements Visitor<Void> {
             Map<String, String> importResolutions,
             Map<String, Map<String, Type>> hostModules, boolean entryModule,
             SourceMapGenerator smg,
-            CanonicalRuntimeTypeDescriptor descriptors,
+            ModuleIdentityResolver.IdentityIndex identityIndex,
             SemanticProfile semanticProfile) {
         LuaBackend backend = new LuaBackend(result.typeMap(),
             result.symbolTable(), semanticProfile);
-        backend.descriptors = descriptors;
+        backend.identityIndex = identityIndex;
+        backend.moduleIdentities = identityIndex.moduleIdentityLookup();
+        backend.descriptors = new CanonicalRuntimeTypeDescriptor(identityIndex);
         backend.sourceFilePath = sourcePath;
         backend.modulePath = modulePath;
         backend.importResolutions = Map.copyOf(importResolutions);
@@ -504,7 +516,7 @@ public final class LuaBackend implements Visitor<Void> {
                                                 boolean entryModule) {
         return generateResult(program, result, sourcePath, modulePath,
             importResolutions, hostModules, entryModule, smg,
-            standaloneDescriptors(modulePath, hostModules),
+            standaloneIdentityIndex(modulePath, hostModules),
             SemanticProfile.LEGACY_SAFE_INT).lua();
     }
 
@@ -644,7 +656,7 @@ public final class LuaBackend implements Visitor<Void> {
         return generateToFile(program, result, sourcePath, modulePath,
             outputRoot, outputPath, emitSourceMap, importResolutions,
             hostModules, entryModule,
-            standaloneDescriptors(modulePath, hostModules),
+            standaloneIdentityIndex(modulePath, hostModules),
             SemanticProfile.LEGACY_SAFE_INT);
     }
 
@@ -666,7 +678,7 @@ public final class LuaBackend implements Visitor<Void> {
         return generateToFile(program, result, sourcePath, modulePath,
             outputRoot, outputPath, emitSourceMap, importResolutions,
             hostModules, entryModule,
-            standaloneDescriptors(modulePath, hostModules), semanticProfile);
+            standaloneIdentityIndex(modulePath, hostModules), semanticProfile);
     }
 
     /**
@@ -684,11 +696,11 @@ public final class LuaBackend implements Visitor<Void> {
                                        Map<String, String> importResolutions,
                                        Map<String, Map<String, Type>> hostModules,
                                        boolean entryModule,
-                                       CanonicalRuntimeTypeDescriptor descriptors)
+                                       ModuleIdentityResolver.IdentityIndex identityIndex)
                                        throws IOException {
         return generateToFile(program, result, sourcePath, modulePath,
             outputRoot, outputPath, emitSourceMap, importResolutions,
-            hostModules, entryModule, descriptors,
+            hostModules, entryModule, identityIndex,
             SemanticProfile.LEGACY_SAFE_INT);
     }
 
@@ -708,13 +720,13 @@ public final class LuaBackend implements Visitor<Void> {
                                        Map<String, String> importResolutions,
                                        Map<String, Map<String, Type>> hostModules,
                                        boolean entryModule,
-                                       CanonicalRuntimeTypeDescriptor descriptors,
+                                       ModuleIdentityResolver.IdentityIndex identityIndex,
                                        SemanticProfile semanticProfile)
                                        throws IOException {
         SourceMapGenerator smg = emitSourceMap ? new SourceMapGenerator() : null;
         GenerationResult gen = generateResult(program, result, sourcePath,
             modulePath, importResolutions, hostModules, entryModule, smg,
-            descriptors, semanticProfile);
+            identityIndex, semanticProfile);
         String luaSource = gen.lua();
         boolean hasErrors = gen.diagnostics().stream()
             .anyMatch(d -> "error".equals(d.severity()));
@@ -807,7 +819,11 @@ public final class LuaBackend implements Visitor<Void> {
         this(typeMap, symbols, SemanticProfile.LEGACY_SAFE_INT);
         this.sourceFilePath = sourcePath;
         this.modulePath = sourcePath;
-        this.descriptors = standaloneDescriptors(sourcePath, Map.of());
+        ModuleIdentityResolver.IdentityIndex standalone =
+            standaloneIdentityIndex(sourcePath, Map.of());
+        this.identityIndex = standalone;
+        this.moduleIdentities = standalone.moduleIdentityLookup();
+        this.descriptors = new CanonicalRuntimeTypeDescriptor(standalone);
     }
 
     /**
@@ -819,8 +835,8 @@ public final class LuaBackend implements Visitor<Void> {
      */
     public LuaBackend(Map<ExpressionNode, Type> typeMap, SymbolTable symbols,
                       String sourcePath, String modulePath,
-                      CanonicalRuntimeTypeDescriptor descriptors) {
-        this(typeMap, symbols, sourcePath, modulePath, descriptors,
+                      ModuleIdentityResolver.IdentityIndex identityIndex) {
+        this(typeMap, symbols, sourcePath, modulePath, identityIndex,
             SemanticProfile.LEGACY_SAFE_INT);
     }
 
@@ -832,12 +848,14 @@ public final class LuaBackend implements Visitor<Void> {
      */
     public LuaBackend(Map<ExpressionNode, Type> typeMap, SymbolTable symbols,
                       String sourcePath, String modulePath,
-                      CanonicalRuntimeTypeDescriptor descriptors,
+                      ModuleIdentityResolver.IdentityIndex identityIndex,
                       SemanticProfile semanticProfile) {
         this(typeMap, symbols, semanticProfile);
         this.sourceFilePath = sourcePath;
         this.modulePath = modulePath;
-        this.descriptors = descriptors;
+        this.identityIndex = identityIndex;
+        this.moduleIdentities = identityIndex.moduleIdentityLookup();
+        this.descriptors = new CanonicalRuntimeTypeDescriptor(identityIndex);
     }
 
     /**
@@ -1135,8 +1153,60 @@ public final class LuaBackend implements Visitor<Void> {
      * invariant violation of the descriptor service).
      */
     private String qualifiedClassName(String name) {
+        CanonicalClassIdentity identity = localClassIdentity(name);
+        return identityIndex.descriptorTextFor(identity);
+    }
+
+    /**
+     * The canonical class identity of a class declared in THIS module:
+     * the module-identity layer's classification of the backend-held
+     * module path plus the class name — never a locally derived
+     * spelling (descriptor-identity-propagation D1).  A module without
+     * a public identity fails closed (the pinned internal invariant
+     * violation).
+     */
+    private CanonicalClassIdentity localClassIdentity(String name) {
         String mp = modulePath != null ? modulePath : sourceFilePath;
-        return descriptors.encode(Types.classType(name, mp));
+        CanonicalModuleIdentity moduleIdentity = moduleIdentities.apply(mp);
+        if (moduleIdentity == null) {
+            throw new IllegalStateException(
+                "no canonical public module identity for module path '" + mp
+                    + "': a class there can never be represented "
+                    + "(internal invariant violation)");
+        }
+        return new CanonicalClassIdentity(moduleIdentity, name);
+    }
+
+    /** The intrinsic builtin Error class type (E2's synthesis). */
+    private Type.Class errorClassType() {
+        return Types.classType("Error", new CanonicalClassIdentity(
+            CanonicalModuleIdentity.BuiltinModule.INSTANCE, "Error"));
+    }
+
+    /** A Class type for a class declared in the given wiring path. */
+    private Type.Class classTypeFor(String name, String wiringPath) {
+        CanonicalModuleIdentity moduleIdentity =
+            moduleIdentities.apply(wiringPath == null ? "" : wiringPath);
+        if (moduleIdentity == null) {
+            throw new IllegalStateException(
+                "no canonical public module identity for module path '"
+                    + wiringPath + "': a class there can never be "
+                    + "represented (internal invariant violation)");
+        }
+        return Types.classType(name,
+            new CanonicalClassIdentity(moduleIdentity, name));
+    }
+
+    /**
+     * True when the class type's identity declares in THIS module
+     * (v1.2 identity carriage): same-module detection replaces the
+     * retired dotted-path comparison.
+     */
+    private boolean isDeclaredInThisModule(Type.Class cls) {
+        String mp = modulePath != null ? modulePath : sourceFilePath;
+        CanonicalModuleIdentity mine = moduleIdentities.apply(mp);
+        return mine != null
+            && cls.identity().moduleIdentity().equals(mine);
     }
 
     /**
@@ -2476,30 +2546,34 @@ public final class LuaBackend implements Visitor<Void> {
             defaultsRef = hasVisibleNestedClassDeclaration(className)
                 ? className + "_defaults"
                 : LuaAbi.helperRef(className, LuaAbi.HelperKind.DEFAULTS);
-        } else if (cls.modulePath() != null && !cls.modulePath().isEmpty()
-                && cls.modulePath().equals(modulePath)) {
-            // Same-module class that is not in the root symbol table: a
-            // nested declaration (block/function-local). Reference the
-            // scope-local <C>_defaults artifact when it is lexically
-            // visible at the construction site (lua-abi-emission-layer
-            // D2.6) — the checker (ISSUE-0318 seam) now types these
-            // literals as class constructions. A non-visible reference
-            // can only come from a checker-error program, so the {}
-            // fallback mirrors the imported-class defensive arm.
-            defaultsRef = hasVisibleNestedClassDeclaration(className)
-                ? className + "_defaults"
-                : "{}";
-        } else if (cls.modulePath() != null && !cls.modulePath().isEmpty()) {
-            // Imported class: find the import alias and use alias._defaults
-            String alias = findImportAliasForClass(className, cls.modulePath());
-            if (alias != null) {
+        } else {
+            // The import alias whose export carries this exact identity
+            // wins first: two files in one directory share the module
+            // identity, so alias presence — never identity locality —
+            // distinguishes an imported class from a same-module nested
+            // declaration.
+            String alias = findImportAliasForClass(className, cls.identity());
+            if (alias == null && isDeclaredInThisModule(cls)
+                    && !cls.identity().moduleIdentity().equals(
+                        CanonicalModuleIdentity.BuiltinModule.INSTANCE)) {
+                // Same-module class that is not in the root symbol
+                // table: a nested declaration (block/function-local).
+                // Reference the scope-local <C>_defaults artifact when
+                // it is lexically visible at the construction site
+                // (lua-abi-emission-layer D2.6) — the checker
+                // (ISSUE-0318 seam) now types these literals as class
+                // constructions. A non-visible reference can only come
+                // from a checker-error program, so the {} fallback
+                // mirrors the imported-class defensive arm.
+                defaultsRef = hasVisibleNestedClassDeclaration(className)
+                    ? className + "_defaults"
+                    : "{}";
+            } else if (alias != null) {
                 defaultsRef = LuaAbi.memberAccess(alias,
                     LuaAbi.helperKey(className, LuaAbi.HelperKind.DEFAULTS));
             } else {
                 defaultsRef = "{}";
             }
-        } else {
-            defaultsRef = "{}";
         }
 
         Span cspan = obj.span();
@@ -2509,22 +2583,25 @@ public final class LuaBackend implements Visitor<Void> {
 
     /**
      * Searches the root symbol table for a ModuleSymbol whose exports
-     * include the given class with the exact module path. Returns the
-     * import alias (module local name) or {@code null} if not found.
+     * include the given class with the exact canonical class identity.
+     * Returns the import alias (module local name) or {@code null} if
+     * not found.
      *
-     * <p>The {@code modulePath} parameter is essential: when two imported
+     * <p>The identity parameter is essential: when two imported
      * modules export classes with the same name (e.g., both {@code mod1}
      * and {@code mod2} export {@code class Result}), checking only the
      * class name would return the wrong alias and produce incorrect
-     * defaults-table references.</p>
+     * defaults-table references (v1.2 identity carriage — imported
+     * classes carry the declaring source's identity).
      */
-    private String findImportAliasForClass(String className, String modulePath) {
+    private String findImportAliasForClass(String className,
+                                           CanonicalClassIdentity identity) {
         for (var entry : symbols.symbols().entrySet()) {
             Symbol sym = entry.getValue();
             if (sym instanceof Symbol.ModuleSymbol ms) {
                 Type exportType = ms.exports().get(className);
                 if (exportType instanceof Type.Class tc
-                        && tc.modulePath().equals(modulePath)) {
+                        && tc.identity().equals(identity)) {
                     return entry.getKey();
                 }
             }
@@ -3267,7 +3344,7 @@ public final class LuaBackend implements Visitor<Void> {
                 case "number" -> Type.Number.INSTANCE;
                 case "string" -> Type.String.INSTANCE;
                 case "table" -> Type.Table.INSTANCE;
-                case "Error" -> Types.classType("Error", "");
+                case "Error" -> errorClassType();
                 // v1.2 bytes (emitter page D3): a bytes-spelled named
                 // type resolves to the canonical Type.Bytes primitive.
                 // bytes is not a DEAL keyword, so a checker-accepted
@@ -3279,17 +3356,17 @@ public final class LuaBackend implements Visitor<Void> {
                 case "bytes" -> {
                     Symbol sym = symbols.resolve(nt.name());
                     if (sym instanceof Symbol.ClassSymbol cs) {
-                        yield Types.classType(nt.name(), cs.modulePath());
+                        yield Types.classType(nt.name(), cs.identity());
                     }
                     if (hasVisibleNestedClassDeclaration(nt.name())) {
-                        yield Types.classType(nt.name(), modulePath);
+                        yield classTypeFor(nt.name(), modulePath);
                     }
                     yield Type.Bytes.INSTANCE;
                 }
                 default -> {
                     Symbol sym = symbols.resolve(nt.name());
                     if (sym instanceof Symbol.ClassSymbol cs) {
-                        yield Types.classType(nt.name(), cs.modulePath());
+                        yield Types.classType(nt.name(), cs.identity());
                     }
                     yield Type.Error.INSTANCE;
                 }
@@ -3302,7 +3379,7 @@ public final class LuaBackend implements Visitor<Void> {
                     Type exportType = ms.exports().get(qt.typeName());
                     if (exportType != null) yield exportType;
                 }
-                yield Types.classType(qt.typeName(), qt.moduleName());
+                yield classTypeFor(qt.typeName(), qt.moduleName());
             }
             case deal.ast.ArrayType at -> {
                 Type elem = resolveTypeNode(at.elementType());

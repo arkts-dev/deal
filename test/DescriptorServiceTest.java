@@ -12,6 +12,7 @@ import deal.semantic.ir.SemanticCapability;
 import deal.semantic.ir.SemanticProfile;
 import deal.semantic.ir.SemanticIrTextDecodeException;
 import deal.types.Type;
+import deal.test.IdentityTestFixtures;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -139,11 +140,11 @@ public class DescriptorServiceTest {
         check(RuntimeDescriptor.Table.INSTANCE == DescriptorService.describe(Type.Table.INSTANCE),
             "Table -> Table.INSTANCE");
 
-        RuntimeDescriptor user = DescriptorService.describe(new Type.Class("User", "src/app"));
+        RuntimeDescriptor user = DescriptorService.describe(IdentityTestFixtures.classType("User", "src/app"));
         check(new RuntimeDescriptor.Class(new ClassId("src/app", "User")).equals(user),
             "Class(name, modulePath) -> Class(new ClassId(modulePath, name))");
 
-        RuntimeDescriptor builtinError = DescriptorService.describe(new Type.Class("Error", ""));
+        RuntimeDescriptor builtinError = DescriptorService.describe(IdentityTestFixtures.errorClassType());
         check(new RuntimeDescriptor.Class(ClassId.ERROR).equals(builtinError),
             "the builtin Error class type maps to Class(ClassId.ERROR) (@/Error)");
 
@@ -163,7 +164,7 @@ public class DescriptorServiceTest {
             "Nullable(T) -> Nullable(describe(T))");
 
         RuntimeDescriptor nullableArrayOfClass = DescriptorService.describe(
-            new Type.Nullable(new Type.Array(new Type.Class("User", "src/app"))));
+            new Type.Nullable(new Type.Array(IdentityTestFixtures.classType("User", "src/app"))));
         check(new RuntimeDescriptor.Nullable(new RuntimeDescriptor.Array(
                 new RuntimeDescriptor.Class(new ClassId("src/app", "User"))))
                 .equals(nullableArrayOfClass),
@@ -232,15 +233,15 @@ public class DescriptorServiceTest {
             new Case("number", Type.Number.INSTANCE),
             new Case("string", Type.String.INSTANCE),
             new Case("table", Type.Table.INSTANCE),
-            new Case("@src/app/User", new Type.Class("User", "src/app")),
-            new Case("@/Error", new Type.Class("Error", "")),
+            new Case("@src/app/User", IdentityTestFixtures.classType("User", "src/app")),
+            new Case("@/Error", IdentityTestFixtures.errorClassType()),
             new Case("[int]", new Type.Array(Type.Int.INSTANCE)),
             new Case("[[int]]", new Type.Array(new Type.Array(Type.Int.INSTANCE))),
             new Case("[?@src/app/User]", new Type.Array(
-                new Type.Nullable(new Type.Class("User", "src/app")))),
+                new Type.Nullable(IdentityTestFixtures.classType("User", "src/app")))),
             new Case("?string", new Type.Nullable(Type.String.INSTANCE)),
             new Case("?[@src/app/User]", new Type.Nullable(
-                new Type.Array(new Type.Class("User", "src/app")))),
+                new Type.Array(IdentityTestFixtures.classType("User", "src/app")))),
             new Case("(int,string)->boolean", new Type.Func(
                 List.of(Type.Int.INSTANCE, Type.String.INSTANCE), Type.Boolean.INSTANCE)),
             new Case("()->null", new Type.Func(List.of(), Type.Null.INSTANCE)),
@@ -278,9 +279,9 @@ public class DescriptorServiceTest {
 
         // Separately constructed variants with equal structure are equal.
         RuntimeDescriptor a = DescriptorService.describe(
-            new Type.Array(new Type.Nullable(new Type.Class("User", "src/app"))));
+            new Type.Array(new Type.Nullable(IdentityTestFixtures.classType("User", "src/app"))));
         RuntimeDescriptor b = DescriptorService.describe(
-            new Type.Array(new Type.Nullable(new Type.Class("User", "src/app"))));
+            new Type.Array(new Type.Nullable(IdentityTestFixtures.classType("User", "src/app"))));
         check(a.equals(b), "separately constructed equal types produce equal descriptors");
 
         // Parse/render path equals the direct-construction path.
@@ -289,17 +290,17 @@ public class DescriptorServiceTest {
             "parse/render equality is symmetric");
 
         // Class equality is ClassId(modulePath, name) equality.
-        check(DescriptorService.describe(new Type.Class("User", "src/app"))
-                .equals(DescriptorService.describe(new Type.Class("User", "src/app"))),
+        check(DescriptorService.describe(IdentityTestFixtures.classType("User", "src/app"))
+                .equals(DescriptorService.describe(IdentityTestFixtures.classType("User", "src/app"))),
             "class descriptors with equal module path and name are equal");
-        check(!DescriptorService.describe(new Type.Class("User", "src/app"))
-                .equals(DescriptorService.describe(new Type.Class("Other", "src/app"))),
+        check(!DescriptorService.describe(IdentityTestFixtures.classType("User", "src/app"))
+                .equals(DescriptorService.describe(IdentityTestFixtures.classType("Other", "src/app"))),
             "different class names are different descriptors");
-        check(!DescriptorService.describe(new Type.Class("User", "src/app"))
-                .equals(DescriptorService.describe(new Type.Class("User", "other/app"))),
+        check(!DescriptorService.describe(IdentityTestFixtures.classType("User", "src/app"))
+                .equals(DescriptorService.describe(IdentityTestFixtures.classType("User", "other/app"))),
             "different module paths are different descriptors");
-        check(!DescriptorService.describe(new Type.Class("Error", ""))
-                .equals(DescriptorService.describe(new Type.Class("User", ""))),
+        check(!DescriptorService.describe(IdentityTestFixtures.errorClassType())
+                .equals(DescriptorService.describe(IdentityTestFixtures.classType("User", ""))),
             "builtin Error is not the empty-module User class");
 
         // Func equality: async marker + parameter list + return descriptor.
@@ -436,9 +437,9 @@ public class DescriptorServiceTest {
         List<Type> types = List.of(
             Type.Null.INSTANCE,
             Type.Int.INSTANCE,
-            new Type.Class("User", "src/app"),
-            new Type.Class("Error", ""),
-            new Type.Array(new Type.Nullable(new Type.Class("User", "src/app"))),
+            IdentityTestFixtures.classType("User", "src/app"),
+            IdentityTestFixtures.errorClassType(),
+            new Type.Array(new Type.Nullable(IdentityTestFixtures.classType("User", "src/app"))),
             new Type.Func(List.of(Type.Int.INSTANCE, Type.String.INSTANCE),
                 Type.Boolean.INSTANCE, true));
         for (Type type : types) {

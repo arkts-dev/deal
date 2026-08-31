@@ -2047,7 +2047,15 @@ public class JsBackendTest {
         check(dparse != null && !dparse.hasErrors(),
             "the host declaration parses clean");
         if (dparse == null || dparse.hasErrors()) return;
-        ExportExtractor extractor = new ExportExtractor("hostmod", true);
+        // The v1.2 identity carriage: the host declaration's classes
+        // carry the externals classification (the same surface the
+        // production seam consumes), never the dotted-path default.
+        Map<String, CanonicalModuleIdentity> hostmodClassification =
+            new LinkedHashMap<>();
+        hostmodClassification.put("hostmod",
+            new CanonicalModuleIdentity.ExternalModule("hostmod"));
+        ExportExtractor extractor = new ExportExtractor("hostmod", true,
+            hostmodClassification::get);
         Map<String, Type> declExports = extractor.extract(dparse.program());
         Map<String, List<HostModuleDeclarations.HostField>> declFields =
             new LinkedHashMap<>();
@@ -2078,6 +2086,7 @@ public class JsBackendTest {
             new CanonicalModuleIdentity.ExternalModule("hostmod"));
         ModuleIdentityResolver.IdentityIndex index =
             ModuleIdentityResolver.buildIndex(byPath);
+        java.util.Objects.requireNonNull(hostmodClassification);
 
         Frontend cf = compileFrontend("""
             import * as cfg from "./hostmod"
@@ -4085,17 +4094,26 @@ public class JsBackendTest {
         check(unrepresentableThrows,
             "an unrepresentable root text fails closed at projection");
 
-        // The one Type->text producer over the index.
+        // The one Type->text producer over the index (v1.2 identity
+        // carriage: class types carry their identities; encode resolves
+        // the projection from the identity).
         CanonicalRuntimeTypeDescriptor service =
-            new CanonicalRuntimeTypeDescriptor(index, index.moduleIdentityLookup());
+            new CanonicalRuntimeTypeDescriptor(index);
         check("[@src/app/User]".equals(service.encode(
-                new Type.Array(Types.classType("User", "app.user")))),
+                new Type.Array(Types.classType("User",
+                    new CanonicalClassIdentity(byPath.get("app.user"),
+                        "User"))))),
             "encode(Type) emits [@src/app/User] via the index");
         check("(?@src/app/User)->boolean".equals(service.encode(
                 new Type.Func(List.of(new Type.Nullable(
-                    Types.classType("User", "app.user"))), Type.Boolean.INSTANCE))),
+                    Types.classType("User",
+                        new CanonicalClassIdentity(byPath.get("app.user"),
+                            "User")))), Type.Boolean.INSTANCE))),
             "encode(Type) emits ?D function parameters");
-        check("@$builtin/Error".equals(service.encode(Types.classType("Error", ""))),
+        check("@$builtin/Error".equals(service.encode(Types.classType("Error",
+                new CanonicalClassIdentity(
+                    CanonicalModuleIdentity.BuiltinModule.INSTANCE,
+                    "Error")))),
             "encode(Type) emits @$builtin/Error for the builtin Error type");
         check("async(bytes)->bytes".equals(service.encode(
                 new Type.Func(List.of(Type.Bytes.INSTANCE), Type.Bytes.INSTANCE, true))),
@@ -4103,12 +4121,18 @@ public class JsBackendTest {
 
         boolean absentIdentityThrows = false;
         try {
-            service.encode(Types.classType("Ghost", "unclassified.mod"));
+            service.encode(Types.classType("Ghost",
+                new CanonicalClassIdentity(
+                    new CanonicalModuleIdentity.ProjectModule(
+                        new ProjectModuleIdentity("bad root",
+                            "bad root", List.of())),
+                    "Ghost")));
         } catch (IllegalStateException e) {
             absentIdentityThrows = true;
         }
         check(absentIdentityThrows,
-            "a class from an unclassified module path fails closed (invariant)");
+            "a class whose identity projects unrepresentable text fails "
+            + "closed at the index (invariant)");
         boolean errorSentinelThrows = false;
         try {
             service.encode(Type.Error.INSTANCE);

@@ -7,7 +7,7 @@
 // header and the discovery walk skips the host-fixtures subtree.
 //
 // The typing/class-identity module path is the dotted form host.presence
-// (class descriptor @host.presence/Config); the generated loader requires
+// (class descriptor @$external/host.presence/Config); the generated loader requires
 // the raw slash-form specifier host/presence verbatim.
 //
 // The optional field types exercise every synthesized-symbol resolution

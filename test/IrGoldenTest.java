@@ -6,6 +6,8 @@ import deal.diagnostics.CompilerDiagnostic;
 import deal.ir.IrDumper;
 import deal.lexer.*;
 import deal.module.ExportExtractor;
+import deal.module.ModuleIdentityResolver;
+import deal.identity.CanonicalModuleIdentity;
 import deal.parser.*;
 import deal.types.Type;
 import deal.types.Types;
@@ -240,8 +242,13 @@ public final class IrGoldenTest {
             return new IrDumpResult(null, sb.toString());
         }
 
-        // Dump IR
-        String ir = IrDumper.dump(parseResult.program(), result, filename);
+        // Dump IR (v1.2 identity carriage: class rows project through
+        // the identity index; the harness's standalone checker default
+        // classifies the filename as its own project root, so the
+        // golden text stays @<filename>/<C> byte-identically).
+        String ir = IrDumper.dump(parseResult.program(), result, filename,
+            ModuleIdentityResolver.buildIndex(Map.of(
+                "", CanonicalModuleIdentity.BuiltinModule.INSTANCE)));
         return new IrDumpResult(ir, null);
     }
 

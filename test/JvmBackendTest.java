@@ -10175,7 +10175,13 @@ public class JvmBackendTest {
         // Entry.$C_C (the pre-fix name-keyed guard emitted `$C_C c =
         // Lib.getC();` — javac: incompatible types Lib.$C_C → Entry.$C_C
         // — after the CLI reported success).
-        writeFile("src2/lib.deal", """
+        // The companion lives in its own directory: under the v1.2
+        // identity carriage two files in one directory share the module
+        // identity, so a same-named local class would be
+        // identity-ambiguous with the imported one — the subdirectory
+        // keeps the two nominal identities distinct (the pre-carriage
+        // module-path isolation semantics this pin preserves).
+        writeFile("src2/lib/index.deal", """
             class C { v: int = 0; }
             export function getC(): C { return { v: 9 }; }
             """);
@@ -10203,9 +10209,9 @@ public class JvmBackendTest {
             + "imported class: " + orchestrator2.diagnostics());
         if (success2 && Files.exists(outputDir2.resolve("Entry.java"))) {
             String java = Files.readString(outputDir2.resolve("Entry.java"));
-            check(java.contains("Lib.$C_C c = Lib.getC();"),
-                "the imported type references Lib.$C_C even with a local C: "
-                    + java);
+            check(java.contains("LibIndex.$C_C c = LibIndex.getC();"),
+                "the imported type references LibIndex.$C_C even with a "
+                + "local C: " + java);
             check(java.contains("new $C_C(4L)"),
                 "the local construction keeps the local $C_C: " + java);
             ExecResult exec = runJvmArtifacts(outputDir2,
@@ -10306,10 +10312,10 @@ public class JvmBackendTest {
 
         // (5) Cross-module nominal runtime checks: two modules export a
         // SAME-NAME class; an instance crossing an untyped table passes
-        // its own module's check (Modela.$check("@modela/Item", …)
+        // its own module's check (Modela.$check("@src5/Item", …)
         // succeeds) and fails the foreign module's check with E8001
-        // naming both module-qualified identities (@modela/Item vs
-        // @modelb/Item) — identity is
+        // naming both canonical identities (@src5/Item vs
+        // @src5/modelb/Item) — identity is
         // module-qualified, never bare-name. The foreign check raises the
         // IMPORTED module's DealError, which the conformance runner
         // reports with the DEAL_ERROR_CODE contract.
@@ -10318,7 +10324,14 @@ public class JvmBackendTest {
             export function makeItem(tag: string): Item { return { tag: tag }; }
             export function readItem(i: Item): string { return i.tag; }
             """);
-        writeFile("src5/modelb.deal", """
+        // modelb lives in its own directory: under the v1.2 identity
+        // carriage two files in one directory share the module identity
+        // (relative components exclude the file stem), so same-named
+        // same-directory classes would carry ONE nominal identity and
+        // the foreign check could never mismatch — the subdirectory
+        // keeps the two identities distinct and preserves the
+        // module-qualified isolation semantics of this pin.
+        writeFile("src5/modelb/index.deal", """
             export class Item { tag: string = ""; }
             export function makeItem(tag: string): Item { return { tag: tag }; }
             export function readItem(i: Item): string { return i.tag; }
@@ -10357,10 +10370,10 @@ public class JvmBackendTest {
             + orchestrator5.diagnostics());
         if (success5 && Files.exists(outputDir5.resolve("Entry.java"))) {
             String java = Files.readString(outputDir5.resolve("Entry.java"));
-            check(java.contains("Modela.$check(\"@modela/Item\", ("),
+            check(java.contains("Modela.$check(\"@src5/Item\", ("),
                 "the imported class-typed table read dispatches on the "
-                + "declaring module's shared seam with the spec class "
-                + "descriptor: " + java);
+                + "declaring module's shared seam with the canonical "
+                + "class descriptor: " + java);
             ExecResult exec = runJvmArtifacts(outputDir5,
                 parseProgram("export function run(): string { return \"\"; }"),
                 "Entry");
@@ -10388,8 +10401,8 @@ public class JvmBackendTest {
             check(exec.output().contains("DEAL_ERROR_CODE: E8001"),
                 "the foreign nominal check reports E8001: " + exec.output());
             check(exec.output().contains(
-                    "expected instance of @modelb/Item, got @modela/Item"),
-                "the E8001 message names both module-qualified identities: "
+                    "expected instance of @src5/modelb/Item, got @src5/Item"),
+                "the E8001 message names both canonical identities: "
                     + exec.output());
         }
 
@@ -10489,19 +10502,33 @@ public class JvmBackendTest {
                 Types.nullable(Type.Int.INSTANCE)))).equals("?[?int]"),
             "(int | null)[] | null spells '?[?int]'");
         check(JvmBackend.typeDescriptor(
-                Types.classType("User", "models")).equals("@models/User"),
-            "a class with a module path spells '@models/User'");
+                IdentityTestFixtures.classType("User", "models"))
+                    .equals("@models/User"),
+            "a class with a project identity spells '@models/User'");
         check(JvmBackend.typeDescriptor(
-                Types.classType("User", "")).equals("User"),
-            "a class with an empty module path spells the bare name");
+                IdentityTestFixtures.errorClassType())
+                    .equals("@$builtin/Error"),
+            "the intrinsic builtin Error class spells '@$builtin/Error'");
+        try {
+            JvmBackend.typeDescriptor(
+                IdentityTestFixtures.classType("User", ""));
+            fail("typeDescriptor: a bare class name must never be emitted");
+        } catch (IllegalStateException expected) {
+            check(true, "a bare class name is never emitted (the unrepresentable"
+                + " builtin non-Error identity is the pinned internal "
+                + "invariant violation)");
+        }
         check(JvmBackend.typeDescriptor(Types.nullable(
-                Types.classType("User", "app"))).equals("?@app/User"),
+                IdentityTestFixtures.classType("User", "app")))
+                    .equals("?@app/User"),
             "User | null spells '?@app/User'");
         check(JvmBackend.typeDescriptor(Types.array(
-                Types.classType("User", "app"))).equals("[@app/User]"),
+                IdentityTestFixtures.classType("User", "app")))
+                    .equals("[@app/User]"),
             "User[] spells '[@app/User]'");
         check(JvmBackend.typeDescriptor(Types.array(Types.nullable(
-                Types.classType("User", "app")))).equals("[?@app/User]"),
+                IdentityTestFixtures.classType("User", "app"))))
+                    .equals("[?@app/User]"),
             "(User | null)[] spells '[?@app/User]'");
         check(JvmBackend.typeDescriptor(Types.func(
                 List.of(Type.Int.INSTANCE), Type.String.INSTANCE))
@@ -10513,13 +10540,13 @@ public class JvmBackendTest {
             "async(int)->string spells 'async(int)->string'");
         check(JvmBackend.typeDescriptor(Types.func(
                 List.of(Types.array(Type.Int.INSTANCE)),
-                Types.nullable(Types.classType("User", "app"))))
+                Types.nullable(IdentityTestFixtures.classType("User", "app"))))
                 .equals("([int])->?@app/User"),
             "an array parameter and a nullable class return compose in one "
             + "descriptor");
         check(JvmBackend.typeDescriptor(Types.func(
                 List.of(Types.nullable(Type.String.INSTANCE)),
-                Types.array(Types.classType("User", "app"))))
+                Types.array(IdentityTestFixtures.classType("User", "app"))))
                 .equals("(?string)->[@app/User]"),
             "a nullable parameter and a class-array return compose in one "
             + "descriptor");
@@ -12654,7 +12681,7 @@ module @<PROJECT>/lib.deal:1:1-3:1
       body
         return @<PROJECT>/lib.deal:2:39-2:56
           [boundary: return]
-          object : @lib/Point @<PROJECT>/lib.deal:2:46-2:53
+          object : @irpin02/Point @<PROJECT>/lib.deal:2:46-2:53
             [boundary: class-construct]
             ident x : int @<PROJECT>/lib.deal:2:51-2:51
 
@@ -12669,7 +12696,7 @@ module @<PROJECT>/main.deal:1:1-8:1
       return @<PROJECT>/main.deal:2:35-2:47
         [boundary: return]
         member .x : int @<PROJECT>/main.deal:2:42-2:44
-          ident p : @lib/Point @<PROJECT>/main.deal:2:42-2:42
+          ident p : @irpin02/Point @<PROJECT>/main.deal:2:42-2:42
   export @<PROJECT>/main.deal:3:1-7:6
     [boundary: export]
     function run: int @<PROJECT>/main.deal:3:8-7:6
@@ -12677,9 +12704,9 @@ module @<PROJECT>/main.deal:1:1-8:1
         let got: int @<PROJECT>/main.deal:4:3-5:8
           [boundary: var-annotation]
           call : int @<PROJECT>/main.deal:4:18-4:33
-            ident use : (@lib/Point)->int @<PROJECT>/main.deal:4:18-4:20
-            call : @lib/Point @<PROJECT>/main.deal:4:22-4:32
-              member .make : (int)->@lib/Point @<PROJECT>/main.deal:4:22-4:29
+            ident use : (@irpin02/Point)->int @<PROJECT>/main.deal:4:18-4:20
+            call : @irpin02/Point @<PROJECT>/main.deal:4:22-4:32
+              member .make : (int)->@irpin02/Point @<PROJECT>/main.deal:4:22-4:29
                 [boundary: table-read]
                 ident lib : table @<PROJECT>/main.deal:4:22-4:24
                   [boundary: import]
@@ -12749,7 +12776,7 @@ module @<PROJECT>/lib.deal:1:1-3:1
       body
         return @<PROJECT>/lib.deal:2:43-2:64
           [boundary: return]
-          object : @lib/Item @<PROJECT>/lib.deal:2:50-2:61
+          object : @irpin03/Item @<PROJECT>/lib.deal:2:50-2:61
             [boundary: class-construct]
             ident tag : string @<PROJECT>/lib.deal:2:57-2:59
 
@@ -12764,21 +12791,21 @@ module @<PROJECT>/main.deal:1:1-8:1
         let holder: table @<PROJECT>/main.deal:3:3-4:5
           [boundary: var-annotation]
           object : table @<PROJECT>/main.deal:3:23-3:45
-            call : @lib/Item @<PROJECT>/main.deal:3:31-3:43
-              member .make : (string)->@lib/Item @<PROJECT>/main.deal:3:31-3:38
+            call : @irpin03/Item @<PROJECT>/main.deal:3:31-3:43
+              member .make : (string)->@irpin03/Item @<PROJECT>/main.deal:3:31-3:38
                 [boundary: table-read]
                 ident lib : table @<PROJECT>/main.deal:3:31-3:33
                   [boundary: import]
               literal "x" : string @<PROJECT>/main.deal:3:40-3:42
-        let i: @lib/Item @<PROJECT>/main.deal:4:3-5:8
+        let i: @irpin03/Item @<PROJECT>/main.deal:4:3-5:8
           [boundary: var-annotation]
-          member .item : @lib/Item @<PROJECT>/main.deal:4:21-4:31
+          member .item : @irpin03/Item @<PROJECT>/main.deal:4:21-4:31
             [boundary: table-read]
             ident holder : table @<PROJECT>/main.deal:4:21-4:26
         return @<PROJECT>/main.deal:5:3-6:1
           [boundary: return]
           member .tag : string @<PROJECT>/main.deal:5:10-5:14
-            ident i : @lib/Item @<PROJECT>/main.deal:5:10-5:10
+            ident i : @irpin03/Item @<PROJECT>/main.deal:5:10-5:10
   export @<PROJECT>/main.deal:7:1-8:1
     [boundary: export]
     function main: null @<PROJECT>/main.deal:7:8-8:1
@@ -12839,21 +12866,21 @@ module @<PROJECT>/main.deal:1:1-9:1
         let holder: table @<PROJECT>/main.deal:4:3-5:5
           [boundary: var-annotation]
           object : table @<PROJECT>/main.deal:4:23-4:48
-            call : @modela/Item @<PROJECT>/main.deal:4:31-4:46
-              member .make : (string)->@modela/Item @<PROJECT>/main.deal:4:31-4:41
+            call : @irpin04/Item @<PROJECT>/main.deal:4:31-4:46
+              member .make : (string)->@irpin04/Item @<PROJECT>/main.deal:4:31-4:41
                 [boundary: table-read]
                 ident modela : table @<PROJECT>/main.deal:4:31-4:36
                   [boundary: import]
               literal "a" : string @<PROJECT>/main.deal:4:43-4:45
-        let b: @modelb/Item @<PROJECT>/main.deal:5:3-6:8
+        let b: @irpin04/Item @<PROJECT>/main.deal:5:3-6:8
           [boundary: var-annotation]
-          member .item : @modelb/Item @<PROJECT>/main.deal:5:24-5:34
+          member .item : @irpin04/Item @<PROJECT>/main.deal:5:24-5:34
             [boundary: table-read]
             ident holder : table @<PROJECT>/main.deal:5:24-5:29
         return @<PROJECT>/main.deal:6:3-7:1
           [boundary: return]
           member .tag : string @<PROJECT>/main.deal:6:10-6:14
-            ident b : @modelb/Item @<PROJECT>/main.deal:6:10-6:10
+            ident b : @irpin04/Item @<PROJECT>/main.deal:6:10-6:10
   export @<PROJECT>/main.deal:8:1-9:1
     [boundary: export]
     function main: null @<PROJECT>/main.deal:8:8-9:1
@@ -12877,7 +12904,7 @@ module @<PROJECT>/modela.deal:1:1-3:1
       body
         return @<PROJECT>/modela.deal:2:43-2:64
           [boundary: return]
-          object : @modela/Item @<PROJECT>/modela.deal:2:50-2:61
+          object : @irpin04/Item @<PROJECT>/modela.deal:2:50-2:61
             [boundary: class-construct]
             ident tag : string @<PROJECT>/modela.deal:2:57-2:59
 
@@ -13029,7 +13056,7 @@ module @<PROJECT>/lib.deal:1:1-5:71
       body
         return @<PROJECT>/lib.deal:5:47-5:70
           [boundary: return]
-          object : @lib/Point @<PROJECT>/lib.deal:5:54-5:67
+          object : @irpin06/Point @<PROJECT>/lib.deal:5:54-5:67
             [boundary: class-construct]
             ident x : int @<PROJECT>/lib.deal:5:59-5:59
             ident y : int @<PROJECT>/lib.deal:5:65-5:65
@@ -13048,10 +13075,10 @@ module @<PROJECT>/main.deal:1:1-7:2
     [boundary: export]
     function run: int @<PROJECT>/main.deal:4:8-7:2
       body
-        let p: @lib/Point @<PROJECT>/main.deal:5:3-6:8
+        let p: @irpin06/Point @<PROJECT>/main.deal:5:3-6:8
           [boundary: var-annotation]
-          call : @lib/Point @<PROJECT>/main.deal:5:22-5:35
-            member .make : (int,int)->@lib/Point @<PROJECT>/main.deal:5:22-5:29
+          call : @irpin06/Point @<PROJECT>/main.deal:5:22-5:35
+            member .make : (int,int)->@irpin06/Point @<PROJECT>/main.deal:5:22-5:29
               [boundary: table-read]
               ident lib : table @<PROJECT>/main.deal:5:22-5:24
                 [boundary: import]
@@ -13062,10 +13089,10 @@ module @<PROJECT>/main.deal:1:1-7:2
           binary + : int @<PROJECT>/main.deal:6:10-6:23
             binary * : int @<PROJECT>/main.deal:6:10-6:17
               member .x : int @<PROJECT>/main.deal:6:10-6:12
-                ident p : @lib/Point @<PROJECT>/main.deal:6:10-6:10
+                ident p : @irpin06/Point @<PROJECT>/main.deal:6:10-6:10
               literal 10 : int @<PROJECT>/main.deal:6:16-6:17
             member .y : int @<PROJECT>/main.deal:6:21-6:23
-              ident p : @lib/Point @<PROJECT>/main.deal:6:21-6:21
+              ident p : @irpin06/Point @<PROJECT>/main.deal:6:21-6:21
 """;
             if (!(irPinExpected + "\n").equals(irPinNormalized)) {
                 check(false, "jvm-xmod-classes-slice.json :: jvm-xmod-class-export-import: exact IR dump mismatch");
@@ -13127,9 +13154,9 @@ module @<PROJECT>/lib.deal:1:1-5:57
           [boundary: return]
           binary + : int @<PROJECT>/lib.deal:5:45-5:53
             member .x : int @<PROJECT>/lib.deal:5:45-5:47
-              ident p : @lib/Point @<PROJECT>/lib.deal:5:45-5:45
+              ident p : @irpin07/Point @<PROJECT>/lib.deal:5:45-5:45
             member .y : int @<PROJECT>/lib.deal:5:51-5:53
-              ident p : @lib/Point @<PROJECT>/lib.deal:5:51-5:51
+              ident p : @irpin07/Point @<PROJECT>/lib.deal:5:51-5:51
 
 === IR: main.ir.txt ===
 module @<PROJECT>/main.deal:1:1-8:2
@@ -13145,13 +13172,13 @@ module @<PROJECT>/main.deal:1:1-8:2
     [boundary: export]
     function run: int @<PROJECT>/main.deal:4:8-8:2
       body
-        let a: @lib/Point @<PROJECT>/main.deal:5:3-6:5
+        let a: @irpin07/Point @<PROJECT>/main.deal:5:3-6:5
           [boundary: var-annotation]
-          object : @lib/Point @<PROJECT>/main.deal:5:22-5:23
+          object : @irpin07/Point @<PROJECT>/main.deal:5:22-5:23
             [boundary: class-construct]
-        let b: @lib/Point @<PROJECT>/main.deal:6:3-7:8
+        let b: @irpin07/Point @<PROJECT>/main.deal:6:3-7:8
           [boundary: var-annotation]
-          object : @lib/Point @<PROJECT>/main.deal:6:22-6:35
+          object : @irpin07/Point @<PROJECT>/main.deal:6:22-6:35
             [boundary: class-construct]
             literal 5 : int @<PROJECT>/main.deal:6:27-6:27
             literal 2 : int @<PROJECT>/main.deal:6:33-6:33
@@ -13160,17 +13187,17 @@ module @<PROJECT>/main.deal:1:1-8:2
           binary + : int @<PROJECT>/main.deal:7:10-7:36
             binary + : int @<PROJECT>/main.deal:7:10-7:23
               member .x : int @<PROJECT>/main.deal:7:10-7:12
-                ident a : @lib/Point @<PROJECT>/main.deal:7:10-7:10
+                ident a : @irpin07/Point @<PROJECT>/main.deal:7:10-7:10
               binary * : int @<PROJECT>/main.deal:7:16-7:23
                 member .y : int @<PROJECT>/main.deal:7:16-7:18
-                  ident a : @lib/Point @<PROJECT>/main.deal:7:16-7:16
+                  ident a : @irpin07/Point @<PROJECT>/main.deal:7:16-7:16
                 literal 10 : int @<PROJECT>/main.deal:7:22-7:23
             call : int @<PROJECT>/main.deal:7:27-7:36
-              member .sum : (@lib/Point)->int @<PROJECT>/main.deal:7:27-7:33
+              member .sum : (@irpin07/Point)->int @<PROJECT>/main.deal:7:27-7:33
                 [boundary: table-read]
                 ident lib : table @<PROJECT>/main.deal:7:27-7:29
                   [boundary: import]
-              ident b : @lib/Point @<PROJECT>/main.deal:7:35-7:35
+              ident b : @irpin07/Point @<PROJECT>/main.deal:7:35-7:35
 """;
             if (!(irPinExpected + "\n").equals(irPinNormalized)) {
                 check(false, "jvm-xmod-classes-slice.json :: jvm-xmod-class-construction-defaults: exact IR dump mismatch");
@@ -13232,9 +13259,9 @@ module @<PROJECT>/lib.deal:1:1-5:63
           [boundary: return]
           binary + : int @<PROJECT>/lib.deal:5:44-5:59
             member .left : int @<PROJECT>/lib.deal:5:44-5:49
-              ident p : @lib/Pair @<PROJECT>/lib.deal:5:44-5:44
+              ident p : @irpin08/Pair @<PROJECT>/lib.deal:5:44-5:44
             member .right : int @<PROJECT>/lib.deal:5:53-5:59
-              ident p : @lib/Pair @<PROJECT>/lib.deal:5:53-5:53
+              ident p : @irpin08/Pair @<PROJECT>/lib.deal:5:53-5:53
 
 === IR: main.ir.txt ===
 module @<PROJECT>/main.deal:1:1-7:2
@@ -13250,20 +13277,20 @@ module @<PROJECT>/main.deal:1:1-7:2
     [boundary: export]
     function run: int @<PROJECT>/main.deal:4:8-7:2
       body
-        let p: @lib/Pair @<PROJECT>/main.deal:5:3-6:8
+        let p: @irpin08/Pair @<PROJECT>/main.deal:5:3-6:8
           [boundary: var-annotation]
-          object : @lib/Pair @<PROJECT>/main.deal:5:21-5:41
+          object : @irpin08/Pair @<PROJECT>/main.deal:5:21-5:41
             [boundary: class-construct]
             literal 5 : int @<PROJECT>/main.deal:5:29-5:29
             literal 7 : int @<PROJECT>/main.deal:5:39-5:39
         return @<PROJECT>/main.deal:6:3-7:1
           [boundary: return]
           call : int @<PROJECT>/main.deal:6:10-6:19
-            member .sum : (@lib/Pair)->int @<PROJECT>/main.deal:6:10-6:16
+            member .sum : (@irpin08/Pair)->int @<PROJECT>/main.deal:6:10-6:16
               [boundary: table-read]
               ident lib : table @<PROJECT>/main.deal:6:10-6:12
                 [boundary: import]
-            ident p : @lib/Pair @<PROJECT>/main.deal:6:18-6:18
+            ident p : @irpin08/Pair @<PROJECT>/main.deal:6:18-6:18
 """;
             if (!(irPinExpected + "\n").equals(irPinNormalized)) {
                 check(false, "jvm-xmod-classes-slice.json :: jvm-xmod-class-param-pass: exact IR dump mismatch");
@@ -13318,7 +13345,7 @@ module @<PROJECT>/lib.deal:1:1-5:57
       body
         return @<PROJECT>/lib.deal:4:34-4:55
           [boundary: return]
-          object : @lib/Box @<PROJECT>/lib.deal:4:41-4:52
+          object : @irpin09/Box @<PROJECT>/lib.deal:4:41-4:52
             [boundary: class-construct]
             literal 7 : int @<PROJECT>/lib.deal:4:50-4:50
   export @<PROJECT>/lib.deal:5:1-5:57
@@ -13330,7 +13357,7 @@ module @<PROJECT>/lib.deal:1:1-5:57
         return @<PROJECT>/lib.deal:5:40-5:56
           [boundary: return]
           member .value : int @<PROJECT>/lib.deal:5:47-5:53
-            ident b : @lib/Box @<PROJECT>/lib.deal:5:47-5:47
+            ident b : @irpin09/Box @<PROJECT>/lib.deal:5:47-5:47
 
 === IR: main.ir.txt ===
 module @<PROJECT>/main.deal:1:1-8:2
@@ -13346,10 +13373,10 @@ module @<PROJECT>/main.deal:1:1-8:2
     [boundary: export]
     function run: int @<PROJECT>/main.deal:4:8-8:2
       body
-        let b: @lib/Box @<PROJECT>/main.deal:5:3-6:3
+        let b: @irpin09/Box @<PROJECT>/main.deal:5:3-6:3
           [boundary: var-annotation]
-          call : @lib/Box @<PROJECT>/main.deal:5:20-5:32
-            member .makeBox : ()->@lib/Box @<PROJECT>/main.deal:5:20-5:30
+          call : @irpin09/Box @<PROJECT>/main.deal:5:20-5:32
+            member .makeBox : ()->@irpin09/Box @<PROJECT>/main.deal:5:20-5:30
               [boundary: table-read]
               ident lib : table @<PROJECT>/main.deal:5:20-5:22
                 [boundary: import]
@@ -13357,19 +13384,19 @@ module @<PROJECT>/main.deal:1:1-8:2
           assign = : int @<PROJECT>/main.deal:6:3-6:23
             [boundary: field-write]
             member .value : int @<PROJECT>/main.deal:6:3-6:9
-              ident b : @lib/Box @<PROJECT>/main.deal:6:3-6:3
+              ident b : @irpin09/Box @<PROJECT>/main.deal:6:3-6:3
             binary + : int @<PROJECT>/main.deal:6:13-6:23
               member .value : int @<PROJECT>/main.deal:6:13-6:19
-                ident b : @lib/Box @<PROJECT>/main.deal:6:13-6:13
+                ident b : @irpin09/Box @<PROJECT>/main.deal:6:13-6:13
               literal 5 : int @<PROJECT>/main.deal:6:23-6:23
         return @<PROJECT>/main.deal:7:3-8:1
           [boundary: return]
           call : int @<PROJECT>/main.deal:7:10-7:23
-            member .readBox : (@lib/Box)->int @<PROJECT>/main.deal:7:10-7:20
+            member .readBox : (@irpin09/Box)->int @<PROJECT>/main.deal:7:10-7:20
               [boundary: table-read]
               ident lib : table @<PROJECT>/main.deal:7:10-7:12
                 [boundary: import]
-            ident b : @lib/Box @<PROJECT>/main.deal:7:22-7:22
+            ident b : @irpin09/Box @<PROJECT>/main.deal:7:22-7:22
 """;
             if (!(irPinExpected + "\n").equals(irPinNormalized)) {
                 check(false, "jvm-xmod-classes-slice.json :: jvm-xmod-class-return-mutate-roundtrip: exact IR dump mismatch");
@@ -13430,14 +13457,14 @@ module @<PROJECT>/main.deal:1:1-11:2
     [boundary: export]
     function run: null @<PROJECT>/main.deal:6:8-11:2
       body
-        let a: @modela/Item @<PROJECT>/main.deal:7:3-8:5
+        let a: @irpin10/Item @<PROJECT>/main.deal:7:3-8:5
           [boundary: var-annotation]
-          object : @modela/Item @<PROJECT>/main.deal:7:24-7:37
+          object : @irpin10/Item @<PROJECT>/main.deal:7:24-7:37
             [boundary: class-construct]
             literal "one" : string @<PROJECT>/main.deal:7:31-7:35
-        let b: @modelb/Item @<PROJECT>/main.deal:8:3-9:9
+        let b: @irpin10/Item @<PROJECT>/main.deal:8:3-9:9
           [boundary: var-annotation]
-          object : @modelb/Item @<PROJECT>/main.deal:8:24-8:37
+          object : @irpin10/Item @<PROJECT>/main.deal:8:24-8:37
             [boundary: class-construct]
             literal "two" : string @<PROJECT>/main.deal:8:31-8:35
         expr-stmt @<PROJECT>/main.deal:9:3-9:28
@@ -13448,11 +13475,11 @@ module @<PROJECT>/main.deal:1:1-11:2
               ident console : table @<PROJECT>/main.deal:9:3-9:9
                 [boundary: import]
             call : string @<PROJECT>/main.deal:9:15-9:27
-              member .tag : (@modela/Item)->string @<PROJECT>/main.deal:9:15-9:24
+              member .tag : (@irpin10/Item)->string @<PROJECT>/main.deal:9:15-9:24
                 [boundary: table-read]
                 ident modela : table @<PROJECT>/main.deal:9:15-9:20
                   [boundary: import]
-              ident a : @modela/Item @<PROJECT>/main.deal:9:26-9:26
+              ident a : @irpin10/Item @<PROJECT>/main.deal:9:26-9:26
         expr-stmt @<PROJECT>/main.deal:10:3-10:28
           call : null @<PROJECT>/main.deal:10:3-10:28
             [boundary: stdlib-boundary]
@@ -13461,11 +13488,11 @@ module @<PROJECT>/main.deal:1:1-11:2
               ident console : table @<PROJECT>/main.deal:10:3-10:9
                 [boundary: import]
             call : string @<PROJECT>/main.deal:10:15-10:27
-              member .tag : (@modelb/Item)->string @<PROJECT>/main.deal:10:15-10:24
+              member .tag : (@irpin10/Item)->string @<PROJECT>/main.deal:10:15-10:24
                 [boundary: table-read]
                 ident modelb : table @<PROJECT>/main.deal:10:15-10:20
                   [boundary: import]
-              ident b : @modelb/Item @<PROJECT>/main.deal:10:26-10:26
+              ident b : @irpin10/Item @<PROJECT>/main.deal:10:26-10:26
 
 === IR: modela.ir.txt ===
 module @<PROJECT>/modela.deal:1:1-4:62
@@ -13486,7 +13513,7 @@ module @<PROJECT>/modela.deal:1:1-4:62
           binary + : string @<PROJECT>/modela.deal:4:47-4:58
             literal "a:" : string @<PROJECT>/modela.deal:4:47-4:50
             member .tag : string @<PROJECT>/modela.deal:4:54-4:58
-              ident i : @modela/Item @<PROJECT>/modela.deal:4:54-4:54
+              ident i : @irpin10/Item @<PROJECT>/modela.deal:4:54-4:54
 
 === IR: modelb.ir.txt ===
 module @<PROJECT>/modelb.deal:1:1-4:62
@@ -13507,7 +13534,7 @@ module @<PROJECT>/modelb.deal:1:1-4:62
           binary + : string @<PROJECT>/modelb.deal:4:47-4:58
             literal "b:" : string @<PROJECT>/modelb.deal:4:47-4:50
             member .tag : string @<PROJECT>/modelb.deal:4:54-4:58
-              ident i : @modelb/Item @<PROJECT>/modelb.deal:4:54-4:54
+              ident i : @irpin10/Item @<PROJECT>/modelb.deal:4:54-4:54
 """;
             if (!(irPinExpected + "\n").equals(irPinNormalized)) {
                 check(false, "jvm-xmod-classes-slice.json :: jvm-xmod-same-name-isolation: exact IR dump mismatch");
@@ -13569,9 +13596,9 @@ module @<PROJECT>/lib.deal:1:1-5:57
           [boundary: return]
           binary + : int @<PROJECT>/lib.deal:5:45-5:53
             member .x : int @<PROJECT>/lib.deal:5:45-5:47
-              ident p : @lib/Point @<PROJECT>/lib.deal:5:45-5:45
+              ident p : @irpin11/Point @<PROJECT>/lib.deal:5:45-5:45
             member .y : int @<PROJECT>/lib.deal:5:51-5:53
-              ident p : @lib/Point @<PROJECT>/lib.deal:5:51-5:51
+              ident p : @irpin11/Point @<PROJECT>/lib.deal:5:51-5:51
 
 === IR: main.ir.txt ===
 module @<PROJECT>/main.deal:1:1-12:2
@@ -13591,40 +13618,40 @@ module @<PROJECT>/main.deal:1:1-12:2
         assign = : int @<PROJECT>/main.deal:5:3-5:15
           [boundary: field-write]
           member .x : int @<PROJECT>/main.deal:5:3-5:5
-            ident p : @lib/Point @<PROJECT>/main.deal:5:3-5:3
+            ident p : @irpin11/Point @<PROJECT>/main.deal:5:3-5:3
           binary + : int @<PROJECT>/main.deal:5:9-5:15
             member .x : int @<PROJECT>/main.deal:5:9-5:11
-              ident p : @lib/Point @<PROJECT>/main.deal:5:9-5:9
+              ident p : @irpin11/Point @<PROJECT>/main.deal:5:9-5:9
             literal 1 : int @<PROJECT>/main.deal:5:15-5:15
       return @<PROJECT>/main.deal:6:3-7:1
         [boundary: return]
-        ident p : @lib/Point @<PROJECT>/main.deal:6:10-6:10
+        ident p : @irpin11/Point @<PROJECT>/main.deal:6:10-6:10
   export @<PROJECT>/main.deal:8:1-12:2
     [boundary: export]
     function run: int @<PROJECT>/main.deal:8:8-12:2
       body
-        let p: @lib/Point @<PROJECT>/main.deal:9:3-10:5
+        let p: @irpin11/Point @<PROJECT>/main.deal:9:3-10:5
           [boundary: var-annotation]
-          object : @lib/Point @<PROJECT>/main.deal:9:22-9:35
+          object : @irpin11/Point @<PROJECT>/main.deal:9:22-9:35
             [boundary: class-construct]
             literal 3 : int @<PROJECT>/main.deal:9:27-9:27
             literal 4 : int @<PROJECT>/main.deal:9:33-9:33
-        let q: @lib/Point @<PROJECT>/main.deal:10:3-11:8
+        let q: @irpin11/Point @<PROJECT>/main.deal:10:3-11:8
           [boundary: var-annotation]
-          call : @lib/Point @<PROJECT>/main.deal:10:22-10:29
-            ident shift : (@lib/Point)->@lib/Point @<PROJECT>/main.deal:10:22-10:26
-            ident p : @lib/Point @<PROJECT>/main.deal:10:28-10:28
+          call : @irpin11/Point @<PROJECT>/main.deal:10:22-10:29
+            ident shift : (@irpin11/Point)->@irpin11/Point @<PROJECT>/main.deal:10:22-10:26
+            ident p : @irpin11/Point @<PROJECT>/main.deal:10:28-10:28
         return @<PROJECT>/main.deal:11:3-12:1
           [boundary: return]
           binary + : int @<PROJECT>/main.deal:11:10-11:25
             call : int @<PROJECT>/main.deal:11:10-11:19
-              member .sum : (@lib/Point)->int @<PROJECT>/main.deal:11:10-11:16
+              member .sum : (@irpin11/Point)->int @<PROJECT>/main.deal:11:10-11:16
                 [boundary: table-read]
                 ident lib : table @<PROJECT>/main.deal:11:10-11:12
                   [boundary: import]
-              ident q : @lib/Point @<PROJECT>/main.deal:11:18-11:18
+              ident q : @irpin11/Point @<PROJECT>/main.deal:11:18-11:18
             member .y : int @<PROJECT>/main.deal:11:23-11:25
-              ident q : @lib/Point @<PROJECT>/main.deal:11:23-11:23
+              ident q : @irpin11/Point @<PROJECT>/main.deal:11:23-11:23
 """;
             if (!(irPinExpected + "\n").equals(irPinNormalized)) {
                 check(false, "jvm-xmod-classes-slice.json :: jvm-xmod-class-param-return-local-fn: exact IR dump mismatch");

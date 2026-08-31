@@ -263,7 +263,9 @@ public class TypeDescriptorTest {
     }
 
     private static String dumpIR(CompileResult cr) {
-        return IrDumper.dump(cr.program, cr.checkResult, "test");
+        return IrDumper.dump(cr.program, cr.checkResult, "test",
+            deal.module.ModuleIdentityResolver.buildIndex(java.util.Map.of(
+                "", deal.identity.CanonicalModuleIdentity.BuiltinModule.INSTANCE)));
     }
 
     private static void assertTrue(boolean cond, String label) {
@@ -497,7 +499,9 @@ public class TypeDescriptorTest {
         st.define("f", new Symbol.VariableSymbol("f", funcType, false));
         CheckResult result = new CheckResult(typeMap, st, List.of());
 
-        String ir = IrDumper.dump(prog, result, "test");
+        String ir = IrDumper.dump(prog, result, "test",
+            deal.module.ModuleIdentityResolver.buildIndex(java.util.Map.of(
+                "", deal.identity.CanonicalModuleIdentity.BuiltinModule.INSTANCE)));
         assertContains(ir, "([int])->int", "array param uses [int] descriptor");
         assertNotContains(ir, "...", "no rest arm in v1.2 descriptors");
         System.out.println("OK");
@@ -585,7 +589,9 @@ public class TypeDescriptorTest {
         st.define("d", new Symbol.VariableSymbol("d", funcType, false));
         CheckResult result = new CheckResult(typeMap, st, List.of());
 
-        String ir = IrDumper.dump(prog, result, "test");
+        String ir = IrDumper.dump(prog, result, "test",
+            deal.module.ModuleIdentityResolver.buildIndex(java.util.Map.of(
+                "", deal.identity.CanonicalModuleIdentity.BuiltinModule.INSTANCE)));
         assertContains(ir, "(string,[int])->null", "fixed params descriptor (string,[int])->null");
         assertNotContains(ir, "...", "no rest arm in v1.2 descriptors");
         System.out.println("OK");
@@ -621,7 +627,9 @@ public class TypeDescriptorTest {
         st.define("g", new Symbol.VariableSymbol("g", funcType, false));
         CheckResult result = new CheckResult(typeMap, st, List.of());
 
-        String ir = IrDumper.dump(prog, result, "test");
+        String ir = IrDumper.dump(prog, result, "test",
+            deal.module.ModuleIdentityResolver.buildIndex(java.util.Map.of(
+                "", deal.identity.CanonicalModuleIdentity.BuiltinModule.INSTANCE)));
         assertContains(ir, "()->null", "zero-param function uses ()->null");
         assertNotContains(ir, "rest param", "no rest-param IR node in v1.2");
         System.out.println("OK");
@@ -775,7 +783,9 @@ public class TypeDescriptorTest {
         st.define("f", new Symbol.VariableSymbol("f", funcType, false));
         CheckResult result = new CheckResult(typeMap, st, List.of());
 
-        String ir = IrDumper.dump(prog, result, "test");
+        String ir = IrDumper.dump(prog, result, "test",
+            deal.module.ModuleIdentityResolver.buildIndex(java.util.Map.of(
+                "", deal.identity.CanonicalModuleIdentity.BuiltinModule.INSTANCE)));
         assertContains(ir, "async(int)->string", "async function type uses async prefix");
         System.out.println("OK");
     }
