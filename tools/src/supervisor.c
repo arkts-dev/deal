@@ -920,6 +920,14 @@ typedef struct dealpg4_supervisor_state {
     int kill_issued;
     int signals_issued_to_target; /* a supervisor-issued TERM/KILL was
                                      actually delivered */
+    int cancel_signals_issued;  /* a supervisor-issued TERM/KILL on the
+                                   cancel path: set only when
+                                   dealpg4_supervisor_apply_cancel itself
+                                   issues the signal — deadline-issued
+                                   signals never set it, so a death by
+                                   the T2/T3 escalation classifies
+                                   EXECUTION_TIMEOUT even when a cancel
+                                   arrived mid-escalation (D3/D5(c)) */
 
     /* Stub / identity. */
     pid_t stub_pid;
@@ -1721,8 +1729,13 @@ static void dealpg4_supervisor_reap_all(dealpg4_supervisor_state *state)
  * classification is CALLER_LOST (the final record derives CLEAN
  * final=cancelled from a clean reaped exit or FAILED CALLER_LOST from
  * a cancel-path signal death at finalization), and a post-release
- * signal death under an applied cancel is CALLER_LOST (never STARTED
- * when the cancel landed before exec confirmation). */
+ * signal death is CALLER_LOST only when the cancel path itself issued
+ * the signal (cancel_signals_issued); a death by the deadline
+ * escalation — a cancel arriving mid-escalation after the T2 TERM —
+ * classifies EXECUTION_TIMEOUT (parent D3, D5(c); never STARTED when
+ * the cancel landed before exec confirmation). Signals issued by the
+ * deadline escalation never set the cancel-path flag, so the owning
+ * phase token keeps its record. */
 static void dealpg4_supervisor_evaluate(dealpg4_supervisor_state *state)
 {
     if (state->classification == DEALPG4_SUP_CLASS_STARTED
@@ -1734,7 +1747,7 @@ static void dealpg4_supervisor_evaluate(dealpg4_supervisor_state *state)
             break;
         case CLD_KILLED:
         case CLD_DUMPED:
-            if (state->cancel_requested && state->signals_issued_to_target)
+            if (state->cancel_requested && state->cancel_signals_issued)
                 state->classification = DEALPG4_SUP_CLASS_CALLER_LOST;
             else if (state->signals_issued_to_target)
                 state->classification =
@@ -1841,7 +1854,7 @@ static void dealpg4_supervisor_evaluate(dealpg4_supervisor_state *state)
         break;
     case CLD_KILLED:
     case CLD_DUMPED:
-        if (state->cancel_requested && state->signals_issued_to_target)
+        if (state->cancel_requested && state->cancel_signals_issued)
             state->classification = DEALPG4_SUP_CLASS_CALLER_LOST;
         else if (state->signals_issued_to_target)
             state->classification = DEALPG4_SUP_CLASS_EXECUTION_TIMEOUT;
@@ -1860,23 +1873,32 @@ static void dealpg4_supervisor_evaluate(dealpg4_supervisor_state *state)
 /* Signals target a verified negative PGID (parent D5): getpgrp() !=
  * targetPgid and kill(-targetPgid, 0) == 0 before each signal;
  * unverifiable targets are never signaled. Pre-release the retained
- * stubPid is signaled directly. The signals_issued_to_target record
- * disambiguates the D3 classification (cancel-path TERM / T2-T3
- * deadline signals / no supervisor-issued signal). */
-static void dealpg4_supervisor_signal_target(dealpg4_supervisor_state *state,
+ * stubPid is signaled directly. Returns 1 when a signal was actually
+ * delivered. The signals_issued_to_target record disambiguates the D3
+ * classification (any supervisor-issued TERM/KILL / no
+ * supervisor-issued signal); the caller on the cancel path
+ * (apply_cancel only) additionally records its own delivery in
+ * cancel_signals_issued so a deadline-path death classifies
+ * EXECUTION_TIMEOUT even when a cancel arrived mid-escalation. */
+static int dealpg4_supervisor_signal_target(dealpg4_supervisor_state *state,
                                              int sig)
 {
     if (state->release_write_ok && state->stub_pgid > 0) {
         pid_t pgid = state->stub_pgid;
 
         if (getpgrp() != pgid && kill(-pgid, 0) == 0) {
-            if (kill(-pgid, sig) == 0)
+            if (kill(-pgid, sig) == 0) {
                 state->signals_issued_to_target = 1;
+                return 1; /* actually delivered */
+            }
         }
-        return; /* unverifiable: never signaled */
+        return 0; /* unverifiable: never signaled */
     }
-    if (state->stub_pid > 0 && kill(state->stub_pid, sig) == 0)
+    if (state->stub_pid > 0 && kill(state->stub_pid, sig) == 0) {
         state->signals_issued_to_target = 1;
+        return 1; /* actually delivered */
+    }
+    return 0;
 }
 
 /* The next applicable absolute phase deadline from the invocation
@@ -2317,8 +2339,10 @@ static void dealpg4_supervisor_apply_cancel(dealpg4_supervisor_state *state)
             state->term_issued = 1;
             state->term_ms = (int64_t)now - state->t0;
             if (state->stub_pid > 0 && !state->stub_reaped
-                && kill(state->stub_pid, SIGTERM) == 0)
+                && kill(state->stub_pid, SIGTERM) == 0) {
                 state->signals_issued_to_target = 1;
+                state->cancel_signals_issued = 1;
+            }
         }
         if (state->phase == DEALPG4_PHASE_STARTUP
             || state->phase == DEALPG4_PHASE_RUN)
@@ -2332,15 +2356,17 @@ static void dealpg4_supervisor_apply_cancel(dealpg4_supervisor_state *state)
         if (!state->term_issued) {
             state->term_issued = 1;
             state->term_ms = (int64_t)now - state->t0;
-            if (!state->stub_reaped)
-                dealpg4_supervisor_signal_target(state, SIGTERM);
+            if (!state->stub_reaped
+                && dealpg4_supervisor_signal_target(state, SIGTERM))
+                state->cancel_signals_issued = 1;
         }
         if (now >= (uint64_t)state->dl.t3) {
             if (!state->kill_issued) {
                 state->kill_issued = 1;
                 state->kill_ms = (int64_t)now - state->t0;
-                if (!state->stub_reaped)
-                    dealpg4_supervisor_signal_target(state, SIGKILL);
+                if (!state->stub_reaped
+                    && dealpg4_supervisor_signal_target(state, SIGKILL))
+                    state->cancel_signals_issued = 1;
             }
             if (state->phase == DEALPG4_PHASE_RUN
                 || state->phase == DEALPG4_PHASE_TERM)
@@ -2794,10 +2820,25 @@ static void dealpg4_supervisor_finalize(dealpg4_supervisor_state *state)
         } else if (state->stub_reaped
                    && (state->stub_si_code == CLD_KILLED
                        || state->stub_si_code == CLD_DUMPED)
-                   && state->signals_issued_to_target) {
-            /* Cancel-path signal death. */
+                   && state->cancel_signals_issued) {
+            /* Cancel-path signal death: the cancel path itself issued
+             * the TERM/KILL (D5(c)). */
             kind = DEALPG4_SUP_TERMINAL_FAILED;
             token = "CALLER_LOST";
+        } else if (state->stub_reaped
+                   && (state->stub_si_code == CLD_KILLED
+                       || state->stub_si_code == CLD_DUMPED)
+                   && state->signals_issued_to_target) {
+            /* A supervisor-issued signal death on a non-cancel path:
+             * the deadline escalation owns the death (the T2/T3
+             * TERM/KILL, the T1 pre-release TERM, or the TIMER_FAILED
+             * escalation) — the cancel that arrived mid-escalation
+             * issued no signal of its own, so the owning phase token
+             * classifies the record (parent D3: the T2/T3 deadline
+             * path -> EXECUTION_TIMEOUT). */
+            kind = DEALPG4_SUP_TERMINAL_FAILED;
+            token = dealpg4_supervisor_class_token(
+                state->classification);
         } else if (state->stub_reaped
                    && (state->stub_si_code == CLD_KILLED
                        || state->stub_si_code == CLD_DUMPED)) {

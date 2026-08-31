@@ -744,6 +744,14 @@ static const char *g_exit5_target[3] = { "/bin/sh", "-c", "exit 5" };
 static const char *g_exit5_slow_target[3] = { "/bin/sh", "-c",
                                               "sleep 0.1; exit 5" };
 
+/* Ignores TERM: the T2 deadline TERM is issued but cannot kill it —
+ * the target survives into the term-grace window and dies only by the
+ * deadline-issued KILL at T3 (ISSUE-0438 regression: a valid CANCEL
+ * arriving during the term-grace window must not relabel the
+ * deadline-path death as CALLER_LOST). */
+static const char *g_ignore_term_target[3] = { "/bin/sh", "-c",
+                                               "trap '' TERM; while :; do :; done" };
+
 static void marker_setup(void)
 {
     snprintf(g_marker_path, sizeof g_marker_path,
@@ -1525,6 +1533,55 @@ static void t4_post_release_wedges(void)
     CHECK(!marker_exists());
 }
 
+/* Cancel during the term-grace window after the T2 deadline TERM
+ * (ISSUE-0438 regression): the target ignores TERM, so the T2
+ * deadline TERM is issued at T2 = 5000 but does not kill it; a valid
+ * CANCEL arrives during the term-grace window (after the T2 TERM
+ * issue, before the absolute T3 = 7000 KILL). The cancel path issues
+ * no new signal of its own (TERM was already issued by the deadline
+ * escalation), so the death by the deadline-issued KILL at T3 is a
+ * deadline-path signal death: REPORT.failureToken = EXECUTION_TIMEOUT
+ * and the terminal FAILED carries EXECUTION_TIMEOUT — CALLER_LOST is
+ * reserved for a supervisor-issued cancel-path signal (parent D3,
+ * dealpg4-supervisor-engine D5(c)). */
+static void t4_cancel_during_term_grace(void)
+{
+    chan_scene s;
+    dealpg4_parsed p;
+    const char *line;
+    size_t len;
+    int64_t v;
+
+    g_ctx = "T4 cancel during term grace (deadline TERM owns the death)";
+    script_reset();
+    if (chan_start(&s, CHILD_CORE, "/tmp", g_nonce, 1, 15000,
+                   g_ignore_term_target, 3)
+        == 0) {
+        CHECK(rr_expect(&s.reader, DEALPG4_REC_STUB_FORKED, &p, 5000)
+              == 0);
+        CHECK(rr_expect(&s.reader, DEALPG4_REC_STUB_READY, &p, 5000)
+              == 0);
+        CHECK(send_ack(s.sock, g_nonce) == 0);
+        CHECK(rr_expect(&s.reader, DEALPG4_REC_STARTED, &p, 8000) == 0);
+        /* T = 15000 -> T2 = 5000, T3 = 7000: sleep past the T2 TERM
+         * issue, then send the CANCEL inside the term-grace window. */
+        msleep(6000);
+        CHECK(send_cancel(s.sock, g_nonce) == 0);
+        /* Both drains reach EOF after the T3 KILL, so both OUT_ENDs
+         * precede REPORT (zero-byte streams still emit them). */
+        expect_both_out_ends(&s.reader);
+        CHECK(rr_expect(&s.reader, DEALPG4_REC_REPORT, &p, 8000) == 0);
+        check_report(&p, 137, 9, "EXECUTION_TIMEOUT", 1);
+        CHECK(pfi(&p, 5, &v) && v > 0); /* termMs: the T2 TERM issue */
+        CHECK(pfi(&p, 6, &v) && v > 0); /* killMs: the T3 KILL issue */
+        CHECK(rr_expect(&s.reader, DEALPG4_REC_FAILED, &p, 5000) == 0);
+        CHECK(ptok(&p, 1, "EXECUTION_TIMEOUT"));
+        CHECK(rr_line(&s.reader, 2000, &line, &len) == 0);
+        chan_finish(&s, 2, 8000);
+    }
+    CHECK(!marker_exists());
+}
+
 /* The post-ACK-pre-release freeze (D5(a)): the sup-pre-release-write
  * delay wedges the release; a CANCEL (or a channel close) that arrives
  * during the delay is processed before the write decision, so the
@@ -2202,6 +2259,7 @@ int main(void)
      * regression. */
     t4_release_races();
     t4_post_release_wedges();
+    t4_cancel_during_term_grace();
     t4_post_ack_freeze();
     t4_supervisor_death();
     t4_parent_mismatch();
