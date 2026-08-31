@@ -1,0 +1,16 @@
+// @spec: Lexical elements — Numeric overflow, NaN, and Infinity
+// @description: int32 remainder: -2147483648 % -1 computes the truncated remainder 0 (spec v1.2 remainder rule — only / overflows on MIN_VALUE / -1) on every retained route
+// @expected: runtime-ok
+// @features: runtime, int, modulo, boundary, v1.2
+
+export function test_int32_mod_min_neg_one(): int {
+  let r: int = -2147483648 % -1;
+  if (r !== 0) {
+    throw { code: "TEST_FAIL", message: "-2147483648 % -1 must be 0" };
+  }
+  return r;
+}
+
+export function main(): null {
+  return null;
+}

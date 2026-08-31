@@ -99,11 +99,13 @@ import java.util.concurrent.atomic.AtomicInteger;
  *       cutover: the LuaJIT-owned canonical-boundary E8010
  *       signature-mismatch expectation requires the canonical matcher's
  *       function row; JVM descriptors are ISSUE-0277's.</li>
- *   <li><b>JVM-GAP-INT32</b> (8 entries) — the signed-int32 runtime
- *       gate: JvmBackend retains the ±(2^53−1) safe range until JVM
- *       v1.2 completion (ISSUE-0277), so the LuaJIT-owned E8004
- *       int32 expectations (arithmetic, conversion, stdlib/math absInt,
- *       and unary-negation locations) pass only on LuaJIT.</li>
+ *   <li><b>JVM-GAP-INT32</b> — the signed-int32 runtime gate: the
+ *       retained v1.2 JVM route (the ISSUE-0375 carrier switch plus the
+ *       profile-selected helper bodies) now raises E8004 for every
+ *       arithmetic/conversion/negation/absInt case, so the skip entries
+ *       were removed with their promotions (the A5 seam promotions and
+ *       the ISSUE-0397 I6 int32-math-abs-min absInt long-magnitude
+ *       arm); the gap keeps no entries.</li>
  *   <li><b>JVM-GAP-BYTES</b> (10 entries) — the bytes runtime lane:
  *       JvmBackend raises E6000 at every bytes site until JVM v1.2
  *       completion (ISSUE-0277), so the LuaJIT-owned bytes expectations
@@ -195,24 +197,18 @@ public class JvmConformanceTest {
         // ---- JVM-GAP-INT32: the signed-int32 runtime gate ----
         // The v1.2 corpus pins int as [-2147483648, 2147483647] with E8004
         // on every out-of-range arithmetic result and conversion. The
-        // profile-selected JVM int32 helper bodies landed (ISSUE-0394):
-        // the retained v1.2 invocation now raises E8004 for the
-        // arithmetic/conversion/negation cases below, so those entries
-        // became stale under the A5 seam and were removed with the
-        // promotions (the backend-runtime int-add-overflow case re-homed
-        // to the two-backend slice surface). The single remaining entry
-        // is the int32 std/math.absInt residual: the int-carrier arm's
-        // java.lang.Math.abs(int) of MIN_VALUE stays negative and the
-        // emitted checkInt passes it silently, so the LuaJIT-owned E8004
-        // expectation still fails on JVM (tracked residual).
-        skip("backend-runtime/stdlib/math/int-abs-min-overflow.deal",
-            "E8004 for std/math.absInt(-2147483648) requires the int32 "
-                + "absInt arm to compute the LuaJIT-matching long "
-                + "magnitude (2147483648) before the gate; the int-carrier "
-                + "arm's java.lang.Math.abs(int) of MIN_VALUE stays "
-                + "negative and returns silently (tracked JVM int32 "
-                + "residual).", "JVM-GAP-INT32");
-
+        // profile-selected JVM int32 helper bodies landed (ISSUE-0394),
+        // so the retained v1.2 invocation raises E8004 for the
+        // arithmetic/conversion/negation cases — those entries became
+        // stale under the A5 seam and were removed with the promotions
+        // (the backend-runtime int-add-overflow case re-homed to the
+        // two-backend slice surface). The final entry — the
+        // std/math.absInt(-2147483648) residual — was resolved by
+        // ISSUE-0397 I6: the emitted int32 absInt arm now promotes the
+        // int-carrier operand to long before java.lang.Math.abs, so the
+        // MIN_VALUE magnitude (2147483648) reaches the int32 checkInt
+        // gate and raises E8004 (int32-math-abs-min pins the promoted
+        // case on both retained routes), and the stale skip was removed.
         // ---- JVM-GAP-BYTES: the bytes runtime lane (ISSUE-0277) ----
         // The v1.2 corpus pins the FFI-backed bytes carrier with
         // zero-fill allocation, E8012 index bounds, E8013 value range,
@@ -394,12 +390,6 @@ public class JvmConformanceTest {
             + "(javac-rejected artifact; a missed E6000 guard)",
         "JVM-GAP-ASYNC-FNEXPR", "async function expressions and "
             + "block-level async functions (E6000)",
-        "JVM-GAP-INT32", "signed-int32 runtime gate — the int32 "
-            + "arithmetic/conversion/negation expectations pass under the "
-            + "v1.2 invocation (entries removed with the A5 seam); the "
-            + "std/math.absInt(-2147483648) E8004 residual stays tracked "
-            + "(the int-carrier java.lang.Math.abs(int) of MIN_VALUE "
-            + "stays negative)",
         "JVM-GAP-BYTES", "bytes runtime lane — JvmBackend raises E6000 on "
             + "every bytes site (the bytes carrier/lowering slice is "
             + "ISSUE-0277's); the LuaJIT bytes expectations "
@@ -610,6 +600,7 @@ public class JvmConformanceTest {
         // legacy-dependent assertion, and the mechanism self-probes pass
         // before any fixture executes.
         LegacyProfileRegressionCatalog.validateRows();
+        LegacyProfileRegressionCatalog.validateReplacementRows();
         LegacyProfileRegressionCatalog.runSelfProbes();
         for (TestFile test : discovered) {
             LegacyProfileRegressionCatalog.scanDealSource(

@@ -3634,9 +3634,23 @@ public final class JvmBackend {
         emitLine("    }");
         emitLine("    switch (d) {");
         emitLine("        case \"int\":");
-        emitLine(int32Mode
-            ? "            if (v instanceof java.lang.Integer i) return checkInt(i);"
-            : "            if (v instanceof java.lang.Long l) return checkInt(l.longValue());");
+        if (int32Mode) {
+            // ISSUE-0397 I6 (int32-host-int-return): under
+            // DEAL_V1_2_INT32 the declared int host boundary accepts the
+            // integer-family carriers — the boxed int carrier AND the
+            // retained long carrier (the legacy host implementations
+            // return Long). The wider long routes through the signed32
+            // checkInt gate, so an out-of-range host return (2147483648)
+            // raises the pinned E8004 int-range error at the boundary
+            // (host-module-abi D2/D3 "E8004 int range"; the LuaJIT
+            // reference check_int shape) instead of the Integer-only
+            // arm's unreachable range check. Wrong kinds (string, null
+            // on non-nullable, …) still fall through to E8010/E8001.
+            emitLine("            if (v instanceof java.lang.Integer i) return checkInt(i);");
+            emitLine("            if (v instanceof java.lang.Long l) return checkInt(l.longValue());");
+        } else {
+            emitLine("            if (v instanceof java.lang.Long l) return checkInt(l.longValue());");
+        }
         emitLine("            break;");
         emitLine("        case \"number\":");
         emitLine("            if (v instanceof java.lang.Double dd) return dd;");
@@ -10815,8 +10829,16 @@ public final class JvmBackend {
      * {@code java.lang.Math} (the same IEEE 754 semantics as LuaJIT's
      * {@code math.*} over doubles); {@code absInt} re-checks its result
      * with {@code checkInt} exactly like LuaJIT's {@code
-     * check_int(math.abs(x))}; {@code sqrt} routes through {@code
-     * __mathSqrt} for the negative-input E8001 (std/math.lua). All
+     * check_int(math.abs(x))} — under {@code DEAL_V1_2_INT32} the
+     * int-carrier operand is promoted to {@code long} before
+     * {@code java.lang.Math.abs}, so the MIN_VALUE magnitude
+     * (2147483648) reaches the int32 {@code checkInt} gate and raises
+     * E8004 instead of {@code Math.abs(int)}'s silent MIN_VALUE
+     * round-trip (the LuaJIT-matching long magnitude;
+     * ISSUE-0397 I6 int32-math-abs-min). Under
+     * {@code LEGACY_SAFE_INT} the emission stays byte-identical.
+     * {@code sqrt} routes through {@code __mathSqrt} for the
+     * negative-input E8001 (std/math.lua). All
      * {@code java.lang} references are fully qualified so a user binding
      * named {@code Math} can never shadow them.
      */
@@ -10827,7 +10849,9 @@ public final class JvmBackend {
             case "floor" -> "java.lang.Math.floor(" + a0 + ")";
             case "ceil" -> "java.lang.Math.ceil(" + a0 + ")";
             case "sqrt" -> "__mathSqrt(" + a0 + ")";
-            case "absInt" -> "checkInt(java.lang.Math.abs(" + a0 + "))";
+            case "absInt" -> int32Mode
+                ? "checkInt(java.lang.Math.abs((long) " + a0 + "))"
+                : "checkInt(java.lang.Math.abs(" + a0 + "))";
             case "absNumber" -> "java.lang.Math.abs(" + a0 + ")";
             case "minInt" -> "java.lang.Math.min("
                 + adaptIntBoundary(call.args().get(0), a0, Type.Int.INSTANCE)

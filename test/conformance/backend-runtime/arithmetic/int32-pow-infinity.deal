@@ -1,0 +1,12 @@
+// @spec: Lexical elements — Numeric overflow, NaN, and Infinity
+// @description: int32 exponentiation: 2 ** 1024 overflows to infinity and raises E8001 'expected int, got infinity' before any range test (the NaN/infinity-first pow order — all three lanes agree)
+// @expected: runtime-error E8001
+// @features: runtime, int, pow, infinity, v1.2
+
+export function test_int32_pow_infinity(): int {
+  return 2 ** 1024;
+}
+
+export function main(): null {
+  return null;
+}

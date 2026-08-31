@@ -136,8 +136,11 @@ public class SidecarCorpusValidationTest {
      * bytes-class-field-descriptor, bytes-write-single-evaluation, and
      * bytes-write-validation-order fixtures; plus the two stdlib/json
      * D5 fixtures ISSUE-0342 added with their sidecars in the same
-     * change: int32-boundary-parse and json-stringify-roundtrip). */
-    private static final int RUNTIME_OK_COUNT = 207;
+     * change: int32-boundary-parse and json-stringify-roundtrip; plus
+     * the ISSUE-0397 I6 arithmetic/int32-mod-min-neg-one fixture — the
+     * truncated remainder -2147483648 % -1 == 0 on all three lanes —
+     * added with its uniform sidecar in the same change). */
+    private static final int RUNTIME_OK_COUNT = 208;
 
     /**
      * The exact runtime-error population (ISSUE-0350 completeness, plus
@@ -159,9 +162,13 @@ public class SidecarCorpusValidationTest {
      * source-location/bytes-index-bounds-source, and
      * source-location/bytes-write-range-source; plus the
      * stdlib/json/json-stringify-bytes-error E8001 fixture ISSUE-0342
-     * added with its sidecar in the same change).
+     * added with its sidecar in the same change; plus the two
+     * ISSUE-0397 I6 arithmetic pow-band fixtures — int32-pow-overflow
+     * (2 ** 62 → E8004, the finite band) and int32-pow-infinity
+     * (2 ** 1024 → E8001 infinity, the NaN/infinity-first band) — each
+     * added with its uniform three-backend sidecar in the same change).
      */
-    private static final int RUNTIME_ERROR_COUNT = 77;
+    private static final int RUNTIME_ERROR_COUNT = 79;
 
     /** The G4.6 lane error framing prefixes. */
     private static final String DEAL_ERROR_CODE_LINE = "DEAL_ERROR_CODE: ";

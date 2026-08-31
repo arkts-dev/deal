@@ -495,8 +495,11 @@ public class BackendConformanceTest {
         // legacy-dependent assertion, and the mechanism self-probes pass
         // before any fixture executes.
         LegacyProfileRegressionCatalog.validateRows();
+        LegacyProfileRegressionCatalog.validateReplacementRows();
         LegacyProfileRegressionCatalog.runSelfProbes();
         LegacyProfileRegressionCatalog.validateSliceRows(sliceCases);
+        LegacyProfileRegressionCatalog.validateReplacementSliceRows(
+            sliceCases);
         List<String> catalogViolations =
             LegacyProfileRegressionCatalog.drainViolations();
         if (!catalogViolations.isEmpty()) {

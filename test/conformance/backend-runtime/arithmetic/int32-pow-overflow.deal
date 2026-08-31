@@ -1,0 +1,12 @@
+// @spec: Lexical elements — Numeric overflow, NaN, and Infinity
+// @description: int32 exponentiation: 2 ** 62 is finite but outside the signed 32-bit range and raises E8004 at the pow site (the finite band of the NaN/infinity-first pow order — all three lanes agree)
+// @expected: runtime-error E8004
+// @features: runtime, int, pow, overflow, v1.2
+
+export function test_int32_pow_overflow(): int {
+  return 2 ** 62;
+}
+
+export function main(): null {
+  return null;
+}

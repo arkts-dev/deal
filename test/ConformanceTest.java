@@ -252,6 +252,7 @@ public class ConformanceTest {
         // any fixture executes. A violation is a harness defect — the gate
         // fails naming it, never silently weakening a pin.
         LegacyProfileRegressionCatalog.validateRows();
+        LegacyProfileRegressionCatalog.validateReplacementRows();
         LegacyProfileRegressionCatalog.runSelfProbes();
         for (TestFile test : tests) {
             LegacyProfileRegressionCatalog.scanDealSource(
@@ -2511,6 +2512,86 @@ final class LegacyProfileRegressionCatalog {
                 violation("unknown locator '" + row.locator()
                     + "' — the catalog row names no fixture case in "
                     + parts[0] + " (a harness defect)");
+            }
+        }
+    }
+
+    /**
+     * The additive-replacement pairing validation (A4; activated by the
+     * I6 coverage child): every non-excluded row's
+     * {@code additiveReplacement} locator must resolve to an on-disk
+     * v1.2 replacement — the {@code jvm-int32-slice.json} matrix, the
+     * uniform-sidecar backend-runtime int32 fixtures, the promoted
+     * frontend E1036 fixtures, or {@code test_runtime_int32.lua} — and
+     * must not itself be catalogued (a catalogued replacement would run
+     * under the legacy authority and earn zero replacement credit; the
+     * A5 seam sends every uncatalogued replacement through
+     * {@code COMMON_SHADOW + DEAL_V1_2_INT32}). A missing replacement
+     * is a harness defect, never a silent pairing gap. Slice-row
+     * replacements are checked file-level here and case-level by
+     * {@link #validateReplacementSliceRows(Map)} (the runners with the
+     * parsed fixture index); excluded rows ({@code null} — the time
+     * lock and the JS v1.2 exclusion) record no replacement this epic.
+     */
+    static void validateReplacementRows() {
+        for (Row row : ROWS) {
+            String replacement = row.additiveReplacement();
+            if (replacement == null) {
+                continue; // excluded family: no replacement this epic
+            }
+            if (isCatalogued(replacement)) {
+                violation("replacement locator '" + replacement
+                    + "' for row '" + row.locator() + "' is itself "
+                    + "catalogued — an additive replacement must run "
+                    + "under the v1.2 profile (the A5 seam), never the "
+                    + "legacy regression authority");
+                continue;
+            }
+            String filePart = replacement.contains("#")
+                ? replacement.substring(0, replacement.indexOf('#'))
+                : replacement;
+            Path file = replacement.startsWith("backend-runtime/")
+                    || replacement.startsWith("frontend/")
+                ? Path.of("test", "conformance", filePart)
+                : replacement.contains("#")
+                    ? Path.of("test", "conformance", "fixtures", filePart)
+                    : Path.of(filePart);
+            if (!Files.isRegularFile(file)) {
+                violation("replacement locator '" + replacement
+                    + "' for row '" + row.locator()
+                    + "' names no on-disk replacement artifact (a "
+                    + "missing additive v1.2 replacement — the pairing "
+                    + "contract requires every non-excluded row to name "
+                    + "an existing replacement that passes under "
+                    + "DEAL_V1_2_INT32)");
+            }
+        }
+    }
+
+    /**
+     * The slice-index pairing check (A4): every slice-row replacement
+     * ({@code <fixture-file>#<case-name>}) must name a case of the
+     * runner's parsed fixture file. Called by the slice runner
+     * (BackendConformanceTest) after its file-level parse; the
+     * file-level existence check is {@link #validateReplacementRows()}.
+     */
+    static void validateReplacementSliceRows(
+            Map<String, Set<String>> sliceCases) {
+        for (Row row : ROWS) {
+            String replacement = row.additiveReplacement();
+            if (replacement == null || !replacement.contains("#")) {
+                continue;
+            }
+            String[] parts = replacement.split("#", 2);
+            Set<String> names = sliceCases.get(parts[0]);
+            if (names == null || !names.contains(parts[1])) {
+                violation("replacement locator '" + replacement
+                    + "' for row '" + row.locator()
+                    + "' names no fixture case in " + parts[0]
+                    + " (a missing additive v1.2 replacement — the "
+                    + "pairing contract requires every non-excluded row "
+                    + "to name an existing replacement that passes under "
+                    + "DEAL_V1_2_INT32)");
             }
         }
     }

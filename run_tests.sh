@@ -462,6 +462,7 @@ echo ""
 echo "=== Running Runtime Library Tests ==="
 if command -v luajit &> /dev/null; then
   luajit test_runtime.lua
+  luajit test_runtime_int32.lua
 else
   echo "WARNING: luajit not found, skipping runtime library tests"
 fi

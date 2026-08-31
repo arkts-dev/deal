@@ -1,0 +1,258 @@
+{
+  "version": "1.0",
+  "description": "v1.2 signed-int32 two-backend slice (ISSUE-0397 I6 part 3). The JS-divergent int32 matrix: per-case backends lists and no three-backend sidecar contract — the JS lane executes none of these cases in this epic (the uniform three-backend sidecar schema pins one shared expectation per fixture, and the JS lane's legacy safe-range gate produces no E8004 for the in-legacy-range cases below; js-v12-int32-bytes owns the later promotion of this matrix into uniform sidecars). Every case runs the real frontend (lexer → parser → name resolver → type checker) under the per-case A5 invocation (COMMON_SHADOW + DEAL_V1_2_INT32 — none of these cases is catalogued) → real LuaBackend/JvmBackend codegen → luajit / javac + java executing the emitted artifact. The matrix re-homes the removed backend-runtime int-add-overflow fixture as int32-add-overflow (the re-home whose retained-route coverage the A5 profile-selection merge moved out of the uniform-sidecar population); the other cases are the additive signed32 replacements for the catalogued safe-int-era families: sub/mul/neg/div/conversion overflow, the literal boundaries, the both-raise precedence parity, the table-read int boundary, the std/math.absInt(MIN_VALUE) gate, the async completion int boundary, the standalone overflow expression, the number-pow IEEE band (the pinned IEEE-754 special-case table), and the JVM-only declared host int return boundary (the LuaJIT host-boundary replacement is test_runtime_int32.lua and the fixed corpus).",
+  "tests": [
+    {
+      "name": "int32-add-overflow",
+      "description": "v1.2 signed 32-bit int: 2147483647 + 1 leaves the signed 32-bit range and raises E8004 on both retained routes (the re-home of the removed backend-runtime int-add-overflow fixture; LuaJIT is the reference)",
+      "source": "export function test(): int {\n  return 2147483647 + 1;\n}",
+      "expectedOutput": null,
+      "expectedError": "E8004",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: int",
+        "binary + : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "int32-sub-overflow",
+      "description": "v1.2 signed 32-bit int: -2147483648 - 1 leaves the signed 32-bit range and raises E8004 on both retained routes",
+      "source": "export function test(): int {\n  return -2147483648 - 1;\n}",
+      "expectedOutput": null,
+      "expectedError": "E8004",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: int",
+        "binary - : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "int32-mul-overflow",
+      "description": "v1.2 signed 32-bit int: 2147483647 * 2 leaves the signed 32-bit range and raises E8004 on both retained routes",
+      "source": "export function test(): int {\n  return 2147483647 * 2;\n}",
+      "expectedOutput": null,
+      "expectedError": "E8004",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: int",
+        "binary * : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "int32-neg-min",
+      "description": "v1.2 signed 32-bit int: unary minus on the minimum value routes through the checked negation gate — -(-2147483648) leaves the signed 32-bit range and raises E8004 on both retained routes",
+      "source": "export function test(): int {\n  return -(-2147483648);\n}",
+      "expectedOutput": null,
+      "expectedError": "E8004",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: int",
+        "unary - : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "int32-div-min-neg-one",
+      "description": "v1.2 signed 32-bit int: -2147483648 / -1 computes 2147483648, which leaves the signed 32-bit range and raises E8004 on both retained routes (the truncated-division overflow)",
+      "source": "export function test(): int {\n  return -2147483648 / -1;\n}",
+      "expectedOutput": null,
+      "expectedError": "E8004",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: int",
+        "binary / : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "int32-convert-range",
+      "description": "v1.2 signed 32-bit int: int(2147483648.0) — an integral number at 2^31 — leaves the signed 32-bit range and raises E8004 on both retained routes (the conversion gate)",
+      "source": "export function test(): int {\n  return int(2147483648.0);\n}",
+      "expectedOutput": null,
+      "expectedError": "E8004",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: int",
+        "call : int",
+        "ident int : (number)->int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "int32-literal-boundaries",
+      "description": "v1.2 signed 32-bit int literals: the maximum 2147483647 and the minimum -2147483648 (the immediate-token unary-minus form) compile, run, and hold their exact values on both retained routes (TEST_FAIL-asserted)",
+      "source": "export function test(): int {\n  let max: int = 2147483647;\n  let min: int = -2147483648;\n  if (max !== 2147483647 || min !== -2147483648) {\n    throw { code: \"TEST_FAIL\", message: \"int32 literal boundaries must hold their exact values\" };\n  }\n  return 0;\n}",
+      "expectedOutput": null,
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "int32-array-precedence-parity",
+      "description": "v1.2 cross-backend parity for the both-raise error precedence: (2147483647 + 1) === xs[-1] — both operands can raise, and the left operand's checked int32 arithmetic must raise E8004 first, never the right read's E8002, on both retained routes",
+      "source": "import * as console from \"std/console\"\nexport function test(): null {\n  let xs: int[] = [1];\n  if ((2147483647 + 1) === xs[-1]) { console.log(\"bad\"); }\n}",
+      "expectedOutput": null,
+      "expectedNotOutput": [
+        "E8002",
+        "bad"
+      ],
+      "expectedError": "E8004",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [
+        "index [] : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "int32-table-read-boundary",
+      "description": "v1.2 signed 32-bit int boundary: a table read holding the integral number 2147483648.0 assigned to an int | null binding crosses the typed boundary and raises E8004 on both retained routes (the int boundary gate)",
+      "source": "export function test(): int {\n  let t: table = { v: 2147483648.0 };\n  let n: int | null = t.v;\n  if (n === null) { return 1; }\n  return 0;\n}",
+      "expectedOutput": null,
+      "expectedError": "E8004",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "int32-math-abs-min",
+      "description": "v1.2 std/math: absInt(-2147483648) computes the magnitude 2147483648, which leaves the signed 32-bit range and raises E8004 on both retained routes (the absInt arm computes the long magnitude before the gate — LuaJIT is the reference)",
+      "source": "import * as math from \"std/math\"\nexport function test(): int {\n  return math.absInt(-2147483648);\n}",
+      "expectedOutput": null,
+      "expectedError": "E8004",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "int32-async-completion-safe",
+      "description": "v1.2 async completion int boundary: an async export completing with the maximal signed 32-bit int 2147483647 passes the await-site completion check and the run completes (runtime-ok) on both retained routes",
+      "source": "async function big(): int { return 2147483647; }\nexport async function test(): int { return await big(); }",
+      "expectedOutput": null,
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "async function big: int",
+        "await : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "int32-standalone-overflow",
+      "description": "v1.2 standalone expression statement: the discarded 2147483647 + 1 still evaluates through the checked int32 arithmetic and raises E8004 on both retained routes (evaluation is real, matching LuaJIT)",
+      "source": "export function test(): int {\n  2147483647 + 1;\n  return 0;\n}",
+      "expectedOutput": null,
+      "expectedError": "E8004",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [
+        "function test: int",
+        "binary + : int"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "int32-number-pow-ieee",
+      "description": "v1.2 number ** IEEE-754 band on both retained routes: exact powers, 0.0 ** 0.0 === 1.0, 0.0 ** -1.0 === +Infinity, the negative-base fractional NaN (self-unequal), pow(1, NaN) === 1.0, pow(NaN, 0) === 1.0, pow(-1, +Infinity) === 1.0, overflow to +Infinity, and underflow to +0 (TEST_FAIL-asserted; LuaJIT C pow and the JVM pinned numPow wrapper agree on every case)",
+      "source": "export function test(): int {\n  if (2.0 ** 10.0 !== 1024.0) { throw { code: \"TEST_FAIL\", message: \"2.0 ** 10.0 must be 1024.0\" }; }\n  if ((-2.0) ** 3.0 !== -8.0) { throw { code: \"TEST_FAIL\", message: \"(-2.0) ** 3.0 must be -8.0\" }; }\n  if (0.0 ** 0.0 !== 1.0) { throw { code: \"TEST_FAIL\", message: \"0.0 ** 0.0 must be 1.0\" }; }\n  if (0.0 ** -1.0 !== (1.0 / 0.0)) { throw { code: \"TEST_FAIL\", message: \"0.0 ** -1.0 must be +Infinity\" }; }\n  if ((-2.0) ** 0.5 === (-2.0) ** 0.5) { throw { code: \"TEST_FAIL\", message: \"negative-base fractional pow must be NaN\" }; }\n  if (1.0 ** (0.0 / 0.0) !== 1.0) { throw { code: \"TEST_FAIL\", message: \"1.0 ** NaN must be 1.0\" }; }\n  if ((0.0 / 0.0) ** 0.0 !== 1.0) { throw { code: \"TEST_FAIL\", message: \"NaN ** 0.0 must be 1.0\" }; }\n  if ((-1.0) ** (1.0 / 0.0) !== 1.0) { throw { code: \"TEST_FAIL\", message: \"(-1.0) ** Infinity must be 1.0\" }; }\n  if (2.0 ** 1024.0 !== (1.0 / 0.0)) { throw { code: \"TEST_FAIL\", message: \"2.0 ** 1024.0 must overflow to +Infinity\" }; }\n  if (2.0 ** -1075.0 !== 0.0) { throw { code: \"TEST_FAIL\", message: \"2.0 ** -1075.0 must underflow to +0\" }; }\n  return 0;\n}",
+      "expectedOutput": null,
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "int32-host-int-return",
+      "description": "v1.2 declared host int return boundary: a host function returning the long 2147483648 through a declared int return crosses the typed boundary and raises E8004 (the JVM host-ABI slice surface is JVM-only; the LuaJIT host-boundary replacement is test_runtime_int32.lua and the fixed corpus)",
+      "modules": {
+        "bindings/log.d.deal": "export function value(): int;",
+        "entry.deal": "import * as log from \"host/log\"\nexport function main(): null { return null; }\nexport function run(): int { return log.value(); }"
+      },
+      "entry": "entry.deal",
+      "hosts": {
+        "host/log": {
+          "declaration": "bindings/log.d.deal",
+          "java": "public final class HostLog {\n    public static Object value() { return Long.valueOf(2147483648L); }\n}\n"
+        }
+      },
+      "expectedOutput": null,
+      "expectedError": "E8004",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    }
+  ]
+}
