@@ -54,6 +54,40 @@
  * boundary in coordinator-observable terms (see the contract block
  * below).
  *
+ * This child (ISSUE-0297, epic Sequencing step 5) adds: the
+ * per-record nested control-channel state machine (one invocation
+ * per channel, expectation sets configured through
+ * dealpg4_expectation_set_* per record state, the D4 relay
+ * rules); the parent-D6 STUB_READY double verification before
+ * forwarding (getpgid/getsid/kill-0//proc-stat/nonce-equality/
+ * nonce-uniqueness/pid-collision — only then forwarded and
+ * TARGET_PUBLISHED entered; a failed re-verification forwards
+ * nothing and answers nothing, the record stays STUB_BLOCKED);
+ * the ACK relay (validated ACK queued into the nested channel,
+ * RELEASED entered exactly when that write completes) and the
+ * validated-CANCEL application (queued-but-unwritten ACK
+ * dropped, record CANCELLING with the pre-cancel state
+ * retained, CANCEL relayed with the exact registry nonce); the
+ * single-terminal-answer rule (outer-side termination -> the
+ * drain-only switch, nested-origin records consumed but never
+ * relayed, the outer-synthesized CLEAN <id> cancelled |
+ * FAILED <id> <token> terminal record queued ahead of DONE,
+ * never a synthesized REPORT, suppressed only when the broker
+ * is closed); the post-terminal drop rule (channel drained to
+ * EOF and closed, no relay, no PROTOCOL_ERROR, no fallback on
+ * a terminal record); the queued-write discard on terminality
+ * (a nested-origin terminal record relayed while an ACK/CANCEL
+ * write is queued-but-unwritten discards the queued write
+ * without completing it — no RELEASED on a terminal record);
+ * the nested-channel PROTOCOL_ERROR rule (framing defects,
+ * unknown types, oversize records, state-unexpected records
+ * while the record is live and no outer-side termination is in
+ * progress: the channel closes and that state's death fallback
+ * is initiated — the fallback execution is the fallback
+ * child's); and the outer-side fallback-termination surface
+ * (dealpg4_outer_fallback_begin / _synthesize) the fallback
+ * child and the component tests drive.
+ *
  * See dealpg4-outer-supervisor-engine D1/D2/D5/D6 for the pinned
  * surfaces (outer-coordinator-and-broker D1-D9 preserved):
  *  - the mode entry owns only surface binding: the pinned argv shape
@@ -302,8 +336,32 @@ typedef struct dealpg4_outer_record_view {
     int ack_applied;       /* first-ACK tracking (D6): set when the
                               outer validates and accepts the ACK for
                               relay (at queueing, before any write
-                              completes) */
+                              completes); cleared only when a
+                              validated CANCEL or terminality
+                              discards that queued-but-unwritten
+                              ACK */
     int cleanup_acknowledged; /* outer completed the fallback proof */
+    int channel_open;     /* the nested control channel is open
+                             (control_fd >= 0) */
+    int channel_drain_only; /* outer-side termination began, or the
+                              record is terminal: nested-origin
+                              records are consumed-not-relayed /
+                              dropped until EOF, then the channel
+                              closes (the D4 single-terminal-answer
+                              and post-terminal drop rules) */
+    int fallback_initiated; /* this state's death fallback was
+                              initiated (the fallback execution is
+                              the fallback child's) */
+    int fallback_state;   /* the state whose death fallback applies
+                             (the pre-cancel state when the record
+                             was CANCELLING) */
+    int pre_cancel_state; /* the state the record was in when the
+                             cancel landed (recovered from the
+                             ordered history) */
+    int queued_ack;       /* an ACK relay write is queued-but-
+                             unwritten into the nested channel */
+    int queued_cancel;    /* a CANCEL relay write is queued-but-
+                             unwritten into the nested channel */
     int clean_final;       /* CLEAN records: 1 = success, 0 =
                               cancelled */
     char failure_token[DEALPG4_OUTER_TOKEN_VIEW_BYTES]; /* FAILED
@@ -321,6 +379,36 @@ typedef struct dealpg4_outer_record_view {
  * empty snapshot). */
 size_t dealpg4_outer_registry_count(void);
 int dealpg4_outer_registry_record(size_t idx, dealpg4_outer_record_view *out);
+
+/* === Outer-side fallback-termination surface (engine D4) ==============
+ * The channel-machine child owns the single-terminal-answer
+ * machinery; the fallback child calls these at its pinned moments,
+ * and the component tests drive them directly:
+ *  - begin: the moment an outer-side termination of a live record
+ *    starts (a state's death fallback at the nested supervisor's
+ *    death observation, or the wedge force-termination at the
+ *    TERM-by-pid dispatch). Queued-but-unwritten ACK/CANCEL writes
+ *    for the record are discarded without completing them and the
+ *    record's control channel switches to drain-only: every
+ *    nested-origin record from then on is consumed but never
+ *    relayed, never classified, never applied — until EOF, then
+ *    the channel closes.
+ *  - synthesize: the fallback's completion — the record's single
+ *    terminal answer: CLEAN <id> cancelled when the fallback proof
+ *    is clean, otherwise FAILED <id> <token> (the named survivor
+ *    finding of that proof: GROUP_SURVIVOR | SESSION_SURVIVOR |
+ *    ADOPTED_SURVIVOR | ZOMBIE_SURVIVOR). Queued through the
+ *    non-blocking POLLOUT path ahead of DONE, catalog-bounded,
+ *    never dropped by relay-queue pressure while the broker is
+ *    open, suppressed only when the broker is already closed.
+ *    Never a synthesized REPORT. The record transitions terminal
+ *    exactly once.
+ * Both resolve the invocation id against the live core state
+ * (valid during a core call) and return -1 with errno set when no
+ * live record carries that id or the operation does not apply. */
+int dealpg4_outer_fallback_begin(int64_t invocation_id);
+int dealpg4_outer_fallback_synthesize(int64_t invocation_id, int clean,
+                                      const char *token);
 
 /* === Coordinator-side dispatch contract (engine D5, pinned here for
  * the Java-client boundary — coordinator-observable terms only; the
@@ -504,6 +592,23 @@ enum dealpg4_outer_fi_fail_site {
                                     * and fires the parent-D5 stall
                                     * rule; a native deadline is never
                                     * suspended */
+#define FI_CONGEST_NESTED_CTRL   2 /* a nested control channel hop
+                                    * (engine D6, this child's site) */
+#define NESTED_WRITE_STALL       1 /* a nested control channel POLLOUT
+                                    * never ready — the outer's
+                                    * ACK/CANCEL write into that
+                                    * channel never completes (the
+                                    * flush reports EAGAIN without
+                                    * attempting the syscall). The
+                                    * conforming intermediate path
+                                    * (congestion alone) relays the
+                                    * nested-origin T1 FAILED
+                                    * STARTUP_TIMEOUT / T2 CLEAN
+                                    * cancelled record and discards
+                                    * the queued write; the wedge path
+                                    * (with FI_SUPV_SUPPRESS_DEADLINE)
+                                    * holds the record to its
+                                    * per-record deadline */
 
 /* Named delay-site tags (string tags through dealpg4_fi_hooks.
  * delay_ms; an injected delay sleeps exactly the scripted ms before
@@ -671,6 +776,35 @@ typedef struct dealpg4_outer_result {
                                    record CLEAN success or clean
                                    cancelled) */
     int64_t done_ms;            /* t0o-relative DONE queueing time */
+
+    /* Nested control-channel machine (engine D4 — this child). */
+    int nested_protocol_errors; /* PROTOCOL_ERROR on a nested control
+                                   channel (channel closed + the
+                                   state's death fallback initiated) */
+    int nested_terminal_relays; /* nested-origin CLEAN/FAILED records
+                                   relayed verbatim (the record's
+                                   single terminal answer) */
+    int synthesized_terminals;  /* outer-synthesized terminal records
+                                   queued (fallback completions) */
+    int ack_write_completions;  /* ACK relay writes completed
+                                   (RELEASED entries) */
+    int queued_write_discards;  /* queued-but-unwritten ACK/CANCEL
+                                   writes discarded without
+                                   completing */
+    int nested_deaths_observed; /* nested-supervisor deaths observed
+                                   (channel EOF/HUP or reap) */
+    int stub_ready_forwarded;   /* double-verified STUB_READY
+                                   forwarded to the broker */
+    int stub_verify_failures;   /* failed STUB_READY re-verifications
+                                   (nothing forwarded, nothing
+                                   answered) */
+    int nested_rejects;         /* nested REJECT records consumed
+                                   (the supervisor-defect hold) */
+    int broker_relay_overflow; /* a payload relay was dropped at the
+                                   1 MiB per-stream relay cap (the
+                                   truncation consequence) */
+    size_t broker_relay_dropped; /* relay payload bytes dropped at
+                                    the cap */
 } dealpg4_outer_result;
 
 /* Copy the most recent core call's result view (zeroed when no core
