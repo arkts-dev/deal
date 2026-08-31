@@ -1976,17 +1976,29 @@ static void dealpg4_supervisor_timer_failed(dealpg4_supervisor_state *state)
         state->phase = DEALPG4_PHASE_TERM;
 }
 
-/* Phase escalation per the parent D4 recipe. T1 pre-release:
- * STARTUP_TIMEOUT classification and the retained stub killed
- * pre-release (TERM now, KILL at the absolute T3) — never a release
- * byte after T1 without an observed successful release write (the
- * successful write already ended the startup phase); a pre-release
- * cancel freezes the release first, so a cancel-path invocation is
- * never re-classified STARTUP_TIMEOUT. T2: TERM against the verified
- * negative PGID. T3: KILL. T4: the proof deadline — the survivor /
- * DRAIN_FAILED / PROOF_TIMEOUT classification and the terminal
- * records at the terminal classification. T5: OVERALL_TIMEOUT (the
- * record terminates by its own deadline). */
+/* Phase escalation per the parent D4 recipe, applied in ascending
+ * deadline order (T1, T2, T3, T4, T5) so every boundary crossed in
+ * one hop is caught up in the same call: the phase-gated conditions
+ * are idempotent, and a loop iteration that resumes past the T4 proof
+ * deadline must never skip the T2 TERM or the T3 KILL — a stalled
+ * supervisor resumes the escalation instead of abandoning the target
+ * tree (D5: the supervisor never exits-and-orphans a released
+ * target). T1 pre-release: STARTUP_TIMEOUT classification and the
+ * retained stub killed pre-release (TERM now, KILL at the absolute
+ * T3) — never a release byte after T1 without an observed successful
+ * release write (the successful write already ended the startup
+ * phase); a pre-release cancel freezes the release first, so a
+ * cancel-path invocation is never re-classified STARTUP_TIMEOUT.
+ * T2: TERM against the verified negative PGID. T3: KILL. T4 (below
+ * T5 only): the proof deadline — the survivor / DRAIN_FAILED /
+ * PROOF_TIMEOUT classification and the terminal records at the
+ * terminal classification. T5: OVERALL_TIMEOUT — with the escalation
+ * and the cleanup completed before the exit: a still-live invocation
+ * at the overall deadline is classified OVERALL_TIMEOUT (termMs/
+ * killMs record the catch-up escalation above) and the loop stays
+ * alive until the killed tree is reaped and the proof completes
+ * (finalize runs from the proof completion), so the supervisor exits
+ * only with the zero-survivor post-state. */
 static void dealpg4_supervisor_advance_deadlines(
     dealpg4_supervisor_state *state)
 {
@@ -1995,49 +2007,8 @@ static void dealpg4_supervisor_advance_deadlines(
 
     if (state->done)
         return;
-    if (now >= state->dl.t5) {
-        if (!state->terminal_queued) {
-            state->classification = DEALPG4_SUP_CLASS_OVERALL_TIMEOUT;
-            state->proof_failed_class = 1;
-            if (state->proof_ms == 0)
-                state->proof_ms = now - state->t0;
-            dealpg4_supervisor_finalize(state);
-        }
-        state->done = 1;
-        return;
-    }
-    if (now >= state->dl.t4) {
-        /* The proof deadline classifies survivor / DRAIN_FAILED /
-         * PROOF_TIMEOUT paths — including a channel-loss / protocol-
-         * abort invocation whose proof still runs after the terminal
-         * classification (proof_pending admits exactly that state). */
-        if (dealpg4_supervisor_proof_pending(state))
-            dealpg4_supervisor_proof_deadline(state);
-        return;
-    }
-    if (now >= state->dl.t3 && state->phase == DEALPG4_PHASE_TERM) {
-        state->phase = DEALPG4_PHASE_KILL;
-        state->kill_issued = 1;
-        state->kill_ms = now - state->t0;
-        if (!state->stub_reaped)
-            dealpg4_supervisor_signal_target(state, SIGKILL);
-        if (dealpg4_deadline_arm(&state->timer, (uint64_t)state->dl.t4)
-            != 0)
-            dealpg4_supervisor_timer_failed(state);
-        return;
-    }
-    if (now >= state->dl.t2 && state->phase == DEALPG4_PHASE_RUN) {
-        state->phase = DEALPG4_PHASE_TERM;
-        state->term_issued = 1;
-        state->term_ms = now - state->t0;
-        if (!state->stub_reaped)
-            dealpg4_supervisor_signal_target(state, SIGTERM);
-        if (dealpg4_deadline_arm(&state->timer, (uint64_t)state->dl.t3)
-            != 0)
-            dealpg4_supervisor_timer_failed(state);
-        return;
-    }
-    if (now >= state->dl.t1 && state->phase == DEALPG4_PHASE_STARTUP) {
+    if (state->phase == DEALPG4_PHASE_STARTUP
+        && now >= state->dl.t1) {
         if (!state->release_write_ok
             && state->classification == DEALPG4_SUP_CLASS_NONE
             && !state->cancel_requested) {
@@ -2055,7 +2026,59 @@ static void dealpg4_supervisor_advance_deadlines(
         if (dealpg4_deadline_arm(&state->timer, (uint64_t)state->dl.t3)
             != 0)
             dealpg4_supervisor_timer_failed(state);
-        return;
+    }
+    if (state->phase == DEALPG4_PHASE_RUN && now >= state->dl.t2) {
+        state->phase = DEALPG4_PHASE_TERM;
+        state->term_issued = 1;
+        state->term_ms = now - state->t0;
+        if (!state->stub_reaped)
+            dealpg4_supervisor_signal_target(state, SIGTERM);
+        if (dealpg4_deadline_arm(&state->timer, (uint64_t)state->dl.t3)
+            != 0)
+            dealpg4_supervisor_timer_failed(state);
+    }
+    if (state->phase == DEALPG4_PHASE_TERM && now >= state->dl.t3) {
+        state->phase = DEALPG4_PHASE_KILL;
+        state->kill_issued = 1;
+        state->kill_ms = now - state->t0;
+        if (!state->stub_reaped)
+            dealpg4_supervisor_signal_target(state, SIGKILL);
+        if (dealpg4_deadline_arm(&state->timer, (uint64_t)state->dl.t4)
+            != 0)
+            dealpg4_supervisor_timer_failed(state);
+    }
+    if (now >= state->dl.t4 && now < state->dl.t5) {
+        /* The proof deadline classifies survivor / DRAIN_FAILED /
+         * PROOF_TIMEOUT paths — including a channel-loss / protocol-
+         * abort invocation whose proof still runs after the terminal
+         * classification (proof_pending admits exactly that state).
+         * Gated below T5: past the overall deadline the T5 branch
+         * owns the classification and the exit, and a proof deadline
+         * classification must not preempt the T5 cleanup. */
+        if (dealpg4_supervisor_proof_pending(state))
+            dealpg4_supervisor_proof_deadline(state);
+    }
+    if (now >= state->dl.t5) {
+        if (state->terminal_queued) {
+            /* The terminal record was already queued (the cleanup ran
+             * to its terminal classification) or the record terminates
+             * by its own deadline. */
+            state->done = 1;
+            return;
+        }
+        /* Live-unclassified at the overall deadline: the escalation
+         * was caught up above in this same call (TERM at T2, KILL at
+         * T3 — termMs/killMs record the issue times). Classify
+         * OVERALL_TIMEOUT, the owning T5 token, and keep the loop
+         * alive: SIGCHLD reaping and the proof loop complete the
+         * zero-survivor cleanup (the proof pass finalizes the
+         * invocation with the REPORT/FAILED records) before the
+         * supervisor exits. proof_failed_class is set at finalize for
+         * this token (the pinned drainEof = 0 consequence) — not
+         * here, so the proof loop still runs. */
+        state->classification = DEALPG4_SUP_CLASS_OVERALL_TIMEOUT;
+        if (state->proof_ms == 0)
+            state->proof_ms = now - state->t0;
     }
 }
 
@@ -2266,7 +2289,14 @@ static int dealpg4_supervisor_has_waitable(
 /* The T4 proof deadline: any survivor names its token — GROUP_SURVIVOR
  * / SESSION_SURVIVOR / ADOPTED_SURVIVOR / ZOMBIE_SURVIVOR /
  * DRAIN_FAILED — otherwise PROOF_TIMEOUT (the confirming pass did not
- * complete). REPORT and the terminal record publish at the terminal
+ * complete). Every survivor the scan discovers is signaled by pid
+ * first (parent D5/D6: adopted descendants are discovered by the
+ * /proc ppid scan and signaled TERM then KILL — at the deadline the
+ * escalation stage is KILL): in the normal flow the proof passes
+ * signaled them repeatedly already, and in the T2->T4 catch-up the
+ * proof passes are preempted by this check, so the check itself must
+ * complete the escalation instead of classifying a never-signaled
+ * escapee. REPORT and the terminal record publish at the terminal
  * classification without the incomplete stream's OUT_END (D5(d)). */
 static void dealpg4_supervisor_proof_deadline(
     dealpg4_supervisor_state *state)
@@ -2276,6 +2306,8 @@ static void dealpg4_supervisor_proof_deadline(
 
     dealpg4_supervisor_reap_all(state);
     dealpg4_supervisor_scan_proc(state, &surv);
+    if (surv.group_found || surv.session_found || surv.adopted_found)
+        dealpg4_supervisor_signal_survivors(state, &surv);
     state->group_clean = surv.ok && !surv.group_found;
     state->session_clean = surv.ok && !surv.session_found;
     state->drain_ok =
@@ -2864,6 +2896,14 @@ static void dealpg4_supervisor_finalize(dealpg4_supervisor_state *state)
              token);
     state->final_ms = (int64_t)dealpg4_now_ms() - state->t0;
 
+    /* The OVERALL_TIMEOUT pin (D5(d)): REPORT.drainEof = 0 — the
+     * streams never reached EOF before the overall deadline. The T5
+     * catch-up cleanup still completes the proof before the exit (the
+     * proof loop must run, so the consequence is applied here at the
+     * terminal classification, never while the proof is pending). */
+    if (state->classification == DEALPG4_SUP_CLASS_OVERALL_TIMEOUT)
+        state->proof_failed_class = 1;
+
     dealpg4_supervisor_build_report(state);
 
     if (state->control_fd >= 0) {
@@ -3134,7 +3174,12 @@ static int64_t dealpg4_supervisor_loop_timeout_ms(
 
         if (np <= now) {
             remaining = 0;
-        } else if (np - now < remaining) {
+        } else if (remaining == 0 || np - now < remaining) {
+            /* The proof-pass throttle is the wakeup whenever the
+             * recipe-state deadline is exhausted (the post-T4/T5
+             * catch-up cleanup states): the loop wakes at the proof
+             * cadence instead of busy-spinning on a 0-ms remaining
+             * while SIGCHLD reaping and the proof passes complete. */
             remaining = np - now;
         }
         if (state->proof_first_pass && !state->proof_done) {
@@ -3142,7 +3187,7 @@ static int64_t dealpg4_supervisor_loop_timeout_ms(
 
             if (confirm <= now) {
                 remaining = 0;
-            } else if (confirm - now < remaining) {
+            } else if (remaining == 0 || confirm - now < remaining) {
                 remaining = confirm - now;
             }
         }
