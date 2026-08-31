@@ -1,0 +1,12 @@
+// @expected: host-fixture
+// @description: Host-module declaration fixture (host-module-abi D6) —
+// resolved on demand by the host-fixture registry; the discovery walk
+// skips test/conformance/host-fixtures/ entirely.
+// Host fixture declaration for the ISSUE-0340 default-plan fixtures:
+// the two exported functions hold mutable host-side state so a DEAL
+// class default calling them observes every invocation (the load-time
+// zero-invocation probe and the per-attempt re-execution probe).
+
+export function nextValue(): int;
+
+export function valueCount(): int;

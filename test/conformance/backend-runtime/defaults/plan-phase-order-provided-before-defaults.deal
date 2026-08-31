@@ -1,0 +1,47 @@
+// @spec: Classes — Construction
+// @description: v1.2 default plans: provided field expressions evaluate before any default evaluation — a provided value that raises E8002 fires first and runs no defaults (the phase-order pin: the side-effect counter stays 0 after the failed attempt and observes exactly one call on the clean attempt).
+// @expected: runtime-ok
+// @features: classes, defaults, functions, modules, host-abi, arrays
+
+import * as probe from "host/planprobe"
+
+class C {
+  a: int = probe.nextValue();
+  b: int = 0;
+}
+
+function pick(): int {
+  let xs: int[] = [1];
+  return xs[-1];
+}
+
+export function test_plan_phase_order(): null {
+  let caught: Error | null = null;
+  try {
+    let c: C = { a: pick(), b: 3 };
+  } catch (e) {
+    caught = e;
+  }
+  if (caught !== null) {
+    if (caught.code !== "E8002") {
+      throw { code: "TEST_FAIL", message: "provided-value bounds error did not fire first" };
+    }
+  } else {
+    throw { code: "TEST_FAIL", message: "provided-value bounds error did not raise" };
+  }
+  if (probe.valueCount() !== 0) {
+    throw { code: "TEST_FAIL", message: "default ran before provided-value evaluation" };
+  }
+  let c2: C = { b: 3 };
+  if (probe.valueCount() !== 1) {
+    throw { code: "TEST_FAIL", message: "clean attempt did not run the default once" };
+  }
+  if (c2.a !== 10) {
+    throw { code: "TEST_FAIL", message: "clean attempt default result mismatch" };
+  }
+  return null;
+}
+
+export function main(): null {
+  return null;
+}

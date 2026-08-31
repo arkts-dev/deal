@@ -1,0 +1,23 @@
+// @spec: Classes — Construction
+// @description: v1.2 default plans: mutable table defaults are freshly constructed per construction attempt — two instances never share the default table (defaults are deep-constructed per their typed literal structure, never evaluated once at class declaration time).
+// @expected: runtime-ok
+// @features: classes, defaults, tables
+
+class Box {
+  data: table = {};
+}
+
+export function test_plan_fresh_literals(): null {
+  let a: Box = {};
+  let b: Box = {};
+  a.data.x = 7;
+  let bx: int | null = b.data.x;
+  if (bx !== null) {
+    throw { code: "TEST_FAIL", message: "plan table default shared across instances" };
+  }
+  return null;
+}
+
+export function main(): null {
+  return null;
+}

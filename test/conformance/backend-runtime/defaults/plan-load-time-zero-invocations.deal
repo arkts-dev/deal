@@ -1,0 +1,28 @@
+// @spec: Classes — Construction
+// @description: v1.2 default plans: evaluator closures are never invoked at module load — the host-side side-effect counter stays 0 until the first construction attempt runs the evaluator (defaults are evaluated per construction, not once at class declaration time).
+// @expected: runtime-ok
+// @features: classes, defaults, functions, modules, host-abi
+
+import * as probe from "host/planprobe"
+
+class Probe {
+  value: int = probe.nextValue();
+}
+
+export function test_plan_load_time_zero_invocations(): null {
+  if (probe.valueCount() !== 0) {
+    throw { code: "TEST_FAIL", message: "default evaluated at module load" };
+  }
+  let p: Probe = {};
+  if (probe.valueCount() !== 1) {
+    throw { code: "TEST_FAIL", message: "default did not run exactly once per attempt" };
+  }
+  if (p.value !== 10) {
+    throw { code: "TEST_FAIL", message: "default result mismatch" };
+  }
+  return null;
+}
+
+export function main(): null {
+  return null;
+}

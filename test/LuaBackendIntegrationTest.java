@@ -3298,8 +3298,8 @@ public class LuaBackendIntegrationTest {
         // so it's already in order, but we verify both exist)
         check(r.lua.contains("__deal[\"Child_fields\"] = {"), "Child_fields emitted");
         check(r.lua.contains("__deal[\"Parent_fields\"] = {"), "Parent_fields emitted");
-        // Parent field descriptor should reference Child_defaults and Child_fields
-        check(r.lua.contains("Child_defaults"), "nested class defaults reference");
+        // Parent field descriptor should reference Child_plan and Child_fields
+        check(r.lua.contains("Child_plan"), "nested class plan reference");
         check(r.lua.contains("Child_fields"), "nested class fields reference");
         check(r.lua.contains("jtype = \"class\""), "class jtype for nested field");
 

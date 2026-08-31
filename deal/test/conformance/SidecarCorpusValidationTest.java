@@ -145,8 +145,13 @@ public class SidecarCorpusValidationTest {
      * sidecar in the same change; plus the three stdlib/table keys
      * fixtures ISSUE-0341 added with their sidecars in the same
      * change: keys-string-inclusion, keys-nonstring-exclusion, and
-     * keys-order-pin). */
-    private static final int RUNTIME_OK_COUNT = 212;
+     * keys-order-pin; plus the six ISSUE-0340 default-plan runtime-ok
+     * fixtures — plan-fresh-literals, plan-reexecuted-calls,
+     * plan-load-time-zero-invocations, plan-imported-provider-scope,
+     * plan-phase-order-provided-before-defaults, and
+     * plan-host-discriminator — each added with its sidecar in the
+     * same change). */
+    private static final int RUNTIME_OK_COUNT = 218;
 
     /**
      * The exact runtime-error population (ISSUE-0350 completeness, plus
@@ -224,8 +229,15 @@ public class SidecarCorpusValidationTest {
      * stdlib/table keys runtime-ok fixtures (keys-string-inclusion,
      * keys-nonstring-exclusion, keys-order-pin) and the
      * keys-nontable-error runtime-error fixture with their sidecars in
-     * the same change, moving the pins to 212/81. The pins below carry
-     * those ISSUE-0334 and ISSUE-0341 deltas.
+     * the same change, moving the pins to 212/81. ISSUE-0340 then
+     * lands on the 212/81 corpus and adds exactly six default-plan
+     * runtime-ok fixtures with their sidecars in the same change —
+     * plan-fresh-literals, plan-reexecuted-calls,
+     * plan-load-time-zero-invocations, plan-imported-provider-scope,
+     * plan-phase-order-provided-before-defaults, and
+     * plan-host-discriminator (pins move 212 -> 218). The known-fail
+     * population stays empty. The pins below carry those ISSUE-0334,
+     * ISSUE-0341, and ISSUE-0340 deltas.
      */
 
     /** The G4.6 lane error framing prefixes. */

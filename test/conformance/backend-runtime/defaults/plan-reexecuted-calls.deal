@@ -1,0 +1,26 @@
+// @spec: Classes — Construction
+// @description: v1.2 default plans: call-valued defaults re-execute on every construction attempt — the host-side invocation counter observes exactly one call per attempt and each instance receives the call's current result (the call is re-executed per construction, never evaluated once at class declaration time).
+// @expected: runtime-ok
+// @features: classes, defaults, functions, modules, host-abi
+
+import * as probe from "host/planprobe"
+
+class Counter {
+  value: int = probe.nextValue();
+}
+
+export function test_plan_reexecuted_calls(): null {
+  let a: Counter = {};
+  let b: Counter = {};
+  if (probe.valueCount() !== 2) {
+    throw { code: "TEST_FAIL", message: "default call did not re-execute per attempt" };
+  }
+  if (a.value !== 10 || b.value !== 20) {
+    throw { code: "TEST_FAIL", message: "per-attempt default results mismatch" };
+  }
+  return null;
+}
+
+export function main(): null {
+  return null;
+}

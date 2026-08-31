@@ -53,8 +53,15 @@ public final class LuaAbi {
     /** The Lua emission encoding of the safe/unsafe key decision. */
     public enum KeyForm { DOT, BRACKET }
 
-    /** The five kinds of per-class generated artifacts. */
-    public enum HelperKind { DEFAULTS, META, FIELDS, FROM_JSON, TO_JSON }
+    /**
+     * The six kinds of per-class generated artifacts. {@link #PLAN} is the
+     * v1.2 extension of the frozen helper-key set (emitter page D4): the
+     * module-scope compiler-class default-plan artifact ({@code <C>_plan})
+     * holding the ordered field-entry list with evaluator closures. Host
+     * modules never carry a PLAN key ({@code host-module-abi} D1/D2) —
+     * host-declared classes keep the {@link #DEFAULTS} defaults-map seam.
+     */
+    public enum HelperKind { DEFAULTS, META, FIELDS, FROM_JSON, TO_JSON, PLAN }
 
     // =========================================================================
     // Backend-neutral decision surface (reusable for future backends)
@@ -102,9 +109,9 @@ public final class LuaAbi {
 
     /**
      * Returns the raw DEAL artifact name for a class helper of the given
-     * kind (e.g. {@code User_defaults}, {@code User$fromJson}). The
-     * returned names are the frozen export keys; {@code $} names are
-     * preserved raw.
+     * kind (e.g. {@code User_defaults}, {@code User$fromJson},
+     * {@code User_plan}). The returned names are the frozen export keys;
+     * {@code $} names are preserved raw.
      */
     public static String helperKey(String className, HelperKind kind) {
         return switch (kind) {
@@ -113,6 +120,7 @@ public final class LuaAbi {
             case FIELDS -> className + "_fields";
             case FROM_JSON -> className + "$fromJson";
             case TO_JSON -> className + "$toJson";
+            case PLAN -> className + "_plan";
         };
     }
 
@@ -233,7 +241,8 @@ public final class LuaAbi {
 
     /**
      * Emits a reference to a class artifact:
-     * {@code __deal["<C>_defaults"]}, {@code __deal["<C>$fromJson"]}, etc.
+     * {@code __deal["<C>_defaults"]}, {@code __deal["<C>$fromJson"]},
+     * {@code __deal["<C>_plan"]}, etc.
      */
     public static String helperRef(String className, HelperKind kind) {
         return generatedRef(helperKey(className, kind));

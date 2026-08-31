@@ -181,9 +181,9 @@ public final class LuaBackend implements Visitor<Void> {
     /**
      * Export keys whose slots were registered by an {@code export class}
      * declaration, mapped to the class name (META under the bare class
-     * name, DEFAULTS under {@code <C>_defaults}). Their values are
-     * resolved at chunk end in {@link #emitExports} against the last
-     * chunk-visible declaration of the class name.
+     * name, PLAN under {@code <C>_plan}). Their values are resolved at
+     * chunk end in {@link #emitExports} against the last chunk-visible
+     * declaration of the class name.
      */
     private final Map<String, String> classExportKeyOwners = new HashMap<>();
 
@@ -976,7 +976,7 @@ public final class LuaBackend implements Visitor<Void> {
                 // the frozen export surface.
                 LuaAbi.HelperKind kind = key.equals(ownerClass)
                     ? LuaAbi.HelperKind.META
-                    : LuaAbi.HelperKind.DEFAULTS;
+                    : LuaAbi.HelperKind.PLAN;
                 value = resolveClassExportValue(ownerClass, kind);
             }
             emitLine(LuaAbi.exportAssignment(key, value));
@@ -1043,10 +1043,10 @@ public final class LuaBackend implements Visitor<Void> {
      */
     private String resolveClassExportValue(String className,
                                            LuaAbi.HelperKind kind) {
-        // META and DEFAULTS are the only kinds exported through the
+        // META and PLAN are the only kinds exported through the
         // class-export keys (FIELDS/FROM_JSON/TO_JSON values follow the
         // deferred pass's last-declared-wins registration instead).
-        String suffix = (kind == LuaAbi.HelperKind.META) ? "_meta" : "_defaults";
+        String suffix = (kind == LuaAbi.HelperKind.META) ? "_meta" : "_plan";
         if (lastChunkVisibleClassDecl.get(className)
                 == ChunkVisibleClassDecl.MODULE_LEVEL) {
             return LuaAbi.helperRef(className, kind);
@@ -1382,30 +1382,43 @@ public final class LuaBackend implements Visitor<Void> {
     @Override
     public Void visit(ClassDeclaration node) {
         String name = node.name();
-        StringBuilder defaults = new StringBuilder("{");
+        StringBuilder plan = new StringBuilder("{");
         boolean first = true;
         for (ClassField field : node.fields()) {
-            if (!first) defaults.append(", ");
+            if (!first) plan.append(", ");
             first = false;
-            String fieldDefault;
-            if (field.optional() && field.defaultExpr().isEmpty()) {
-                fieldDefault = "__MISSING";
-            } else if (field.defaultExpr().isPresent()) {
-                fieldDefault = emitExpression(field.defaultExpr().get());
+            plan.append("{ name = \"").append(field.name()).append("\"");
+            Type fieldType = resolveTypeNode(field.type());
+            String descriptor = (fieldType == null
+                    || fieldType instanceof Type.Error)
+                ? "\"table\"" : quotedTypeDescriptor(fieldType);
+            plan.append(", descriptor = ").append(descriptor);
+            plan.append(", optional = ")
+                .append(field.optional() ? "true" : "false");
+            String evaluator;
+            if (field.defaultExpr().isPresent()) {
+                evaluator = "function() return "
+                    + emitExpression(field.defaultExpr().get()) + " end";
+            } else if (field.optional()) {
+                evaluator = null;
             } else if (field.nullable()) {
-                fieldDefault = "__NULL";
+                evaluator = "function() return __NULL end";
             } else {
-                fieldDefault = defaultValueForTypeNode(field.type());
+                evaluator = "function() return "
+                    + defaultValueForTypeNode(field.type()) + " end";
             }
-            defaults.append(LuaAbi.tableField(field.name(), fieldDefault));
+            if (evaluator != null) {
+                plan.append(", evaluator = ").append(evaluator);
+            }
+            plan.append(" }");
         }
-        defaults.append("}");
+        plan.append("}");
 
         emitLine("-- Class: " + name);
         if (moduleScope) {
             emitLine(LuaAbi.namespaceAssignment(
-                LuaAbi.helperKey(name, LuaAbi.HelperKind.DEFAULTS),
-                defaults.toString()));
+                LuaAbi.helperKey(name, LuaAbi.HelperKind.PLAN),
+                plan.toString()));
             emitLine(LuaAbi.namespaceAssignment(
                 LuaAbi.helperKey(name, LuaAbi.HelperKind.META),
                 "__rt.export_class(\"" + qualifiedClassName(name) + "\")"));
@@ -1417,13 +1430,13 @@ public final class LuaBackend implements Visitor<Void> {
             lastChunkVisibleClassDecl.put(name,
                 ChunkVisibleClassDecl.MODULE_LEVEL);
         } else {
-            emitLine("local " + LuaAbi.helperKey(name, LuaAbi.HelperKind.DEFAULTS)
-                + " = " + defaults.toString());
+            emitLine("local " + LuaAbi.helperKey(name, LuaAbi.HelperKind.PLAN)
+                + " = " + plan.toString());
             emitLine("local " + LuaAbi.helperKey(name, LuaAbi.HelperKind.META)
                 + " = __rt.export_class(\"" + qualifiedClassName(name) + "\")");
             // Track the declaration so construction sites that resolve to
             // the root ClassSymbol of the same name reference the bare
-            // <C>_defaults local (Lua lexical scoping) instead of the
+            // <C>_plan local (Lua lexical scoping) instead of the
             // __deal namespace entry (nested shadowing, D2.6).
             recordNestedClassDeclaration(name);
             // A nested declaration in a chunk-level bare block emits
@@ -1951,15 +1964,18 @@ public final class LuaBackend implements Visitor<Void> {
                     // is a placeholder that emitExports() replaces.
                     classExportKeyOwners.put(cd.name(), cd.name());
                 }
-                // Also export the defaults table so importing modules
-                // can construct instances of this class.
-                String defaultsKey = LuaAbi.helperKey(
-                    cd.name(), LuaAbi.HelperKind.DEFAULTS);
-                if (exportedValues.putIfAbsent(defaultsKey,
+                // Also export the default plan so importing modules
+                // can construct instances of this class through
+                // __rt.class_plan_ (emitter page D4 — the PLAN extension
+                // of the frozen helper-key set; host-declared classes
+                // never register here, they live in host modules).
+                String planKey = LuaAbi.helperKey(
+                    cd.name(), LuaAbi.HelperKind.PLAN);
+                if (exportedValues.putIfAbsent(planKey,
                     moduleLevel
-                        ? LuaAbi.helperRef(cd.name(), LuaAbi.HelperKind.DEFAULTS)
-                        : cd.name() + "_defaults") == null) {
-                    classExportKeyOwners.put(defaultsKey, cd.name());
+                        ? LuaAbi.helperRef(cd.name(), LuaAbi.HelperKind.PLAN)
+                        : cd.name() + "_plan") == null) {
+                    classExportKeyOwners.put(planKey, cd.name());
                 }
                 visit(cd);
 
@@ -1967,7 +1983,7 @@ public final class LuaBackend implements Visitor<Void> {
                 if (cd.isJsonable()) {
                     // Record metadata for deferred emission
                     deferredJsonables.add(new JsonableClassMeta(
-                        cd.name(), cd.fields(), moduleLevel));
+                        cd.name(), cd.fields(), moduleLevel, cd.span()));
                     // Register exports for generated jsonable artifacts.
                     // put (not putIfAbsent): the deferred pass is keyed by
                     // class name with last-declaration-wins (the
@@ -2533,19 +2549,35 @@ public final class LuaBackend implements Visitor<Void> {
         }
         provided.append("}");
 
-        String defaultsRef;
+        String planRef;
+        String entry;
         if (sym instanceof Symbol.ClassSymbol cs) {
-            // Root ClassSymbol (module-level class, including the seeded
-            // Error): the artifact normally lives in the __deal namespace
-            // table. When a non-module-level declaration of the same name
-            // is lexically visible at the construction site (nested-class
-            // shadowing, lua-abi-emission-layer D2.6), reference the bare
-            // <C>_defaults local instead so Lua lexical scoping resolves to
+            // Root ClassSymbol (module-level compiler class, including
+            // the seeded Error). Compiler classes construct through the
+            // plan entry __rt.class_plan_ over their default plan; the
+            // seeded builtin Error keeps the preserved defaults-map
+            // entry over the builtin plan {code="", message=""} emitted
+            // in the header (emitter page D4). The artifact normally
+            // lives in the __deal namespace table. When a
+            // non-module-level declaration of the same name is lexically
+            // visible at the construction site (nested-class shadowing,
+            // lua-abi-emission-layer D2.6), reference the bare
+            // <C>_plan local instead so Lua lexical scoping resolves to
             // the scope-local artifact, exactly as the pre-namespace
             // backend did.
-            defaultsRef = hasVisibleNestedClassDeclaration(className)
-                ? className + "_defaults"
-                : LuaAbi.helperRef(className, LuaAbi.HelperKind.DEFAULTS);
+            boolean builtinError = cs.identity().moduleIdentity()
+                instanceof CanonicalModuleIdentity.BuiltinModule;
+            if (builtinError) {
+                planRef = hasVisibleNestedClassDeclaration(className)
+                    ? className + "_defaults"
+                    : LuaAbi.helperRef(className, LuaAbi.HelperKind.DEFAULTS);
+                entry = "class_";
+            } else {
+                planRef = hasVisibleNestedClassDeclaration(className)
+                    ? className + "_plan"
+                    : LuaAbi.helperRef(className, LuaAbi.HelperKind.PLAN);
+                entry = "class_plan_";
+            }
         } else {
             // The import alias whose export carries this exact identity
             // wins first: two files in one directory share the module
@@ -2553,32 +2585,102 @@ public final class LuaBackend implements Visitor<Void> {
             // distinguishes an imported class from a same-module nested
             // declaration.
             String alias = findImportAliasForClass(className, cls.identity());
-            if (alias == null && isDeclaredInThisModule(cls)
+            if (alias != null) {
+                // Host-class discriminator (emitter page D4/D7).
+                // Host-declared classes keep exactly today's emission —
+                // __rt.class_ over alias["<C>_defaults"] (load_host
+                // copies the frozen defaults map; no <C>_plan exists in
+                // host modules). DEAL-imported classes construct through
+                // __rt.class_plan_ over the provider's exported
+                // alias["<C>_plan"].
+                if (isHostDeclaredClass(cls)) {
+                    planRef = LuaAbi.memberAccess(alias,
+                        LuaAbi.helperKey(className, LuaAbi.HelperKind.DEFAULTS));
+                    entry = "class_";
+                } else {
+                    planRef = LuaAbi.memberAccess(alias,
+                        LuaAbi.helperKey(className, LuaAbi.HelperKind.PLAN));
+                    entry = "class_plan_";
+                }
+            } else if (isDeclaredInThisModule(cls)
                     && !cls.identity().moduleIdentity().equals(
                         CanonicalModuleIdentity.BuiltinModule.INSTANCE)) {
                 // Same-module class that is not in the root symbol
                 // table: a nested declaration (block/function-local).
-                // Reference the scope-local <C>_defaults artifact when
-                // it is lexically visible at the construction site
+                // Reference the scope-local <C>_plan artifact when it
+                // is lexically visible at the construction site
                 // (lua-abi-emission-layer D2.6) — the checker
                 // (ISSUE-0318 seam) now types these literals as class
                 // constructions. A non-visible reference can only come
                 // from a checker-error program, so the {} fallback
                 // mirrors the imported-class defensive arm.
-                defaultsRef = hasVisibleNestedClassDeclaration(className)
-                    ? className + "_defaults"
+                planRef = hasVisibleNestedClassDeclaration(className)
+                    ? className + "_plan"
                     : "{}";
-            } else if (alias != null) {
-                defaultsRef = LuaAbi.memberAccess(alias,
-                    LuaAbi.helperKey(className, LuaAbi.HelperKind.DEFAULTS));
+                entry = "class_plan_";
+            } else if (cls.identity().moduleIdentity()
+                    instanceof CanonicalModuleIdentity.BuiltinModule) {
+                // The builtin Error resolved outside the root symbol
+                // table (defensive; the seeded ClassSymbol covers every
+                // valid program): keep the preserved defaults-map entry
+                // over the header's builtin plan.
+                planRef = LuaAbi.helperRef(className,
+                    LuaAbi.HelperKind.DEFAULTS);
+                entry = "class_";
             } else {
-                defaultsRef = "{}";
+                planRef = "{}";
+                entry = "class_plan_";
             }
         }
 
         Span cspan = obj.span();
-        return "__rt.class_(" + quotedTypeDescriptor(cls) + ", " + defaultsRef
+        return "__rt." + entry + "(" + quotedTypeDescriptor(cls) + ", " + planRef
             + ", " + provided.toString() + ", " + spanArgs(cspan) + ")";
+    }
+
+    /**
+     * Host-class discriminator (emitter page D4): an imported class is
+     * host-declared iff its dotted module path equals the dotted form of
+     * a {@code hostModules} key (raw import path with {@code /} &rarr;
+     * {@code .} — the same mapping {@code CompilationOrchestrator}
+     * derives the externals typing/class-identity name with at
+     * {@code deal/module/CompilationOrchestrator.java:980} and the
+     * harness applies to host fixtures per {@code host-module-abi} D6).
+     * Host-declared construction keeps the preserved defaults-map entry;
+     * every other imported class is compiler-declared and constructs
+     * through its provider's default plan.
+     */
+    private boolean isHostDeclaredClass(Type.Class cls) {
+        CanonicalModuleIdentity moduleIdentity =
+            cls.identity().moduleIdentity();
+        if (moduleIdentity
+                instanceof CanonicalModuleIdentity.ExternalModule em) {
+            // Externals classification (production orchestrator and the
+            // conformance harness): the raw import specifier may carry
+            // the slash-form manifest key (orchestrator) or the already
+            // dotted typing form (harness); either projects the same
+            // dotted module path through the '/' -> '.' mapping.
+            String dotted = em.rawImportSpecifier().replace('/', '.');
+            for (String raw : hostModules.keySet()) {
+                if (raw.replace('/', '.').equals(dotted)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        if (moduleIdentity
+                instanceof CanonicalModuleIdentity.ProjectModule pm) {
+            // Standalone backend classification (single-module adapter):
+            // each host module registers as a project module whose
+            // configured root text is the dotted host path.
+            String dotted = pm.projectIdentity().configuredRootText();
+            for (String raw : hostModules.keySet()) {
+                if (raw.replace('/', '.').equals(dotted)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /**
@@ -2873,11 +2975,20 @@ public final class LuaBackend implements Visitor<Void> {
          */
         final boolean moduleLevel;
 
+        /**
+         * The class declaration's source span, forwarded into the
+         * plan-based reconstruction entry ({@code json_from_plan}) so
+         * any error that escapes the null-collapsing walkers carries the
+         * declaration location (emitter page D8).
+         */
+        final Span span;
+
         JsonableClassMeta(String className, List<ClassField> fields,
-                          boolean moduleLevel) {
+                          boolean moduleLevel, Span span) {
             this.className = className;
             this.fields = fields;
             this.moduleLevel = moduleLevel;
+            this.span = span;
         }
     }
 
@@ -2912,6 +3023,56 @@ public final class LuaBackend implements Visitor<Void> {
         emitLine("local __json = require(\"std.json\")");
         emitLine("local __json_parse = __json.parse.f");
         emitLine("local __json_stringify = __json.stringify.f");
+        emitLine("");
+        // Nested class-field decoder (emitter page D4): compiler-class
+        // plans reconstruct class-typed sub-documents through
+        // __rt.json_from_plan recursively; host-declared class fields
+        // (no plan) keep the preserved defaults+fields walkers. The
+        // plan-based C$fromJson bodies call it before __rt.json_from_plan
+        // so every class-typed provided value is a tagged instance at
+        // plan validation time; any failure returns nil and the wrapper
+        // maps it to the DEAL null.
+        emitLine("-- @jsonable nested class-field decoder");
+        emitLine("local function __jsonable_from_value(fdesc, raw)");
+        indent++;
+        emitLine("if fdesc.jtype == \"class\" then");
+        indent++;
+        emitLine("if raw == __rt.__NULL then");
+        indent++;
+        emitLine("if fdesc.nullable then return __rt.__NULL end");
+        emitLine("return nil");
+        indent--;
+        emitLine("end");
+        emitLine("if fdesc.plan ~= nil then");
+        indent++;
+        emitLine("return __rt.json_from_plan(fdesc.className, fdesc.plan, raw)");
+        indent--;
+        emitLine("end");
+        emitLine("return __rt.json_from_json(fdesc.className, raw, "
+            + "fdesc.defaults, fdesc.fields)");
+        indent--;
+        emitLine("end");
+        emitLine("if fdesc.jtype == \"array\" then");
+        indent++;
+        emitLine("local elem = fdesc.element");
+        emitLine("if elem.jtype == \"class\" or elem.jtype == \"array\" then");
+        indent++;
+        emitLine("if not __rt._json_is_array(raw) then return nil end");
+        emitLine("for i = 1, #raw do");
+        indent++;
+        emitLine("local nv = __jsonable_from_value(elem, raw[i])");
+        emitLine("if nv == nil then return nil end");
+        emitLine("raw[i] = nv");
+        indent--;
+        emitLine("end");
+        indent--;
+        emitLine("end");
+        emitLine("return raw");
+        indent--;
+        emitLine("end");
+        emitLine("return raw");
+        indent--;
+        emitLine("end");
         emitLine("");
 
         // Build lookup map by class name
@@ -3071,8 +3232,7 @@ public final class LuaBackend implements Visitor<Void> {
             sb.append(", className = \"")
                 .append(escapeLuaStringNoQuotes(classNameFromTypeNode(innerType)))
                 .append("\"");
-            sb.append(", defaults = ").append(defaultsRefForTypeNode(innerType));
-            sb.append(", fields = ").append(fieldsRefForTypeNode(innerType));
+            appendClassFieldSubShape(sb, innerType);
         } else if (jtype.equals("array")) {
             ArrayType at = (ArrayType) innerType;
             sb.append(", element = ")
@@ -3105,8 +3265,7 @@ public final class LuaBackend implements Visitor<Void> {
             sb.append(", className = \"")
                 .append(escapeLuaStringNoQuotes(classNameFromTypeNode(inner)))
                 .append("\"");
-            sb.append(", defaults = ").append(defaultsRefForTypeNode(inner));
-            sb.append(", fields = ").append(fieldsRefForTypeNode(inner));
+            appendClassFieldSubShape(sb, inner);
         } else if (jtype.equals("array")) {
             ArrayType at = (ArrayType) inner;
             sb.append(", element = ")
@@ -3159,6 +3318,72 @@ public final class LuaBackend implements Visitor<Void> {
     }
 
     /**
+     * Appends the class-typed sub-shape of a field/element descriptor
+     * (emitter page D4). Compiler-declared classes carry the declaring
+     * module's {@code plan} reference — the nested decoder reconstructs
+     * them through {@code __rt.json_from_plan}; host-declared classes
+     * (D4 discriminator) and the builtin {@code Error} keep the
+     * preserved {@code defaults} reference into the
+     * {@code json_from_json}/{@code json_to_json} walkers
+     * ({@code host-module-abi} D2 cycle-6). {@code fields} always
+     * follows: the encode walker iterates it and host-class nested
+     * decode validates it.
+     */
+    private void appendClassFieldSubShape(StringBuilder sb, TypeNode typeNode) {
+        if (classFieldKeepsDefaultsWalker(typeNode)) {
+            sb.append(", defaults = ").append(defaultsRefForTypeNode(typeNode));
+        } else {
+            sb.append(", plan = ").append(planRefForTypeNode(typeNode));
+        }
+        sb.append(", fields = ").append(fieldsRefForTypeNode(typeNode));
+    }
+
+    /**
+     * True when a class-typed field keeps the preserved defaults walker:
+     * a host-declared class (the D4 discriminator) or the builtin
+     * {@code Error} (empty declaring module path — its defaults live in
+     * the header's {@code Error_defaults} artifact; no plan is emitted
+     * for it).
+     */
+    private boolean classFieldKeepsDefaultsWalker(TypeNode typeNode) {
+        Type.Class cls = resolvedClassForTypeNode(typeNode);
+        if (cls == null) return false;
+        if (cls.identity().moduleIdentity()
+                instanceof CanonicalModuleIdentity.BuiltinModule) {
+            // The builtin Error keeps its defaults in the header's
+            // Error_defaults artifact; no plan is emitted for it.
+            return true;
+        }
+        return isHostDeclaredClass(cls);
+    }
+
+    /**
+     * The resolved {@link Type.Class} of a type node, or {@code null}
+     * when the node is not a class type (checker-error programs).
+     */
+    private Type.Class resolvedClassForTypeNode(TypeNode typeNode) {
+        Type resolved = resolveTypeNode(typeNode);
+        return resolved instanceof Type.Class cls ? cls : null;
+    }
+
+    /**
+     * Returns the Lua reference for the default-plan artifact of a
+     * class-typed field: the {@code __deal} namespace entry (or the bare
+     * scope-local for a visible nested declaration) for same-module
+     * classes; the imported module's exported {@code <C>_plan} for
+     * cross-module DEAL classes (emitter page D4).
+     */
+    private String planRefForTypeNode(TypeNode typeNode) {
+        return switch (typeNode) {
+            case NamedType nt -> visibleNestedArtifactRef(nt.name(),
+                LuaAbi.HelperKind.PLAN);
+            case QualifiedType qt -> LuaAbi.memberAccess(qt.moduleName(),
+                LuaAbi.helperKey(qt.typeName(), LuaAbi.HelperKind.PLAN));
+            default -> "{}";
+        };
+    }
+
+    /**
      * Returns the Lua reference for the defaults table of a class-typed field.
      */
     private String defaultsRefForTypeNode(TypeNode typeNode) {
@@ -3204,6 +3429,7 @@ public final class LuaBackend implements Visitor<Void> {
                 case FIELDS -> "_fields";
                 case FROM_JSON -> "_fromJson";
                 case TO_JSON -> "_toJson";
+                case PLAN -> "_plan";
             };
             return className + suffix;
         }
@@ -3212,6 +3438,14 @@ public final class LuaBackend implements Visitor<Void> {
 
     /**
      * Emits the {@code C$fromJson} function for a single @jsonable class.
+     *
+     * <p>Compiler classes reconstruct through the plan entry
+     * {@code __rt.json_from_plan} (emitter page D4): the parsed document
+     * runs through the module's nested class-field decoder (so every
+     * class-typed sub-document is a tagged instance before plan
+     * validation), then the plan entry applies the pinned phase order
+     * (provided-value validation, omitted-default evaluation, final
+     * validation) and any failure collapses to the DEAL null.
      */
     private void emitFromJson(JsonableClassMeta meta) {
         String name = meta.className;
@@ -3222,11 +3456,11 @@ public final class LuaBackend implements Visitor<Void> {
 
         // Non-module-level @jsonable classes keep the legacy $→_ scope-local
         // binding (local C_fromJson) and reference their scope-local
-        // C_defaults/C_fields artifacts; only module-level classes write and
+        // C_plan/C_fields artifacts; only module-level classes write and
         // read the __deal namespace table (lua-abi-emission-layer D2.6).
-        String defaultsRef = meta.moduleLevel
-            ? LuaAbi.helperRef(name, LuaAbi.HelperKind.DEFAULTS)
-            : name + "_defaults";
+        String planRef = meta.moduleLevel
+            ? LuaAbi.helperRef(name, LuaAbi.HelperKind.PLAN)
+            : name + "_plan";
         String fieldsRef = meta.moduleLevel
             ? LuaAbi.helperRef(name, LuaAbi.HelperKind.FIELDS)
             : name + "_fields";
@@ -3241,8 +3475,25 @@ public final class LuaBackend implements Visitor<Void> {
         emitLine("__rt.check_string(s)");
         emitLine("local ok, parsed = pcall(__json_parse, s)");
         emitLine("if not ok then return __NULL end");
-        emitLine("local instance = __rt.json_from_json(\"" + identity
-            + "\", parsed, " + defaultsRef + ", " + fieldsRef + ")");
+        // Top-level input gate (jsonable-runtime-validation D2 step 2 +
+        // the plan entry's own gates): scalars and the DEAL null never
+        // reach the field walk.
+        emitLine("if type(parsed) ~= \"table\" or parsed == __rt.__NULL"
+            + " then return __NULL end");
+        emitLine("for _, f in ipairs(" + fieldsRef + ") do");
+        indent++;
+        emitLine("local raw = parsed[f.name]");
+        emitLine("if raw ~= nil then");
+        indent++;
+        emitLine("local nv = __jsonable_from_value(f, raw)");
+        emitLine("if nv == nil then return __NULL end");
+        emitLine("parsed[f.name] = nv");
+        indent--;
+        emitLine("end");
+        indent--;
+        emitLine("end");
+        emitLine("local instance = __rt.json_from_plan(\"" + identity
+            + "\", " + planRef + ", parsed, " + spanArgs(meta.span) + ")");
         emitLine("if instance == nil then return __NULL end");
         emitLine("return instance");
         indent--;
@@ -3367,6 +3618,14 @@ public final class LuaBackend implements Visitor<Void> {
                     Symbol sym = symbols.resolve(nt.name());
                     if (sym instanceof Symbol.ClassSymbol cs) {
                         yield Types.classType(nt.name(), cs.identity());
+                    }
+                    // A visible nested declaration of the name (the
+                    // bytes arm's guard): nested classes share the
+                    // declaring module's identity space, so the type
+                    // resolves to the same-module class atom even
+                    // though the root symbol table has no entry.
+                    if (hasVisibleNestedClassDeclaration(nt.name())) {
+                        yield classTypeFor(nt.name(), modulePath);
                     }
                     yield Type.Error.INSTANCE;
                 }

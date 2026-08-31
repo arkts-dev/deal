@@ -1,0 +1,28 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: v1.2 host-class discriminator: an imported host-declared class constructs through the preserved defaults-map entry (alias.ServerConfig_defaults over __rt.class_) — the emitter reads and exports no <C>_plan for host classes, and the constructed instance crosses the host boundary through a declared function parameter.
+// @expected: runtime-ok
+// @features: modules, host-abi, classes, defaults
+
+import * as cfg from "host/cfg"
+
+export function test_plan_host_discriminator(): string {
+  let s: cfg.ServerConfig = {
+    port: 9090,
+    endpoint: { path: "/api" },
+  };
+  if (s.port !== 9090) {
+    throw { code: "TEST_FAIL", message: "host class port field mismatch" };
+  }
+  if (s.endpoint.path !== "/api") {
+    throw { code: "TEST_FAIL", message: "host class endpoint field mismatch" };
+  }
+  let described: string = cfg.describe(s);
+  if (described !== "/api:9090") {
+    throw { code: "TEST_FAIL", message: "host class instance failed the boundary roundtrip" };
+  }
+  return "host discriminator ok";
+}
+
+export function main(): null {
+  return null;
+}
