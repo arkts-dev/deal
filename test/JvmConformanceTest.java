@@ -83,23 +83,28 @@ import java.util.concurrent.atomic.AtomicInteger;
  *       @jsonable JVM defects: nested-array {@code fromJson} javac
  *       collision; table-field nested arrays E8001; the fromJson
  *       top-level input gate (ISSUE-0101 promotion).</li>
- *   <li><b>JVM-GAP-HOST-ABI-SHAPES</b> (13 entries) — JVM host ABI
+ *   <li><b>JVM-GAP-HOST-ABI-SHAPES</b> (16 entries) — JVM host ABI
  *       unsupported declared shapes: host class exports,
- *       array/function-typed parameters and returns (E6000), and the
- *       Lua pre-wrapped export form.</li>
- *   <li><b>JVM-GAP-XMOD-FNVALUE</b> (5 entries) — cross-module function
- *       values: imported call results and module aliases used as
- *       function values (E6000).</li>
- *   <li><b>JVM-GAP-XMOD-ARRAY</b> (1 entry) — imported async array
- *       return: per-module array wrapper classes cannot cross module
- *       boundaries (javac-rejected artifact; a missed E6000
- *       guard).</li>
+ *       array/function-typed parameters and returns (E6000), the
+ *       Lua pre-wrapped export form, and the host async export used as
+ *       a function value (relabeled from JVM-GAP-XMOD-FNVALUE with the
+ *       shared-carrier lane).</li>
+ *   <li><b>JVM-GAP-XMOD-FNVALUE</b> — RETIRED with the shared runtime
+ *       value surface (ISSUE-0301): the four cross-module function-value
+ *       fixtures pass the real pipeline on the shared $DealRt wrapper
+ *       carriers, and the stale-skip gate forced the registry entries
+ *       out.</li>
+ *   <li><b>JVM-GAP-XMOD-ARRAY</b> — RETIRED with the shared runtime
+ *       value surface (ISSUE-0301): await-returning-array-indexed
+ *       passes the real pipeline on the shared $DealRt array carriers,
+ *       and the stale-skip gate forced the registry entry out.</li>
  *   <li><b>JVM-GAP-ASYNC-FNEXPR</b> (2 entries) — async function
  *       expressions and block-level async functions (E6000).</li>
- *   <li><b>JVM-GAP-DESCRIPTORS</b> (1 entry) — the canonical descriptor
- *       cutover: the LuaJIT-owned canonical-boundary E8010
- *       signature-mismatch expectation requires the canonical matcher's
- *       function row; JVM descriptors are ISSUE-0277's.</li>
+ *   <li><b>JVM-GAP-DESCRIPTORS</b> — RETIRED with the canonical matcher
+ *       realization (ISSUE-0301): the emitted $check function row raises
+ *       E8010 on a carried-descriptor delta, so
+ *       canonical-sig-mismatch-e8010 passes and the stale-skip gate
+ *       forced the entry out.</li>
  *   <li><b>JVM-GAP-DEFAULTS-PLANS</b> (2 entries) — the v1.2
  *       default-plan lane (ISSUE-0340, LuaJIT-owned): imported
  *       non-literal defaults evaluate in the declaring module's scope
@@ -123,9 +128,10 @@ import java.util.concurrent.atomic.AtomicInteger;
  * <ul>
  *   <li>frontend-classified files: 100% pass (zero failed);</li>
  *   <li>backend-runtime: zero applicable failures AND at least 80% of
- *       the on-disk backend-runtime tests (the 257-test
- *       denominator) pass through the frontend → CompilationOrchestrator
- *       → JVM codegen → javac → JVM pipeline;</li>
+ *       the on-disk backend-runtime tests (the per-run
+ *       {@code runtimeDenominator()} count — currently 293) pass through the
+ *       frontend → CompilationOrchestrator → JVM codegen → javac → JVM
+ *       pipeline;</li>
  *   <li>zero unclassified skips (by construction — the classifier has
  *       no fallback skip branch, and the registry is validated);</li>
  *   <li>zero stale skips and zero stale known-fail markers (promotion
@@ -190,19 +196,13 @@ public class JvmConformanceTest {
                 + "non-string keys the fixture pins excluded from "
                 + "std/table.keys.", "JVM-GAP-STDJSON");
 
-        // ---- JVM-GAP-DESCRIPTORS: the canonical descriptor cutover
-        // (ISSUE-0336, LuaJIT-owned) ----
-        // The canonical-boundary family pins the LuaJIT canonical matcher's
-        // function row: a signature mismatch raises E8010. The JVM backend's
-        // boundary path reports the same mismatch through its own E8001
-        // template (JVM descriptor completion is ISSUE-0277's); the four
-        // sibling runtime-ok canonical-boundary fixtures pass on JVM and
-        // stay applicable.
-        skip("backend-runtime/descriptors/canonical-sig-mismatch-e8010.deal",
-            "E8010 on a function signature mismatch requires the canonical "
-                + "descriptor matcher's function row; the JVM boundary path "
-                + "reports the mismatch as E8001 (ISSUE-0277).",
-            "JVM-GAP-DESCRIPTORS");
+        // ---- JVM-GAP-DESCRIPTORS: retired with the canonical matcher
+        // realization (ISSUE-0301) ----
+        // The emitted $check function row (jvm-v12-runtime-value-surface
+        // D5) raises E8010 "function signature mismatch: expected {D},
+        // got {actual}" on any carried-descriptor delta, so
+        // canonical-sig-mismatch-e8010 passes the real pipeline and the
+        // stale-skip gate forced the entry's removal.
 
         // ---- JVM-GAP-INT32: the signed-int32 runtime gate ----
         // The v1.2 corpus pins int as [-2147483648, 2147483647] with E8004
@@ -378,33 +378,26 @@ public class JvmConformanceTest {
                 + "references), so the caught-E8002 phase-order probe "
                 + "cannot compile.", "JVM-GAP-DEFAULTS-PLANS");
 
-        // ---- JVM-GAP-XMOD-FNVALUE: cross-module function values ----
-        skip("backend-runtime/closures/closure-returned-from-module.deal",
-            "E6000: function values returned from an imported module "
-                + "call (per-module wrapper classes cannot cross a module "
-                + "boundary).", "JVM-GAP-XMOD-FNVALUE");
-        skip("backend-runtime/modules/imported-closure-factory.deal",
-            "E6000: function values returned from an imported module "
-                + "call.", "JVM-GAP-XMOD-FNVALUE");
-        skip("backend-runtime/modules/imported-recursive-callback.deal",
-            "E6000: module aliases used as values (cross-module function "
-                + "value).", "JVM-GAP-XMOD-FNVALUE");
-        skip("backend-runtime/async-await/imported-async-function-value.deal",
-            "E6000: module aliases used as values (imported async "
-                + "function as a function value).", "JVM-GAP-XMOD-FNVALUE");
+        // ---- JVM-GAP-XMOD-FNVALUE: retired with the shared runtime
+        // value surface (ISSUE-0301) ----
+        // The four cross-module function-value fixtures
+        // (closure-returned-from-module, imported-closure-factory,
+        // imported-recursive-callback, imported-async-function-value)
+        // pass the real pipeline on the shared $DealRt wrapper carriers
+        // and were removed with their promotion; the stale-skip gate
+        // forced the removals. host-async-shape-value (a host export
+        // used as a first-class function value) stays with the host ABI
+        // shapes lane below — the host wrapper surface is
+        // jvm-v12-host-abi-completion's.
         skip("backend-runtime/host-abi/host-async-shape-value.deal",
             "E6000: module aliases used as values (host async export "
-                + "as a function value).", "JVM-GAP-XMOD-FNVALUE");
+                + "as a function value).", "JVM-GAP-HOST-ABI-SHAPES");
 
-        // ---- JVM-GAP-XMOD-ARRAY: imported async array return ----
-        skip("backend-runtime/async-await/await-returning-array-indexed.deal",
-            "imported async call returning an array: per-module "
-                + "__IntArray wrapper classes cannot cross the module "
-                + "boundary; the emitted artifact is javac-rejected "
-                + "(\"incompatible types: Async_batch2_lib.__IntArray "
-                + "cannot be converted to "
-                + "Await_returning_array_indexed.__IntArray\") — a "
-                + "missed E6000 guard.", "JVM-GAP-XMOD-ARRAY");
+        // ---- JVM-GAP-XMOD-ARRAY: retired with the shared runtime value
+        // surface (ISSUE-0301) ----
+        // await-returning-array-indexed passes the real pipeline on the
+        // shared $DealRt array carriers and was removed with its
+        // promotion; the stale-skip gate forced the removal.
 
         // ---- JVM-GAP-ASYNC-FNEXPR: async function expressions ----
         skip("backend-runtime/async-await/async-fn-expr.deal",
@@ -433,12 +426,6 @@ public class JvmConformanceTest {
             + "shapes — host class exports, array/function-typed "
             + "parameters and returns (E6000), the Lua pre-wrapped "
             + "export form",
-        "JVM-GAP-XMOD-FNVALUE", "cross-module function values — imported "
-            + "call results and module aliases used as function values "
-            + "(E6000)",
-        "JVM-GAP-XMOD-ARRAY", "imported async array return — per-module "
-            + "array wrapper classes cannot cross module boundaries "
-            + "(javac-rejected artifact; a missed E6000 guard)",
         "JVM-GAP-ASYNC-FNEXPR", "async function expressions and "
             + "block-level async functions (E6000)",
         "JVM-GAP-BYTES", "bytes runtime lane — JvmBackend raises E6000 on "
@@ -447,10 +434,6 @@ public class JvmConformanceTest {
             + "(zero-fill buffers, E8012/E8013, single-evaluation "
             + "writes, canonical bytes descriptors) pass only on "
             + "LuaJIT and Node",
-        "JVM-GAP-DESCRIPTORS", "canonical descriptor cutover — the "
-            + "LuaJIT-owned canonical-boundary E8010 signature-mismatch "
-            + "expectation requires the canonical matcher's function row "
-            + "(ISSUE-0336); JVM descriptors are ISSUE-0277's",
         "JVM-GAP-DEFAULTS-PLANS", "v1.2 default-plan lane — imported "
             + "non-literal defaults evaluate in the declaring module's "
             + "scope under LuaJIT (E6000 on the JVM imported-class "

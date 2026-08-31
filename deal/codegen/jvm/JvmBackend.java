@@ -133,11 +133,16 @@ import java.util.function.Function;
  * imported-class arrays ({@code Lib.Point[]}). Tables map to the SHARED
  * {@code $DealRt.Table} class (declared by the entry module's artifact
  * or the standalone adapter), so table values cross module boundaries
- * with shared identity. Anything outside this scope — nested class
+ * with shared identity. ISSUE-0301 extends that shared scope into the
+ * full runtime value surface: the per-signature function wrapper
+ * classes, the per-element-shape array wrapper classes, and the final
+ * {@code Bytes} carrier live in the ONE entry-emitted {@code $DealRt},
+ * so function values and arrays cross module boundaries unchanged (the
+ * {@code JVM-GAP-XMOD-FNVALUE}/{@code JVM-GAP-XMOD-ARRAY} surfaces are
+ * retired). Anything outside this scope — nested class
  * declarations, {@code table | null} values, nullable tables, arrays of
- * table elements, async/await, cross-module
- * function-value flow (the per-module wrapper classes cannot cross a
- * module boundary), stdlib imports other than the five supported
+ * table elements, async/await, stdlib imports other than the five
+ * supported
  * modules — is rejected with a backend {@code E6000} diagnostic, never
  * silently miscompiled.
  *
@@ -221,19 +226,19 @@ import java.util.function.Function;
  * permits. Async function values reuse the ISSUE-0098 wrapper
  * machinery unchanged: {@code resolveTypeNode} accepts the {@code
  * async} marker on function-type annotations, so a declared async
- * function produces the same per-signature wrapper class
- * ({@code Fn1_I_R_I} for {@code async (x: int) =&gt; int}) and
- * per-declaration wrapper instance field ({@code value$fn}) the sync
+ * function produces the same shared wrapper class
+ * ({@code $DealRt.FnA1_I_R_I} for {@code async (x: int) =&gt; int} —
+ * a distinct shape id, so the async descriptor can never share a
+ * class with the sync shape) and per-declaration wrapper instance
+ * field ({@code value$fn}) the sync
  * slice emits, typed locals/parameters of async function type hold
  * wrapper references, and awaited indirect calls
  * ({@code let f: async (x: int) =&gt; int = value; await f(6);})
  * dispatch through {@code invoke} with the same completion check.
- * Deferred to ISSUE-0110 with E6000: async function expressions and
- * function types with non-representable signatures
- * (arrays/classes/nullables/nested function types). Cross-module
- * function values stay E6000 for async signatures exactly like sync
- * ones (the per-module wrapper classes cannot cross a module
- * boundary). The frontend keeps enforcing every spec-v1.2 async rule
+ * Cross-module async function values flow on the shared carriers like
+ * sync ones (ISSUE-0301). Deferred to the async-expressions lane with
+ * E6000: async function expressions and block-level async functions.
+ * The frontend keeps enforcing every spec-v1.2 async rule
  * (E3012 await outside async, E3013 await on a non-async call, E3014
  * async call without await — the backend never sees a non-conforming
  * await).
@@ -275,9 +280,11 @@ import java.util.function.Function;
  * __init$}, which Java's in-progress initialization rule handles without
  * deadlock).
  *
- * <p>Primitive arrays (ISSUE-0094) map to emitted mutable wrapper
+ * <p>Primitive arrays (ISSUE-0094) map to the SHARED
+ * {@code $DealRt} mutable wrapper
  * classes ({@code __IntArray}/{@code __NumberArray}/{@code __StringArray}/
- * {@code __BooleanArray} holding a primitive Java array), the spec's
+ * {@code __BooleanArray} holding a primitive Java array — ISSUE-0301
+ * D3), the spec's
  * "specialized primitive array wrapper" JVM representation. The wrapper
  * identity is stable across appends — writing at {@code i == length}
  * grows the wrapped storage in place — so aliases observe every write
@@ -433,16 +440,20 @@ import java.util.function.Function;
  * later-declared variable in an {@code else if} condition is rejected
  * with E6000 instead of emitting an illegal forward reference.
  *
- * <p>Function values (ISSUE-0098 slice): a function declaration produces a
- * first-class typed function value — a per-signature abstract wrapper
- * class ({@code Fn2_II_R_I} for {@code (int,int)->int}) carrying the
- * spec-convention runtime descriptor string and an {@code invoke} method
- * with the JVM-mapped signature, plus a per-declaration wrapper instance
- * field ({@code add$fn}) emitted at the declaration's source position
- * whose invoke delegates to the static method (the JVM form of the Lua
- * backend's runtime function wrappers). Typed/inferred variables,
- * parameters (callbacks), module fields, and returns of function type
- * hold wrapper references; indirect calls dispatch through
+ * <p>Function values (ISSUE-0098 slice; ISSUE-0301 shared carriers): a
+ * function declaration produces a first-class typed function value — a
+ * per-signature abstract wrapper class declared in the SHARED
+ * {@code $DealRt} runtime scope ({@code $DealRt.Fn2_I_I_R_I} for
+ * {@code (int,int)->int}, one class per compiled project) carrying the
+ * complete canonical runtime descriptor string and an {@code invoke}
+ * method with the JVM-mapped signature, plus a per-declaration wrapper
+ * instance field ({@code add$fn}) emitted at the declaration's source
+ * position whose invoke delegates to the static method (the JVM form of
+ * the Lua backend's runtime function wrappers). Because the wrapper
+ * class is shared, function values cross module boundaries unchanged —
+ * the {@code JVM-GAP-XMOD-FNVALUE} surface is retired. Typed/inferred
+ * variables, parameters (callbacks), returns, and array/class fields of
+ * function type hold wrapper references; indirect calls dispatch through
  * {@code invoke}, including callees that are call results
  * ({@code picker()(41)} → {@code __fn0 = picker(); __fn0.invoke(41L)} —
  * the callee is materialized into a single-assignment temporary at its
@@ -457,7 +468,9 @@ import java.util.function.Function;
  * signature check LuaJIT performs at callback-argument and return
  * boundaries: a wrapper of the target shape whose construction raises
  * {@code E8010} "function signature mismatch: expected …, got …" where
- * LuaJIT's parameter/return boundary check raises it. At check positions
+ * LuaJIT's parameter/return boundary check raises it — including the
+ * imported member call's declared parameter targets (ISSUE-0301). At
+ * check positions
  * the value expression is evaluated FIRST (materialized into a
  * temporary at its evaluation position) and later call arguments are
  * materialized before the raising construction, so every evaluation
@@ -473,8 +486,8 @@ import java.util.function.Function;
  * is then stable, so the snapshot equals LuaJIT's live read forever).
  * A local/parameter the enclosing body reassigns anywhere and any
  * non-identifier value expression (a call result, which LuaJIT
- * re-evaluates on every invoke) are rejected with E6000 until
- * ISSUE-0110, never a silent divergence; no lambda is ever emitted.
+ * re-evaluates on every invoke) are rejected with E6000, never a silent
+ * divergence; no lambda is ever emitted.
  * Function equality is wrapper
  * reference identity (LuaJIT's wrapper-table identity). Load-time value
  * uses of a not-yet-declared function are E6000 (LuaJIT reads the global
@@ -490,13 +503,16 @@ import java.util.function.Function;
  * field may hold must not (transitively) read a later-declared field,
  * reach a later-declared function, or use a later-declared import —
  * otherwise E6000, never a silent divergence. Async markers are
- * ISSUE-0099-slice: the same wrapper classes, per-declaration wrapper
- * fields, indirect calls, adapters, and guards cover async signatures
+ * ISSUE-0099-slice: the same shared wrapper classes (with a distinct
+ * shape id per async descriptor), per-declaration wrapper fields,
+ * indirect calls, adapters, and guards cover async signatures
  * unchanged (see the ISSUE-0099 paragraph above), with the
  * await-site completion check applied at every await. Function
- * expressions, nested functions, and signatures
- * containing arrays/classes/nullables/nested function types/rest arms
- * stay deferred to ISSUE-0110 and are rejected with E6000.
+ * expressions and nested functions emit (ISSUE-0102); function-type
+ * ANNOTATIONS whose signatures contain arrays/classes/nullables/bytes
+ * stay resolveTypeNode-gated with E6000 (the shape-encoding itself
+ * covers the complete canonical grammar), and async function
+ * expressions stay E6000 (the async-expressions lane).
  *
  * <p>JVM value mapping follows the spec's JVM backend contract
  * ({@code docs/spec-v1.2.md} §JVM value mapping / §JVM backend contract —
@@ -684,10 +700,16 @@ public final class JvmBackend {
     }
     private final boolean isEntry;
 
-    /** True when this artifact must carry the shared $DealRt table
-     * class (the orchestrator's selected entry module or the standalone
-     * single-module adapter). */
+    /** True when this artifact must carry the shared $DealRt runtime
+     * scope (ISSUE-0102 tables; ISSUE-0301 function/array/bytes
+     * carriers) — the orchestrator's selected entry module or the
+     * standalone single-module adapter. */
     private final boolean emitSharedTable;
+
+    /** The orchestrator's collected project-wide shape set (ISSUE-0301
+     * D4), pre-registered in {@link #generateProgram} after the module
+     * pre-scan; empty for the standalone single-module adapter. */
+    private final List<Type> collectedShapes;
 
     /**
      * The backend-wide int mode derived from the invocation's
@@ -1002,6 +1024,17 @@ public final class JvmBackend {
      */
     private final List<String> classCheckBranches = new ArrayList<>();
 
+    /** Per-element-shape {@code [D]} check branches for nested-array,
+     * function-array, and bytes-array element shapes (ISSUE-0301 D5):
+     * every {@link #registerRefArrayShape} call appends the generated
+     * branch text; {@link #emitSharedCheckSeam} emits them inside the
+     * emitted {@code $checkArray} helper. */
+    private final List<String> refArrayCheckBranches = new ArrayList<>();
+
+    /** Element shapes whose {@code [D]} branch is registered (one branch
+     * per shape). */
+    private final Set<Type> refArrayCheckElements = new LinkedHashSet<>();
+
     /** Module-level @jsonable class declarations, in declaration order
      * (the JSON serialization slice). Registered in the pre-scan; drives
      * the conditional emission of the JSON runtime support and the
@@ -1019,11 +1052,13 @@ public final class JvmBackend {
     private List<StatementNode> moduleStatements = List.of();
 
     /** Emitted function-wrapper shape classes (one abstract class per
-     * distinct signature), accumulated during emission and spliced into
-     * the class body right after the runtime support. */
-    private final StringBuilder wrapperClasses = new StringBuilder();
+     * distinct signature) for the SHARED $DealRt runtime scope,
+     * accumulated during emission and spliced into the $DealRt body
+     * right after the fixed carrier classes (ISSUE-0301 runtime value
+     * surface: one shared carrier scope per compiled project). */
+    private final StringBuilder sharedWrapperClasses = new StringBuilder();
 
-    /** Wrapper shapes already registered (one class per shape name). */
+    /** Wrapper shapes already registered (one class per shape id). */
     private final Set<String> emittedWrapperShapes = new LinkedHashSet<>();
 
     /** The statements of the function body currently being emitted, or
@@ -1186,9 +1221,10 @@ public final class JvmBackend {
                        Map<String, Map<String, ClassDeclaration>> importedClasses,
                        Map<String, Map<String, Type>> hostModules,
                        boolean isEntry, boolean emitSharedTable,
+                       SemanticProfile semanticProfile,
+                       List<Type> sharedShapes,
                        CanonicalClassIdentityIndex identityIndex,
-                       Function<String, CanonicalModuleIdentity> moduleIdentities,
-                       SemanticProfile semanticProfile) {
+                       Function<String, CanonicalModuleIdentity> moduleIdentities) {
         this.typeMap = typeMap;
         this.symbols = symbols;
         this.sourcePath = sourcePath;
@@ -1204,10 +1240,492 @@ public final class JvmBackend {
             ? Map.of() : Map.copyOf(importResolutions);
         this.importedClasses = importedClasses == null
             ? Map.of() : Map.copyOf(importedClasses);
-        this.hostModules = hostModules == null
-            ? Map.of() : Map.copyOf(hostModules);
+        // The inner export maps keep the orchestrator's declaration
+        // order (info.exports is a statement-ordered LinkedHashMap):
+        // collectModuleShapes walks them in source order (deterministic
+        // diagnostics D4 — hash-bucket iteration must never drive
+        // output). The outer map is keyed-access-only.
+        Map<String, Map<String, Type>> hostCopy = new LinkedHashMap<>();
+        for (Map.Entry<String, Map<String, Type>> entry
+                : (hostModules == null ? Map.<String, Map<String, Type>>of()
+                    : hostModules).entrySet()) {
+            hostCopy.put(entry.getKey(), entry.getValue() == null
+                ? Map.of() : new LinkedHashMap<>(entry.getValue()));
+        }
+        this.hostModules = hostCopy;
         localScopes.push(new LinkedHashMap<>());
         localTypeScopes.push(new LinkedHashMap<>());
+        // ISSUE-0301 D4: the orchestrator's project-wide shape set
+        // (deterministic — dependency order, then source order) is
+        // pre-registered in generateProgram (after the module-class and
+        // import pre-scan) so the entry module's shared $DealRt scope
+        // carries every shape any module references. Null for the
+        // standalone single-module adapter, whose lazy registrations
+        // are the complete one-module set.
+        this.collectedShapes = sharedShapes == null
+            ? List.of() : List.copyOf(sharedShapes);
+    }
+
+    /**
+     * Pre-registers one collected project shape (ISSUE-0301 D4): a
+     * function-signature shape registers its shared wrapper class, an
+     * array-element shape registers its shared per-element-shape array
+     * carrier class and its {@code [D]} check branch. Registration is
+     * idempotent and never records a diagnostic.
+     */
+    private void registerCollectedShape(Type t) {
+        if (t instanceof Type.Func f) {
+            registerWrapperShape(f);
+            return;
+        }
+        if (t instanceof Type.Array a) {
+            Type element = a.element();
+            if (element instanceof Type.Array
+                    || element instanceof Type.Func
+                    || (element instanceof Type.Nullable ne
+                        && ne.inner() instanceof Type.Func)
+                    || element instanceof Type.Bytes
+                    || (element instanceof Type.Nullable ne
+                        && ne.inner() instanceof Type.Bytes)) {
+                registerRefArrayShape(element);
+            }
+        }
+    }
+
+    // =========================================================================
+    // Project-wide shape collection (ISSUE-0301 D4)
+    // =========================================================================
+
+    /** The closed shape set produced by a collection pass; {@code null}
+     * during emission. Populated only by {@link #collectModuleShapes}. */
+    private LinkedHashSet<Type> collectedShapesOut = null;
+
+    /**
+     * Collects the closed project-shape set of ONE checked module
+     * (ISSUE-0301 D4): every function-signature shape and every
+     * nested-array/function-array/bytes-array element shape the
+     * module's emission can reference — every type annotation
+     * (parameters, returns, locals, fields, array elements, function
+     * signatures), the host declarations, and the two intrinsic
+     * wrappers — closed transitively. Diagnostic-free: the pass
+     * resolves types with a silent mirror of {@link #resolveTypeNode}
+     * and never records an E6000 (the real emission sites own every
+     * diagnostic). The result is deterministic, seeded ONLY through
+     * source-ordered walks (deterministic-diagnostics D4 — hash-bucket
+     * iteration never drives the output): the two intrinsic wrapper
+     * shapes, the host declarations in import-statement order (each
+     * export map in declaration order), then the AST walk in statement
+     * order closing every annotation and expression type.
+     */
+    public static List<Type> collectShapes(ProgramNode program,
+            CheckResult result, String sourcePath, String modulePath,
+            Map<String, String> importResolutions,
+            Map<String, Map<String, ClassDeclaration>> importedClasses,
+            Map<String, Map<String, Type>> hostModules,
+            SemanticProfile semanticProfile,
+            CanonicalClassIdentityIndex identityIndex,
+            Function<String, CanonicalModuleIdentity> moduleIdentities) {
+        JvmBackend collector = new JvmBackend(result.typeMap(),
+            result.symbolTable(), sourcePath, modulePath,
+            importResolutions, importedClasses, hostModules, false, false,
+            semanticProfile, null, identityIndex, moduleIdentities);
+        return collector.collectModuleShapes(program);
+    }
+
+    /**
+     * True when the given collected shape transitively references a
+     * class whose declaring module is a HOST module of the compiled
+     * project ({@code hostPaths}: the raw import specifiers, e.g.
+     * {@code host/cfg}, that any project module imports). Host class
+     * exports keep their import-time E6000s (the host ABI lane's
+     * carriers — jvm-v12-host-abi-completion): the shared {@code
+     * $DealRt} scope must never carry a wrapper whose invoke signature
+     * references a host Java class the backend never emits, so the
+     * orchestrator's collection seam drops such shapes from the
+     * project-wide union before any module pre-registers them. A class
+     * whose carried module identity classifies as an externals
+     * declaration module (the identity layer's
+     * {@code ExternalModule(rawImportSpecifier)}) matches when its raw
+     * specifier (or its dotted/raw converted spelling) is one of the
+     * project's host import paths.
+     */
+    public static boolean shapeReferencesHostModule(Type t,
+            Set<String> hostPaths) {
+        if (t instanceof Type.Class c) {
+            CanonicalModuleIdentity mi = c.identity().moduleIdentity();
+            if (mi instanceof CanonicalModuleIdentity.ExternalModule em) {
+                String raw = em.rawImportSpecifier();
+                if (hostPaths.contains(raw)) {
+                    return true;
+                }
+                if (hostPaths.contains(raw.replace('.', '/'))) {
+                    return true;
+                }
+                if (hostPaths.contains(raw.replace('/', '.'))) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        if (t instanceof Type.Func f) {
+            for (Type p : f.paramTypes()) {
+                if (shapeReferencesHostModule(p, hostPaths)) {
+                    return true;
+                }
+            }
+            return shapeReferencesHostModule(f.returnType(), hostPaths);
+        }
+        if (t instanceof Type.Array a) {
+            return shapeReferencesHostModule(a.element(), hostPaths);
+        }
+        if (t instanceof Type.Nullable n) {
+            return shapeReferencesHostModule(n.inner(), hostPaths);
+        }
+        return false;
+    }
+
+    private List<Type> collectModuleShapes(ProgramNode program) {
+        collectedShapesOut = new LinkedHashSet<>();
+        // Silent context mirror of generateProgram's pre-scan: module
+        // classes and import aliases, so the silent class-type mapper
+        // resolves exactly the classes the real emission would.
+        for (StatementNode stmt : program.statements()) {
+            if (stmt instanceof ImportDeclaration imp) {
+                if (SUPPORTED_STDLIB_MODULES.contains(imp.modulePath())) {
+                    importAliases.put(imp.alias(), imp.modulePath());
+                } else {
+                    Map<String, Type> hostExports =
+                        hostModules.get(imp.modulePath());
+                    if (hostExports != null) {
+                        importAliases.put(imp.alias(),
+                            imp.modulePath().replace('/', '.'));
+                    } else {
+                        String resolved = importResolutions.get(
+                            imp.modulePath());
+                        if (resolved != null) {
+                            importAliases.put(imp.alias(), resolved);
+                        }
+                    }
+                }
+            } else if (stmt instanceof ClassDeclaration cd) {
+                moduleClasses.putIfAbsent(cd.name(), cd);
+            } else if (stmt instanceof ExportDeclaration ed
+                    && ed.declaration() instanceof ClassDeclaration cd) {
+                moduleClasses.putIfAbsent(cd.name(), cd);
+            }
+        }
+        // The two conversion-intrinsic wrapper shapes every module emits.
+        closeShape(new Type.Func(List.of(Type.Number.INSTANCE),
+            Type.Int.INSTANCE));
+        closeShape(new Type.Func(List.of(Type.Int.INSTANCE),
+            Type.Number.INSTANCE));
+        // Host declaration shapes, in import-statement (source) order:
+        // the export maps are the orchestrator's declaration-ordered
+        // correctedExports LinkedHashMaps (preserved by the constructor
+        // copy), so this walk is deterministic — source order, never
+        // hash-bucket order (deterministic-diagnostics D4). The
+        // checker-inferred expression types need no separate map
+        // iteration: collectTypeNodes walks every expression node in
+        // source order and closes its typeMap entry there.
+        for (StatementNode stmt : program.statements()) {
+            if (stmt instanceof ImportDeclaration imp) {
+                Map<String, Type> hostExports =
+                    hostModules.get(imp.modulePath());
+                if (hostExports != null) {
+                    for (Type t : hostExports.values()) {
+                        closeShape(t);
+                    }
+                }
+            }
+        }
+        // Every type annotation and nested expression in the AST.
+        collectTypeNodes(program.statements());
+        List<Type> result = List.copyOf(collectedShapesOut);
+        collectedShapesOut = null;
+        return result;
+    }
+
+    /** Adds {@code t} to the collection and closes over its structure:
+     * function params/returns, array elements, nullable inners. */
+    private void closeShape(Type t) {
+        if (t instanceof Type.Func f) {
+            if (collectedShapesOut.add(f)) {
+                for (Type p : f.paramTypes()) {
+                    closeShape(p);
+                }
+                closeShape(f.returnType());
+            }
+            return;
+        }
+        if (t instanceof Type.Array a) {
+            if (collectedShapesOut.add(a)) {
+                closeShape(a.element());
+            }
+            return;
+        }
+        if (t instanceof Type.Nullable n) {
+            closeShape(n.inner());
+        }
+    }
+
+    /** Silent resolution of a type annotation for the collection pass:
+     * mirrors {@link #resolveTypeNode} shape-for-shape but never
+     * records a diagnostic ({@code Type.Error} for unsupported shapes,
+     * which the real emission rejects with its own E6000). */
+    /** Identity-carrying {@code Type.Class} for a class declared in
+     * the given wiring path, or {@code Type.Error} when the path has
+     * no public module identity — the silent collection pass never
+     * throws and never records a diagnostic. */
+    private Type silentClassType(String name, String wiringPath) {
+        CanonicalModuleIdentity moduleIdentity = moduleIdentities.apply(
+            wiringPath == null ? "" : wiringPath);
+        if (moduleIdentity == null) {
+            return Type.Error.INSTANCE;
+        }
+        return Types.classType(name,
+            new CanonicalClassIdentity(moduleIdentity, name));
+    }
+
+    private Type silentResolveTypeNode(TypeNode tn) {
+        return switch (tn) {
+            case NamedType nt -> switch (nt.name()) {
+                case "null" -> Type.Null.INSTANCE;
+                case "boolean" -> Type.Boolean.INSTANCE;
+                case "int" -> Type.Int.INSTANCE;
+                case "number" -> Type.Number.INSTANCE;
+                case "string" -> Type.String.INSTANCE;
+                case "bytes" -> Type.Bytes.INSTANCE;
+                case "table" -> Type.Table.INSTANCE;
+                default -> {
+                    Symbol sym = symbols.resolve(nt.name());
+                    if (sym instanceof Symbol.ClassSymbol
+                            && moduleClasses.containsKey(nt.name())) {
+                        yield silentClassType(nt.name(), modulePath);
+                    }
+                    if ("Error".equals(nt.name())
+                            && sym instanceof Symbol.ClassSymbol) {
+                        yield errorClassType();
+                    }
+                    yield Type.Error.INSTANCE;
+                }
+            };
+            case QualifiedType qt -> {
+                String module = importResolutions.get(qt.moduleName());
+                Map<String, ClassDeclaration> decls =
+                    module == null ? null : importedClasses.get(module);
+                if (decls == null || !decls.containsKey(qt.typeName())) {
+                    yield Type.Error.INSTANCE;
+                }
+                yield silentClassType(qt.typeName(), module);
+            }
+            case ArrayType at -> {
+                Type elem = silentResolveTypeNode(at.elementType());
+                yield elem == Type.Error.INSTANCE
+                    ? Type.Error.INSTANCE : new Type.Array(elem);
+            }
+            case NullableType nnt -> {
+                Type inner = silentResolveTypeNode(nnt.innerType());
+                if (inner == Type.Error.INSTANCE
+                        || inner instanceof Type.Null
+                        || inner instanceof Type.Nullable) {
+                    yield Type.Error.INSTANCE;
+                }
+                yield new Type.Nullable(inner);
+            }
+            case FunctionType ft -> {
+                List<Type> params = new ArrayList<>();
+                boolean ok = true;
+                for (FunctionTypeParam p : ft.params()) {
+                    Type pt = silentResolveTypeNode(p.type());
+                    if (pt == Type.Error.INSTANCE) {
+                        ok = false;
+                        break;
+                    }
+                    params.add(pt);
+                }
+                Type rt = silentResolveTypeNode(ft.returnType());
+                if (rt == Type.Error.INSTANCE) {
+                    ok = false;
+                }
+                yield ok
+                    ? new Type.Func(params, rt, ft.isAsync())
+                    : Type.Error.INSTANCE;
+            }
+        };
+    }
+
+    /** The function shape of a declaration (the signature the wrapper
+     * field will carry), assembled exactly like the checker's function
+     * symbol type. */
+    private void collectDeclarationShape(FunctionDeclaration fd) {
+        List<Type> params = new ArrayList<>();
+        boolean ok = true;
+        for (Parameter p : fd.params()) {
+            Type pt = silentResolveTypeNode(p.type());
+            if (pt == Type.Error.INSTANCE) {
+                ok = false;
+                break;
+            }
+            params.add(pt);
+        }
+        Type rt = silentResolveTypeNode(fd.returnType());
+        if (rt == Type.Error.INSTANCE) {
+            ok = false;
+        }
+        if (ok) {
+            closeShape(new Type.Func(params, rt, fd.isAsync()));
+        }
+    }
+
+    /** Walks every statement collecting type annotations and expression
+     * types (with nested function-expression bodies). */
+    private void collectTypeNodes(List<StatementNode> stmts) {
+        for (StatementNode stmt : stmts) {
+            switch (stmt) {
+                case VariableDeclaration vd -> {
+                    vd.typeAnnotation().ifPresent(this::collectTypeNode);
+                    collectExprShapes(vd.initializer());
+                }
+                case FunctionDeclaration fd -> {
+                    collectTypeNode(fd.returnType());
+                    for (Parameter p : fd.params()) {
+                        collectTypeNode(p.type());
+                    }
+                    collectDeclarationShape(fd);
+                    collectTypeNodes(fd.body().statements());
+                }
+                case ExportDeclaration ed -> collectTypeNodes(
+                    List.of(ed.declaration()));
+                case ClassDeclaration cd -> {
+                    for (ClassField cf : cd.fields()) {
+                        collectTypeNode(cf.type());
+                        cf.defaultExpr().ifPresent(this::collectExprShapes);
+                    }
+                }
+                case ReturnStatement rs -> rs.expr().ifPresent(
+                    this::collectExprShapes);
+                case IfStatement is -> {
+                    collectExprShapes(is.condition());
+                    collectTypeNodes(is.thenBlock().statements());
+                    if (is.elseBranch().isPresent()) {
+                        switch (is.elseBranch().get()) {
+                            case Either.Left<IfStatement, Block> left -> {
+                                collectExprShapes(left.value().condition());
+                                collectTypeNodes(
+                                    left.value().thenBlock().statements());
+                                if (left.value().elseBranch().isPresent()) {
+                                    collectTypeNodes(
+                                        List.of(new IfStatement(
+                                            left.value().span(),
+                                            left.value().condition(),
+                                            left.value().thenBlock(),
+                                            left.value().elseBranch())));
+                                }
+                            }
+                            case Either.Right<IfStatement, Block> right ->
+                                collectTypeNodes(right.value().statements());
+                        }
+                    }
+                }
+                case Block b -> collectTypeNodes(b.statements());
+                case WhileStatement ws -> {
+                    collectExprShapes(ws.condition());
+                    collectTypeNodes(ws.body().statements());
+                }
+                case ForStatement fs -> {
+                    if (fs.init().isPresent()) {
+                        switch (fs.init().get()) {
+                            case ForInit.VarDecl vd -> collectTypeNodes(
+                                List.of(vd.decl()));
+                            case ForInit.AssignExpr ae -> collectExprShapes(
+                                ae.expr());
+                        }
+                    }
+                    fs.condition().ifPresent(this::collectExprShapes);
+                    fs.update().ifPresent(this::collectExprShapes);
+                    collectTypeNodes(fs.body().statements());
+                }
+                case ForOfStatement fos -> {
+                    collectTypeNode(fos.varType());
+                    collectExprShapes(fos.iterable());
+                    collectTypeNodes(fos.body().statements());
+                }
+                case ExpressionStatement es -> collectExprShapes(es.expr());
+                case ThrowStatement ts -> collectExprShapes(ts.expr());
+                case DeleteStatement ds -> collectExprShapes(ds.target());
+                case TryStatement ts -> {
+                    collectTypeNodes(ts.tryBlock().statements());
+                    collectTypeNodes(ts.catchBlock().statements());
+                }
+                case ImportDeclaration ignored -> { }
+                case BreakStatement ignored -> { }
+                case ContinueStatement ignored -> { }
+            }
+        }
+    }
+
+    /** Collects the checker-inferred type of an expression and walks its
+     * children (function-expression bodies recurse into statements). */
+    private void collectExprShapes(ExpressionNode e) {
+        Type t = typeMap.get(e);
+        if (t != null) {
+            closeShape(t);
+        }
+        switch (e) {
+            case LiteralExpr ignored -> { }
+            case IdentifierExpr ignored -> { }
+            case BinaryExpr b -> {
+                collectExprShapes(b.left());
+                collectExprShapes(b.right());
+            }
+            case UnaryExpr u -> collectExprShapes(u.expr());
+            case CallExpr c -> {
+                collectExprShapes(c.callee());
+                for (ExpressionNode a : c.args()) {
+                    collectExprShapes(a);
+                }
+            }
+            case MemberAccessExpr m -> collectExprShapes(m.object());
+            case IndexExpr ix -> {
+                collectExprShapes(ix.array());
+                collectExprShapes(ix.index());
+            }
+            case ArrayLiteralExpr al -> {
+                for (ExpressionNode el : al.elements()) {
+                    collectExprShapes(el);
+                }
+            }
+            case ObjectLiteralExpr ol -> {
+                for (Property p : ol.properties()) {
+                    collectExprShapes(p.value());
+                }
+            }
+            case FunctionExpr fe -> {
+                for (Parameter p : fe.params()) {
+                    collectTypeNode(p.type());
+                }
+                collectTypeNodes(fe.body().statements());
+            }
+            case HasExpr he -> collectExprShapes(he.object());
+            case AssignmentExpr ae -> {
+                collectExprShapes(ae.target());
+                collectExprShapes(ae.value());
+            }
+            case TemplateLiteralExpr tl -> {
+                for (ExpressionNode part : tl.parts()) {
+                    collectExprShapes(part);
+                }
+            }
+            case AwaitExpression aw -> collectExprShapes(aw.callee());
+        }
+    }
+
+    /** Collects one type annotation through the silent resolver. */
+    private void collectTypeNode(TypeNode tn) {
+        Type t = silentResolveTypeNode(tn);
+        if (t != null && !(t instanceof Type.Error)) {
+            closeShape(t);
+        }
     }
 
     // =========================================================================
@@ -1339,10 +1857,11 @@ public final class JvmBackend {
                                             Map<String, Map<String, Type>> hostModules,
                                             boolean isEntry) {
         // The pre-plumb per-module path: only the selected ENTRY module
-        // emits the shared table class (one per compiled project). The
-        // unchanged signature defaults to the LEGACY_SAFE_INT semantic
-        // profile (ISSUE-0374 profile plumb), so untouched direct
-        // callers keep legacy behavior by construction.
+        // emits the shared $DealRt runtime scope (one per compiled
+        // project). The unchanged signature defaults to the
+        // LEGACY_SAFE_INT semantic profile (ISSUE-0374 profile plumb),
+        // so untouched direct callers keep legacy behavior by
+        // construction.
         return generate(program, result, sourcePath, modulePath,
             importResolutions, importedClasses, hostModules, isEntry,
             isEntry, SemanticProfile.LEGACY_SAFE_INT);
@@ -1355,7 +1874,8 @@ public final class JvmBackend {
      * and stores one backend-wide int mode from
      * {@code profile == DEAL_V1_2_INT32} — recorded on the result as
      * {@link JvmCodegenResult#int32Mode()}. Only the selected ENTRY
-     * module emits the shared table class (one per compiled project).
+     * module emits the shared $DealRt runtime scope (one per compiled
+     * project).
      * Source and the CLI gain no profile surface; the existing overloads
      * without a profile argument keep their signatures and default to
      * {@link SemanticProfile#LEGACY_SAFE_INT}.
@@ -1378,8 +1898,9 @@ public final class JvmBackend {
     /**
      * Full generate entry: {@code isEntry} gates the v1.2 entry surface
      * (E6004 main check, the JVM entry point), {@code emitSharedTable}
-     * gates the shared {@code $DealRt} table class (the orchestrator's
-     * selected entry module and the standalone single-module adapter).
+     * gates the shared {@code $DealRt} runtime scope (the
+     * orchestrator's selected entry module and the standalone
+     * single-module adapter).
      * The unchanged signature defaults to the {@code LEGACY_SAFE_INT}
      * semantic profile (ISSUE-0374 profile plumb).
      */
@@ -1402,7 +1923,7 @@ public final class JvmBackend {
      * {@code profile == DEAL_V1_2_INT32} and records it on the result.
      * {@code isEntry} gates the v1.2 entry surface (E6004 main check,
      * the JVM entry point), {@code emitSharedTable} gates the shared
-     * {@code $DealRt} table class (the orchestrator's selected entry
+     * {@code $DealRt} runtime scope (the orchestrator's selected entry
      * module and the standalone single-module adapter). Every overload
      * without a profile argument defaults to
      * {@link SemanticProfile#LEGACY_SAFE_INT}.
@@ -1418,9 +1939,34 @@ public final class JvmBackend {
                                             boolean isEntry,
                                             boolean emitSharedTable,
                                             SemanticProfile semanticProfile) {
-        // The legacy overload chain supplies the standalone
-        // single-module identity surface (the checker's standalone
-        // default classifies its paths the same way).
+        return generate(program, result, sourcePath, modulePath,
+            importResolutions, importedClasses, hostModules, isEntry,
+            emitSharedTable, semanticProfile, null);
+    }
+
+    /** Full generate entry with the orchestrator's collected
+     * project-wide shape set (ISSUE-0301 D4):
+     * {@code CompilationOrchestrator.codegenAllJvm} pre-collects the
+     * closed shape set over every checked module (dependency order,
+     * then source order) and passes the SAME list to every module's
+     * generation. The selected entry module's shared {@code $DealRt}
+     * scope then carries every shape any module references; the
+     * standalone single-module adapter passes {@code null}, and its
+     * lazy registrations are the complete one-module set.
+     *
+     * @param sharedShapes   the closed project shape list, or
+     *                       {@code null} for the standalone
+     *                       single-module adapter
+     */
+    public static JvmCodegenResult generate(ProgramNode program, CheckResult result,
+                                            String sourcePath, String modulePath,
+                                            Map<String, String> importResolutions,
+                                            Map<String, Map<String, ClassDeclaration>> importedClasses,
+                                            Map<String, Map<String, Type>> hostModules,
+                                            boolean isEntry,
+                                            boolean emitSharedTable,
+                                            SemanticProfile semanticProfile,
+                                            List<Type> sharedShapes) {
         Function<String, CanonicalModuleIdentity> classification =
             standaloneClassification(modulePath, sourcePath);
         ModuleIdentityResolver.IdentityIndex standalone =
@@ -1428,7 +1974,45 @@ public final class JvmBackend {
                 classificationMap(modulePath, sourcePath));
         return generate(program, result, sourcePath, modulePath,
             importResolutions, importedClasses, hostModules, isEntry,
-            emitSharedTable, standalone, classification, semanticProfile);
+            emitSharedTable, standalone, classification, semanticProfile,
+            sharedShapes);
+    }
+
+    /**
+     * The production identity-carriage generate entry
+     * (descriptor-identity-propagation D1/D2, ISSUE-0301 D4): the
+     * orchestrator passes the compilation's identity index, the
+     * module-path classification, and the collected project shape
+     * list; every class descriptor this backend emits resolves through
+     * {@code index.descriptorTextFor(identity)} — the same projection
+     * the one descriptor service produces — and the selected entry
+     * module's shared {@code $DealRt} scope pre-registers every
+     * collected shape.
+     *
+     * @param sharedShapes the closed project shape list
+     *                     ({@code null} for the standalone
+     *                     single-module adapter, whose lazy
+     *                     registrations are the complete one-module
+     *                     set)
+     */
+    public static JvmCodegenResult generate(ProgramNode program, CheckResult result,
+                                            String sourcePath, String modulePath,
+                                            Map<String, String> importResolutions,
+                                            Map<String, Map<String, ClassDeclaration>> importedClasses,
+                                            Map<String, Map<String, Type>> hostModules,
+                                            boolean isEntry,
+                                            boolean emitSharedTable,
+                                            CanonicalClassIdentityIndex identityIndex,
+                                            Function<String, CanonicalModuleIdentity> moduleIdentities,
+                                            SemanticProfile semanticProfile,
+                                            List<Type> sharedShapes) {
+        Objects.requireNonNull(semanticProfile,
+            "semanticProfile must not be null");
+        JvmBackend backend = new JvmBackend(result.typeMap(), result.symbolTable(),
+            sourcePath, modulePath, importResolutions, importedClasses,
+            hostModules, isEntry, emitSharedTable, semanticProfile,
+            sharedShapes, identityIndex, moduleIdentities);
+        return backend.generateProgram(program);
     }
 
     private static Map<String, CanonicalModuleIdentity> classificationMap(
@@ -1446,33 +2030,6 @@ public final class JvmBackend {
             }
         }
         return map;
-    }
-
-    /**
-     * The production identity-carriage generate entry
-     * (descriptor-identity-propagation D1/D2): the orchestrator passes
-     * the compilation's identity index and module-path classification;
-     * every class descriptor this backend emits resolves through
-     * {@code index.descriptorTextFor(identity)} — the same projection
-     * the one descriptor service produces.
-     */
-    public static JvmCodegenResult generate(ProgramNode program, CheckResult result,
-                                            String sourcePath, String modulePath,
-                                            Map<String, String> importResolutions,
-                                            Map<String, Map<String, ClassDeclaration>> importedClasses,
-                                            Map<String, Map<String, Type>> hostModules,
-                                            boolean isEntry,
-                                            boolean emitSharedTable,
-                                            CanonicalClassIdentityIndex identityIndex,
-                                            Function<String, CanonicalModuleIdentity> moduleIdentities,
-                                            SemanticProfile semanticProfile) {
-        Objects.requireNonNull(semanticProfile,
-            "semanticProfile must not be null");
-        JvmBackend backend = new JvmBackend(result.typeMap(), result.symbolTable(),
-            sourcePath, modulePath, importResolutions, importedClasses,
-            hostModules, isEntry, emitSharedTable, identityIndex,
-            moduleIdentities, semanticProfile);
-        return backend.generateProgram(program);
     }
 
     /**
@@ -1734,6 +2291,14 @@ public final class JvmBackend {
             }
         }
         this.moduleStatements = List.copyOf(statements);
+        // ISSUE-0301 D4: pre-register the orchestrator's collected
+        // project-wide shape set now that the pre-scan populated
+        // moduleClasses and importAliases — the entry module's shared
+        // $DealRt scope then carries every shape any module references,
+        // in the deterministic collection order.
+        for (Type shape : collectedShapes) {
+            registerCollectedShape(shape);
+        }
         computeTransitiveFieldReads();
         computeForwardFieldViolations();
 
@@ -1831,20 +2396,18 @@ public final class JvmBackend {
         indent--;
         emitLine("}");
 
-        // ISSUE-0102: the entry module's artifact also declares the
-        // SHARED runtime table class (a package-private top-level class
-        // in the same file — every emitted artifact lives in the
-        // default package, so all modules reference the one class and
-        // table values cross module boundaries with shared identity).
-        // The name starts with $, which classNameFor can never produce
-        // (sanitizeSegment maps $ to _), so no module class can collide.
+        // ISSUE-0102 + ISSUE-0301 D1: the entry module's artifact also
+        // declares the SHARED $DealRt runtime scope (a package-private
+        // top-level class in the same file — every emitted artifact
+        // lives in the default package, so all modules reference the one
+        // class and table/function/array/bytes values cross module
+        // boundaries with shared identity). The name starts with $,
+        // which classNameFor can never produce (sanitizeSegment maps $
+        // to _), so no module class can collide.
         if (emitSharedTable) {
-            emitSharedTableClass();
+            emitSharedScope();
         }
 
-        if (wrapperClasses.length() > 0) {
-            out.insert(wrapperInsertion, wrapperClasses.toString());
-        }
         if (arrayHelpers.length() > 0) {
             out.insert(wrapperInsertion, arrayHelpers.toString());
         }
@@ -3797,7 +4360,7 @@ public final class JvmBackend {
         emitLine("// string-typed, so the cast is a defensive static proof.");
         emitLine("static <V> V $tPut($DealRt.Table t, java.lang.String k, V v) { t.put(k, v); return v; }");
         emitLine("static void $tRemove($DealRt.Table t, java.lang.Object k) { t.remove((java.lang.String) k); }");
-        emitLine("static __StringArray __tableKeys($DealRt.Table t) { return new __StringArray(t.keys()); }");
+        emitLine("static $DealRt.__StringArray __tableKeys($DealRt.Table t) { return new $DealRt.__StringArray(t.keys()); }");
         emitLine("// ISSUE-0102 Error support: unwrap the DEAL code of any");
         emitLine("// RuntimeException whose class is an emitted module's nested");
         emitLine("// DealError (each module declares its own, so no shared type");
@@ -3855,11 +4418,10 @@ public final class JvmBackend {
         emitLine("// wrapper's initializer throw constant (JLS requires an instance");
         emitLine("// initializer to be able to complete normally).");
         emitLine("static boolean checkSig(java.lang.String expected, java.lang.String actual) { return expected.equals(actual); }");
-        emitLine("// ISSUE-0102: every function-value wrapper implements $FnValue so");
-        emitLine("// the shared seam's function-descriptor branch can validate a");
-        emitLine("// dynamically read function value against its runtime");
-        emitLine("// descriptor.");
-        emitLine("interface $FnValue { java.lang.String descriptor(); }");
+        emitLine("// ISSUE-0301: every function-value wrapper implements the shared");
+        emitLine("// $DealRt.FnValue interface so the shared seam's function-");
+        emitLine("// descriptor branch can validate a dynamically read function");
+        emitLine("// value against its runtime descriptor across module boundaries.");
         emitLine();
         // ---- DEAL JVM function values (ISSUE-0098 slice) ----
         // The int / number conversion intrinsics are first-class function
@@ -3868,17 +4430,17 @@ public final class JvmBackend {
         // (int)->number. Direct intrinsic calls still route to the inline
         // intFromNumber / numberFromInt helpers; value uses (assignment,
         // callback arguments, arity adapters) flow through these wrappers.
-        registerWrapperShape(new Type.Func(List.of(Type.Number.INSTANCE),
-            Type.Int.INSTANCE));
-        registerWrapperShape(new Type.Func(List.of(Type.Int.INSTANCE),
-            Type.Number.INSTANCE));
-        emitLine("static final Fn1_N_R_I _int$fn = new Fn1_N_R_I() {");
+        String intFnShape = registerWrapperShape(new Type.Func(
+            List.of(Type.Number.INSTANCE), Type.Int.INSTANCE));
+        String numberFnShape = registerWrapperShape(new Type.Func(
+            List.of(Type.Int.INSTANCE), Type.Number.INSTANCE));
+        emitLine("static final " + intFnShape + " _int$fn = new " + intFnShape + "() {");
         emitLine("    @Override");
         emitLine(int32Mode
             ? "    int invoke(double p0) { return intFromNumber(p0); }"
             : "    long invoke(double p0) { return intFromNumber(p0); }");
         emitLine("};");
-        emitLine("static final Fn1_I_R_N _number$fn = new Fn1_I_R_N() {");
+        emitLine("static final " + numberFnShape + " _number$fn = new " + numberFnShape + "() {");
         emitLine("    @Override");
         emitLine(int32Mode
             ? "    double invoke(int p0) { return numberFromInt(p0); }"
@@ -3886,19 +4448,12 @@ public final class JvmBackend {
         emitLine("};");
         emitLine();
         emitLine("// ---- DEAL primitive array runtime support (ISSUE-0094) ----");
-        emitLine("// int[]/number[]/string[]/boolean[] map to mutable wrapper classes — the");
-        emitLine("// spec's specialized primitive array wrapper (spec-v1.2 §JVM value mapping).");
-        emitLine("// The wrapper identity is stable across appends (writing at i == length grows");
-        emitLine("// the wrapped storage in place), so aliases observe every write exactly like");
-        emitLine("// LuaJIT's shared 1-based table. Every name here uses the __ prefix, which is");
-        emitLine("// unreachable from javaName's translation (each DEAL underscore escapes to");
-        emitLine("// $u), so no user binding, method, or field can collide with it.");
-        emitLine(int32Mode
-            ? "static final class __IntArray { int[] data; __IntArray(int[] data) { this.data = data; } }"
-            : "static final class __IntArray { long[] data; __IntArray(long[] data) { this.data = data; } }");
-        emitLine("static final class __NumberArray { double[] data; __NumberArray(double[] data) { this.data = data; } }");
-        emitLine("static final class __StringArray { java.lang.String[] data; __StringArray(java.lang.String[] data) { this.data = data; } }");
-        emitLine("static final class __BooleanArray { boolean[] data; __BooleanArray(boolean[] data) { this.data = data; } }");
+        emitLine("// int[]/number[]/string[]/boolean[] map to the SHARED $DealRt");
+        emitLine("// mutable wrapper classes (ISSUE-0301 D3) — the spec's specialized");
+        emitLine("// primitive array wrapper (spec-v1.2 §JVM value mapping). The");
+        emitLine("// wrapper identity is stable across appends (writing at i == length");
+        emitLine("// grows the wrapped storage in place), so aliases observe every");
+        emitLine("// write exactly like LuaJIT's shared 1-based table.");
         emitLine("// array reads: a negative index is E8002 (LuaJIT's emitted negative-index");
         emitLine("// check); an index past the end is E8001 \"expected <T>, got null\" — LuaJIT");
         emitLine("// reads nil there and the read site's typed boundary fails with exactly that");
@@ -3906,11 +4461,11 @@ public final class JvmBackend {
         emitLine("// int). A primitive Java array cannot yield nil, so the JVM read raises the");
         emitLine("// boundary failure directly.");
         emitLine(int32Mode
-            ? "static int __intArrayRead(__IntArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected int, got null\"); return a.data[(int) i]; }"
-            : "static long __intArrayRead(__IntArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected int, got null\"); return a.data[(int) i]; }");
-        emitLine("static double __numberArrayRead(__NumberArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected number, got null\"); return a.data[(int) i]; }");
-        emitLine("static java.lang.String __stringArrayRead(__StringArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected string, got null\"); return a.data[(int) i]; }");
-        emitLine("static boolean __booleanArrayRead(__BooleanArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected boolean, got null\"); return a.data[(int) i]; }");
+            ? "static int __intArrayRead($DealRt.__IntArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected int, got null\"); return a.data[(int) i]; }"
+            : "static long __intArrayRead($DealRt.__IntArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected int, got null\"); return a.data[(int) i]; }");
+        emitLine("static double __numberArrayRead($DealRt.__NumberArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected number, got null\"); return a.data[(int) i]; }");
+        emitLine("static java.lang.String __stringArrayRead($DealRt.__StringArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected string, got null\"); return a.data[(int) i]; }");
+        emitLine("static boolean __booleanArrayRead($DealRt.__BooleanArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected boolean, got null\"); return a.data[(int) i]; }");
         emitLine("// boxed array reads for === / !== operand positions (ISSUE-0094 rework):");
         emitLine("// the read-site contract (spec §Bounds and nil behavior) applies no typed");
         emitLine("// boundary to a comparison operand, so LuaJIT reads nil past the end and");
@@ -3921,11 +4476,11 @@ public final class JvmBackend {
         emitLine("// E8002 — LuaJIT emits that check unconditionally at the read, whatever");
         emitLine("// the surrounding position.");
         emitLine(int32Mode
-            ? "static java.lang.Integer __intArrayReadBoxed(__IntArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return java.lang.Integer.valueOf(a.data[(int) i]); }"
-            : "static java.lang.Long __intArrayReadBoxed(__IntArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return java.lang.Long.valueOf(a.data[(int) i]); }");
-        emitLine("static java.lang.Double __numberArrayReadBoxed(__NumberArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return java.lang.Double.valueOf(a.data[(int) i]); }");
-        emitLine("static java.lang.String __stringArrayReadBoxed(__StringArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return a.data[(int) i]; }");
-        emitLine("static java.lang.Boolean __booleanArrayReadBoxed(__BooleanArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return java.lang.Boolean.valueOf(a.data[(int) i]); }");
+            ? "static java.lang.Integer __intArrayReadBoxed($DealRt.__IntArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return java.lang.Integer.valueOf(a.data[(int) i]); }"
+            : "static java.lang.Long __intArrayReadBoxed($DealRt.__IntArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return java.lang.Long.valueOf(a.data[(int) i]); }");
+        emitLine("static java.lang.Double __numberArrayReadBoxed($DealRt.__NumberArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return java.lang.Double.valueOf(a.data[(int) i]); }");
+        emitLine("static java.lang.String __stringArrayReadBoxed($DealRt.__StringArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return a.data[(int) i]; }");
+        emitLine("static java.lang.Boolean __booleanArrayReadBoxed($DealRt.__BooleanArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return java.lang.Boolean.valueOf(a.data[(int) i]); }");
         emitLine("// boolean boundary check for nil-aware && / || results (ISSUE-0094 rework):");
         emitLine("// a past-end boolean[] read in an and/or operand is Lua's nil — the");
         emitLine("// operand is falsy and the Lua result can itself be nil (nil and x yields");
@@ -3946,47 +4501,43 @@ public final class JvmBackend {
         emitLine("// evaluated — the helper call's Java arguments evaluate left to right before");
         emitLine("// the bounds check, per spec-v1.2 §Operational semantics rule 3.");
         emitLine(int32Mode
-            ? "static int __intArrayWrite(__IntArray a, long i, int v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (i == (long) a.data.length) { int[] nd = new int[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }"
-            : "static long __intArrayWrite(__IntArray a, long i, long v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); v = checkInt(v); if (i == (long) a.data.length) { long[] nd = new long[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
-        emitLine("static double __numberArrayWrite(__NumberArray a, long i, double v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (i == (long) a.data.length) { double[] nd = new double[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
-        emitLine("static java.lang.String __stringArrayWrite(__StringArray a, long i, java.lang.String v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (i == (long) a.data.length) { java.lang.String[] nd = new java.lang.String[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
-        emitLine("static boolean __booleanArrayWrite(__BooleanArray a, long i, boolean v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (i == (long) a.data.length) { boolean[] nd = new boolean[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
+            ? "static int __intArrayWrite($DealRt.__IntArray a, long i, int v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (i == (long) a.data.length) { int[] nd = new int[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }"
+            : "static long __intArrayWrite($DealRt.__IntArray a, long i, long v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); v = checkInt(v); if (i == (long) a.data.length) { long[] nd = new long[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
+        emitLine("static double __numberArrayWrite($DealRt.__NumberArray a, long i, double v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (i == (long) a.data.length) { double[] nd = new double[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
+        emitLine("static java.lang.String __stringArrayWrite($DealRt.__StringArray a, long i, java.lang.String v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (i == (long) a.data.length) { java.lang.String[] nd = new java.lang.String[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
+        emitLine("static boolean __booleanArrayWrite($DealRt.__BooleanArray a, long i, boolean v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (i == (long) a.data.length) { boolean[] nd = new boolean[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
         emitLine();
         emitLine("// ---- DEAL nullable and nullable-array runtime support (ISSUE-0108) ----");
-        emitLine("// (T | null)[] maps to a wrapper over BOXED elements (java.lang.Long[],");
-        emitLine("// java.lang.Double[], java.lang.String[], java.lang.Boolean[]): Java null");
-        emitLine("// is the DEAL null element, exactly like LuaJIT's table storage where nil/");
-        emitLine("// __NULL is the null element. Reads yield null past the end (the LuaJIT");
-        emitLine("// nil), and a negative index still raises E8002 (LuaJIT emits that check");
-        emitLine("// unconditionally at the read). Writes accept null (check_nullable");
-        emitLine("// permits it) and check only the index bounds.");
+        emitLine("// (T | null)[] maps to the SHARED $DealRt wrappers over BOXED");
+        emitLine("// elements (java.lang.Long[], java.lang.Double[],");
+        emitLine("// java.lang.String[], java.lang.Boolean[]): Java null is the DEAL");
+        emitLine("// null element, exactly like LuaJIT's table storage where nil/");
+        emitLine("// __NULL is the null element. Reads yield null past the end (the");
+        emitLine("// LuaJIT nil), and a negative index still raises E8002 (LuaJIT");
+        emitLine("// emits that check unconditionally at the read). Writes accept");
+        emitLine("// null (check_nullable permits it) and check only the index");
+        emitLine("// bounds.");
         emitLine(int32Mode
-            ? "static final class __IntOrNullArray { java.lang.Integer[] data; __IntOrNullArray(java.lang.Integer[] data) { this.data = data; } }"
-            : "static final class __IntOrNullArray { java.lang.Long[] data; __IntOrNullArray(java.lang.Long[] data) { this.data = data; } }");
-        emitLine("static final class __NumberOrNullArray { java.lang.Double[] data; __NumberOrNullArray(java.lang.Double[] data) { this.data = data; } }");
-        emitLine("static final class __StringOrNullArray { java.lang.String[] data; __StringOrNullArray(java.lang.String[] data) { this.data = data; } }");
-        emitLine("static final class __BooleanOrNullArray { java.lang.Boolean[] data; __BooleanOrNullArray(java.lang.Boolean[] data) { this.data = data; } }");
-        emitLine(int32Mode
-            ? "static java.lang.Integer __intOrNullArrayWrite(__IntOrNullArray a, long i, java.lang.Integer v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (i == (long) a.data.length) { java.lang.Integer[] nd = new java.lang.Integer[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }"
-            : "static java.lang.Long __intOrNullArrayWrite(__IntOrNullArray a, long i, java.lang.Long v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (i == (long) a.data.length) { java.lang.Long[] nd = new java.lang.Long[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
-        emitLine("static java.lang.Double __numberOrNullArrayWrite(__NumberOrNullArray a, long i, java.lang.Double v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (i == (long) a.data.length) { java.lang.Double[] nd = new java.lang.Double[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
-        emitLine("static java.lang.String __stringOrNullArrayWrite(__StringOrNullArray a, long i, java.lang.String v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (i == (long) a.data.length) { java.lang.String[] nd = new java.lang.String[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
-        emitLine("static java.lang.Boolean __booleanOrNullArrayWrite(__BooleanOrNullArray a, long i, java.lang.Boolean v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (i == (long) a.data.length) { java.lang.Boolean[] nd = new java.lang.Boolean[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
+            ? "static java.lang.Integer __intOrNullArrayWrite($DealRt.__IntOrNullArray a, long i, java.lang.Integer v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (i == (long) a.data.length) { java.lang.Integer[] nd = new java.lang.Integer[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }"
+            : "static java.lang.Long __intOrNullArrayWrite($DealRt.__IntOrNullArray a, long i, java.lang.Long v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (i == (long) a.data.length) { java.lang.Long[] nd = new java.lang.Long[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
+        emitLine("static java.lang.Double __numberOrNullArrayWrite($DealRt.__NumberOrNullArray a, long i, java.lang.Double v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (i == (long) a.data.length) { java.lang.Double[] nd = new java.lang.Double[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
+        emitLine("static java.lang.String __stringOrNullArrayWrite($DealRt.__StringOrNullArray a, long i, java.lang.String v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (i == (long) a.data.length) { java.lang.String[] nd = new java.lang.String[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
+        emitLine("static java.lang.Boolean __booleanOrNullArrayWrite($DealRt.__BooleanOrNullArray a, long i, java.lang.Boolean v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (i == (long) a.data.length) { java.lang.Boolean[] nd = new java.lang.Boolean[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
         emitLine("// (T | null)[] reads: null past the end (the LuaJIT nil — a valid");
         emitLine("// nullable element, so NO E8001 at the read) and the stored boxed");
         emitLine("// element otherwise; a negative index still raises E8002 (LuaJIT");
         emitLine("// emits that check unconditionally at the read).");
         emitLine(int32Mode
-            ? "static java.lang.Integer __intOrNullArrayRead(__IntOrNullArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return a.data[(int) i]; }"
-            : "static java.lang.Long __intOrNullArrayRead(__IntOrNullArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return a.data[(int) i]; }");
-        emitLine("static java.lang.Double __numberOrNullArrayRead(__NumberOrNullArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return a.data[(int) i]; }");
-        emitLine("static java.lang.String __stringOrNullArrayRead(__StringOrNullArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return a.data[(int) i]; }");
-        emitLine("static java.lang.Boolean __booleanOrNullArrayRead(__BooleanOrNullArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return a.data[(int) i]; }");
-        emitLine("// Class arrays (C[], (C | null)[]) map to __RefArray holding");
-        emitLine("// java.lang.Object[]; every class declaration also emits a per-class");
-        emitLine("// subclass ($Array$<C>) so instanceof proves the element type, plus");
-        emitLine("// per-class read/write helpers with the nominal E8001 checks.");
-        emitLine("static class __RefArray { java.lang.Object[] data; __RefArray(java.lang.Object[] data) { this.data = data; } }");
+            ? "static java.lang.Integer __intOrNullArrayRead($DealRt.__IntOrNullArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return a.data[(int) i]; }"
+            : "static java.lang.Long __intOrNullArrayRead($DealRt.__IntOrNullArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return a.data[(int) i]; }");
+        emitLine("static java.lang.Double __numberOrNullArrayRead($DealRt.__NumberOrNullArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return a.data[(int) i]; }");
+        emitLine("static java.lang.String __stringOrNullArrayRead($DealRt.__StringOrNullArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return a.data[(int) i]; }");
+        emitLine("static java.lang.Boolean __booleanOrNullArrayRead($DealRt.__BooleanOrNullArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return a.data[(int) i]; }");
+        emitLine("// Class arrays (C[], (C | null)[]) map to the shared");
+        emitLine("// $DealRt.__RefArray holding java.lang.Object[]; every class");
+        emitLine("// declaration also emits a per-class subclass ($Array$<C>) so");
+        emitLine("// instanceof proves the element type, plus per-class read/write");
+        emitLine("// helpers with the nominal E8001 checks.");
         emitLine("// The untyped-boundary checks the nullable slice needs (check_nullable");
         emitLine("// semantics for ?int/?number/?boolean/?string, the per-wrapper array");
         emitLine("// gates for [int]/[number]/[string]/[boolean] and their [?T]");
@@ -4038,9 +4589,9 @@ public final class JvmBackend {
         emitLine("// values (spec-v1.2 §String lengths and positions are measured in");
         emitLine("// Unicode scalar values); otherwise every occurrence of sep delimits a");
         emitLine("// part, with the trailing remainder (even empty) appended.");
-        emitLine("static __StringArray __strSplit(java.lang.String s, java.lang.String sep) {");
+        emitLine("static $DealRt.__StringArray __strSplit(java.lang.String s, java.lang.String sep) {");
         emitLine("    java.util.ArrayList<java.lang.String> parts = new java.util.ArrayList<>();");
-        emitLine("    if (s.isEmpty()) return new __StringArray(parts.toArray(new java.lang.String[0]));");
+        emitLine("    if (s.isEmpty()) return new $DealRt.__StringArray(parts.toArray(new java.lang.String[0]));");
         emitLine("    if (sep.isEmpty()) {");
         emitLine("        int i = 0;");
         emitLine("        while (i < s.length()) {");
@@ -4048,7 +4599,7 @@ public final class JvmBackend {
         emitLine("            parts.add(new java.lang.String(java.lang.Character.toChars(cp)));");
         emitLine("            i += java.lang.Character.charCount(cp);");
         emitLine("        }");
-        emitLine("        return new __StringArray(parts.toArray(new java.lang.String[0]));");
+        emitLine("        return new $DealRt.__StringArray(parts.toArray(new java.lang.String[0]));");
         emitLine("    }");
         emitLine("    int start = 0;");
         emitLine("    while (true) {");
@@ -4057,7 +4608,7 @@ public final class JvmBackend {
         emitLine("        parts.add(s.substring(start, found));");
         emitLine("        start = found + sep.length();");
         emitLine("    }");
-        emitLine("    return new __StringArray(parts.toArray(new java.lang.String[0]));");
+        emitLine("    return new $DealRt.__StringArray(parts.toArray(new java.lang.String[0]));");
         emitLine("}");
         emitLine("// Lua pattern %s whitespace set: space, tab, newline, vertical tab, form feed,");
         emitLine("// carriage return (exactly the std/string.lua trim contract).");
@@ -4080,13 +4631,30 @@ public final class JvmBackend {
      * top-level package-private class per compiled project, declared by
      * the entry module's artifact. The ordered string-key map is the
      * JVM form of the Lua backend's table. */
-    private void emitSharedTableClass() {
-        emitLine("// Shared DEAL table runtime class (ISSUE-0102): one per compiled");
-        emitLine("// project, declared by the entry module's artifact. Every module");
-        emitLine("// references the SAME class, so table values cross module");
-        emitLine("// boundaries with shared identity — exactly like LuaJIT's");
-        emitLine("// single table type. The $ in the name is unreachable from");
-        emitLine("// classNameFor (sanitizeSegment maps $ to _).");
+    /**
+     * Emits the SHARED {@code $DealRt} runtime scope (ISSUE-0301 D1) —
+     * one top-level package-private class per compiled project, declared
+     * by the entry module's artifact (or the standalone single-module
+     * adapter). It carries every cross-module value carrier: the DEAL
+     * table (unchanged, ISSUE-0102), the {@code FnValue} interface and
+     * the per-signature function wrapper classes (D2), the
+     * per-element-shape array wrapper classes (D3), the final
+     * {@code Bytes} wrapper over {@code byte[]} (D6 — carrier only; the
+     * operations live on the int32-bytes lane), and the synthesized
+     * host-class records (the host-abi lane). Every module references
+     * the SAME class, so carrier values cross module boundaries with
+     * shared identity — exactly like LuaJIT's single value types. The
+     * {@code $} in the name is unreachable from {@link #classNameFor}
+     * (sanitizeSegment maps {@code $} to {@code _}).
+     */
+    private void emitSharedScope() {
+        emitLine("// Shared DEAL runtime value scope (ISSUE-0102 tables; ISSUE-0301");
+        emitLine("// function/array/bytes carriers): one per compiled project,");
+        emitLine("// declared by the entry module's artifact. Every module");
+        emitLine("// references the SAME class, so table, function, array, and");
+        emitLine("// bytes values cross module boundaries with shared identity —");
+        emitLine("// exactly like LuaJIT's single value types. The $ in the name");
+        emitLine("// is unreachable from classNameFor (sanitizeSegment maps $ to _).");
         emitLine("class $DealRt {");
         emitLine("    static final class Table {");
         emitLine("        private final java.util.LinkedHashMap<java.lang.String, java.lang.Object> entries = new java.util.LinkedHashMap<>();");
@@ -4106,36 +4674,99 @@ public final class JvmBackend {
         emitLine("        java.util.ArrayList<java.lang.Object> $array() { return array; }");
         emitLine("        java.util.LinkedHashMap<java.lang.String, java.lang.Object> $entries() { return entries; }");
         emitLine("    }");
+        emitLine("    // The final runtime-owned bytes wrapper over byte[] (ISSUE-0301");
+        emitLine("    // D6 — carrier only: reference identity for equality/assignment/");
+        emitLine("    // aliasing, canonical descriptor 'bytes' in $check, non-jsonable.");
+        emitLine("    // Allocation/indexing/mutation live on the int32-bytes lane.");
+        emitLine("    static final class Bytes {");
+        emitLine("        final byte[] data;");
+        emitLine("        Bytes(byte[] data) { this.data = data; }");
+        emitLine("    }");
+        emitLine("    // The shared function-value carrier interface: every wrapper");
+        emitLine("    // carries the complete canonical descriptor text so signature");
+        emitLine("    // checks are byte comparisons across module boundaries.");
+        emitLine("    interface FnValue { java.lang.String descriptor(); }");
+        emitLine("    // ---- shared per-element-shape array carriers (ISSUE-0301 D3) ----");
+        emitLine("    // The wrapper classes move here from the per-module scope:");
+        emitLine("    // identity stable across appends, aliases observe every write,");
+        emitLine("    // and the values cross module boundaries with shared identity.");
+        emitLine(int32Mode
+            ? "    static final class __IntArray { int[] data; __IntArray(int[] data) { this.data = data; } }"
+            : "    static final class __IntArray { long[] data; __IntArray(long[] data) { this.data = data; } }");
+        emitLine("    static final class __NumberArray { double[] data; __NumberArray(double[] data) { this.data = data; } }");
+        emitLine("    static final class __StringArray { java.lang.String[] data; __StringArray(java.lang.String[] data) { this.data = data; } }");
+        emitLine("    static final class __BooleanArray { boolean[] data; __BooleanArray(boolean[] data) { this.data = data; } }");
+        emitLine(int32Mode
+            ? "    static final class __IntOrNullArray { java.lang.Integer[] data; __IntOrNullArray(java.lang.Integer[] data) { this.data = data; } }"
+            : "    static final class __IntOrNullArray { java.lang.Long[] data; __IntOrNullArray(java.lang.Long[] data) { this.data = data; } }");
+        emitLine("    static final class __NumberOrNullArray { java.lang.Double[] data; __NumberOrNullArray(java.lang.Double[] data) { this.data = data; } }");
+        emitLine("    static final class __StringOrNullArray { java.lang.String[] data; __StringOrNullArray(java.lang.String[] data) { this.data = data; } }");
+        emitLine("    static final class __BooleanOrNullArray { java.lang.Boolean[] data; __BooleanOrNullArray(java.lang.Boolean[] data) { this.data = data; } }");
+        emitLine("    // The Object-storage base for per-class array wrappers (each");
+        emitLine("    // module's $Array$<C> extends it so instanceof proves the");
+        emitLine("    // element type).");
+        emitLine("    static class __RefArray { java.lang.Object[] data; __RefArray(java.lang.Object[] data) { this.data = data; } }");
+        emitLine("    // One wrapper class per complex element shape (nested arrays,");
+        emitLine("    // arrays of function values, arrays of bytes) — named by the");
+        emitLine("    // same injective encoding as function shapes, so distinct");
+        emitLine("    // element types map to distinct classes (ISSUE-0301 D3).");
+        for (Type element : refArrayCheckElements) {
+            emitLine("    static final class " + refArrayWrapperId(element)
+                + " { java.lang.Object[] data; "
+                + refArrayWrapperId(element)
+                + "(java.lang.Object[] data) { this.data = data; } }");
+        }
+        // The per-signature function wrapper classes accumulate during
+        // module emission and are spliced here, inside the shared scope.
+        int dealRtInsertion = out.length();
         emitLine("}");
+        if (sharedWrapperClasses.length() > 0) {
+            out.insert(dealRtInsertion, sharedWrapperClasses.toString());
+        }
     }
 
     /**
-     * Emits the single shared descriptor-driven runtime-check seam
-     * (ISSUE-0110) at the end of the generated class (after the module
-     * body, so every declared class has appended its branches): ONE
-     * emitted {@code $check(descriptor, value)} helper that every typed
-     * boundary the JVM type system cannot prove routes through, with the
-     * expected type spelled as its spec {@code RuntimeTypeDescriptor}
+     * Emits the shared descriptor-driven runtime-check seam
+     * (ISSUE-0110; ISSUE-0301 D5 — the canonical RuntimeTypeMatcher
+     * realization over the shared {@code $DealRt} carriers) at the end
+     * of the generated class (after the module body, so every declared
+     * class has appended its branches): ONE emitted
+     * {@code $check(descriptor, value)} helper that every typed boundary
+     * the JVM type system cannot prove routes through, with the expected
+     * type spelled as its canonical {@code RuntimeTypeDescriptor}
      * ({@code docs/spec-v1.2.md} §Runtime type descriptor format). A
      * {@code ?} prefix applies {@code check_nullable} (the DEAL null
-     * passes through); the primitive branches carry the exact acceptance
-     * semantics of the retired per-kind helpers (check_int parity for
-     * {@code int} — a Long passes through {@code checkInt}, an integral
+     * passes through); the table/scalar rows carry the pinned messages
+     * (check_int parity for
+     * {@code int} — a Long/Integer passes through {@code checkInt}, an
+     * integral
      * in-range Double converts, NaN/infinity/non-integral raise E8001,
      * out-of-safe-range raises E8004; {@code number} accepts every Long
-     * and Double like check_number); {@code string} additionally runs the
-     * v1.2 boundary string validation — an unpaired UTF-16 surrogate code
-     * unit raises E8001 (spec-v1.2 §JVM value mapping); the array branches
-     * gate on the
-     * emitted wrappers with the {@code [?T]} widening forms (a plain
-     * {@code T[]} wrapper passes a {@code [?T]} gate — the boxed copy /
-     * shared-storage conversions the retired gates performed); the class
-     * branches (collected per declared class during {@link #emitClass})
+     * and Double like check_number); {@code string} additionally runs
+     * the
+     * v1.2 boundary string validation — an unpaired UTF-16 surrogate
+     * code
+     * unit raises E8001 (spec-v1.2 §JVM value mapping); the {@code bytes}
+     * row delegates to the shared {@code $DealRt.Bytes} carrier
+     * predicate; the {@code [D]} row dispatches through the generated
+     * recursive {@code $checkArray} — the matching per-element-shape
+     * wrapper passes (identity; the {@code [?T]} widening forms keep the
+     * boxed copy / shared-storage conversions the retired gates
+     * performed), an array-mode {@code $DealRt.Table} (the
+     * {@code __jsonTableValue} output) is accepted as the dynamic array
+     * representation with its elements checked recursively in index
+     * order (E8003 {@code array element {i} type mismatch} at the first
+     * failing index), and any other value raises E8001 {@code expected
+     * array}; the function row accepts a {@code $DealRt.FnValue} whose
+     * carried canonical descriptor equals the expected text
+     * byte-for-byte, raises E8010 {@code function signature mismatch:
+     * expected {D}, got {actual}} on any descriptor delta, and E8001
+     * {@code expected function} for a non-wrapper; the class
+     * branches (collected per declared class during
+     * {@link #emitClass})
      * carry the module-qualified nominal checks; and every other
      * descriptor raises the deterministic mismatch shape
-     * {@code "expected <descriptor>, got <$describe(v)>"} — the same
-     * E8001 code and message shapes the per-feature helpers pinned, now
-     * driven by one descriptor spelling.
+     * {@code "expected <descriptor>, got <$describe(v)>"}.
      *
      * <p>The name {@code $check} is unreachable from {@link #javaName}
      * output (user {@code $} escapes to {@code $d}), so no DEAL function,
@@ -4145,7 +4776,9 @@ public final class JvmBackend {
      */
     private void emitSharedCheckSeam() {
         emitLine();
-        emitLine("// ---- Shared descriptor-driven runtime-check seam (ISSUE-0110) ----");
+        emitLine("// ---- Shared descriptor-driven runtime-check seam (ISSUE-0110;");
+        emitLine("// ISSUE-0301 D5: the canonical RuntimeTypeMatcher realization over");
+        emitLine("// the shared $DealRt carriers) ----");
         emitLine("// One helper, one descriptor convention (spec RuntimeTypeDescriptor,");
         emitLine("// docs/spec-v1.2.md): every boundary the JVM type system cannot");
         emitLine("// prove routes through $check(descriptor, value). A ? prefix is");
@@ -4184,114 +4817,351 @@ public final class JvmBackend {
         emitLine(int32Mode
             ? "if (descriptor.equals(\"number\")) { if (v instanceof java.lang.Integer i) return (double) i; if (v instanceof java.lang.Double d) return d; throw new DealError(\"E8001\", \"expected number, got \" + $describe(v)); }"
             : "if (descriptor.equals(\"number\")) { if (v instanceof java.lang.Long l) return (double) l; if (v instanceof java.lang.Double d) return d; throw new DealError(\"E8001\", \"expected number, got \" + $describe(v)); }");
-        emitLine("if (descriptor.equals(\"[int]\")) { if (v instanceof __IntArray a) return a; throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
-        emitLine("if (descriptor.equals(\"[number]\")) { if (v instanceof __NumberArray a) return a; throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
-        emitLine("if (descriptor.equals(\"[string]\")) { if (v instanceof __StringArray a) return a; throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
-        emitLine("if (descriptor.equals(\"[boolean]\")) { if (v instanceof __BooleanArray a) return a; throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
-        emitLine(int32Mode
-            ? "if (descriptor.equals(\"[?int]\")) { if (v instanceof __IntOrNullArray a) return a; if (v instanceof __IntArray a) { java.lang.Integer[] nd = new java.lang.Integer[a.data.length]; for (int i = 0; i < a.data.length; i++) nd[i] = java.lang.Integer.valueOf(a.data[i]); return new __IntOrNullArray(nd); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }"
-            : "if (descriptor.equals(\"[?int]\")) { if (v instanceof __IntOrNullArray a) return a; if (v instanceof __IntArray a) { java.lang.Long[] nd = new java.lang.Long[a.data.length]; for (int i = 0; i < a.data.length; i++) nd[i] = java.lang.Long.valueOf(a.data[i]); return new __IntOrNullArray(nd); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
-        emitLine("if (descriptor.equals(\"[?number]\")) { if (v instanceof __NumberOrNullArray a) return a; if (v instanceof __NumberArray a) { java.lang.Double[] nd = new java.lang.Double[a.data.length]; for (int i = 0; i < a.data.length; i++) nd[i] = java.lang.Double.valueOf(a.data[i]); return new __NumberOrNullArray(nd); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
-        emitLine("if (descriptor.equals(\"[?string]\")) { if (v instanceof __StringOrNullArray a) return a; if (v instanceof __StringArray a) { java.lang.String[] nd = new java.lang.String[a.data.length]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); return new __StringOrNullArray(nd); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
-        emitLine("if (descriptor.equals(\"[?boolean]\")) { if (v instanceof __BooleanOrNullArray a) return a; if (v instanceof __BooleanArray a) { java.lang.Boolean[] nd = new java.lang.Boolean[a.data.length]; for (int i = 0; i < a.data.length; i++) nd[i] = java.lang.Boolean.valueOf(a.data[i]); return new __BooleanOrNullArray(nd); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
-        emitLine("if (descriptor.startsWith(\"(\") || descriptor.startsWith(\"async(\")) {");
-        indent++;
-        emitLine("if (v instanceof $FnValue f && f.descriptor().equals(descriptor)) return v;");
-        emitLine("throw new DealError(\"E8001\", \"expected \" + descriptor + \", got \" + $describe(v));");
-        indent--;
-        emitLine("}");
+        emitLine("// bytes row (the canonical matcher table): the shared $DealRt.Bytes");
+        emitLine("// carrier is the JVM bytes representation (ISSUE-0301 D6 — the");
+        emitLine("// final runtime-owned wrapper over byte[]); anything else raises");
+        emitLine("// E8001. Allocation/indexing/mutation live on the int32-bytes lane.");
+        emitLine("if (descriptor.equals(\"bytes\")) { if (v instanceof $DealRt.Bytes b) return b; throw new DealError(\"E8001\", \"expected bytes, got \" + $describe(v)); }");
+        // Class branches (plain class descriptors and per-class array
+        // descriptors) are appended by emitClass before the generic [D]
+        // dispatch: every generated branch keys on its own descriptor
+        // atom, never a prefix of the array/function rows.
         for (String branch : classCheckBranches) {
             emitLine(branch);
         }
+        emitLine("// [D] row (the canonical matcher table): $checkArray accepts the");
+        emitLine("// typed per-element-shape wrapper (identity) and an array-mode");
+        emitLine("// $DealRt.Table (the __jsonTableValue dynamic array");
+        emitLine("// representation — elements checked recursively in index order,");
+        emitLine("// E8003 at the first failing index); any other value raises");
+        emitLine("// E8001 \"expected array\".");
+        emitLine("if (descriptor.startsWith(\"[\") && descriptor.endsWith(\"]\")) { return $checkArray(descriptor, v); }");
+        emitLine("// function row (the canonical matcher table): a shared");
+        emitLine("// $DealRt.FnValue whose carried canonical descriptor equals the");
+        emitLine("// expected text byte-for-byte passes; any descriptor delta raises");
+        emitLine("// E8010 \"function signature mismatch: expected {D}, got {actual}\";");
+        emitLine("// a non-wrapper raises E8001 \"expected function\".");
+        emitLine("if (descriptor.startsWith(\"(\") || descriptor.startsWith(\"async(\")) {");
+        indent++;
+        emitLine("if (v instanceof $DealRt.FnValue f) {");
+        indent++;
+        emitLine("if (f.descriptor().equals(descriptor)) return v;");
+        emitLine("throw new DealError(\"E8010\", \"function signature mismatch: expected \" + descriptor + \", got \" + f.descriptor());");
+        indent--;
+        emitLine("}");
+        emitLine("throw new DealError(\"E8001\", \"expected function\");");
+        indent--;
+        emitLine("}");
         emitLine("throw new DealError(\"E8001\", \"expected \" + descriptor + \", got \" + $describe(v));");
         indent--;
         emitLine("}");
+        emitLine("// The generated recursive [D] realization (ISSUE-0301 D5): one");
+        emitLine("// branch per element shape — the fixed primitive/nullable rows,");
+        emitLine("// the per-class rows appended by emitClass, and the generated");
+        emitLine("// per-element-shape rows for nested/function/bytes arrays.");
+        emitLine("static java.lang.Object $checkArray(java.lang.String descriptor, java.lang.Object v) {");
+        indent++;
+        emitLine("if (descriptor.equals(\"[int]\")) { if (v instanceof $DealRt.__IntArray a) return a; return $dynamicIntArray(v); }");
+        emitLine("if (descriptor.equals(\"[number]\")) { if (v instanceof $DealRt.__NumberArray a) return a; return $dynamicNumberArray(v); }");
+        emitLine("if (descriptor.equals(\"[string]\")) { if (v instanceof $DealRt.__StringArray a) return a; return $dynamicStringArray(v); }");
+        emitLine("if (descriptor.equals(\"[boolean]\")) { if (v instanceof $DealRt.__BooleanArray a) return a; return $dynamicBooleanArray(v); }");
+        emitLine(int32Mode
+            ? "if (descriptor.equals(\"[?int]\")) { if (v instanceof $DealRt.__IntOrNullArray a) return a; if (v instanceof $DealRt.__IntArray a) { java.lang.Integer[] nd = new java.lang.Integer[a.data.length]; for (int i = 0; i < a.data.length; i++) nd[i] = java.lang.Integer.valueOf(a.data[i]); return new $DealRt.__IntOrNullArray(nd); } return $dynamicIntOrNullArray(v); }"
+            : "if (descriptor.equals(\"[?int]\")) { if (v instanceof $DealRt.__IntOrNullArray a) return a; if (v instanceof $DealRt.__IntArray a) { java.lang.Long[] nd = new java.lang.Long[a.data.length]; for (int i = 0; i < a.data.length; i++) nd[i] = java.lang.Long.valueOf(a.data[i]); return new $DealRt.__IntOrNullArray(nd); } return $dynamicIntOrNullArray(v); }");
+        emitLine("if (descriptor.equals(\"[?number]\")) { if (v instanceof $DealRt.__NumberOrNullArray a) return a; if (v instanceof $DealRt.__NumberArray a) { java.lang.Double[] nd = new java.lang.Double[a.data.length]; for (int i = 0; i < a.data.length; i++) nd[i] = java.lang.Double.valueOf(a.data[i]); return new $DealRt.__NumberOrNullArray(nd); } return $dynamicNumberOrNullArray(v); }");
+        emitLine("if (descriptor.equals(\"[?string]\")) { if (v instanceof $DealRt.__StringOrNullArray a) return a; if (v instanceof $DealRt.__StringArray a) { java.lang.String[] nd = new java.lang.String[a.data.length]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); return new $DealRt.__StringOrNullArray(nd); } return $dynamicStringOrNullArray(v); }");
+        emitLine("if (descriptor.equals(\"[?boolean]\")) { if (v instanceof $DealRt.__BooleanOrNullArray a) return a; if (v instanceof $DealRt.__BooleanArray a) { java.lang.Boolean[] nd = new java.lang.Boolean[a.data.length]; for (int i = 0; i < a.data.length; i++) nd[i] = java.lang.Boolean.valueOf(a.data[i]); return new $DealRt.__BooleanOrNullArray(nd); } return $dynamicBooleanOrNullArray(v); }");
+        for (String branch : refArrayCheckBranches) {
+            emitLine(branch);
+        }
+        emitLine("throw new DealError(\"E8001\", \"expected array, got \" + $describe(v));");
+        indent--;
+        emitLine("}");
+        // Dynamic [D] conversions: an array-mode $DealRt.Table crossed a
+        // typed array boundary converts into fresh typed wrapper storage
+        // after each element passes the element row (E8003 at the first
+        // failing index — the inner failure is suppressed exactly like
+        // LuaJIT's pcall-wrapped element checks).
+        emitLine(int32Mode
+            ? "static $DealRt.__IntArray $dynamicIntArray(java.lang.Object v) { if (v instanceof $DealRt.Table t && t.$array() != null) { java.util.ArrayList<java.lang.Object> a = t.$array(); int[] data = new int[a.size()]; for (int i = 0; i < a.size(); i++) { try { data[i] = ((java.lang.Integer) $check(\"int\", a.get(i))).intValue(); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return new $DealRt.__IntArray(data); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }"
+            : "static $DealRt.__IntArray $dynamicIntArray(java.lang.Object v) { if (v instanceof $DealRt.Table t && t.$array() != null) { java.util.ArrayList<java.lang.Object> a = t.$array(); long[] data = new long[a.size()]; for (int i = 0; i < a.size(); i++) { try { data[i] = ((java.lang.Long) $check(\"int\", a.get(i))).longValue(); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return new $DealRt.__IntArray(data); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
+        emitLine("static $DealRt.__NumberArray $dynamicNumberArray(java.lang.Object v) { if (v instanceof $DealRt.Table t && t.$array() != null) { java.util.ArrayList<java.lang.Object> a = t.$array(); double[] data = new double[a.size()]; for (int i = 0; i < a.size(); i++) { try { data[i] = ((java.lang.Double) $check(\"number\", a.get(i))).doubleValue(); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return new $DealRt.__NumberArray(data); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
+        emitLine("static $DealRt.__StringArray $dynamicStringArray(java.lang.Object v) { if (v instanceof $DealRt.Table t && t.$array() != null) { java.util.ArrayList<java.lang.Object> a = t.$array(); java.lang.String[] data = new java.lang.String[a.size()]; for (int i = 0; i < a.size(); i++) { try { data[i] = (java.lang.String) $check(\"string\", a.get(i)); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return new $DealRt.__StringArray(data); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
+        emitLine("static $DealRt.__BooleanArray $dynamicBooleanArray(java.lang.Object v) { if (v instanceof $DealRt.Table t && t.$array() != null) { java.util.ArrayList<java.lang.Object> a = t.$array(); boolean[] data = new boolean[a.size()]; for (int i = 0; i < a.size(); i++) { try { data[i] = ((java.lang.Boolean) $check(\"boolean\", a.get(i))).booleanValue(); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return new $DealRt.__BooleanArray(data); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
+        emitLine(int32Mode
+            ? "static $DealRt.__IntOrNullArray $dynamicIntOrNullArray(java.lang.Object v) { if (v instanceof $DealRt.Table t && t.$array() != null) { java.util.ArrayList<java.lang.Object> a = t.$array(); java.lang.Integer[] data = new java.lang.Integer[a.size()]; for (int i = 0; i < a.size(); i++) { try { data[i] = (java.lang.Integer) $check(\"?int\", a.get(i)); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return new $DealRt.__IntOrNullArray(data); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }"
+            : "static $DealRt.__IntOrNullArray $dynamicIntOrNullArray(java.lang.Object v) { if (v instanceof $DealRt.Table t && t.$array() != null) { java.util.ArrayList<java.lang.Object> a = t.$array(); java.lang.Long[] data = new java.lang.Long[a.size()]; for (int i = 0; i < a.size(); i++) { try { data[i] = (java.lang.Long) $check(\"?int\", a.get(i)); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return new $DealRt.__IntOrNullArray(data); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
+        emitLine("static $DealRt.__NumberOrNullArray $dynamicNumberOrNullArray(java.lang.Object v) { if (v instanceof $DealRt.Table t && t.$array() != null) { java.util.ArrayList<java.lang.Object> a = t.$array(); java.lang.Double[] data = new java.lang.Double[a.size()]; for (int i = 0; i < a.size(); i++) { try { data[i] = (java.lang.Double) $check(\"?number\", a.get(i)); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return new $DealRt.__NumberOrNullArray(data); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
+        emitLine("static $DealRt.__StringOrNullArray $dynamicStringOrNullArray(java.lang.Object v) { if (v instanceof $DealRt.Table t && t.$array() != null) { java.util.ArrayList<java.lang.Object> a = t.$array(); java.lang.String[] data = new java.lang.String[a.size()]; for (int i = 0; i < a.size(); i++) { try { data[i] = (java.lang.String) $check(\"?string\", a.get(i)); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return new $DealRt.__StringOrNullArray(data); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
+        emitLine("static $DealRt.__BooleanOrNullArray $dynamicBooleanOrNullArray(java.lang.Object v) { if (v instanceof $DealRt.Table t && t.$array() != null) { java.util.ArrayList<java.lang.Object> a = t.$array(); java.lang.Boolean[] data = new java.lang.Boolean[a.size()]; for (int i = 0; i < a.size(); i++) { try { data[i] = (java.lang.Boolean) $check(\"?boolean\", a.get(i)); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return new $DealRt.__BooleanOrNullArray(data); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
     }
 
     // =========================================================================
-    // Function-value wrappers (ISSUE-0098 slice)
+    // Function-value wrappers (ISSUE-0098 slice; shared $DealRt carriers
+    // — ISSUE-0301 runtime value surface)
     // =========================================================================
 
     /**
-     * Registers the wrapper class for a function signature and returns its
-     * Java class name (e.g. {@code Fn2_II_R_I} for
+     * Registers the wrapper class for a function signature and returns
+     * its Java type reference (e.g. {@code $DealRt.Fn2_I_I_R_I} for
      * {@code (int,int)->int}). One abstract class per distinct signature
-     * shape; the class carries the spec-convention runtime descriptor
-     * string (the same text the Lua backend stores in its runtime
-     * function wrappers — observable only at the host boundary, deferred
-     * to ISSUE-0110) and an {@code invoke} method with the JVM-mapped
-     * signature. The class text is accumulated and spliced into the class
-     * body right after the runtime support.
+     * shape, declared inside the SHARED {@code $DealRt} runtime scope
+     * (emitted once per compiled project by the selected entry module),
+     * so wrapper values cross module boundaries with one javac-visible
+     * type. The class carries the canonical runtime descriptor string
+     * (produced by the one {@link #typeDescriptor} emitter) and an
+     * {@code invoke} method with the JVM-mapped signature. The class
+     * text is accumulated and spliced into the {@code $DealRt} body
+     * right after the fixed carrier classes.
      */
     private String registerWrapperShape(Type.Func f) {
-        String name = fnShapeName(f);
-        if (name == null) return null; // deferred shape; caller records E6000
-        if (emittedWrapperShapes.add(name)) {
+        String id = fnShapeId(f);
+        // The invoke signature is built through the DIAGNOSTIC-FREE
+        // mapper: pre-registration of the orchestrator's collected
+        // shape set must never invent an E6000, and an unrepresentable
+        // signature (bytes/table carriers inside the signature) keeps
+        // its E6000 at the call site, never a broken wrapper class.
+        if (!isRepresentableSignature(f)) return null;
+        if (emittedWrapperShapes.add(id)) {
             StringBuilder body = new StringBuilder();
             body.append("// DEAL function-value wrapper for descriptor ")
                 .append(quoteJavaString(fnDescriptor(f))).append("\n");
-            body.append("static abstract class ").append(name)
-                .append(" implements $FnValue {\n");
+            body.append("static abstract class ").append(id)
+                .append(" implements FnValue {\n");
             body.append("    final java.lang.String descriptor = ")
                 .append(quoteJavaString(fnDescriptor(f))).append(";\n");
             body.append("    public java.lang.String descriptor() { return descriptor; }\n");
-            body.append("    abstract ").append(javaReturnType(f.returnType(), null))
+            body.append("    abstract ").append(silentReturnJavaType(f.returnType()))
                 .append(" invoke(");
             for (int i = 0; i < f.paramTypes().size(); i++) {
                 if (i > 0) body.append(", ");
-                body.append(javaLocalType(f.paramTypes().get(i), null))
+                body.append(silentJavaLocalType(f.paramTypes().get(i)))
                     .append(" p").append(i);
             }
             body.append(");\n");
             body.append("}\n");
-            // The class text is spliced into the class body at indent 1;
-            // prefix every line with the class-body indent.
+            // The class text is spliced into the $DealRt body at indent
+            // 1; prefix every line with the class-body indent.
             for (String line : body.toString().split("\n", -1)) {
                 if (line.isEmpty()) continue;
-                wrapperClasses.append("    ").append(line).append('\n');
+                sharedWrapperClasses.append("    ").append(line).append('\n');
             }
         }
-        return name;
+        return "$DealRt." + id;
     }
 
-    /** The wrapper class name for a signature, or {@code null} when the
-     * signature contains a deferred type (array/class/nullable/nested
-     * function — the emitter records E6000 for those elsewhere). */
-    private static String fnShapeName(Type.Func f) {
-        StringBuilder sb = new StringBuilder("Fn").append(f.paramTypes().size());
-        if (f.paramTypes().isEmpty()) {
-            sb.append("_R_");
-        } else {
-            sb.append('_');
-            for (Type p : f.paramTypes()) {
-                String seg = fnShapeSegment(p);
-                if (seg == null) return null;
-                sb.append(seg);
-            }
-            sb.append("_R_");
+    /**
+     * True when the signature's invoke method maps every parameter and
+     * the return type to a real Java carrier through the diagnostic-free
+     * mapper — the shape the shared wrapper class can carry without an
+     * E6000. Signatures with bytes/table carriers or classes the module
+     * cannot reference are not representable (their E6000 surfaces at
+     * the emission call site, as before the shared-scope migration).
+     */
+    private boolean isRepresentableSignature(Type.Func f) {
+        String ret = silentReturnJavaType(f.returnType());
+        if (ret == null) return false;
+        for (Type p : f.paramTypes()) {
+            if (silentJavaLocalType(p) == null) return false;
         }
-        String rc = fnShapeSegment(f.returnType());
-        if (rc == null) return null;
-        sb.append(rc);
+        return true;
+    }
+
+    /** Diagnostic-free mirror of {@link #javaLocalType}: identical
+     * carriers for every representable type, {@code null} instead of an
+     * E6000 for every unrepresentable one. Used ONLY to build the shared
+     * wrapper classes (pre-registration of collected shapes must never
+     * invent diagnostics) and by {@link #isRepresentableSignature}. */
+    private String silentJavaLocalType(Type t) {
+        return switch (t) {
+            case Type.Int ignored -> int32Mode ? "int" : "long";
+            case Type.Number ignored -> "double";
+            case Type.Boolean ignored -> "boolean";
+            case Type.String ignored -> "java.lang.String";
+            case Type.Null ignored -> "java.lang.Void";
+            case Type.Array a -> silentArrayWrapperName(a.element());
+            case Type.Table ignored -> "$DealRt.Table";
+            case Type.Class c -> silentClassJavaType(c);
+            case Type.Nullable n -> silentNullableJavaType(n.inner());
+            case Type.Func f -> registerWrapperShape(f);
+            case Type.Bytes ignored -> null;
+            default -> null;
+        };
+    }
+
+    /** Diagnostic-free mirror of {@link #arrayWrapperName} with every
+     * per-class wrapper fully qualified by its declaring module class
+     * ({@code Main.$Array$C}, {@code Lib.$Array$C}) — the wrapper text
+     * lives inside the shared {@code $DealRt} scope. */
+    private String silentArrayWrapperName(Type element) {
+        if (element instanceof Type.Class c) {
+            return silentClassArrayWrapperName(c, false);
+        }
+        if (element instanceof Type.Nullable ne
+                && ne.inner() instanceof Type.Class c) {
+            return silentClassArrayWrapperName(c, true);
+        }
+        return arrayWrapperName(element);
+    }
+
+    /** A class whose declaring module is a HOST module import of the
+     * current module is never representable here: host class exports
+     * keep their import-time E6000s (the host ABI lane's carriers —
+     * jvm-v12-host-abi-completion), and the shared scope can never
+     * reference a host Java class the backend does not emit, so the
+     * wrapper must not carry one. */
+    private String silentClassArrayWrapperName(Type.Class c,
+            boolean orNull) {
+        String wrapper = orNull
+            ? classOrNullArrayWrapperName(c.name())
+            : classArrayWrapperName(c.name());
+        if (isLocalClassType(c)) {
+            return moduleClasses.containsKey(c.name())
+                ? classNameFor(modulePath) + "." + wrapper : null;
+        }
+        if (isHostModuleClass(c)) {
+            return null;
+        }
+        String module = declaringModulePath(c);
+        if (module == null) {
+            return null;
+        }
+        return classNameFor(module) + "." + wrapper;
+    }
+
+    /** Diagnostic-free mirror of the class-typed {@link #javaLocalType}
+     * arm (builtin Error, local classes, imported classes). Every
+     * generated class reference is FULLY QUALIFIED with its declaring
+     * module class ({@code Main.$C_C}, {@code Lib.$C_C}): the wrapper
+     * text lives inside the shared {@code $DealRt} scope, where a bare
+     * {@code $C_C} does not resolve. All emitted artifacts share the
+     * default package, so the qualified reference is exactly what javac
+     * compiles. A class of an unknown module (never the case for a
+     * checker-typed collected shape) maps to {@code null}. A class
+     * whose declaring module is a host module import of the current
+     * module maps to {@code null} as well: host class exports keep
+     * their import-time E6000s (the host ABI lane's carriers —
+     * jvm-v12-host-abi-completion), and a shared-scope wrapper may
+     * never reference a host Java class the backend does not emit. */
+    private String silentClassJavaType(Type.Class c) {
+        if (isBuiltinErrorType(c)) {
+            return "java.lang.RuntimeException";
+        }
+        if (isLocalClassType(c)) {
+            return moduleClasses.containsKey(c.name())
+                ? classNameFor(modulePath) + "."
+                    + classNameForClass(c.name())
+                : null;
+        }
+        if (isHostModuleClass(c)) {
+            return null;
+        }
+        String module = declaringModulePath(c);
+        if (module == null) {
+            return null;
+        }
+        return classNameFor(module) + "." + classNameForClass(c.name());
+    }
+
+    /** True when the class's carried module identity is an externals
+     * declaration module ({@code ExternalModule(rawImportSpecifier)})
+     * whose raw specifier — or its dotted/raw converted spelling — is
+     * a host module import of the current module
+     * ({@link #hostModules}). Host class exports keep their import-time
+     * E6000s (the host ABI lane's carriers), never a shared-scope
+     * wrapper over a never-emitted host Java class. */
+    private boolean isHostModuleClass(Type.Class c) {
+        CanonicalModuleIdentity mi = c.identity().moduleIdentity();
+        if (mi instanceof CanonicalModuleIdentity.ExternalModule em) {
+            String raw = em.rawImportSpecifier();
+            if (hostModules.containsKey(raw)) {
+                return true;
+            }
+            if (hostModules.containsKey(raw.replace('.', '/'))) {
+                return true;
+            }
+            if (hostModules.containsKey(raw.replace('/', '.'))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Diagnostic-free mirror of {@link #nullableJavaType}. */
+    private String silentNullableJavaType(Type inner) {
+        return switch (inner) {
+            case Type.Int ignored ->
+                int32Mode ? "java.lang.Integer" : "java.lang.Long";
+            case Type.Number ignored -> "java.lang.Double";
+            case Type.Boolean ignored -> "java.lang.Boolean";
+            case Type.String ignored -> "java.lang.String";
+            case Type.Class c -> silentClassJavaType(c);
+            case Type.Array a -> silentArrayWrapperName(a.element());
+            case Type.Func f -> registerWrapperShape(f);
+            case Type.Bytes ignored -> null;
+            default -> null;
+        };
+    }
+
+    /** Diagnostic-free mirror of {@link #javaReturnType}. */
+    private String silentReturnJavaType(Type t) {
+        if (t instanceof Type.Null) return "void";
+        return silentJavaLocalType(t);
+    }
+
+    /**
+     * The deterministic injective wrapper class id for a function
+     * signature ({@code Fn2_I_I_R_I} for {@code (int,int)->int},
+     * {@code FnA1_I_R_I} for {@code async (int)->int}). The encoding
+     * covers the complete canonical type grammar: primitives use the
+     * pinned single-letter codes ({@code B}/{@code I}/{@code N}/
+     * {@code S}/{@code V}/{@code Y}), and every other type — bytes
+     * composites, arrays, nullables, classes (by canonical identity
+     * text), and nested sync/async functions — uses a {@code $}-prefixed
+     * escape of the canonical descriptor text produced by the one
+     * {@link #typeDescriptor} emitter. Distinct canonical types map to
+     * distinct ids by construction: the single-letter codes are
+     * disjoint, complex segments carry injectively escaped descriptor
+     * text, the {@code _} separators never occur inside a segment (the
+     * escape maps {@code _} to {@code $u}), and the async marker is a
+     * dedicated {@code A} position — so {@code async (int)->int} and
+     * {@code (int)->int} never share a class. The name can never collide
+     * with a {@link #javaName}-translated user identifier: {@code javaName}
+     * output contains neither {@code _} nor {@code $}.
+     */
+    /**
+     * The deterministic injective signature-shape id over the complete
+     * canonical grammar, over the supplied descriptor service (the
+     * static form: the backend instance delegates with the compilation's
+     * service; the property tests supply their own).
+     */
+    public static String fnShapeId(Type.Func f) {
+        StringBuilder sb = new StringBuilder("Fn");
+        if (f.isAsync()) sb.append('A');
+        sb.append(f.paramTypes().size());
+        if (!f.paramTypes().isEmpty()) {
+            sb.append('_');
+            for (int i = 0; i < f.paramTypes().size(); i++) {
+                if (i > 0) sb.append('_');
+                sb.append(shapeSegment(f.paramTypes().get(i)));
+            }
+        }
+        sb.append("_R_").append(shapeSegment(f.returnType()));
         return sb.toString();
     }
 
-    /** One signature-shape segment: the single-letter code for a
-     * primitive, or the nested function shape's full wrapper name for a
-     * function type (ISSUE-0102 — nested function types now emit). */
-    private static String fnShapeSegment(Type t) {
+    /** One segment of {@link #fnShapeId}: the single-letter code for a
+     * primitive, or {@code $} + the injectively escaped canonical
+     * descriptor text for any other type. */
+    private static String shapeSegment(Type t) {
         Character c = fnShapeLetter(t);
         if (c != null) return c.toString();
-        if (t instanceof Type.Func nested) {
-            String nestedName = fnShapeName(nested);
-            if (nestedName == null) return null;
-            return "F" + nestedName;
-        }
-        return null;
+        return "$" + escapedIdentifier(typeDescriptor(t));
     }
 
-    /** The one-letter signature-shape code ({@code B/I/N/S/V} for
-     * boolean/int/number/string/null; {@code null} for deferred types). */
+    /** The one-letter shape code ({@code B}/{@code I}/{@code N}/
+     * {@code S}/{@code V}/{@code Y} for boolean/int/number/string/null/
+     * bytes). */
     private static Character fnShapeLetter(Type t) {
         return switch (t) {
             case Type.Boolean ignored -> 'B';
@@ -4299,39 +5169,71 @@ public final class JvmBackend {
             case Type.Number ignored -> 'N';
             case Type.String ignored -> 'S';
             case Type.Null ignored -> 'V';
-            case Type.Bytes ignored -> null;
+            case Type.Bytes ignored -> 'Y';
             default -> null;
         };
     }
 
-    /** The spec-convention runtime descriptor ({@code (int,int)->int}) —
-     * the same text the Lua backend stores in its runtime function
-     * wrappers. Only primitive/string/null signatures reach this point,
-     * so no escaping beyond the descriptor grammar is needed. */
-    private static String fnDescriptor(Type.Func f) {
+    /**
+     * The injective identifier-safe escape of arbitrary text: ASCII
+     * letters/digits stay raw, {@code $} becomes {@code $$}, {@code _}
+     * becomes {@code $u}, the descriptor punctuation uses compact
+     * two-character codes ({@code (}→{@code $l}, {@code )}→{@code $r},
+     * {@code [}→{@code $B}, {@code ]}→{@code $E}, {@code ?}→{@code $Q},
+     * {@code @}→{@code $a}, {@code -}→{@code $m}, {@code >}→{@code $g},
+     * {@code ,}→{@code $c}, {@code .}→{@code $i}, {@code /}→{@code $s} —
+     * keeping emitted class-file names far below the filesystem length
+     * bound), and every other UTF-16 code unit becomes {@code $x} +
+     * four lowercase hex digits. The code is prefix-free (a decoder
+     * reading {@code $} consumes {@code $$}/{@code $u}/{@code $xhhhh}
+     * or one two-character code greedily and unambiguously; {@code x}
+     * never doubles as a two-character code), so distinct input texts
+     * map to distinct output texts, and the output contains no raw
+     * {@code _} — segment concatenations joined by {@code _} stay
+     * injective.
+     */
+    public static String escapedIdentifier(String text) {
         StringBuilder sb = new StringBuilder();
-        if (f.isAsync()) sb.append("async");
-        sb.append("(");
-        for (int i = 0; i < f.paramTypes().size(); i++) {
-            if (i > 0) sb.append(",");
-            sb.append(singleTypeDescriptor(f.paramTypes().get(i)));
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+                    || (c >= '0' && c <= '9')) {
+                sb.append(c);
+            } else if (c == '$') {
+                sb.append("$$");
+            } else if (c == '_') {
+                sb.append("$u");
+            } else {
+                appendEscapedChar(sb, c);
+            }
         }
-        sb.append(")->").append(singleTypeDescriptor(f.returnType()));
         return sb.toString();
     }
 
-    /** One segment of a function signature descriptor. */
-    private static String singleTypeDescriptor(Type t) {
-        return switch (t) {
-            case Type.Int ignored -> "int";
-            case Type.Number ignored -> "number";
-            case Type.Boolean ignored -> "boolean";
-            case Type.String ignored -> "string";
-            case Type.Null ignored -> "null";
-            case Type.Bytes ignored -> "bytes";
-            case Type.Func nested -> fnDescriptor(nested);
-            default -> "?";
-        };
+    /** One escaped non-identifier code unit of {@link #escapedIdentifier}. */
+    private static void appendEscapedChar(StringBuilder sb, char c) {
+        switch (c) {
+            case '(' -> sb.append("$l");
+            case ')' -> sb.append("$r");
+            case '[' -> sb.append("$B");
+            case ']' -> sb.append("$E");
+            case '?' -> sb.append("$Q");
+            case '@' -> sb.append("$a");
+            case '-' -> sb.append("$m");
+            case '>' -> sb.append("$g");
+            case ',' -> sb.append("$c");
+            case '.' -> sb.append("$i");
+            case '/' -> sb.append("$s");
+            default -> sb.append(String.format("$x%04x", (int) c));
+        }
+    }
+
+    /** The function-signature runtime descriptor — the ONE descriptor
+     * producer for every wrapper descriptor, {@code $check} call-site
+     * literal, and host-boundary descriptor: {@link #typeDescriptor(Type)}
+     * (the compilation's canonical descriptor service). */
+    private String fnDescriptor(Type.Func f) {
+        return typeDescriptor(f);
     }
 
     // =========================================================================
@@ -4893,16 +5795,17 @@ public final class JvmBackend {
     // =========================================================================
 
     /**
-     * The ONE JVM type-descriptor emitter (ISSUE-0110), public and static
-     * so the later function-value (ISSUE-0098) and async (ISSUE-0099)
-     * slices — and the unit tests — consume exactly one spelling. Maps a
-     * {@link Type} to the spec's {@code RuntimeTypeDescriptor} string
-     * ({@code docs/spec-v1.2.md} §Runtime type descriptor format):
-     * {@code ?T} nullables, {@code [T]} arrays, {@code @module/Name}
-     * classes (bare name only for an empty module path — the same
-     * spelling {@code IrDumper} produces), {@code (params)->ret} function
-     * types with the {@code async} prefix, and the primitive/table/Error
-     * forms (DEAL v1.2 has no rest parameters).
+     * The ONE JVM type-descriptor emitter (ISSUE-0110, ISSUE-0301
+     * descriptor seam): every {@link Type}&rarr;text production in the
+     * backend uses this single public static emitter — the canonical
+     * runtime-descriptor grammar ({@code [D]} arrays, {@code ?D}
+     * nullables, {@code bytes}, exact {@code async? (...) -> D}
+     * functions) with class atoms projected byte-for-byte from the
+     * carried canonical identity through the static identity index
+     * ({@code @$builtin/Error}, {@code @<configuredRootText>/...},
+     * {@code @$external/<specifier>/<ClassName>}) — never a legacy
+     * spelling ({@code T[]}, {@code T|null}, bare class names). No
+     * second {@code Type}&rarr;text producer exists in the backend.
      */
     public static String typeDescriptor(Type t) {
         if (t == null) return "null";
@@ -4947,19 +5850,18 @@ public final class JvmBackend {
     }
 
     /**
-     * The spec {@code ClassDescriptor} string the runtime-check seam
-     * dispatches on for class {@code cls}: the backend-held
-     * module-qualified identity ({@link #classIdentity}) for a LOCAL
-     * class — the exact string the generated class carries — and
-     * {@code @<declaringModulePath>/<name>} for an imported class (the
-     * checker records the declaring module path in {@code Type.Class},
-     * and the declaring module's emitted seam branches on its own
-     * {@code classIdentity}, which equals that path under the
-     * orchestrator). Both spellings are the spec's
-     * {@code ClassDescriptor} form; the locality split exists because the
-     * single-module conformance harness checks with the source filename
-     * while codegen runs with the backend-held module path — the same
-     * alignment {@link #isLocalClassType} already encodes.
+     * The canonical descriptor string the runtime-check seam dispatches
+     * on for class {@code cls}: the backend-held canonical identity
+     * ({@link #classIdentity}) for a LOCAL class — the exact string the
+     * generated class carries — and the canonical projection of the
+     * checker-recorded {@code Type.Class} through the compilation's
+     * descriptor service for an imported class (the declaring module's
+     * emitted seam branches on its own {@code classIdentity}, which
+     * equals that projection under the orchestrator). The locality split
+     * exists because the direct single-module adapter checks with the
+     * source filename while codegen runs with the backend-held module
+     * path — the same alignment {@link #isLocalClassType} already
+     * encodes.
      */
     private String classCheckDescriptor(Type.Class cls) {
         if (isLocalClassType(cls)) return classIdentity(cls.name());
@@ -5482,14 +6384,14 @@ public final class JvmBackend {
         // helpers carrying the nominal E8001 checks. The identity
         // strings mirror the nominal check helper above.
         emitLine("static final class " + classArrayWrapperName(cd.name())
-            + " extends __RefArray {");
+            + " extends $DealRt.__RefArray {");
         indent++;
         emitLine(classArrayWrapperName(cd.name())
             + "(java.lang.Object[] data) { super(data); }");
         indent--;
         emitLine("}");
         emitLine("static final class " + classOrNullArrayWrapperName(cd.name())
-            + " extends __RefArray {");
+            + " extends $DealRt.__RefArray {");
         indent++;
         emitLine(classOrNullArrayWrapperName(cd.name())
             + "(java.lang.Object[] data) { super(data); }");
@@ -5520,7 +6422,7 @@ public final class JvmBackend {
         classCheckBranches.add("    throw new DealError(\"E8001\", \"expected array, got \" + $describe(v));");
         classCheckBranches.add("}");
         emitLine("static " + gen + " " + classArrayReadName(cd.name())
-            + "(__RefArray a, long i) {");
+            + "($DealRt.__RefArray a, long i) {");
         indent++;
         emitLine("if (i < 0L) throw new DealError(\"E8002\", \"negative array index\");");
         emitLine("if (i >= (long) a.data.length) throw new DealError(\"E8001\", "
@@ -5532,7 +6434,7 @@ public final class JvmBackend {
         indent--;
         emitLine("}");
         emitLine("static " + gen + " " + classOrNullArrayReadName(cd.name())
-            + "(__RefArray a, long i) {");
+            + "($DealRt.__RefArray a, long i) {");
         indent++;
         emitLine("if (i < 0L) throw new DealError(\"E8002\", \"negative array index\");");
         emitLine("if (i >= (long) a.data.length) return null;");
@@ -5544,7 +6446,7 @@ public final class JvmBackend {
         indent--;
         emitLine("}");
         emitLine("static " + gen + " " + classArrayWriteName(cd.name())
-            + "(__RefArray a, long i, java.lang.Object v) {");
+            + "($DealRt.__RefArray a, long i, java.lang.Object v) {");
         indent++;
         emitLine("if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\");");
         emitLine("if (!(v instanceof " + gen + " c)) throw new DealError(\"E8001\", \"expected instance of " + identity + ", got \" + $describe(v));");
@@ -5553,7 +6455,7 @@ public final class JvmBackend {
         indent--;
         emitLine("}");
         emitLine("static " + gen + " " + classOrNullArrayWriteName(cd.name())
-            + "(__RefArray a, long i, java.lang.Object v) {");
+            + "($DealRt.__RefArray a, long i, java.lang.Object v) {");
         indent++;
         emitLine("if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\");");
         emitLine("if (v != null && !(v instanceof " + gen + " c)) throw new DealError(\"E8001\", \"expected instance of " + identity + ", got \" + $describe(v));");
@@ -6575,7 +7477,7 @@ public final class JvmBackend {
         emitLine("return;");
         indent--;
         emitLine("}");
-        emitLine("if (v instanceof __IntArray a) {");
+        emitLine("if (v instanceof $DealRt.__IntArray a) {");
         indent++;
         emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
         emitLine("sb.append('[');");
@@ -6588,7 +7490,7 @@ public final class JvmBackend {
         emitLine("return;");
         indent--;
         emitLine("}");
-        emitLine("if (v instanceof __NumberArray a) {");
+        emitLine("if (v instanceof $DealRt.__NumberArray a) {");
         indent++;
         emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
         emitLine("sb.append('[');");
@@ -6599,7 +7501,7 @@ public final class JvmBackend {
         emitLine("return;");
         indent--;
         emitLine("}");
-        emitLine("if (v instanceof __StringArray a) {");
+        emitLine("if (v instanceof $DealRt.__StringArray a) {");
         indent++;
         emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
         emitLine("sb.append('[');");
@@ -6610,7 +7512,7 @@ public final class JvmBackend {
         emitLine("return;");
         indent--;
         emitLine("}");
-        emitLine("if (v instanceof __BooleanArray a) {");
+        emitLine("if (v instanceof $DealRt.__BooleanArray a) {");
         indent++;
         emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
         emitLine("sb.append('[');");
@@ -6621,7 +7523,7 @@ public final class JvmBackend {
         emitLine("return;");
         indent--;
         emitLine("}");
-        emitLine("if (v instanceof __IntOrNullArray a) {");
+        emitLine("if (v instanceof $DealRt.__IntOrNullArray a) {");
         indent++;
         emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
         emitLine("sb.append('[');");
@@ -6634,7 +7536,7 @@ public final class JvmBackend {
         emitLine("return;");
         indent--;
         emitLine("}");
-        emitLine("if (v instanceof __NumberOrNullArray a) {");
+        emitLine("if (v instanceof $DealRt.__NumberOrNullArray a) {");
         indent++;
         emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
         emitLine("sb.append('[');");
@@ -6645,7 +7547,7 @@ public final class JvmBackend {
         emitLine("return;");
         indent--;
         emitLine("}");
-        emitLine("if (v instanceof __StringOrNullArray a) {");
+        emitLine("if (v instanceof $DealRt.__StringOrNullArray a) {");
         indent++;
         emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
         emitLine("sb.append('[');");
@@ -6656,7 +7558,7 @@ public final class JvmBackend {
         emitLine("return;");
         indent--;
         emitLine("}");
-        emitLine("if (v instanceof __BooleanOrNullArray a) {");
+        emitLine("if (v instanceof $DealRt.__BooleanOrNullArray a) {");
         indent++;
         emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
         emitLine("sb.append('[');");
@@ -7234,8 +8136,7 @@ public final class JvmBackend {
         // LuaJIT's declaration-point assignment of function values.
         Symbol fnSym = symbols.resolve(fd.name());
         if (fnSym instanceof Symbol.FunctionSymbol fs
-                && fs.funcType() != null
-                && fnShapeName(fs.funcType()) != null) {
+                && fs.funcType() != null) {
             Type.Func funcType = fs.funcType();
             String shape = registerWrapperShape(funcType);
             emitLine("static final " + shape + " " + javaFn + "$fn = new "
@@ -7405,8 +8306,8 @@ public final class JvmBackend {
         String shape = registerWrapperShape(funcType);
         if (shape == null) {
             unsupported("function values whose signature contains "
-                + "arrays/classes/nullables/nested functions "
-                + "(deferred to ISSUE-0110)", fd.span());
+                + "bytes/table carriers (deferred to the int32-bytes "
+                + "lane)", fd.span());
             return;
         }
         String mapped = declareLocal(fd.name(), funcType);
@@ -7440,8 +8341,8 @@ public final class JvmBackend {
         String shape = registerWrapperShape(ft);
         if (shape == null) {
             unsupported("function values whose signature contains "
-                + "arrays/classes/nullables/nested functions "
-                + "(deferred to ISSUE-0110)", fe.span());
+                + "bytes/table carriers (deferred to the int32-bytes "
+                + "lane)", fe.span());
             return "null";
         }
         Type returnType = ft.returnType();
@@ -9156,21 +10057,17 @@ public final class JvmBackend {
                     + "reference to the wrapper field)", id.span());
                 return "null";
             }
-            // Deferred signature shapes (array/class/nullable/table or
-            // nested-function parameters or returns): emitFunction emits
-            // the per-declaration wrapper field only when the signature
-            // shape is supported (fnShapeName != null), so a value use
-            // must be rejected with E6000 here instead of referencing a
-            // field that does not exist — an artifact javac would reject
-            // after the CLI reported success. Function equality/inequality
-            // is the value position that reaches emitIdentifier without a
-            // typed function-value boundary in between (every other
-            // position gates on the deferred shape earlier), exactly
-            // mirroring the emitFunction wrapper-field gate.
-            if (fs.funcType() == null || fnShapeName(fs.funcType()) == null) {
+            // The wrapper field always exists for a module function: the
+            // shared $DealRt scope carries every wrapper shape, and
+            // emitFunction emits the per-declaration wrapper field.
+            // Signature shapes with bytes/table carriers are rejected
+            // earlier at the parameter/return type mapping (E6000), so
+            // no dangling reference can be emitted here; the null
+            // funcType arm stays defensive.
+            if (fs.funcType() == null) {
                 unsupported("function values whose signature contains "
-                    + "arrays/classes/nullables/nested functions "
-                    + "(deferred to ISSUE-0110)", id.span());
+                    + "bytes/table carriers (deferred to the int32-bytes "
+                    + "lane)", id.span());
                 return "null";
             }
             return javaName(id.name()) + "$fn";
@@ -10166,15 +11063,15 @@ public final class JvmBackend {
         String shape = registerWrapperShape(target);
         if (shape == null) {
             unsupported("function values whose signature contains "
-                + "arrays/classes/nullables/nested functions "
-                + "(deferred to ISSUE-0110)", value.span());
+                + "bytes/table carriers (deferred to the int32-bytes "
+                + "lane)", value.span());
             return "null";
         }
         String actualShape = registerWrapperShape(actual);
         if (actualShape == null) {
             unsupported("function values whose signature contains "
-                + "arrays/classes/nullables/nested functions "
-                + "(deferred to ISSUE-0110)", value.span());
+                + "bytes/table carriers (deferred to the int32-bytes "
+                + "lane)", value.span());
             return "null";
         }
         // Evaluate the value expression first (strict left-to-right /
@@ -10298,8 +11195,8 @@ public final class JvmBackend {
         String shape = registerWrapperShape(target);
         if (shape == null) {
             unsupported("function values whose signature contains "
-                + "arrays/classes/nullables/nested functions "
-                + "(deferred to ISSUE-0110)", value.span());
+                + "bytes/table carriers (deferred to the int32-bytes "
+                + "lane)", value.span());
             return "null";
         }
         StringBuilder sb = new StringBuilder("new ").append(shape)
@@ -10518,8 +11415,8 @@ public final class JvmBackend {
         String shape = registerWrapperShape(actual);
         if (shape == null) {
             unsupported("function values whose signature contains "
-                + "arrays/classes/nullables/nested functions "
-                + "(deferred to ISSUE-0110)", value.span());
+                + "bytes/table carriers (deferred to the int32-bytes "
+                + "lane)", value.span());
             return "null";
         }
         String tmp = nextFunctionValueTempName();
@@ -10809,8 +11706,8 @@ public final class JvmBackend {
             String shape = registerWrapperShape(f);
             if (shape == null) {
                 unsupported("function values whose signature contains "
-                    + "arrays/classes/nullables/nested functions "
-                    + "(deferred to ISSUE-0110)", call.callee().span());
+                    + "bytes/table carriers (deferred to the int32-bytes "
+                    + "lane)", call.callee().span());
                 return "null";
             }
             String callee = emitExpression(call.callee());
@@ -10960,59 +11857,29 @@ public final class JvmBackend {
             }
         }
         String className = classNameFor(module);
-        // ISSUE-0098: function values cannot cross a project-module
-        // boundary — the per-signature wrapper classes are emitted per
-        // module as nested classes, so a caller-module wrapper is never
-        // a value of the callee module's wrapper class. A Func-typed
-        // argument (a callback, an arity-extension adapter value, or a
-        // conversion intrinsic) would emit an artifact javac rejects
-        // after the CLI reported success, and the member-call path has
-        // no function parameter targets, so the parameter-boundary
-        // E8010 check the same-module call path emits would be silently
-        // dropped — reject with E6000 until ISSUE-0110 emits the
-        // wrapper shapes as shared top-level classes.
-        for (int i = 0; i < call.args().size(); i++) {
-            if (typeOf(call.args().get(i)) instanceof Type.Func) {
-                unsupported("function values passed to an imported "
-                    + "module call (the per-module wrapper classes "
-                    + "cannot cross a module boundary — cross-module "
-                    + "function values are deferred to ISSUE-0110)",
-                    call.args().get(i).span());
-                return "null";
-            }
-        }
-        // A function value returned from an imported module call (used
-        // as an assignment value, a call-result callee, or a discarded
-        // statement value) carries the DEFINING module's wrapper class
-        // — the same boundary violation.
-        if (typeOf(call) instanceof Type.Func) {
-            unsupported("function values returned from an imported "
-                + "module call (the per-module wrapper classes cannot "
-                + "cross a module boundary — cross-module function "
-                + "values are deferred to ISSUE-0110)", mae.span());
-            return "null";
-        }
-        List<String> argCodes = emitOperandsInOrder(call.args());
+        // ISSUE-0301 shared carriers: the checker typed the member as
+        // the exported function, so its declared signature — parameter
+        // Java types included — is visible here as {@code typeOf(mae)}.
+        // Function values cross the module boundary on the shared
+        // $DealRt wrappers (no conversion adapter, reference identity
+        // preserved), and the parameter-boundary E8010 check the
+        // same-module path emits applies here identically: a
+        // narrower arity-extension argument raises
+        // "function signature mismatch: expected {D}, got {actual}" at
+        // the call, with the argument value evaluated first (spec
+        // §Operational semantics rule 2).
+        Type.Func exported = typeOf(mae) instanceof Type.Func f ? f : null;
+        List<Type> argTargets = exported == null
+            ? null : exported.paramTypes();
+        List<String> argCodes = emitOperandsInOrder(call.args(), argTargets);
         StringBuilder sb = new StringBuilder(className).append('.')
             .append(javaName(mae.field())).append('(');
         for (int i = 0; i < argCodes.size(); i++) {
             if (i > 0) sb.append(", ");
-            // A null-typed assignment argument carries the assignment
-            // TARGET's Java type, and the imported module's parameter
-            // Java type is not visible to this backend instance — the
-            // shape could mismatch across modules (imports stay out of
-            // the nullable slice, ISSUE-0108), so reject instead of
-            // emitting an artifact javac would reject.
-            if (call.args().get(i) instanceof AssignmentExpr ae
-                    && typeOf(ae) instanceof Type.Null) {
-                unsupported("null-typed assignment argument to an "
-                    + "imported function call (the imported parameter's "
-                    + "Java type is not visible to this backend)",
-                    ae.span());
-                return "null";
-            }
-            sb.append(adaptIntBoundary(call.args().get(i),
-                argCodes.get(i), typeOf(call.args().get(i))));
+            Type paramType = argTargets != null
+                && i < argTargets.size() ? argTargets.get(i) : null;
+            sb.append(boundaryArgCode(call.args().get(i),
+                argCodes.get(i), paramType));
         }
         return sb.append(')').toString();
     }
@@ -11230,6 +12097,29 @@ public final class JvmBackend {
 
     private String emitMemberAccessValue(MemberAccessExpr mae) {
         Type objType = typeOf(mae.object());
+        if (mae.object() instanceof IdentifierExpr id) {
+            String module = importAliases.get(id.name());
+            if (module != null
+                    && !SUPPORTED_STDLIB_MODULES.contains(module)
+                    && !hostAliases.containsKey(id.name())) {
+                // ISSUE-0301 cross-module function values: an imported
+                // project module's function used as a VALUE reads the
+                // declaring module's wrapper instance field
+                // ({@code Lib.<fn>$fn}) — the shared $DealRt wrapper
+                // class, so the value crosses the module boundary with
+                // its complete canonical descriptor and reference
+                // identity.
+                if (typeOf(mae) instanceof Type.Func f
+                        && registerWrapperShape(f) != null) {
+                    return classNameFor(module) + "."
+                        + javaName(mae.field()) + "$fn";
+                }
+                unsupported("imported module members used as values "
+                    + "(only imported functions are supported)",
+                    mae.span());
+                return "null";
+            }
+        }
         if (objType instanceof Type.Array && "length".equals(mae.field())) {
             String obj = emitExpression(mae.object());
             // ISSUE-0375 carrier switch: array length is DEAL int —
@@ -11972,11 +12862,21 @@ public final class JvmBackend {
                     + ", " + temp + "))";
             }
             if (inner instanceof Type.Array arr
-                    && elementCheckDescriptor(arr.element()) != null
-                    && arrayWrapperName(arr.element()) != null) {
+                    && arrayWrapperName(arr.element()) != null
+                    && (elementCheckDescriptor(arr.element()) != null
+                        || arr.element() instanceof Type.Array
+                        || arr.element() instanceof Type.Func
+                        || arr.element() instanceof Type.Bytes
+                        || (arr.element() instanceof Type.Nullable ne
+                            && (ne.inner() instanceof Type.Func
+                                || ne.inner() instanceof Type.Bytes)))) {
+                String elemDesc = elementCheckDescriptor(arr.element());
+                if (elemDesc == null) {
+                    registerRefArrayShape(arr.element());
+                    elemDesc = typeDescriptor(arr.element());
+                }
                 return "((" + arrayWrapperName(arr.element()) + ") $check("
-                    + quoteJavaString("?" + "["
-                        + elementCheckDescriptor(arr.element()) + "]")
+                    + quoteJavaString("?[" + elemDesc + "]")
                     + ", " + temp + "))";
             }
             if (inner instanceof Type.Int || inner instanceof Type.Number
@@ -11997,9 +12897,27 @@ public final class JvmBackend {
         if (target instanceof Type.Array arr) {
             String elementDesc = elementCheckDescriptor(arr.element());
             if (elementDesc == null) {
-                unsupported("table field reads with target type "
-                    + typeName(target), mae.span());
-                return "null";
+                // ISSUE-0301 D5: nested-array, function-array, and
+                // bytes-array table reads route through the generated
+                // recursive $checkArray — the per-element-shape branch
+                // accepts the matching shared wrapper (identity) and an
+                // array-mode $DealRt.Table (elements checked recursively
+                // in index order, E8003 at the first failing index,
+                // converted into fresh wrapper storage).
+                if (arrayWrapperName(arr.element()) != null
+                        && (arr.element() instanceof Type.Array
+                            || arr.element() instanceof Type.Func
+                            || arr.element() instanceof Type.Bytes
+                            || (arr.element() instanceof Type.Nullable ne
+                                && (ne.inner() instanceof Type.Func
+                                    || ne.inner() instanceof Type.Bytes)))) {
+                    registerRefArrayShape(arr.element());
+                    elementDesc = typeDescriptor(arr.element());
+                } else {
+                    unsupported("table field reads with target type "
+                        + typeName(target), mae.span());
+                    return "null";
+                }
             }
             String temp = nextEvalTempName();
             preStatements.add(new PreLine(
@@ -12764,20 +13682,21 @@ public final class JvmBackend {
             }
             case Type.Error ignored -> null;
             case Type.Func f -> {
-                // Function values (ISSUE-0098 slice): a per-signature
-                // wrapper class whose invoke method carries the JVM-mapped
+                // Function values (ISSUE-0098 slice; ISSUE-0301 shared
+                // carrier): the shared $DealRt per-signature wrapper
+                // class whose invoke method carries the JVM-mapped
                 // signature. The JVM type system proves the parameter and
                 // return checks the spec's runtime wrappers perform (the
                 // spec's JVM backend contract explicitly permits this);
                 // the int safe range stays enforced inside the functions.
-                String shape = fnShapeName(f);
+                String shape = registerWrapperShape(f);
                 if (shape == null) {
                     unsupported("function values whose signature contains "
-                        + "arrays/classes/nullables/nested functions "
-                        + "(deferred to ISSUE-0110)", span);
+                        + "bytes/table carriers (deferred to the int32-bytes "
+                        + "lane)", span);
                     yield null;
                 }
-                yield registerWrapperShape(f);
+                yield shape;
             }
             default -> {
                 unsupported("values of type " + typeName(t), span);
@@ -12857,14 +13776,14 @@ public final class JvmBackend {
             case Type.Func f -> {
                 // ISSUE-0102: a nullable function value holds the
                 // wrapper reference (Java null is the DEAL null).
-                String shape = fnShapeName(f);
+                String shape = registerWrapperShape(f);
                 if (shape == null) {
                     unsupported("function values whose signature contains "
-                        + "arrays/classes/nullables/nested functions "
-                        + "(deferred to ISSUE-0110)", span);
+                        + "bytes/table carriers (deferred to the int32-bytes "
+                        + "lane)", span);
                     yield null;
                 }
-                yield registerWrapperShape(f);
+                yield shape;
             }
             case Type.Bytes ignored -> {
                 unsupported("values of type " + typeName(inner) + " | null"
@@ -12916,14 +13835,9 @@ public final class JvmBackend {
                     yield null;
                 }
                 case Type.Func f -> {
-                    // ISSUE-0102: nullable function elements — Object
-                    // storage; null is the DEAL null element.
-                    if (fnShapeName(f) == null) {
-                        unsupported("function arrays whose signature "
-                            + "contains arrays/classes/nullables/nested "
-                            + "functions (deferred to ISSUE-0110)", span);
-                        yield null;
-                    }
+                    // ISSUE-0102 nullable function elements — Object
+                    // storage; null is the DEAL null element. The shared
+                    // $DealRt scope carries the per-signature wrapper.
                     yield "java.lang.Object";
                 }
                 default -> {
@@ -12949,8 +13863,10 @@ public final class JvmBackend {
                 yield null;
             }
             case Type.Array inner -> {
-                // ISSUE-0102 nested arrays: Object storage; the
-                // per-element-shape helpers check each element.
+                // ISSUE-0102 nested arrays; ISSUE-0301 shared carrier:
+                // Object storage inside the per-element-shape shared
+                // $DealRt wrapper class; the per-element-shape helpers
+                // check each element.
                 if (arrayWrapperName(inner) == null) {
                     unsupported("nested arrays with element type "
                         + typeName(element), span);
@@ -12959,14 +13875,9 @@ public final class JvmBackend {
                 yield "java.lang.Object";
             }
             case Type.Func f -> {
-                // ISSUE-0102 function arrays: Object storage; the
-                // per-signature helpers check each element.
-                if (fnShapeName(f) == null) {
-                    unsupported("function arrays whose signature contains "
-                        + "arrays/classes/nullables/nested functions "
-                        + "(deferred to ISSUE-0110)", span);
-                    yield null;
-                }
+                // ISSUE-0102 function arrays; ISSUE-0301 shared carrier:
+                // Object storage; the per-signature helpers check each
+                // element.
                 yield "java.lang.Object";
             }
             default -> {
@@ -12979,13 +13890,86 @@ public final class JvmBackend {
         };
     }
 
-    /** Emitted wrapper class name for a supported primitive element type.
+    /** Emitted wrapper class reference for a supported element type:
+     * the shared {@code $DealRt.__X} carrier classes for the primitive,
+     * nullable-primitive, nested-array, function, and bytes element
+     * shapes (ISSUE-0301 runtime value surface — one class per compiled
+     * project, so array values cross module boundaries with shared
+     * identity), and the per-module per-class wrappers for class
+     * elements (which extend the shared {@code $DealRt.__RefArray}).
      * Callers gate on {@link #javaArrayElementType} first, so a
      * {@code null} here only ever accompanies an already-recorded E6000.
-     * The {@code __} prefix is unreachable from {@link #javaName} (every
-     * DEAL underscore escapes to {@code $u}), so no user binding can
-     * collide with the emitted class. */
+     */
     private String arrayWrapperName(Type element) {
+        switch (element) {
+            case Type.Int ignored -> {
+                return "$DealRt.__IntArray";
+            }
+            case Type.Number ignored -> {
+                return "$DealRt.__NumberArray";
+            }
+            case Type.String ignored -> {
+                return "$DealRt.__StringArray";
+            }
+            case Type.Boolean ignored -> {
+                return "$DealRt.__BooleanArray";
+            }
+            case Type.Nullable ne -> {
+                return switch (ne.inner()) {
+                    case Type.Int ignored -> "$DealRt.__IntOrNullArray";
+                    case Type.Number ignored -> "$DealRt.__NumberOrNullArray";
+                    case Type.String ignored -> "$DealRt.__StringOrNullArray";
+                    case Type.Boolean ignored -> "$DealRt.__BooleanOrNullArray";
+                    case Type.Class c -> classOrNullArrayWrapperName(c.name());
+                    case Type.Func f -> "$DealRt."
+                        + refArrayWrapperId(element);
+                    case Type.Bytes ignored -> "$DealRt."
+                        + refArrayWrapperId(element);
+                    default -> null;
+                };
+            }
+            case Type.Class c -> {
+                return isLocalClassType(c)
+                    ? classArrayWrapperName(c.name())
+                    : importedArrayWrapperName(c);
+            }
+            // ISSUE-0102 nested arrays (T[][]), function arrays
+            // ((...)=>T []), and bytes arrays (ISSUE-0301 D3): one
+            // shared per-element-shape wrapper class named by the same
+            // injective encoding as function shapes; reads/writes route
+            // through the per-element-shape helpers below, whose runtime
+            // checks prove every element.
+            case Type.Array inner -> {
+                return "$DealRt." + refArrayWrapperId(element);
+            }
+            case Type.Func f -> {
+                return "$DealRt." + refArrayWrapperId(element);
+            }
+            case Type.Bytes ignored -> {
+                return "$DealRt." + refArrayWrapperId(element);
+            }
+            default -> {
+                return null;
+            }
+        }
+    }
+
+    /** The identifier-safe wrapper class id for a nested-array,
+     * function-array, or bytes-array element shape:
+     * {@code __A$<escaped canonical descriptor>} — injective over the
+     * canonical grammar like {@link #fnShapeId}, distinct from every
+     * primitive wrapper id and from {@link #javaName} output. */
+    private String refArrayWrapperId(Type element) {
+        return "__A$" + escapedIdentifier(typeDescriptor(element));
+    }
+
+    /** The identifier-safe wrapper id (without the {@code $DealRt.}
+     * prefix) for any element shape: the primitive/nullable-primitive
+     * class names, the per-class wrapper names, and the
+     * {@code __A$...} ids for the complex shapes. Helper-method names
+     * key on this id, so they stay valid Java identifiers across the
+     * shared scope. */
+    private String arrayWrapperId(Type element) {
         return switch (element) {
             case Type.Int ignored -> "__IntArray";
             case Type.Number ignored -> "__NumberArray";
@@ -12997,21 +13981,10 @@ public final class JvmBackend {
                 case Type.String ignored -> "__StringOrNullArray";
                 case Type.Boolean ignored -> "__BooleanOrNullArray";
                 case Type.Class c -> classOrNullArrayWrapperName(c.name());
-                case Type.Func f -> "__RefArray";
-                case Type.Bytes ignored -> null;
-                default -> null;
+                default -> refArrayWrapperId(element);
             };
-            case Type.Class c -> isLocalClassType(c)
-                ? classArrayWrapperName(c.name())
-                : importedArrayWrapperName(c);
-            // ISSUE-0102: nested arrays (T[][]) and function arrays
-            // ((...)=>T []) share the Object-storage __RefArray
-            // wrapper; reads/writes route through the per-element-shape
-            // helpers below, whose runtime checks prove every element.
-            case Type.Array inner -> "__RefArray";
-            case Type.Func f -> "__RefArray";
-            case Type.Bytes ignored -> null;
-            default -> null;
+            case Type.Class c -> classArrayWrapperName(c.name());
+            default -> refArrayWrapperId(element);
         };
     }
 
@@ -13151,59 +14124,62 @@ public final class JvmBackend {
     private final StringBuilder arrayHelpers = new StringBuilder();
     private final Set<String> emittedArrayHelpers = new LinkedHashSet<>();
 
-    /** Read-helper name for a nested-array or function-array element
+    /**
+     * Read-helper name for a nested-array or function-array element
      * type, or {@code null} (with E6000 recorded) for any other shape.
      * The helper carries the bounds checks and the per-element runtime
-     * proof. */
+     * proof. The outer storage is the shared per-element-shape
+     * {@code $DealRt.__A$...} carrier (ISSUE-0301); helper names are
+     * keyed by the identifier-safe inner wrapper id, so cross-module
+     * helper-name agreement is by construction.
+     */
     private String refArrayReadHelper(Type element, Span span) {
         if (element instanceof Type.Array inner) {
             Type innerElem = inner.element();
             String innerWrapper = arrayWrapperName(innerElem);
-            if (innerWrapper == null
-                    || !(innerElem instanceof Type.Int
-                        || innerElem instanceof Type.Number
-                        || innerElem instanceof Type.String
-                        || innerElem instanceof Type.Boolean)) {
+            if (innerWrapper == null) {
                 unsupported("nested arrays with element type "
                     + typeName(innerElem), span);
                 return null;
             }
-            String key = "nestedarr$" + innerWrapper;
+            registerRefArrayShape(element);
+            String key = "nestedarr$" + arrayWrapperId(innerElem);
             if (emittedArrayHelpers.add(key)) {
-                emitNestedArrayHelpers(innerElem, innerWrapper);
+                emitNestedArrayHelpers(innerElem, arrayWrapperName(element),
+                    arrayWrapperId(innerElem));
             }
-            return "__nestedRead$" + innerWrapper;
+            return "__nestedRead$" + arrayWrapperId(innerElem);
         }
         if (element instanceof Type.Nullable ne
                 && ne.inner() instanceof Type.Func f) {
-            String shape = fnShapeName(f);
-            if (shape == null) {
+            if (registerWrapperShape(f) == null) {
                 unsupported("function arrays whose signature contains "
-                    + "arrays/classes/nullables/nested functions "
-                    + "(deferred to ISSUE-0110)", span);
+                    + "bytes/table carriers (deferred to the int32-bytes "
+                    + "lane)", span);
                 return null;
             }
-            registerWrapperShape(f);
-            String key = "fnarr$" + shape;
+            registerRefArrayShape(element);
+            String key = "fnarr$" + refArrayWrapperId(element);
             if (emittedArrayHelpers.add(key)) {
-                emitFnArrayHelpers(f, shape, true);
+                emitFnArrayHelpers(f, fnShapeId(f), true,
+                    arrayWrapperName(element), refArrayWrapperId(element));
             }
-            return "__fnOrNullRead$" + shape;
+            return "__fnOrNullRead$" + fnShapeId(f);
         }
         if (element instanceof Type.Func f) {
-            String shape = fnShapeName(f);
-            if (shape == null) {
+            if (registerWrapperShape(f) == null) {
                 unsupported("function arrays whose signature contains "
-                    + "arrays/classes/nullables/nested functions "
-                    + "(deferred to ISSUE-0110)", span);
+                    + "bytes/table carriers (deferred to the int32-bytes "
+                    + "lane)", span);
                 return null;
             }
-            registerWrapperShape(f);
-            String key = "fnarr$" + shape;
+            registerRefArrayShape(element);
+            String key = "fnarr$" + refArrayWrapperId(element);
             if (emittedArrayHelpers.add(key)) {
-                emitFnArrayHelpers(f, shape, false);
+                emitFnArrayHelpers(f, fnShapeId(f), false,
+                    arrayWrapperName(element), refArrayWrapperId(element));
             }
-            return "__fnRead$" + shape;
+            return "__fnRead$" + fnShapeId(f);
         }
         return null;
     }
@@ -13214,81 +14190,123 @@ public final class JvmBackend {
         if (element instanceof Type.Array inner) {
             Type innerElem = inner.element();
             String innerWrapper = arrayWrapperName(innerElem);
-            if (innerWrapper == null
-                    || !(innerElem instanceof Type.Int
-                        || innerElem instanceof Type.Number
-                        || innerElem instanceof Type.String
-                        || innerElem instanceof Type.Boolean)) {
+            if (innerWrapper == null) {
                 unsupported("nested arrays with element type "
                     + typeName(innerElem), span);
                 return null;
             }
-            String key = "nestedarr$" + innerWrapper;
+            registerRefArrayShape(element);
+            String key = "nestedarr$" + arrayWrapperId(innerElem);
             if (emittedArrayHelpers.add(key)) {
-                emitNestedArrayHelpers(innerElem, innerWrapper);
+                emitNestedArrayHelpers(innerElem, arrayWrapperName(element),
+                    arrayWrapperId(innerElem));
             }
-            return "__nestedWrite$" + innerWrapper;
+            return "__nestedWrite$" + arrayWrapperId(innerElem);
         }
         if (element instanceof Type.Nullable ne
                 && ne.inner() instanceof Type.Func f) {
-            String shape = fnShapeName(f);
-            if (shape == null) {
+            if (registerWrapperShape(f) == null) {
                 unsupported("function arrays whose signature contains "
-                    + "arrays/classes/nullables/nested functions "
-                    + "(deferred to ISSUE-0110)", span);
+                    + "bytes/table carriers (deferred to the int32-bytes "
+                    + "lane)", span);
                 return null;
             }
-            registerWrapperShape(f);
-            String key = "fnarr$" + shape;
+            registerRefArrayShape(element);
+            String key = "fnarr$" + refArrayWrapperId(element);
             if (emittedArrayHelpers.add(key)) {
-                emitFnArrayHelpers(f, shape, true);
+                emitFnArrayHelpers(f, fnShapeId(f), true,
+                    arrayWrapperName(element), refArrayWrapperId(element));
             }
-            return "__fnOrNullWrite$" + shape;
+            return "__fnOrNullWrite$" + fnShapeId(f);
         }
         if (element instanceof Type.Func f) {
-            String shape = fnShapeName(f);
-            if (shape == null) {
+            if (registerWrapperShape(f) == null) {
                 unsupported("function arrays whose signature contains "
-                    + "arrays/classes/nullables/nested functions "
-                    + "(deferred to ISSUE-0110)", span);
+                    + "bytes/table carriers (deferred to the int32-bytes "
+                    + "lane)", span);
                 return null;
             }
-            registerWrapperShape(f);
-            String key = "fnarr$" + shape;
+            registerRefArrayShape(element);
+            String key = "fnarr$" + refArrayWrapperId(element);
             if (emittedArrayHelpers.add(key)) {
-                emitFnArrayHelpers(f, shape, false);
+                emitFnArrayHelpers(f, fnShapeId(f), false,
+                    arrayWrapperName(element), refArrayWrapperId(element));
             }
-            return "__fnWrite$" + shape;
+            return "__fnWrite$" + fnShapeId(f);
         }
         return null;
     }
 
-    /** Emits the read/write helper pair for a nested primitive array
-     * ({@code int[][]} etc.): bounds checks (E8002 negative / past-end
-     * append rule), the per-element wrapper proof (E8003 on a wrong
-     * element shape, mirroring LuaJIT's check_array element mismatch),
-     * and the in-place grow-on-append storage. */
-    private void emitNestedArrayHelpers(Type inner, String innerWrapper) {
+    /**
+     * Registers the per-element-shape {@code [D]} check branch for a
+     * nested-array, function-array, or bytes-array element shape
+     * (ISSUE-0301 D5): the emitted {@code $checkArray} accepts the
+     * matching shared wrapper (identity) and an array-mode
+     * {@code $DealRt.Table} (the {@code __jsonTableValue} dynamic array
+     * representation — elements checked recursively in index order via
+     * {@code $check}, E8003 {@code array element {i} type mismatch} at
+     * the first failing index, converted into fresh wrapper storage),
+     * and raises E8001 {@code expected array} for any other value.
+     */
+    private void registerRefArrayShape(Type element) {
+        if (refArrayCheckElements.add(element)) {
+            String elemDesc = typeDescriptor(element);
+            String ref = "$DealRt." + refArrayWrapperId(element);
+            StringBuilder body = new StringBuilder();
+            body.append("if (descriptor.equals(")
+                .append(quoteJavaString("[" + elemDesc + "]"))
+                .append(")) {\n");
+            body.append("    if (v instanceof ").append(ref)
+                .append(" a) return a;\n");
+            body.append("    if (v instanceof $DealRt.Table t && t.$array() != null) {\n");
+            body.append("        java.util.ArrayList<java.lang.Object> a = t.$array();\n");
+            body.append("        java.lang.Object[] data = new java.lang.Object[a.size()];\n");
+            body.append("        for (int i = 0; i < a.size(); i++) {\n");
+            body.append("            try { data[i] = $check(")
+                .append(quoteJavaString(elemDesc)).append(", a.get(i)); }\n");
+            body.append("            catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); }\n");
+            body.append("        }\n");
+            body.append("        return new ").append(ref).append("(data);\n");
+            body.append("    }\n");
+            body.append("    throw new DealError(\"E8001\", \"expected array, got \" + $describe(v));\n");
+            body.append("}\n");
+            for (String line : body.toString().split("\n", -1)) {
+                if (line.isEmpty()) continue;
+                refArrayCheckBranches.add("    " + line);
+            }
+        }
+    }
+    /**
+     * Emits the read/write helper pair for a nested array
+     * ({@code int[][]} etc., any nested element shape): bounds checks
+     * (E8002 negative / past-end append rule), the per-element wrapper
+     * proof (E8003 on a wrong element shape, mirroring LuaJIT's
+     * check_array element mismatch), and the in-place grow-on-append
+     * storage inside the shared per-element-shape carrier.
+     */
+    private void emitNestedArrayHelpers(Type inner, String outerRef,
+            String outerId) {
         String desc = "[" + typeDescriptor(inner) + "]";
+        String innerRef = arrayWrapperName(inner);
         StringBuilder body = new StringBuilder();
         body.append("// nested array ").append(desc)
-            .append(" element helpers (ISSUE-0102)\n");
-        body.append("static ").append(innerWrapper)
-            .append(" __nestedRead$").append(innerWrapper)
-            .append("(__RefArray a, long i) {\n");
+            .append(" element helpers (ISSUE-0102; ISSUE-0301 shared carrier)\n");
+        body.append("static ").append(innerRef)
+            .append(" __nestedRead$").append(outerId)
+            .append("(").append(outerRef).append(" a, long i) {\n");
         body.append("    if (i < 0L) throw new DealError(\"E8002\", \"negative array index\");\n");
         body.append("    if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected ").append(desc).append(", got null\");\n");
-        body.append("    return (").append(innerWrapper)
+        body.append("    return (").append(innerRef)
             .append(") a.data[(int) i];\n");
         body.append("}\n");
-        body.append("static ").append(innerWrapper)
-            .append(" __nestedWrite$").append(innerWrapper)
-            .append("(__RefArray a, long i, java.lang.Object v) {\n");
+        body.append("static ").append(innerRef)
+            .append(" __nestedWrite$").append(outerId)
+            .append("(").append(outerRef).append(" a, long i, java.lang.Object v) {\n");
         body.append("    if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\");\n");
-        body.append("    if (!(v instanceof ").append(innerWrapper)
+        body.append("    if (!(v instanceof ").append(innerRef)
             .append(")) throw new DealError(\"E8003\", \"array element type mismatch: expected ").append(desc).append("\");\n");
         body.append("    if (i == (long) a.data.length) { java.lang.Object[] nd = new java.lang.Object[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; }\n");
-        body.append("    return (").append(innerWrapper).append(") v;\n");
+        body.append("    return (").append(innerRef).append(") v;\n");
         body.append("}\n");
         for (String line : body.toString().split("\n", -1)) {
             if (line.isEmpty()) continue;
@@ -13296,20 +14314,24 @@ public final class JvmBackend {
         }
     }
 
-    /** Emits the read/write helper pair for a function array element
+    /**
+     * Emits the read/write helper pair for a function array element
      * signature ({@code orNull} accepts the DEAL null element). Reads
      * and writes prove the wrapper signature; the descriptor spelling
-     * matches the wrapper's runtime descriptor. */
-    private void emitFnArrayHelpers(Type.Func f, String shape,
-            boolean orNull) {
+     * matches the wrapper's runtime descriptor. The outer storage is
+     * the shared per-element-shape {@code $DealRt.__A$...} carrier.
+     */
+    private void emitFnArrayHelpers(Type.Func f, String shapeId,
+            boolean orNull, String outerRef, String outerId) {
         String desc = fnDescriptor(f);
+        String shapeRef = "$DealRt." + shapeId;
         StringBuilder body = new StringBuilder();
         body.append("// function array ").append(desc)
             .append(" element helpers (ISSUE-0102)\n");
-        String readName = orNull ? "__fnOrNullRead$" + shape
-            : "__fnRead$" + shape;
-        body.append("static ").append(shape).append(' ').append(readName)
-            .append("(__RefArray a, long i) {\n");
+        String readName = orNull ? "__fnOrNullRead$" + shapeId
+            : "__fnRead$" + shapeId;
+        body.append("static ").append(shapeRef).append(' ').append(readName)
+            .append("(").append(outerRef).append(" a, long i) {\n");
         body.append("    if (i < 0L) throw new DealError(\"E8002\", \"negative array index\");\n");
         body.append("    if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected ").append(desc).append(", got null\");\n");
         body.append("    java.lang.Object v = a.data[(int) i];\n");
@@ -13318,27 +14340,27 @@ public final class JvmBackend {
         } else {
             body.append("    if (v == null) throw new DealError(\"E8001\", \"expected ").append(desc).append(", got null\");\n");
         }
-        body.append("    if (v instanceof ").append(shape)
+        body.append("    if (v instanceof ").append(shapeRef)
             .append(" fv) return fv;\n");
         body.append("    throw new DealError(\"E8001\", \"expected ")
             .append(desc).append(", got \" + $describe(v));\n");
         body.append("}\n");
-        String writeName = orNull ? "__fnOrNullWrite$" + shape
-            : "__fnWrite$" + shape;
-        body.append("static ").append(shape).append(' ').append(writeName)
-            .append("(__RefArray a, long i, java.lang.Object v) {\n");
+        String writeName = orNull ? "__fnOrNullWrite$" + shapeId
+            : "__fnWrite$" + shapeId;
+        body.append("static ").append(shapeRef).append(' ').append(writeName)
+            .append("(").append(outerRef).append(" a, long i, java.lang.Object v) {\n");
         body.append("    if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\");\n");
         if (orNull) {
-            body.append("    if (v != null && !(v instanceof ").append(shape)
+            body.append("    if (v != null && !(v instanceof ").append(shapeRef)
                 .append(")) throw new DealError(\"E8001\", \"expected ")
                 .append(desc).append(", got \" + $describe(v));\n");
         } else {
-            body.append("    if (!(v instanceof ").append(shape)
+            body.append("    if (!(v instanceof ").append(shapeRef)
                 .append(")) throw new DealError(\"E8001\", \"expected ")
                 .append(desc).append(", got \" + $describe(v));\n");
         }
         body.append("    if (i == (long) a.data.length) { java.lang.Object[] nd = new java.lang.Object[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; }\n");
-        body.append("    return (").append(shape).append(") v;\n");
+        body.append("    return (").append(shapeRef).append(") v;\n");
         body.append("}\n");
         for (String line : body.toString().split("\n", -1)) {
             if (line.isEmpty()) continue;

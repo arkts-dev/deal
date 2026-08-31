@@ -17,6 +17,9 @@ import deal.codegen.Backend;
 import deal.codegen.jvm.JvmBackend;
 import deal.lexer.LexResult;
 import deal.lexer.Lexer;
+import deal.identity.CanonicalModuleIdentity;
+import deal.identity.ProjectModuleIdentity;
+import deal.module.ModuleIdentityResolver;
 import deal.module.ModuleShapeValidator;
 import deal.module.CompilationOrchestrator;
 import deal.project.ProjectContext;
@@ -281,18 +284,24 @@ import java.util.concurrent.atomic.AtomicInteger;
  *       reference equality, call-result-callee evaluation order (the
  *       callee materialized into a single-assignment temporary at its
  *       evaluation position, before any argument's hoisted
- *       pre-statements), the deferred signature shapes
- *       (nested/nullable function types, arrays of functions, and
- *       function equality/inequality over array-/class-/nullable-
- *       parameter signatures) rejected with E6000, and cross-module
+ *       pre-statements), the shared-carrier shape encoding and $check behaviors
+ *       ({@code testSharedCarrierShapeEncoding},
+ *       {@code testSharedCarrierCheckBehaviors}), function
+ *       equality/inequality over array-/class-/nullable-parameter
+ *       signatures now emitting on the shared wrappers, and
+ *       cross-module
  *       function values (a Func-typed argument to an imported module
- *       call — including the arity-extension/E8010-boundary shape — and
- *       an imported call result with Func static type) rejected with
- *       E6000 and no entry artifact by the orchestrator
- *       ({@code testCrossModuleFunctionValuesRejected} — the per-module
- *       wrapper classes cannot cross a module boundary, so the pre-fix
- *       emissions were artifacts javac rejected after the CLI reported
- *       success). Every v1.1 module-field/load-time shape — the LIVE
+ *       call — including the arity-extension/E8010-boundary shape —
+ *       an imported call result with Func static type, and an imported
+ *       call-result callee) compiling and executing on the shared
+ *       $DealRt carriers with reference identity across the module
+ *       boundary
+ *       ({@code testCrossModuleFunctionValues},
+ *       {@code testSharedCarrierCrossModuleIdentity} — the pre-fix
+ *       per-module wrapper classes could not cross a module boundary,
+ *       so the pre-fix emissions were artifacts javac rejected after
+ *       the CLI reported success). Every v1.1 module-field/load-time
+ *       shape — the LIVE
  *       static-field-delegation adapter, the load-time indirect-call
  *       guards, the module-level call-result callee hazards, and the
  *       rest function-type arm — is a v1.2 frontend grammar gate
@@ -410,7 +419,12 @@ public class JvmBackendTest {
             new TestCase("testJsonableSlice", () -> testJsonableSlice()),
             new TestCase("testImportedClassValues", () -> testImportedClassValues()),
             new TestCase("testFunctionValues", () -> testFunctionValues()),
-            new TestCase("testCrossModuleFunctionValuesRejected", () -> testCrossModuleFunctionValuesRejected()),
+            new TestCase("testSharedCarrierShapeEncoding", () -> testSharedCarrierShapeEncoding()),
+            new TestCase("testSharedShapeCollectionOrder", () -> testSharedShapeCollectionOrder()),
+            new TestCase("testSharedCarrierCheckBehaviors", () -> testSharedCarrierCheckBehaviors()),
+            new TestCase("testSharedCarrierCrossModuleIdentity", () -> testSharedCarrierCrossModuleIdentity()),
+            new TestCase("testSharedCarrierHostClassShapes", () -> testSharedCarrierHostClassShapes()),
+            new TestCase("testCrossModuleFunctionValues", () -> testCrossModuleFunctionValues()),
             new TestCase("testUseBeforeDeclarationRejected", () -> testUseBeforeDeclarationRejected()),
             new TestCase("testFunctionBodyModuleFieldAccessGuards", () -> testFunctionBodyModuleFieldAccessGuards()),
             new TestCase("testAssignmentBeforeDeclarationRejected", () -> testAssignmentBeforeDeclarationRejected()),
@@ -1132,18 +1146,15 @@ public class JvmBackendTest {
                 "backend now accepts " + c.what() + ": " + res.diagnostics());
         }
 
-        // Exact rejection-detail-text pins migrated from the JSON slice
-        // corpus (ISSUE-0359; v12-three-backend-conformance-corpus C1/C6:
-        // backend-internal E6000 detail texts are never corpus fields — the
-        // corpus keeps only the E6000 code pins). Each pin mirrors one JSON
-        // corpus E6000 case and asserts the EXACT current detail text, so a
-        // production text drift trips the unit test while the JSON cases
-        // keep pinning only the code.
-        //
-        // Cross-module function-value flow (jvm-function-values-slice.json:
-        // jvm-fv-xmod-callback-arg-e6000, jvm-fv-xmod-arity-extension-
-        // arg-e6000, jvm-fv-xmod-return-out-e6000,
-        // jvm-fv-xmod-callresult-callee-e6000).
+        // Cross-module function-value flow on the shared $DealRt
+        // carriers (jvm-function-values-slice.json: the four former
+        // E6000 rejection pins are runtime pins now — ISSUE-0301). The
+        // emission-shape pins here assert the promoted forms: the
+        // callback argument crosses as the shared wrapper field, the
+        // arity-extension argument carries the imported parameter
+        // boundary's E8010 raising construction, and the returned
+        // function value / call-result callee hold the SAME shared
+        // wrapper class the caller types.
         Map<String, Map<String, Type>> xmodLib = Map.of(
             "./lib", Map.of(
                 "apply", Types.func(List.of(
@@ -1155,54 +1166,45 @@ public class JvmBackendTest {
                     Type.Int.INSTANCE), Type.Int.INSTANCE),
                 "picker", Types.func(List.of(),
                     Types.func(List.of(Type.Int.INSTANCE), Type.Int.INSTANCE))));
-        String xmodArgText = "JVM backend (skeleton) does not support "
-            + "function values passed to an imported module call (the "
-            + "per-module wrapper classes cannot cross a module boundary \u2014 "
-            + "cross-module function values are deferred to ISSUE-0110) yet";
-        String xmodReturnText = "JVM backend (skeleton) does not support "
-            + "function values returned from an imported module call (the "
-            + "per-module wrapper classes cannot cross a module boundary \u2014 "
-            + "cross-module function values are deferred to ISSUE-0110) yet";
-        record XmodPin(String what, String source, String detailText) {}
+        record XmodPin(String what, String source, String emission) {}
         List<XmodPin> xmodPins = List.of(
             new XmodPin("callback passed into an imported module call", """
                 import * as lib from "./lib"
                 function inc(x: int): int { return x + 1; }
                 export function test(): int { return lib.apply(inc, 41); }
-                """, xmodArgText),
+                """, "Lib.apply(inc$fn, 41L)"),
             new XmodPin("arity-extension adapter argument to an imported module call", """
                 import * as lib from "./lib"
                 function inc(x: int): int { return x + 1; }
                 export function test(): int { return lib.apply2(inc, 41); }
-                """, xmodArgText),
+                """, "Lib.apply2(new $DealRt.Fn2_I_S_R_I() { { if (!checkSig(\"(int,string)->int\", \"(int)->int\"))"),
             new XmodPin("function value returned from an imported module call", """
                 import * as lib from "./lib"
                 export function test(): int {
                   let f: (x: int) => int = lib.picker();
                   return f(41);
                 }
-                """, xmodReturnText),
+                """, "$DealRt.Fn1_I_R_I f = Lib.picker();"),
             new XmodPin("imported call result used as a call-result callee", """
                 import * as lib from "./lib"
                 export function test(): int { return lib.picker()(41); }
-                """, xmodReturnText));
+                """, "__fn0.invoke(41L)"));
         for (XmodPin pin : xmodPins) {
             Frontend f = compileFrontend(pin.source(),
-                "jvmtest-xmod-rejection.deal", new FixedModuleResolver(xmodLib));
+                "jvmtest-xmod-carrier.deal", new FixedModuleResolver(xmodLib));
             if (!f.errors().isEmpty()) {
-                fail("frontend must accept the JSON-corpus rejection shape '"
-                    + pin.what() + "' (the backend rejects it): " + f.errors());
+                fail("frontend must accept the shared-carrier shape '"
+                    + pin.what() + "': " + f.errors());
                 continue;
             }
             JvmBackend.JvmCodegenResult res = JvmBackend.generate(
-                f.program(), f.checkResult(), "jvmtest-xmod-rejection.deal",
+                f.program(), f.checkResult(), "jvmtest-xmod-carrier.deal",
                 "main", Map.of("./lib", "lib"));
-            check(res.hasErrors(), "backend rejects " + pin.what());
-            check(res.diagnostics().stream().anyMatch(d ->
-                    "E6000".equals(d.code())
-                        && pin.detailText().equals(d.message())),
-                "E6000 detail text exact for " + pin.what() + ": "
-                    + res.diagnostics());
+            check(!res.hasErrors(), "backend accepts " + pin.what() + ": "
+                + res.diagnostics());
+            check(res.source().contains(pin.emission()),
+                "emission shape for " + pin.what() + " (" + pin.emission()
+                    + ")");
         }
 
         // @jsonable optional table field (jvm-jsonable-slice.json:
@@ -1827,9 +1829,9 @@ public class JvmBackendTest {
             if (!res.hasErrors()) {
                 String java = res.source();
                 check(java.contains("static final class __IntArray"),
-                    "__IntArray wrapper class emitted");
-                check(java.contains("new __IntArray(new long[]{10L, 20L})"),
-                    "int[] literal lowers to new __IntArray(new long[]{…})");
+                    "shared $DealRt __IntArray wrapper class emitted");
+                check(java.contains("new $DealRt.__IntArray(new long[]{10L, 20L})"),
+                    "int[] literal lowers to new $DealRt.__IntArray(new long[]{…})");
                 check(java.contains("__intArrayWrite(xs, 1L, 99L);"),
                     "element write lowers to the __intArrayWrite helper call");
                 check(java.contains("__intArrayRead(xs, 0L)"),
@@ -3301,9 +3303,11 @@ public class JvmBackendTest {
             }
         }
 
-        // Rejection: for-of over an unsupported function signature or a
-        // nested array of function elements records E6000 (no artifact a
-        // javac step would reject after the CLI reported success).
+        // Rejection: a function-type ANNOTATION whose signature has an
+        // array parameter stays resolveTypeNode-gated (E6000) — the
+        // shared carriers cover the inferred shapes; the annotation
+        // surface with array/class/nullable signatures keeps its pinned
+        // rejection.
         Frontend badSig = compileFrontend("""
             function bad(xs: int[]): int { return 1; }
             export function test(): int {
@@ -3340,10 +3344,8 @@ public class JvmBackendTest {
             JvmBackend.JvmCodegenResult er = JvmBackend.generate(
                 badNested.program(), badNested.checkResult(),
                 "jvmtest-forof-badnested.deal", "main");
-            check(er.hasErrors(), "nested-function-array for-of rejected");
-            check(er.diagnostics().stream()
-                    .anyMatch(d -> "E6000".equals(d.code())),
-                "E6000 for the nested-function-array for-of: "
+            check(!er.hasErrors(),
+                "nested-function-array for-of codegen clean: "
                     + er.diagnostics());
         }
 
@@ -3390,15 +3392,17 @@ public class JvmBackendTest {
                     + exec.output());
         }
 
-        // The unsupported-signature for-of fails the orchestrator with
-        // E6000 and writes no entry artifact (the slice contract: E6000,
-        // never a broken artifact).
+        // The bytes-signature function-array for-of fails the
+        // orchestrator with E6000 (bytes carriers inside function
+        // signatures stay on the int32-bytes lane) and writes no entry
+        // artifact (the slice contract: E6000, never a broken
+        // artifact).
         writeFile("src2/refof_bad.deal", """
             export function main(): null { return null; }
-            function bad(xs: int[]): int { return 1; }
+            function bad(xs: bytes): int { return 1; }
             export function run(): int {
-              let fs: ((xs: int[]) => int)[] = [];
-              for (let f: (xs: int[]) => int of fs) { }
+              let fs: ((xs: bytes) => int)[] = [];
+              for (let f: (xs: bytes) => int of fs) { }
               return 0;
             }
             """);
@@ -3411,39 +3415,43 @@ public class JvmBackendTest {
             Path.of(".").toAbsolutePath().normalize());
         boolean badSuccess = badOrchestrator.compile();
         check(!badSuccess,
-            "the unsupported-signature for-of fails the orchestrator: "
+            "the bytes-signature for-of fails the orchestrator: "
                 + badOrchestrator.diagnostics());
         check(badOrchestrator.diagnostics().stream()
                 .anyMatch(d -> "E6000".equals(d.code())),
-            "orchestrator reports E6000 for the unsupported-signature "
-                + "for-of: " + badOrchestrator.diagnostics());
+            "orchestrator reports E6000 for the bytes-signature for-of: "
+                + badOrchestrator.diagnostics());
         check(!Files.exists(badOut.resolve("Refof_bad.java")),
             "no entry artifact when the ref-shape for-of is rejected");
 
         // Backend-boundary pin (T12): the for-of E6000 arrives through
         // the backend's native List<CompilerDiagnostic> and renders at
         // its real source position — SOURCE origin with exact scalar
-        // offsets, never synthetic (1,1). The unsupported call anchors at
-        // the for-of statement's own span.
+        // offsets, never synthetic (1,1). The bytes-signature rejection
+        // anchors at the loop variable's bytes annotation.
+        String badSrc = Files.readString(badEntry);
+        int forIdx = badSrc.indexOf("bytes", badSrc.indexOf("for (let f"));
+        check(forIdx >= 0, "fixture contains the bytes annotation");
+        int lineStart = badSrc.lastIndexOf('\n', forIdx) + 1;
+        int expectedLine = badSrc.substring(0, forIdx).split("\n", -1).length;
+        int expectedColumn = forIdx - lineStart + 1;
+        int expectedOffset = ScalarSourceCursor.scalarCount(badSrc, 0, forIdx);
         CompilerDiagnostic e6000 = badOrchestrator.diagnostics().stream()
             .filter(d -> "E6000".equals(d.code())
-                && d.message().contains("function arrays whose signature"))
+                && d.message().contains(
+                    "type 'bytes' (only local classes are supported)"))
+            .filter(d -> d.range() != null
+                && d.range().startLine() == expectedLine
+                && d.range().startColumn() == expectedColumn)
             .findFirst().orElse(null);
         check(e6000 != null, "for-of E6000 present for the boundary pin");
         if (e6000 != null) {
             DiagnosticRange range = e6000.range();
             check(range.origin() == RangeOrigin.SOURCE,
                 "backend-boundary E6000 range origin is SOURCE: " + range);
-            String src = Files.readString(badEntry);
-            int forIdx = src.indexOf("for (let f");
-            check(forIdx >= 0, "fixture contains the for-of statement");
-            int lineStart = src.lastIndexOf('\n', forIdx) + 1;
-            int expectedLine = src.substring(0, forIdx).split("\n", -1).length;
-            int expectedColumn = forIdx - lineStart + 1;
-            int expectedOffset = ScalarSourceCursor.scalarCount(src, 0, forIdx);
             check(range.startLine() == expectedLine
                     && range.startColumn() == expectedColumn,
-                "backend-boundary E6000 starts at the for-of statement: "
+                "backend-boundary E6000 starts at the bytes annotation: "
                     + range);
             check(range.startScalarOffset() == expectedOffset,
                 "backend-boundary E6000 start scalar offset is exact ("
@@ -4885,25 +4893,25 @@ public class JvmBackendTest {
                 + res.diagnostics());
             if (!res.hasErrors()) {
                 String src = res.source();
-                check(src.contains("static abstract class Fn2_II_R_I implements $FnValue {"),
-                    "per-signature wrapper class emitted");
+                check(src.contains("static abstract class Fn2_I_I_R_I implements FnValue {"),
+                    "shared per-signature wrapper class emitted inside $DealRt");
                 check(src.contains(
                     "final java.lang.String descriptor = \"(int,int)->int\";"),
-                    "wrapper carries the spec-convention descriptor");
-                check(src.contains("static final Fn2_II_R_I add$fn = new Fn2_II_R_I()"),
+                    "wrapper carries the canonical descriptor");
+                check(src.contains("static final $DealRt.Fn2_I_I_R_I add$fn = new $DealRt.Fn2_I_I_R_I()"),
                     "per-declaration wrapper instance field emitted");
                 check(src.contains("f.invoke(1L, 2L)"),
                     "indirect call dispatches through invoke");
                 check(src.contains(
-                    "Fn2_II_R_I g = new Fn2_II_R_I() { @Override long invoke(long p0, long p1) { return Main.inc(p0); } };"),
+                    "$DealRt.Fn2_I_I_R_I g = new $DealRt.Fn2_I_I_R_I() { @Override long invoke(long p0, long p1) { return Main.inc(p0); } };"),
                     "arity adapter delegates to the qualified static method, dropping p1");
                 check(src.contains(
-                        "static final Fn2_II_R_I add$fn = new Fn2_II_R_I() {")
+                        "static final $DealRt.Fn2_I_I_R_I add$fn = new $DealRt.Fn2_I_I_R_I() {")
                     && src.contains(
                         "long invoke(long p0, long p1) { return Main.add(p0, p1); }"),
                     "declaration wrapper delegates to the qualified static method");
-                check(src.contains("static final Fn1_N_R_I _int$fn = new Fn1_N_R_I() {")
-                    && src.contains("static final Fn1_I_R_N _number$fn = new Fn1_I_R_N() {"),
+                check(src.contains("static final $DealRt.Fn1_N_R_I _int$fn = new $DealRt.Fn1_N_R_I() {")
+                    && src.contains("static final $DealRt.Fn1_I_R_N _number$fn = new $DealRt.Fn1_I_R_N() {"),
                     "intrinsic function-value wrappers emitted");
                 check(!src.contains(" -> "),
                     "no lambda is emitted (descriptor strings may carry the arrow glyph)");
@@ -4967,7 +4975,7 @@ public class JvmBackendTest {
                 check(res.source().contains("return Main.invoke(p0);"),
                     "the declaration wrapper delegates to the qualified static invoke");
                 check(res.source().contains(
-                        "Fn2_II_R_I g = new Fn2_II_R_I() { @Override long invoke(long p0, long p1) { return Main.invoke(p0); } };"),
+                        "$DealRt.Fn2_I_I_R_I g = new $DealRt.Fn2_I_I_R_I() { @Override long invoke(long p0, long p1) { return Main.invoke(p0); } };"),
                     "the arity adapter delegates to the qualified static invoke");
                 check(!res.source().contains("return invoke(p0);"),
                     "never a bare invoke call recursing into the wrapper's own invoke");
@@ -5003,7 +5011,7 @@ public class JvmBackendTest {
             check(!res.hasErrors(), "local adapter probe codegen clean: "
                 + res.diagnostics());
             if (!res.hasErrors()) {
-                check(res.source().contains("Fn1_I_R_I __fn0 = g;"),
+                check(res.source().contains("$DealRt.Fn1_I_R_I __fn0 = g;"),
                     "adapter snapshots the local into an effectively-final temporary");
                 check(res.source().contains("__fn0.invoke(p0)"),
                     "adapter delegates through the snapshot temporary");
@@ -5144,7 +5152,7 @@ public class JvmBackendTest {
             check(!res.hasErrors(), "call-result callee emit probe codegen "
                 + "clean: " + res.diagnostics());
             if (!res.hasErrors()) {
-                check(res.source().contains("Fn2_II_R_I __fn0 = picker();"),
+                check(res.source().contains("$DealRt.Fn2_I_I_R_I __fn0 = picker();"),
                     "the call-result callee is materialized into a temporary "
                     + "at its evaluation position");
                 check(res.source().contains("__fn0.invoke(41L, 1L)"),
@@ -5268,7 +5276,7 @@ public class JvmBackendTest {
         // parameter's descriptor, and the emitted artifact must be valid
         // Java. The pre-fix JVM materialized the later operand's RAISING
         // construction into an actual-shape temporary
-        // (`Fn0_R_I __t0 = new Fn2_IS_R_I() {…}`), which javac rejected
+        // (`Fn0_R_I __t0 = new Fn2_I_S_R_I() {…}`), which javac rejected
         // ("incompatible types") after the CLI reported success — and
         // which would have raised the SECOND parameter's check before
         // the first's.
@@ -5319,18 +5327,18 @@ public class JvmBackendTest {
                 "two-check emission probe codegen clean: " + res.diagnostics());
             if (!res.hasErrors()) {
                 String src = res.source();
-                check(src.contains("Fn1_I_R_I __fn0 = inc$fn;"),
+                check(src.contains("$DealRt.Fn1_I_R_I __fn0 = inc$fn;"),
                     "the first check operand's value temp carries its ACTUAL shape");
-                check(src.contains("Fn0_R_I __fn1 = pickZero();"),
+                check(src.contains("$DealRt.Fn0_R_I __fn1 = pickZero();"),
                     "the later check operand's value temp carries its ACTUAL shape");
                 check(!src.contains("Fn0_R_I __t")
-                    && !src.contains("Fn2_IS_R_I __t")
+                    && !src.contains("Fn2_I_S_R_I __t")
                     && !src.contains("Fn1_I_R_I __t"),
                     "no materialization temp holds a raising construction");
-                check(src.contains("new Fn2_IS_R_I() { { if (!checkSig(\"(int,string)->int\", \"(int)->int\"))")
-                    && src.contains("new Fn2_IS_R_I() { { if (!checkSig(\"(int,string)->int\", \"()->int\"))"),
+                check(src.contains("new $DealRt.Fn2_I_S_R_I() { { if (!checkSig(\"(int,string)->int\", \"(int)->int\"))")
+                    && src.contains("new $DealRt.Fn2_I_S_R_I() { { if (!checkSig(\"(int,string)->int\", \"()->int\"))"),
                     "both raising constructions stay inline at their argument positions in parameter order");
-                check(src.contains("apply2(new Fn2_IS_R_I()"),
+                check(src.contains("apply2(new $DealRt.Fn2_I_S_R_I()"),
                     "the inline raise sits directly in the call argument list");
             }
         }
@@ -5604,22 +5612,14 @@ public class JvmBackendTest {
                     + "' rejected with E1049: " + gf.errors());
         }
 
-        // Deferred signature shapes → E6000 (ISSUE-0110).
+        // ISSUE-0301: the shared wrapper scope covers the complete
+        // canonical grammar, so function equality/inequality over
+        // array/class/nullable-parameter signatures — the former
+        // deferred E6000 shapes — now emits wrapper classes and
+        // executes: wrapper equality is reference identity, so two
+        // distinct declarations never compare equal.
         record DeferredCase(String what, String source) {}
-        List<DeferredCase> deferred = List.of(
-            // The four former deferred cases — async function types
-            // (ISSUE-0099), nested and nullable function types, and
-            // arrays of functions (ISSUE-0102) — are promoted out of
-            // this list: async function-type bindings run through the
-            // ISSUE-0099 wrapper machinery (testAsyncSlice), and the
-            // ISSUE-0102 promoted block below pins the other three.
-            // Function equality/inequality over deferred signature
-            // shapes: the value use reaches emitIdentifier's
-            // FunctionSymbol branch without a typed function-value
-            // boundary in between, and the wrapper field emitFunction
-            // gates on does not exist for these signatures — E6000,
-            // never an artifact javac rejects after the CLI reported
-            // success.
+        List<DeferredCase> promotedEquality = List.of(
             new DeferredCase(
                 "function equality with array-parameter signatures", """
                 function f(xs: int[]): int { return xs[0]; }
@@ -5639,18 +5639,18 @@ public class JvmBackendTest {
                 function g(x: int | null): int { return 2; }
                 export function test(): boolean { return f === g; }
                 """));
-        for (DeferredCase c : deferred) {
+        for (DeferredCase c : promotedEquality) {
             Frontend df = compileFrontend(c.source, "jvmtest-fv-deferred.deal");
             if (!df.errors().isEmpty()) {
-                fail("frontend must accept the deferred case '" + c.what()
-                    + "' (the backend rejects it): " + df.errors());
+                fail("frontend must accept the promoted equality case '"
+                    + c.what() + "': " + df.errors());
                 continue;
             }
-            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
-                df.program(), df.checkResult(), "jvmtest-fv-deferred.deal", "main");
-            check(res.hasErrors(), "backend rejects " + c.what());
-            check(res.diagnostics().stream().anyMatch(d -> "E6000".equals(d.code())),
-                "E6000 for " + c.what() + ": " + res.diagnostics());
+            ExecResult er = compileAndRunJvm(c.source, "jvmtest-fv-deferred");
+            check(er.exitCode() == 0 && er.output().contains(
+                    c.what().contains("inequality") ? "true" : "false"),
+                c.what() + " runs through javac + java with reference "
+                    + "identity semantics: " + er.output());
         }
 
         // ISSUE-0102: nested and nullable function types promoted out of
@@ -5701,39 +5701,649 @@ public class JvmBackendTest {
     }
 
     /**
-     * ISSUE-0098 cross-module function values: the per-signature wrapper
-     * classes are emitted per module as NESTED classes, so a function
-     * value cannot cross a project-module boundary — a Func-typed
-     * argument to an imported module call, or a Func-typed call result
-     * used as an assignment value / call-result callee, is E6000 with no
-     * entry artifact (never an artifact javac rejects after the CLI
-     * reported success). The pre-fix emissions
-     * ({@code Lib.apply(inc$fn, 41L)}, {@code Fn1_I_R_I f =
-     * Lib.picker();}, {@code Fn1_I_R_I __fn0 = Lib.picker();}) were all
-     * javac-rejected, and the member-call path also silently skipped the
-     * LuaJIT parameter-boundary E8010 check the same-module path emits.
-     * The same four shapes are pinned by the multi-module conformance
+     * ISSUE-0301 shape-naming property cases (jvm-v12-runtime-value-
+     * surface D2/D3, Verification 3): the injective encoding over the
+     * complete canonical grammar. {@link JvmBackend#fnShapeId} maps
+     * every distinct function signature — primitives including
+     * {@code null} and {@code bytes}, arrays, nullables, classes (by
+     * canonical identity text), and nested sync/async functions — to a
+     * distinct identifier, and the array-shape id
+     * ({@code __A$} + escaped descriptor) maps distinct element shapes
+     * to distinct identifiers. Generated ids can never collide with
+     * {@link JvmBackend#javaName} output: they contain {@code _} or
+     * {@code $}, neither of which a translated user identifier can
+     * contain.
+     */
+    private static void testSharedCarrierShapeEncoding() {
+        System.out.println("-- Shared carrier shape encoding (ISSUE-0301) --");
+
+        List<Type> types = List.of(
+            Type.Boolean.INSTANCE,
+            Type.Int.INSTANCE,
+            Type.Number.INSTANCE,
+            Type.String.INSTANCE,
+            Type.Null.INSTANCE,
+            Type.Bytes.INSTANCE,
+            Type.Table.INSTANCE,
+            new Type.Array(Type.Int.INSTANCE),
+            new Type.Array(new Type.Array(Type.Int.INSTANCE)),
+            new Type.Array(Type.Bytes.INSTANCE),
+            new Type.Array(new Type.Func(List.of(Type.Int.INSTANCE),
+                Type.Int.INSTANCE, false)),
+            new Type.Array(new Type.Func(List.of(Type.Int.INSTANCE),
+                Type.Int.INSTANCE, true)),
+            new Type.Nullable(Type.Int.INSTANCE),
+            new Type.Nullable(IdentityTestFixtures.classType("C", "lib")),
+            new Type.Array(new Type.Nullable(Type.String.INSTANCE)),
+            IdentityTestFixtures.classType("Box", "lib"),
+            IdentityTestFixtures.classType("Box", "main"),
+            IdentityTestFixtures.errorClassType(),
+            new Type.Func(List.of(), Type.Int.INSTANCE, false),
+            new Type.Func(List.of(Type.Int.INSTANCE), Type.Int.INSTANCE, false),
+            new Type.Func(List.of(Type.Int.INSTANCE), Type.Int.INSTANCE, true),
+            new Type.Func(List.of(Type.Int.INSTANCE, Type.String.INSTANCE),
+                Type.Number.INSTANCE, false),
+            new Type.Func(List.of(new Type.Array(Type.Int.INSTANCE)),
+                Type.Boolean.INSTANCE, false),
+            new Type.Func(List.of(new Type.Nullable(Type.Int.INSTANCE)),
+                IdentityTestFixtures.classType("C", "lib"), false),
+            new Type.Func(List.of(new Type.Func(List.of(Type.Int.INSTANCE),
+                Type.Int.INSTANCE, false)), Type.Int.INSTANCE, false),
+            new Type.Func(List.of(new Type.Func(List.of(Type.Int.INSTANCE),
+                Type.Int.INSTANCE, true)), Type.Int.INSTANCE, false),
+            new Type.Func(List.of(Type.Bytes.INSTANCE), Type.Null.INSTANCE,
+                false));
+        // The shape ids consume the ONE static JVM type-descriptor
+        // emitter (ISSUE-0301 descriptor seam): class atoms project
+        // from the carried canonical identities, so the property cases
+        // exercise the service-driven class atoms.
+        Map<String, Type> ids = new LinkedHashMap<>();
+        for (Type t : types) {
+            String id = t instanceof Type.Func f
+                ? JvmBackend.fnShapeId(f)
+                : "__A$" + JvmBackend.escapedIdentifier(
+                    JvmBackend.typeDescriptor(t));
+            Type previous = ids.putIfAbsent(id, t);
+            check(previous == null,
+                "distinct canonical type " + t + " maps to a distinct id '"
+                    + id + "' (collision with " + previous + ")");
+            check(id.contains("_") || id.contains("$"),
+                "generated shape id '" + id + "' carries a character "
+                    + "javaName output can never contain");
+        }
+        check(ids.size() == types.size(),
+            "every canonical shape in the corpus produced a distinct id");
+        // Pinned spot values: the primitive letter codes and the async
+        // marker position survive the complete-grammar extension.
+        check("Fn2_I_I_R_I".equals(JvmBackend.fnShapeId(
+                new Type.Func(List.of(Type.Int.INSTANCE, Type.Int.INSTANCE),
+                    Type.Int.INSTANCE, false))),
+            "sync (int,int)->int keeps the pinned Fn2_I_I_R_I id");
+        check("FnA1_I_R_I".equals(JvmBackend.fnShapeId(
+                new Type.Func(List.of(Type.Int.INSTANCE),
+                    Type.Int.INSTANCE, true))),
+            "async (int)->int maps to the distinct FnA1_I_R_I id");
+        check("Fn1_Y_R_V".equals(JvmBackend.fnShapeId(
+                new Type.Func(List.of(Type.Bytes.INSTANCE),
+                    Type.Null.INSTANCE, false))),
+            "bytes params map to the Y code (bytes is covered)");
+        // User-name disjointness: javaName escapes $ and _, so no
+        // translated user identifier can spell a generated id.
+        for (String user : List.of("Fn1_I_R_I", "invoke", "descriptor",
+                "__IntArray", "add", "x$1", "_x")) {
+            String translated = JvmBackend.javaName(user);
+            check(!translated.contains("_"),
+                "javaName output never contains a raw underscore ("
+                    + translated + ") — the generated ids' underscore "
+                    + "positions are unreachable from any user identifier");
+            check(!ids.containsKey(translated),
+                "the translated user identifier '" + user + "' never "
+                    + "equals a generated shape id");
+        }
+    }
+
+    /**
+     * ISSUE-0301 D4 deterministic collection order (the review-round
+     * correction of the HashMap-seeded order): the collected
+     * project-shape set is seeded ONLY through source-ordered walks —
+     * the two intrinsic wrappers, the host declarations in
+     * import-statement order (their export maps in declaration order),
+     * then the AST walk (declaration order) closing every type
+     * annotation and expression type. The result is a pinned exact
+     * list: no hash-bucket iteration participates (the checker's
+     * typeMap is a HashMap and the host export maps reach the backend
+     * through unordered copies — the walk, not their iteration order,
+     * drives the output).
+     */
+    private static void testSharedShapeCollectionOrder() {
+        System.out.println("-- Shared shape collection order (ISSUE-0301) --");
+        Map<String, Map<String, Type>> hostModules = new LinkedHashMap<>();
+        Map<String, Type> hostExports = new LinkedHashMap<>();
+        hostExports.put("take", new Type.Func(List.of(Type.String.INSTANCE),
+            Type.Int.INSTANCE, false));
+        hostExports.put("xs", new Type.Array(Type.Int.INSTANCE));
+        hostModules.put("hostx", hostExports);
+        Frontend f = compileFrontend("""
+            import * as hostx from "hostx"
+            function f1(x: int): int { return x; }
+            export function g(): int {
+              let a: int[] = [1];
+              return f1(a[0]);
+            }
+            """, "jvmtest-shape-order.deal",
+            new FixedModuleResolver(Map.of("hostx", hostExports)));
+        check(f.errors().isEmpty(),
+            "shape-order fixture frontend clean: " + f.errors());
+        if (!f.errors().isEmpty()) return;
+        Map<String, CanonicalModuleIdentity> classification =
+            new LinkedHashMap<>();
+        classification.put("",
+            CanonicalModuleIdentity.BuiltinModule.INSTANCE);
+        for (String path : List.of("main", "jvmtest-shape-order.deal")) {
+            classification.put(path,
+                new CanonicalModuleIdentity.ProjectModule(
+                    new ProjectModuleIdentity(path, path, List.of())));
+        }
+        ModuleIdentityResolver.IdentityIndex idx =
+            ModuleIdentityResolver.buildIndex(classification);
+        List<Type> shapes = JvmBackend.collectShapes(f.program(),
+            f.checkResult(), "jvmtest-shape-order.deal", "main",
+            Map.of(), Map.of(), hostModules,
+            SemanticProfile.LEGACY_SAFE_INT, idx,
+            idx.moduleIdentityLookup());
+        List<Type> expected = List.of(
+            new Type.Func(List.of(Type.Number.INSTANCE),
+                Type.Int.INSTANCE, false),
+            new Type.Func(List.of(Type.Int.INSTANCE),
+                Type.Number.INSTANCE, false),
+            new Type.Func(List.of(Type.String.INSTANCE),
+                Type.Int.INSTANCE, false),
+            new Type.Array(Type.Int.INSTANCE),
+            new Type.Func(List.of(Type.Int.INSTANCE),
+                Type.Int.INSTANCE, false),
+            new Type.Func(List.of(), Type.Int.INSTANCE, false));
+        check(shapes.equals(expected),
+            "the collected shape list is the pinned source-ordered "
+                + "sequence " + expected + ", got: " + shapes);
+    }
+
+    /**
+     * ISSUE-0301 $check realization behaviors (jvm-v12-runtime-value-
+     * surface D5, Verification 4): the generated recursive [D] row
+     * accepts the matching shared wrapper and an array-mode $DealRt.Table
+     * (the __jsonTableValue dynamic representation — elements checked
+     * recursively in index order, E8003 "array element {i} type
+     * mismatch" at the first failing index), any other non-array value
+     * raises E8001 "expected array"; the function row byte-compares the
+     * carried canonical descriptor (a descriptor delta raises E8010, a
+     * non-wrapper raises E8001 "expected function"); the bytes row
+     * delegates to the $DealRt.Bytes carrier predicate. The array-mode
+     * table fixtures build the dynamic representation through a
+     * @jsonable class's table field (the __jsonTableValue output) and
+     * cross it at a typed array boundary.
+     */
+    private static void testSharedCarrierCheckBehaviors() throws Exception {
+        System.out.println("-- Shared carrier $check behaviors (ISSUE-0301) --");
+
+        // Array-mode table accepted as the [int] dynamic representation.
+        ExecResult ok = compileAndRunJvm("""
+            // @jsonable
+            export class Wrap {
+              data: table = {};
+            }
+            export function test(): int {
+              let w: Wrap | null = Wrap$fromJson(
+                  "{\\"data\\": {\\"xs\\": [1, 2]}}");
+              if (w !== null) {
+                let holder: table = w.data;
+                let xs: int[] = holder.xs;
+                return xs[1];
+              }
+              return 0;
+            }
+            """, "carrier-dynarray-ok");
+        check(ok.exitCode() == 0 && ok.output().contains("2"),
+            "an array-mode $DealRt.Table crosses an [int] boundary with "
+                + "recursive element checks: " + ok.output());
+
+        // E8003 at the first failing index inside the dynamic array.
+        ExecResult badElem = compileAndRunJvm("""
+            // @jsonable
+            export class Wrap {
+              data: table = {};
+            }
+            export function test(): int {
+              let w: Wrap | null = Wrap$fromJson(
+                  "{\\"data\\": {\\"xs\\": [1, 2.5, 3]}}");
+              if (w !== null) {
+                let holder: table = w.data;
+                let xs: int[] = holder.xs;
+                return xs[0];
+              }
+              return 0;
+            }
+            """, "carrier-dynarray-badelem");
+        check(badElem.exitCode() == 1
+                && badElem.output().contains("DEAL_ERROR_CODE: E8003")
+                && badElem.output().contains(
+                    "array element 2 type mismatch"),
+            "the first failing index raises E8003 \"array element 2 type "
+                + "mismatch\" (the inner non-integer cause is suppressed "
+                + "like LuaJIT's pcall-wrapped checks): " + badElem.output());
+
+        // Recursive [D] over nested arrays: the dynamic [[int]] row
+        // checks elements recursively in index order.
+        ExecResult nestedOk = compileAndRunJvm("""
+            // @jsonable
+            export class Wrap {
+              data: table = {};
+            }
+            export function test(): int {
+              let w: Wrap | null = Wrap$fromJson(
+                  "{\\"data\\": {\\"xs\\": [[1, 2], [3, 4]]}}");
+              if (w !== null) {
+                let holder: table = w.data;
+                let rows: int[][] = holder.xs;
+                return rows[1][1];
+              }
+              return 0;
+            }
+            """, "carrier-dynarray-nested-ok");
+        check(nestedOk.exitCode() == 0 && nestedOk.output().contains("4"),
+            "an array-mode table crosses a nested [[int]] boundary with "
+                + "recursive element checks: " + nestedOk.output());
+
+        ExecResult nestedBad = compileAndRunJvm("""
+            // @jsonable
+            export class Wrap {
+              data: table = {};
+            }
+            export function test(): int {
+              let w: Wrap | null = Wrap$fromJson(
+                  "{\\"data\\": {\\"xs\\": [[1, 2], [3, \\"bad\\"]]}}");
+              if (w !== null) {
+                let holder: table = w.data;
+                let rows: int[][] = holder.xs;
+                return rows[0][0];
+              }
+              return 0;
+            }
+            """, "carrier-dynarray-nested-bad");
+        check(nestedBad.exitCode() == 1
+                && nestedBad.output().contains("DEAL_ERROR_CODE: E8003")
+                && nestedBad.output().contains(
+                    "array element 2 type mismatch"),
+            "a failing nested element raises E8003 at the first failing "
+                + "index (row 2): " + nestedBad.output());
+
+        // An object-mode table (or any non-array value) raises E8001
+        // "expected array" at the [D] boundary.
+        ExecResult objMode = compileAndRunJvm("""
+            // @jsonable
+            export class Wrap {
+              data: table = {};
+            }
+            export function test(): int {
+              let w: Wrap | null = Wrap$fromJson(
+                  "{\\"data\\": {\\"xs\\": {\\"x\\": 1}}}");
+              if (w !== null) {
+                let holder: table = w.data;
+                let xs: int[] = holder.xs;
+                return 0;
+              }
+              return 0;
+            }
+            """, "carrier-dynarray-objmode");
+        check(objMode.exitCode() == 1
+                && objMode.output().contains("DEAL_ERROR_CODE: E8001")
+                && objMode.output().contains("expected array, got table"),
+            "an object-mode table raises E8001 \"expected array, got "
+                + "table\": " + objMode.output());
+
+        // A function-typed table read byte-compares the carried
+        // descriptor; a non-wrapper raises E8001 "expected function".
+        ExecResult fnValue = compileAndRunJvm("""
+            function inc(x: int): int { return x + 1; }
+            export function test(): int {
+              let t: table = { fn: inc };
+              let f: (x: int) => int = t.fn;
+              return f(41);
+            }
+            """, "jvmtest-carrier-fnrow-ok");
+        check(fnValue.exitCode() == 0 && fnValue.output().contains("42"),
+            "a wrapper whose carried descriptor equals the expected text "
+                + "passes the function row: " + fnValue.output());
+
+        ExecResult fnBad = compileAndRunJvm("""
+            export function test(): int {
+              let t: table = { fn: 42 };
+              let f: (x: int) => int = t.fn;
+              return 0;
+            }
+            """, "jvmtest-carrier-fnrow-bad");
+        check(fnBad.exitCode() == 1
+                && fnBad.output().contains("DEAL_ERROR_CODE: E8001")
+                && fnBad.output().contains("expected function"),
+            "a non-wrapper value raises E8001 \"expected function\" at "
+                + "the function row: " + fnBad.output());
+
+        // Function-array [D] row: the emitted $checkArray accepts the
+        // typed ((x:int)=>int)[] wrapper (identity) and converts a
+        // dynamic array-mode table holding function wrappers with
+        // recursive element checks — E8003 "array element {i} type
+        // mismatch" at the first failing index. No DEAL expression can
+        // build a dynamic table holding function values (functions are
+        // not JSON), so the probe drives the REAL emitted helpers with
+        // a hand-built runner over the production artifact.
+        Frontend fnArrProbe = compileFrontend("""
+            function inc(x: int): int { return x + 1; }
+            export function test(): int {
+              let holder: table = {};
+              let fs: ((x: int) => int)[] = holder.fs;
+              return 0;
+            }
+            """, "jvmtest-carrier-fnarr.deal");
+        check(fnArrProbe.errors().isEmpty(),
+            "function-array probe frontend clean: " + fnArrProbe.errors());
+        if (fnArrProbe.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                fnArrProbe.program(), fnArrProbe.checkResult(),
+                "jvmtest-carrier-fnarr.deal", "Main");
+            check(!res.hasErrors(),
+                "function-array probe codegen clean: " + res.diagnostics());
+            Path dir = Files.createTempDirectory("jvmtest_fnarr_");
+            Files.writeString(dir.resolve("Main.java"), res.source());
+            Files.writeString(dir.resolve("Runner.java"), """
+                public final class Runner {
+                    public static void main(String[] args) {
+                        try {
+                            java.util.ArrayList<java.lang.Object> els =
+                                new java.util.ArrayList<>();
+                            els.add(Main.inc$fn);
+                            els.add(java.lang.Long.valueOf(42));
+                            $DealRt.Table t = new $DealRt.Table(els);
+                            Main.$check("[(int)->int]", t);
+                            System.out.println("no-error");
+                        } catch (Main.DealError e) {
+                            System.out.println("DEAL_ERROR_CODE: " + e.code);
+                            System.out.println(e.getMessage());
+                            System.exit(1);
+                        }
+                    }
+                }
+                """);
+            StringBuilder javacErr = new StringBuilder();
+            boolean javacOk = BackendConformanceTest.compileWithJavac(dir,
+                List.of("Main.java", "Runner.java"), javacErr);
+            check(javacOk, "function-array probe artifacts compile: "
+                + javacErr);
+            if (javacOk) {
+                ProcessBuilder java = new ProcessBuilder("java", "-cp",
+                    dir.toString(), "Runner");
+                java.redirectErrorStream(true);
+                Process p = java.start();
+                String out = new String(p.getInputStream().readAllBytes())
+                    .trim();
+                int exit = p.waitFor();
+                check(exit == 1
+                        && out.contains("DEAL_ERROR_CODE: E8003")
+                        && out.contains("array element 2 type mismatch"),
+                    "a dynamic function-array conversion raises E8003 at "
+                        + "the first failing index (element 2, the Long "
+                        + "is not a wrapper): " + out);
+                Files.writeString(dir.resolve("Runner.java"), """
+                    public final class Runner {
+                        public static void main(String[] args) {
+                            try {
+                                java.util.ArrayList<java.lang.Object> els =
+                                    new java.util.ArrayList<>();
+                                els.add(Main.inc$fn);
+                                $DealRt.Table t = new $DealRt.Table(els);
+                                Main.$check("[(int)->int]", t);
+                                System.out.println("fn-array-row-ok");
+                            } catch (Main.DealError e) {
+                                System.out.println("DEAL_ERROR_CODE: " + e.code);
+                                System.exit(1);
+                            }
+                        }
+                    }
+                    """);
+                ProcessBuilder javac2 = new ProcessBuilder("javac",
+                    "-encoding", "UTF-8", "Main.java", "Runner.java");
+                javac2.directory(dir.toFile());
+                javac2.redirectErrorStream(true);
+                Process p2 = javac2.start();
+                String javacOut2 = new String(
+                    p2.getInputStream().readAllBytes()).trim();
+                int javacExit2 = p2.waitFor();
+                check(javacExit2 == 0,
+                    "positive runner compiles: " + javacOut2);
+                ProcessBuilder java2 = new ProcessBuilder("java", "-cp",
+                    dir.toString(), "Runner");
+                java2.redirectErrorStream(true);
+                Process p3 = java2.start();
+                String out2 = new String(p3.getInputStream().readAllBytes())
+                    .trim();
+                int exit2 = p3.waitFor();
+                check(exit2 == 0 && out2.contains("fn-array-row-ok"),
+                    "a dynamic function-array of genuine wrappers passes "
+                        + "the [D] row element-wise: " + out2);
+            }
+            try {
+                Files.walk(dir).sorted(Comparator.reverseOrder())
+                    .forEach(p2 -> { try { Files.deleteIfExists(p2); }
+                        catch (IOException ignored) {} });
+            } catch (IOException ignored) { }
+        }
+
+        // The bytes row delegates to the $DealRt.Bytes carrier predicate
+        // (matcher table): emission inspection — no DEAL bytes value
+        // exists until the int32-bytes lane lands its operations.
+        Frontend bytesProbe = compileFrontend("""
+            export function test(): int { return 1; }
+            """, "jvmtest-carrier-bytesrow.deal");
+        check(bytesProbe.errors().isEmpty(),
+            "bytes-row probe frontend clean: " + bytesProbe.errors());
+        if (bytesProbe.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                bytesProbe.program(), bytesProbe.checkResult(),
+                "jvmtest-carrier-bytesrow.deal", "main");
+            check(!res.hasErrors(), "bytes-row probe codegen clean: "
+                + res.diagnostics());
+            check(res.source().contains(
+                    "if (descriptor.equals(\"bytes\")) { if (v "
+                        + "instanceof $DealRt.Bytes b) return b;"),
+                "the emitted $check carries the canonical bytes row over "
+                    + "the $DealRt.Bytes carrier");
+            check(res.source().contains(
+                    "static final class Bytes {"),
+                "the shared $DealRt scope carries the final Bytes wrapper "
+                    + "over byte[]");
+        }
+    }
+
+    /**
+     * ISSUE-0301 identity/equality across module boundaries
+     * (jvm-v12-runtime-value-surface Verification 5): wrapper reference
+     * equality, alias-observed writes, and append stability hold when
+     * the carriers cross a module boundary — the shared $DealRt classes
+     * keep one identity per project. Executes the real orchestrator
+     * pipeline (codegen → javac → java).
+     */
+    private static void testSharedCarrierCrossModuleIdentity()
+            throws Exception {
+        System.out.println("-- Shared carrier cross-module identity (ISSUE-0301) --");
+
+        writeFile("src/lib.deal", """
+            export function make(): int[] { return [5]; }
+            export function sum(xs: int[]): int { return xs[0] + xs[1]; }
+            export function picker(): (x: int) => int { return inc; }
+            function inc(x: int): int { return x + 1; }
+            """);
+        writeFile("src/entry.deal", """
+            import * as lib from "./lib"
+            export function main(): null { return null; }
+            export function run(): int {
+              let a: int[] = lib.make();
+              a[1] = 7;
+              a[0] = 9;
+              let b: int[] = a;
+              b[1] = 8;
+              let f1: (x: int) => int = lib.picker();
+              let f2: (x: int) => int = lib.picker();
+              let eq: int = 0;
+              if (f1 === f2) { eq = 1; }
+              let t: table = { fn: lib.picker() };
+              let f3: (x: int) => int = t.fn;
+              return lib.sum(a) + a[1] + f1(40) + eq + f3(0);
+            }
+            """);
+
+        Path entryFile = tmpDir.get().resolve("src/entry.deal").toAbsolutePath();
+        Path outputDir = tmpDir.get().resolve("build/carrier_identity");
+        List<Path> roots = List.of(tmpDir.get().resolve("src").toAbsolutePath());
+
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputDir, false, false, false, false, Backend.JVM,
+            null, roots, Path.of(".").toAbsolutePath().normalize());
+        boolean success = orchestrator.compile();
+        check(success, "shared-carrier identity project compiles: "
+            + orchestrator.diagnostics());
+        if (success && Files.exists(outputDir.resolve("Entry.java"))) {
+            ExecResult exec = runJvmArtifacts(outputDir,
+                parseProgram("export function run(): int { return 1; }"),
+                "Entry");
+            check(exec.exitCode() == 0 && exec.output().contains("68"),
+                "cross-module identity holds: lib.sum(a)=17 (the lib-built "
+                    + "array keeps its identity and observes the entry's "
+                    + "append and aliased write when passed back), a[1]=8, "
+                    + "f1(40)=41, wrapper reference equality =1, "
+                    + "table-read wrapper byte-compare passes and f3(0)=1 "
+                    + "→ 68: " + exec.output());
+        }
+    }
+
+    /**
+     * ISSUE-0301 host-class-typed shapes stay out of the shared scope:
+     * a project whose non-entry module imports a host module with a
+     * class export must not pre-register a shared-scope wrapper whose
+     * invoke signature references the never-emitted host Java class —
+     * the pre-fix entry artifact carried
+     * {@code abstract HostCfg.$C_ServerConfig invoke();} inside
+     * {@code $DealRt}, which javac rejected ("package HostCfg does not
+     * exist"), violating the self-contained single-source-Java
+     * post-state. The host ABI lane's import-time E6000s stay, the
+     * two-pass site still writes the clean entry artifact, and that
+     * artifact carries no host-class reference at all. Runs the real
+     * orchestrator pipeline (collection seam → codegen → artifact
+     * write).
+     */
+    private static void testSharedCarrierHostClassShapes()
+            throws Exception {
+        System.out.println("-- Shared carrier host-class shape exclusion (ISSUE-0301) --");
+
+        writeFile("deal.json", """
+            {
+              "languageVersion": "1.2",
+              "moduleRoots": ["src"],
+              "externals": {
+                "host/cfg": { "declaration": "bindings/cfg.d.deal" }
+              }
+            }
+            """);
+        writeFile("bindings/cfg.d.deal", """
+            export class ServerConfig {
+              port: int;
+            }
+            export function load(): ServerConfig;
+            """);
+        writeFile("src/hostshape_lib.deal", """
+            import * as Cfg from "host/cfg"
+            export function load(): Cfg.ServerConfig {
+              return Cfg.load();
+            }
+            export function ports(cfgs: Cfg.ServerConfig[]): int[] {
+              return [cfgs[0].port];
+            }
+            """);
+        writeFile("src/hostshape_entry.deal", """
+            import * as Lib from "./hostshape_lib"
+            export function main(): null { return null; }
+            """);
+
+        Path entryFile = tmpDir.get().resolve("src/hostshape_entry.deal")
+            .toAbsolutePath().normalize();
+        Path outputRoot = tmpDir.get()
+            .resolve("build/hostclass_shapes");
+        List<Path> roots = List.of(
+            tmpDir.get().resolve("src").toAbsolutePath());
+        Map<String, String> externals = Map.of("host/cfg",
+            tmpDir.get().resolve("bindings/cfg.d.deal").toString());
+        check(Files.exists(tmpDir.get().resolve("bindings/cfg.d.deal")),
+            "deal.json externals bind the host declaration");
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputRoot, false, false, false, Backend.JVM,
+            externals, roots, Path.of(".").toAbsolutePath().normalize());
+        boolean ok = orchestrator.compile();
+        check(!ok, "the host-class project fails as a whole (the host "
+            + "ABI lane's import-time E6000s stay): "
+            + orchestrator.diagnostics());
+        check(orchestrator.diagnostics().stream().anyMatch(d ->
+                d.toString().contains("host export 'ServerConfig'")),
+            "the host class export keeps its import-time E6000: "
+                + orchestrator.diagnostics());
+        Path entryArtifact = outputRoot.resolve("Hostshape_entry.java");
+        check(Files.exists(entryArtifact),
+            "the two-pass site still writes the clean entry artifact");
+        if (Files.exists(entryArtifact)) {
+            String artifact = Files.readString(entryArtifact);
+            check(!artifact.contains("HostCfg")
+                    && !artifact.contains("ServerConfig"),
+                "the entry artifact's shared $DealRt carries no wrapper "
+                    + "referencing the never-emitted host Java class "
+                    + "(pre-fix: 'abstract HostCfg.$C_ServerConfig "
+                    + "invoke();')");
+        }
+    }
+
+    /**
+     * ISSUE-0301 cross-module function values on the shared $DealRt
+     * carriers: the per-signature wrapper classes live in ONE shared
+     * scope emitted by the selected entry module, so function values
+     * cross a project-module boundary unchanged — a Func-typed argument
+     * to an imported module call, a Func-typed call result used as an
+     * assignment value, and an imported call-result callee all compile
+     * and execute (the pre-fix per-module wrapper classes were artifacts
+     * javac rejected after the CLI reported success), and the
+     * member-call path now applies the same LuaJIT parameter-boundary
+     * E8010 check the same-module path emits (an arity-extension
+     * argument raises "function signature mismatch: expected
+     * (int,string)->int, got (int)->int" at the imported call). The
+     * same four shapes are pinned by the multi-module conformance
      * fixtures in {@code test/conformance/fixtures/
      * jvm-function-values-slice.json} through
      * {@code BackendConformanceTest.runMultiModuleTestCase}.
      */
-    private static void testCrossModuleFunctionValuesRejected() throws Exception {
-        System.out.println("-- Orchestrator: cross-module function values → E6000 --");
+    private static void testCrossModuleFunctionValues() throws Exception {
+        System.out.println("-- Orchestrator: cross-module function values on the shared carriers --");
 
-        record XmodCase(String what, String libSource, String entrySource) {}
+        record XmodCase(String what, String libSource, String entrySource,
+                        String expectedOutput, String expectedErrorCode) {}
         List<XmodCase> cases = List.of(
             new XmodCase("callback argument",
                 "export function apply(f: (x: int) => int, v: int): int { return f(v); }\n",
                 "import * as lib from \"./lib\"\n"
                     + "function inc(x: int): int { return x + 1; }\n"
                     + "export function main(): null { return null; }\n"
-                    + "export function test(): int { return lib.apply(inc, 41); }\n"),
+                    + "export function test(): int { return lib.apply(inc, 41); }\n",
+                "42", null),
             new XmodCase("arity-extension argument (E8010 boundary)",
                 "export function apply2(f: (a: int, b: string) => int, v: int): int { return f(v, \"i\"); }\n",
                 "import * as lib from \"./lib\"\n"
                     + "function inc(x: int): int { return x + 1; }\n"
                     + "export function main(): null { return null; }\n"
-                    + "export function test(): int { return lib.apply2(inc, 41); }\n"),
+                    + "export function test(): int { return lib.apply2(inc, 41); }\n",
+                null, "E8010"),
             new XmodCase("returned function value",
                 "export function picker(): (x: int) => int { return inc; }\n"
                     + "function inc(x: int): int { return x + 1; }\n",
@@ -5742,13 +6352,15 @@ public class JvmBackendTest {
                     + "export function test(): int {\n"
                     + "  let f: (x: int) => int = lib.picker();\n"
                     + "  return f(41);\n"
-                    + "}\n"),
+                    + "}\n",
+                "42", null),
             new XmodCase("imported call-result callee",
                 "export function picker(): (x: int) => int { return inc; }\n"
                     + "function inc(x: int): int { return x + 1; }\n",
                 "import * as lib from \"./lib\"\n"
                     + "export function main(): null { return null; }\n"
-                    + "export function test(): int { return lib.picker()(41); }\n"));
+                    + "export function test(): int { return lib.picker()(41); }\n",
+                "42", null));
 
         for (XmodCase c : cases) {
             writeFile("src/lib.deal", c.libSource());
@@ -5763,18 +6375,31 @@ public class JvmBackendTest {
                 null, roots, Path.of(".").toAbsolutePath().normalize());
 
             boolean success = orchestrator.compile();
-            check(!success, "cross-module function-value case '" + c.what()
-                + "' is rejected: " + orchestrator.diagnostics());
-            check(orchestrator.diagnostics().stream()
-                    .anyMatch(d -> "E6000".equals(d.code())),
-                "E6000 for cross-module function-value case '" + c.what()
-                    + "': " + orchestrator.diagnostics());
-            // The rejected ENTRY module writes no artifact (the clean
-            // lib module may still be written by the orchestrator's
-            // two-pass design) — never an artifact javac rejects after
-            // the CLI reported success.
-            check(!Files.exists(outputDir.resolve("Entry.java")),
-                "no entry artifact for '" + c.what() + "'");
+            check(success, "cross-module function-value case '" + c.what()
+                + "' compiles: " + orchestrator.diagnostics());
+            Path entryArtifact = outputDir.resolve("Entry.java");
+            check(success && Files.exists(entryArtifact),
+                "entry artifact written for '" + c.what() + "'");
+            if (!success || !Files.exists(entryArtifact)) {
+                continue;
+            }
+            ExecResult exec = runJvmArtifacts(outputDir,
+                parseProgram("export function test(): int { return 0; }"),
+                "Entry");
+            if (c.expectedErrorCode() == null) {
+                check(exec.exitCode() == 0
+                        && exec.output().contains(c.expectedOutput()),
+                    "cross-module case '" + c.what() + "' runs through "
+                        + "javac + java and prints " + c.expectedOutput()
+                        + ": " + exec.output());
+            } else {
+                check(exec.exitCode() == 1
+                        && exec.output().contains("DEAL_ERROR_CODE: "
+                            + c.expectedErrorCode()),
+                    "cross-module case '" + c.what() + "' raises "
+                        + c.expectedErrorCode() + " at the imported "
+                        + "parameter boundary: " + exec.output());
+            }
 
             if (Files.isDirectory(outputDir)) {
                 try (var stream = Files.walk(outputDir)) {
@@ -9376,13 +10001,13 @@ public class JvmBackendTest {
             "null-returning async function → void method");
         check(java.contains("checkInt(g())"),
             "await of an int completion wraps the call in checkInt");
-        check(java.contains("static abstract class Fn0_R_I"),
-            "async () => int uses the ISSUE-0098 wrapper shape class");
-        check(java.contains("static abstract class Fn1_I_R_I"),
-            "async (x: int) => int uses the ISSUE-0098 wrapper shape class");
-        check(java.contains("static final Fn0_R_I value$fn = new Fn0_R_I()"),
+        check(java.contains("static abstract class FnA0_R_I"),
+            "async () => int uses the shared wrapper shape class");
+        check(java.contains("static abstract class FnA1_I_R_I"),
+            "async (x: int) => int uses the shared wrapper shape class");
+        check(java.contains("static final $DealRt.FnA0_R_I value$fn = new $DealRt.FnA0_R_I()"),
             "per-declaration wrapper instance field");
-        check(java.contains("Fn0_R_I f = value$fn;"),
+        check(java.contains("$DealRt.FnA0_R_I f = value$fn;"),
             "function-typed local initializes from the wrapper field");
         check(java.contains("checkInt(f.invoke())"),
             "awaited indirect call dispatches through invoke");
@@ -10081,7 +10706,7 @@ public class JvmBackendTest {
                     "a required no-default table field defaults to a "
                     + "fresh empty $DealRt.Table (never Java null)");
                 check(java.contains(
-                        "__IntArray f1 = new __IntArray(new long[0]);"),
+                        "$DealRt.__IntArray f1 = new $DealRt.__IntArray(new long[0]);"),
                     "a required no-default array field defaults to a "
                     + "fresh empty wrapper (never Java null)");
                 check(java.contains(
@@ -11000,7 +11625,7 @@ public class JvmBackendTest {
             "the __strLength helper definition is emitted");
         check(java.contains("static java.lang.String __strSubstring("),
             "the __strSubstring helper definition is emitted");
-        check(java.contains("static __StringArray __strSplit("),
+        check(java.contains("static $DealRt.__StringArray __strSplit("),
             "the __strSplit helper definition is emitted");
         check(java.contains("static double __mathSqrt(double x)"),
             "the __mathSqrt helper definition is emitted");

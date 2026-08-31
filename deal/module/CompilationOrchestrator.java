@@ -46,7 +46,6 @@ import java.io.InputStream;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import deal.descriptors.CanonicalRuntimeTypeDescriptor;
 import deal.diagnostics.DiagnosticCode;
 import java.util.*;
 
@@ -2146,6 +2145,70 @@ public final class CompilationOrchestrator {
      * two modules mapping to the same class name (e.g. a case-only
      * difference) is an E6000 error — never a silent artifact overwrite.
      */
+
+    /** Per-module JVM import context (ISSUE-0096/ISSUE-0100/ISSUE-0109):
+     * import resolutions, imported class declarations, and host-module
+     * declarations for one module — the same discovery the JVM use site
+     * builds. Shared by the ISSUE-0301 shape-collection pre-pass and the
+     * per-module codegen pass. */
+    private record JvmImportContext(
+            Map<String, String> importResolutions,
+            Map<String, Map<String, ClassDeclaration>> importedClasses,
+            Map<String, Map<String, Type>> hostModules) {}
+
+    /** Builds the per-module JVM import context for {@code info}. */
+    private JvmImportContext jvmImportContextOf(ModuleInfo info) {
+        // Import resolutions (ISSUE-0096): raw import path → module
+        // path of the imported COMPILED module. Declaration files
+        // become host modules (ISSUE-0100). ISSUE-0109: the same
+        // discovery pass collects each imported module's class
+        // declarations (module path → name → declaration).
+        Map<String, String> importResolutions = new HashMap<>();
+        Map<String, Map<String, ClassDeclaration>> importedClasses =
+            new HashMap<>();
+        Map<String, Map<String, Type>> hostModules = new HashMap<>();
+        for (StatementNode stmt : info.rawAst.statements()) {
+            if (stmt instanceof ImportDeclaration imp) {
+                String resolvedSource = resolveImportPath(imp.modulePath(),
+                    Path.of(info.sourcePath), imp.span());
+                if (resolvedSource != null) {
+                    ModuleInfo imported = modules.get(resolvedSource);
+                    if (imported == null) {
+                        continue;
+                    }
+                    if (imported.isDeclarationFile) {
+                        if (!isSpecStdlibModuleInfo(imported)) {
+                            hostModules.put(imp.modulePath(),
+                                imported.exports != null
+                                    ? imported.exports : Map.of());
+                        }
+                    } else {
+                        importResolutions.put(imp.modulePath(),
+                            imported.modulePath);
+                        Map<String, ClassDeclaration> classes =
+                            new LinkedHashMap<>();
+                        for (StatementNode importedStmt
+                                : imported.rawAst.statements()) {
+                            ClassDeclaration cd = null;
+                            if (importedStmt instanceof ClassDeclaration c) {
+                                cd = c;
+                            } else if (importedStmt instanceof ExportDeclaration ed
+                                    && ed.declaration() instanceof ClassDeclaration c) {
+                                cd = c;
+                            }
+                            if (cd != null) {
+                                classes.putIfAbsent(cd.name(), cd);
+                            }
+                        }
+                        importedClasses.put(imported.modulePath, classes);
+                    }
+                }
+            }
+        }
+        return new JvmImportContext(importResolutions, importedClasses,
+            hostModules);
+    }
+
     private void codegenAllJvm() throws IOException {
         if (sourceMapExplicit) {
             // Source-map sidecars (.deal.map.json) are produced only by the
@@ -2158,67 +2221,64 @@ public final class CompilationOrchestrator {
                 + "sidecars with the JVM backend (source maps are "
                 + "LuaJIT-only)");
         }
+        // Canonical identity surface (canonical identity carriage,
+        // descriptor-identity-propagation D1/D2): the ONE
+        // per-compilation identity index over the module-path
+        // classification — the same surface the checker consumed — so
+        // every class descriptor the JVM backend emits resolves through
+        // {@code index.descriptorTextFor(identity)} byte-for-byte from
+        // the classified identities (no second Type-to-text producer
+        // exists).
+        ModuleIdentityResolver.IdentityIndex identityIndex =
+            buildCanonicalIdentitySurface();
+        // Pre-codegen collection pass (ISSUE-0301 D4, the shared
+        // runtime value surface): walk every checked module's types and
+        // collect the closed project-wide shape set — function-signature
+        // shapes, nested/function/bytes array element shapes — so the
+        // selected entry module's shared $DealRt scope carries every
+        // shape any module references. Deterministic: module dependency
+        // order (the modules map), then source order per module.
+        //
+        // Host-class-typed shapes never enter the union: the project's
+        // host modules (the raw specifiers any module imports) name
+        // declarations whose class exports keep their import-time
+        // E6000s (the host ABI lane's carriers), so a shared-scope
+        // wrapper referencing a never-emitted host Java class must not
+        // be pre-registered by the entry's emission.
+        Set<String> projectHostPaths = new LinkedHashSet<>();
+        for (ModuleInfo info : modules.values()) {
+            if (info.isDeclarationFile) continue;
+            projectHostPaths.addAll(jvmImportContextOf(info)
+                .hostModules.keySet());
+        }
+        List<Type> sharedShapes = new ArrayList<>();
+        Set<Type> seenShapes = new LinkedHashSet<>();
+        for (ModuleInfo info : modules.values()) {
+            if (info.isDeclarationFile) continue;
+            JvmImportContext ctx = jvmImportContextOf(info);
+            for (Type shape : JvmBackend.collectShapes(info.rawAst,
+                    info.checkResult, info.sourcePath, info.modulePath,
+                    ctx.importResolutions, ctx.importedClasses,
+                    ctx.hostModules, invocation.semanticProfile(),
+                    identityIndex, identityIndex.moduleIdentityLookup())) {
+                if (JvmBackend.shapeReferencesHostModule(shape,
+                        projectHostPaths)) {
+                    continue;
+                }
+                if (seenShapes.add(shape)) {
+                    sharedShapes.add(shape);
+                }
+            }
+        }
+        List<Type> projectShapes = List.copyOf(sharedShapes);
+
         // Pass 1: generate every module and merge diagnostics. Rejected
         // modules write no artifact.
         List<ModuleInfo> cleanModules = new ArrayList<>();
         Map<ModuleInfo, JvmBackend.JvmCodegenResult> results = new LinkedHashMap<>();
         for (ModuleInfo info : modules.values()) {
             if (info.isDeclarationFile) continue;
-            // Import resolutions (ISSUE-0096): raw import path → module
-            // path of the imported COMPILED module. Declaration files
-            // become host modules (ISSUE-0100) — see the hostModules
-            // construction below — instead of the pre-slice E6000.
-            // ISSUE-0109: the same discovery pass collects each imported
-            // module's class declarations (module path → name →
-            // declaration) so the backend can emit imported-class types,
-            // construction, and nominal checks against the declaring
-            // module's generated nested classes.
-            Map<String, String> importResolutions = new HashMap<>();
-            Map<String, Map<String, ClassDeclaration>> importedClasses =
-                new HashMap<>();
-            // ISSUE-0100 host ABI slice: imports of declaration files that
-            // are not spec stdlib modules are host modules — the same
-            // classification the LuaJIT use site builds (host-module-abi
-            // D5) — and their declared export map flows into JvmBackend.
-            Map<String, Map<String, Type>> hostModules = new HashMap<>();
-            for (StatementNode stmt : info.rawAst.statements()) {
-                if (stmt instanceof ImportDeclaration imp) {
-                    String resolvedSource = resolveImportPath(imp.modulePath(),
-                        Path.of(info.sourcePath), imp.span());
-                    if (resolvedSource != null) {
-                        ModuleInfo imported = modules.get(resolvedSource);
-                        if (imported == null) {
-                            continue;
-                        }
-                        if (imported.isDeclarationFile) {
-                            if (!isSpecStdlibModuleInfo(imported)) {
-                                hostModules.put(imp.modulePath(),
-                                    imported.exports != null
-                                        ? imported.exports : Map.of());
-                            }
-                        } else {
-                            importResolutions.put(imp.modulePath(),
-                                imported.modulePath);
-                            Map<String, ClassDeclaration> classes =
-                                new LinkedHashMap<>();
-                            for (StatementNode importedStmt
-                                    : imported.rawAst.statements()) {
-                                ClassDeclaration cd = null;
-                                if (importedStmt instanceof ClassDeclaration c) {
-                                    cd = c;
-                                } else if (importedStmt instanceof ExportDeclaration ed
-                                        && ed.declaration() instanceof ClassDeclaration c) {
-                                    cd = c;
-                                }
-                                if (cd != null) {
-                                    classes.putIfAbsent(cd.name(), cd);
-                                }
-                            }
-                            importedClasses.put(imported.modulePath, classes);
-                        }
-                    }
-                }
-            }
+            JvmImportContext ctx = jvmImportContextOf(info);
             boolean isEntry = info.sourcePath.equals(entryFile.toString());
             // ISSUE-0374 profile plumb: the backend derives its
             // backend-wide int mode from the invocation's project-wide
@@ -2228,13 +2288,12 @@ public final class CompilationOrchestrator {
             // D1/D2): the compilation's identity index and module-path
             // classification flow in; every class descriptor the backend
             // emits resolves through index.descriptorTextFor(identity).
-            ModuleIdentityResolver.IdentityIndex identityIndex =
-                buildCanonicalIdentitySurface();
             JvmBackend.JvmCodegenResult res = JvmBackend.generate(
                 info.rawAst, info.checkResult, info.sourcePath, info.modulePath,
-                importResolutions, importedClasses, hostModules, isEntry,
-                isEntry, identityIndex, identityIndex.moduleIdentityLookup(),
-                invocation.semanticProfile());
+                ctx.importResolutions, ctx.importedClasses, ctx.hostModules,
+                isEntry, isEntry, identityIndex,
+                identityIndex.moduleIdentityLookup(),
+                invocation.semanticProfile(), projectShapes);
             for (CompilerDiagnostic d : res.diagnostics()) {
                 diagnostics.add(d);
                 hasErrors = true;
@@ -2315,6 +2374,7 @@ public final class CompilationOrchestrator {
     }
 
     /**
+     * JS use site (ISSUE-0247 core slice, js-backend-emitter D3): the JVM    /**
      * JS use site (ISSUE-0247 core slice, js-backend-emitter D3): the JVM
      * two-pass model — pass 1 generates every module and merges
      * diagnostics, pass 2 writes one {@code <modulePath with '/' for
