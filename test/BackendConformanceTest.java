@@ -18,6 +18,7 @@ import deal.module.ModuleShapeValidator;
 import deal.module.DealConfig;
 import deal.module.StdlibModuleResolver;
 import deal.ir.IrDumper;
+import deal.semantic.CompilerInvocation;
 import deal.semantic.ir.SemanticProfile;
 import deal.lexer.*;
 import deal.parser.*;
@@ -346,6 +347,13 @@ public class BackendConformanceTest {
     private static final AtomicInteger failed = new AtomicInteger();
     private static final AtomicInteger skipped = new AtomicInteger();
     private static final AtomicInteger knownFailures = new AtomicInteger();
+
+    /** Profile-authority accounting (A4/A5): legacy-authority results
+     * keep their own denominator and earn zero v1.2 credit. */
+    private static final AtomicInteger legacyAuthorityResults =
+        new AtomicInteger();
+    private static final AtomicInteger v12CreditResults =
+        new AtomicInteger();
     private static final AtomicInteger luajitPassed = new AtomicInteger();
     private static final AtomicInteger luajitFailed = new AtomicInteger();
     private static final AtomicInteger jvmPassed = new AtomicInteger();
@@ -428,6 +436,7 @@ public class BackendConformanceTest {
         // spawns and keeps the suite under the gate's wall-clock budget
         // even when the host runs other work concurrently.
         List<Object[]> caseTasks = new ArrayList<>();
+        Map<String, Set<String>> sliceCases = new LinkedHashMap<>();
         for (Path file : fixtureFiles) {
             log("--- Fixture: " + file.getFileName() + " ---");
             try {
@@ -449,9 +458,31 @@ public class BackendConformanceTest {
                     continue;
                 }
 
+                String fixtureFileName = file.getFileName().toString();
                 for (Map<String, Object> test : tests) {
+                    String caseName = jsonString(test, "name", "<unnamed>");
+                    sliceCases.computeIfAbsent(fixtureFileName,
+                        k -> new TreeSet<>()).add(caseName);
+                    // A4 completeness scan over every case source and
+                    // every multi-module module source.
+                    String caseSource = jsonString(test, "source", null);
+                    if (caseSource != null) {
+                        LegacyProfileRegressionCatalog.scanCaseSource(
+                            fixtureFileName, caseName, caseSource,
+                            jsonString(test, "expectedCompileError", null));
+                    }
+                    Object modulesObj = test.get("modules");
+                    if (modulesObj != null && modulesObj != JSON_NULL) {
+                        for (Map.Entry<String, Object> me
+                                : ((Map<String, Object>) modulesObj).entrySet()) {
+                            LegacyProfileRegressionCatalog.scanCaseSource(
+                                fixtureFileName, caseName,
+                                String.valueOf(me.getValue()),
+                                jsonString(test, "expectedCompileError", null));
+                        }
+                    }
                     caseTasks.add(new Object[] {
-                        file.getFileName().toString(), test });
+                        fixtureFileName, test });
                 }
             } catch (Exception e) {
                 log("  FAIL: error processing fixture: " + e.getMessage());
@@ -459,6 +490,24 @@ public class BackendConformanceTest {
                 failed.incrementAndGet();
             }
         }
+        // LegacyProfileRegressionCatalog validation (A4): rows resolve,
+        // the closed completeness scan found no uncatalogued
+        // legacy-dependent assertion, and the mechanism self-probes pass
+        // before any fixture executes.
+        LegacyProfileRegressionCatalog.validateRows();
+        LegacyProfileRegressionCatalog.runSelfProbes();
+        LegacyProfileRegressionCatalog.validateSliceRows(sliceCases);
+        List<String> catalogViolations =
+            LegacyProfileRegressionCatalog.drainViolations();
+        if (!catalogViolations.isEmpty()) {
+            log("CATALOG FAILURE: LegacyProfileRegressionCatalog "
+                + "validation failed:");
+            for (String violation : catalogViolations) {
+                log("  " + violation);
+            }
+            System.exit(1);
+        }
+
         int workers = Math.max(1,
             Math.min(2 * Runtime.getRuntime().availableProcessors(),
                 caseTasks.size()));
@@ -499,6 +548,14 @@ public class BackendConformanceTest {
         System.out.println("Total: " + total + ", Passed: " + passed.get() +
             ", Failed: " + failed.get() + ", Skipped: " + skipped.get() +
             ", KnownFailures (tracked): " + knownFailures.get());
+        System.out.println();
+        System.out.println("Profile-authority accounting: "
+            + legacyAuthorityResults.get()
+            + " legacy-authority case(s) (LEGACY_REGRESSION + "
+            + "LEGACY_SAFE_INT — zero v1.2/promotion credit; every "
+            + "legacy result is labelled distinctly on its case line), "
+            + v12CreditResults.get()
+            + " v1.2-credit case(s) (COMMON_SHADOW + DEAL_V1_2_INT32)");
         System.out.println();
         System.out.println("=== DEAL v1.2 Backend-Runtime Gates ===");
         int luajitTotal = luajitPassed.get() + luajitFailed.get();
@@ -1000,8 +1057,35 @@ public class BackendConformanceTest {
     @SuppressWarnings("unchecked")
     private static void runTestCaseInner(String fixtureName, Map<String, Object> test) {
         String name = jsonString(test, "name", "<unnamed>");
+        boolean legacyAuthority = LegacyProfileRegressionCatalog
+            .isCatalogued(fixtureName + "#" + name);
+        if (legacyAuthority) {
+            legacyAuthorityResults.incrementAndGet();
+            log("  [" + name + "] LEGACY-AUTHORITY (legacy-regression; "
+                + "zero v1.2 credit)");
+        } else {
+            v12CreditResults.incrementAndGet();
+        }
+        // Parallel workers mutate the global counters concurrently, so a
+        // delta snapshot here can absorb other cases' increments; the
+        // legacy denominator therefore counts results only, and any
+        // legacy failure still fails the global gate exactly like a
+        // v1.2-credit failure.
+        runTestCaseInnerImpl(fixtureName, test);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void runTestCaseInnerImpl(String fixtureName, Map<String, Object> test) {
+        String name = jsonString(test, "name", "<unnamed>");
         String description = jsonString(test, "description", "");
         String source = jsonString(test, "source", null);
+        // A5: exactly one per-case invocation from the catalog decision —
+        // catalogued case -> LEGACY_REGRESSION + LEGACY_SAFE_INT; every
+        // other case -> COMMON_SHADOW + DEAL_V1_2_INT32 (zero shadow
+        // requests). The selected profile reaches the parser and the
+        // retained Lua/JVM emitters; the JS retained route ignores it.
+        SemanticProfile caseProfile = LegacyProfileRegressionCatalog
+            .profileFor(fixtureName + "#" + name);
         String expectedCompileError = jsonString(test, "expectedCompileError", null);
         List<String> backends = (List<String>) test.getOrDefault("backends", List.of());
         List<String> expectedNotOutput = new ArrayList<>();
@@ -1057,7 +1141,7 @@ public class BackendConformanceTest {
             // → type checker). Diagnostics are collected per phase, exactly
             // like ConformanceTest.compileAndGetDiagnostics.
             FrontendCompile fc = compileFrontend(source, "fixture-" + name + ".deal",
-                "fixture-" + name + ".deal", hosts);
+                "fixture-" + name + ".deal", hosts, caseProfile);
 
             // ---- Frontend compile-error gate (ISSUE-0091) ----
             // Rejected before any backend: this path returns before codegen,
@@ -1148,9 +1232,9 @@ public class BackendConformanceTest {
             if (appliesToLuajit) {
                 if (luajitAvailable) {
                     if (!runBackendTracked("luajit",
-                            () -> runLuaAssertions(name, source, expectedOutput,
-                                expectedNotOutput, expectedError,
-                                expectedExitCode))) {
+                            () -> runLuaAssertions(name, source, caseProfile,
+                                expectedOutput, expectedNotOutput,
+                                expectedError, expectedExitCode))) {
                         return; // failure already reported
                     }
                     ranAny = true;
@@ -1160,9 +1244,9 @@ public class BackendConformanceTest {
             if (appliesToJvm) {
                 if (jvmAvailable) {
                     if (!runBackendTracked("jvm",
-                            () -> runJvmAssertions(name, fc, expectedOutput,
-                                expectedNotOutput, expectedError,
-                                expectedExitCode))) {
+                            () -> runJvmAssertions(name, fc, caseProfile,
+                                expectedOutput, expectedNotOutput,
+                                expectedError, expectedExitCode))) {
                         return; // failure already reported
                     }
                     ranAny = true;
@@ -1172,7 +1256,7 @@ public class BackendConformanceTest {
             if (appliesToJs) {
                 if (nodeAvailable) {
                     if (!runBackendTracked("js",
-                            () -> runJsAssertions(name, source,
+                            () -> runJsAssertions(name, source, caseProfile,
                                 expectedOutput, expectedNotOutput,
                                 expectedError, expectedExitCode,
                                 hosts))) {
@@ -1263,6 +1347,20 @@ public class BackendConformanceTest {
     private static FrontendCompile compileFrontend(String source, String filename,
                                                    String modulePath,
                                                    Map<String, Object> hosts) {
+        return compileFrontend(source, filename, modulePath, hosts,
+            SemanticProfile.LEGACY_SAFE_INT);
+    }
+
+    /**
+     * Profile-aware frontend compile (A5 seam): the per-case invocation's
+     * project-wide profile reaches the parser and the host-declaration
+     * parse; the profile-less overload keeps the legacy default.
+     */
+    @SuppressWarnings("deprecation")
+    private static FrontendCompile compileFrontend(String source, String filename,
+                                                   String modulePath,
+                                                   Map<String, Object> hosts,
+                                                   SemanticProfile profile) {
         List<CompilerDiagnostic> errors = new ArrayList<>();
 
         LexResult lex = new Lexer(source, filename).tokenize();
@@ -1275,7 +1373,7 @@ public class BackendConformanceTest {
             return new FrontendCompile(null, null, null, errors);
         }
 
-        Parser parser = new Parser(lex.tokens(), filename);
+        Parser parser = new Parser(lex.tokens(), filename, profile);
         ParseResult parseResult = parser.parse();
         for (CompilerDiagnostic d : parseResult.diagnostics()) {
             if ("error".equals(d.severity())) {
@@ -1301,7 +1399,7 @@ public class BackendConformanceTest {
 
         ModuleResolver resolver = hosts == null || hosts.isEmpty()
             ? (ModuleResolver) new StubModuleResolver()
-            : new JsHostResolver(hosts);
+            : new JsHostResolver(hosts, profile);
         NameResolver nr = new NameResolver(modulePath, resolver);
         SymbolTable symTable;
         try {
@@ -1367,7 +1465,7 @@ public class BackendConformanceTest {
             new LinkedHashMap<>();
 
         @SuppressWarnings("deprecation")
-        JsHostResolver(Map<String, Object> hosts) {
+        JsHostResolver(Map<String, Object> hosts, SemanticProfile profile) {
             for (Map.Entry<String, Object> e : hosts.entrySet()) {
                 String raw = e.getKey();
                 Map<?, ?> entry = (Map<?, ?>) e.getValue();
@@ -1377,7 +1475,7 @@ public class BackendConformanceTest {
                 LexResult lex = new Lexer(declaration,
                     raw + ".d.deal").tokenize();
                 ParseResult parse = new Parser(lex.tokens(),
-                    raw + ".d.deal").parse();
+                    raw + ".d.deal", profile).parse();
                 ExportExtractor extractor = new ExportExtractor(dotted,
                     true);
                 Map<String, Type> exports = extractor.extract(
@@ -1482,6 +1580,25 @@ public class BackendConformanceTest {
     private static OrchestratorRun runOrchestrator(Path projectRoot, Path entryFile,
                                                     Path outputRoot,
                                                     DealConfig config) {
+        return runOrchestrator(projectRoot, entryFile, outputRoot, config,
+            null);
+    }
+
+    /**
+     * Runs the multi-module pipeline through the orchestrator's FULL
+     * constructor with the per-case selected invocation (A5 seam): the
+     * catalogued cases pass the LEGACY_REGRESSION + LEGACY_SAFE_INT
+     * invocation, every other case COMMON_SHADOW + DEAL_V1_2_INT32 with
+     * zero shadow-module requests (the A1-updated planner guard admits
+     * the invocation at phase 3.7 and F4 rule 5 leaves every module on
+     * the retained LEGACY route). A null invocation delegates to the
+     * config-only orchestrator constructor, which keeps the release
+     * default invocation (the existing production-path callers).
+     */
+    private static OrchestratorRun runOrchestrator(Path projectRoot, Path entryFile,
+                                                    Path outputRoot,
+                                                    DealConfig config,
+                                                    CompilerInvocation invocation) {
         ByteArrayOutputStream captured = new ByteArrayOutputStream();
         // The global stream swap is serialized against worker flushes
         // (CONSOLE_LOCK): a parallel fixture file's output block must
@@ -1497,11 +1614,19 @@ public class BackendConformanceTest {
             try {
                 System.setOut(new PrintStream(captured, true, StandardCharsets.UTF_8));
                 System.setErr(new PrintStream(captured, true, StandardCharsets.UTF_8));
-                CompilationOrchestrator orchestrator = new CompilationOrchestrator(
-                    entryFile.toAbsolutePath().normalize(),
-                    outputRoot.toAbsolutePath().normalize(),
-                    false, true, false, Backend.JVM,
-                    config, List.of(projectRoot.toAbsolutePath().normalize()), null);
+                CompilationOrchestrator orchestrator = invocation == null
+                    ? new CompilationOrchestrator(
+                        entryFile.toAbsolutePath().normalize(),
+                        outputRoot.toAbsolutePath().normalize(),
+                        false, true, false, Backend.JVM,
+                        config, List.of(projectRoot.toAbsolutePath().normalize()),
+                        null)
+                    : new CompilationOrchestrator(
+                        entryFile.toAbsolutePath().normalize(),
+                        outputRoot.toAbsolutePath().normalize(),
+                        false, true, false, false, Backend.JVM,
+                        config, List.of(projectRoot.toAbsolutePath().normalize()),
+                        null, null, invocation);
                 boolean success = orchestrator.compile();
                 return new OrchestratorRun(success, orchestrator.diagnostics(),
                     captured.toString(StandardCharsets.UTF_8));
@@ -1563,13 +1688,21 @@ public class BackendConformanceTest {
      * this parse cannot act as a checker bypass for the fixture.
      */
     private static ProgramNode parseEntryProgram(Path entryFile) throws IOException {
+        return parseEntryProgram(entryFile, SemanticProfile.LEGACY_SAFE_INT);
+    }
+
+    /** Profile-aware entry parse (A5 seam): the per-case profile the
+     * orchestrator invocation selected drives the runner's export list. */
+    private static ProgramNode parseEntryProgram(Path entryFile,
+            SemanticProfile profile) throws IOException {
         String source = Files.readString(entryFile);
         LexResult lex = new Lexer(source, entryFile.toString()).tokenize();
         if (lex.hasErrors()) {
             throw new IllegalStateException("entry module lex errors: "
                 + lex.diagnostics());
         }
-        ParseResult parse = new Parser(lex.tokens(), entryFile.toString()).parse();
+        ParseResult parse = new Parser(lex.tokens(), entryFile.toString(),
+            profile).parse();
         if (parse.hasErrors()) {
             throw new IllegalStateException("entry module parse errors: "
                 + parse.diagnostics());
@@ -1713,6 +1846,11 @@ public class BackendConformanceTest {
         String name = jsonString(test, "name", "<unnamed>");
         String description = jsonString(test, "description", "");
         String entry = jsonString(test, "entry", null);
+        // A5: the same per-case catalog decision drives the orchestrator's
+        // full constructor and the entry-program parse.
+        CompilerInvocation invocation = LegacyProfileRegressionCatalog
+            .invocationFor(fixtureName + "#" + name);
+        SemanticProfile caseProfile = invocation.semanticProfile();
         Map<String, Object> modulesObj = (Map<String, Object>) test.get("modules");
         String expectedCompileError = jsonString(test, "expectedCompileError", null);
         Object hostsObj = test.get("hosts");
@@ -1771,7 +1909,7 @@ public class BackendConformanceTest {
             // and the fixture fails.
             if (expectedCompileError != null) {
                 OrchestratorRun run = runOrchestrator(projectRoot, entryFile,
-                    outputRoot, config);
+                    outputRoot, config, invocation);
                 boolean matched = run.diagnostics().stream()
                     .anyMatch(d -> expectedCompileError.equals(d.code()));
                 // An E6 expectation is a backend-rejection fixture
@@ -1858,7 +1996,7 @@ public class BackendConformanceTest {
 
             // ---- Runtime fixture: the whole project must compile. ----
             OrchestratorRun run = runOrchestrator(projectRoot, entryFile,
-                outputRoot, config);
+                outputRoot, config, invocation);
             if (!run.success()) {
                 log("  [" + name + "] FAIL: orchestrator compile "
                     + "failed: " + run.diagnostics() + "\n"
@@ -1957,7 +2095,7 @@ public class BackendConformanceTest {
 
             // Runner: auto-invokes the entry module's zero-arity exports,
             // driven by the real parser's export list.
-            ProgramNode entryProgram = parseEntryProgram(entryFile);
+            ProgramNode entryProgram = parseEntryProgram(entryFile, caseProfile);
             Path runnerFile = outputRoot.resolve("JvmConformanceRunner.java");
             Files.writeString(runnerFile, buildJvmRunner(entryProgram, entryClass));
 
@@ -2037,11 +2175,12 @@ public class BackendConformanceTest {
 
     /** Runs the LuaJIT execution + assertions. Returns true when all pass. */
     private static boolean runLuaAssertions(String name, String source,
+                                            SemanticProfile profile,
                                             Object expectedOutput,
                                             List<String> expectedNotOutput,
                                             Object expectedError,
                                             Object expectedExitCode) {
-        String lua = generateLua(source, "fixture-" + name + ".deal");
+        String lua = generateLua(source, "fixture-" + name + ".deal", profile);
         if (lua == null) {
             log("  [" + name + "] FAIL: codegen failed");
             failed.incrementAndGet();
@@ -2101,12 +2240,13 @@ public class BackendConformanceTest {
         return true;
     }
 
-    private static String generateLua(String source, String filename) {
+    private static String generateLua(String source, String filename,
+            SemanticProfile profile) {
         try {
             LexResult lex = new Lexer(source, filename).tokenize();
             if (lex.hasErrors()) return null;
 
-            Parser parser = new Parser(lex.tokens(), filename);
+            Parser parser = new Parser(lex.tokens(), filename, profile);
             ParseResult parseResult = parser.parse();
             if (parseResult.hasErrors()) return null;
 
@@ -2116,7 +2256,8 @@ public class BackendConformanceTest {
             CheckResult result = TypeChecker.check(filename, symTable, nr, parseResult.program());
             if (result.hasErrors()) return null;
 
-            return LuaBackend.generate(parseResult.program(), result, filename);
+            return LuaBackend.generate(parseResult.program(), result, filename,
+                profile);
         } catch (Exception e) {
             return null;
         }
@@ -2133,6 +2274,7 @@ public class BackendConformanceTest {
      * artifact for javac, and a bypassed JVM execution produces no output.
      */
     private static boolean runJvmAssertions(String name, FrontendCompile fc,
+                                            SemanticProfile profile,
                                             Object expectedOutput,
                                             List<String> expectedNotOutput,
                                             Object expectedError,
@@ -2140,7 +2282,8 @@ public class BackendConformanceTest {
         // 1. Codegen with the real JVM backend. Errors (E6000 for
         //    out-of-skeleton constructs) fail the fixture.
         JvmBackend.JvmCodegenResult res = JvmBackend.generate(
-            fc.program(), fc.checkResult(), "fixture-" + name + ".deal", "Main");
+            fc.program(), fc.checkResult(), "fixture-" + name + ".deal",
+            "Main", profile);
         if (res.hasErrors()) {
             log("  [" + name + "] FAIL: JVM codegen diagnostics: "
                 + res.diagnostics());
@@ -2435,6 +2578,7 @@ public class BackendConformanceTest {
     }
 
     private static boolean runJsAssertions(String name, String source,
+                                           SemanticProfile profile,
                                            Object expectedOutput,
                                            List<String> expectedNotOutput,
                                            Object expectedError,
@@ -2446,7 +2590,7 @@ public class BackendConformanceTest {
         // cannot act as a checker bypass (the shared fc already ran the
         // compile-error gate and the IR assertions).
         FrontendCompile jsFc = compileFrontend(source, "fixture-" + name + ".deal",
-            "Main", hosts);
+            "Main", hosts, profile);
         if (jsFc.hasErrors()) {
             log("  [" + name + "] FAIL: JS frontend errors: " + jsFc.errors());
             failed.incrementAndGet();

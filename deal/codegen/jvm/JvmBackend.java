@@ -1182,6 +1182,22 @@ public final class JvmBackend {
     }
 
     /**
+     * Profile-aware single-module variant (ISSUE-0374 profile plumb,
+     * harness profile-selection seam): the single-module conformance
+     * adapter is a standalone compiled module — not an entry, but its
+     * artifact emits the shared {@code $DealRt} table class — with the
+     * caller's project-wide {@link SemanticProfile} deriving the emitted
+     * helper bodies. The profile-less overloads above keep the
+     * {@link SemanticProfile#LEGACY_SAFE_INT} default.
+     */
+    public static JvmCodegenResult generate(ProgramNode program, CheckResult result,
+                                            String sourcePath, String modulePath,
+                                            SemanticProfile semanticProfile) {
+        return generate(program, result, sourcePath, modulePath, Map.of(),
+            Map.of(), Map.of(), false, true, semanticProfile);
+    }
+
+    /**
      * Generates Java source for a checked module with an explicit module
      * path and the orchestrator's import resolution map (ISSUE-0096).
      *

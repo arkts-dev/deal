@@ -221,6 +221,19 @@ public final class LuaBackend implements Visitor<Void> {
     }
 
     /**
+     * Profile-aware entry point (signed-int32 foundation I4, harness
+     * profile-selection seam): the overload above keeps the
+     * {@link SemanticProfile#LEGACY_SAFE_INT} default; the conformance
+     * harness passes the per-case invocation's project-wide profile here.
+     */
+    public static String generate(ProgramNode program, CheckResult result,
+                                   String sourcePath,
+                                   SemanticProfile semanticProfile) {
+        return generateWithImports(program, result, sourcePath, Map.of(),
+            semanticProfile);
+    }
+
+    /**
      * Entry point with import resolution mapping.
      * Maps raw import paths (e.g. "./lib") to Lua require paths (e.g. "lib").
      * The module path defaults to the source path.
@@ -230,6 +243,20 @@ public final class LuaBackend implements Visitor<Void> {
                                               Map<String, String> importResolutions) {
         return generateWithImports(program, result, sourcePath, sourcePath,
             importResolutions, Map.of());
+    }
+
+    /**
+     * Profile-aware import-resolution variant (signed-int32 foundation
+     * I4): the module path defaults to the source path and the
+     * {@link SemanticProfile#LEGACY_SAFE_INT} default lives in the
+     * profile-less overloads above.
+     */
+    public static String generateWithImports(ProgramNode program, CheckResult result,
+                                              String sourcePath,
+                                              Map<String, String> importResolutions,
+                                              SemanticProfile semanticProfile) {
+        return generateWithImports(program, result, sourcePath, sourcePath,
+            importResolutions, Map.of(), false, semanticProfile);
     }
 
     /**
@@ -315,6 +342,24 @@ public final class LuaBackend implements Visitor<Void> {
         return generateResult(program, result, sourcePath, modulePath,
             importResolutions, hostModules, entryModule, null, descriptors,
             SemanticProfile.LEGACY_SAFE_INT).lua();
+    }
+
+    /**
+     * Profile-aware standalone variant (signed-int32 foundation I4): the
+     * single-module adapter descriptor surface plus the caller's
+     * project-wide profile. The profile-less overloads above keep the
+     * {@link SemanticProfile#LEGACY_SAFE_INT} default.
+     */
+    public static String generateWithImports(ProgramNode program, CheckResult result,
+                                              String sourcePath, String modulePath,
+                                              Map<String, String> importResolutions,
+                                              Map<String, Map<String, Type>> hostModules,
+                                              boolean entryModule,
+                                              SemanticProfile semanticProfile) {
+        return generateResult(program, result, sourcePath, modulePath,
+            importResolutions, hostModules, entryModule, null,
+            standaloneDescriptors(modulePath, hostModules), semanticProfile)
+            .lua();
     }
 
     /**

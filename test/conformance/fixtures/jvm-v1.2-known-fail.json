@@ -1,29 +1,33 @@
 {
   "version": "1.0",
-  "description": "DEAL v1.2 promotion gate (ISSUE-0107): intentionally unsupported v1.2 cases for the JVM backend-runtime gate. Every case names its tracked follow-up issue in 'knownFail'; when the tracked issue lands and the case passes, the runner fails with a promotion instruction. ISSUE-0106 promoted jvm-unicode-scalar-string-length (the JVM backend now measures std/string length in Unicode scalar values; the passing pins live in jvm-v12-slice.json).",
+  "description": "DEAL v1.2 promotion gate (ISSUE-0107): intentionally unsupported v1.2 cases for the JVM backend-runtime gate. Every case names its tracked follow-up issue in 'knownFail'; when the tracked issue lands and the case passes, the runner fails with a promotion instruction. ISSUE-0106 promoted jvm-unicode-scalar-string-length; the A5 profile-selection merge promoted jvm-int32-literal-out-of-range and jvm-int32-add-overflow (the retained v1.2 JVM route now raises E1036/E8004 \u2014 their passing pins stay in place as JVM-only coverage; the backend-runtime int-add-overflow case re-homed to the two-backend slice surface).",
   "tests": [
     {
       "name": "jvm-int32-literal-out-of-range",
       "description": "v1.2 signed 32-bit int: the literal 2147483648 outside the unary-minus position is a compile-time error (E1036)",
       "source": "export function test(): int {\n  return 2147483648;\n}",
       "expectedCompileError": "E1036",
-      "backends": ["jvm"],
-      "knownFail": "ISSUE-0111"
+      "backends": [
+        "jvm"
+      ]
     },
     {
       "name": "jvm-int32-add-overflow",
       "description": "v1.2 signed 32-bit int: 2147483647 + 1 raises E8004 at runtime",
       "source": "export function test(): int {\n  return 2147483647 + 1;\n}",
       "expectedError": "E8004",
-      "backends": ["jvm"],
-      "knownFail": "ISSUE-0111"
+      "backends": [
+        "jvm"
+      ]
     },
     {
       "name": "jvm-bytes-buffer-ops",
       "description": "v1.2 bytes: bytes(4) allocates a zero-filled buffer; b[0] = 255; b.length is 4",
       "source": "export function test(): int {\n  let b: bytes = bytes(4);\n  b[0] = 255;\n  let n: int = b.length;\n  return n;\n}",
       "expectedOutput": "4",
-      "backends": ["jvm"],
+      "backends": [
+        "jvm"
+      ],
       "knownFail": "ISSUE-0111"
     }
   ]
