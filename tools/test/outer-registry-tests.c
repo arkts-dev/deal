@@ -108,6 +108,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/prctl.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
@@ -149,7 +150,7 @@ static const char *g_suite_argv0;
  *  - FLOOR: the T-floor case (nestedStop 8000 — T < 15000 for every
  *    pre-cutoff INVOKE). */
 static const OuterLimits FAST_LIMITS = {9000, 500, 2000, 7000, 200};
-static const OuterLimits LIVE_LIMITS = {18000, 500, 17000, 1000, 200};
+static const OuterLimits LIVE_LIMITS = {21000, 500, 17000, 4000, 200};
 static const OuterLimits FLOOR_LIMITS = {10000, 500, 8000, 2000, 200};
 
 /* A well-formed valid INVOKE: tag `tag`, cwd "/" (2f), argc 1, argv
@@ -212,6 +213,8 @@ typedef struct spawn_recorder {
     char last_nonce[DEALPG4_NONCE_HEX_CHARS + 1];
     int64_t last_budget;
     int last_control_fd;
+    pid_t last_pid; /* the real forked child (the live-record
+                       compositions) */
     int fail_errno;
     /* Captured serve argv surface. */
     char serve_self[PATH_MAX];
@@ -309,9 +312,41 @@ static int recorder_fork_nested(const dealpg4_outer_spawn *self,
             fclose(f);
         }
     }
-    return 999999; /* a non-child pid: nothing signals or reaps it at
-                      this stage (the fallback child owns that
-                      machinery) */
+    /* The live-record compositions: fork a real hanging child that
+     * keeps the child control end open (the record stays live for
+     * the caller-loss / cutoff / wedge paths — the fallback
+     * execution would otherwise complete the record on the channel
+     * loss within milliseconds and the 128-live-record REGISTRY_FULL
+     * window would be unreachable). The child sets the
+     * parent-death kill and never reads the channel. */
+    {
+        pid_t pid = fork();
+
+        if (pid < 0) {
+            errno = EAGAIN;
+            return -1;
+        }
+        if (pid == 0) {
+            /* The production child's exec hygiene (the serve exec
+             * closes every CLOEXEC fd): this stand-in never execs, so
+             * it closes everything except the control channel itself
+             * — otherwise its inherited copies of the broker
+             * connection/listen fds would keep the connection alive
+             * past the outer's close. */
+            long maxfd = sysconf(_SC_OPEN_MAX);
+            int cfd;
+
+            (void)prctl(PR_SET_PDEATHSIG, SIGKILL);
+            for (cfd = 3; maxfd > 0 && cfd < maxfd; cfd++) {
+                if (cfd != child_control_fd)
+                    close(cfd);
+            }
+            for (;;)
+                pause();
+        }
+        rec->last_pid = pid;
+        return pid;
+    }
 }
 
 static dealpg4_outer_spawn make_spawn(spawn_recorder *rec)
@@ -469,6 +504,53 @@ static int peer_parse_reject(const char *line, int64_t *id,
         return 1;
     *id = (int64_t)v;
     return 0;
+}
+
+/* Read the next REJECT answer, skipping interleaved terminal records
+ * (CLEAN <id> ... / FAILED <id> ... — the fallback executions'
+ * synthesized terminal answers arrive over the open broker
+ * asynchronously, one per completed record). Returns 0 with the
+ * parsed fields on success, -1 otherwise. */
+static int peer_read_reject_skipping(int fd, char *line, size_t cap,
+                                     int64_t *id, char tag[64],
+                                     char token[64], int timeout_ms)
+{
+    for (;;) {
+        char type[32];
+        long long rid = 0;
+
+        if (peer_read_line(fd, line, cap, timeout_ms) != 0)
+            return -1;
+        if (peer_parse_reject(line, id, tag, token) == 0)
+            return 0;
+        if (sscanf(line, "DEALPG4 %31s %lld", type, &rid) == 2
+            && (strcmp(type, "CLEAN") == 0
+                || strcmp(type, "FAILED") == 0))
+            continue; /* a synthesized terminal answer: skipped */
+        return -1;
+    }
+}
+
+/* Read the next INVOKED answer, skipping interleaved terminal records
+ * (see peer_read_reject_skipping). */
+static int peer_read_invoked_skipping(int fd, char *line, size_t cap,
+                                      int64_t *id, char tag[64],
+                                      int timeout_ms)
+{
+    for (;;) {
+        char type[32];
+        long long rid = 0;
+
+        if (peer_read_line(fd, line, cap, timeout_ms) != 0)
+            return -1;
+        if (peer_parse_invoked(line, id, tag) == 0)
+            return 0;
+        if (sscanf(line, "DEALPG4 %31s %lld", type, &rid) == 2
+            && (strcmp(type, "CLEAN") == 0
+                || strcmp(type, "FAILED") == 0))
+            continue; /* a synthesized terminal answer: skipped */
+        return -1;
+    }
 }
 
 /* One scripted coordinator scenario. Returns the exit status (the
@@ -708,12 +790,12 @@ static int registry_peer_main(const char *scenario, const char *arg)
         for (i = 0; i < 128; i++) {
             if (peer_write_all(fd, VALID_INVOKE,
                                strlen(VALID_INVOKE)) != 0
-                || peer_read_line(fd, line, sizeof line, 3000) != 0) {
+                || peer_read_invoked_skipping(fd, line, sizeof line,
+                                              &id, tag, 3000) != 0) {
                 fprintf(stderr, "PEER FAIL full-invoked-%d\n", i);
                 return 1;
             }
-            if (peer_parse_invoked(line, &id, tag) != 0
-                || strcmp(tag, "tag") != 0 || id != prev + 1) {
+            if (strcmp(tag, "tag") != 0 || id != prev + 1) {
                 fprintf(stderr, "PEER FAIL full-shape-%d %s\n", i,
                         line);
                 return 1;
@@ -721,12 +803,12 @@ static int registry_peer_main(const char *scenario, const char *arg)
             prev = id;
         }
         if (peer_write_all(fd, VALID_INVOKE, strlen(VALID_INVOKE)) != 0
-            || peer_read_line(fd, line, sizeof line, 3000) != 0) {
+            || peer_read_reject_skipping(fd, line, sizeof line, &id,
+                                         tag, token, 3000) != 0) {
             fprintf(stderr, "PEER FAIL full-reject-read\n");
             return 1;
         }
-        if (peer_parse_reject(line, &id, tag, token) != 0
-            || strcmp(token, "REGISTRY_FULL") != 0
+        if (strcmp(token, "REGISTRY_FULL") != 0
             || id != prev + 1) {
             fprintf(stderr, "PEER FAIL full-reject %s\n", line);
             return 1;
@@ -812,8 +894,8 @@ static int registry_peer_main(const char *scenario, const char *arg)
                          (long long)(rid + 1), nonce1);
             if (n <= 0 || (size_t)n >= sizeof cmd
                 || peer_write_all(fd, cmd, (size_t)n) != 0
-                || peer_read_line(fd, line, sizeof line, 3000) != 0
-                || peer_parse_reject(line, &aid, tag, token) != 0
+                || peer_read_reject_skipping(fd, line, sizeof line, &aid, tag,
+                                             token, 3000) != 0
                 || aid != rid + 1 || strcmp(tag, "-") != 0
                 || strcmp(token, "AUTH_FAILED") != 0) {
                 fprintf(stderr, "PEER FAIL ack-unknown %s\n", line);
@@ -828,8 +910,8 @@ static int registry_peer_main(const char *scenario, const char *arg)
                          (long long)id1, BAD_NONCE);
             if (n <= 0 || (size_t)n >= sizeof cmd
                 || peer_write_all(fd, cmd, (size_t)n) != 0
-                || peer_read_line(fd, line, sizeof line, 3000) != 0
-                || peer_parse_reject(line, &aid, tag, token) != 0
+                || peer_read_reject_skipping(fd, line, sizeof line, &aid, tag,
+                                             token, 3000) != 0
                 || aid != id1 || strcmp(tag, "tag") != 0
                 || strcmp(token, "AUTH_FAILED") != 0) {
                 fprintf(stderr, "PEER FAIL ack-nonce %s\n", line);
@@ -846,8 +928,8 @@ static int registry_peer_main(const char *scenario, const char *arg)
                          (long long)id1, nonce1);
             if (n <= 0 || (size_t)n >= sizeof cmd
                 || peer_write_all(fd, cmd, (size_t)n) != 0
-                || peer_read_line(fd, line, sizeof line, 3000) != 0
-                || peer_parse_reject(line, &aid, tag, token) != 0
+                || peer_read_reject_skipping(fd, line, sizeof line, &aid, tag,
+                                             token, 3000) != 0
                 || aid != id1 || strcmp(tag, "tag") != 0
                 || strcmp(token, "AUTH_FAILED") != 0) {
                 fprintf(stderr, "PEER FAIL ack-forking %s\n", line);
@@ -865,8 +947,8 @@ static int registry_peer_main(const char *scenario, const char *arg)
                          (long long)rid, nonce1);
             if (n <= 0 || (size_t)n >= sizeof cmd
                 || peer_write_all(fd, cmd, (size_t)n) != 0
-                || peer_read_line(fd, line, sizeof line, 3000) != 0
-                || peer_parse_reject(line, &aid, tag, token) != 0
+                || peer_read_reject_skipping(fd, line, sizeof line, &aid, tag,
+                                             token, 3000) != 0
                 || aid != rid || strcmp(tag, "tag") != 0
                 || strcmp(token, "AUTH_FAILED") != 0) {
                 fprintf(stderr, "PEER FAIL ack-terminal %s\n", line);
@@ -881,8 +963,8 @@ static int registry_peer_main(const char *scenario, const char *arg)
                          (long long)id1, BAD_NONCE);
             if (n <= 0 || (size_t)n >= sizeof cmd
                 || peer_write_all(fd, cmd, (size_t)n) != 0
-                || peer_read_line(fd, line, sizeof line, 3000) != 0
-                || peer_parse_reject(line, &cid, tag, token) != 0
+                || peer_read_reject_skipping(fd, line, sizeof line, &cid, tag,
+                                             token, 3000) != 0
                 || cid != id1 || strcmp(tag, "tag") != 0
                 || strcmp(token, "CANCEL_AUTH_FAILED") != 0) {
                 fprintf(stderr, "PEER FAIL cancel-nonce %s\n", line);
@@ -897,8 +979,8 @@ static int registry_peer_main(const char *scenario, const char *arg)
                          (long long)(rid + 1), nonce1);
             if (n <= 0 || (size_t)n >= sizeof cmd
                 || peer_write_all(fd, cmd, (size_t)n) != 0
-                || peer_read_line(fd, line, sizeof line, 3000) != 0
-                || peer_parse_reject(line, &cid, tag, token) != 0
+                || peer_read_reject_skipping(fd, line, sizeof line, &cid, tag,
+                                             token, 3000) != 0
                 || cid != rid + 1 || strcmp(tag, "-") != 0
                 || strcmp(token, "CANCEL_AUTH_FAILED") != 0) {
                 fprintf(stderr, "PEER FAIL cancel-unknown %s\n", line);
@@ -913,8 +995,8 @@ static int registry_peer_main(const char *scenario, const char *arg)
                          (long long)term_id, nonce1);
             if (n <= 0 || (size_t)n >= sizeof cmd
                 || peer_write_all(fd, cmd, (size_t)n) != 0
-                || peer_read_line(fd, line, sizeof line, 3000) != 0
-                || peer_parse_reject(line, &rid, tag, token) != 0
+                || peer_read_reject_skipping(fd, line, sizeof line, &rid, tag,
+                                             token, 3000) != 0
                 || rid != term_id
                 || strcmp(token, "CANCEL_AUTH_FAILED") != 0) {
                 fprintf(stderr, "PEER FAIL cancel-terminal %s\n",
@@ -945,8 +1027,8 @@ static int registry_peer_main(const char *scenario, const char *arg)
                          (long long)id2, nonce2);
             if (n <= 0 || (size_t)n >= sizeof cmd
                 || peer_write_all(fd, cmd, (size_t)n) != 0
-                || peer_read_line(fd, line, sizeof line, 3000) != 0
-                || peer_parse_reject(line, &aid, tag, token) != 0
+                || peer_read_reject_skipping(fd, line, sizeof line, &aid, tag,
+                                             token, 3000) != 0
                 || aid != id2 || strcmp(tag, "tag") != 0
                 || strcmp(token, "AUTH_FAILED") != 0) {
                 fprintf(stderr, "PEER FAIL ack-id2 %s\n", line);
@@ -975,7 +1057,7 @@ static int registry_peer_main(const char *scenario, const char *arg)
         }
         if (peer_write_all(fd, "DEALPG4 BYE\n", 12) != 0
             || peer_read_line(fd, line, sizeof line, 3000) != -1) {
-            fprintf(stderr, "PEER FAIL bye-no-eof\n");
+            fprintf(stderr, "PEER FAIL bye-no-eof got=[%s]\n", line);
             return 1;
         }
         close(fd);
@@ -1876,9 +1958,10 @@ static int fork_fail_site_case_fn(void)
 }
 
 /* REGISTRY_FULL at 128 live records: the 129th INVOKE gets REJECT
- * REGISTRY_FULL + a terminal FAILED record with no fork. The run
- * completes at the total deadline (the live records' cancellation
- * execution lands with the fallback child). */
+ * REGISTRY_FULL + a terminal FAILED record with no fork. The 128
+ * hanging live records hold to their per-record deadlines, where
+ * the wedge rule force-terminates them and the FORKING death
+ * fallbacks complete them CLEAN cancelled. */
 static int registry_full_case_fn(void)
 {
     spawn_recorder rec;
@@ -1899,22 +1982,36 @@ static int registry_full_case_fn(void)
     after = dealpg4_now_ms();
 
     CHECK(status == DEALPG4_OUTER_EXIT_GATE_FAILURE);
-    CHECK(after - before >= 15000); /* the run held to the total
-                                       deadline with live records */
+    CHECK(after - before >= 15000); /* the live records held to their
+                                       per-record deadlines (the
+                                       wedge trigger at ~17 s +
+                                       the grace + the proof) */
     CHECK(after - before < 25000);
     CHECK(rec.fork_calls == 128);
     CHECK(view.records_total == 129);
-    CHECK(view.records_live == 128); /* all CANCELLING (caller loss)
-                                        — the cancellation execution
-                                        lands with the fallback
-                                        child */
+    CHECK(view.records_live == 0);
+    CHECK(view.records_clean == 128); /* every live record completed
+                                         CLEAN cancelled (the wedge
+                                         force-termination + the
+                                         FORKING death fallback's
+                                         clean proof) */
     CHECK(view.records_failed == 1);
     CHECK(view.next_invocation_id == 130);
     CHECK(view.cutoff_cancelled == 1);
     CHECK(view.caller_loss_marked == 1);
-    CHECK(view.done_queued == 0); /* live records: DONE waits */
-    CHECK(has_token(&view, "OVERALL_TIMEOUT"));
-    CHECK(view.proof_passed == 0);
+    CHECK(view.cancel_fanout_writes == 128); /* the parallel
+                                                total-cancel fan-out */
+    CHECK(view.wedge_terminations == 128); /* the hanging children
+                                              were alive at their
+                                              per-record deadlines */
+    CHECK(view.synthesized_terminals == 128);
+    CHECK(view.fallback_completions == 128);
+    CHECK(view.done_queued == 1); /* the registry became fully
+                                     terminal at/after the cutoff */
+    CHECK(view.done_clean == 0); /* the REGISTRY_FULL FAILED record */
+    CHECK(has_token(&view, "COORDINATOR_LOST"));
+    CHECK(!has_token(&view, "OVERALL_TIMEOUT"));
+    CHECK(view.proof_passed == 1);
     CHECK(dealpg4_outer_registry_count() == 129);
     CHECK(dealpg4_outer_registry_record(128, &recview) == 0);
     CHECK(recview.state == DEALPG4_OUTER_REC_FAILED);
@@ -2003,21 +2100,40 @@ static int register_before_fork_fn(void)
     after = dealpg4_now_ms();
 
     CHECK(status == DEALPG4_OUTER_EXIT_GATE_FAILURE);
-    CHECK(after - before >= 15000); /* the live record holds the run
-                                       to the total deadline */
+    CHECK(after - before >= 15000); /* the live record held to its
+                                       per-record deadline (the wedge
+                                       trigger) */
     CHECK(after - before < 25000);
     CHECK(rec.fork_calls == 1);
     CHECK(view.records_total == 1);
-    CHECK(view.records_live == 1);
+    CHECK(view.records_live == 0);
+    CHECK(view.records_clean == 1); /* CLEAN cancelled (the wedge +
+                                       FORKING fallback's clean
+                                       proof) */
     CHECK(view.next_invocation_id == 2);
     CHECK(view.cutoff_cancelled == 1);
     CHECK(view.caller_loss_marked == 1);
-    CHECK(has_token(&view, "OVERALL_TIMEOUT"));
+    CHECK(has_token(&view, "COORDINATOR_LOST")); /* the broker EOF
+                                                    landed while the
+                                                    record was live */
+    CHECK(!has_token(&view, "OVERALL_TIMEOUT"));
+    CHECK(view.wedge_terminations == 1);
+    CHECK(view.synthesized_terminals == 1);
+    CHECK(view.fallback_completions == 1);
+    CHECK(view.cancel_fanout_writes == 1); /* the channel stayed open
+                                              at the caller-loss mark */
+    CHECK(view.done_queued == 1); /* at/after the cutoff with a
+                                     non-empty fully-terminal
+                                     registry */
+    CHECK(view.done_clean == 1);
+    CHECK(view.proof_passed == 1);
     CHECK(dealpg4_outer_registry_record(0, &recview) == 0);
     CHECK(recview.invocation_id == 1);
-    CHECK(recview.state == DEALPG4_OUTER_REC_CANCELLING);
-    CHECK(recview.supervisor_pid == 999999); /* attached at fork
-                                                return */
+    CHECK(recview.state == DEALPG4_OUTER_REC_CLEAN);
+    CHECK(recview.clean_final == 0);
+    CHECK(recview.cleanup_acknowledged == 1);
+    CHECK(recview.supervisor_pid == rec.last_pid); /* attached at fork
+                                                      return */
     CHECK(recview.nonce[0] != '\0');
     CHECK(strcmp(recview.nonce, rec.last_nonce) == 0);
     CHECK(recview.deadline_ms == rec.last_budget);
@@ -2026,9 +2142,10 @@ static int register_before_fork_fn(void)
     CHECK(recview.deadline_abs_ms > recview.deadline_ms);
     CHECK(recview.ack_applied == 0);
     CHECK(strcmp(recview.client_tag, "tag") == 0);
-    CHECK(recview.history_count == 2);
+    CHECK(recview.history_count == 3);
     CHECK(recview.history[0].state == DEALPG4_OUTER_REC_FORKING);
     CHECK(recview.history[1].state == DEALPG4_OUTER_REC_CANCELLING);
+    CHECK(recview.history[2].state == DEALPG4_OUTER_REC_CLEAN);
     /* The captured serve argv surface (checked in-fork by the
      * composition; re-checked here): self + serve + cwd + -- +
      * target. */
@@ -2063,18 +2180,30 @@ static int mid_invoke_eof_fn(void)
     after = dealpg4_now_ms();
 
     CHECK(status == DEALPG4_OUTER_EXIT_GATE_FAILURE);
-    CHECK(after - before >= 15000);
+    CHECK(after - before >= 15000); /* the wedge completes the record
+                                       at its per-record deadline */
     CHECK(after - before < 25000);
     CHECK(rec.fork_calls == 1); /* register + fork ran before the
                                    caller-loss mark */
     CHECK(view.records_total == 1);
-    CHECK(view.records_live == 1);
+    CHECK(view.records_live == 0);
+    CHECK(view.records_clean == 1);
     CHECK(view.caller_loss_marked == 1);
-    CHECK(has_token(&view, "OVERALL_TIMEOUT"));
+    CHECK(view.cancel_fanout_writes == 1);
+    CHECK(view.wedge_terminations == 1);
+    CHECK(has_token(&view, "COORDINATOR_LOST"));
+    CHECK(!has_token(&view, "OVERALL_TIMEOUT"));
+    CHECK(view.synthesized_terminals == 1);
+    CHECK(view.fallback_completions == 1);
+    CHECK(view.done_queued == 1);
+    CHECK(view.proof_passed == 1);
     CHECK(dealpg4_outer_registry_record(0, &recview) == 0);
-    CHECK(recview.state == DEALPG4_OUTER_REC_CANCELLING);
+    CHECK(recview.state == DEALPG4_OUTER_REC_CLEAN);
+    CHECK(recview.clean_final == 0);
+    CHECK(recview.cleanup_acknowledged == 1);
     CHECK(recview.history[0].state == DEALPG4_OUTER_REC_FORKING);
     CHECK(recview.history[1].state == DEALPG4_OUTER_REC_CANCELLING);
+    CHECK(recview.history[2].state == DEALPG4_OUTER_REC_CLEAN);
     return (g_failures > 0) ? 1 : 0;
 }
 
@@ -2102,19 +2231,41 @@ static int ack_cancel_validation_fn(void)
     (void)unlink("build/.outer-rec-nonce");
 
     CHECK(status == DEALPG4_OUTER_EXIT_GATE_FAILURE);
-    CHECK(after - before >= 15000);
+    CHECK(after - before >= 15000); /* the wedge completes the two
+                                       live records at their
+                                       per-record deadlines */
     CHECK(after - before < 25000);
     CHECK(rec.fork_calls == 2);
     CHECK(view.records_total == 3);
-    CHECK(view.records_live == 2);
+    CHECK(view.records_live == 0);
+    CHECK(view.records_clean == 2); /* the two live records completed
+                                       CLEAN cancelled (wedge + the
+                                       FORKING death fallbacks) */
     CHECK(view.records_failed == 1);
     CHECK(view.next_invocation_id == 4);
-    CHECK(has_token(&view, "OVERALL_TIMEOUT"));
+    CHECK(view.wedge_terminations == 2);
+    CHECK(view.synthesized_terminals == 2);
+    CHECK(view.fallback_completions == 2);
+    CHECK(view.cancel_fanout_writes == 1); /* the caller-loss fan-out
+                                              hit id2's open channel —
+                                              id1 was already
+                                              CANCELLING (the
+                                              validated CANCEL) and
+                                              needs no second write */
+    CHECK(!has_token(&view, "OVERALL_TIMEOUT"));
     CHECK(!has_token(&view, "PROTOCOL_ERROR"));
+    CHECK(has_token(&view, "COORDINATOR_LOST"));
+    CHECK(view.done_queued == 1);
+    CHECK(view.done_clean == 0); /* the MALFORMED_INVOKE FAILED
+                                    record */
+    CHECK(view.proof_passed == 1);
     CHECK(dealpg4_outer_registry_record(0, &recview) == 0);
-    CHECK(recview.state == DEALPG4_OUTER_REC_CANCELLING);
+    CHECK(recview.state == DEALPG4_OUTER_REC_CLEAN);
+    CHECK(recview.clean_final == 0);
+    CHECK(recview.cleanup_acknowledged == 1);
     CHECK(recview.ack_applied == 0); /* every ACK was rejected — the
-                                        record is untouched */
+                                        record was untouched until the
+                                        fallback completed it */
     CHECK(dealpg4_outer_registry_record(2, &recview) == 0);
     CHECK(recview.state == DEALPG4_OUTER_REC_FAILED);
     CHECK(strcmp(recview.failure_token, "MALFORMED_INVOKE") == 0);
@@ -2142,16 +2293,30 @@ static int bye_in_live_fn(void)
     after = dealpg4_now_ms();
 
     CHECK(status == DEALPG4_OUTER_EXIT_GATE_FAILURE);
-    CHECK(after - before >= 15000);
+    CHECK(after - before >= 15000); /* the wedge completes the live
+                                       record at its per-record
+                                       deadline */
     CHECK(after - before < 25000);
     CHECK(rec.fork_calls == 1);
     CHECK(has_token(&view, "PROTOCOL_ERROR"));
-    CHECK(has_token(&view, "OVERALL_TIMEOUT"));
+    CHECK(has_token(&view, "COORDINATOR_LOST")); /* the coordinator
+                                                    exited 0 while the
+                                                    record was live */
+    CHECK(!has_token(&view, "OVERALL_TIMEOUT"));
     CHECK(view.records_total == 1);
-    CHECK(view.records_live == 1);
+    CHECK(view.records_live == 0);
+    CHECK(view.records_clean == 1);
     CHECK(view.caller_loss_marked == 1);
+    CHECK(view.cancel_fanout_writes == 1);
+    CHECK(view.wedge_terminations == 1);
+    CHECK(view.synthesized_terminals == 1);
+    CHECK(view.done_queued == 1);
+    CHECK(view.done_clean == 1);
+    CHECK(view.proof_passed == 1);
     CHECK(dealpg4_outer_registry_record(0, &recview) == 0);
-    CHECK(recview.state == DEALPG4_OUTER_REC_CANCELLING);
+    CHECK(recview.state == DEALPG4_OUTER_REC_CLEAN);
+    CHECK(recview.clean_final == 0);
+    CHECK(recview.cleanup_acknowledged == 1);
     return (g_failures > 0) ? 1 : 0;
 }
 

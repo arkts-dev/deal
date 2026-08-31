@@ -60,8 +60,31 @@
  * escalation deadline (COORDINATOR_HANG / the PROTOCOL_ERROR and
  * AUTH_FAILED aftermath), on shell loss (immediate bounded
  * escalation), on BROKER_STALLED (immediate escalation after the
- * vacuous total-cancel), or at the total deadline (OVERALL_TIMEOUT —
- * the hard bound).
+ * total-cancel marking — the TERM dispatch defers while live records
+ * remain), or at the total deadline (OVERALL_TIMEOUT — the hard
+ * bound).
+ *
+ * This child (ISSUE-0298, epic Sequencing step 6) adds the D7
+ * fallback execution: the per-state death fallbacks (FORKING /
+ * STUB_BLOCKED / TARGET_PUBLISHED / RELEASED — a death while
+ * CANCELLING applies the pre-cancel state's fallback, recovered from
+ * the ordered history), the wedge rule (a live record at its
+ * per-record deadline without a terminal answer: kill(supervisorPid,
+ * 0) re-verified — an already-dead supervisor applies that state's
+ * death fallback directly — TERM by pid, grace termGraceMs, KILL by
+ * pid re-verified, reap to waitid, then the state's death fallback),
+ * the total-cancel CANCEL fan-out (caller loss / the INVOKE cutoff /
+ * shell loss mark every live record CANCELLING in parallel and relay
+ * the CANCEL with the exact registry nonce through the POLLOUT
+ * discipline), the per-record /proc proof (group/session absence
+ * against the retained identities, the adopted-descendant scan with
+ * per-pid TERM-then-KILL, the supervisor/stub reap observation, the
+ * confirming second pass) with the survivor-token synthesis
+ * (CLEAN <id> cancelled when the proof is clean, otherwise
+ * FAILED <id> GROUP_SURVIVOR | SESSION_SURVIVOR | ADOPTED_SURVIVOR |
+ * ZOMBIE_SURVIVOR), the COORDINATOR_LOST discrimination slot on
+ * broker EOF with live records, and the D8 escalation TERM deferred
+ * until every registry record is terminal.
  */
 #define _GNU_SOURCE
 #define _POSIX_C_SOURCE 200809L
@@ -140,6 +163,11 @@
  * (per-pid TERM then KILL signaling per the D7/D8 policy). */
 #define DEALPG4_OUTER_SURVIVOR_VIEW_MAX 32
 
+/* The bounded per-record survivor view of the fallback proof scan
+ * (per-pid TERM at discovery, KILL once the discovery grace passed —
+ * the D7/D8 policy). */
+#define DEALPG4_OUTER_REC_SURVIVOR_VIEW_MAX 8
+
 /* The pre-exec pipe line bound: one catalog-bounded record line
  * (COORD_READY / COORD_EXEC_FAILED, <= DEALPG4_MAX_LINE_OTHER_BYTES). */
 #define DEALPG4_OUTER_READY_BUF_BYTES (DEALPG4_MAX_LINE_OTHER_BYTES + 1)
@@ -190,6 +218,20 @@ struct dealpg4_outer_record {
     int pre_cancel_state; /* the state the record was in when the
                              cancel landed (recovered from the
                              ordered history) */
+    /* Fallback execution (engine D4/D7 — this child). */
+    int fallback_step;    /* dealpg4_outer_fallback_step */
+    int fallback_wedge;   /* the fallback began as the wedge
+                             force-termination (the supervisor
+                             TERM/grace/KILL precedes the state's
+                             death fallback) */
+    int64_t fallback_grace_deadline_ms; /* absolute CLOCK_MONOTONIC ms
+                                           of the current grace
+                                           expiry (0 when idle) */
+    int fallback_proof_first_pass;
+    int64_t fallback_proof_first_pass_ms;
+    pid_t fb_survivor_pids[DEALPG4_OUTER_REC_SURVIVOR_VIEW_MAX];
+    int64_t fb_survivor_seen_ms[DEALPG4_OUTER_REC_SURVIVOR_VIEW_MAX];
+    size_t fb_survivor_count;
     int supervisor_dead; /* the nested supervisor's death was
                             observed (the reap match): the
                             death-fallback initiation defers
@@ -442,6 +484,11 @@ typedef struct dealpg4_outer_state {
     int stub_ready_forwarded;
     int stub_verify_failures;
     int nested_rejects;
+    int wedge_terminations;   /* wedge-rule TERM-by-pid dispatches */
+    int fallback_completions; /* fallback executions completed (the
+                                 synthesized terminal record) */
+    int cancel_fanout_writes; /* total-cancel CANCEL fan-out writes
+                                 queued */
 } dealpg4_outer_state;
 
 /* In-process observability (outer.h contract). */
@@ -762,6 +809,8 @@ static void dealpg4_outer_eval_done_trigger(dealpg4_outer_state *st);
  * reconfigures the per-state expectation set, and the STUB_READY
  * re-verification reads the /proc identity helper defined later. */
 static void dealpg4_outer_channel_configure(dealpg4_outer_record *r);
+static void dealpg4_outer_channel_cancel_write(dealpg4_outer_state *st,
+                                               dealpg4_outer_record *r);
 static int dealpg4_proc_stat_identity(pid_t pid, pid_t *ppid,
                                       pid_t *pgrp, pid_t *session);
 static void dealpg4_outer_broker_invoke(dealpg4_outer_state *st,
@@ -1251,6 +1300,12 @@ static void dealpg4_outer_broker_read(dealpg4_outer_state *st)
                 continue;
             if (r == 0) {
                 st->broker_eof = 1;
+                /* The D8 discrimination slot: broker EOF/HUP with
+                 * live records is COORDINATOR_LOST (the total-cancel
+                 * trigger) — including a coordinator that exits 0
+                 * without BYE while records are live. */
+                if (st->records_live > 0)
+                    dealpg4_outer_gate_token(st, "COORDINATOR_LOST");
                 st->broker_rbuf_len = 0;
                 dealpg4_outer_broker_close(st);
                 return;
@@ -1505,9 +1560,15 @@ static dealpg4_outer_record *dealpg4_outer_insert_record(
     return r;
 }
 
-/* The caller-loss / cutoff mark: every live record becomes CANCELLING
- * (one-shot per cause; the cancellation execution lands with the
- * fallback child). */
+/* The caller-loss / cutoff mark (one-shot per cause): every live
+ * record becomes CANCELLING and the total-cancel CANCEL fan-out
+ * relays the CANCEL with the exact registry nonce into every open
+ * control channel (parent D7 — the parallel cancellation; the
+ * non-blocking POLLOUT write queue, never a blocking write). A
+ * closed channel needs no write: the record's fallback owns the
+ * termination. The per-record deadline is the earlier of the record
+ * deadline and the outer reserve — every record's deadline lands
+ * inside the cutoff by construction (D9). */
 static void dealpg4_outer_mark_live_cancelling(dealpg4_outer_state *st,
                                                int caller_loss)
 {
@@ -1522,11 +1583,18 @@ static void dealpg4_outer_mark_live_cancelling(dealpg4_outer_state *st,
     for (i = 0; i < st->nrecords; i++) {
         dealpg4_outer_record *r = &st->records[i];
 
-        if (dealpg4_outer_record_live_state(r->state)
-            && r->state != DEALPG4_OUTER_REC_CANCELLING)
-            dealpg4_outer_record_transition(st, r,
-                                            DEALPG4_OUTER_REC_CANCELLING,
-                                            now);
+        if (!dealpg4_outer_record_live_state(r->state)
+            || r->state == DEALPG4_OUTER_REC_CANCELLING)
+            continue;
+        dealpg4_outer_record_transition(st, r,
+                                        DEALPG4_OUTER_REC_CANCELLING,
+                                        now);
+        if (r->control_fd >= 0) {
+            /* The fan-out relay (the queued-but-unwritten ACK drops
+             * with it — the D4 relay rules). */
+            dealpg4_outer_channel_cancel_write(st, r);
+            st->cancel_fanout_writes++;
+        }
     }
 }
 
@@ -1900,21 +1968,27 @@ static void dealpg4_outer_channel_begin_termination(
 }
 
 /* Initiate that state's death fallback (the initiation and the
- * drain-only switch are this child's; the fallback execution lands
- * with the fallback child). A nested-supervisor death while
- * CANCELLING applies the pre-cancel state's death fallback, recovered
- * from the record's ordered history (the pre_cancel_state retained at
- * the CANCELLING entry). Idempotent. */
+ * drain-only switch are this child's; the fallback execution is this
+ * child's executor below). A nested-supervisor death while CANCELLING
+ * applies the pre-cancel state's death fallback, recovered from the
+ * record's ordered history (the pre_cancel_state retained at the
+ * CANCELLING entry). wedge = 1 marks the wedge force-termination (the
+ * executor begins with the supervisor TERM/grace/KILL by pid); a
+ * death fallback begins directly with the retained-identity signals
+ * (the supervisor is already dead). Idempotent. */
 static void dealpg4_outer_channel_initiate_fallback(
-    dealpg4_outer_state *st, dealpg4_outer_record *r)
+    dealpg4_outer_state *st, dealpg4_outer_record *r, int wedge)
 {
     (void)st;
     if (r->fallback_initiated)
         return;
     r->fallback_initiated = 1;
+    r->fallback_wedge = wedge;
     r->fallback_state = r->state == DEALPG4_OUTER_REC_CANCELLING
                             ? r->pre_cancel_state
                             : r->state;
+    r->fallback_step = wedge ? DEALPG4_OUTER_FB_TERM_SUPV
+                             : DEALPG4_OUTER_FB_TERM_TARGET;
 }
 
 /* The deferred death-fallback switch (engine D4): the nested
@@ -1935,7 +2009,7 @@ static void dealpg4_outer_channel_death_apply(dealpg4_outer_state *st,
         || r->channel_drain_only)
         return;
     dealpg4_outer_channel_begin_termination(st, r);
-    dealpg4_outer_channel_initiate_fallback(st, r);
+    dealpg4_outer_channel_initiate_fallback(st, r, 0 /* death */);
 }
 
 /* The nested-channel PROTOCOL_ERROR aftermath (engine D4): framing
@@ -1952,7 +2026,7 @@ static void dealpg4_outer_channel_protocol_error(
     st->nested_protocol_errors++;
     dealpg4_outer_gate_token(st, "PROTOCOL_ERROR");
     dealpg4_outer_channel_begin_termination(st, r);
-    dealpg4_outer_channel_initiate_fallback(st, r);
+    dealpg4_outer_channel_initiate_fallback(st, r, 0 /* death */);
     dealpg4_outer_channel_close(st, r);
 }
 
@@ -1975,9 +2049,405 @@ static void dealpg4_outer_channel_loss(dealpg4_outer_state *st,
                                              supervisor_dead flag */
         r->supervisor_dead = 1;
         dealpg4_outer_channel_begin_termination(st, r);
-        dealpg4_outer_channel_initiate_fallback(st, r);
+        dealpg4_outer_channel_initiate_fallback(st, r, 0 /* death */);
     }
     dealpg4_outer_channel_close(st, r);
+}
+
+/* === Per-state fallback execution + wedge rule (engine D4/D7 —
+ * this child) ============================================================
+ * The D7 exact fallback table, executed as a per-record step machine
+ * driven by the per-batch evaluation (the TERM/grace/KILL escalation
+ * and the proof loop advance on the event loop's own clock — a grace
+ * window is an absolute deadline, never a blocking wait):
+ *   FB_TERM_SUPV  — the wedge: TERM the supervisor by pid (re-verified;
+ *                   a race that finds it already dead falls through to
+ *                   the death-fallback signals without a grace wait);
+ *   FB_GRACE_SUPV — the termGraceMs grace window;
+ *   FB_KILL_SUPV  — KILL by pid (re-verified), reap it to waitid;
+ *   FB_TERM_TARGET / FB_GRACE_TARGET / FB_KILL_TARGET — the state's
+ *                   death fallback signals: FORKING nothing (any stub
+ *                   dies via PDEATHSIG + release EOF; adopted
+ *                   descendants are the proof scan's per-pid
+ *                   TERM-then-KILL policy); STUB_BLOCKED the retained
+ *                   stubPid directly; TARGET_PUBLISHED the verified
+ *                   -pgid (the group holds only the pre-exec stub) and
+ *                   the retained stubPid; RELEASED the verified -pgid
+ *                   (the retained-identity takeover);
+ *   FB_PROOF      — the per-record proof: the reap loop, the
+ *                   group/session absence scan against the retained
+ *                   identities, the adopted-descendant scan with
+ *                   per-pid TERM-then-KILL, and the clean decision
+ *                   with the confirming second pass (~10 ms);
+ *   FB_DONE       — the record's single terminal answer was
+ *                   synthesized exactly once (CLEAN <id> cancelled
+ *                   when the proof is clean, otherwise
+ *                   FAILED <id> <token>) with cleanupAcknowledged set.
+ * No fallback retries: the initiation is idempotent and the steps
+ * advance monotonically (the proof loop's repeated passes are the D6
+ * fixpoint discipline, not retries).
+ */
+
+/* Forward declarations of the later-defined machinery the executor
+ * consumes (the global reap loop and the terminal-record synthesis —
+ * both defined in the sections below). */
+static int dealpg4_outer_reap_all(dealpg4_outer_state *st);
+static void dealpg4_outer_channel_synthesize(dealpg4_outer_state *st,
+                                             dealpg4_outer_record *r,
+                                             int clean,
+                                             const char *token);
+
+/* Reap one specific child by pid (the D7 wedge "reap it to waitid"
+ * step; belt-and-braces on the global reap loop). */
+static void dealpg4_outer_reap_pid(dealpg4_outer_state *st, pid_t pid)
+{
+    siginfo_t si;
+
+    if (pid <= 0)
+        return;
+    memset(&si, 0, sizeof si);
+    if (waitid(P_PID, pid, &si, WEXITED | WNOHANG) == 0
+        && si.si_pid != 0)
+        st->reap_count++;
+}
+
+/* Signal the death fallback's identities per the fallback state
+ * (parent D7). Returns 1 when at least one signal was dispatched (the
+ * caller's grace wait), 0 when nothing was alive (no grace wait —
+ * the escalation discipline of D8 step 1). */
+static int dealpg4_outer_fallback_signal(dealpg4_outer_state *st,
+                                         dealpg4_outer_record *r,
+                                         int sig, int64_t now)
+{
+    int sent = 0;
+
+    (void)st;
+    (void)now;
+    switch (r->fallback_state) {
+    case DEALPG4_OUTER_REC_FORKING:
+        return 0; /* nothing to signal: the supervisor is dead, and
+                     any stub dies via PDEATHSIG + release EOF */
+    case DEALPG4_OUTER_REC_STUB_BLOCKED:
+        if (r->stub_pid > 0 && kill(r->stub_pid, 0) == 0) {
+            (void)kill(r->stub_pid, sig);
+            sent = 1;
+        }
+        return sent;
+    case DEALPG4_OUTER_REC_TARGET_PUBLISHED: {
+        pid_t pgid = r->target_pgid;
+
+        if (pgid > 0 && kill(-pgid, 0) == 0 && getpgrp() != pgid) {
+            (void)kill(-pgid, sig);
+            sent = 1;
+        }
+        if (r->stub_pid > 0 && kill(r->stub_pid, 0) == 0) {
+            (void)kill(r->stub_pid, sig);
+            sent = 1;
+        }
+        return sent;
+    }
+    case DEALPG4_OUTER_REC_RELEASED: {
+        pid_t pgid = r->target_pgid;
+
+        if (pgid > 0 && kill(-pgid, 0) == 0 && getpgrp() != pgid) {
+            (void)kill(-pgid, sig);
+            sent = 1;
+        }
+        return sent;
+    }
+    default:
+        return 0;
+    }
+}
+
+/* One /proc pass for a record's fallback proof: every task in the
+ * record's retained target group/session and every adopted descendant
+ * (ppid == the outer) is recorded and signaled — TERM at discovery,
+ * KILL once the discovery grace passed. Known-live identities (the
+ * coordinator, every record's supervisor/stub, and the coordinator's
+ * own group) are excluded from the adopted attribution: they are not
+ * this record's survivors (the coordinator tree is the D8 escalation's
+ * and the final proof's). */
+static void dealpg4_outer_record_scan(dealpg4_outer_state *st,
+                                      dealpg4_outer_record *r,
+                                      int64_t now,
+                                      int *group_found,
+                                      int *session_found,
+                                      int *adopted_found)
+{
+    DIR *dir;
+    struct dirent *ent;
+    pid_t me = getpid();
+
+    dir = opendir("/proc");
+    if (dir == NULL) {
+        /* The scan failed: report the conservative findings (the
+         * caller's bounded failure synthesis keeps the named token). */
+        if (r->target_pgid > 0 || r->target_session_id > 0)
+            *group_found = 1;
+        *adopted_found = 1;
+        return;
+    }
+    while ((ent = readdir(dir)) != NULL) {
+        const char *name = ent->d_name;
+        pid_t pid = 0;
+        pid_t ppid = 0;
+        pid_t pgrp = 0;
+        pid_t session = 0;
+        size_t i;
+        size_t slot;
+        int member = 0;
+        int adopted = 0;
+        int known = 0;
+
+        if (name[0] < '0' || name[0] > '9')
+            continue;
+        for (i = 0; name[i] != '\0'; i++) {
+            int d = name[i] - '0';
+
+            if (d < 0 || d > 9)
+                break;
+            if (pid > (INT_MAX - d) / 10) {
+                pid = INT_MAX;
+                break;
+            }
+            pid = pid * 10 + d;
+        }
+        if (name[i] != '\0' || pid <= 0)
+            continue;
+        if (pid == me || pid == st->coordinator_pid)
+            continue;
+        for (i = 0; i < st->nrecords; i++) {
+            const dealpg4_outer_record *o = &st->records[i];
+
+            if ((o->supervisor_pid > 0
+                 && pid == o->supervisor_pid)
+                || (o->stub_pid > 0 && pid == o->stub_pid)) {
+                known = 1;
+                break;
+            }
+        }
+        if (known)
+            continue;
+        if (dealpg4_proc_stat_identity(pid, &ppid, &pgrp, &session)
+            != 0)
+            continue; /* the task raced away */
+        if (r->target_pgid > 0 && pgrp == r->target_pgid) {
+            member = 1;
+            *group_found = 1;
+        }
+        if (r->target_session_id > 0 && session == r->target_session_id) {
+            member = 1;
+            *session_found = 1;
+        }
+        adopted = (ppid == me);
+        if (adopted && st->ready_verified && st->coordinator_pgid > 0
+            && pgrp == st->coordinator_pgid)
+            adopted = 0; /* the coordinator tree — the D8 escalation's
+                            scope, not this record's survivor */
+        if (!member && !adopted)
+            continue;
+        if (adopted)
+            *adopted_found = 1;
+        /* TERM at discovery, KILL once the discovery grace passed
+         * (the bounded per-record survivor view). */
+        slot = r->fb_survivor_count;
+        for (i = 0; i < r->fb_survivor_count; i++) {
+            if (r->fb_survivor_pids[i] == pid) {
+                slot = i;
+                break;
+            }
+        }
+        if (slot == r->fb_survivor_count) {
+            if (r->fb_survivor_count < DEALPG4_OUTER_REC_SURVIVOR_VIEW_MAX) {
+                r->fb_survivor_pids[slot] = pid;
+                r->fb_survivor_seen_ms[slot] = now;
+                r->fb_survivor_count++;
+            }
+        }
+        {
+            int64_t seen = slot < r->fb_survivor_count
+                               ? r->fb_survivor_seen_ms[slot]
+                               : now;
+            int sig = now >= seen + DEALPG4_LAUNCHER_TERM_GRACE_MS
+                          ? SIGKILL
+                          : SIGTERM;
+
+            (void)kill(pid, sig);
+        }
+    }
+    closedir(dir);
+}
+
+/* One fallback proof pass: the reap loop, the record's
+ * group/session/adopted scan, and the clean decision with the
+ * confirming second pass after ~10 ms (the supervisor-engine D6
+ * two-pass discipline). Returns 1 when the proof is clean — the
+ * caller synthesizes CLEAN <id> cancelled; returns 0 while work
+ * remains, filling token with the named finding of the current pass
+ * (GROUP_SURVIVOR | SESSION_SURVIVOR | ADOPTED_SURVIVOR |
+ * ZOMBIE_SURVIVOR) for the caller's bounded failure synthesis. */
+static int dealpg4_outer_fallback_proof_pass(
+    dealpg4_outer_state *st, dealpg4_outer_record *r, int64_t now,
+    char token[DEALPG4_OUTER_TOKEN_VIEW_BYTES])
+{
+    int group_found = 0;
+    int session_found = 0;
+    int adopted_found = 0;
+    int supv_alive = 0;
+    int stub_alive = 0;
+    int clean;
+
+    (void)dealpg4_outer_reap_all(st);
+    dealpg4_outer_reap_pid(st, r->supervisor_pid);
+    dealpg4_outer_reap_pid(st, r->stub_pid);
+    dealpg4_outer_record_scan(st, r, now, &group_found, &session_found,
+                              &adopted_found);
+
+    if (r->supervisor_pid > 0 && kill(r->supervisor_pid, 0) == 0)
+        supv_alive = 1;
+    if (r->stub_pid > 0 && kill(r->stub_pid, 0) == 0)
+        stub_alive = 1;
+
+    /* The named survivor finding of the current pass. */
+    if (group_found)
+        snprintf(token, DEALPG4_OUTER_TOKEN_VIEW_BYTES, "GROUP_SURVIVOR");
+    else if (session_found)
+        snprintf(token, DEALPG4_OUTER_TOKEN_VIEW_BYTES, "SESSION_SURVIVOR");
+    else if (adopted_found)
+        snprintf(token, DEALPG4_OUTER_TOKEN_VIEW_BYTES, "ADOPTED_SURVIVOR");
+    else if (supv_alive || stub_alive)
+        snprintf(token, DEALPG4_OUTER_TOKEN_VIEW_BYTES, "ZOMBIE_SURVIVOR");
+    else
+        token[0] = '\0';
+
+    clean = !group_found && !session_found && !adopted_found
+            && !supv_alive && !stub_alive;
+    if (!clean) {
+        r->fallback_proof_first_pass = 0;
+        return 0;
+    }
+    if (!r->fallback_proof_first_pass) {
+        r->fallback_proof_first_pass = 1;
+        r->fallback_proof_first_pass_ms = now;
+        return 0;
+    }
+    if (now - r->fallback_proof_first_pass_ms >= 10)
+        return 1;
+    return 0;
+}
+
+/* One fallback-executor advancement (the per-batch step). */
+static void dealpg4_outer_fallback_run(dealpg4_outer_state *st,
+                                       dealpg4_outer_record *r,
+                                       int64_t now)
+{
+    for (;;) {
+        if (!r->fallback_initiated || r->fallback_step == DEALPG4_OUTER_FB_DONE
+            || !dealpg4_outer_record_live_state(r->state))
+            return;
+        switch (r->fallback_step) {
+        case DEALPG4_OUTER_FB_TERM_SUPV: {
+            pid_t pid = r->supervisor_pid;
+
+            if (pid > 0 && kill(pid, 0) == 0) {
+                (void)kill(pid, SIGTERM);
+                r->fallback_grace_deadline_ms =
+                    now + DEALPG4_LAUNCHER_TERM_GRACE_MS;
+                r->fallback_step = DEALPG4_OUTER_FB_GRACE_SUPV;
+                return;
+            }
+            /* A race between the deadline check and the TERM: nothing
+             * was signaled — no grace wait. */
+            r->fallback_step = DEALPG4_OUTER_FB_KILL_SUPV;
+            continue;
+        }
+        case DEALPG4_OUTER_FB_GRACE_SUPV:
+            if (now < r->fallback_grace_deadline_ms)
+                return;
+            r->fallback_step = DEALPG4_OUTER_FB_KILL_SUPV;
+            continue;
+        case DEALPG4_OUTER_FB_KILL_SUPV: {
+            pid_t pid = r->supervisor_pid;
+
+            if (pid > 0 && kill(pid, 0) == 0)
+                (void)kill(pid, SIGKILL);
+            dealpg4_outer_reap_pid(st, pid);
+            r->fallback_step = DEALPG4_OUTER_FB_TERM_TARGET;
+            continue;
+        }
+        case DEALPG4_OUTER_FB_TERM_TARGET:
+            if (dealpg4_outer_fallback_signal(st, r, SIGTERM, now)) {
+                r->fallback_grace_deadline_ms =
+                    now + DEALPG4_LAUNCHER_TERM_GRACE_MS;
+                r->fallback_step = DEALPG4_OUTER_FB_GRACE_TARGET;
+                return;
+            }
+            r->fallback_step = DEALPG4_OUTER_FB_KILL_TARGET;
+            continue;
+        case DEALPG4_OUTER_FB_GRACE_TARGET:
+            if (now < r->fallback_grace_deadline_ms)
+                return;
+            r->fallback_step = DEALPG4_OUTER_FB_KILL_TARGET;
+            continue;
+        case DEALPG4_OUTER_FB_KILL_TARGET:
+            (void)dealpg4_outer_fallback_signal(st, r, SIGKILL, now);
+            r->fallback_proof_first_pass = 0;
+            r->fallback_step = DEALPG4_OUTER_FB_PROOF;
+            continue;
+        case DEALPG4_OUTER_FB_PROOF: {
+            char token[DEALPG4_OUTER_TOKEN_VIEW_BYTES];
+
+            if (dealpg4_outer_fallback_proof_pass(st, r, now, token)) {
+                /* The proof is clean: the record's single terminal
+                 * answer is the synthesized CLEAN <id> cancelled. */
+                r->cleanup_acknowledged = 1;
+                r->fallback_step = DEALPG4_OUTER_FB_DONE;
+                st->fallback_completions++;
+                dealpg4_outer_channel_synthesize(st, r, 1, NULL);
+            }
+            return; /* work remains: the next batch retries */
+        }
+        default:
+            r->fallback_step = DEALPG4_OUTER_FB_TERM_TARGET;
+            continue;
+        }
+    }
+}
+
+/* The total-deadline hard-bound completion: skip the remaining grace
+ * windows (the D8 escalation discipline), force the KILL steps, reap,
+ * run one final proof pass, and synthesize the record's terminal
+ * answer with the facts at hand — CLEAN <id> cancelled when that pass
+ * is clean (the zero-survivor proof holds), otherwise
+ * FAILED <id> <token> (the named survivor finding). The gate is
+ * already nonzero (OVERALL_TIMEOUT); the single pass replaces the
+ * two-pass confirm because the run ends now. */
+static void dealpg4_outer_fallback_force_complete(
+    dealpg4_outer_state *st, dealpg4_outer_record *r, int64_t now)
+{
+    char token[DEALPG4_OUTER_TOKEN_VIEW_BYTES];
+
+    if (r->fallback_step == DEALPG4_OUTER_FB_TERM_SUPV
+        || r->fallback_step == DEALPG4_OUTER_FB_GRACE_SUPV
+        || r->fallback_step == DEALPG4_OUTER_FB_KILL_SUPV) {
+        pid_t pid = r->supervisor_pid;
+
+        if (pid > 0 && kill(pid, 0) == 0)
+            (void)kill(pid, SIGKILL);
+        dealpg4_outer_reap_pid(st, pid);
+        r->fallback_step = DEALPG4_OUTER_FB_TERM_TARGET;
+    }
+    (void)dealpg4_outer_fallback_signal(st, r, SIGKILL, now);
+    r->fallback_proof_first_pass = 0;
+    r->fallback_step = DEALPG4_OUTER_FB_DONE;
+    st->fallback_completions++;
+    if (dealpg4_outer_fallback_proof_pass(st, r, now, token)) {
+        r->cleanup_acknowledged = 1;
+        dealpg4_outer_channel_synthesize(st, r, 1, NULL);
+    } else {
+        dealpg4_outer_channel_synthesize(st, r, 0, token);
+    }
 }
 
 /* The parent-D6 STUB_READY double verification: the outer re-verifies
@@ -2938,6 +3408,9 @@ static void dealpg4_outer_fill_record_view(const dealpg4_outer_record *r,
     out->channel_open = r->control_fd >= 0;
     out->channel_drain_only = r->channel_drain_only;
     out->fallback_initiated = r->fallback_initiated;
+    out->fallback_wedge = r->fallback_wedge;
+    out->fallback_step = r->fallback_step;
+    out->fallback_grace_deadline_ms = r->fallback_grace_deadline_ms;
     out->fallback_state = r->fallback_state;
     out->pre_cancel_state = r->pre_cancel_state;
     out->queued_ack = r->queued_ack;
@@ -3394,6 +3867,9 @@ static void dealpg4_outer_startup_failed(dealpg4_outer_state *st);
 static void dealpg4_outer_begin_escalation(dealpg4_outer_state *st,
                                            int group_scope);
 
+static void dealpg4_outer_escalation_term_dispatch(
+    dealpg4_outer_state *st, int64_t now);
+
 static void dealpg4_outer_begin_escalation(dealpg4_outer_state *st,
                                            int group_scope)
 {
@@ -3408,7 +3884,40 @@ static void dealpg4_outer_begin_escalation(dealpg4_outer_state *st,
     st->escalation_term_ms = now - st->t0o;
     st->escalation_kill_ms = now + DEALPG4_LAUNCHER_TERM_GRACE_MS;
 
-    if (group_scope) {
+    if (st->coord_exec_failed) {
+        /* The child published COORD_EXEC_FAILED immediately
+         * before its own _exit(127): the by-pid TERM is deferred
+         * by the grace window so the child's own exit is
+         * deterministically observed (CLD_EXITED 127) and never
+         * raced by the signal; a defective child that hangs
+         * after the publication is TERMed at the deferred moment
+         * (re-verified) and KILLed after the standard grace. */
+        st->escalation_term_abs_ms =
+            now + DEALPG4_LAUNCHER_TERM_GRACE_MS;
+        st->escalation_kill_ms =
+            st->escalation_term_abs_ms
+            + DEALPG4_LAUNCHER_TERM_GRACE_MS;
+        return;
+    }
+    /* The D8 precondition (parent D8): the coordinator PGID is TERMed
+     * only after every registry record is terminal. The TERM dispatch
+     * defers while live records remain (the escalation is active; the
+     * KILL grace clock starts at the dispatch moment — evaluate
+     * dispatches the TERM the moment the precondition holds). */
+    if (st->records_live > 0)
+        return;
+    dealpg4_outer_escalation_term_dispatch(st, now);
+}
+
+/* The D8 step-1 TERM dispatch (by scope), re-verified: group scope —
+ * the liveness check kill(-pgid, 0) == 0 with getpgrp() != pgid, then
+ * TERM -pgid; pid scope — TERM by pid. The KILL grace clock starts at
+ * the dispatch moment; nothing alive at the dispatch runs both steps
+ * as no-ops (no grace wait — nothing was signaled). */
+static void dealpg4_outer_escalation_term_dispatch(
+    dealpg4_outer_state *st, int64_t now)
+{
+    if (st->escalation_group_scope) {
         pid_t pgid = st->coordinator_pgid;
 
         st->group_liveness_checked = 1;
@@ -3419,32 +3928,18 @@ static void dealpg4_outer_begin_escalation(dealpg4_outer_state *st,
     } else {
         pid_t pid = st->coordinator_pid;
 
-        if (st->coord_exec_failed) {
-            /* The child published COORD_EXEC_FAILED immediately
-             * before its own _exit(127): the by-pid TERM is deferred
-             * by the grace window so the child's own exit is
-             * deterministically observed (CLD_EXITED 127) and never
-             * raced by the signal; a defective child that hangs
-             * after the publication is TERMed at the deferred moment
-             * (re-verified) and KILLed after the standard grace. */
-            st->escalation_term_abs_ms =
-                now + DEALPG4_LAUNCHER_TERM_GRACE_MS;
-            st->escalation_kill_ms =
-                st->escalation_term_abs_ms
-                + DEALPG4_LAUNCHER_TERM_GRACE_MS;
-            return;
-        }
         if (pid > 0 && kill(pid, 0) == 0) {
             st->escalation_term_sent = 1;
             (void)kill(pid, SIGTERM);
         }
     }
-
     if (!st->escalation_term_sent) {
         /* Nothing was signaled: the KILL step runs as a no-op too —
          * no grace wait for a target that is already gone. */
         st->escalation_kill_issued = 1;
         st->escalation_kill_ms = now;
+    } else {
+        st->escalation_kill_ms = now + DEALPG4_LAUNCHER_TERM_GRACE_MS;
     }
 }
 
@@ -3837,6 +4332,31 @@ static void dealpg4_outer_scan_proc(dealpg4_outer_state *st, int64_t now)
                 continue;
             if (pid == me || pid == st->coordinator_pid)
                 continue;
+            {
+                int known = 0;
+                size_t ri;
+
+                /* Known registry identities (every record's
+                 * supervisor/stub) are never adopted descendants:
+                 * they are live registered records owned by the
+                 * record machinery (records_live is the separate
+                 * final-proof item). Only tasks outside the known
+                 * set with ppid == outerPid are reparented
+                 * stragglers. */
+                for (ri = 0; ri < st->nrecords; ri++) {
+                    const dealpg4_outer_record *o = &st->records[ri];
+
+                    if ((o->supervisor_pid > 0
+                         && pid == o->supervisor_pid)
+                        || (o->stub_pid > 0
+                            && pid == o->stub_pid)) {
+                        known = 1;
+                        break;
+                    }
+                }
+                if (known)
+                    continue;
+            }
             if (dealpg4_proc_stat_identity(pid, &ppid, &pgrp, &session)
                 != 0)
                 continue; /* the task raced away */
@@ -4011,6 +4531,26 @@ static int64_t dealpg4_outer_next_deadline(dealpg4_outer_state *st)
         d = st->proof_next_pass_ms;
     if (st->stall_armed && st->stall_deadline_ms < d)
         d = st->stall_deadline_ms;
+    /* Per-record deadlines (the D7 wedge trigger) and the fallback
+     * grace windows (the D7 TERM->grace->KILL escalation). */
+    {
+        size_t i;
+
+        for (i = 0; i < st->nrecords; i++) {
+            const dealpg4_outer_record *r = &st->records[i];
+
+            if (dealpg4_outer_record_live_state(r->state)
+                && r->deadline_abs_ms > 0 && r->deadline_abs_ms < d)
+                d = r->deadline_abs_ms;
+            if (r->fallback_initiated
+                && (r->fallback_step == DEALPG4_OUTER_FB_GRACE_SUPV
+                    || r->fallback_step
+                           == DEALPG4_OUTER_FB_GRACE_TARGET)
+                && r->fallback_grace_deadline_ms > 0
+                && r->fallback_grace_deadline_ms < d)
+                d = r->fallback_grace_deadline_ms;
+        }
+    }
     return d;
 }
 
@@ -4052,14 +4592,13 @@ static void dealpg4_outer_evaluate(dealpg4_outer_state *st)
      * is TERMed here and KILLed at the grace expiry. */
     if (st->escalation_active && !st->escalation_term_sent
         && !st->escalation_kill_issued
-        && now >= st->escalation_term_abs_ms) {
-        pid_t pid = st->coordinator_pid;
-
-        if (pid > 0 && kill(pid, 0) == 0) {
-            st->escalation_term_sent = 1;
-            st->escalation_term_ms = now - st->t0o;
-            (void)kill(pid, SIGTERM);
-        }
+        && now >= st->escalation_term_abs_ms
+        && st->records_live == 0) {
+        /* The deferred TERM dispatch (the exec-failed deferral, or
+         * the D8 precondition deferral — the TERM runs only once
+         * every registry record is terminal). */
+        st->escalation_term_ms = now - st->t0o;
+        dealpg4_outer_escalation_term_dispatch(st, now);
     }
 
     /* Recipe deadline observations (D9). */
@@ -4070,12 +4609,34 @@ static void dealpg4_outer_evaluate(dealpg4_outer_state *st)
         dealpg4_outer_gate_token(st, "OVERALL_TIMEOUT");
         /* The hard bound (everything completes by T0o +
          * overallTimeoutMs): force the KILL step (skipping any
-         * remaining grace — the deadline passed), run one final
-         * reap/scan, and terminate with the facts at hand. */
+         * remaining grace — the deadline passed), complete every
+         * still-live record with the facts at hand, run one final
+         * reap/scan, and terminate. */
         if (!st->coordinator_reaped) {
             if (!st->escalation_active)
                 dealpg4_outer_begin_escalation(st, st->ready_verified);
             dealpg4_outer_escalation_kill(st);
+        }
+        {
+            size_t i;
+
+            for (i = 0; i < st->nrecords; i++) {
+                dealpg4_outer_record *r = &st->records[i];
+
+                if (!dealpg4_outer_record_live_state(r->state))
+                    continue;
+                if (!r->fallback_initiated) {
+                    dealpg4_outer_channel_begin_termination(st, r);
+                    if (r->supervisor_pid > 0
+                        && kill(r->supervisor_pid, 0) == 0) {
+                        st->wedge_terminations++;
+                        dealpg4_outer_channel_initiate_fallback(st, r, 1);
+                    } else {
+                        dealpg4_outer_channel_initiate_fallback(st, r, 0);
+                    }
+                }
+                dealpg4_outer_fallback_force_complete(st, r, now);
+            }
         }
         st->proof_active = 1;
         st->proof_next_pass_ms = now;
@@ -4112,6 +4673,11 @@ static void dealpg4_outer_evaluate(dealpg4_outer_state *st)
         && getppid() != st->shell_pid) {
         st->shell_lost = 1;
         dealpg4_outer_gate_token(st, "SHELL_LOST");
+        /* The total-cancel trigger (parent D1/D7): every live record
+         * CANCELLING with the CANCEL fan-out; the coordinator
+         * termination is the bounded D8 escalation, its TERM deferred
+         * until every record is terminal (the precondition). */
+        dealpg4_outer_mark_live_cancelling(st, 0 /* shell loss */);
         if (!st->coordinator_reaped && !st->escalation_active)
             dealpg4_outer_begin_escalation(st, st->ready_verified);
     }
@@ -4126,10 +4692,44 @@ static void dealpg4_outer_evaluate(dealpg4_outer_state *st)
         && !st->ready_line_verified)
         dealpg4_outer_startup_failed(st);
 
-    /* Escalation progression: the KILL step at the grace expiry. */
+    /* Escalation progression: the KILL step at the grace expiry
+     * (the grace clock starts at the TERM dispatch — a deferred TERM
+     * never lets the KILL fire first). */
     if (st->escalation_active && !st->escalation_kill_issued
-        && now >= st->escalation_kill_ms)
+        && st->escalation_term_sent && now >= st->escalation_kill_ms)
         dealpg4_outer_escalation_kill(st);
+
+    /* The per-record wedge rule + the fallback execution (D7): a live
+     * record at its per-record deadline without a terminal
+     * CLEAN/FAILED is unresponsive — kill(supervisorPid, 0) is
+     * re-verified (an already-dead supervisor applies that state's
+     * death fallback directly) and the wedge force-termination begins
+     * (TERM by pid -> grace -> KILL -> reap -> the state's death
+     * fallback). Every initiated fallback advances one step per
+     * batch on the loop's own clock. */
+    {
+        size_t i;
+
+        for (i = 0; i < st->nrecords; i++) {
+            dealpg4_outer_record *r = &st->records[i];
+
+            if (!dealpg4_outer_record_live_state(r->state))
+                continue;
+            if (!r->fallback_initiated && r->deadline_abs_ms > 0
+                && now >= r->deadline_abs_ms) {
+                dealpg4_outer_channel_begin_termination(st, r);
+                if (r->supervisor_pid > 0
+                    && kill(r->supervisor_pid, 0) == 0) {
+                    st->wedge_terminations++;
+                    dealpg4_outer_channel_initiate_fallback(st, r, 1);
+                } else {
+                    dealpg4_outer_channel_initiate_fallback(st, r, 0);
+                }
+            }
+            if (r->fallback_initiated)
+                dealpg4_outer_fallback_run(st, r, now);
+        }
+    }
 
     /* Broker stall rule (D5): the stall deadline arms at
      * now + brokerStallMs while relay data is pending and POLLOUT is
@@ -4196,7 +4796,8 @@ static void dealpg4_outer_evaluate(dealpg4_outer_state *st)
         if (st->coordinator_reaped) {
             if (st->ready_verified && !st->escalation_active
                 && !(st->coordinator_si_code == CLD_EXITED
-                     && st->coordinator_si_status == 0))
+                     && st->coordinator_si_status == 0
+                     && st->records_live == 0))
                 dealpg4_outer_gate_token(st, "COORDINATOR_LOST");
             st->proof_active = 1;
             st->proof_next_pass_ms = now;
@@ -4719,6 +5320,9 @@ static void dealpg4_outer_copy_view(dealpg4_outer_state *st, int status)
     v.nested_protocol_errors = st->nested_protocol_errors;
     v.nested_terminal_relays = st->nested_terminal_relays;
     v.synthesized_terminals = st->synthesized_terminals;
+    v.wedge_terminations = st->wedge_terminations;
+    v.fallback_completions = st->fallback_completions;
+    v.cancel_fanout_writes = st->cancel_fanout_writes;
     v.ack_write_completions = st->ack_write_completions;
     v.queued_write_discards = st->queued_write_discards;
     v.nested_deaths_observed = st->nested_deaths_observed;
