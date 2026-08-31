@@ -183,9 +183,10 @@ public class SidecarCorpusValidationTest {
      * ({@code 192 -> 193}, {@code 63 -> 65}, known-fail
      * {@code {backend-runtime/bytes/bytes-buffer-ops.deal}}) were
      * authored against an earlier tree and are unattainable in this
-     * one: at the MR's merge base (6c4fac5d, the canonical revision;
-     * its ancestor 113c048 already carried the same 207/77 pins with
-     * an empty known-fail population) the corpus had grown through the
+     * one: at the MR's merge base (52a262da, the canonical revision;
+     * content-identical to its ancestor 6c4fac5d — and 113c048 already
+     * carried the same 207/77 pins with an empty known-fail
+     * population) the corpus had grown through the
      * merged sibling issues ISSUE-0332 (signed32 gate), ISSUE-0335
      * (async), ISSUE-0336 (boundaries), ISSUE-0337 (math), ISSUE-0339
      * (bytes — which promoted
