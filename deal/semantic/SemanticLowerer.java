@@ -1,13 +1,16 @@
 package deal.semantic;
 
 import deal.ast.ArrayLiteralExpr;
+import deal.ast.AssignmentExpr;
 import deal.ast.BinaryExpr;
 import deal.ast.BinaryOp;
 import deal.ast.Block;
 import deal.ast.CallExpr;
+import deal.ast.DeleteStatement;
 import deal.ast.ExpressionNode;
 import deal.ast.ForOfStatement;
 import deal.ast.IdentifierExpr;
+import deal.ast.IndexExpr;
 import deal.ast.LiteralExpr;
 import deal.ast.LiteralValue;
 import deal.ast.MemberAccessExpr;
@@ -21,17 +24,22 @@ import deal.ast.UnaryOp;
 import deal.checker.CheckResult;
 import deal.checker.Symbol;
 import deal.diagnostics.CompilerDiagnostic;
+import deal.semantic.ir.AddressChainProtocol;
 import deal.semantic.ir.AnchorId;
+import deal.semantic.ir.AssignTargetKind;
 import deal.semantic.ir.BinarySelector;
 import deal.semantic.ir.BindingId;
 import deal.semantic.ir.BlockId;
 import deal.semantic.ir.BoundaryKind;
 import deal.semantic.ir.BoundaryRealization;
+import deal.semantic.ir.ClassId;
 import deal.semantic.ir.ConstructKind;
 import deal.semantic.ir.ContractSnapshotCanonicalizer;
+import deal.semantic.ir.DeleteTargetKind;
 import deal.semantic.ir.ExportPlan;
 import deal.semantic.ir.FailureContractRegistry;
 import deal.semantic.ir.FailurePolicyId;
+import deal.semantic.ir.IndexMode;
 import deal.semantic.ir.IntrinsicKind;
 import deal.semantic.ir.IterationMode;
 import deal.semantic.ir.KindPayload;
@@ -60,8 +68,10 @@ import deal.semantic.ir.UnarySelector;
 import deal.semantic.ir.ValueId;
 import deal.types.Type;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.EnumMap;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -114,6 +124,37 @@ import java.util.Set;
  *       ({@code INT_CONVERSION}/{@code NUMBER_CONVERSION}) as the
  *       terminal check.</li>
  * </ul>
+ *
+ * <p><b>The E5 address-chain arms (pinned).</b> Over checked facts, the
+ * arms lower every checked {@link AssignmentExpr}/{@link DeleteStatement}
+ * target shape through the closed A-D9 map into one {@code ASSIGN}/
+ * {@code DELETE} op with the pinned child order and trace roles (A-D2:
+ * receiver → key → RHS → normalize → boundary → commit; VARIABLE: value
+ * → boundary → commit; DELETE omits the RHS), the closed boundary
+ * production (A-D4), the single-last commit structure (A-D5), the
+ * committed-value result (A-D6), and single evaluation (A-D8):
+ * {@code IdentifierExpr} targets → {@code ASSIGN VARIABLE}
+ * {@code [valueOp, boundaryOp(VARIABLE_ASSIGNMENT),
+ * commitOp(BINDING_STORE)]} with the declared target descriptor and the
+ * descriptor-kind policy (the {@code FUNCTION_ADAPT} adapter slot stays
+ * E6's — this epic produces no adapter children); {@code MemberAccessExpr}
+ * on table → {@code TABLE_SLOT [containerOp, valueOp, MEMBER_WRITE]};
+ * {@code IndexExpr} on table → {@code TABLE_SLOT [containerOp, keyOp,
+ * valueOp, INDEX_NORMALIZE(TABLE_WRITE), INDEX_WRITE]} (the key is
+ * statically {@code string} by the checker's E3018 gate);
+ * {@code IndexExpr} on array → {@code ARRAY_SLOT [containerOp, keyOp,
+ * valueOp, ARRAY_LENGTH, INDEX_NORMALIZE(ARRAY_WRITE),
+ * ARRAY_ELEMENT_ASSIGNMENT, INDEX_WRITE]} (the length read pins at
+ * normalize time; the append idiom lowers through this standard chain);
+ * {@code MemberAccessExpr} on class → {@code CLASS_FIELD [containerOp,
+ * valueOp, FIELD_WRITE]}; the four {@code DELETE} rows of A-D9 with the
+ * {@code ARRAY_ELEMENT_DELETE + ARRAY_DELETE_BOUNDS} bounds boundary on
+ * the array row. {@code ASSIGN} publishes the committed value with
+ * {@code resultType} = the target position's checked descriptor;
+ * {@code DELETE} publishes none. Every chain child records the chain op
+ * as its {@code parentOpId}, nested chains record the enclosing chain
+ * op, and the unit-production seam runs {@link AddressChainProtocol}
+ * over the produced unit (A-D1).</p>
  *
  * <p><b>I3 profile guard.</b> {@link #lowerModule} refuses any lowering
  * request whose invocation profile is not
@@ -322,13 +363,16 @@ public final class SemanticLowerer {
     public static final String CANONICAL_RUNTIME_VALIDATION_ID = "runtime-validation";
 
     /**
-     * The pinned initial generation of every for-of loop binding (D1/D6):
-     * the {@code FOR_EACH} payload's {@code generation} field is this
-     * initial generation, never rewritten per iteration; loads of the
-     * loop binding inside the body carry it and the body-runner resolves
-     * the effective generation as initial + current iteration index at
-     * execution. Binding allocation and generation increments/stores are
-     * E6's (ISSUE-0235); this stage only pins the payload value.
+     * The pinned initial generation of every for-of loop binding (D1/D6)
+     * and of every variable-assignment store in this stage's window (E6
+     * owns generation increments): the {@code FOR_EACH} payload's
+     * {@code generation} field and the {@code BINDING_STORE} commit's
+     * {@code generation} field carry this initial generation, never
+     * rewritten; loads of the loop binding inside the body carry it and
+     * the body-runner resolves the effective generation as initial +
+     * current iteration index at execution. Binding allocation and
+     * generation increments/stores are E6's (ISSUE-0235); this stage
+     * only pins the payload value.
      */
     public static final long INITIAL_LOOP_GENERATION = 0L;
 
@@ -489,15 +533,16 @@ public final class SemanticLowerer {
      * Lowers one checked implementation module through this stage and
      * produces the validated unit (the unit-production seam, S1): the
      * module's top-level statements lower through the positionable
-     * statement arms (for-of statements — transparent blocks recurse;
-     * every other statement is a foreign construct and fails
-     * E6005 {@code CONSTRUCT_UNLOWERED}), the manifest's
+     * statement arms (for-of statements, the E5 delete arm — transparent
+     * blocks recurse; every other statement is a foreign construct and
+     * fails E6005 {@code CONSTRUCT_UNLOWERED}), the manifest's
      * construct-coverage rows are recorded onto the unit at lowering
      * start, descriptor defects convert to E6005
      * {@code DESCRIPTOR_UNREPRESENTABLE}, and the produced unit must pass
-     * the closed validator (the first rejection is the returned
-     * diagnostic). In E3's window the unit claims the empty capability
-     * set derived through the claiming seam (D9 items 2/4).
+     * the closed validator plus the production-time address-chain
+     * protocol (A-D1 — the first rejection is the returned diagnostic).
+     * In E3's window the unit claims the empty capability set derived
+     * through the claiming seam (D9 items 2/4).
      *
      * <p><b>I3 profile guard.</b> The invocation profile is a required
      * input: a lowering request whose profile is not
@@ -569,6 +614,15 @@ public final class SemanticLowerer {
         if (validation.isPresent()) {
             return new LoweringResult(null, List.of(validation.get()));
         }
+        // E5 production-time check (A-D1): the closed address-chain
+        // protocol runs after the foundation validator — every produced
+        // ASSIGN/DELETE chain must match exactly one closed A-D9 shape
+        // with single evaluation; the first violation is the returned
+        // E6005 (ADDRESS_CHAIN_SHAPE | SINGLE_EVALUATION).
+        Optional<CompilerDiagnostic> chainShape = AddressChainProtocol.validate(unit);
+        if (chainShape.isPresent()) {
+            return new LoweringResult(null, List.of(chainShape.get()));
+        }
         return new LoweringResult(unit, List.of());
     }
 
@@ -601,6 +655,22 @@ public final class SemanticLowerer {
         private long nextOrdinal = 0;
         private final List<SemanticOp> ops = new ArrayList<>();
         private final List<ForEachFrame> frames = new ArrayList<>();
+        /**
+         * The enclosing address-chain parents (A-D2): the innermost chain
+         * op currently being built. Every op emitted while a chain is
+         * active records that chain as its {@code parentOpId} — chain
+         * children in payload order and nested chain ops alike.
+         */
+        private final ArrayDeque<OpId> chainParents = new ArrayDeque<>();
+        /**
+         * The cached store identities of assigned variables (keyed by the
+         * resolved {@link Symbol.VariableSymbol} identity, never by name
+         * or structural equality — two same-named bindings in nested
+         * scopes stay distinct). E6's declaration-driven
+         * {@code BINDING_ALLOC} replaces this on-demand allocation.
+         */
+        private final IdentityHashMap<Symbol.VariableSymbol, BindingId> variableBindings =
+            new IdentityHashMap<>();
 
         /**
          * Creates one lowering session. The module-init block is the
@@ -704,6 +774,7 @@ public final class SemanticLowerer {
                 case TemplateLiteralExpr template -> lowerTemplate(template);
                 case UnaryExpr unary -> lowerUnary(unary);
                 case CallExpr call -> lowerIntrinsicCall(call);
+                case AssignmentExpr assignment -> lowerAssignment(assignment);
                 default -> throw new ConstructUnlowered(describeExpression(expr));
             };
         }
@@ -749,6 +820,608 @@ public final class SemanticLowerer {
                 closeForEachScope();
             }
             return opId;
+        }
+
+        // ---------------------------------------------------------------------
+        // The address-chain arms (E5; assignment-delete-address-chains A-D9)
+        // ---------------------------------------------------------------------
+
+        /**
+         * {@code ASSIGN} — the address-chain dispatch over the closed
+         * A-D9 map: the target's checked shape selects exactly one chain
+         * (VARIABLE, TABLE_SLOT member/index, ARRAY_SLOT, CLASS_FIELD).
+         * Each chain is one {@code ASSIGN} op with the pinned child order
+         * (A-D2), the closed boundary production (A-D4), the single-last
+         * commit (A-D5), the committed-value result (A-D6), and single
+         * evaluation (A-D8): every child records the chain op as its
+         * {@code parentOpId} and each source subexpression appears
+         * exactly once as a producing op.
+         *
+         * @param assignment the checked assignment expression; non-null
+         * @return the committed value's {@link ValueId} (A-D6)
+         * @throws ConstructUnlowered on a target shape outside the closed
+         *         A-D9 map
+         */
+        public ValueId lowerAssignment(AssignmentExpr assignment) {
+            Objects.requireNonNull(assignment, "assignment must not be null");
+            ExpressionNode target = assignment.target();
+            if (target instanceof IdentifierExpr identifier) {
+                return lowerVariableAssign(assignment, identifier);
+            }
+            if (target instanceof MemberAccessExpr access) {
+                Type objectType = checkedType(access.object());
+                if (objectType instanceof Type.Table) {
+                    return lowerTableMemberAssign(assignment, access);
+                }
+                if (objectType instanceof Type.Class classType) {
+                    return lowerClassFieldAssign(assignment, access, classType);
+                }
+                throw new ConstructUnlowered("assignment target '" + access.field()
+                    + "' on " + typeName(objectType) + " (no closed A-D9 chain shape for "
+                    + "this receiver: module members are E10's, array/bytes members carry "
+                    + "no write shape)");
+            }
+            if (target instanceof IndexExpr index) {
+                Type containerType = checkedType(index.array());
+                if (containerType instanceof Type.Table) {
+                    return lowerTableIndexAssign(assignment, index);
+                }
+                if (containerType instanceof Type.Array arrayType) {
+                    return lowerArrayIndexAssign(assignment, index, arrayType);
+                }
+                throw new ConstructUnlowered("assignment target index on "
+                    + typeName(containerType) + " (no closed A-D9 chain shape for this "
+                    + "container: bytes indexing is ISSUE-0158's)");
+            }
+            throw new ConstructUnlowered("assignment target "
+                + target.getClass().getSimpleName() + " (no closed A-D9 chain shape)");
+        }
+
+        /**
+         * {@code DELETE} — the address-chain dispatch over the closed
+         * A-D9 delete map: TABLE_SLOT member/index, ARRAY_SLOT, or
+         * CLASS_FIELD; no RHS. The chain is one {@code DELETE} op with
+         * the pinned order receiver → key → normalize → [array bounds
+         * boundary] → commit; the result is {@code none} (A-D6).
+         *
+         * @param delete the checked delete statement; non-null
+         * @throws ConstructUnlowered on a target shape outside the closed
+         *         A-D9 map
+         */
+        public void lowerDelete(DeleteStatement delete) {
+            Objects.requireNonNull(delete, "delete must not be null");
+            ExpressionNode target = delete.target();
+            if (target instanceof MemberAccessExpr access) {
+                Type objectType = checkedType(access.object());
+                if (objectType instanceof Type.Table) {
+                    lowerTableMemberDelete(delete, access);
+                    return;
+                }
+                if (objectType instanceof Type.Class classType) {
+                    lowerClassFieldDelete(delete, access, classType);
+                    return;
+                }
+                throw new ConstructUnlowered("delete target '" + access.field() + "' on "
+                    + typeName(objectType) + " (no closed A-D9 delete shape for this "
+                    + "receiver: module members are E10's, array/bytes members carry no "
+                    + "delete shape)");
+            }
+            if (target instanceof IndexExpr index) {
+                Type containerType = checkedType(index.array());
+                if (containerType instanceof Type.Table) {
+                    lowerTableIndexDelete(delete, index);
+                    return;
+                }
+                if (containerType instanceof Type.Array arrayType) {
+                    lowerArrayIndexDelete(delete, index, arrayType);
+                    return;
+                }
+                throw new ConstructUnlowered("delete target index on " + typeName(containerType)
+                    + " (no closed A-D9 delete shape for this container: bytes indexing is "
+                    + "ISSUE-0158's)");
+            }
+            throw new ConstructUnlowered("delete target " + target.getClass().getSimpleName()
+                + " (no closed A-D9 delete shape)");
+        }
+
+        /**
+         * ASSIGN VARIABLE — the single closed shape
+         * {@code [valueOp, boundaryOp(VARIABLE_ASSIGNMENT),
+         * commitOp(BINDING_STORE)]}: the value child, then exactly one
+         * {@code VARIABLE_ASSIGNMENT} boundary carrying the target
+         * binding's declared descriptor and the descriptor-kind policy
+         * with input = the committed value, then the {@code BINDING_STORE}
+         * commit storing {@code {binding, generation, committed value}}
+         * (A-D4/A-D5). The optional {@code FUNCTION_ADAPT} adapter slot
+         * between the value and the boundary is E6's creation rule — this
+         * epic produces no adapter children. The {@code ASSIGN} result is
+         * the committed value with {@code resultType} = the declared
+         * target descriptor (A-D6).
+         */
+        private ValueId lowerVariableAssign(AssignmentExpr assignment, IdentifierExpr target) {
+            ForEachFrame frame = null;
+            for (ForEachFrame candidate : frames) {
+                if (candidate.name().equals(target.name())) {
+                    frame = candidate;
+                    break;
+                }
+            }
+            BindingId binding;
+            long generation;
+            if (frame != null) {
+                binding = frame.binding();
+                generation = frame.generation();
+            } else if (checks.symbolTable().resolve(target.name())
+                    instanceof Symbol.VariableSymbol variable) {
+                binding = variableBindings.computeIfAbsent(variable,
+                    v -> ids.nextBindingId(module, nextOrdinal++, 0));
+                generation = INITIAL_LOOP_GENERATION;
+            } else {
+                throw new ConstructUnlowered("assignment target '" + target.name()
+                    + "' is not a variable binding in this stage's window (binding "
+                    + "allocation is E6's; only loop bindings and declared variables "
+                    + "carry a store identity here)");
+            }
+            Type targetType = checkedType(target);
+            RuntimeDescriptor targetDescriptor =
+                ContainerPayloadDescriptors.resultDescriptorOf(targetType);
+            OpId chainOpId = ids.nextOpId(module, nextOrdinal++, 0);
+            chainParents.push(chainOpId);
+            ValueId value;
+            OpId valueOp;
+            OpId boundaryOp;
+            OpId commitOp;
+            try {
+                value = lowerExpression(assignment.value());
+                valueOp = producerOpId(value);
+                FailurePolicyId boundaryPolicy = targetDescriptor instanceof RuntimeDescriptor.Func
+                    ? FailurePolicyId.FUNCTION_SIGNATURE : FailurePolicyId.TYPE_DESCRIPTOR;
+                boundaryOp = emitNullOp(SemanticOpKind.BOUNDARY,
+                    new KindPayload.BoundaryPayload(BoundaryKind.VARIABLE_ASSIGNMENT,
+                        targetDescriptor, value,
+                        new BoundaryRealization.RuntimeValidation(
+                            CANONICAL_RUNTIME_VALIDATION_ID)),
+                    target.span(), boundaryPolicy, SourceOriginKind.SYNTHETIC, chainOpId);
+                commitOp = emitNullOp(SemanticOpKind.BINDING_STORE,
+                    new KindPayload.BindingStorePayload(binding, generation, value),
+                    target.span(), FailurePolicyId.NO_DEAL_FAILURE,
+                    SourceOriginKind.SYNTHETIC, chainOpId);
+            } finally {
+                chainParents.pop();
+            }
+            AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+            SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(assignment.span()),
+                SourceOriginKind.USER, anchor, chainParents.peek());
+            ops.add(buildOp(chainOpId, SemanticOpKind.ASSIGN,
+                new KindPayload.AssignPayload(AssignTargetKind.VARIABLE,
+                    List.of(valueOp, boundaryOp, commitOp)),
+                value, targetDescriptor, FailurePolicyId.NO_DEAL_FAILURE, origin));
+            return value;
+        }
+
+        /**
+         * ASSIGN TABLE_SLOT member write — {@code [containerOp, valueOp,
+         * commitOp(MEMBER_WRITE)]}: the member key is a literal string
+         * (no keyOp) and the shape carries zero write-check boundaries
+         * (A-D4: the spec pins table writes unchecked).
+         */
+        private ValueId lowerTableMemberAssign(AssignmentExpr assignment,
+                                               MemberAccessExpr access) {
+            if (access.object() instanceof IdentifierExpr identifier
+                    && checks.symbolTable().resolve(identifier.name())
+                        instanceof Symbol.ModuleSymbol) {
+                throw new ConstructUnlowered("module member assignment '" + identifier.name()
+                    + "." + access.field() + "' (EXPORT_* is E10's)");
+            }
+            RuntimeDescriptor targetDescriptor =
+                ContainerPayloadDescriptors.resultDescriptorOf(checkedType(access));
+            OpId chainOpId = ids.nextOpId(module, nextOrdinal++, 0);
+            chainParents.push(chainOpId);
+            ValueId value;
+            OpId containerOp;
+            OpId valueOp;
+            OpId commitOp;
+            try {
+                ValueId container = lowerExpression(access.object());
+                containerOp = producerOpId(container);
+                value = lowerExpression(assignment.value());
+                valueOp = producerOpId(value);
+                commitOp = emitNullOp(SemanticOpKind.MEMBER_WRITE,
+                    new KindPayload.MemberWritePayload(container, access.field(), value),
+                    access.span(), FailurePolicyId.NO_DEAL_FAILURE,
+                    SourceOriginKind.SYNTHETIC, chainOpId);
+            } finally {
+                chainParents.pop();
+            }
+            AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+            SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(assignment.span()),
+                SourceOriginKind.USER, anchor, chainParents.peek());
+            ops.add(buildOp(chainOpId, SemanticOpKind.ASSIGN,
+                new KindPayload.AssignPayload(AssignTargetKind.TABLE_SLOT,
+                    List.of(containerOp, valueOp, commitOp)),
+                value, targetDescriptor, FailurePolicyId.NO_DEAL_FAILURE, origin));
+            return value;
+        }
+
+        /**
+         * ASSIGN TABLE_SLOT index write — {@code [containerOp, keyOp,
+         * valueOp, normalizeOp(INDEX_NORMALIZE TABLE_WRITE),
+         * commitOp(INDEX_WRITE)]}: the key is statically {@code string}
+         * by the checker's E3018 gate (A-D10), so the normalize is total
+         * with no coercion; its unused {@code currentLength} operand
+         * references the raw key identity (no length read for table
+         * targets, A-D3).
+         */
+        private ValueId lowerTableIndexAssign(AssignmentExpr assignment, IndexExpr index) {
+            if (!(checkedType(index.index()) instanceof Type.String)) {
+                throw new ConstructUnlowered("table index assignment key of checked type "
+                    + typeName(checkedType(index.index())) + " (A-D10's E3018 checker gate "
+                    + "pins every table index write key to static string — a non-string "
+                    + "key reaching lowering is a producer defect)");
+            }
+            RuntimeDescriptor targetDescriptor =
+                ContainerPayloadDescriptors.resultDescriptorOf(checkedType(index));
+            OpId chainOpId = ids.nextOpId(module, nextOrdinal++, 0);
+            chainParents.push(chainOpId);
+            ValueId value;
+            OpId containerOp;
+            OpId keyOp;
+            OpId valueOp;
+            OpId normalizeOp;
+            OpId commitOp;
+            try {
+                ValueId container = lowerExpression(index.array());
+                containerOp = producerOpId(container);
+                ValueId key = lowerExpression(index.index());
+                keyOp = producerOpId(key);
+                value = lowerExpression(assignment.value());
+                valueOp = producerOpId(value);
+                ValueId slot = emitChainChildOp(SemanticOpKind.INDEX_NORMALIZE,
+                    new KindPayload.IndexNormalizePayload(IndexMode.TABLE_WRITE, key, key),
+                    index.span(),
+                    ContainerPayloadDescriptors.resultDescriptorOf(Type.String.INSTANCE),
+                    FailurePolicyId.NO_DEAL_FAILURE);
+                normalizeOp = producerOpId(slot);
+                commitOp = emitNullOp(SemanticOpKind.INDEX_WRITE,
+                    new KindPayload.IndexWritePayload(container, slot, value),
+                    index.span(), FailurePolicyId.NO_DEAL_FAILURE,
+                    SourceOriginKind.SYNTHETIC, chainOpId);
+            } finally {
+                chainParents.pop();
+            }
+            AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+            SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(assignment.span()),
+                SourceOriginKind.USER, anchor, chainParents.peek());
+            ops.add(buildOp(chainOpId, SemanticOpKind.ASSIGN,
+                new KindPayload.AssignPayload(AssignTargetKind.TABLE_SLOT,
+                    List.of(containerOp, keyOp, valueOp, normalizeOp, commitOp)),
+                value, targetDescriptor, FailurePolicyId.NO_DEAL_FAILURE, origin));
+            return value;
+        }
+
+        /**
+         * ASSIGN ARRAY_SLOT write — {@code [containerOp, keyOp, valueOp,
+         * lengthOp(ARRAY_LENGTH), normalizeOp(INDEX_NORMALIZE
+         * ARRAY_WRITE), boundaryOp(ARRAY_ELEMENT_ASSIGNMENT +
+         * ARRAY_WRITE_BOUNDS_THEN_ELEMENT), commitOp(INDEX_WRITE)]}: the
+         * length read pins at normalize time (after key and RHS), the
+         * boundary enforces {@code <0}/{@code >length} then the element
+         * descriptor with input = the checked RHS value, and the commit
+         * appends exactly when the normalize computed
+         * {@code index == length} (the append idiom's standard shape).
+         */
+        private ValueId lowerArrayIndexAssign(AssignmentExpr assignment, IndexExpr index,
+                                              Type.Array arrayType) {
+            RuntimeDescriptor elementDescriptor =
+                ContainerPayloadDescriptors.elementDescriptorOf(arrayType.element());
+            OpId chainOpId = ids.nextOpId(module, nextOrdinal++, 0);
+            chainParents.push(chainOpId);
+            ValueId value;
+            OpId containerOp;
+            OpId keyOp;
+            OpId valueOp;
+            OpId lengthOp;
+            OpId normalizeOp;
+            OpId boundaryOp;
+            OpId commitOp;
+            try {
+                ValueId container = lowerExpression(index.array());
+                containerOp = producerOpId(container);
+                ValueId key = lowerExpression(index.index());
+                keyOp = producerOpId(key);
+                value = lowerExpression(assignment.value());
+                valueOp = producerOpId(value);
+                ValueId length = emitChainChildOp(SemanticOpKind.ARRAY_LENGTH,
+                    new KindPayload.ArrayLengthPayload(container), index.span(),
+                    ContainerPayloadDescriptors.resultDescriptorOf(Type.Int.INSTANCE),
+                    FailurePolicyId.INT32_RESULT);
+                lengthOp = producerOpId(length);
+                ValueId slot = emitChainChildOp(SemanticOpKind.INDEX_NORMALIZE,
+                    new KindPayload.IndexNormalizePayload(IndexMode.ARRAY_WRITE, key, length),
+                    index.span(),
+                    ContainerPayloadDescriptors.resultDescriptorOf(Type.Int.INSTANCE),
+                    FailurePolicyId.NO_DEAL_FAILURE);
+                normalizeOp = producerOpId(slot);
+                boundaryOp = emitNullOp(SemanticOpKind.BOUNDARY,
+                    new KindPayload.BoundaryPayload(BoundaryKind.ARRAY_ELEMENT_ASSIGNMENT,
+                        elementDescriptor, value,
+                        new BoundaryRealization.RuntimeValidation(
+                            CANONICAL_RUNTIME_VALIDATION_ID)),
+                    index.span(), FailurePolicyId.ARRAY_WRITE_BOUNDS_THEN_ELEMENT,
+                    SourceOriginKind.SYNTHETIC, chainOpId);
+                commitOp = emitNullOp(SemanticOpKind.INDEX_WRITE,
+                    new KindPayload.IndexWritePayload(container, slot, value),
+                    index.span(), FailurePolicyId.NO_DEAL_FAILURE,
+                    SourceOriginKind.SYNTHETIC, chainOpId);
+            } finally {
+                chainParents.pop();
+            }
+            AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+            SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(assignment.span()),
+                SourceOriginKind.USER, anchor, chainParents.peek());
+            ops.add(buildOp(chainOpId, SemanticOpKind.ASSIGN,
+                new KindPayload.AssignPayload(AssignTargetKind.ARRAY_SLOT,
+                    List.of(containerOp, keyOp, valueOp, lengthOp, normalizeOp, boundaryOp,
+                        commitOp)),
+                value, elementDescriptor, FailurePolicyId.NO_DEAL_FAILURE, origin));
+            return value;
+        }
+
+        /**
+         * ASSIGN CLASS_FIELD write — {@code [containerOp, valueOp,
+         * commitOp(FIELD_WRITE)]}: zero write-check boundaries
+         * ({@code CLASS_FIELD_ASSIGNMENT} stays admissible but is
+         * produced by E9, never here; A-D4).
+         */
+        private ValueId lowerClassFieldAssign(AssignmentExpr assignment,
+                                              MemberAccessExpr access, Type.Class classType) {
+            RuntimeDescriptor fieldDescriptor =
+                ContainerPayloadDescriptors.resultDescriptorOf(checkedType(access));
+            ClassId classId = new ClassId(classType.modulePath(), classType.name());
+            OpId chainOpId = ids.nextOpId(module, nextOrdinal++, 0);
+            chainParents.push(chainOpId);
+            ValueId value;
+            OpId containerOp;
+            OpId valueOp;
+            OpId commitOp;
+            try {
+                ValueId container = lowerExpression(access.object());
+                containerOp = producerOpId(container);
+                value = lowerExpression(assignment.value());
+                valueOp = producerOpId(value);
+                commitOp = emitNullOp(SemanticOpKind.FIELD_WRITE,
+                    new KindPayload.FieldWritePayload(container, classId, access.field(),
+                        value),
+                    access.span(), FailurePolicyId.NO_DEAL_FAILURE,
+                    SourceOriginKind.SYNTHETIC, chainOpId);
+            } finally {
+                chainParents.pop();
+            }
+            AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+            SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(assignment.span()),
+                SourceOriginKind.USER, anchor, chainParents.peek());
+            ops.add(buildOp(chainOpId, SemanticOpKind.ASSIGN,
+                new KindPayload.AssignPayload(AssignTargetKind.CLASS_FIELD,
+                    List.of(containerOp, valueOp, commitOp)),
+                value, fieldDescriptor, FailurePolicyId.NO_DEAL_FAILURE, origin));
+            return value;
+        }
+
+        /**
+         * DELETE TABLE_SLOT member — {@code [containerOp,
+         * commitOp(MEMBER_DELETE)]}: the literal string key, no keyOp,
+         * no normalize, no bounds boundary (A-D9).
+         */
+        private void lowerTableMemberDelete(DeleteStatement delete, MemberAccessExpr access) {
+            if (access.object() instanceof IdentifierExpr identifier
+                    && checks.symbolTable().resolve(identifier.name())
+                        instanceof Symbol.ModuleSymbol) {
+                throw new ConstructUnlowered("module member delete '" + identifier.name()
+                    + "." + access.field() + "' (EXPORT_* is E10's)");
+            }
+            OpId chainOpId = ids.nextOpId(module, nextOrdinal++, 0);
+            chainParents.push(chainOpId);
+            OpId containerOp;
+            OpId commitOp;
+            try {
+                ValueId container = lowerExpression(access.object());
+                containerOp = producerOpId(container);
+                commitOp = emitNullOp(SemanticOpKind.MEMBER_DELETE,
+                    new KindPayload.MemberDeletePayload(container, access.field()),
+                    access.span(), FailurePolicyId.NO_DEAL_FAILURE,
+                    SourceOriginKind.SYNTHETIC, chainOpId);
+            } finally {
+                chainParents.pop();
+            }
+            AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+            SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(delete.span()),
+                SourceOriginKind.USER, anchor, chainParents.peek());
+            ops.add(buildOp(chainOpId, SemanticOpKind.DELETE,
+                new KindPayload.DeletePayload(DeleteTargetKind.TABLE_SLOT,
+                    List.of(containerOp, commitOp)),
+                null, null, FailurePolicyId.NO_DEAL_FAILURE, origin));
+        }
+
+        /**
+         * DELETE TABLE_SLOT index — {@code [containerOp, keyOp,
+         * normalizeOp(INDEX_NORMALIZE TABLE_WRITE),
+         * commitOp(INDEX_DELETE)]}: the write-mode normalize (delete is a
+         * mutation context; the closed {@link IndexMode} set is not
+         * extended) with the statically-string key of A-D10's E3018 gate.
+         */
+        private void lowerTableIndexDelete(DeleteStatement delete, IndexExpr index) {
+            if (!(checkedType(index.index()) instanceof Type.String)) {
+                throw new ConstructUnlowered("table index delete key of checked type "
+                    + typeName(checkedType(index.index())) + " (A-D10's E3018 checker gate "
+                    + "pins every table index delete key to static string — a non-string "
+                    + "key reaching lowering is a producer defect)");
+            }
+            OpId chainOpId = ids.nextOpId(module, nextOrdinal++, 0);
+            chainParents.push(chainOpId);
+            OpId containerOp;
+            OpId keyOp;
+            OpId normalizeOp;
+            OpId commitOp;
+            try {
+                ValueId container = lowerExpression(index.array());
+                containerOp = producerOpId(container);
+                ValueId key = lowerExpression(index.index());
+                keyOp = producerOpId(key);
+                ValueId slot = emitChainChildOp(SemanticOpKind.INDEX_NORMALIZE,
+                    new KindPayload.IndexNormalizePayload(IndexMode.TABLE_WRITE, key, key),
+                    index.span(),
+                    ContainerPayloadDescriptors.resultDescriptorOf(Type.String.INSTANCE),
+                    FailurePolicyId.NO_DEAL_FAILURE);
+                normalizeOp = producerOpId(slot);
+                commitOp = emitNullOp(SemanticOpKind.INDEX_DELETE,
+                    new KindPayload.IndexDeletePayload(container, slot),
+                    index.span(), FailurePolicyId.NO_DEAL_FAILURE,
+                    SourceOriginKind.SYNTHETIC, chainOpId);
+            } finally {
+                chainParents.pop();
+            }
+            AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+            SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(delete.span()),
+                SourceOriginKind.USER, anchor, chainParents.peek());
+            ops.add(buildOp(chainOpId, SemanticOpKind.DELETE,
+                new KindPayload.DeletePayload(DeleteTargetKind.TABLE_SLOT,
+                    List.of(containerOp, keyOp, normalizeOp, commitOp)),
+                null, null, FailurePolicyId.NO_DEAL_FAILURE, origin));
+        }
+
+        /**
+         * DELETE ARRAY_SLOT — {@code [containerOp, keyOp,
+         * lengthOp(ARRAY_LENGTH), normalizeOp(INDEX_NORMALIZE
+         * ARRAY_WRITE), boundaryOp(ARRAY_ELEMENT_DELETE +
+         * ARRAY_DELETE_BOUNDS), commitOp(INDEX_DELETE)]}: exactly one
+         * bounds boundary whose input is the normalized index (E8002
+         * {@code array index out of bounds} for {@code <0}/{@code >length}
+         * at the delete-target origin; {@code == length} is a permitted
+         * no-op commit, A-D4).
+         */
+        private void lowerArrayIndexDelete(DeleteStatement delete, IndexExpr index,
+                                           Type.Array arrayType) {
+            RuntimeDescriptor elementDescriptor =
+                ContainerPayloadDescriptors.elementDescriptorOf(arrayType.element());
+            OpId chainOpId = ids.nextOpId(module, nextOrdinal++, 0);
+            chainParents.push(chainOpId);
+            OpId containerOp;
+            OpId keyOp;
+            OpId lengthOp;
+            OpId normalizeOp;
+            OpId boundaryOp;
+            OpId commitOp;
+            try {
+                ValueId container = lowerExpression(index.array());
+                containerOp = producerOpId(container);
+                ValueId key = lowerExpression(index.index());
+                keyOp = producerOpId(key);
+                ValueId length = emitChainChildOp(SemanticOpKind.ARRAY_LENGTH,
+                    new KindPayload.ArrayLengthPayload(container), index.span(),
+                    ContainerPayloadDescriptors.resultDescriptorOf(Type.Int.INSTANCE),
+                    FailurePolicyId.INT32_RESULT);
+                lengthOp = producerOpId(length);
+                ValueId slot = emitChainChildOp(SemanticOpKind.INDEX_NORMALIZE,
+                    new KindPayload.IndexNormalizePayload(IndexMode.ARRAY_WRITE, key, length),
+                    index.span(),
+                    ContainerPayloadDescriptors.resultDescriptorOf(Type.Int.INSTANCE),
+                    FailurePolicyId.NO_DEAL_FAILURE);
+                normalizeOp = producerOpId(slot);
+                boundaryOp = emitNullOp(SemanticOpKind.BOUNDARY,
+                    new KindPayload.BoundaryPayload(BoundaryKind.ARRAY_ELEMENT_DELETE,
+                        elementDescriptor, slot,
+                        new BoundaryRealization.RuntimeValidation(
+                            CANONICAL_RUNTIME_VALIDATION_ID)),
+                    index.span(), FailurePolicyId.ARRAY_DELETE_BOUNDS,
+                    SourceOriginKind.SYNTHETIC, chainOpId);
+                commitOp = emitNullOp(SemanticOpKind.INDEX_DELETE,
+                    new KindPayload.IndexDeletePayload(container, slot),
+                    index.span(), FailurePolicyId.NO_DEAL_FAILURE,
+                    SourceOriginKind.SYNTHETIC, chainOpId);
+            } finally {
+                chainParents.pop();
+            }
+            AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+            SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(delete.span()),
+                SourceOriginKind.USER, anchor, chainParents.peek());
+            ops.add(buildOp(chainOpId, SemanticOpKind.DELETE,
+                new KindPayload.DeletePayload(DeleteTargetKind.ARRAY_SLOT,
+                    List.of(containerOp, keyOp, lengthOp, normalizeOp, boundaryOp, commitOp)),
+                null, null, FailurePolicyId.NO_DEAL_FAILURE, origin));
+        }
+
+        /**
+         * DELETE CLASS_FIELD — {@code [containerOp,
+         * commitOp(FIELD_DELETE)]}: no key, no normalize, no bounds
+         * boundary (table and class targets run no bounds boundary;
+         * A-D9).
+         */
+        private void lowerClassFieldDelete(DeleteStatement delete, MemberAccessExpr access,
+                                           Type.Class classType) {
+            ClassId classId = new ClassId(classType.modulePath(), classType.name());
+            OpId chainOpId = ids.nextOpId(module, nextOrdinal++, 0);
+            chainParents.push(chainOpId);
+            OpId containerOp;
+            OpId commitOp;
+            try {
+                ValueId container = lowerExpression(access.object());
+                containerOp = producerOpId(container);
+                commitOp = emitNullOp(SemanticOpKind.FIELD_DELETE,
+                    new KindPayload.FieldDeletePayload(container, classId, access.field()),
+                    access.span(), FailurePolicyId.NO_DEAL_FAILURE,
+                    SourceOriginKind.SYNTHETIC, chainOpId);
+            } finally {
+                chainParents.pop();
+            }
+            AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+            SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(delete.span()),
+                SourceOriginKind.USER, anchor, chainParents.peek());
+            ops.add(buildOp(chainOpId, SemanticOpKind.DELETE,
+                new KindPayload.DeletePayload(DeleteTargetKind.CLASS_FIELD,
+                    List.of(containerOp, commitOp)),
+                null, null, FailurePolicyId.NO_DEAL_FAILURE, origin));
+        }
+
+        /**
+         * The producing op of a completed value: the last op in the
+         * emitted list publishing that {@link ValueId} (the chain op
+         * itself is emitted after its children, so a nested chain as the
+         * value child resolves to the inner {@code ASSIGN} op, which
+         * publishes the committed value).
+         */
+        private OpId producerOpId(ValueId value) {
+            for (int i = ops.size() - 1; i >= 0; i--) {
+                SemanticOp op = ops.get(i);
+                if (value.equals(op.result())) {
+                    return op.opId();
+                }
+            }
+            throw new IllegalStateException("no produced op publishes value " + value
+                + " (producer defect)");
+        }
+
+        /**
+         * Emits one value-producing chain child (the normalize-phase
+         * machinery: {@code ARRAY_LENGTH} length reads and
+         * {@code INDEX_NORMALIZE} slot computations) parented to the
+         * innermost chain op (A-D2).
+         */
+        private ValueId emitChainChildOp(SemanticOpKind kind, KindPayload payload, Span span,
+                                         RuntimeDescriptor resultType,
+                                         FailurePolicyId policy) {
+            OpId parent = chainParents.peek();
+            if (parent == null) {
+                throw new IllegalStateException("chain child emission outside an address "
+                    + "chain (producer defect)");
+            }
+            ValueId value = ids.nextValueId(module, nextOrdinal++, 0);
+            AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+            OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
+            SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(span),
+                SourceOriginKind.SYNTHETIC, anchor, parent);
+            ops.add(buildOp(opId, kind, payload, value, resultType, List.of(), List.of(),
+                policy, origin));
+            return value;
         }
 
         // ---------------------------------------------------------------------
@@ -837,6 +1510,10 @@ public final class SemanticLowerer {
             for (StatementNode statement : statements) {
                 if (statement instanceof ForOfStatement forOf) {
                     lowerForOfStatement(forOf);
+                    continue;
+                }
+                if (statement instanceof DeleteStatement delete) {
+                    lowerDelete(delete);
                     continue;
                 }
                 if (statement instanceof Block block) {
@@ -936,7 +1613,7 @@ public final class SemanticLowerer {
                 children.add(child);
             }
             SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(literal.span()),
-                SourceOriginKind.USER, anchor, null);
+                SourceOriginKind.USER, anchor, chainParents.peek());
             ops.add(buildOp(opId, SemanticOpKind.ARRAY_NEW,
                 new KindPayload.ArrayNewPayload(elementDescriptor, values, boundaryIds),
                 result, ContainerPayloadDescriptors.resultDescriptorOf(arrayType),
@@ -1021,7 +1698,7 @@ public final class SemanticLowerer {
             AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
             OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
             SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(access.span()),
-                SourceOriginKind.USER, anchor, null);
+                SourceOriginKind.USER, anchor, chainParents.peek());
             ops.add(buildOp(opId, SemanticOpKind.MEMBER_READ,
                 new KindPayload.MemberReadPayload(receiver, access.field()),
                 result, resultType, FailurePolicyId.NO_DEAL_FAILURE, origin));
@@ -1324,7 +2001,7 @@ public final class SemanticLowerer {
             AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
             OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
             SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(span),
-                SourceOriginKind.USER, anchor, null);
+                SourceOriginKind.USER, anchor, chainParents.peek());
             ops.add(buildOp(opId, kind, payload, value, resultType, operands, operandTypes,
                 policy, origin));
             return value;
@@ -1428,8 +2105,6 @@ public final class SemanticLowerer {
                     "function expression (CLOSURE_NEW is E6's, ISSUE-0235)";
                 case deal.ast.HasExpr ignored ->
                     "has expression (HAS_FIELD is E5's, ISSUE-0234)";
-                case deal.ast.AssignmentExpr ignored ->
-                    "assignment expression (the ASSIGN address chain is E5's, ISSUE-0234)";
                 case deal.ast.AwaitExpression ignored ->
                     "await expression (ASYNC_START/AWAIT are E7's)";
                 default -> expr.getClass().getSimpleName() + " expression";
@@ -1460,8 +2135,6 @@ public final class SemanticLowerer {
                     "export declaration (EXPORT_* is E10's)";
                 case deal.ast.ClassDeclaration ignored ->
                     "class declaration (class layouts and CLASS_NEW are E9's)";
-                case deal.ast.DeleteStatement ignored ->
-                    "delete statement (the DELETE address chain is E5's, ISSUE-0234)";
                 case deal.ast.TryStatement ignored ->
                     "try statement (TRY_CATCH is E5's, ISSUE-0234)";
                 case deal.ast.ThrowStatement ignored ->

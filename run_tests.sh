@@ -65,6 +65,7 @@ javac --release 25 -proc:none -d build \
   test/BoundaryExecutorTest.java \
   test/ComparisonExecutorTest.java \
   test/AddressChainProtocolTest.java \
+  test/AddressChainLoweringTest.java \
   test/UnicodeScalarsTest.java \
   test/BoundaryRealizationReportTest.java \
   test/FailureContractRegistryTest.java \
@@ -295,6 +296,10 @@ java -ea -cp build deal.test.ComparisonExecutorTest
 echo ""
 echo "=== Running Address Chain Protocol / Normalized Slot Tests (ISSUE-0234 A-D1/A-D3/A-D9) ==="
 java -ea -cp build deal.test.AddressChainProtocolTest
+
+echo ""
+echo "=== Running Address Chain Lowering Tests (ISSUE-0405 ASSIGN/DELETE chains) ==="
+java -ea -cp build deal.test.AddressChainLoweringTest
 
 echo ""
 
