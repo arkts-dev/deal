@@ -1579,8 +1579,28 @@ public class FoundationIntegrationTest {
         private record ParserOutcome(boolean parsed, List<CompilerDiagnostic> diagnostics,
                                      Integer locatedLine, Integer locatedColumn) {}
 
-        /** One semantics-row outcome. */
-        private record SemRowOutcome(String value, String failCode, String failTemplate) {}
+        /**
+         * One semantics-row outcome. Error rows carry the failure origin
+         * the primitive returned — the caller-supplied
+         * {@code SourceOrigin} this driver handed in — so the error-case
+         * comparison pins code + canonical template + origin (the
+         * shared-side leg of the {@code LegacyErrorNormalization}
+         * code+origin rule).
+         */
+        private record SemRowOutcome(String value, String failCode, String failTemplate,
+                                     String originFile, Integer originLine,
+                                     Integer originColumn) {
+
+            static SemRowOutcome value(String value) {
+                return new SemRowOutcome(value, null, null, null, null, null);
+            }
+
+            static SemRowOutcome failure(SharedValueSemantics.Int32Result.Fail fail) {
+                return new SemRowOutcome(null, fail.code().code(), fail.template(),
+                    fail.origin().span().file(), fail.origin().span().startLine(),
+                    fail.origin().span().startColumn());
+            }
+        }
 
         static void runAll() throws Exception {
             testCorpusFourWayAgreement();
@@ -1884,14 +1904,14 @@ public class FoundationIntegrationTest {
                         case "mod" -> SharedValueSemantics.numberModFloor(b.a(), b.b());
                         default -> throw new IllegalArgumentException("unknown number op " + b.op());
                     };
-                    return new SemRowOutcome(numberText(v), null, null);
+                    return SemRowOutcome.value(numberText(v));
                 }
                 case SignedInt32Corpus.SemNumberUnary u -> {
                     double v = switch (u.op()) {
                         case "neg" -> SharedValueSemantics.numberNeg(u.a());
                         default -> throw new IllegalArgumentException("unknown number unary " + u.op());
                     };
-                    return new SemRowOutcome(numberText(v), null, null);
+                    return SemRowOutcome.value(numberText(v));
                 }
                 case SignedInt32Corpus.SemNumberCompare cmp -> {
                     boolean v = switch (cmp.op()) {
@@ -1903,23 +1923,21 @@ public class FoundationIntegrationTest {
                         case "ge" -> SharedValueSemantics.numberGe(cmp.a(), cmp.b());
                         default -> throw new IllegalArgumentException("unknown compare op " + cmp.op());
                     };
-                    return new SemRowOutcome(Boolean.toString(v), null, null);
+                    return SemRowOutcome.value(Boolean.toString(v));
                 }
                 case SignedInt32Corpus.SemNumberPow p -> {
-                    return new SemRowOutcome(
-                        numberText(SharedValueSemantics.numberPow(p.a(), p.b())),
-                        null, null);
+                    return SemRowOutcome.value(
+                        numberText(SharedValueSemantics.numberPow(p.a(), p.b())));
                 }
             }
         }
 
         private static SemRowOutcome int32Text(SharedValueSemantics.Int32Result result) {
             if (result instanceof SharedValueSemantics.Int32Result.Value v) {
-                return new SemRowOutcome(Integer.toString(v.value()), null, null);
+                return SemRowOutcome.value(Integer.toString(v.value()));
             }
-            SharedValueSemantics.Int32Result.Fail f =
-                (SharedValueSemantics.Int32Result.Fail) result;
-            return new SemRowOutcome(null, f.code().code(), f.template());
+            return SemRowOutcome.failure(
+                (SharedValueSemantics.Int32Result.Fail) result);
         }
 
         // =====================================================================
@@ -2393,21 +2411,47 @@ public class FoundationIntegrationTest {
                         disagreements++;
                     }
                 } else {
+                    // The shared primitive must fail with the pinned code,
+                    // the pinned canonical template, and the failure origin
+                    // the driver handed in — the origin comparison mirrors
+                    // the LuaJIT-lane check (span line/column plus the
+                    // case's source file name). All error cases pin an
+                    // origin, so a primitive that fabricates or loses the
+                    // caller-supplied origin fails the agreement.
+                    boolean originOk = outcome.originLine() != null
+                        && outcome.originLine().equals(expected.originLine())
+                        && outcome.originColumn() != null
+                        && outcome.originColumn().equals(expected.originColumn());
+                    boolean fileOk = outcome.originFile() != null
+                        && outcome.originFile()
+                            .replace(java.io.File.separatorChar, '/')
+                            .endsWith(name + ".deal");
                     boolean matched = expected.code().equals(outcome.failCode())
-                        && expected.canonicalTemplate().equals(outcome.failTemplate());
+                        && expected.canonicalTemplate().equals(outcome.failTemplate())
+                        && originOk && fileOk;
                     if (report) {
                         check(matched, "corpus " + name + ": semantics row " + row
                             + " fails " + outcome.failCode() + " \""
-                            + outcome.failTemplate() + "\" (expected " + expected.code()
-                            + " \"" + expected.canonicalTemplate() + "\")");
+                            + outcome.failTemplate() + "\" at "
+                            + outcome.originLine() + ":" + outcome.originColumn()
+                            + " " + outcome.originFile() + " (expected "
+                            + expected.code() + " \""
+                            + expected.canonicalTemplate() + "\" at "
+                            + expected.originLine() + ":" + expected.originColumn()
+                            + " " + name + ".deal)");
                     }
                     if (!matched) {
                         String actual = outcome.failCode() == null
                             ? "value " + outcome.value()
-                            : outcome.failCode() + " \"" + outcome.failTemplate() + "\"";
+                            : outcome.failCode() + " \"" + outcome.failTemplate()
+                                + "\" at " + outcome.originLine() + ":"
+                                + outcome.originColumn() + " "
+                                + outcome.originFile();
                         disagreement(name, "semantics row " + row + " yielded " + actual
                             + " instead of " + expected.code() + " \""
-                            + expected.canonicalTemplate() + "\"");
+                            + expected.canonicalTemplate() + "\" at "
+                            + expected.originLine() + ":" + expected.originColumn()
+                            + " " + name + ".deal");
                         disagreements++;
                     }
                 }
@@ -2570,23 +2614,29 @@ public class FoundationIntegrationTest {
         }
 
         /**
-         * Every armed-state gate fact as one predicate. Returns true iff all
-         * hold: the release constant is PRE_ACTIVATION (the flip is not
-         * performed), the public build of an int-using module derives
-         * LEGACY_SAFE_INT with an all-LEGACY plan and empty shadowModules
-         * (production SHARED ineligible), an internal V1_2_ACTIVE
-         * construction derives DEAL_V1_2_INT32, the flip is exactly the one
-         * ReleaseConfiguration constant edit, and no CLI/source profile
-         * selection path exists.
+         * Every armed-state gate fact as one predicate, evaluated end to
+         * end under the asserted release state. Returns true iff all
+         * hold: the public build of an int-using module under the
+         * asserted state derives LEGACY_SAFE_INT with an all-LEGACY plan
+         * and empty shadowModules (production SHARED ineligible), an
+         * internal V1_2_ACTIVE construction derives DEAL_V1_2_INT32, the
+         * release constant equals the asserted state and is still
+         * PRE_ACTIVATION (the flip is not performed), the flip is
+         * exactly the one ReleaseConfiguration constant edit, and no
+         * CLI/source profile selection path exists.
+         *
+         * <p>The asserted state drives the derivation, the public-build
+         * compile, and the plan checks — not only the entry guard — so
+         * the {@code V1_2_ACTIVE} probe executes a genuinely flipped
+         * configuration through the real orchestrator and must fail the
+         * LEGACY_SAFE_INT gate facts. The release-constant guard runs
+         * after the parameterized facts, so a flipped-configuration
+         * probe reaches and fails them instead of short-circuiting.</p>
          */
         private static boolean armedStateFactsHold(ReleaseState assertedState)
                 throws Exception {
-            if (ReleaseConfiguration.CURRENT_RELEASE_STATE != assertedState) {
-                return false;
-            }
-            if (ReleaseConfiguration.CURRENT_RELEASE_STATE != ReleaseState.PRE_ACTIVATION) {
-                return false; // the flip must not have been performed
-            }
+            // State-independent provider facts: the closed public
+            // derivation in both release states.
             if (CompilerProfileProvider.publicProfile(ReleaseState.PRE_ACTIVATION)
                     != SemanticProfile.LEGACY_SAFE_INT) {
                 return false;
@@ -2601,9 +2651,11 @@ public class FoundationIntegrationTest {
                 return false;
             }
 
-            // A public build of an int-using module: LEGACY_SAFE_INT, an
-            // all-LEGACY plan, empty shadowModules (production SHARED
-            // ineligible under PRE_ACTIVATION — F4 rule 3).
+            // The asserted state drives the public-build invocation and
+            // the real orchestrator compile end to end: the V1_2_ACTIVE
+            // probe executes the flipped configuration (a v1.2 public
+            // build) and only then fails the LEGACY_SAFE_INT gate facts.
+            CompilerInvocation publicInvocation = publicBuildInvocation(assertedState);
             SignedInt32Corpus.Case intCase = SignedInt32Corpus.CASES.stream()
                 .filter(c -> c.name().equals("add_overflow_max"))
                 .findFirst().orElseThrow();
@@ -2612,21 +2664,36 @@ public class FoundationIntegrationTest {
                 Path src = tmp.resolve("src");
                 Files.createDirectories(src);
                 Files.writeString(src.resolve("main.deal"), intCase.source());
-                CompilerInvocation publicPre =
-                    publicBuildInvocation(ReleaseState.PRE_ACTIVATION);
-                if (publicPre.semanticProfile() != SemanticProfile.LEGACY_SAFE_INT
-                        || publicPre.releaseState() != ReleaseState.PRE_ACTIVATION) {
-                    return false;
-                }
                 CompilationOrchestrator orchestrator = compile(
                     src.resolve("main.deal").toAbsolutePath(), tmp.resolve("build"),
-                    Backend.LUAJIT, List.of(src.toAbsolutePath()), publicPre, null);
+                    Backend.LUAJIT, List.of(src.toAbsolutePath()),
+                    publicInvocation, null);
                 if (orchestrator == null || orchestrator.checkedProject() == null
                         || orchestrator.checkedProject().hasErrors()) {
                     return false;
                 }
                 RoutePlanResult plan = orchestrator.routePlan();
                 if (plan == null || plan.hasErrors() || plan.plan() == null) {
+                    return false;
+                }
+
+                // The armed-state gate facts over the executed
+                // configuration: while PRE_ACTIVATION the public build
+                // derives LEGACY_SAFE_INT with an all-LEGACY plan and
+                // empty shadowModules (production SHARED ineligible — F4
+                // rule 3); the flipped V1_2_ACTIVE run fails the
+                // LEGACY_SAFE_INT derivation facts here.
+                if (CompilerProfileProvider.publicProfile(assertedState)
+                        != SemanticProfile.LEGACY_SAFE_INT) {
+                    return false;
+                }
+                if (publicInvocation.semanticProfile()
+                        != SemanticProfile.LEGACY_SAFE_INT
+                        || publicInvocation.releaseState() != assertedState) {
+                    return false;
+                }
+                if (orchestrator.invocation().semanticProfile()
+                        != SemanticProfile.LEGACY_SAFE_INT) {
                     return false;
                 }
                 if (!plan.plan().entries().values().stream()
@@ -2636,12 +2703,17 @@ public class FoundationIntegrationTest {
                 if (!plan.plan().shadowModules().isEmpty()) {
                     return false;
                 }
-                if (orchestrator.invocation().semanticProfile()
-                        != SemanticProfile.LEGACY_SAFE_INT) {
-                    return false;
-                }
             } finally {
                 deleteRecursively(tmp);
+            }
+
+            // The release-constant facts: the constant must equal the
+            // asserted state and the flip must not have been performed.
+            if (ReleaseConfiguration.CURRENT_RELEASE_STATE != assertedState) {
+                return false;
+            }
+            if (ReleaseConfiguration.CURRENT_RELEASE_STATE != ReleaseState.PRE_ACTIVATION) {
+                return false; // the flip must not have been performed
             }
 
             // The flip is exactly the one ReleaseConfiguration constant edit:
@@ -2714,11 +2786,13 @@ public class FoundationIntegrationTest {
 
                 check(catalogAuthorityProbe(tmp, true),
                     "the intact catalog selects the legacy regression invocation and "
-                        + "the pinned legacy authority holds");
-                check(!catalogAuthorityProbe(tmp, false),
+                        + "the pinned legacy authority holds (E8004 'int out of "
+                        + "range' — the fixture's pinned transcript)");
+                check(catalogAuthorityProbe(tmp, false),
                     "faulted catalog (the int-convert-range row removed — the v1.2 "
-                        + "seam selection diverges from the pinned legacy authority) "
-                        + "fails the verification");
+                        + "seam selection runs the fixture and its outcome diverges "
+                        + "from the pinned legacy authority) fails the "
+                        + "verification");
 
                 CorpusConfig seamFault = new CorpusConfig();
                 seamFault.legacyLuaInvocation = true;
@@ -2758,18 +2832,35 @@ public class FoundationIntegrationTest {
 
         /**
          * The catalog authority probe: for the catalogued backend-runtime
-         * fixture {@code runtime/int-convert-range.deal}, the intact harness
+         * fixture {@code runtime/int-convert-range.deal} the intact harness
          * seam selects LEGACY_REGRESSION + LEGACY_SAFE_INT and the LuaJIT
-         * lane produces the pinned legacy outcome (E8004 with the legacy
-         * template); a removed catalog row would select the v1.2 invocation
-         * whose outcome diverges (E8004 with the retained template) — the
-         * probe returns true iff the pinned legacy authority holds.
+         * lane produces the pinned legacy authority outcome (E8004 with
+         * the legacy template the fixture's transcript pins). The intact
+         * probe returns true iff the catalog still carries the row and the
+         * observed outcome equals that pinned authority.
+         *
+         * <p>The faulted probe ({@code rowPresent == false}) never
+         * consults the catalog guard: it simulates the removed row by
+         * selecting the seam the catalog applies to an uncatalogued
+         * locator ({@code frontendInvocation()} — the v1.2 invocation),
+         * executes the real compile + LuaJIT run, and returns true iff the
+         * observed outcome diverges from the pinned legacy authority
+         * outcome. The faulted run therefore proves the anti-hollow
+         * requirement for the catalog constituent: a removed row makes the
+         * verification fail observably (E8004 with the v1.2 retained
+         * template instead of the pinned legacy template).</p>
          */
         private static boolean catalogAuthorityProbe(Path tmp, boolean rowPresent)
                 throws Exception {
             String locator = "backend-runtime/runtime/int-convert-range.deal";
-            if (LegacyProfileRegressionCatalog.isCatalogued(locator) != rowPresent) {
-                return false;
+            if (rowPresent) {
+                // The intact seam's pre-condition: the catalog carries the
+                // row, so the intact selection is the legacy regression
+                // invocation (A5). The faulted probe skips this guard on
+                // purpose — it simulates the removed row.
+                if (!LegacyProfileRegressionCatalog.isCatalogued(locator)) {
+                    return false;
+                }
             }
             String source = Files.readString(
                 Path.of("test", "conformance", locator));
@@ -2825,8 +2916,13 @@ public class FoundationIntegrationTest {
             Map<String, String> fields = parseFieldOutput(output);
             // The pinned legacy authority outcome: E8004 with the legacy
             // LuaJIT branch template (the landed ISSUE-0332 branch).
-            return "E8004".equals(fields.get("CODE"))
+            boolean legacyAuthority = "E8004".equals(fields.get("CODE"))
                 && "int out of range".equals(fields.get("MESSAGE"));
+            // Intact: the observed outcome must equal the pinned legacy
+            // authority. Faulted (row removed): the v1.2 seam run must
+            // diverge from the pinned legacy authority — that divergence
+            // is the verification failure the fault matrix asserts.
+            return rowPresent ? legacyAuthority : !legacyAuthority;
         }
     }
 }
@@ -3324,6 +3420,9 @@ final class SignedInt32Corpus {
                     "negative-base fractional pow must be NaN"),
                 assertFail("num_pow_ieee", "1.0 ** (0.0 / 0.0) !== 1.0",
                     "1.0 ** NaN must be 1.0"),
+                assertFail("num_pow_ieee",
+                    "2.0 ** (0.0 / 0.0) === 2.0 ** (0.0 / 0.0)",
+                    "pow(x != 1, NaN) must be NaN (self-unequal)"),
                 assertFail("num_pow_ieee", "(0.0 / 0.0) ** 0.0 !== 1.0",
                     "NaN ** 0.0 must be 1.0"),
                 assertFail("num_pow_ieee", "(-1.0) ** (1.0 / 0.0) !== 1.0",
@@ -3349,6 +3448,7 @@ final class SignedInt32Corpus {
                 np(0.0, -1.0, "v:Infinity"),
                 np(-2.0, 0.5, "v:NaN"),
                 np(1.0, Double.NaN, "v:1.0"),
+                np(2.0, Double.NaN, "v:NaN"),
                 np(Double.NaN, 0.0, "v:1.0"),
                 np(-1.0, Double.POSITIVE_INFINITY, "v:1.0"),
                 np(2.0, 1024.0, "v:Infinity"),
