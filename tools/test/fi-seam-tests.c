@@ -46,7 +46,15 @@
  *       or a channel close inside the delay -> the release byte is
  *       never written, no exec, zero survivors, exactly one REPORT +
  *       one terminal record with the CLEAN cancelled / FAILED
- *       CALLER_LOST disjunction); FI_SUP_DEATH (the supervisor exits
+ *       CALLER_LOST disjunction); the repeated pre-release ACK
+ *       rejection (a wrong-nonce ACK, then further well-formed ACKs
+ *       while still pre-release -> record-level AUTH_FAILED,
+ *       idempotent, never a PROTOCOL_ERROR abort, the pinned
+ *       REPORT + FAILED AUTH_FAILED pair always published; the
+ *       post-cancel pre-release ACK never aborts the channel either;
+ *       a post-release ACK stays state-unexpected -> PROTOCOL_ERROR
+ *       with the per-state termination and exit 2); FI_SUP_DEATH (the
+ *       supervisor exits
  *       the scripted code with no cleanup and the stub dies via the
  *       PDEATHSIG cascade); the parent-mismatch _exit(2) and the
  *       PDEATHSIG-cascade deaths (stub-post-fork / stub-pre-ppid-recheck
@@ -737,6 +745,8 @@ static void expect_both_out_ends(rr *r)
 /* === Scenario constants ================================================= */
 
 static const char *g_nonce = "0123456789abcdef0123456789abcdef";
+static const char *g_wrong_nonce = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+static const char *g_sleep_target[2] = { "/bin/sleep", "30" };
 static char g_touch_cmd[192];
 static const char *g_noexec_target[3];
 static const char *g_true_target[1] = { "/bin/true" };
@@ -1690,6 +1700,157 @@ static void t4_post_ack_freeze(void)
     CHECK(!marker_exists());
 }
 
+/* The repeated pre-release ACK rejection (canonical ACK rule,
+ * catalog; parent D9): a first well-formed ACK with a wrong nonce is
+ * the record-level AUTH_FAILED path; a further well-formed ACK
+ * received while the channel is still pre-release is again the
+ * record-level AUTH_FAILED path — idempotent for a repeated
+ * rejection, never a PROTOCOL_ERROR abort — so the pinned
+ * REPORT + FAILED <id> AUTH_FAILED pair is always published before
+ * the channel close, with zero survivors, no exec, never STARTED.
+ * The same discipline holds on the post-cancel window (a valid CANCEL
+ * freezes the release, a later pre-release ACK never aborts the
+ * channel — the cancel-path terminal records always publish), and the
+ * post-release boundary is unchanged: an ACK after the release write
+ * is state-unexpected -> PROTOCOL_ERROR with the per-state invocation
+ * termination, serve exit 2, zero survivors. */
+static void t4_repeated_ack_rejection(void)
+{
+    chan_scene s;
+    dealpg4_parsed p;
+    const char *line;
+    size_t len;
+
+    /* Repeated rejection: wrong nonce, then two more well-formed ACKs
+     * (a matching one and a second wrong one) — every one record-level
+     * AUTH_FAILED, the channel never aborts, the pinned pair
+     * publishes. */
+    g_ctx = "T4 repeated pre-release ACK rejection";
+    script_reset();
+    if (chan_start(&s, CHILD_CORE, "/tmp", g_nonce, 1, 45000,
+                   g_noexec_target, 3)
+        == 0) {
+        CHECK(rr_expect(&s.reader, DEALPG4_REC_STUB_FORKED, &p, 5000)
+              == 0);
+        CHECK(rr_expect(&s.reader, DEALPG4_REC_STUB_READY, &p, 5000)
+              == 0);
+        CHECK(send_ack(s.sock, g_wrong_nonce) == 0);
+        CHECK(send_ack(s.sock, g_nonce) == 0);
+        CHECK(send_ack(s.sock, g_wrong_nonce) == 0);
+        /* The REPORT exitCode is the stub's reaped status (the
+         * release-EOF exit 5 or the AUTH_FAILED TERM death) — not
+         * pinned; the token is. */
+        CHECK(rr_expect(&s.reader, DEALPG4_REC_REPORT, &p, 8000) == 0);
+        CHECK(ptok(&p, 18, "AUTH_FAILED"));
+        CHECK(rr_expect(&s.reader, DEALPG4_REC_FAILED, &p, 5000) == 0);
+        CHECK(ptok(&p, 1, "AUTH_FAILED"));
+        CHECK(rr_line(&s.reader, 2000, &line, &len) == 0);
+        chan_finish(&s, 2, 8000);
+    }
+    CHECK(!marker_exists());
+
+    /* Post-cancel pre-release ACK: a matching ACK applied, a CANCEL in
+     * the release-delay window freezes the release, then a further ACK
+     * — still pre-release, never a PROTOCOL_ERROR abort: the
+     * cancel-path terminal records (exactly one REPORT + one terminal
+     * record with the CLEAN final=cancelled / FAILED CALLER_LOST
+     * disjunction) always publish. */
+    g_ctx = "T4 post-cancel pre-release ACK";
+    script_reset();
+    script_delay(DEALPG4_FI_DELAY_SUP_PRE_RELEASE_WRITE, 2000, 1);
+    if (chan_start(&s, CHILD_CORE, "/tmp", g_nonce, 1, 45000,
+                   g_noexec_target, 3)
+        == 0) {
+        int reports = 0;
+        int terminals = 0;
+        int report_exit = 0;
+        int report_term = 0;
+        int terminal_kind = 0; /* 1 = CLEAN cancelled, 2 = FAILED */
+        char report_token[32] = "";
+
+        CHECK(rr_expect(&s.reader, DEALPG4_REC_STUB_FORKED, &p, 5000)
+              == 0);
+        CHECK(rr_expect(&s.reader, DEALPG4_REC_STUB_READY, &p, 5000)
+              == 0);
+        CHECK(send_ack(s.sock, g_nonce) == 0);
+        msleep(500);
+        CHECK(send_cancel(s.sock, g_nonce) == 0);
+        CHECK(send_ack(s.sock, g_nonce) == 0);
+        for (;;) {
+            int rc = rr_line(&s.reader, 8000, &line, &len);
+
+            if (rc == 0)
+                break;
+            if (rc != 1) {
+                CHECK(rc == 1);
+                break;
+            }
+            CHECK(dealpg4_parse(line, len, &p) == DEALPG4_PARSE_OK);
+            rr_consume(&s.reader, len);
+            if (p.type == DEALPG4_REC_REPORT) {
+                int64_t v;
+
+                reports++;
+                if (pfi(&p, 0, &v))
+                    report_exit = (int)v;
+                if (pfi(&p, 1, &v))
+                    report_term = (int)v;
+                {
+                    const dealpg4_field_slice *f =
+                        dealpg4_parsed_field(&p, 18);
+
+                    if (f != NULL) {
+                        snprintf(report_token, sizeof report_token,
+                                 "%.*s", (int)f->len, f->p);
+                    }
+                }
+            } else if (p.type == DEALPG4_REC_CLEAN) {
+                terminals++;
+                terminal_kind = 1;
+                CHECK(ptok(&p, 1, "cancelled"));
+            } else if (p.type == DEALPG4_REC_FAILED) {
+                terminals++;
+                terminal_kind = 2;
+                CHECK(ptok(&p, 1, "CALLER_LOST"));
+            } else {
+                CHECK(0 && "unexpected record after the cancel");
+            }
+        }
+        CHECK(reports == 1);
+        CHECK(terminals == 1);
+        CHECK((terminal_kind == 1 && report_exit == 5
+               && strcmp(report_token, "-") == 0)
+              || (terminal_kind == 2 && report_exit == 143
+                  && report_term == 15
+                  && strcmp(report_token, "CALLER_LOST") == 0));
+        chan_finish_range(&s, 1, 2, 8000);
+    }
+    CHECK(!marker_exists());
+
+    /* Post-release ACK: state-unexpected -> PROTOCOL_ERROR — the
+     * channel closes with no FAILED record and no further publication,
+     * the per-state invocation termination (RELEASED: immediate TERM
+     * against the verified negative PGID, KILL at the absolute T3,
+     * reap, full proof) completes with zero survivors, serve exit 2. */
+    g_ctx = "T4 post-release ACK";
+    script_reset();
+    if (chan_start(&s, CHILD_CORE, "/tmp", g_nonce, 1, 45000,
+                   g_sleep_target, 2)
+        == 0) {
+        CHECK(rr_expect(&s.reader, DEALPG4_REC_STUB_FORKED, &p, 5000)
+              == 0);
+        CHECK(rr_expect(&s.reader, DEALPG4_REC_STUB_READY, &p, 5000)
+              == 0);
+        CHECK(send_ack(s.sock, g_nonce) == 0);
+        CHECK(rr_expect(&s.reader, DEALPG4_REC_STARTED, &p, 8000) == 0);
+        CHECK(send_ack(s.sock, g_nonce) == 0);
+        /* No further record: channel EOF without a FAILED record. */
+        CHECK(rr_line(&s.reader, 8000, &line, &len) == 0);
+        chan_finish(&s, 2, 8000);
+    }
+    CHECK(!marker_exists());
+}
+
 /* FI_SUP_DEATH: the supervisor exits the scripted code with no
  * cleanup at the first batch end after the stub's STUB_IDENTITY was
  * processed (the seam's pinned fire gate) — the stub is past step 1
@@ -2261,6 +2422,7 @@ int main(void)
     t4_post_release_wedges();
     t4_cancel_during_term_grace();
     t4_post_ack_freeze();
+    t4_repeated_ack_rejection();
     t4_supervisor_death();
     t4_parent_mismatch();
     t4_pdeathsig_cascade();
