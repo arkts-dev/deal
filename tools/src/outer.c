@@ -86,6 +86,21 @@
  * broker EOF with live records, and the D8 escalation TERM deferred
  * until every registry record is terminal.
  *
+ * This child (ISSUE-0300, epic Sequencing step 8) completes the
+ * D6 fault-injection seam catalog: the remaining delay sites
+ * (outer-pre-invoke-fork before the nested supervisor fork,
+ * outer-pre-ack-write before the ACK relay write,
+ * outer-pre-cancel-write before the fan-out CANCEL write), the
+ * FI_OUTER_DEATH fail site (scripted nonzero -> the scenario process
+ * terminates immediately with the scripted exit code and no cleanup,
+ * the kernel PDEATHSIG cascades killing the coordinator, nested
+ * supervisors, and released targets — checked at the end of each
+ * event-loop batch, gated on the first record having entered
+ * RELEASED), and the outer-registry-broker battery contract
+ * (outer.h). The supervisor-side wedge-composition sites
+ * (FI_SUPV_SUPPRESS_DEADLINE / FI_SUPV_IGNORE_CANCEL) are pinned on
+ * the supervisor-engine catalog by this child.
+ *
  * This child (ISSUE-0299, epic Sequencing step 7) adds the
  * coordinator death classification with the split immediate
  * escalation scopes and the final report: the READINESS_TIMEOUT
@@ -510,6 +525,12 @@ typedef struct dealpg4_outer_state {
                                CANCELLING (the caller-loss mark) */
 
     /* Nested control-channel machine (engine D4 — this child). */
+    int any_released; /* the first record entered RELEASED (the ACK
+                         write completed): the FI_OUTER_DEATH
+                         structural gate — by that moment the
+                         coordinator, a nested supervisor, and a
+                         released target exist with their PDEATHSIG
+                         chains armed */
     int nested_protocol_errors;
     int nested_terminal_relays;
     int synthesized_terminals;
@@ -2701,6 +2722,7 @@ static void dealpg4_outer_channel_flush(dealpg4_outer_state *st,
                 dealpg4_outer_record_transition(
                     st, r, DEALPG4_OUTER_REC_RELEASED,
                     (int64_t)dealpg4_now_ms());
+                st->any_released = 1; /* the FI_OUTER_DEATH gate */
             }
         }
         if (r->queued_cancel)
@@ -2727,6 +2749,11 @@ static void dealpg4_outer_channel_ack_write(dealpg4_outer_state *st,
     size_t written = 0;
     int n;
 
+    /* outer-pre-ack-write (D6): before the ACK relay write — an
+     * injected delay sleeps exactly the scripted ms here and consumes
+     * the enclosing deadline (fi.h); production: 0 ms. */
+    (void)dealpg4_fi_hooks.delay_ms(0,
+                                    DEALPG4_FI_DELAY_OUTER_PRE_ACK_WRITE);
     if (r->control_fd < 0)
         return;
     n = snprintf(idbuf, sizeof idbuf, "%lld",
@@ -2764,6 +2791,11 @@ static void dealpg4_outer_channel_cancel_write(dealpg4_outer_state *st,
     size_t written = 0;
     int n;
 
+    /* outer-pre-cancel-write (D6): before the fan-out CANCEL write —
+     * an injected delay sleeps exactly the scripted ms here and
+     * consumes the enclosing deadline (fi.h); production: 0 ms. */
+    (void)dealpg4_fi_hooks.delay_ms(
+        0, DEALPG4_FI_DELAY_OUTER_PRE_CANCEL_WRITE);
     dealpg4_outer_channel_discard_writes(st, r);
     if (r->state != DEALPG4_OUTER_REC_CANCELLING)
         dealpg4_outer_record_transition(st, r,
@@ -3216,6 +3248,13 @@ static void dealpg4_outer_broker_invoke(dealpg4_outer_state *st,
         dealpg4_outer_eval_done_trigger(st);
         return;
     }
+
+    /* outer-pre-invoke-fork (D6): before the nested supervisor
+     * fork — an injected delay sleeps exactly the scripted ms here and
+     * consumes the enclosing deadline (fi.h); production: 0 ms. The
+     * record is already registered (register-before-fork held). */
+    (void)dealpg4_fi_hooks.delay_ms(
+        0, DEALPG4_FI_DELAY_OUTER_PRE_INVOKE_FORK);
 
     /* The nested fork through the spawn seam (D2): the production
      * fork_nested forks, dup2s the child end onto fd 0, dup2s
@@ -4992,6 +5031,30 @@ static void dealpg4_outer_sigchld(dealpg4_outer_state *st)
     }
 }
 
+/* FI_OUTER_DEATH (D6): scripted nonzero terminates the outer
+ * scenario process immediately with the scripted value as the exit
+ * code and no cleanup (a kill-equivalent death — no report, no
+ * fallback, no broker close; the kernel PDEATHSIG cascades apply:
+ * the coordinator, the nested supervisors, and the released targets
+ * die via their armed prctl(PR_SET_PDEATHSIG, SIGKILL) chains). The
+ * check sits at the end of each event-loop batch (the top of the
+ * next iteration), gated on the first record having entered
+ * RELEASED: by that moment the coordinator, at least one nested
+ * supervisor, and at least one released target exist with their
+ * PDEATHSIG chains armed, so the pinned full-cascade scenario is
+ * deterministic (the structural gate mirrors the supervisor's
+ * FI_SUP_DEATH identity_seen gate, D6). */
+static void dealpg4_outer_fi_death_check(dealpg4_outer_state *st)
+{
+    int injected;
+
+    if (!st->any_released)
+        return;
+    injected = dealpg4_fi_hooks.fail(FI_OUTER_DEATH);
+    if (injected != 0)
+        _exit(injected);
+}
+
 /* The single-threaded ppoll loop (parent D1): timerfd + signalfd +
  * the coordinator pre-exec pipe + both coordinator stream drains +
  * POLLOUT sides for every non-empty write queue. ppoll blocks only
@@ -5015,6 +5078,7 @@ static void dealpg4_outer_loop(dealpg4_outer_state *st)
 
         if (st->done)
             break;
+        dealpg4_outer_fi_death_check(st);
 
         pfds[n].fd = st->timer.fd;
         pfds[n].events = POLLIN;

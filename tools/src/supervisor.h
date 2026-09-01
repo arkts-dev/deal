@@ -108,6 +108,62 @@
 #define FI_STUB_EXEC                9
 #define FI_SUP_DEATH               10
 
+/* Wedge-composition sites (dealpg4-outer-supervisor-engine D6 —
+ * pinned by the outer child; the supervisor-engine call sites live in
+ * this engine's ppoll deadline-expiry handling across the complete
+ * invocation-recipe deadline set T1-T5 and in its CANCEL handling;
+ * outer scenarios script them through the fork-only serve children,
+ * whose in-process core call inherits the installed overrides, D2):
+ *
+ * FI_SUPV_SUPPRESS_DEADLINE — scripted nonzero suppresses the nested
+ * supervisor's complete deadline-driven termination and terminal-
+ * record publication across the invocation-recipe deadline set
+ * (monotonic.h:114-126) for the enclosing scenario: the T1
+ * handshake+ACK expiry action (publishing FAILED <id>
+ * STARTUP_TIMEOUT), the T2 execution-cutoff action (the cutoff TERM)
+ * and the cancel-path self-termination, the T3 KILL escalation
+ * action, the T4 proof-deadline expiry action (publishing
+ * FAILED <id> PROOF_TIMEOUT), and the T5 finalization expiry action
+ * (publishing FAILED <id> OVERALL_TIMEOUT) are all skipped — the
+ * suppressed supervisor publishes no nested-origin terminal record at
+ * any recipe deadline and arms no further self-terminating deadline
+ * (after the suppressed T1 expiry passes the ppoll loop keeps waiting
+ * for ACK/CANCEL/control-channel events with no T2/T3/T4/T5
+ * deadline-driven termination ever dispatched), so the supervisor
+ * provably remains alive in its ppoll loop until the outer's
+ * TERM-by-pid arrives at the per-record deadline — the single
+ * deterministic termination point for the record. The T5 coverage is
+ * mandatory for wedge determinism, not optional: nested T5 = T0n + T
+ * (finalization) lands within the fork/exec/entry-latency window of
+ * the outer's per-record deadline (registration time + T —
+ * registration strictly precedes the nested serve entry's T0n read,
+ * parent D2/D7), so an unsuppressed T5 expiry would race the wedge
+ * dispatch at the same absolute budget boundary. The suppression also
+ * covers the stub's own step-6 T1s startup deadline (the stub release
+ * poll blocks until the release byte / EOF / error instead of exiting
+ * 4 at its T1s): a stub T1s exit would otherwise deliver a
+ * nested-origin pre-release death to the supervisor and publish a
+ * terminal record long before the per-record deadline, racing the
+ * wedge exactly like T5 would.
+ *
+ * FI_SUPV_IGNORE_CANCEL — scripted nonzero makes the nested
+ * supervisor consume a valid CANCEL without applying it at receipt
+ * (no cancel path, no release freeze, no signals, no state change):
+ * the deterministic composition for the objective's "a nested
+ * supervisor that ignores its CANCEL" wedge case. Combined with
+ * FI_SUPV_SUPPRESS_DEADLINE the record stays CANCELLING until the
+ * outer's per-record deadline (the wedge outcome). Scripted alone
+ * with an otherwise conforming supervisor, the valid CANCEL's receipt
+ * is consumed and the T2 execution cutoff then applies the cancel-path
+ * self-termination (the deferred cancel application: TERM with the
+ * cancel-path signal record, cancel_requested entered) — a target
+ * that exits on its own then yields CLEAN <id> cancelled at the
+ * supervisor's own T2 (the conforming intermediate path, D4), before
+ * the per-record deadline.
+ */
+#define FI_SUPV_SUPPRESS_DEADLINE  15
+#define FI_SUPV_IGNORE_CANCEL      16
+
 /* Congest targets (int tags). */
 #define FI_CONGEST_STATUS_PIPE 11
 #define FI_CONGEST_CTRL        12
@@ -128,7 +184,9 @@
 
 /* The supervisor/stub seam catalog (the named surface the ISSUE-0184
  * battery passes to dealpg4_fi_install_overrides): the eleven delay
- * site tags, the ten fail-site tags, the four congest targets, and
+ * site tags, the twelve fail-site tags (including the pinned
+ * FI_SUPV_SUPPRESS_DEADLINE / FI_SUPV_IGNORE_CANCEL
+ * wedge-composition sites), the four congest targets, and
  * the nine congestion-mode tags of D6. Defined in supervisor.c. */
 extern const struct dealpg4_fi_catalog dealpg4_supervisor_fi_catalog;
 

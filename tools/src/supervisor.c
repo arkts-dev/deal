@@ -18,6 +18,18 @@
  * OUT_END rule, the bounded write-side queue, the canonical REPORT,
  * the terminal records, the proof loop, the mid-run TIMER_FAILED
  * path, and the run-mode passthrough surface.
+ *
+ * The wedge-composition seam sites (ISSUE-0300,
+ * dealpg4-outer-supervisor-engine D6) land in this file:
+ * FI_SUPV_SUPPRESS_DEADLINE (advance_deadlines — the complete T1-T5
+ * deadline-driven termination and terminal-record publication set
+ * suppressed, no further self-terminating deadline armed; the ppoll
+ * timeout — the suppressed loop blocks without a deadline; and the
+ * stub's step-6 release poll — the stub's own T1s startup deadline
+ * suppressed so no nested-origin pre-release death can race the
+ * per-record deadline) and FI_SUPV_IGNORE_CANCEL (the CANCEL handler
+ * consumes a valid CANCEL without applying it; the T2 execution
+ * cutoff applies the deferred cancel-path self-termination).
  */
 #define _GNU_SOURCE
 #define _POSIX_C_SOURCE 200809L
@@ -126,7 +138,9 @@ static const int dealpg4_supervisor_fail_sites[] = {
     FI_STUB_IDENTITY_SELFCHECK,
     FI_STUB_CHDIR,
     FI_STUB_EXEC,
-    FI_SUP_DEATH
+    FI_SUP_DEATH,
+    FI_SUPV_SUPPRESS_DEADLINE,
+    FI_SUPV_IGNORE_CANCEL
 };
 
 static const int dealpg4_supervisor_congest_targets[] = {
@@ -371,12 +385,28 @@ static int64_t dealpg4_stub_t1s_deadline_ms(void)
  * the deadline (implicit — the poll returned), then write one
  * DEALPG4 RELEASE_RECV <pid> line to the status pipe (single
  * non-blocking attempt; on EPIPE/EAGAIN the stub proceeds without
- * retry). */
+ * retry).
+ *
+ * FI_SUPV_SUPPRESS_DEADLINE (the pinned wedge-composition site, D6):
+ * scripted nonzero suppresses the stub's own step-6 T1s startup
+ * deadline — the release poll blocks until the release byte or
+ * EOF/error instead of exiting 4 at its T1s. A stub T1s exit would
+ * otherwise deliver a nested-origin pre-release death to the
+ * supervisor and publish a terminal record long before the outer's
+ * per-record deadline, racing the wedge dispatch exactly like an
+ * unsuppressed T5 would (the stub's T1s = stub-entry + 5000 lands at
+ * T0n + 5000 + fork/exec/entry latency, ~10 s before the outer's
+ * per-record deadline for every accepted T >= 15000). The hook is
+ * checked at the step-6 entry (the script is installed before the
+ * supervisor forks the stub, so the override is inherited); the
+ * production deadline path is unchanged when the site is unscripted. */
 static void dealpg4_stub_release_poll(int release_fd, int status_fd,
                                       pid_t pid, int64_t t1s_deadline)
 {
     struct pollfd pfd;
     char byte;
+    int suppressed = dealpg4_fi_hooks.fail(FI_SUPV_SUPPRESS_DEADLINE)
+                     != 0;
 
     pfd.fd = release_fd;
     pfd.events = POLLIN;
@@ -394,18 +424,28 @@ static void dealpg4_stub_release_poll(int release_fd, int status_fd,
          * never arrived — the release write that raced the stub's
          * deadline lands in the pipe buffer while the stub still
          * lives, the stub exits 4 without consuming it, and no
-         * RELEASE_RECV exists (the deterministic D3 race driver). */
-        if (now >= (uint64_t)t1s_deadline)
+         * RELEASE_RECV exists (the deterministic D3 race driver).
+         * Under the wedge seam the deadline is suppressed: the stub
+         * stays in its release poll until the release byte, EOF, or
+         * error — the outer's TERM-by-pid at the per-record deadline
+         * kills the supervisor and the stub's armed PDEATHSIG cascade
+         * kills the stub (the single deterministic termination
+         * point). */
+        if (!suppressed && now >= (uint64_t)t1s_deadline)
             _exit(4);
         pfd.revents = 0;
         rc = poll(&pfd, 1,
-                  remaining > (uint64_t)INT_MAX ? INT_MAX
-                                                : (int)remaining);
+                  suppressed
+                      ? -1
+                      : remaining > (uint64_t)INT_MAX
+                            ? INT_MAX
+                            : (int)remaining);
         if (rc > 0)
             break;
         if (rc == 0) {
             /* EINTR-free timeout: re-check the absolute deadline. */
-            if (dealpg4_now_ms() >= (uint64_t)t1s_deadline)
+            if (!suppressed
+                && dealpg4_now_ms() >= (uint64_t)t1s_deadline)
                 _exit(4);
             continue;
         }
@@ -995,6 +1035,15 @@ typedef struct dealpg4_supervisor_state {
     int ack_applied;
     int cancel_requested;  /* a valid CANCEL or channel loss applied the
                               cancel path */
+    int cancel_ignored;   /* FI_SUPV_IGNORE_CANCEL: a valid CANCEL was
+                             consumed without applying it (no cancel
+                             path, no state change at receipt); the T2
+                             execution cutoff then applies the
+                             cancel-path self-termination (the
+                             deferred cancel application) — the
+                             deterministic composition for the
+                             CANCEL-ignored wedge case and the
+                             conforming intermediate path (D6) */
     int channel_lost;
     int protocol_aborted;
     char ctrl_buf[DEALPG4_SUPERVISOR_CTRL_BUF_BYTES];
@@ -1953,6 +2002,7 @@ static int64_t dealpg4_supervisor_next_deadline(
 }
 
 static void dealpg4_supervisor_finalize(dealpg4_supervisor_state *state);
+static void dealpg4_supervisor_apply_cancel(dealpg4_supervisor_state *state);
 
 /* The mid-run TIMER_FAILED path (D8): a failed deadline arm while
  * installing a phase deadline terminates the invocation
@@ -2035,11 +2085,30 @@ static void dealpg4_supervisor_timer_failed(dealpg4_supervisor_state *state)
 static void dealpg4_supervisor_advance_deadlines(
     dealpg4_supervisor_state *state)
 {
-    uint64_t now64 = dealpg4_now_ms();
-    int64_t now = (int64_t)now64;
+    uint64_t now64;
+    int64_t now;
 
     if (state->done)
         return;
+    /* FI_SUPV_SUPPRESS_DEADLINE (the pinned wedge-composition site,
+     * D6): scripted nonzero suppresses every deadline-driven
+     * termination action and terminal-record publication across the
+     * complete invocation-recipe deadline set T1-T5 — the T1
+     * handshake+ACK expiry (FAILED STARTUP_TIMEOUT publication), the
+     * T2 execution cutoff (TERM) and the cancel-path
+     * self-termination (including the deferred FI_SUPV_IGNORE_CANCEL
+     * application below), the T3 KILL escalation, the T4
+     * proof-deadline expiry (FAILED PROOF_TIMEOUT publication), and
+     * the T5 finalization (FAILED OVERALL_TIMEOUT publication) are
+     * all skipped and no further self-terminating deadline is armed,
+     * so the per-record deadline is the single deterministic wedge
+     * trigger. The loop's ppoll then blocks without a timeout (see
+     * dealpg4_supervisor_loop) — the supervisor provably remains
+     * alive in its loop until the outer's TERM-by-pid arrives. */
+    if (dealpg4_fi_hooks.fail(FI_SUPV_SUPPRESS_DEADLINE) != 0)
+        return;
+    now64 = dealpg4_now_ms();
+    now = (int64_t)now64;
     if (state->phase == DEALPG4_PHASE_STARTUP
         && now >= state->dl.t1) {
         if (!state->release_write_ok
@@ -2061,6 +2130,18 @@ static void dealpg4_supervisor_advance_deadlines(
             dealpg4_supervisor_timer_failed(state);
     }
     if (state->phase == DEALPG4_PHASE_RUN && now >= state->dl.t2) {
+        if (state->cancel_ignored && !state->cancel_requested) {
+            /* FI_SUPV_IGNORE_CANCEL (the pinned wedge-composition
+             * site, D6): the valid CANCEL was consumed without
+             * applying it at receipt; the T2 execution cutoff applies
+             * the cancel-path self-termination (the deferred cancel
+             * application: TERM with the cancel-path signal record,
+             * cancel_requested entered) — a target that exits on its
+             * own then yields CLEAN <id> cancelled at the
+             * supervisor's own T2 (the conforming intermediate
+             * path). */
+            dealpg4_supervisor_apply_cancel(state);
+        }
         state->phase = DEALPG4_PHASE_TERM;
         state->term_issued = 1;
         state->term_ms = now - state->t0;
@@ -2644,6 +2725,21 @@ static void dealpg4_supervisor_cancel(dealpg4_supervisor_state *state,
                                      DEALPG4_NONCE_HEX_CHARS) == 0);
     cls = dealpg4_cancel_classify(&facts);
     if (cls == DEALPG4_CLASS_OK) {
+        if (dealpg4_fi_hooks.fail(FI_SUPV_IGNORE_CANCEL) != 0) {
+            /* FI_SUPV_IGNORE_CANCEL (the pinned wedge-composition
+             * site, D6): consume the valid CANCEL without applying
+             * it — no cancel path, no release freeze, no signals, no
+             * state change at receipt (the record stays in the state
+             * it held when the injection fired). The receipt is
+             * retained: the T2 execution cutoff applies the
+             * cancel-path self-termination (the deferred cancel
+             * application in advance_deadlines) — combined with
+             * FI_SUPV_SUPPRESS_DEADLINE the T2 application is
+             * suppressed too and the record stays CANCELLING until
+             * the outer's per-record deadline (the wedge outcome). */
+            state->cancel_ignored = 1;
+            return;
+        }
         dealpg4_supervisor_apply_cancel(state);
         return;
     }
@@ -3283,17 +3379,30 @@ static int dealpg4_supervisor_run_output_done(
  * were delivered — never blocked in ppoll until the next phase
  * deadline). */
 static int64_t dealpg4_supervisor_loop_timeout_ms(
-    const dealpg4_supervisor_state *state, int64_t now)
+    const dealpg4_supervisor_state *state, int64_t now, int suppressed)
 {
-    int64_t deadline = dealpg4_supervisor_next_deadline(state);
-    int64_t remaining = deadline > now ? deadline - now : 0;
+    int64_t deadline = suppressed ? -1
+                                  : dealpg4_supervisor_next_deadline(
+                                        state);
+    /* -1 = block indefinitely (no timeout at all). Under
+     * FI_SUPV_SUPPRESS_DEADLINE the recipe-state deadline never
+     * governs the loop (it is never armed further and its expiry is
+     * suppressed), so the remaining terms alone decide — a suppressed
+     * loop with no close-linger and no proof throttle blocks in ppoll
+     * until SIGCHLD or a channel/status/stream event: the suppressed
+     * supervisor provably remains alive in its loop until the outer's
+     * TERM-by-pid arrives. */
+    int64_t remaining =
+        deadline >= 0 && deadline > now ? deadline - now : 0;
 
+    if (suppressed && deadline < 0)
+        remaining = -1;
     if (state->close_lingering) {
         int64_t linger = state->close_linger_deadline_ms;
 
         if (linger <= now) {
             remaining = 0;
-        } else if (linger - now < remaining) {
+        } else if (remaining < 0 || linger - now < remaining) {
             remaining = linger - now;
         }
     }
@@ -3309,7 +3418,7 @@ static int64_t dealpg4_supervisor_loop_timeout_ms(
 
         if (bound <= now) {
             remaining = 0;
-        } else if (remaining == 0 || bound - now < remaining) {
+        } else if (remaining < 0 || bound - now < remaining) {
             remaining = bound - now;
         }
     }
@@ -3318,7 +3427,7 @@ static int64_t dealpg4_supervisor_loop_timeout_ms(
 
         if (np <= now) {
             remaining = 0;
-        } else if (remaining == 0 || np - now < remaining) {
+        } else if (remaining < 0 || np - now < remaining) {
             /* The proof-pass throttle is the wakeup whenever the
              * recipe-state deadline is exhausted (the post-T4/T5
              * catch-up cleanup states): the loop wakes at the proof
@@ -3331,7 +3440,7 @@ static int64_t dealpg4_supervisor_loop_timeout_ms(
 
             if (confirm <= now) {
                 remaining = 0;
-            } else if (remaining == 0 || confirm - now < remaining) {
+            } else if (remaining < 0 || confirm - now < remaining) {
                 remaining = confirm - now;
             }
         }
@@ -3359,6 +3468,8 @@ static void dealpg4_supervisor_loop(dealpg4_supervisor_state *state)
         int64_t now;
         int64_t remaining;
         struct timespec ts;
+        struct timespec *tsp;
+        int suppressed;
         int fi_death;
         int stream_congested;
         int ctrl_write_stalled;
@@ -3435,11 +3546,28 @@ static void dealpg4_supervisor_loop(dealpg4_supervisor_state *state)
         }
 
         now = (int64_t)dealpg4_now_ms();
-        remaining = dealpg4_supervisor_loop_timeout_ms(state, now);
-        dealpg4_ms_to_timespec(
-            remaining > (uint64_t)INT_MAX ? (uint64_t)INT_MAX
-                                          : (uint64_t)remaining,
-            &ts);
+        /* FI_SUPV_SUPPRESS_DEADLINE: when armed the recipe deadlines
+         * never govern the loop (advance_deadlines suppresses every
+         * T1-T5 action and arms no further self-terminating deadline)
+         * — the ppoll timeout comes only from the non-deadline terms
+         * (the TERMINAL close-linger and the bounded proof-pass
+         * throttle), and with none active ppoll blocks with no
+         * timeout at all until SIGCHLD or a channel/status/stream
+         * event (the suppressed supervisor provably remains alive in
+         * its loop until the outer's TERM-by-pid). */
+        suppressed = dealpg4_fi_hooks.fail(FI_SUPV_SUPPRESS_DEADLINE)
+                     != 0;
+        remaining = dealpg4_supervisor_loop_timeout_ms(state, now,
+                                                       suppressed);
+        if (remaining < 0) {
+            tsp = NULL;
+        } else {
+            dealpg4_ms_to_timespec(
+                remaining > (uint64_t)INT_MAX ? (uint64_t)INT_MAX
+                                              : (uint64_t)remaining,
+                &ts);
+            tsp = &ts;
+        }
 
         fds[nfds].fd = state->timer.fd;
         fds[nfds].events = POLLIN;
@@ -3540,7 +3668,7 @@ static void dealpg4_supervisor_loop(dealpg4_supervisor_state *state)
             }
         }
 
-        rc = ppoll(fds, nfds, &ts, NULL);
+        rc = ppoll(fds, nfds, tsp, NULL);
         if (rc < 0) {
             if (errno == EINTR) {
                 /* EINTR recompute via the monotonic helpers: re-arm the

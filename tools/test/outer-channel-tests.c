@@ -87,6 +87,17 @@
  *     the peer in order — then DONE clean at the scaled cutoff with
  *     the CLEAN before it; the peer BYEs and exits 0; the outer
  *     runs the final proof and exits 0.
+ * 12. D6 seam-catalog completion: the delay-site determinism
+ *     (outer-pre-invoke-fork / outer-pre-ack-write /
+ *     outer-pre-cancel-write — each sleeps exactly the scripted
+ *     400 ms before its named step, measured by the peer across the
+ *     causal round trip, the production 0 ms path unchanged) and
+ *     the FI_OUTER_DEATH kill-equivalent death (the forked scenario
+ *     process exits the scripted code 55 with no cleanup; the
+ *     PDEATHSIG cascades kill the coordinator peer, the scripted
+ *     nested supervisor, and the released target stand-in — three
+ *     CLD_KILLED 9 reaps by the subreaper suite, the stale broker
+ *     path abandoned as pinned).
  *
  * Every group's internal assertion failures propagate through the
  * helper child's exit status and the captured stderr; the peer's own
@@ -104,10 +115,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/prctl.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "../src/drain.h"
@@ -148,6 +161,16 @@ static const OuterLimits FLOOD_LIMITS = {18000, 500, 17000, 1000, 5000};
  * signaled: cleanupReserveMs 8000 puts the escalation at T0o + 20000,
  * 3000 ms after the cutoff (T0o + 17000). */
 static const OuterLimits DONE_LIMITS = {25000, 500, 17000, 8000, 200};
+
+/* Monotonic now in ms (the peer-side delay measurements). */
+static uint64_t peer_now_ms(void)
+{
+    struct timespec ts;
+
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
+        return 0;
+    return (uint64_t)ts.tv_sec * 1000u + (uint64_t)(ts.tv_nsec / 1000000);
+}
 
 /* Monotonic-bounded sleep. */
 static void sleep_ms(unsigned ms)
@@ -280,6 +303,72 @@ static pid_t chan_fork_stub(void)
             fprintf(stderr, "CHILD FAIL stub-confirm r=%zd errno=%d\n", r,
                     errno);
             _exit(9); /* the stub died before confirming */
+        }
+    }
+    close(ready[0]);
+    return p;
+}
+
+/* The FI_OUTER_DEATH cascade stand-in stub: arms its own
+ * PR_SET_PDEATHSIG = SIGKILL against the scripted serve child (the
+ * composition double skips the production prctl), rechecks the
+ * parent, setsid (pid == pgid == sid for the outer's double
+ * verification), confirms, and then holds forever — it dies only by
+ * the armed cascade when the serve child dies. */
+static void chan_stub_runner_death(int ready_fd)
+{
+    pid_t parent = getppid();
+
+    if (prctl(PR_SET_PDEATHSIG, SIGKILL) != 0)
+        _exit(3);
+    if (getppid() != parent)
+        _exit(2);
+    if (setsid() == -1)
+        _exit(3);
+    (void)!write(ready_fd, "x", 1);
+    for (;;)
+        sleep_ms(1000);
+}
+
+/* Fork the death-cascade stub stand-in (the chan_fork_stub retry
+ * pattern with the armed runner). */
+static pid_t chan_fork_stub_death(void)
+{
+    int ready[2];
+    pid_t p;
+    int attempt;
+
+    if (pipe(ready) != 0)
+        _exit(9);
+    for (attempt = 0; attempt < 20; attempt++) {
+        p = fork();
+        if (p == 0) {
+            close(ready[0]);
+            chan_stub_runner_death(ready[1]);
+        }
+        if (p > 0)
+            break;
+        sleep_ms(10);
+    }
+    close(ready[1]);
+    if (p <= 0) {
+        fprintf(stderr, "CHILD FAIL death-stub-fork errno=%d\n", errno);
+        _exit(9);
+    }
+    {
+        char c;
+
+        for (;;) {
+            ssize_t r = read(ready[0], &c, 1);
+
+            if (r == 1)
+                break;
+            if (r < 0 && errno == EINTR)
+                continue;
+            fprintf(stderr,
+                    "CHILD FAIL death-stub-confirm r=%zd errno=%d\n", r,
+                    errno);
+            _exit(9);
         }
     }
     close(ready[0]);
@@ -464,6 +553,34 @@ static int chan_script_child(const char *scenario, int fd, int64_t id,
                  (long long)id);
         chan_write_line(fd, line);
         return 0;
+    }
+
+    if (strcmp(scenario, "death-cascade") == 0) {
+        /* The FI_OUTER_DEATH cascade stand-in: the serve child arms
+         * its own PR_SET_PDEATHSIG = SIGKILL against the outer (the
+         * composition double skips the production prctl), publishes a
+         * real stub identity, consumes the validated ACK, publishes
+         * STARTED, and then holds forever with the armed stub
+         * stand-in alive — when the outer's scripted death fires the
+         * kernel cascade kills the coordinator, this nested
+         * supervisor, and the released target stand-in. */
+        if (prctl(PR_SET_PDEATHSIG, SIGKILL) != 0)
+            return 1;
+        stub = chan_fork_stub_death();
+        snprintf(line, sizeof line,
+                 "DEALPG4 STUB_FORKED %lld %d\n", (long long)id,
+                 (int)stub);
+        chan_write_line(fd, line);
+        snprintf(line, sizeof line,
+                 "DEALPG4 STUB_READY %lld %d %d %d %s\n", (long long)id,
+                 (int)stub, (int)stub, (int)stub, nonce);
+        chan_write_line(fd, line);
+        chan_verify_ctl(fd, "ACK", id, nonce);
+        snprintf(line, sizeof line, "DEALPG4 STARTED %lld\n",
+                 (long long)id);
+        chan_write_line(fd, line);
+        for (;;)
+            sleep_ms(1000);
     }
 
     if (strcmp(scenario, "cancel-from-forking") == 0) {
@@ -1263,6 +1380,130 @@ static int chan_peer_main(const char *scenario)
         return 0;
     }
 
+    if (strcmp(scenario, "delay-invoke") == 0) {
+        /* outer-pre-invoke-fork (400 ms scripted): the INVOKED answer
+         * is queued only after the nested fork, so the measured
+         * INVOKE -> INVOKED round trip carries the delay. */
+        uint64_t t0 = peer_now_ms();
+
+        build_invoke(inv, sizeof inv, "tag", "ready-ok");
+        if (peer_invoke_one(fd, inv, &id) != 0)
+            return 1;
+        if (peer_now_ms() - t0 < 350) {
+            fprintf(stderr, "PEER FAIL delay-invoke too fast\n");
+            return 1;
+        }
+        rc = peer_read_line(fd, line, sizeof line, 5000);
+        if (rc != 0 || peer_parse_stub_ready(line, &id2, rec_nonce) != 0
+            || id2 != id) {
+            fprintf(stderr, "PEER FAIL delay-invoke-ready %s\n", line);
+            return 1;
+        }
+        if (peer_send_ack(fd, id, rec_nonce) != 0
+            || peer_expect_line(fd, "DEALPG4 STARTED 1\n") != 0
+            || peer_expect_line(fd, "DEALPG4 CLEAN 1 success\n") != 0) {
+            fprintf(stderr, "PEER FAIL delay-invoke-cycle\n");
+            return 1;
+        }
+        close(fd);
+        printf("PEER delay-invoke\n");
+        fflush(stdout);
+        return 0;
+    }
+
+    if (strcmp(scenario, "delay-ack") == 0) {
+        /* outer-pre-ack-write (400 ms scripted): STARTED arrives only
+         * after the delayed ACK relay write completes and the child
+         * publishes it — the measured ACK -> STARTED gap carries the
+         * delay. */
+        uint64_t t0;
+
+        build_invoke(inv, sizeof inv, "tag", "ready-ok");
+        if (peer_invoke_one(fd, inv, &id) != 0)
+            return 1;
+        rc = peer_read_line(fd, line, sizeof line, 5000);
+        if (rc != 0 || peer_parse_stub_ready(line, &id2, rec_nonce) != 0
+            || id2 != id) {
+            fprintf(stderr, "PEER FAIL delay-ack-ready %s\n", line);
+            return 1;
+        }
+        t0 = peer_now_ms();
+        if (peer_send_ack(fd, id, rec_nonce) != 0
+            || peer_expect_line(fd, "DEALPG4 STARTED 1\n") != 0) {
+            fprintf(stderr, "PEER FAIL delay-ack-start\n");
+            return 1;
+        }
+        if (peer_now_ms() - t0 < 350) {
+            fprintf(stderr, "PEER FAIL delay-ack too fast\n");
+            return 1;
+        }
+        if (peer_expect_line(fd, "DEALPG4 CLEAN 1 success\n") != 0) {
+            fprintf(stderr, "PEER FAIL delay-ack-clean\n");
+            return 1;
+        }
+        close(fd);
+        printf("PEER delay-ack\n");
+        fflush(stdout);
+        return 0;
+    }
+
+    if (strcmp(scenario, "delay-cancel") == 0) {
+        /* outer-pre-cancel-write (400 ms scripted): the cancel-path
+         * CLEAN cancelled arrives only after the delayed CANCEL
+         * fan-out write completes and the child consumes it — the
+         * measured CANCEL -> CLEAN gap carries the delay. */
+        uint64_t t0;
+
+        build_invoke(inv, sizeof inv, "tag", "cancel-read");
+        if (peer_invoke_one(fd, inv, &id) != 0)
+            return 1;
+        rc = peer_read_line(fd, line, sizeof line, 5000);
+        if (rc != 0 || peer_parse_stub_ready(line, &id2, rec_nonce) != 0
+            || id2 != id) {
+            fprintf(stderr, "PEER FAIL delay-cancel-ready %s\n", line);
+            return 1;
+        }
+        t0 = peer_now_ms();
+        if (peer_send_cancel(fd, id, rec_nonce) != 0
+            || peer_expect_line(fd, "DEALPG4 CLEAN 1 cancelled\n") != 0) {
+            fprintf(stderr, "PEER FAIL delay-cancel-clean\n");
+            return 1;
+        }
+        if (peer_now_ms() - t0 < 350) {
+            fprintf(stderr, "PEER FAIL delay-cancel too fast\n");
+            return 1;
+        }
+        close(fd);
+        printf("PEER delay-cancel\n");
+        fflush(stdout);
+        return 0;
+    }
+
+    if (strcmp(scenario, "death-hold") == 0) {
+        /* FI_OUTER_DEATH: the record reaches RELEASED (the ACK write
+         * completed) and the outer then dies at the end of the same
+         * batch — the peer stays connected and alive after STARTED so
+         * the coordinator layer of the PDEATHSIG cascade is
+         * observable (the armed SIGKILL kills it when the outer's
+         * death reparents it). */
+        build_invoke(inv, sizeof inv, "tag", "death-cascade");
+        if (peer_invoke_one(fd, inv, &id) != 0)
+            return 1;
+        rc = peer_read_line(fd, line, sizeof line, 5000);
+        if (rc != 0 || peer_parse_stub_ready(line, &id2, rec_nonce) != 0
+            || id2 != id) {
+            fprintf(stderr, "PEER FAIL death-hold-ready %s\n", line);
+            return 1;
+        }
+        if (peer_send_ack(fd, id, rec_nonce) != 0
+            || peer_expect_line(fd, "DEALPG4 STARTED 1\n") != 0) {
+            fprintf(stderr, "PEER FAIL death-hold-start\n");
+            return 1;
+        }
+        for (;;)
+            sleep_ms(1000);
+    }
+
     if (strcmp(scenario, "verify-then-reject-ack") == 0) {
         /* STUB_READY forwarded; then a wrong-nonce ACK is rejected
          * record-level (broker open, record untouched); the nested
@@ -2018,13 +2259,21 @@ static void run_chan_case(const OuterLimits *limits,
     (void)dout;
 }
 
-/* The fault-injection catalog (the nested-channel congestion site is
- * this child's). */
+/* The fault-injection catalog (the nested-channel congestion site and
+ * the completed D6 delay/fail tags of this file's children). */
+static const char *const chan_delay_sites[] = {
+    DEALPG4_FI_DELAY_OUTER_PRE_COORD_FORK,
+    DEALPG4_FI_DELAY_COORD_POST_FORK,
+    DEALPG4_FI_DELAY_COORD_PRE_READY_WRITE,
+    DEALPG4_FI_DELAY_OUTER_PRE_INVOKE_FORK,
+    DEALPG4_FI_DELAY_OUTER_PRE_ACK_WRITE,
+    DEALPG4_FI_DELAY_OUTER_PRE_CANCEL_WRITE
+};
 static const int chan_fail_sites[] = {
     FI_OUTER_SUBREAPER, FI_OUTER_TIMERFD, FI_OUTER_SIGNALFD,
     FI_OUTER_NONCE, FI_OUTER_PIPE, FI_COORD_READY_MISMATCH,
     FI_OUTER_BIND, FI_OUTER_SOCKETPAIR, FI_OUTER_FORK,
-    FI_OUTER_ENTRY_NONCE
+    FI_OUTER_ENTRY_NONCE, FI_OUTER_DEATH
 };
 static const int chan_congest_targets[] = {
     FI_CONGEST_BROKER, FI_CONGEST_NESTED_CTRL
@@ -2033,7 +2282,7 @@ static const int chan_congest_modes[] = {
     BROKER_WRITE_STALL, NESTED_WRITE_STALL
 };
 static const dealpg4_fi_catalog chan_catalog = {
-    NULL, 0, chan_fail_sites, 10, chan_congest_targets, 2,
+    chan_delay_sites, 6, chan_fail_sites, 11, chan_congest_targets, 2,
     chan_congest_modes, 2
 };
 
@@ -2054,6 +2303,44 @@ static void install_nested_congest(void)
     script.nfails = 0;
     script.congests = congest;
     script.ncongests = 1;
+    CHECK(dealpg4_fi_install_overrides(&script, &chan_catalog) == 0);
+}
+
+/* The always-on delay at a named delay site (the D6 delay-seam
+ * determinism cases: an injected delay sleeps exactly the scripted ms
+ * before the named step and consumes the enclosing deadline). */
+static void install_delay(const char *site, unsigned ms)
+{
+    dealpg4_fi_script_delay delays[1];
+    dealpg4_fi_script script;
+
+    delays[0].site = site;
+    delays[0].duration_ms = ms;
+    delays[0].oneshot = 0;
+    script.delays = delays;
+    script.ndelays = 1;
+    script.fails = NULL;
+    script.nfails = 0;
+    script.congests = NULL;
+    script.ncongests = 0;
+    CHECK(dealpg4_fi_install_overrides(&script, &chan_catalog) == 0);
+}
+
+/* The always-on FI_OUTER_DEATH fail override (scripted exit code). */
+static void install_outer_death(int value)
+{
+    dealpg4_fi_script_fail fails[1];
+    dealpg4_fi_script script;
+
+    fails[0].site = FI_OUTER_DEATH;
+    fails[0].value = value;
+    fails[0].oneshot = 0;
+    script.delays = NULL;
+    script.ndelays = 0;
+    script.fails = fails;
+    script.nfails = 1;
+    script.congests = NULL;
+    script.ncongests = 0;
     CHECK(dealpg4_fi_install_overrides(&script, &chan_catalog) == 0);
 }
 
@@ -2720,6 +3007,145 @@ static int case_integration_fn(void)
     return 0;
 }
 
+/* Group 12 (the D6 seam-catalog child): the delay-site determinism
+ * (outer-pre-invoke-fork / outer-pre-ack-write / outer-pre-cancel-write
+ * — each sleeps exactly the scripted 400 ms before its named step,
+ * measured by the peer across the causal round trip) and the
+ * FI_OUTER_DEATH kill-equivalent death (the forked scenario process
+ * exits the scripted code with no cleanup and the PDEATHSIG cascades
+ * kill the coordinator, the nested supervisor, and the released
+ * target stand-in). */
+
+static int case_delay_invoke_fn(void)
+{
+    char report[2048];
+    dealpg4_outer_result view;
+    int status;
+
+    install_delay(DEALPG4_FI_DELAY_OUTER_PRE_INVOKE_FORK, 400);
+    run_chan_case(&LIVE_LIMITS, "delay-invoke", CHAN_SPAWN_SCRIPT, report,
+                  sizeof report, &status, &view);
+    CHECK(status == 0);
+    CHECK(view.records_total == 1);
+    CHECK(view.records_clean == 1);
+    CHECK(view.records_live == 0);
+    CHECK(view.ack_write_completions == 1);
+    CHECK(view.ntokens == 0);
+    dealpg4_fi_restore_defaults();
+    return 0;
+}
+
+static int case_delay_ack_fn(void)
+{
+    char report[2048];
+    dealpg4_outer_result view;
+    int status;
+
+    install_delay(DEALPG4_FI_DELAY_OUTER_PRE_ACK_WRITE, 400);
+    run_chan_case(&LIVE_LIMITS, "delay-ack", CHAN_SPAWN_SCRIPT, report,
+                  sizeof report, &status, &view);
+    CHECK(status == 0);
+    CHECK(view.records_total == 1);
+    CHECK(view.records_clean == 1);
+    CHECK(view.records_live == 0);
+    CHECK(view.ack_write_completions == 1);
+    CHECK(view.ntokens == 0);
+    dealpg4_fi_restore_defaults();
+    return 0;
+}
+
+static int case_delay_cancel_fn(void)
+{
+    char report[2048];
+    dealpg4_outer_result view;
+    int status;
+
+    install_delay(DEALPG4_FI_DELAY_OUTER_PRE_CANCEL_WRITE, 400);
+    run_chan_case(&LIVE_LIMITS, "delay-cancel", CHAN_SPAWN_SCRIPT,
+                  report, sizeof report, &status, &view);
+    CHECK(status == 0);
+    CHECK(view.records_total == 1);
+    CHECK(view.records_clean == 1);
+    CHECK(view.records_live == 0);
+    CHECK(view.ntokens == 0);
+    dealpg4_fi_restore_defaults();
+    return 0;
+}
+
+/* The FI_OUTER_DEATH case runs the core in its own forked scenario
+ * process: the site _exits the process with the scripted code before
+ * the core returns, so the case cannot use run_chan_case (whose core
+ * call returns). The scenario reaches RELEASED (the death gate), the
+ * outer dies with no cleanup, and the suite process (the subreaper,
+ * set in main) reaps the three PDEATHSIG-cascade victims. */
+static int case_outer_death_fn(void)
+{
+    char report[4096];
+    chan_spawn sp;
+    dealpg4_outer_spawn spawn = make_chan_spawn(&sp, CHAN_SPAWN_SCRIPT);
+    char *argv[8];
+    int pipefd[2];
+    pid_t pid;
+    int status = -1;
+    size_t total = 0;
+
+    install_outer_death(55);
+    peer_argv(argv, "death-hold");
+    CHECK(pipe(pipefd) == 0);
+    pid = fork();
+    CHECK(pid >= 0);
+    if (pid == 0) {
+        int st;
+
+        close(pipefd[0]);
+        st = dealpg4_outer_core(&LIVE_LIMITS, NONCE, argv, "build",
+                                pipefd[1], &spawn);
+        (void)st;
+        _exit(0); /* unreachable: FI_OUTER_DEATH _exits first */
+    }
+    close(pipefd[1]);
+    for (;;) {
+        ssize_t r = read(pipefd[0], report + total,
+                         sizeof report - total - 1);
+
+        if (r > 0) {
+            total += (size_t)r;
+            if (total >= sizeof report - 1)
+                break;
+            continue;
+        }
+        if (r < 0 && errno == EINTR)
+            continue;
+        break; /* EOF: the death closed the report pipe */
+    }
+    close(pipefd[0]);
+    CHECK(waitpid(pid, &status, 0) == pid);
+    CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 55);
+    /* The pinned no-cleanup consequence: the broker socket path
+     * remains — remove the abandoned stale paths so the later cases
+     * start clean (the production stale-unlink covers only the
+     * same-nonce path). */
+    {
+        DIR *d = opendir("build");
+
+        if (d != NULL) {
+            struct dirent *e;
+
+            while ((e = readdir(d)) != NULL) {
+                if (strncmp(e->d_name, ".dealpg4-broker-", 16) == 0) {
+                    char path[512];
+
+                    snprintf(path, sizeof path, "build/%s", e->d_name);
+                    (void)unlink(path);
+                }
+            }
+            closedir(d);
+        }
+    }
+    dealpg4_fi_restore_defaults();
+    return 0;
+}
+
 /* === Main ============================================================== */
 
 /* Each case runs in its own capture child: the core's entry preamble
@@ -2740,11 +3166,22 @@ static void run_case_child(const char *name, outer_test_fn fn)
 
 int main(int argc, char **argv)
 {
+    int is_subreaper = 0;
+
     g_suite_argv0 = argv[0];
     dealpg4_outer_note_process_argv0(argv[0]);
     signal(SIGPIPE, SIG_IGN);
     if (argc >= 3 && strcmp(argv[1], "--channel-peer") == 0)
         return chan_peer_entry(argc, argv);
+
+    /* The suite is the subreaper for the FI_OUTER_DEATH case: when
+     * the forked scenario process dies by the scripted seam, the
+     * PDEATHSIG-cascade victims (the coordinator peer, the scripted
+     * nested supervisor, and its stub stand-in) reparent here and are
+     * reaped below. */
+    CHECK(prctl(PR_SET_CHILD_SUBREAPER, 1) == 0);
+    CHECK(prctl(PR_GET_CHILD_SUBREAPER, &is_subreaper) == 0
+          && is_subreaper == 1);
 
     run_case_child("forked / no-STARTED schedule", case_forked_fn);
     run_case_child("ACK relay + RELEASED-at-write-completion",
@@ -2783,6 +3220,45 @@ int main(int argc, char **argv)
     run_case_child("outer-synthesized terminal records", case_synth_fn);
     run_case_child("T1-T5 integration (real serve core)",
                    case_integration_fn);
+    run_case_child("outer-pre-invoke-fork delay seam",
+                   case_delay_invoke_fn);
+    run_case_child("outer-pre-ack-write delay seam", case_delay_ack_fn);
+    run_case_child("outer-pre-cancel-write delay seam",
+                   case_delay_cancel_fn);
+    run_case_child("FI_OUTER_DEATH PDEATHSIG cascade",
+                   case_outer_death_fn);
+
+    /* The FI_OUTER_DEATH cascade reap: exactly the coordinator peer,
+     * the scripted nested supervisor, and its stub stand-in — each
+     * killed by the armed PDEATHSIG SIGKILL (si_status 9) after the
+     * scenario process died with the scripted code. */
+    {
+        int killed = 0;
+        int unexpected = 0;
+        uint64_t deadline = peer_now_ms() + 3000;
+        siginfo_t si;
+
+        for (;;) {
+            memset(&si, 0, sizeof si);
+            if (waitid(P_ALL, 0, &si, WEXITED | WNOHANG) != 0) {
+                if (errno == ECHILD)
+                    break;
+                continue;
+            }
+            if (si.si_pid == 0) {
+                if (peer_now_ms() >= deadline)
+                    break;
+                sleep_ms(10);
+                continue;
+            }
+            if (si.si_code == CLD_KILLED && si.si_status == 9)
+                killed++;
+            else
+                unexpected++;
+        }
+        CHECK(killed == 3);
+        CHECK(unexpected == 0);
+    }
 
     /* The core calls forked the suite binary as the coordinator: no
      * child may remain. */

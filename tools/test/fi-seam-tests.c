@@ -8,8 +8,11 @@
  *
  *  T1 — catalog shape and installer determinism (in-process, through
  *       dealpg4_fi_install_overrides against
- *       dealpg4_supervisor_fi_catalog): the eleven delay sites, ten
- *       fail sites, four congest targets, and nine congestion modes;
+ *       dealpg4_supervisor_fi_catalog): the eleven delay sites, twelve
+ *       fail sites (including the pinned FI_SUPV_SUPPRESS_DEADLINE /
+ *       FI_SUPV_IGNORE_CANCEL wedge-composition sites of
+ *       dealpg4-outer-supervisor-engine D6), four congest targets,
+ *       and nine congestion modes;
  *       a scripted delay at each site sleeps exactly the scripted ms
  *       (CLOCK_MONOTONIC delta) with oneshot firing exactly once and
  *       always-on firing on every matching call; each fail site
@@ -56,7 +59,22 @@
  *       with the per-state termination and exit 2); FI_SUP_DEATH (the
  *       supervisor exits
  *       the scripted code with no cleanup and the stub dies via the
- *       PDEATHSIG cascade); the parent-mismatch _exit(2) and the
+ *       PDEATHSIG cascade); the wedge-composition sites
+ *       (FI_SUPV_SUPPRESS_DEADLINE: the complete T1-T5 deadline set —
+ *       T5 finalization included — suppressed with no further
+ *       self-terminating deadline armed and the stub's own T1s
+ *       suppressed, the supervisor provably alive in its ppoll loop
+ *       past T1 with no terminal record, killed by the harness's
+ *       TERM with the stub dying via the PDEATHSIG cascade;
+ *       FI_SUPV_IGNORE_CANCEL: a valid CANCEL consumed without
+ *       applying it, the T2 execution cutoff applying the deferred
+ *       cancel-path self-termination -> CLEAN cancelled at the
+ *       supervisor's own T2 with the target exiting on its own —
+ *       differentially against the immediate application control;
+ *       both sites together: the CANCEL-ignored wedge — the record
+ *       stays wedged past T2 with the target alive until the
+ *       harness's TERM, the armed PDEATHSIG cascade killing the
+ *       target); the parent-mismatch _exit(2) and the
  *       PDEATHSIG-cascade deaths (stub-post-fork / stub-pre-ppid-recheck
  *       delays + a harness-side kill); status-pipe congestion
  *       (STATUS_LOSS drops STUB_IDENTITY -> no STUB_READY + a pre-ACK
@@ -762,6 +780,13 @@ static const char *g_exit5_slow_target[3] = { "/bin/sh", "-c",
 static const char *g_ignore_term_target[3] = { "/bin/sh", "-c",
                                                "trap '' TERM; while :; do :; done" };
 
+/* Exits 0 on TERM: the deferred cancel-path TERM at the supervisor's
+ * own T2 makes the target exit on its own (CLD_EXITED 0) — the
+ * deterministic CLEAN cancelled driver for the FI_SUPV_IGNORE_CANCEL
+ * conforming intermediate path (D6). */
+static const char *g_trap_term_target[3] = { "/bin/sh", "-c",
+                                             "trap 'exit 0' TERM; while :; do :; done" };
+
 static void marker_setup(void)
 {
     snprintf(g_marker_path, sizeof g_marker_path,
@@ -816,10 +841,11 @@ static void t1_catalog_shape(void)
         "stub-pre-release-poll", "stub-post-release", "stub-pre-chdir",
         "stub-pre-execvp"
     };
-    static const int fail_sites[10] = {
+    static const int fail_sites[12] = {
         FI_SUP_SUBREAPER, FI_SUP_TIMERFD, FI_SUP_SIGNALFD, FI_SUP_FORK,
         FI_SUP_PIPE, FI_STUB_SETSID, FI_STUB_IDENTITY_SELFCHECK,
-        FI_STUB_CHDIR, FI_STUB_EXEC, FI_SUP_DEATH
+        FI_STUB_CHDIR, FI_STUB_EXEC, FI_SUP_DEATH,
+        FI_SUPV_SUPPRESS_DEADLINE, FI_SUPV_IGNORE_CANCEL
     };
     static const int targets[4] = {
         FI_CONGEST_STATUS_PIPE, FI_CONGEST_CTRL, FI_CONGEST_STREAM,
@@ -834,12 +860,12 @@ static void t1_catalog_shape(void)
 
     g_ctx = "T1 catalog shape";
     CHECK(c->ndelay_sites == 11);
-    CHECK(c->nfail_sites == 10);
+    CHECK(c->nfail_sites == 12);
     CHECK(c->ntargets == 4);
     CHECK(c->nmodes == 9);
     for (i = 0; i < 11; i++)
         CHECK(str_tag_in(c->delay_sites, c->ndelay_sites, delay_sites[i]));
-    for (i = 0; i < 10; i++)
+    for (i = 0; i < 12; i++)
         CHECK(int_tag_in(c->fail_sites, c->nfail_sites, fail_sites[i]));
     for (i = 0; i < 4; i++)
         CHECK(int_tag_in(c->targets, c->ntargets, targets[i]));
@@ -2163,6 +2189,201 @@ static void t4_stream_no_eof(void)
     }
 }
 
+/* FI_SUPV_SUPPRESS_DEADLINE (the pinned wedge-composition site,
+ * dealpg4-outer-supervisor-engine D6): the complete T1-T5 deadline set
+ * suppressed (T5 finalization included), no further self-terminating
+ * deadline armed, and the stub's own step-6 T1s startup deadline
+ * suppressed — the supervisor publishes no nested-origin terminal
+ * record at any recipe deadline and provably remains alive in its
+ * ppoll loop past T1 (the single deterministic termination point is
+ * the outer's TERM-by-pid at the per-record deadline; the harness's
+ * TERM stands in for it). The stub stays in its release poll past its
+ * T1s (a conforming stub would have exited 4 there and the supervisor
+ * would have published FAILED STARTUP_TIMEOUT) and dies only by the
+ * PDEATHSIG cascade when the supervisor dies. */
+static void t4_suppress_deadline(void)
+{
+    chan_scene s;
+    dealpg4_parsed p;
+    const char *line;
+    size_t len;
+    int status = -1;
+    int code = -1;
+    int st = -1;
+
+    g_ctx = "T4 FI_SUPV_SUPPRESS_DEADLINE wedge suppression";
+    script_reset();
+    script_fail(FI_SUPV_SUPPRESS_DEADLINE, EPERM, 0);
+    if (chan_start(&s, CHILD_CORE, "/tmp", g_nonce, 1, 45000,
+                   g_noexec_target, 3)
+        != 0)
+        return;
+    /* The stub boots normally and publishes its verified identity
+     * before any deadline. */
+    CHECK(rr_expect(&s.reader, DEALPG4_REC_STUB_FORKED, &p, 5000) == 0);
+    CHECK(rr_expect(&s.reader, DEALPG4_REC_STUB_READY, &p, 5000) == 0);
+    /* Past T1 = t0 + 5000 (and past the stub's own T1s ~ T1 + the
+     * fork/exec/entry latency): a conforming supervisor would have
+     * published REPORT + FAILED STARTUP_TIMEOUT by now (the stub
+     * exit 4 at its T1s); the suppressed supervisor publishes
+     * nothing. */
+    msleep(6000);
+    CHECK(rr_line(&s.reader, 300, &line, &len) != 1);
+    /* The supervisor is provably alive in its ppoll loop past T1 (no
+     * deadline-driven termination ever dispatched). */
+    CHECK(kill(s.pid, 0) == 0);
+    /* The harness's TERM stands in for the outer's wedge TERM-by-pid:
+     * the supervisor dies by the signal (default disposition, no
+     * handler), and the stub — still blocked in its suppressed step-6
+     * release poll — dies via the armed PDEATHSIG cascade. */
+    CHECK(kill(s.pid, SIGTERM) == 0);
+    CHECK(wait_child(s.pid, &status, 8000) == 0);
+    CHECK(WIFSIGNALED(status) && WTERMSIG(status) == SIGTERM);
+    close(s.sock);
+    CHECK(reap_extra(&code, &st, 8000) == 1);
+    CHECK(code == CLD_KILLED && st == 9);
+    assert_no_survivors(3000);
+    CHECK(!marker_exists());
+}
+
+/* The CANCEL-ignored wedge composition (d): FI_SUPV_IGNORE_CANCEL +
+ * FI_SUPV_SUPPRESS_DEADLINE together — the valid CANCEL is consumed
+ * without applying it AND the deferred T2 cancel-path
+ * self-termination is suppressed with the complete T1-T5 set, so the
+ * record stays wedged (RUN phase, target alive, no terminal record)
+ * past the supervisor's own T2 execution cutoff until the outer's
+ * TERM-by-pid at the per-record deadline (the harness's TERM stands
+ * in for it); the armed PDEATHSIG cascade then kills the target. */
+static void t4_ignore_cancel_wedged(void)
+{
+    chan_scene s;
+    dealpg4_parsed p;
+    const char *line;
+    size_t len;
+    int status = -1;
+    int code = -1;
+    int st = -1;
+
+    g_ctx = "T4 FI_SUPV_IGNORE_CANCEL + FI_SUPV_SUPPRESS_DEADLINE wedge";
+    script_reset();
+    script_fail(FI_SUPV_IGNORE_CANCEL, EPERM, 0);
+    script_fail(FI_SUPV_SUPPRESS_DEADLINE, EPERM, 0);
+    if (chan_start(&s, CHILD_CORE, "/tmp", g_nonce, 1, 15000,
+                   g_trap_term_target, 3)
+        != 0)
+        return;
+    CHECK(rr_expect(&s.reader, DEALPG4_REC_STUB_FORKED, &p, 5000) == 0);
+    CHECK(rr_expect(&s.reader, DEALPG4_REC_STUB_READY, &p, 5000) == 0);
+    CHECK(send_ack(s.sock, g_nonce) == 0);
+    CHECK(rr_expect(&s.reader, DEALPG4_REC_STARTED, &p, 8000) == 0);
+    CHECK(send_cancel(s.sock, g_nonce) == 0);
+    /* The CANCEL was consumed without applying it and the complete
+     * T1-T5 set is suppressed: past the supervisor's own T2 execution
+     * cutoff (t0 + 5000) there is no terminal record and the
+     * supervisor stays alive in its ppoll loop with the target
+     * running — the record stays CANCELLING until the outer's
+     * per-record deadline (the wedge outcome). */
+    msleep(6000);
+    CHECK(rr_line(&s.reader, 300, &line, &len) != 1);
+    CHECK(kill(s.pid, 0) == 0);
+    CHECK(kill(s.pid, SIGTERM) == 0);
+    CHECK(wait_child(s.pid, &status, 8000) == 0);
+    CHECK(WIFSIGNALED(status) && WTERMSIG(status) == SIGTERM);
+    close(s.sock);
+    /* The released target dies by its armed PDEATHSIG cascade. */
+    CHECK(reap_extra(&code, &st, 8000) == 1);
+    CHECK(code == CLD_KILLED && st == 9);
+    assert_no_survivors(3000);
+    CHECK(!marker_exists());
+}
+
+/* FI_SUPV_IGNORE_CANCEL (the pinned wedge-composition site, D6): a
+ * valid CANCEL is consumed without applying it — no cancel path, no
+ * state change at receipt (no immediate TERM, no terminal record) —
+ * and the supervisor's own T2 execution cutoff then applies the
+ * cancel-path self-termination (the deferred cancel application); a
+ * target that exits on its own yields CLEAN <id> cancelled at T2, the
+ * conforming intermediate path. Differential control: without the
+ * seam the same CANCEL applies immediately and the same CLEAN
+ * cancelled lands within the immediate window (well before T2). */
+static void t4_ignore_cancel(void)
+{
+    chan_scene s;
+    dealpg4_parsed p;
+    uint64_t t_cancel;
+    int64_t v = 0;
+
+    /* The conforming intermediate path with the seam armed. */
+    g_ctx = "T4 FI_SUPV_IGNORE_CANCEL deferred T2 cancel";
+    script_reset();
+    script_fail(FI_SUPV_IGNORE_CANCEL, EPERM, 0);
+    if (chan_start(&s, CHILD_CORE, "/tmp", g_nonce, 1, 15000,
+                   g_trap_term_target, 3)
+        == 0) {
+        CHECK(rr_expect(&s.reader, DEALPG4_REC_STUB_FORKED, &p, 5000)
+              == 0);
+        CHECK(rr_expect(&s.reader, DEALPG4_REC_STUB_READY, &p, 5000)
+              == 0);
+        CHECK(send_ack(s.sock, g_nonce) == 0);
+        CHECK(rr_expect(&s.reader, DEALPG4_REC_STARTED, &p, 8000) == 0);
+        t_cancel = now_ms();
+        CHECK(send_cancel(s.sock, g_nonce) == 0);
+        /* Consumed without applying: nothing until the T2 cutoff
+         * (t0 + 5000). A conforming cancel application would have
+         * TERMed the target immediately and the CLEAN cancelled
+         * would land within ~1 s. */
+        {
+            const char *line;
+            size_t len;
+
+            CHECK(rr_line(&s.reader, 1200, &line, &len) != 1);
+        }
+        /* The deferred cancel-path self-termination at T2: the target
+         * exits on its own -> the stream EOF OUT_ENDs, then REPORT
+         * with elapsedMs >= 4500 (T2 = t0 + 5000, margin for the
+         * anchor read) + CLEAN cancelled. */
+        expect_both_out_ends(&s.reader);
+        CHECK(rr_expect(&s.reader, DEALPG4_REC_REPORT, &p, 8000) == 0);
+        CHECK(pfi(&p, 2, &v) && v >= 4500);
+        CHECK(rr_expect(&s.reader, DEALPG4_REC_CLEAN, &p, 5000) == 0);
+        CHECK(ptok(&p, 1, "cancelled"));
+        CHECK(now_ms() - t_cancel >= 4000);
+        chan_finish(&s, 1, 9000);
+    }
+    CHECK(!marker_exists());
+
+    /* The control: no script — the same CANCEL applies at receipt
+     * and the same CLEAN cancelled lands within the immediate
+     * window (the differential: no ~5 s deferral). */
+    g_ctx = "T4 CANCEL immediate application control";
+    script_reset();
+    if (chan_start(&s, CHILD_CORE, "/tmp", g_nonce, 1, 15000,
+                   g_trap_term_target, 3)
+        == 0) {
+        CHECK(rr_expect(&s.reader, DEALPG4_REC_STUB_FORKED, &p, 5000)
+              == 0);
+        CHECK(rr_expect(&s.reader, DEALPG4_REC_STUB_READY, &p, 5000)
+              == 0);
+        CHECK(send_ack(s.sock, g_nonce) == 0);
+        CHECK(rr_expect(&s.reader, DEALPG4_REC_STARTED, &p, 8000) == 0);
+        /* Settle: STARTED publishes at the exec (the status-pipe EOF
+         * race) — the TERM-trapping sh must have installed its trap
+         * before the cancel TERM lands, else the default disposition
+         * would kill it (a flaky CALLER_LOST instead of the clean
+         * exit). */
+        msleep(300);
+        t_cancel = now_ms();
+        CHECK(send_cancel(s.sock, g_nonce) == 0);
+        expect_both_out_ends(&s.reader);
+        CHECK(rr_expect(&s.reader, DEALPG4_REC_REPORT, &p, 8000) == 0);
+        CHECK(rr_expect(&s.reader, DEALPG4_REC_CLEAN, &p, 5000) == 0);
+        CHECK(ptok(&p, 1, "cancelled"));
+        CHECK(now_ms() - t_cancel <= 3000);
+        chan_finish(&s, 1, 9000);
+    }
+    CHECK(!marker_exists());
+}
+
 /* Production-inertness regression (no script installed). */
 static void t4_production_regression(void)
 {
@@ -2429,6 +2650,9 @@ int main(void)
     t4_status_congestion();
     t4_ctrl_congestion();
     t4_stream_no_eof();
+    t4_suppress_deadline();
+    t4_ignore_cancel();
+    t4_ignore_cancel_wedged();
     t4_production_regression();
 
     assert_no_survivors(3000);

@@ -588,14 +588,13 @@ int dealpg4_outer_core(const OuterLimits *limits,
  * scripted nonzero return forces the named failure path with the
  * scripted value as errno; 0 runs the real syscall. The entry sites
  * (FI_OUTER_SUBREAPER / FI_OUTER_TIMERFD / FI_OUTER_SIGNALFD /
- * FI_OUTER_ENTRY_NONCE) land with the entry child; FI_OUTER_PIPE and
- * FI_COORD_READY_MISMATCH land with this child (the coordinator pipe
- * owner). The pinned D6 catalog binds FI_OUTER_NONCE to the
- * registration-time nonce site (the nested-fork machinery, D3). The
- * remaining D6 fail sites (FI_OUTER_BIND,
- * FI_OUTER_SOCKETPAIR, FI_OUTER_FORK, FI_OUTER_DEATH) and the
- * congestion catalog land with the children that own the broker
- * socket and the nested fork machinery. */
+ * FI_OUTER_ENTRY_NONCE) landed with the entry child; FI_OUTER_PIPE
+ * and FI_COORD_READY_MISMATCH with the coordinator-pipe child; the
+ * pinned D6 catalog binds FI_OUTER_NONCE to the registration-time
+ * nonce site (the nested-fork machinery, D3); FI_OUTER_BIND /
+ * FI_OUTER_SOCKETPAIR / FI_OUTER_FORK with the broker/nested-fork
+ * children; FI_OUTER_DEATH with this child (the seam-catalog child,
+ * which owns the remaining D6 sites and the delay-site completion). */
 enum dealpg4_outer_fi_fail_site {
     FI_OUTER_SUBREAPER = 1, /* entry prctl set/read-back fails ->
                              * CAPABILITY_MISSING, exit 4 */
@@ -642,13 +641,44 @@ enum dealpg4_outer_fi_fail_site {
                                     * path (the record was already
                                     * inserted — register-before-fork;
                                     * D3) */
-    FI_OUTER_ENTRY_NONCE = 10    /* entry getrandom(2) outerNonce
+    FI_OUTER_ENTRY_NONCE = 10,   /* entry getrandom(2) outerNonce
                                     * fails -> NONCE_FAILED on stderr,
                                     * exit 1, no fork, no socket, no
                                     * records (D1). Distinct from
                                     * FI_OUTER_NONCE: the pinned D6
                                     * catalog binds FI_OUTER_NONCE to
                                     * the registration-time site */
+    FI_OUTER_DEATH = 11        /* scripted nonzero -> the outer
+                                * scenario process terminates
+                                * immediately with the scripted value
+                                * as the exit code and no cleanup (a
+                                * kill-equivalent death — no report,
+                                * no fallback, no broker close); the
+                                * observable outcomes are the kernel
+                                * PDEATHSIG cascades, which kill the
+                                * coordinator, the nested supervisors,
+                                * and the released targets (their
+                                * prctl(PR_SET_PDEATHSIG, SIGKILL)
+                                * chains were all armed before the
+                                * site can fire). The check sits at
+                                * the end of each event-loop batch,
+                                * gated on the first record having
+                                * entered RELEASED: by that moment
+                                * the coordinator, at least one nested
+                                * supervisor, and at least one
+                                * released target exist with their
+                                * PDEATHSIG chains armed, so the
+                                * pinned full-cascade scenario is
+                                * deterministic (the structural gate
+                                * mirrors the supervisor's
+                                * FI_SUP_DEATH identity_seen gate).
+                                * Composition consequence: a scenario
+                                * injecting this site must run the
+                                * outer core in a forked scenario
+                                * process (ISSUE-0184 battery
+                                * composition) — the surviving
+                                * ancestor observes the reparented
+                                * children's reaping. */
 };
 
 /* Named congest target/mode tags (int tags through
@@ -685,10 +715,57 @@ enum dealpg4_outer_fi_fail_site {
  * delay_ms; an injected delay sleeps exactly the scripted ms before
  * the named step and consumes the component's own deadline — an
  * injection never extends a deadline, fi.h). Production: the
- * requested 0 ms at every site. */
+ * requested 0 ms at every site. The coordinator-side sites
+ * (outer-pre-coord-fork / coord-post-fork / coord-pre-ready-write)
+ * landed with the coordinator-pipe child; the invoke/ACK/CANCEL
+ * sites (outer-pre-invoke-fork / outer-pre-ack-write /
+ * outer-pre-cancel-write) land with this child. */
 #define DEALPG4_FI_DELAY_OUTER_PRE_COORD_FORK    "outer-pre-coord-fork"
 #define DEALPG4_FI_DELAY_COORD_POST_FORK         "coord-post-fork"
 #define DEALPG4_FI_DELAY_COORD_PRE_READY_WRITE   "coord-pre-ready-write"
+#define DEALPG4_FI_DELAY_OUTER_PRE_INVOKE_FORK   "outer-pre-invoke-fork"
+#define DEALPG4_FI_DELAY_OUTER_PRE_ACK_WRITE     "outer-pre-ack-write"
+#define DEALPG4_FI_DELAY_OUTER_PRE_CANCEL_WRITE  "outer-pre-cancel-write"
+
+/* === outer-registry-broker battery contract (engine D7) =================
+ * The named contract surface for the ISSUE-0184 battery (the battery
+ * itself, the bit-32 capability advertisement, CAPS 63, and the
+ * verify-launcher probe-leg updates land with ISSUE-0184 — this child
+ * records the contract exactly so the battery implements it):
+ *
+ * The battery runs in a fresh forked child (the prober is the
+ * subreaper and reaps everything) and proves the kernel mechanisms the
+ * broker depends on, in order:
+ *   1. create a 0700 scratch directory (mkdtemp under TMPDIR, removed
+ *      afterward);
+ *   2. socket(AF_UNIX, SOCK_STREAM);
+ *   3. bind at a scratch path with stale-same-name unlink first and
+ *      chmod(path, 0600) after bind;
+ *   4. listen;
+ *   5. a forked child connects to the path and performs one bounded
+ *      line round-trip;
+ *   6. accept returns exactly the one connection;
+ *   7. SO_PEERCRED on the accepted socket reports pid == the
+ *      connecting child's pid and uid == getuid();
+ *   8. close and unlink the path; the child is reaped.
+ *
+ * Success: every step holds, the socket path is unlinked, no
+ * survivors. Any deviation -> CAPABILITY_MISSING outer-registry-broker,
+ * nonzero exit.
+ *
+ * Staging pin (D7): ISSUE-0184 lands this battery appended after
+ * bounded-drain in the canonical battery order, together with
+ * DEALPG4_CAP_OUTER_REGISTRY_BROKER = 32 joining DEALPG4_PROBE_CAPS
+ * (selftest.h), the identity line reporting CAPS 63, the probe report
+ * gaining the sixth "OK outer-registry-broker" line (8 lines total),
+ * tools/verify-launcher.sh updating EXPECTED_CAPS=63, the 7-line
+ * report count, the expected OK-line list, and the SELFTEST_LEG_ACTIVE
+ * flip, and the digest re-pin — one atomic change. This child keeps
+ * DEALPG4_PROBE_CAPS = 31 and EXPECTED_CAPS = 31 (no sixth battery, no
+ * probe-report change, no SELFTEST_LEG_ACTIVE flip, no CAPS-driven
+ * digest re-pin at this merge) and re-pins LauncherManifest.sha256
+ * only for the outer implementation change. */
+#define DEALPG4_BATTERY_OUTER_REGISTRY_BROKER "outer-registry-broker"
 
 /* === Exit-status mapping (engine D1) =================================== */
 
