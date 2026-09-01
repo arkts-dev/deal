@@ -75,6 +75,24 @@
  * the buffer overruns. */
 #define DEALPG4_SUPERVISOR_CTRL_BUF_BYTES (DEALPG4_MAX_LINE_INVOKE_BYTES + 1)
 
+/* The bounded post-T5 proof window (ISSUE-0436 remediation, MR-0322
+ * review finding): once the overall deadline classified the invocation
+ * OVERALL_TIMEOUT and the catch-up TERM/KILL/reap escalation ran, the
+ * proof loop is allowed this window to complete the zero-survivor
+ * cleanup before the terminal classification. A tree that cannot be
+ * cleaned — a drain that never reaches EOF, a D-state survivor, or a
+ * drain read failure — can never complete the proof, so the window is
+ * the terminal bound: on expiry the supervisor performs the terminal
+ * classification (OVERALL_TIMEOUT, the owning T5 token, with the
+ * pinned REPORT.drainEof = 0 consequence applied at finalize) and
+ * finalizes/exits regardless of proof completion — exactly one REPORT
+ * and exactly one terminal FAILED record publish, and the record
+ * terminates by its own deadline. The window is 200 proof-throttle
+ * cadences (5 ms) and 100 confirming-pass windows (10 ms); a killable
+ * tree completes the proof in a few cadences, so the window never
+ * misfires on the killable catch-up path. */
+#define DEALPG4_SUP_T5_PROOF_BOUND_MS 1000
+
 /* === Fault-injection seam catalog (dealpg4-supervisor-engine D6) =======
  * The named catalog the selftest battery (ISSUE-0184) passes to
  * dealpg4_fi_install_overrides: the eleven delay site tags (one
@@ -992,6 +1010,12 @@ typedef struct dealpg4_supervisor_state {
     int proof_done;
     int64_t proof_first_pass_ms;
     int64_t proof_next_pass_ms; /* bounded proof-pass throttle */
+    int64_t t5_proof_bound_ms;  /* absolute CLOCK_MONOTONIC bound of the
+                                   post-T5 cleanup window (0 = unset):
+                                   armed when the T5 branch classifies
+                                   OVERALL_TIMEOUT; on expiry the
+                                   terminal classification runs even
+                                   though the proof cannot complete */
     int group_clean;
     int session_clean;
     int drain_ok;
@@ -1056,6 +1080,8 @@ static void dealpg4_supervisor_finalize(dealpg4_supervisor_state *state);
 static int dealpg4_supervisor_proof_pending(
     const dealpg4_supervisor_state *state);
 static void dealpg4_supervisor_proof_deadline(
+    dealpg4_supervisor_state *state);
+static void dealpg4_supervisor_t5_proof_expiry(
     dealpg4_supervisor_state *state);
 
 /* === Record publication ================================================= */
@@ -1998,7 +2024,14 @@ static void dealpg4_supervisor_timer_failed(dealpg4_supervisor_state *state)
  * killMs record the catch-up escalation above) and the loop stays
  * alive until the killed tree is reaped and the proof completes
  * (finalize runs from the proof completion), so the supervisor exits
- * only with the zero-survivor post-state. */
+ * only with the zero-survivor post-state. The post-T5 cleanup is
+ * bounded: the first T5 sighting arms the proof window
+ * (DEALPG4_SUP_T5_PROOF_BOUND_MS) and on expiry the terminal
+ * classification runs regardless of proof completion — a tree that
+ * cannot be cleaned (a never-EOF drain, a D-state survivor, a drain
+ * read failure) can never complete the proof, and the bound keeps the
+ * record terminating by its own deadline instead of hanging the
+ * supervisor on the proof cadence forever. */
 static void dealpg4_supervisor_advance_deadlines(
     dealpg4_supervisor_state *state)
 {
@@ -2075,10 +2108,25 @@ static void dealpg4_supervisor_advance_deadlines(
          * invocation with the REPORT/FAILED records) before the
          * supervisor exits. proof_failed_class is set at finalize for
          * this token (the pinned drainEof = 0 consequence) — not
-         * here, so the proof loop still runs. */
+         * here, so the proof loop still runs. The cleanup itself is
+         * bounded: the first T5 sighting arms the post-T5 proof
+         * window (DEALPG4_SUP_T5_PROOF_BOUND_MS), and on expiry the
+         * terminal classification runs regardless of proof completion
+         * — a tree that cannot be cleaned (a drain that never reaches
+         * EOF, a D-state survivor, or a drain read failure) can never
+         * complete the proof, and without the bound the supervisor
+         * would hang on the proof cadence forever with no REPORT, no
+         * terminal record, and no exit. */
         state->classification = DEALPG4_SUP_CLASS_OVERALL_TIMEOUT;
         if (state->proof_ms == 0)
             state->proof_ms = now - state->t0;
+        if (state->t5_proof_bound_ms == 0)
+            state->t5_proof_bound_ms =
+                now + DEALPG4_SUP_T5_PROOF_BOUND_MS;
+        if (now >= state->t5_proof_bound_ms) {
+            dealpg4_supervisor_t5_proof_expiry(state);
+            return;
+        }
     }
 }
 
@@ -2331,6 +2379,55 @@ static void dealpg4_supervisor_proof_deadline(
     state->proof_failed_class = 1;
     if (state->proof_ms == 0)
         state->proof_ms = now - state->t0;
+
+    state->survivor_count =
+        surv.count < DEALPG4_SUP_SURVIVOR_VIEW_MAX
+            ? surv.count
+            : DEALPG4_SUP_SURVIVOR_VIEW_MAX;
+    memcpy(state->survivor_pids, surv.pids,
+           state->survivor_count * sizeof(surv.pids[0]));
+
+    dealpg4_supervisor_finalize(state);
+}
+
+/* The post-T5 proof window expired: the proof could not complete —
+ * a drain that never reaches EOF, a D-state survivor, or a drain
+ * read failure. One final reap + /proc scan signals every survivor
+ * one last time and records the final group/session/drain items for
+ * the REPORT, then the terminal classification runs regardless of
+ * proof completion: OVERALL_TIMEOUT — the owning T5 token (parent D4
+ * phase overruns, and the classification the T5 branch already
+ * applied) — with the pinned REPORT.drainEof = 0 consequence applied
+ * at finalize. Exactly one REPORT and exactly one terminal FAILED
+ * record publish, and the supervisor exits: the record terminates by
+ * its own deadline, never an unbounded post-T5 proof loop. The
+ * final-scan survivor state is recorded (groupProof/sessionProof and
+ * the bounded in-process survivor view) exactly like the T4 proof
+ * deadline so the REPORT stays the bounded evidence surface. */
+static void dealpg4_supervisor_t5_proof_expiry(
+    dealpg4_supervisor_state *state)
+{
+    dealpg4_sup_survivors surv;
+
+    dealpg4_supervisor_reap_all(state);
+    dealpg4_supervisor_scan_proc(state, &surv);
+    if (surv.group_found || surv.session_found || surv.adopted_found)
+        dealpg4_supervisor_signal_survivors(state, &surv);
+    state->group_clean = surv.ok && !surv.group_found;
+    state->session_clean = surv.ok && !surv.session_found;
+    state->drain_ok =
+        (state->drains_active
+             ? (state->drain_out->eof && !state->drain_out->failed
+                && state->drain_err->eof && !state->drain_err->failed)
+             : 1);
+
+    /* The reap above runs the D3 exec-confirmation evaluation, which
+     * may (re-)classify from the reaped stub status; past the overall
+     * deadline the owning token is OVERALL_TIMEOUT, so the terminal
+     * classification restores it exactly as the T5 branch pinned it. */
+    state->classification = DEALPG4_SUP_CLASS_OVERALL_TIMEOUT;
+    if (state->proof_ms == 0)
+        state->proof_ms = (int64_t)dealpg4_now_ms() - state->t0;
 
     state->survivor_count =
         surv.count < DEALPG4_SUP_SURVIVOR_VIEW_MAX
@@ -3167,6 +3264,22 @@ static int64_t dealpg4_supervisor_loop_timeout_ms(
             remaining = 0;
         } else if (linger - now < remaining) {
             remaining = linger - now;
+        }
+    }
+    if (state->t5_proof_bound_ms != 0) {
+        /* The armed post-T5 cleanup window is a hard wakeup even when
+         * the proof is not pending (the stub not yet reaped past T5
+         * would otherwise idle on a 0-ms recipe-state timeout and
+         * busy-spin the loop until SIGCHLD): the loop sleeps until
+         * the bound, SIGCHLD, or a channel event — whichever is
+         * earliest — and the T5 branch applies the terminal
+         * classification exactly at the bound. */
+        int64_t bound = state->t5_proof_bound_ms;
+
+        if (bound <= now) {
+            remaining = 0;
+        } else if (remaining == 0 || bound - now < remaining) {
+            remaining = bound - now;
         }
     }
     if (dealpg4_supervisor_proof_pending(state)) {
