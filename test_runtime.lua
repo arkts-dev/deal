@@ -3350,6 +3350,7 @@ end
 
 local FFI_BATT_PTR_IDENTITY = "@deal.test.ffi.fixture/Pointer"
 local FFI_BATT_PAIR_IDENTITY = "@deal.test.ffi.fixture/Pair"
+local FFI_BATT_PTRBOX_IDENTITY = "@deal.test.ffi.fixture/PtrBox"
 
 local function ffi_batt_t(kind, desc, cls)
   return { kind = kind, canonicalDescriptor = desc, canonicalClassIdentity = cls }
@@ -3373,6 +3374,10 @@ local FFI_BATT_TYPEDEFS = {
   null_pointer = { "typedef void *(*deal_ffi_0435_fn_0011)(void);", "deal_ffi_0435_fn_0011" },
   static_pointer = { "typedef void *(*deal_ffi_0435_fn_0012)(void);", "deal_ffi_0435_fn_0012" },
   pair = { "typedef struct { int32_t deal_f0; double deal_f1; } deal_ffi_0435_pair_t;", "deal_ffi_0435_pair_t" },
+  ptr_box = { "typedef struct { void *deal_f0; } deal_ffi_0435_ptr_box_t;", "deal_ffi_0435_ptr_box_t" },
+  make_pair = { "typedef deal_ffi_0435_pair_t (*deal_ffi_0435_fn_0014)(int32_t, double);", "deal_ffi_0435_fn_0014" },
+  make_ptr_box = { "typedef deal_ffi_0435_ptr_box_t (*deal_ffi_0435_fn_0015)(void *);", "deal_ffi_0435_fn_0015" },
+  make_null_ptr_box = { "typedef deal_ffi_0435_ptr_box_t (*deal_ffi_0435_fn_0016)(void);", "deal_ffi_0435_fn_0016" },
   symbol_missing = { "typedef int32_t (*deal_ffi_0435_fn_0013)(void);", "deal_ffi_0435_fn_0013" },
 }
 
@@ -3418,6 +3423,22 @@ local FFI_BATT_FN_META = {
   static_pointer = { cSymbol = "fixture_static_pointer", fpt = "deal_ffi_0435_fn_0012",
                      params = {},
                      ret = ffi_batt_t("C_POINTER", FFI_BATT_PTR_IDENTITY, FFI_BATT_PTR_IDENTITY) },
+  -- C_STRUCT functions: the privateFunctionPointerType carries the full
+  -- anonymous function-pointer spelling RET (*)(P1, ...) — the wrapper
+  -- builder both casts to it and splits it for the C_STRUCT ctype
+  -- extraction (the splitter rejects a bare typedef name).
+  make_pair = { cSymbol = "fixture_make_pair",
+                fpt = "deal_ffi_0435_pair_t (*)(int32_t, double)",
+                params = { ffi_batt_t("INT", "int"), ffi_batt_t("NUMBER", "number") },
+                ret = ffi_batt_t("C_STRUCT", FFI_BATT_PAIR_IDENTITY, FFI_BATT_PAIR_IDENTITY) },
+  make_ptr_box = { cSymbol = "fixture_make_ptr_box",
+                   fpt = "deal_ffi_0435_ptr_box_t (*)(void *)",
+                   params = { ffi_batt_t("C_POINTER", FFI_BATT_PTR_IDENTITY, FFI_BATT_PTR_IDENTITY) },
+                   ret = ffi_batt_t("C_STRUCT", FFI_BATT_PTRBOX_IDENTITY, FFI_BATT_PTRBOX_IDENTITY) },
+  make_null_ptr_box = { cSymbol = "fixture_make_null_ptr_box",
+                        fpt = "deal_ffi_0435_ptr_box_t (*)(void)",
+                        params = {},
+                        ret = ffi_batt_t("C_STRUCT", FFI_BATT_PTRBOX_IDENTITY, FFI_BATT_PTRBOX_IDENTITY) },
   symbol_missing = { cSymbol = "fixture_symbol_missing", fpt = "deal_ffi_0435_fn_0013",
                      params = {}, ret = ffi_batt_t("INT", "int") },
 }
@@ -3441,6 +3462,7 @@ local FFI_BATT_FULL_NAMES = {
   "count_call", "call_count", "reset_counter", "add_int", "add_number",
   "not", "echo_string", "bytes_sum", "null_string", "bad_utf8",
   "null_pointer", "static_pointer",
+  "make_pair", "make_ptr_box", "make_null_ptr_box",
 }
 
 local FFI_BATT_SYMBOL_NAMES = { "add_int", "echo_string", "symbol_missing" }
@@ -3453,6 +3475,12 @@ local function ffi_batt_classes_full()
       orderedFields = {
         { dealName = "x", fieldOrdinal = 0, type = ffi_batt_t("INT", "int") },
         { dealName = "y", fieldOrdinal = 1, type = ffi_batt_t("NUMBER", "number") },
+      } },
+    { name = "PtrBox", canonicalClassIdentity = FFI_BATT_PTRBOX_IDENTITY,
+      qualifiedDealDescriptor = FFI_BATT_PTRBOX_IDENTITY, kind = "C_STRUCT",
+      orderedFields = {
+        { dealName = "ptr", fieldOrdinal = 0,
+          type = ffi_batt_t("C_POINTER", FFI_BATT_PTR_IDENTITY, FFI_BATT_PTR_IDENTITY) },
       } },
     { name = "Pointer", canonicalClassIdentity = FFI_BATT_PTR_IDENTITY,
       qualifiedDealDescriptor = FFI_BATT_PTR_IDENTITY, kind = "C_POINTER",
@@ -3480,6 +3508,17 @@ local function ffi_batt_build_plan_list()
   }
 end
 
+-- The PtrBox plan list: the single required field carries no evaluator
+-- (ptr is always provided by the inbound conversion), so no new
+-- default-evaluation path exists and the B6/B7 zero-count assertions
+-- stay exact.
+local function ffi_batt_build_ptrbox_plan_list()
+  return {
+    { name = "ptr", descriptor = FFI_BATT_PTR_IDENTITY,
+      optional = false, evaluator = nil },
+  }
+end
+
 local function ffi_batt_build_plans(plan_list)
   return {
     [FFI_BATT_PAIR_IDENTITY] = {
@@ -3488,6 +3527,13 @@ local function ffi_batt_build_plans(plan_list)
       semanticDefaultContents = "ffi-battery:pair:semantic-default-contents:v1",
       evaluatorImplementationContents = "ffi-battery:pair:evaluator-implementation-contents:v1",
       planDigest = "ffi-battery:pair:plan-digest:v1",
+    },
+    [FFI_BATT_PTRBOX_IDENTITY] = {
+      plan = ffi_batt_build_ptrbox_plan_list(),
+      canonicalPlanContent = "ffi-battery:ptrbox:canonical-plan-content:v1",
+      semanticDefaultContents = "ffi-battery:ptrbox:semantic-default-contents:v1",
+      evaluatorImplementationContents = "ffi-battery:ptrbox:evaluator-implementation-contents:v1",
+      planDigest = "ffi-battery:ptrbox:plan-digest:v1",
     },
   }
 end
@@ -3554,6 +3600,7 @@ local FFI_BATT_FULL_ENTRY_NAMES = {
   "count_call", "call_count", "reset_counter", "add_int", "add_number",
   "not", "echo_string", "bytes_sum", "null_string", "bad_utf8",
   "null_pointer", "static_pointer", "pair",
+  "ptr_box", "make_pair", "make_ptr_box", "make_null_ptr_box",
 }
 
 local function ffi_batt_bundle_full()
@@ -3687,7 +3734,8 @@ test("FFI positive composition: the full fixture bundle exercises every pipeline
   for _ in pairs(exports) do
     key_count = key_count + 1
   end
-  assert(key_count == 13, "the exports table must carry 12 wrappers plus Pair_plan")
+  assert(key_count == 17,
+      "the exports table must carry 15 wrappers plus Pair_plan and PtrBox_plan")
   local sigs = {
     count_call = "()->null",
     call_count = "()->int",
@@ -3701,6 +3749,9 @@ test("FFI positive composition: the full fixture bundle exercises every pipeline
     bad_utf8 = "()->string",
     null_pointer = "()->" .. FFI_BATT_PTR_IDENTITY,
     static_pointer = "()->" .. FFI_BATT_PTR_IDENTITY,
+    make_pair = "(int,number)->" .. FFI_BATT_PAIR_IDENTITY,
+    make_ptr_box = "(" .. FFI_BATT_PTR_IDENTITY .. ")->" .. FFI_BATT_PTRBOX_IDENTITY,
+    make_null_ptr_box = "()->" .. FFI_BATT_PTRBOX_IDENTITY,
   }
   for i = 1, #names do
     local name = names[i]
@@ -3714,6 +3765,8 @@ test("FFI positive composition: the full fixture bundle exercises every pipeline
   end
   assert(exports["Pair_plan"] == plan_list,
       "the exported Pair_plan entry must be the retained plan list (reference equality)")
+  assert(exports["PtrBox_plan"] == plans[FFI_BATT_PTRBOX_IDENTITY].plan,
+      "the exported PtrBox_plan entry must be the retained plan list (reference equality)")
   -- Roundtrips through the converters (int/number/boolean/string/bytes).
   assert(exports.add_int.f(2, 3, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL) == 5)
   assert(exports.add_number.f(2.5, 3.25, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL) == 5.75)
