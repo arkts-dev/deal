@@ -2554,12 +2554,21 @@ static void dealpg4_supervisor_protocol_abort(
     dealpg4_supervisor_apply_cancel(state);
 }
 
-/* A well-formed ACK in the apply phase releases exactly once; any
- * other ACK — post-release, post-T1, or against a terminal-classified
- * invocation — is state-unexpected -> PROTOCOL_ERROR (catalog ACK
- * rule). A well-formed first ACK whose invocationId or nonce
- * mismatches, or a second well-formed pre-release ACK, is the
- * record-level AUTH_FAILED path (parent D9). */
+/* A well-formed ACK while the channel is still pre-release (the
+ * release write never happened, no terminal record is queued) is
+ * always a record-level operation — the canonical ACK rule (catalog;
+ * parent D9): applied exactly once when the invocation can still apply
+ * it, and every other pre-release ACK — a wrong invocationId or nonce,
+ * a second ACK, or an ACK the frozen invocation can no longer apply
+ * (an AUTH_FAILED/cancel classification or the T1 deadline already
+ * fired) — takes the record-level AUTH_FAILED path, idempotent for a
+ * repeated rejection. A pre-release ACK never aborts the channel, so
+ * the pinned REPORT + FAILED <id> AUTH_FAILED pair is always published
+ * before the close. Only after the release write (or against a
+ * terminal invocation) is an ACK state-unexpected -> PROTOCOL_ERROR —
+ * the RELEASED/TERMINAL expectation sets no longer admit ACK, so the
+ * record dispatcher classifies those before this handler; the explicit
+ * guard keeps the split local. */
 static void dealpg4_supervisor_ack(dealpg4_supervisor_state *state,
                                    const dealpg4_parsed *p)
 {
@@ -2573,19 +2582,21 @@ static void dealpg4_supervisor_ack(dealpg4_supervisor_state *state,
     if (idf != NULL)
         (void)dealpg4_field_decimal(idf, &id);
 
+    if (state->release_write_done || state->terminal_queued) {
+        /* Post-release / terminal ACK: state-unexpected (belt-and-
+         * braces — the RELEASED/TERMINAL expectation sets already
+         * exclude ACK, so the dispatcher's expectation check
+         * classifies these before this handler). */
+        dealpg4_supervisor_protocol_abort(state);
+        return;
+    }
     in_apply = (state->phase == DEALPG4_PHASE_STARTUP
                 && !state->release_write_done
                 && state->classification == DEALPG4_SUP_CLASS_NONE
                 && !state->cancel_requested
                 && (int64_t)dealpg4_now_ms() < state->dl.t1);
-    if (!in_apply) {
-        /* Post-release ACK and any ACK the invocation can no longer
-         * apply are state-unexpected (parent D9, catalog ACK rule). */
-        dealpg4_supervisor_protocol_abort(state);
-        return;
-    }
     facts.invocation_id_known = (id == state->invocation_id);
-    facts.record_in_apply_phase = 1;
+    facts.record_in_apply_phase = in_apply;
     facts.nonce_matches = (noncef != NULL
                            && noncef->len == DEALPG4_NONCE_HEX_CHARS
                            && memcmp(noncef->p, state->nonce,
@@ -2599,9 +2610,11 @@ static void dealpg4_supervisor_ack(dealpg4_supervisor_state *state,
          * observes the still-pre-release state (D5(a)). */
         return;
     }
-    /* AUTH_FAILED: publish FAILED <id> AUTH_FAILED at the terminal
-     * classification (channel open until delivered), stub killed
-     * pre-release, reaped, proven clean, never a release byte. */
+    /* AUTH_FAILED: the record-level path (idempotent for a repeated
+     * rejection — the channel is never aborted): publish FAILED
+     * <id> AUTH_FAILED at the terminal classification (channel open
+     * until delivered), stub killed pre-release, reaped, proven clean,
+     * never a release byte. */
     dealpg4_supervisor_classify_auth_failed(state);
 }
 
