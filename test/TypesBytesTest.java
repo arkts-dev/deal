@@ -379,19 +379,21 @@ public class TypesBytesTest {
     static void testDescriptorTextPins() {
         System.out.println("-- descriptor text pins --");
 
-        // JvmBackend.typeDescriptor is the public static producer —
-        // the ONE JVM Type-to-text emitter (ISSUE-0301 descriptor seam).
-        check("bytes".equals(deal.codegen.jvm.JvmBackend.typeDescriptor(
-                Type.Bytes.INSTANCE)),
+        // JvmBackend.typeDescriptor delegates to the ONE canonical
+        // descriptor service (ISSUE-0301 descriptor seam); the
+        // standalone-adapter service drives the pins here.
+        deal.descriptors.CanonicalRuntimeTypeDescriptor jvm =
+            deal.codegen.jvm.JvmBackend.standaloneDescriptorService(
+                "main", null, Map.of(), Map.of());
+        check("bytes".equals(jvm.encode(Type.Bytes.INSTANCE)),
             "JvmBackend.typeDescriptor(bytes) == \"bytes\"");
-        check("[bytes]".equals(deal.codegen.jvm.JvmBackend.typeDescriptor(
+        check("[bytes]".equals(jvm.encode(
                 new Type.Array(Type.Bytes.INSTANCE))),
             "JvmBackend.typeDescriptor([bytes]) == \"[bytes]\"");
-        check("?bytes".equals(deal.codegen.jvm.JvmBackend.typeDescriptor(
+        check("?bytes".equals(jvm.encode(
                 new Type.Nullable(Type.Bytes.INSTANCE))),
             "JvmBackend.typeDescriptor(?bytes) == \"?bytes\"");
-        check("async(bytes)->bytes".equals(
-                deal.codegen.jvm.JvmBackend.typeDescriptor(
+        check("async(bytes)->bytes".equals(jvm.encode(
                     new Type.Func(List.of(Type.Bytes.INSTANCE),
                         Type.Bytes.INSTANCE, true))),
             "JvmBackend.typeDescriptor(async(bytes)->bytes) == \"async(bytes)->bytes\"");

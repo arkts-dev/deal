@@ -2015,23 +2015,6 @@ public final class JvmBackend {
         return backend.generateProgram(program);
     }
 
-    private static Map<String, CanonicalModuleIdentity> classificationMap(
-            String modulePath, String sourcePath) {
-        Map<String, CanonicalModuleIdentity> map = new LinkedHashMap<>();
-        map.put("", CanonicalModuleIdentity.BuiltinModule.INSTANCE);
-        // List.of (not Set.of): modulePath and sourcePath may be
-        // equal or null; iterate once per distinct non-empty path.
-        for (String path : List.of(modulePath, sourcePath)) {
-            if (path != null && !path.isEmpty()
-                    && !map.containsKey(path)) {
-                map.put(path,
-                    new CanonicalModuleIdentity.ProjectModule(
-                        new ProjectModuleIdentity(path, path, List.of())));
-            }
-        }
-        return map;
-    }
-
     /**
      * Derives the public Java class name for a module path. Every path
      * segment contributes a capitalized, sanitized segment (ISSUE-0091
