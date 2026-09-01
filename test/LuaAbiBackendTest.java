@@ -1474,5 +1474,55 @@ public class LuaAbiBackendTest {
         assertThat(out.lua(), not(containsString("Item_defaults")));
     }
 
+    /**
+     * Depth >= 3 nested compiler-class fromJson decode (the ISSUE-0340
+     * review-cycle fix): the generated nested class-field decoder walks
+     * the sub-document's own class-typed fields through
+     * {@code fdesc.fields} before {@code __rt.json_from_plan} validates
+     * them, so X$fromJson of a document whose nested class field itself
+     * contains a class field reconstructs tagged instances at every
+     * level instead of silently yielding the DEAL null. Pins the emitted
+     * walk plus the runtime round-trip under real LuaJIT.
+     */
+    @Test
+    public void jsonableFromJsonNestedDepth3WalksSubFieldsBeforePlan()
+            throws Exception {
+        String source =
+            "// @jsonable\n" +
+            "export class Z {\n" +
+            "  n: int = 0;\n" +
+            "}\n" +
+            "// @jsonable\n" +
+            "export class Y {\n" +
+            "  z: Z = {};\n" +
+            "}\n" +
+            "// @jsonable\n" +
+            "export class X {\n" +
+            "  y: Y = {};\n" +
+            "}\n" +
+            "export function test_jsonable_fromjson_nested_depth3(): null {\n" +
+            "  let x: X | null = X$fromJson(\"{\\\"y\\\":{\\\"z\\\":{\\\"n\\\":7}}}\");\n" +
+            "  if (x === null) { throw { code: \"TEST_FAIL\", message: \"depth3 fromJson null\" }; }\n" +
+            "  if (x !== null) {\n" +
+            "    if (x.y.z.n !== 7) { throw { code: \"TEST_FAIL\", message: \"depth3 value mismatch\" }; }\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}\n";
+        CompileResult out = compile(source);
+
+        // The plan branch pre-tags the sub-document's own class-typed
+        // fields before json_from_plan validates them.
+        assertThat(out.lua(), containsString(
+            "for _, sub in ipairs(fdesc.fields) do"));
+        assertThat(out.lua(), containsString(
+            "return __rt.json_from_plan(fdesc.className, fdesc.plan, raw)"));
+
+        // Runtime round-trip: the depth-3 document decodes to a tagged
+        // instance (TEST_FAIL would throw and fail the run otherwise).
+        assumeLuajit();
+        RunResult run = runLua(out.lua(), autoInvokeProbe());
+        assertEquals("depth-3 fromJson round-trip must pass under "
+            + "LuaJIT: " + run.output(), 0, run.exit());
+    }
 
 }

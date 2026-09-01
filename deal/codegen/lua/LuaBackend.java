@@ -3045,6 +3045,31 @@ public final class LuaBackend implements Visitor<Void> {
         emitLine("end");
         emitLine("if fdesc.plan ~= nil then");
         indent++;
+        // Depth >= 3 nested compiler classes (emitter page D4): the
+        // sub-document's own class-typed fields are still raw JSON
+        // tables at this point, so walk fdesc.fields first — the same
+        // pre-tag loop the top-level C$fromJson body runs — before
+        // __rt.json_from_plan validates them through the canonical
+        // matcher, whose class row requires tagged __kind == "class"
+        // instances. Any failure returns nil and the wrapper maps it
+        // to the DEAL null (the walkers never throw).
+        emitLine("if type(raw) ~= \"table\" then return nil end");
+        emitLine("if type(fdesc.fields) == \"table\" then");
+        indent++;
+        emitLine("for _, sub in ipairs(fdesc.fields) do");
+        indent++;
+        emitLine("local subraw = raw[sub.name]");
+        emitLine("if subraw ~= nil then");
+        indent++;
+        emitLine("local nv = __jsonable_from_value(sub, subraw)");
+        emitLine("if nv == nil then return nil end");
+        emitLine("raw[sub.name] = nv");
+        indent--;
+        emitLine("end");
+        indent--;
+        emitLine("end");
+        indent--;
+        emitLine("end");
         emitLine("return __rt.json_from_plan(fdesc.className, fdesc.plan, raw)");
         indent--;
         emitLine("end");

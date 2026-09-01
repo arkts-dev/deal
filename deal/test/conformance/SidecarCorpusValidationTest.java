@@ -150,8 +150,11 @@ public class SidecarCorpusValidationTest {
      * plan-load-time-zero-invocations, plan-imported-provider-scope,
      * plan-phase-order-provided-before-defaults, and
      * plan-host-discriminator — each added with its sidecar in the
-     * same change). */
-    private static final int RUNTIME_OK_COUNT = 218;
+     * same change; plus the jsonable-fromjson-nested-depth3 fixture
+     * the ISSUE-0340 review fix added with its sidecar in the same
+     * change, pinning the depth >= 3 nested compiler-class fromJson
+     * decode). */
+    private static final int RUNTIME_OK_COUNT = 219;
 
     /**
      * The exact runtime-error population (ISSUE-0350 completeness, plus
@@ -235,9 +238,12 @@ public class SidecarCorpusValidationTest {
      * plan-fresh-literals, plan-reexecuted-calls,
      * plan-load-time-zero-invocations, plan-imported-provider-scope,
      * plan-phase-order-provided-before-defaults, and
-     * plan-host-discriminator (pins move 212 -> 218). The known-fail
-     * population stays empty. The pins below carry those ISSUE-0334,
-     * ISSUE-0341, and ISSUE-0340 deltas.
+     * plan-host-discriminator (pins move 212 -> 218); the ISSUE-0340
+     * review fix then adds the jsonable-fromjson-nested-depth3
+     * runtime-ok fixture with its sidecar in the same change (pins
+     * move 218 -> 219). The known-fail population stays empty. The
+     * pins below carry those ISSUE-0334, ISSUE-0341, and ISSUE-0340
+     * deltas.
      */
 
     /** The G4.6 lane error framing prefixes. */
