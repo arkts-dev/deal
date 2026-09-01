@@ -565,7 +565,7 @@ public class DiagnosticRangeTest {
     // =========================================================================
 
     private static void testTokenOffsets() {
-        System.out.println("-- Token offsets: UNKNOWN sentinel, constructors, withDirectives --");
+        System.out.println("-- Token offsets: UNKNOWN sentinel and constructors --");
 
         check(Token.UNKNOWN_OFFSET == -1, "Token.UNKNOWN_OFFSET != -1");
 
@@ -580,19 +580,9 @@ public class DiagnosticRangeTest {
             "5-arg Token endScalarOffset() " + t5.endScalarOffset() + " != UNKNOWN_OFFSET");
         check(t5.line() == 2 && t5.column() == 3 && t5.length() == 1,
             "5-arg Token positions/length changed");
-        check(t5.directives().isEmpty(), "5-arg Token directives must default to empty");
-
-        // 6-argument convenience constructor with directives: UNKNOWN offsets.
-        Token t6 = new Token(TokenType.EXPORT, "export", 1, 1, 6, List.of("@jsonable"));
-        check(t6.startScalarOffset() == Token.UNKNOWN_OFFSET
-                && t6.scalarLength() == Token.UNKNOWN_OFFSET,
-            "6-arg Token must default both offsets to UNKNOWN_OFFSET");
-        check(!t6.hasScalarOffsets(), "6-arg Token hasScalarOffsets() must be false");
-        check(t6.directives().equals(List.of("@jsonable")),
-            "6-arg Token directives lost");
 
         // Canonical constructor with known offsets: start 7, scalar length 3.
-        Token known = new Token(TokenType.IDENTIFIER, "a\uD83D\uDE00b", 4, 5, 4, 7, 3, List.of());
+        Token known = new Token(TokenType.IDENTIFIER, "a\uD83D\uDE00b", 4, 5, 4, 7, 3);
         check(known.hasScalarOffsets(), "known-offset Token hasScalarOffsets() must be true");
         check(known.startScalarOffset() == 7 && known.scalarLength() == 3,
             "known-offset Token offsets (" + known.startScalarOffset() + ","
@@ -611,38 +601,14 @@ public class DiagnosticRangeTest {
         check(known.startScalarOffset() + known.scalarLength() == 10,
             "startScalarOffset + scalarLength != expected end offset 10");
 
-        // withDirectives preserves offsets verbatim (known in -> known out)
-        // and never routes through the offset-less convenience constructors.
-        Token withD = known.withDirectives(List.of("@jsonable", "@deal-version 1.2"));
-        check(withD.startScalarOffset() == 7 && withD.scalarLength() == 3,
-            "withDirectives must preserve known offsets verbatim, got ("
-                + withD.startScalarOffset() + "," + withD.scalarLength() + ")");
-        check(withD.hasScalarOffsets(),
-            "withDirectives result hasScalarOffsets() must stay true");
-        check(withD.directives().equals(List.of("@jsonable", "@deal-version 1.2")),
-            "withDirectives directives lost");
-        check(withD.type() == known.type() && withD.lexeme().equals(known.lexeme())
-                && withD.line() == 4 && withD.column() == 5 && withD.length() == 4,
-            "withDirectives must copy all other fields");
-
-        // withDirectives preserves UNKNOWN verbatim (UNKNOWN in -> UNKNOWN out).
-        Token unknownD = t6.withDirectives(List.of());
-        check(unknownD.startScalarOffset() == Token.UNKNOWN_OFFSET
-                && unknownD.scalarLength() == Token.UNKNOWN_OFFSET,
-            "withDirectives must preserve UNKNOWN offsets verbatim");
-        check(!unknownD.hasScalarOffsets(),
-            "withDirectives UNKNOWN result hasScalarOffsets() must stay false");
-        check(unknownD.directives().isEmpty(),
-            "withDirectives with empty list must clear directives");
-
         // hasScalarOffsets(): true iff exactly both components non-negative.
-        check(!new Token(TokenType.IDENTIFIER, "x", 1, 1, 1, Token.UNKNOWN_OFFSET, 2, List.of())
+        check(!new Token(TokenType.IDENTIFIER, "x", 1, 1, 1, Token.UNKNOWN_OFFSET, 2)
                 .hasScalarOffsets(),
             "negative start offset must make hasScalarOffsets() false");
-        check(!new Token(TokenType.IDENTIFIER, "x", 1, 1, 1, 0, Token.UNKNOWN_OFFSET, List.of())
+        check(!new Token(TokenType.IDENTIFIER, "x", 1, 1, 1, 0, Token.UNKNOWN_OFFSET)
                 .hasScalarOffsets(),
             "negative scalarLength must make hasScalarOffsets() false");
-        check(new Token(TokenType.IDENTIFIER, "x", 1, 1, 1, 0, 0, List.of())
+        check(new Token(TokenType.IDENTIFIER, "x", 1, 1, 1, 0, 0)
                 .hasScalarOffsets(),
             "(0,0) offsets must make hasScalarOffsets() true");
 
@@ -732,12 +698,12 @@ public class DiagnosticRangeTest {
 
         // Known offsets: hand-built tokens for "let x = 42;" at exact scalar
         // positions (offsets 0-11, EOF at scalar offset 11).
-        Token let = new Token(TokenType.LET, "let", 1, 1, 3, 0, 3, List.of());
-        Token name = new Token(TokenType.IDENTIFIER, "x", 1, 5, 1, 4, 1, List.of());
-        Token eq = new Token(TokenType.EQ_SIGN, "=", 1, 7, 1, 6, 1, List.of());
-        Token num = new Token(TokenType.INT_LITERAL, "42", 1, 9, 2, 8, 2, List.of());
-        Token semi = new Token(TokenType.SEMICOLON, ";", 1, 11, 1, 10, 1, List.of());
-        Token eof = new Token(TokenType.EOF, "", 1, 12, 0, 11, 0, List.of());
+        Token let = new Token(TokenType.LET, "let", 1, 1, 3, 0, 3);
+        Token name = new Token(TokenType.IDENTIFIER, "x", 1, 5, 1, 4, 1);
+        Token eq = new Token(TokenType.EQ_SIGN, "=", 1, 7, 1, 6, 1);
+        Token num = new Token(TokenType.INT_LITERAL, "42", 1, 9, 2, 8, 2);
+        Token semi = new Token(TokenType.SEMICOLON, ";", 1, 11, 1, 10, 1);
+        Token eof = new Token(TokenType.EOF, "", 1, 12, 0, 11, 0);
 
         ParseResult r = new Parser(List.of(let, name, eq, num, semi, eof), "f.deal").parse();
         check(r.diagnostics().isEmpty(), "known-offset program must parse clean, got "
@@ -790,7 +756,7 @@ public class DiagnosticRangeTest {
 
         // Mixed: known start offset, UNKNOWN end offset -> the known start
         // propagates, the end stays UNKNOWN, hasScalarOffsets() is false.
-        Token mlet = new Token(TokenType.LET, "let", 1, 1, 3, 0, 3, List.of());
+        Token mlet = new Token(TokenType.LET, "let", 1, 1, 3, 0, 3);
         ParseResult mr = new Parser(List.of(mlet, uname, ueq, unum, usemi, ueof),
             "f.deal").parse();
         Span mprog = mr.program().span();
@@ -816,7 +782,7 @@ public class DiagnosticRangeTest {
 
         // EOF-token-only list is also an empty program with (0,0) offsets.
         Span eofOnly = new Parser(List.of(
-            new Token(TokenType.EOF, "", 3, 4, 0, 7, 0, List.of())), "f.deal")
+            new Token(TokenType.EOF, "", 3, 4, 0, 7, 0)), "f.deal")
             .parse().program().span();
         check(eofOnly.hasScalarOffsets() && eofOnly.startScalarOffset() == 0
                 && eofOnly.endScalarOffset() == 0,
@@ -825,11 +791,11 @@ public class DiagnosticRangeTest {
 
         // Two statements: the program span is spanBetween(first.span(),
         // last.span()) — first statement start / last statement end.
-        Token a = new Token(TokenType.IDENTIFIER, "a", 2, 3, 1, 5, 1, List.of());
-        Token asemi = new Token(TokenType.SEMICOLON, ";", 2, 4, 1, 6, 1, List.of());
-        Token b = new Token(TokenType.IDENTIFIER, "b", 3, 1, 1, 8, 1, List.of());
-        Token bsemi = new Token(TokenType.SEMICOLON, ";", 3, 2, 1, 9, 1, List.of());
-        Token eof2 = new Token(TokenType.EOF, "", 3, 3, 0, 10, 0, List.of());
+        Token a = new Token(TokenType.IDENTIFIER, "a", 2, 3, 1, 5, 1);
+        Token asemi = new Token(TokenType.SEMICOLON, ";", 2, 4, 1, 6, 1);
+        Token b = new Token(TokenType.IDENTIFIER, "b", 3, 1, 1, 8, 1);
+        Token bsemi = new Token(TokenType.SEMICOLON, ";", 3, 2, 1, 9, 1);
+        Token eof2 = new Token(TokenType.EOF, "", 3, 3, 0, 10, 0);
         ParseResult two = new Parser(List.of(a, asemi, b, bsemi, eof2), "f.deal").parse();
         check(two.diagnostics().isEmpty(), "two-statement program must parse clean, got "
             + two.diagnostics());
@@ -852,7 +818,7 @@ public class DiagnosticRangeTest {
         // canonical SYNTHETIC shape with the D4 anchor note naming the
         // (1,1) fallback anchor — never a SOURCE range.
         ParseResult noEof = new Parser(List.of(
-            new Token(TokenType.LET, "let", 1, 1, 3, 0, 3, List.of())), "f.deal").parse();
+            new Token(TokenType.LET, "let", 1, 1, 3, 0, 3)), "f.deal").parse();
         List<CompilerDiagnostic> diags = noEof.diagnostics();
         check(diags.size() == 1,
             "no-EOF list: expected exactly 1 diagnostic, got " + diags.size());
@@ -881,8 +847,8 @@ public class DiagnosticRangeTest {
         // anchor at the real EOF-token position — a zero-length SOURCE
         // range at the EOF token's computed scalar offsets.
         ParseResult withEof = new Parser(List.of(
-            new Token(TokenType.LET, "let", 1, 1, 3, 0, 3, List.of()),
-            new Token(TokenType.EOF, "", 3, 4, 0, 9, 0, List.of())), "f.deal").parse();
+            new Token(TokenType.LET, "let", 1, 1, 3, 0, 3),
+            new Token(TokenType.EOF, "", 3, 4, 0, 9, 0)), "f.deal").parse();
         List<CompilerDiagnostic> eofDiags = withEof.diagnostics();
         check(eofDiags.size() == 1,
             "EOF-terminated list: expected exactly 1 diagnostic, got " + eofDiags.size());
@@ -908,7 +874,7 @@ public class DiagnosticRangeTest {
 
     private static ParseResult parseTemplateSource(String source) {
         LexResult lex = new Lexer(source, "test.deal").tokenize();
-        return new Parser(lex.tokens(), "test.deal").parse();
+        return new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
     }
 
     private static CompilerDiagnostic templateDiag(List<CompilerDiagnostic> diags,
@@ -1117,7 +1083,11 @@ public class DiagnosticRangeTest {
     private static List<CompilerDiagnostic> checkerDiagnostics(String source,
                                                                 String filename) {
         LexResult lex = new Lexer(source, filename).tokenize();
-        ParseResult parse = new Parser(lex.tokens(), filename).parse();
+        // ISSUE-0273: the events-carrying parser — the @jsonable fixtures
+        // here need production directive binding (E4008 keys on the
+        // derived isJsonable accessor).
+        ParseResult parse = new Parser(lex.tokens(), filename,
+            lex.directiveEvents()).parse();
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver(filename, resolver);
         SymbolTable symTable = nr.resolve(parse.program());
@@ -1321,7 +1291,7 @@ public class DiagnosticRangeTest {
         //    empty.
         String src5 = "// @jsonable\nclass A { a: A; }\n";
         LexResult lex5 = new Lexer(src5, "fallback.deal").tokenize();
-        ParseResult parse5 = new Parser(lex5.tokens(), "fallback.deal").parse();
+        ParseResult parse5 = new Parser(lex5.tokens(), "fallback.deal", lex5.directiveEvents()).parse();
         StubModuleResolver resolver5 = new StubModuleResolver();
         NameResolver nr5 = new NameResolver("fallback.deal", resolver5);
         SymbolTable sym5 = nr5.resolve(parse5.program());
@@ -1673,7 +1643,7 @@ public class DiagnosticRangeTest {
     private static JvmBackend.JvmCodegenResult jvmEntryGenerate(String source,
                                                                 String filename) {
         LexResult lex = new Lexer(source, filename).tokenize();
-        ParseResult parse = new Parser(lex.tokens(), filename).parse();
+        ParseResult parse = new Parser(lex.tokens(), filename, lex.directiveEvents()).parse();
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver(filename, resolver);
         SymbolTable symTable = nr.resolve(parse.program());
@@ -1828,7 +1798,7 @@ public class DiagnosticRangeTest {
 
         // Token with known offsets: end column = column + scalarLength;
         // half-open offsets. 'a' + U+1F600 + 'b' is 3 scalars.
-        Token t = new Token(TokenType.IDENTIFIER, "a\uD83D\uDE00b", 4, 5, 4, 7, 3, List.of());
+        Token t = new Token(TokenType.IDENTIFIER, "a\uD83D\uDE00b", 4, 5, 4, 7, 3);
         DiagnosticRange tr = t.range("f.deal");
         check(tr.origin() == RangeOrigin.SOURCE,
             "known token range origin must be SOURCE, got " + tr.origin());
@@ -1842,7 +1812,7 @@ public class DiagnosticRangeTest {
             "token range offsets/length must be (7,10,3)");
 
         // Zero-scalar-length EOF token: zero-length range at its position.
-        Token eof = new Token(TokenType.EOF, "", 3, 4, 0, 9, 0, List.of());
+        Token eof = new Token(TokenType.EOF, "", 3, 4, 0, 9, 0);
         DiagnosticRange er = eof.range("f.deal");
         check(er.origin() == RangeOrigin.SOURCE, "EOF token range origin must be SOURCE");
         check(er.startLine() == 3 && er.startColumn() == 4
@@ -1875,8 +1845,8 @@ public class DiagnosticRangeTest {
             new Span("f.deal", 2, 3, 2, 7, 4, 9).range(),
             new Span("f.deal", 1, 1, 1, 1, 0, 0).range(),
             new Span("f.deal", 1, 5, 3, 2, 0, 17).range(),
-            new Token(TokenType.IDENTIFIER, "abc", 1, 2, 3, 6, 3, List.of()).range("f.deal"),
-            new Token(TokenType.EOF, "", 3, 4, 0, 9, 0, List.of()).range("f.deal"),
+            new Token(TokenType.IDENTIFIER, "abc", 1, 2, 3, 6, 3).range("f.deal"),
+            new Token(TokenType.EOF, "", 3, 4, 0, 9, 0).range("f.deal"),
         };
         for (DiagnosticRange r : sources) {
             check(r.origin() == RangeOrigin.SOURCE, "range must be SOURCE: " + r);
@@ -1968,7 +1938,7 @@ public class DiagnosticRangeTest {
         check(knownSpan.notes().isEmpty(),
             "known span factory must not append an anchor note");
         CompilerDiagnostic knownTok = CompilerDiagnostic.warning(DiagnosticCode.E1043,
-            "invalid placement", new Token(TokenType.EXPORT, "export", 2, 1, 6, 11, 6, List.of()));
+            "invalid placement", new Token(TokenType.EXPORT, "export", 2, 1, 6, 11, 6));
         check(knownTok.range().origin() == RangeOrigin.SOURCE,
             "known token factory range must be SOURCE");
         check(knownTok.range().file().equals(""),

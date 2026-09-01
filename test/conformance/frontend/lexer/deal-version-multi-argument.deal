@@ -1,6 +1,6 @@
 // @spec: Lexical elements — v1.2 @deal-version file directive
 // @description: @deal-version accepts exactly one version value; extra words are rejected
-// @expected: compile-error E1054
+// @expected: compile-error E1045
 // @features: lexer, directives, deal-version, v1.2
 
 // @deal-version 1.2 extra

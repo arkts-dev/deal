@@ -107,7 +107,11 @@ public class DiagnosticClassificationTest {
     private static List<CompilerDiagnostic> compileAndGetDiagnostics(String source,
                                                               String filename) {
         LexResult lex = new Lexer(source, filename).tokenize();
-        ParseResult parse = new Parser(lex.tokens(), filename).parse();
+        // ISSUE-0273 D6: the classification compile helper switches to
+        // the events-carrying parser so parser-side directive codes
+        // (E1044-E1046/E7002) fire exactly as in production.
+        ParseResult parse = new Parser(lex.tokens(), filename,
+            lex.directiveEvents()).parse();
 
         List<CompilerDiagnostic> allDiags = new ArrayList<>();
         allDiags.addAll(lex.diagnostics());
@@ -164,14 +168,14 @@ public class DiagnosticClassificationTest {
             "// @jsonable\nexport class Foo { fn: (x: int) => null = function(x: int): null { return null; }; }");
         triggers.put("E5001", "function f(x: int): null {} f(true);");
         triggers.put("E1047", "function f(...xs: int[]): null { return null; }");
-        triggers.put("E1052",
-            "class A { x: int = 0; }\n// @deal-version 1.2\n");
-        triggers.put("E1053",
-            "// @deal-version 1.2\n// @deal-version 1.2\nclass A { x: int = 0; }\n");
-        triggers.put("E1054",
-            "// @deal-version\nclass A { x: int = 0; }\n");
-        triggers.put("E1055",
+        triggers.put("E1044",
+            "// @not-a-directive\nclass A { x: int = 0; }\n");
+        triggers.put("E1045",
+            "// @jsonable:foo\nexport class A { x: int = 0; }\n");
+        triggers.put("E1046",
             "// @deal-version 1.1\nclass A { x: int = 0; }\n");
+        triggers.put("E7002",
+            "// @extern-c\nexport class A { x: int = 0; }\n");
         triggers.put("E5003",
             "function f(): int { return \"hi\"; }");
 
@@ -179,8 +183,13 @@ public class DiagnosticClassificationTest {
         for (var entry : triggers.entrySet()) {
             String expectedCode = entry.getKey();
             String source = entry.getValue();
+            // E7002's extern-C marker validation requires a declaration
+            // (.d.deal) file — the wrong-file-kind rule keys on the path.
+            String triggerFile = "E7002".equals(expectedCode)
+                ? "trigger_E7002.d.deal"
+                : "trigger_" + expectedCode + ".deal";
             List<CompilerDiagnostic> diags = compileAndGetDiagnostics(source,
-                "trigger_" + expectedCode + ".deal");
+                triggerFile);
 
             boolean found = diags.stream()
                 .anyMatch(d -> d.code().equals(expectedCode));
@@ -256,10 +265,6 @@ public class DiagnosticClassificationTest {
         coverage.put("E1049", "ModuleSystemTest (top-level statement)");
         coverage.put("E1050", "ModuleSystemTest (nested import/export)");
         coverage.put("E1051", "ModuleSystemTest (bodyless declaration in .deal)");
-        coverage.put("E1052", "LexerTest (@deal-version placement)");
-        coverage.put("E1053", "LexerTest (@deal-version duplicate)");
-        coverage.put("E1054", "LexerTest (@deal-version argument)");
-        coverage.put("E1055", "ParserTest (@deal-version value)");
 
         coverage.put("E2000", "CheckerTest (break/continue)");
         coverage.put("E2001", "CheckerTest (undeclared identifier)");

@@ -202,7 +202,7 @@ public final class IrGoldenTest {
         }
 
         // Parse
-        Parser parser = new Parser(lex.tokens(), filename);
+        Parser parser = new Parser(lex.tokens(), filename, lex.directiveEvents());
         ParseResult parseResult = parser.parse();
         if (parseResult.hasErrors()) {
             return new IrDumpResult(null, "parse errors: " + parseResult.diagnostics());
@@ -515,7 +515,7 @@ public final class IrGoldenTest {
                 if (lex.hasErrors())
                     throw new ModuleNotFoundException("Lex errors in " + filename);
 
-                Parser parser = new Parser(lex.tokens(), filename);
+                Parser parser = new Parser(lex.tokens(), filename, lex.directiveEvents());
                 ParseResult parseResult = parser.parse();
                 if (parseResult.hasErrors())
                     throw new ModuleNotFoundException("Parse errors in " + filename);

@@ -69,6 +69,7 @@ javac --release 22 -d build \
   test/AstAndTypesTest.java \
   test/LexerTest.java \
   test/ParserTest.java \
+  test/DirectiveTest.java \
   test/CheckerTest.java \
   test/IrDumperTest.java \
   test/IrGoldenTest.java \
@@ -116,6 +117,10 @@ run_java deal.test.DiagnosticClassificationTest
 echo ""
 echo "=== Running AST/Types Tests ==="
 run_java deal.test.AstAndTypesTest
+
+echo ""
+echo "=== Running Directive Tests ==="
+run_java deal.test.DirectiveTest
 
 echo ""
 echo "=== Running Lexer Tests ==="

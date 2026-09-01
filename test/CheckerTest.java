@@ -42,7 +42,7 @@ public class CheckerTest {
 
     private static CheckerOutput checkProgram(String source, String filename) {
         LexResult lex = new Lexer(source, filename).tokenize();
-        ParseResult parse = new Parser(lex.tokens(), filename).parse();
+        ParseResult parse = new Parser(lex.tokens(), filename, lex.directiveEvents()).parse();
 
         if (parse.hasErrors()) {
             StubModuleResolver resolver = new StubModuleResolver();
@@ -83,7 +83,7 @@ public class CheckerTest {
     private static CheckerOutput checkProgramWithModule(String source,
             String filename, StubModuleResolver resolver) {
         LexResult lex = new Lexer(source, filename).tokenize();
-        ParseResult parse = new Parser(lex.tokens(), filename).parse();
+        ParseResult parse = new Parser(lex.tokens(), filename, lex.directiveEvents()).parse();
 
         if (parse.hasErrors()) {
             NameResolver nr = new NameResolver(filename, resolver);
@@ -680,7 +680,7 @@ public class CheckerTest {
     private static CheckerOutput checkProgramWithParamRetyped(String source,
             String functionName, String paramName, Type replacementType) {
         LexResult lex = new Lexer(source, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
 
         if (parse.hasErrors()) {
             StubModuleResolver resolver = new StubModuleResolver();
@@ -2827,7 +2827,7 @@ public class CheckerTest {
         // type errors from the initializer expression.
         String source = "let f: async (p: int) => string = null;";
         LexResult lex = new Lexer(source, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         check(!parse.hasErrors(), "Parser: no errors");
 
         StubModuleResolver resolver = new StubModuleResolver();

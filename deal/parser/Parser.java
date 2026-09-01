@@ -2,18 +2,27 @@ package deal.parser;
 
 import deal.ast.*;
 import deal.diagnostics.CompilerDiagnostic;
+import deal.diagnostics.DiagnosticCode;
 import deal.diagnostics.DiagnosticNote;
 import deal.diagnostics.DiagnosticRange;
 import deal.diagnostics.RangeOrigin;
+import deal.lexer.CompilerDirective;
+import deal.lexer.DirectiveName;
 import deal.lexer.Token;
 import deal.semantic.ir.SemanticProfile;
 import deal.source.ScalarSourceCursor;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import deal.diagnostics.DiagnosticCode;
+import java.util.Set;
 
 /**
  * Hand-written recursive descent parser with precedence climbing for expressions.
@@ -50,6 +59,28 @@ public final class Parser {
     private final Token inputEofToken;
     private int pos;          // current index into tokens (0-based)
 
+    /**
+     * The directive event stream (fixed-name-directive-events D1/D10):
+     * the parent lexer events plus the template-embedded merged events,
+     * in eventIndex order. Merged events append at
+     * {@code parseEmbeddedExpression} completion with continuing
+     * event indices.
+     */
+    private final List<CompilerDirective> directiveEvents = new ArrayList<>();
+    /** File-directive evaluation state (D4/D7), shared with merge points. */
+    private final FileDirectiveEvaluator evaluator;
+    /** Events claimed by declaration binding (identity semantics). */
+    private final Set<CompilerDirective> claimedEvents =
+        Collections.newSetFromMap(new IdentityHashMap<>());
+    /** Statement nodes keyed by their start-token index (finalize E7002). */
+    private final Map<Integer, StatementNode> statementByStartIndex =
+        new LinkedHashMap<>();
+    /** C-marker events recorded on export-wrapped classes (cardinality). */
+    private final Map<ClassDeclaration, List<CompilerDirective>> cMarkersByClass =
+        new IdentityHashMap<>();
+    /** Recorded C-marker events in scan order (extern-C-off E1046 sweep). */
+    private final List<CompilerDirective> recordedCMarkers = new ArrayList<>();
+
     // -----------------------------------------------------------------------
     // Construction
     // -----------------------------------------------------------------------
@@ -62,8 +93,14 @@ public final class Parser {
      * contract: no v1.2 int32 gate and no {@code -2147483648}
      * immediate-token special case apply.
      */
+    /**
+     * The no-events constructor (fixed-name-directive-events D1/D10.7):
+     * pinned as the defensive form used by the template sub-parser,
+     * defensive/test callers, and the JVM harness runner parse (D8 item
+     * 2c) — no file-directive evaluation or binding runs.
+     */
     public Parser(List<Token> tokens, String file) {
-        this(tokens, file, SemanticProfile.LEGACY_SAFE_INT);
+        this(tokens, file, SemanticProfile.LEGACY_SAFE_INT, List.of());
     }
 
     /**
@@ -79,11 +116,35 @@ public final class Parser {
      * ({@code docs/spec-v1.2.md:87-98}).
      */
     public Parser(List<Token> tokens, String file, SemanticProfile profile) {
+        this(tokens, file, profile, List.of());
+    }
+
+    /**
+     * The events-carrying constructor
+     * (fixed-name-directive-events D1): the production shape — the
+     * lexer's {@code directiveEvents} flow in, file-directive evaluation
+     * and declaration binding run exactly as in production.
+     */
+    public Parser(List<Token> tokens, String file,
+                  List<CompilerDirective> directiveEvents) {
+        this(tokens, file, SemanticProfile.LEGACY_SAFE_INT, directiveEvents);
+    }
+
+    /**
+     * The profile-aware events-carrying constructor: the profile-aware
+     * parse contract plus the production directive evaluation/binding.
+     */
+    public Parser(List<Token> tokens, String file, SemanticProfile profile,
+                  List<CompilerDirective> directiveEvents) {
         this.tokens = List.copyOf(tokens);
         this.file = file;
         this.profile = Objects.requireNonNull(profile, "profile must not be null");
         this.pos = 0;
         this.inputEofToken = findEofToken(this.tokens);
+        if (directiveEvents != null) {
+            this.directiveEvents.addAll(directiveEvents);
+        }
+        this.evaluator = new FileDirectiveEvaluator(file, diagnostics);
     }
 
     /**
@@ -104,7 +165,11 @@ public final class Parser {
     // =======================================================================
 
     public ParseResult parse() {
-        validateFileVersionDirectives();
+        // Phase 0: file-directive evaluation over the parent lexer events
+        // (D4): deal-version/extern-c shape, duplicate, placement, and
+        // version checks, then the E1045 argument sweep in event order.
+        evaluator.evaluateParentEvents(directiveEvents);
+
         List<StatementNode> statements = new ArrayList<>();
 
         while (!isAtEnd()) {
@@ -113,6 +178,13 @@ public final class Parser {
                 statements.add(stmt);
             }
         }
+
+        // Finalize in the pinned order (D4): (1) extern-c placement,
+        // (2) unclaimed-anchored and unanchored event sweep,
+        // (3) C-marker cardinality.
+        evaluator.finalizeExternCPlacement(statements);
+        sweepUnclaimedAndUnanchored();
+        cardinality(statements);
 
         Span progSpan;
         if (statements.isEmpty()) {
@@ -127,51 +199,208 @@ public final class Parser {
             progSpan = spanBetween(first.span(), last.span());
         }
 
-        ProgramNode program = new ProgramNode(progSpan, List.copyOf(statements));
+        ProgramNode program = new ProgramNode(progSpan, List.copyOf(statements),
+            evaluator.build());
         return new ParseResult(program, List.copyOf(diagnostics));
     }
 
     // =======================================================================
-    // File directive validation
+    // Directive binding (D4)
     // =======================================================================
 
     /**
-     * Validates the {@code @deal-version} file directive VALUE across the
-     * token stream.  The lexer already enforces the directive shape
-     * (single argument, placement before the first non-comment token, at
-     * most once); this pass enforces version compatibility.
-     *
-     * <p>DEAL v1.2 is not source-compatible with earlier language
-     * versions, and minor-version migrations may only be performed by
-     * explicit compiler migration rules (spec-v1.2: Declaration metadata
-     * versioning).  This compiler implements exactly DEAL v1.2, so every
-     * declared version other than {@code 1.2} is a compile-time error
-     * (E1055) — this includes older versions ({@code 1.0}, {@code 1.1})
-     * and newer major versions ({@code 2.0}+).</p>
+     * True when the source file path is a declaration file
+     * ({@code .d.deal}) — the declaration-file {@code @jsonable}
+     * no-effect rule (D4) keys on it.
      */
-    private void validateFileVersionDirectives() {
-        for (Token token : tokens) {
-            for (String directive : token.directives()) {
-                if (!directive.equals("@deal-version")
-                        && !directive.startsWith("@deal-version ")) {
-                    continue;
-                }
-                String value = directive.equals("@deal-version")
-                    ? "" : directive.substring("@deal-version ".length()).trim();
-                if (value.isEmpty()) {
-                    // Shape error already reported by the lexer.
-                    continue;
-                }
-                if (!"1.2".equals(value)) {
-                    error(DiagnosticCode.E1055,
-                        "Unsupported DEAL version '" + value
-                            + "': DEAL v1.2 is not source-compatible with"
-                            + " earlier language versions and this compiler"
-                            + " supports only '1.2'",
-                        token);
-                }
+    private boolean isDeclarationFile() {
+        return file != null && file.endsWith(".d.deal");
+    }
+
+    /**
+     * Claims the directive events anchored at the current statement's
+     * start-token index. Binding applies only at the statement-dispatch
+     * start token (D4): {@code EXPORT} for exported declarations,
+     * {@code CLASS}/{@code FUNCTION}/{@code ASYNC} for non-exported
+     * ones. Events anchored to any other token stay unclaimed and are
+     * handled by the finalize sweep.
+     */
+    private List<CompilerDirective> claimAnchoredAt(int tokenIndex) {
+        TokenType type = peek().type();
+        if (type != TokenType.EXPORT && type != TokenType.CLASS
+                && type != TokenType.FUNCTION && type != TokenType.ASYNC) {
+            return List.of();
+        }
+        List<CompilerDirective> anchored = new ArrayList<>();
+        for (CompilerDirective e : directiveEvents) {
+            if (e.declarationAnchorTokenIndex() != null
+                    && e.declarationAnchorTokenIndex() == tokenIndex
+                    && !claimedEvents.contains(e)) {
+                anchored.add(e);
             }
         }
+        return anchored;
+    }
+
+    /**
+     * Applies binding to a parsed statement (D4). Returns the statement
+     * to record — an export-wrapped class whose metadata changed is
+     * rebuilt with the new directive set.
+     */
+    private StatementNode applyBinding(StatementNode stmt,
+                                       List<CompilerDirective> anchored) {
+        if (anchored.isEmpty() || stmt == null) {
+            return stmt;
+        }
+        if (stmt instanceof ExportDeclaration exp
+                && exp.declaration() instanceof ClassDeclaration cd) {
+            // Export-wrapped class: jsonable → JSONABLE metadata (never in
+            // declaration files — spec :717-718 no-effect, no diagnostic);
+            // C markers recorded on the class for cardinality.
+            Set<DeclarationDirective> dirs = new HashSet<>(cd.directives());
+            List<CompilerDirective> cMarkers = new ArrayList<>();
+            boolean changed = false;
+            for (CompilerDirective e : anchored) {
+                claimedEvents.add(e);
+                if (e.name() == DirectiveName.JSONABLE) {
+                    if (!isDeclarationFile()) {
+                        dirs.add(DeclarationDirective.JSONABLE);
+                        changed = true;
+                    }
+                } else if (e.name() == DirectiveName.C_STRUCT
+                        || e.name() == DirectiveName.C_POINTER) {
+                    dirs.add(toDeclarationDirective(e.name()));
+                    cMarkers.add(e);
+                    changed = true;
+                }
+            }
+            if (!changed) {
+                return stmt;
+            }
+            ClassDeclaration newCd = new ClassDeclaration(cd.span(),
+                cd.name(), cd.fields(), dirs);
+            if (!cMarkers.isEmpty()) {
+                cMarkersByClass.put(newCd, cMarkers);
+                recordedCMarkers.addAll(cMarkers);
+            }
+            return new ExportDeclaration(exp.span(), newCd);
+        }
+        // Export-wrapped function or a non-exported class/function/async
+        // function: jsonable → E1043 warning with no metadata applied;
+        // C markers deferred to the finalize sweep (never recorded).
+        for (CompilerDirective e : anchored) {
+            if (e.name() == DirectiveName.JSONABLE) {
+                warnJsonable(e);
+                claimedEvents.add(e);
+            } else if (e.name() == DirectiveName.C_STRUCT
+                    || e.name() == DirectiveName.C_POINTER) {
+                // Deferred to the finalize sweep: left unclaimed.
+            } else {
+                claimedEvents.add(e);
+            }
+        }
+        return stmt;
+    }
+
+    /**
+     * Finalize step 2 (D4): sweep all unclaimed anchored events and
+     * unanchored events in event order — jsonable → E1043 warning;
+     * C marker → E7002 under effective extern-C (at the declaration node
+     * span when one exists, else the directive range), otherwise E1046
+     * at the directive range.
+     */
+    private void sweepUnclaimedAndUnanchored() {
+        boolean externCEffective = evaluator.externCEffective();
+        for (CompilerDirective e : directiveEvents) {
+            if (claimedEvents.contains(e)) {
+                continue;
+            }
+            StatementNode node = null;
+            if (e.declarationAnchorTokenIndex() != null) {
+                node = statementByStartIndex.get(e.declarationAnchorTokenIndex());
+            }
+            if (e.name() == DirectiveName.JSONABLE) {
+                warnJsonable(e);
+            } else if (e.name() == DirectiveName.C_STRUCT
+                    || e.name() == DirectiveName.C_POINTER) {
+                cMarkerPlacementError(e, node, externCEffective);
+            }
+        }
+    }
+
+    /**
+     * Finalize step 3 (D4): C-marker cardinality. Under effective
+     * extern-C every exported class must have exactly one attached
+     * C-marker event — zero or two-or-more → E7002 at the class
+     * declaration span; without effective extern-C every recorded C
+     * marker is E1046 at its directive range.
+     */
+    private void cardinality(List<StatementNode> statements) {
+        if (evaluator.externCEffective()) {
+            for (StatementNode stmt : statements) {
+                if (stmt instanceof ExportDeclaration exp
+                        && exp.declaration() instanceof ClassDeclaration cd) {
+                    List<CompilerDirective> markers =
+                        cMarkersByClass.getOrDefault(cd, List.of());
+                    if (markers.size() != 1) {
+                        error(DiagnosticCode.E7002,
+                            "Exported class '" + cd.name()
+                                + "' must have exactly one C marker"
+                                + " (@c-struct or @c-pointer)",
+                            cd.span());
+                    }
+                }
+            }
+        } else {
+            for (CompilerDirective marker : recordedCMarkers) {
+                error(DiagnosticCode.E1046,
+                    "C markers are only valid in extern-C declaration"
+                        + " (.d.deal) files",
+                    marker.sourceRange());
+            }
+        }
+    }
+
+    /** One C marker without a valid recorded placement (D4/D6). */
+    private void cMarkerPlacementError(CompilerDirective e, StatementNode node,
+                                       boolean externCEffective) {
+        if (externCEffective) {
+            if (node != null) {
+                error(DiagnosticCode.E7002,
+                    "Invalid C FFI declaration: C markers are only valid"
+                        + " on exported classes",
+                    node.span());
+            } else {
+                error(DiagnosticCode.E7002,
+                    "Invalid C FFI declaration: unattached C marker",
+                    e.sourceRange());
+            }
+        } else {
+            error(DiagnosticCode.E1046,
+                "C markers are only valid in extern-C declaration"
+                    + " (.d.deal) files",
+                e.sourceRange());
+        }
+    }
+
+    /**
+     * The E1043 warning-and-ignore (D4): warning severity, the pinned
+     * message, no metadata, compilation continues; anchored at the
+     * complete directive comment range (parent D6).
+     */
+    private void warnJsonable(CompilerDirective e) {
+        diagnostics.add(CompilerDiagnostic.warning(DiagnosticCode.E1043,
+            "@jsonable directive is only valid on 'export class', ignoring",
+            e.sourceRange()));
+    }
+
+    private static DeclarationDirective toDeclarationDirective(DirectiveName name) {
+        return switch (name) {
+            case C_STRUCT -> DeclarationDirective.C_STRUCT;
+            case C_POINTER -> DeclarationDirective.C_POINTER;
+            default -> throw new IllegalStateException(
+                "Not a C marker directive: " + name);
+        };
     }
 
     // =======================================================================
@@ -179,13 +408,15 @@ public final class Parser {
     // =======================================================================
 
     private StatementNode parseStatement() {
-        TokenType type = peek().type();
+        // D4: binding applies only at the statement-dispatch start token —
+        // EXPORT for exported declarations, CLASS/FUNCTION/ASYNC for
+        // non-exported ones. Events anchored to any other token are
+        // non-declaration anchors handled by the finalize sweep.
+        int startIndex = pos;
+        List<CompilerDirective> anchored = claimAnchoredAt(startIndex);
 
-        // General guard: @jsonable directive is only valid on export class (D2)
-        if (type != TokenType.EXPORT && peek().directives().contains("@jsonable")) {
-            warn(DiagnosticCode.E1043, "@jsonable directive is only valid on 'export class', ignoring", peek());
-        }
-        return switch (type) {
+        TokenType type = peek().type();
+        StatementNode stmt = switch (type) {
             case LBRACE    -> parseBlock();
             case CLASS     -> parseClassDeclaration();
             case FUNCTION  -> {
@@ -225,6 +456,11 @@ public final class Parser {
             case RBRACE    -> { advance(); error(DiagnosticCode.E1041, "Unexpected '}'", previous()); yield null; }
             default        -> parseExpressionStatement();
         };
+        if (stmt != null) {
+            stmt = applyBinding(stmt, anchored);
+            statementByStartIndex.put(startIndex, stmt);
+        }
+        return stmt;
     }
 
     // -- Block --
@@ -557,15 +793,7 @@ public final class Parser {
 
         optionalSemicolon();
         Span sp = spanBetween(importToken, previousOrCurrent());
-        // ISSUE-0252 @extern-c marker surface (js-backend-emitter D8): the
-        // import token carries the lexer-attached compiler directives
-        // (@extern-c among them) and the AST record propagates them — the
-        // @jsonable -> ClassDeclaration.isJsonable() export-path precedent
-        // (parseExportDeclaration). The checker reads only alias()/
-        // modulePath(), so the new component is checker-inert; placement
-        // and C-FFI-metadata validation stay with the C-FFI frontend epic.
-        return new ImportDeclaration(sp, aliasToken.lexeme(), modulePath,
-            importToken.directives());
+        return new ImportDeclaration(sp, aliasToken.lexeme(), modulePath);
     }
 
     // -- Export --
@@ -585,15 +813,8 @@ public final class Parser {
 
         if (declaration == null) return null;
 
-        // @jsonable directive handling (D2)
-        if (exportToken.directives().contains("@jsonable")) {
-            if (declaration instanceof ClassDeclaration cd) {
-                declaration = new ClassDeclaration(cd.span(), cd.name(), cd.fields(), true);
-            } else {
-                warn(DiagnosticCode.E1043, "@jsonable directive is only valid on 'export class', ignoring", exportToken);
-            }
-        }
-
+        // Directive binding is applied by parseStatement/applyBinding at
+        // the statement-dispatch start token (D4) — the export token.
         Span sp = spanBetween(exportToken, previousOrCurrent());
         return new ExportDeclaration(sp, declaration);
     }
@@ -1184,9 +1405,13 @@ public final class Parser {
      */
     private ExpressionNode parseTemplateLiteral() {
         Token token = previous(); // the TEMPLATE_LITERAL token
+        // D10.3: a merged embedded event's precedingNonCommentTokenCount
+        // is the template token's parent stream index plus 1 — pos is
+        // exactly that value right after the template token was advanced.
+        int templatePrecedingCount = pos;
         String raw = token.lexeme();
         List<ExpressionNode> parts = splitTemplateLiteral(raw, token.line(),
-            token.column(), token.startScalarOffset());
+            token.column(), token.startScalarOffset(), templatePrecedingCount);
         return new TemplateLiteralExpr(spanOf(token), parts);
     }
 
@@ -1199,7 +1424,8 @@ public final class Parser {
      * sub-lexer re-entry, and the D5 template scalar-map rebasing.</p>
      */
     private List<ExpressionNode> splitTemplateLiteral(String raw, int baseLine, int baseCol,
-                                                      int templateTokenStartScalarOffset) {
+                                                      int templateTokenStartScalarOffset,
+                                                      int templatePrecedingCount) {
         List<ExpressionNode> parts = new ArrayList<>();
         StringBuilder current = new StringBuilder();
         int pos = 0;
@@ -1273,7 +1499,8 @@ public final class Parser {
                 // template content (the same recovery position
                 // findMatchingBrace already selects).
                 ExpressionNode expr = parseEmbeddedExpression(decoded.source(), map,
-                    ScalarSourceCursor.scalarCount(raw, 0, exprEnd));
+                    ScalarSourceCursor.scalarCount(raw, 0, exprEnd),
+                    templatePrecedingCount);
                 parts.add(expr);
 
                 pos = exprEnd;
@@ -1564,7 +1791,7 @@ public final class Parser {
             : Token.UNKNOWN_OFFSET;
         int scalarLength = startOffset >= 0 ? runScalars : Token.UNKNOWN_OFFSET;
         return new Token(TokenType.IDENTIFIER, "", baseLine, baseCol + 1 + rawScalarIndex,
-            runUtf16Length, startOffset, scalarLength, List.of());
+            runUtf16Length, startOffset, scalarLength);
     }
 
     /**
@@ -1580,7 +1807,8 @@ public final class Parser {
      * position with exact scalar offsets.</p>
      */
     private ExpressionNode parseEmbeddedExpression(String source, TemplateScalarMap map,
-                                                   int eofRawScalarIndex) {
+                                                   int eofRawScalarIndex,
+                                                   int templatePrecedingCount) {
         int baseLine = map.sourceLine();
 
         // 1. Sub-lex the expression substring
@@ -1589,15 +1817,57 @@ public final class Parser {
 
         // 2. Merge sub-lexer diagnostics rebased through the scalar map. A
         // range that cannot be rebased (defensive: non-SOURCE or offset-less)
-        // is kept as produced by the sub-lexer.
+        // is kept as produced by the sub-lexer. D10.8: when the primary
+        // range is rebased, every note range is rebased through the same
+        // rule — a note range that cannot be rebased (null range,
+        // non-SOURCE origin, missing scalar offsets, or a map without
+        // template scalar offsets) is kept as produced; when the primary
+        // cannot be rebased the diagnostic including its notes is kept as
+        // produced.
         for (CompilerDiagnostic d : subResult.diagnostics()) {
             DiagnosticRange rebased = rebaseSubRange(d.range(), map);
             if (rebased != null) {
+                List<DiagnosticNote> rebasedNotes = new ArrayList<>();
+                for (DiagnosticNote n : d.notes()) {
+                    if (n.range() == null) {
+                        rebasedNotes.add(n);
+                        continue;
+                    }
+                    DiagnosticRange rebasedNote = rebaseSubRange(n.range(), map);
+                    rebasedNotes.add(rebasedNote != null
+                        ? new DiagnosticNote(n.message(), rebasedNote)
+                        : n);
+                }
                 diagnostics.add(new CompilerDiagnostic(d.code(), d.severity(),
-                    d.message(), rebased, d.notes(), d.diagnosticCode()));
+                    d.message(), rebased, rebasedNotes, d.diagnosticCode()));
             } else {
                 diagnostics.add(d);
             }
+        }
+
+        // 2b. Merge sub-lexer directive events (D10.1-3, D10.5): rebase
+        // both ranges through the same TemplateScalarMap rules, force the
+        // anchor null (sub-tokens never enter the parent stream and
+        // expressions cannot contain declarations), give the truthful
+        // preceding count (template token index + 1), and run the same
+        // per-event rules at this merge point with the shared seen-sets.
+        // The merge happens before the empty-expression early return so
+        // embedded directives are never silently dropped (D10).
+        for (CompilerDirective e : subResult.directiveEvents()) {
+            DiagnosticRange rebasedSource = rebaseSubRange(e.sourceRange(), map);
+            DiagnosticRange rebasedName = rebaseSubRange(e.nameRange(), map);
+            if (rebasedSource == null) {
+                rebasedSource = e.sourceRange();
+            }
+            if (rebasedName == null) {
+                rebasedName = e.nameRange();
+            }
+            CompilerDirective merged = new CompilerDirective(
+                directiveEvents.size(), e.name(), e.rawArgument(),
+                e.trimmedArgument(), rebasedSource, rebasedName,
+                templatePrecedingCount, null);
+            directiveEvents.add(merged);
+            evaluator.evaluateMergedEvent(merged);
         }
 
         // 3. Rebuild the adjusted token list: the sub-lexer's own EOF token is
@@ -1615,7 +1885,7 @@ public final class Parser {
         }
         adjusted.add(new Token(TokenType.EOF, "", baseLine,
             map.sourceColumnAtRawScalar(eofRawScalarIndex), 0,
-            map.sourceOffsetAtRawScalar(eofRawScalarIndex), 0, List.of()));
+            map.sourceOffsetAtRawScalar(eofRawScalarIndex), 0));
 
         // 4. Empty-expression detection counts tokens other than the retained
         // EOF (D5).
@@ -1634,7 +1904,7 @@ public final class Parser {
                 "Empty expression in template literal",
                 new Token(TokenType.IDENTIFIER, "", baseLine,
                     map.sourceColumnAtRawScalar(rawScalarIndex), 0,
-                    map.sourceOffsetAtRawScalar(rawScalarIndex), 0, List.of()));
+                    map.sourceOffsetAtRawScalar(rawScalarIndex), 0));
             return placeholderLiteral(map);
         }
 
@@ -1644,15 +1914,34 @@ public final class Parser {
         //    interpolations exactly as everywhere else; the legacy
         //    profile keeps the historical contract verbatim.
         //    parseExpression() is private but accessible — Java JLS section 6.6.1
-        Parser subParser = new Parser(adjusted, file, profile);
+        //    D10.7: the sub-parser is constructed with NO directive
+        //    events — sub-events hoist to the enclosing parser instead of
+        //    being re-evaluated here; the seen-sets are shared with the
+        //    parent events (D10.5) so nested duplicate checks see them.
+        Parser subParser = new Parser(adjusted, file, profile, List.of());
+        subParser.evaluator.adoptSeenState(evaluator);
         ExpressionNode expr = subParser.parseExpression();
 
         // 6. Merge sub-parser diagnostics. The adjusted tokens carry rebased
         // line/column positions and exact original scalar offsets, so
         // sub-parser diagnostics are already SOURCE-exact in the original
         // file — including end-of-input errors anchored at the past-end
-        // pseudo-EOF derived from the retained rebased EOF token.
+        // pseudo-EOF derived from the retained rebased EOF token. Nested
+        // template-embedded per-event diagnostics surface here too (the
+        // nested merge points ran inside the sub-parser).
         diagnostics.addAll(subParser.diagnostics);
+
+        // 8. Nested-template events bubble up through the same append rule
+        // (D10.4): they were validated at their nested merge points, so no
+        // re-validation runs here; event indices continue after the parent
+        // lexer's last event and anchors stay null. The finalize sweep of
+        // this parser covers them as unanchored events.
+        for (CompilerDirective e : subParser.directiveEvents) {
+            directiveEvents.add(new CompilerDirective(
+                directiveEvents.size(), e.name(), e.rawArgument(),
+                e.trimmedArgument(), e.sourceRange(), e.nameRange(),
+                e.precedingNonCommentTokenCount(), null));
+        }
 
         // D16: Null-safety guard — if the expression is syntactically invalid
         // (e.g., ${@}), parseExpression() returns null. Substitute a placeholder
@@ -1704,7 +1993,7 @@ public final class Parser {
             return new Token(t.type(), t.lexeme(), baseLine,
                 map.sourceColumnAtRawScalar(map.expressionStartRawScalarIndex())
                     + t.column() - 1,
-                t.length(), t.directives());
+                t.length());
         }
         int decodedStart = t.startScalarOffset();
         int decodedEnd = t.endScalarOffset();
@@ -1715,7 +2004,7 @@ public final class Parser {
         return new Token(t.type(), t.lexeme(), baseLine,
             map.sourceColumnAtRawScalar(rawStart), t.length(),
             map.sourceOffsetAtRawScalar(rawStart),
-            Math.max(0, rawEnd - rawStart), t.directives());
+            Math.max(0, rawEnd - rawStart));
     }
 
     /**
@@ -1889,8 +2178,7 @@ public final class Parser {
             if (inputEofToken != null) {
                 return new Token(TokenType.EOF, "",
                     inputEofToken.line(), inputEofToken.column(), 0,
-                    inputEofToken.startScalarOffset(), inputEofToken.scalarLength(),
-                    List.of());
+                    inputEofToken.startScalarOffset(), inputEofToken.scalarLength());
             }
             return new Token(TokenType.EOF, "", 1, 1, 0);
         }
@@ -1988,7 +2276,7 @@ public final class Parser {
      */
     private Token tokenSpanStart(Span sp) {
         return new Token(TokenType.IDENTIFIER, "", sp.startLine(), sp.startColumn(), 1,
-            sp.startScalarOffset(), 0, List.of());
+            sp.startScalarOffset(), 0);
     }
 
     /**
@@ -1998,7 +2286,7 @@ public final class Parser {
     private Token tokenSpanStart(TypeNode type) {
         Span sp = type.span();
         return new Token(TokenType.IDENTIFIER, "", sp.startLine(), sp.startColumn(), 1,
-            sp.startScalarOffset(), 0, List.of());
+            sp.startScalarOffset(), 0);
     }
 
     /**
@@ -2022,6 +2310,14 @@ public final class Parser {
 
     private void error(DiagnosticCode code, String message, ExpressionNode node) {
         diagnostics.add(CompilerDiagnostic.error(code, message, node.span()));
+    }
+
+    private void error(DiagnosticCode code, String message, Span span) {
+        diagnostics.add(CompilerDiagnostic.error(code, message, span));
+    }
+
+    private void error(DiagnosticCode code, String message, DiagnosticRange range) {
+        diagnostics.add(CompilerDiagnostic.error(code, message, range));
     }
 
 

@@ -56,7 +56,7 @@ public class GenerateStdlibGoldenIr {
                 continue;
             }
 
-            Parser parser = new Parser(lex.tokens(), filename);
+            Parser parser = new Parser(lex.tokens(), filename, lex.directiveEvents());
             ParseResult parseResult = parser.parse();
             if (parseResult.hasErrors()) {
                 System.err.println("Parse errors in " + filename);

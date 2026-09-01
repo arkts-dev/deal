@@ -1073,7 +1073,7 @@ public class ModuleSystemTest {
             """;
 
         LexResult lex = new Lexer(source, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         check(!parse.hasErrors(), "Parser: no errors");
 
         ExportExtractor extractor = new ExportExtractor("test", false);
@@ -1108,7 +1108,7 @@ public class ModuleSystemTest {
             """;
 
         LexResult lex = new Lexer(source, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         check(!parse.hasErrors(), "Parser: no errors");
 
         ExportExtractor extractor = new ExportExtractor("test", false);
@@ -1144,7 +1144,7 @@ public class ModuleSystemTest {
             """;
 
         LexResult lex = new Lexer(source, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         check(!parse.hasErrors(), "Parser: no errors");
 
         ExportExtractor extractor = new ExportExtractor("test", false);
@@ -1180,7 +1180,7 @@ public class ModuleSystemTest {
             """;
 
         LexResult lex = new Lexer(validDecl, "test.d.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.d.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.d.deal", lex.directiveEvents()).parse();
         check(!parse.hasErrors(), "Parser: no errors for valid .d.deal");
 
         ExportExtractor extractor = new ExportExtractor("test", true);
@@ -1195,7 +1195,7 @@ public class ModuleSystemTest {
             """;
 
         LexResult lex2 = new Lexer(invalidDecl, "test2.d.deal").tokenize();
-        ParseResult parse2 = new Parser(lex2.tokens(), "test2.d.deal").parse();
+        ParseResult parse2 = new Parser(lex2.tokens(), "test2.d.deal", lex2.directiveEvents()).parse();
         check(!parse2.hasErrors(), "Parser: no errors for invalid .d.deal");
 
         ExportExtractor extractor2 = new ExportExtractor("test2", true);
@@ -1226,7 +1226,7 @@ public class ModuleSystemTest {
             """;
 
         LexResult lex = new Lexer(invalidDecl, "test_let.d.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test_let.d.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test_let.d.deal", lex.directiveEvents()).parse();
         check(!parse.hasErrors(), "Parser: no errors for .d.deal with let");
 
         ExportExtractor extractor = new ExportExtractor("test_let", true);
@@ -2106,13 +2106,17 @@ public class ModuleSystemTest {
                 "host/cfg": { "declaration": "bindings/host-cfg.d.deal" }
               }
             }""");
+        // ISSUE-0273: @jsonable on a declaration-file class has no
+        // effect (fixed-name-directive-events D4) — the JSON surface is
+        // declared explicitly, never synthesized.
         writeFile("bindings/host-cfg.d.deal", """
             export function ping(): int;
             export function repeat(): int;
-            // @jsonable
             export class User {
                 name: string;
             }
+            export function User$fromJson(s: string): User | null;
+            export function User$toJson(u: User): string;
             """);
         writeFile("src/ext_main.deal", """
             import * as cfg from "host/cfg"
@@ -2151,9 +2155,9 @@ public class ModuleSystemTest {
         check(lua.contains("User = \"@$external/host/cfg/User\""),
             "Class descriptor uses the canonical @$external projection (external raw key)");
         check(lua.contains("[\"User$fromJson\"] = \"(string)->?@$external/host/cfg/User\""),
-            "@jsonable synthetic export emits a bracket-string declared-map key");
+            "explicitly declared User$fromJson emits a bracket-string declared-map key");
         check(lua.contains("[\"User$toJson\"] = \"(@$external/host/cfg/User)->string\""),
-            "@jsonable synthetic toJson export emits a bracket-string key");
+            "explicitly declared User$toJson emits a bracket-string key");
         boolean dollarOnlyInQuotedKeys = true;
         for (int i = lua.indexOf('$'); i >= 0; i = lua.indexOf('$', i + 1)) {
             int open = lua.lastIndexOf('\"', i);
@@ -2475,13 +2479,18 @@ public class ModuleSystemTest {
                 "host/x\\\\y": { "declaration": "bindings/host-xy.d.deal" }
               }
             }""");
+        // ISSUE-0273: @jsonable on a declaration-file class has no
+        // effect — the JSON surface is declared explicitly (the
+        // checker's jsonable-field rule keys on the exported
+        // C$fromJson/C$toJson signatures).
         writeFile("bindings/host-xy.d.deal", """
             export function ping(): int;
 
-            // @jsonable
             export class User {
                 port: int = 0;
             }
+            export function User$fromJson(s: string): User | null;
+            export function User$toJson(u: User): string;
             """);
         // The @jsonable Wrapper holds a host-class field: the emitted
         // Wrapper_fields descriptor embeds the class identity

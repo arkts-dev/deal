@@ -1,6 +1,6 @@
 // @spec: Lexical elements — v1.2 @deal-version file directive
 // @description: Each file directive may occur at most once; a duplicate @deal-version is rejected
-// @expected: compile-error E1053
+// @expected: compile-error E1046
 // @features: lexer, directives, deal-version, v1.2
 
 // @deal-version 1.2

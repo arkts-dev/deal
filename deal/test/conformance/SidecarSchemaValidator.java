@@ -1,8 +1,8 @@
 package deal.test.conformance;
 
-import deal.ast.TokenType;
+import deal.lexer.CompilerDirective;
+import deal.lexer.DirectiveName;
 import deal.lexer.Lexer;
-import deal.lexer.Token;
 import deal.semantic.ir.CanonicalJson;
 import deal.semantic.ir.SemanticIrTextDecodeException;
 
@@ -303,23 +303,24 @@ public final class SidecarSchemaValidator {
     }
 
     /**
-     * True iff the DEAL source text carries an {@code @extern-c} import
-     * directive — the C6 rejection trigger. The real lexer attaches the
-     * directive comment to the following {@code import} token, so a mere
-     * {@code @extern-c} occurrence inside a string literal is never a
-     * trigger. A source that fails to lex yields {@code false} (fail
+     * True iff the DEAL source text carries an {@code @extern-c} file
+     * directive — the C6 rejection trigger (re-keyed onto the structured
+     * directive events by fixed-name-directive-events D9: {@code @extern-c}
+     * is a file directive that never anchors to a token). The real lexer
+     * recognizes the directive only as a directive-shaped comment, so a
+     * mere {@code @extern-c} occurrence inside a string literal is never
+     * a trigger. A source that fails to lex yields {@code false} (fail
      * closed: a divergent form is then rejected as lacking the trigger).
      *
      * @param source the DEAL module source text (non-null)
-     * @return true iff an {@code import} token carries the directive
+     * @return true iff an {@code @extern-c} directive event exists
      */
     public static boolean containsExternCImport(String source) {
         Objects.requireNonNull(source, "source must not be null");
         try {
             Lexer lexer = new Lexer(source, "<sidecar-schema-compilation-module>");
-            for (Token token : lexer.tokenize().tokens()) {
-                if (token.type() == TokenType.IMPORT
-                        && token.directives().contains("@extern-c")) {
+            for (CompilerDirective event : lexer.tokenize().directiveEvents()) {
+                if (event.name() == DirectiveName.EXTERN_C) {
                     return true;
                 }
             }

@@ -85,6 +85,7 @@ javac --release 25 -proc:none -d build \
   test/TypesBytesTest.java \
   test/LexerTest.java \
   test/ParserTest.java \
+  test/DirectiveTest.java \
   test/CheckerTest.java \
   test/IrDumperTest.java \
   test/IrGoldenTest.java \
@@ -405,6 +406,10 @@ java -ea -cp build deal.test.AstAndTypesTest
 echo ""
 echo "=== Running Types Bytes Tests (ISSUE-0308) ==="
 java -ea -cp build deal.test.TypesBytesTest
+
+echo ""
+echo "=== Running Directive Tests ==="
+java -ea -cp build deal.test.DirectiveTest
 
 echo ""
 echo "=== Running Lexer Tests ==="

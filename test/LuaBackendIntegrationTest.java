@@ -50,7 +50,7 @@ public class LuaBackendIntegrationTest {
         }
 
         LexResult lex = new Lexer(dealSource, filename).tokenize();
-        ParseResult parse = new Parser(lex.tokens(), filename).parse();
+        ParseResult parse = new Parser(lex.tokens(), filename, lex.directiveEvents()).parse();
 
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver(filename, resolver);
@@ -218,7 +218,7 @@ public class LuaBackendIntegrationTest {
             "export function add(a: int, b: int): int { return a + b; }\n";
 
         LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver("test.deal", resolver);
         SymbolTable symTable = nr.resolve(parse.program());
@@ -262,7 +262,7 @@ public class LuaBackendIntegrationTest {
             "}\n";
 
         LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver("test.deal", resolver);
         SymbolTable symTable = nr.resolve(parse.program());
@@ -312,7 +312,7 @@ public class LuaBackendIntegrationTest {
             "}\n";
 
         LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver("test.deal", resolver);
         SymbolTable symTable = nr.resolve(parse.program());
@@ -364,7 +364,7 @@ public class LuaBackendIntegrationTest {
             "}\n";
 
         LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver("test.deal", resolver);
         SymbolTable symTable = nr.resolve(parse.program());
@@ -416,7 +416,7 @@ public class LuaBackendIntegrationTest {
             "}\n";
 
         LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver("test.deal", resolver);
         SymbolTable symTable = nr.resolve(parse.program());
@@ -478,7 +478,7 @@ public class LuaBackendIntegrationTest {
             "}\n";
 
         LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver("test.deal", resolver);
         SymbolTable symTable = nr.resolve(parse.program());
@@ -538,7 +538,7 @@ public class LuaBackendIntegrationTest {
             "}\n";
 
         LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver("test.deal", resolver);
         SymbolTable symTable = nr.resolve(parse.program());
@@ -605,7 +605,7 @@ public class LuaBackendIntegrationTest {
             "}\n";
 
         LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver("test.deal", resolver);
         SymbolTable symTable = nr.resolve(parse.program());
@@ -674,7 +674,7 @@ public class LuaBackendIntegrationTest {
             "}\n";
 
         LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver("test.deal", resolver);
         SymbolTable symTable = nr.resolve(parse.program());
@@ -741,7 +741,7 @@ public class LuaBackendIntegrationTest {
             "}\n";
 
         LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver("test.deal", resolver);
         SymbolTable symTable = nr.resolve(parse.program());
@@ -805,7 +805,7 @@ public class LuaBackendIntegrationTest {
             "}\n";
 
         LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver("test.deal", resolver);
         SymbolTable symTable = nr.resolve(parse.program());
@@ -870,7 +870,7 @@ public class LuaBackendIntegrationTest {
             "}\n";
 
         LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver("test.deal", resolver);
         SymbolTable symTable = nr.resolve(parse.program());
@@ -930,7 +930,7 @@ public class LuaBackendIntegrationTest {
             "}\n";
 
         LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver("test.deal", resolver);
         SymbolTable symTable = nr.resolve(parse.program());
@@ -996,7 +996,7 @@ public class LuaBackendIntegrationTest {
             "}\n";
 
         LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver("test.deal", resolver);
         SymbolTable symTable = nr.resolve(parse.program());
@@ -1065,7 +1065,7 @@ public class LuaBackendIntegrationTest {
             "}\n";
 
         LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver("test.deal", resolver);
         SymbolTable symTable = nr.resolve(parse.program());
@@ -1121,7 +1121,7 @@ public class LuaBackendIntegrationTest {
             "}\n";
 
         LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver("test.deal", resolver);
         SymbolTable symTable = nr.resolve(parse.program());
@@ -1177,7 +1177,7 @@ public class LuaBackendIntegrationTest {
             "}\n";
 
         LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver("test.deal", resolver);
         SymbolTable symTable = nr.resolve(parse.program());
@@ -1234,7 +1234,7 @@ public class LuaBackendIntegrationTest {
             "}\n";
 
         LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver("test.deal", resolver);
         SymbolTable symTable = nr.resolve(parse.program());
@@ -1290,7 +1290,7 @@ public class LuaBackendIntegrationTest {
             "}\n";
 
         LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver("test.deal", resolver);
         SymbolTable symTable = nr.resolve(parse.program());
@@ -1346,7 +1346,7 @@ public class LuaBackendIntegrationTest {
             "}\n";
 
         LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver("test.deal", resolver);
         SymbolTable symTable = nr.resolve(parse.program());
@@ -1404,7 +1404,7 @@ public class LuaBackendIntegrationTest {
             "}\n";
 
         LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver("test.deal", resolver);
         SymbolTable symTable = nr.resolve(parse.program());
@@ -1460,7 +1460,7 @@ public class LuaBackendIntegrationTest {
             "}\n";
 
         LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver("test.deal", resolver);
         SymbolTable symTable = nr.resolve(parse.program());
@@ -1490,7 +1490,7 @@ public class LuaBackendIntegrationTest {
             "export function test_direct_int_err(): int { return int(3.7); }\n";
 
         LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver("test.deal", resolver);
         SymbolTable symTable = nr.resolve(parse.program());
@@ -1557,7 +1557,7 @@ public class LuaBackendIntegrationTest {
             "}\n";
 
         LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver("test.deal", resolver);
         SymbolTable symTable = nr.resolve(parse.program());
@@ -1621,7 +1621,7 @@ public class LuaBackendIntegrationTest {
             "}\n";
 
         LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver("test.deal", resolver);
         SymbolTable symTable = nr.resolve(parse.program());
@@ -1685,7 +1685,7 @@ public class LuaBackendIntegrationTest {
             "}\n";
 
         LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver("test.deal", resolver);
         SymbolTable symTable = nr.resolve(parse.program());
@@ -1751,7 +1751,7 @@ public class LuaBackendIntegrationTest {
             "}\n";
 
         LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver("test.deal", resolver);
         SymbolTable symTable = nr.resolve(parse.program());
@@ -1817,7 +1817,7 @@ public class LuaBackendIntegrationTest {
             "}\n";
 
         LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver("test.deal", resolver);
         SymbolTable symTable = nr.resolve(parse.program());
@@ -1882,7 +1882,7 @@ public class LuaBackendIntegrationTest {
             "}\n";
 
         LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver("test.deal", resolver);
         SymbolTable symTable = nr.resolve(parse.program());
@@ -1939,7 +1939,7 @@ public class LuaBackendIntegrationTest {
             "}\n";
 
         LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver("test.deal", resolver);
         SymbolTable symTable = nr.resolve(parse.program());
@@ -2000,7 +2000,7 @@ public class LuaBackendIntegrationTest {
             "}\n";
 
         LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver("test.deal", resolver);
         SymbolTable symTable = nr.resolve(parse.program());
@@ -2061,7 +2061,7 @@ public class LuaBackendIntegrationTest {
             "}\n";
 
         LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver("test.deal", resolver);
         SymbolTable symTable = nr.resolve(parse.program());
@@ -2123,7 +2123,7 @@ public class LuaBackendIntegrationTest {
             "}\n";
 
         LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver("test.deal", resolver);
         SymbolTable symTable = nr.resolve(parse.program());
@@ -2181,7 +2181,7 @@ public class LuaBackendIntegrationTest {
             "}\n";
 
         LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver("test.deal", resolver);
         SymbolTable symTable = nr.resolve(parse.program());
@@ -2243,7 +2243,7 @@ public class LuaBackendIntegrationTest {
             "}\n";
 
         LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver("test.deal", resolver);
         SymbolTable symTable = nr.resolve(parse.program());
@@ -2306,7 +2306,7 @@ public class LuaBackendIntegrationTest {
             "}\n";
 
         LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver("test.deal", resolver);
         SymbolTable symTable = nr.resolve(parse.program());
@@ -2372,7 +2372,7 @@ public class LuaBackendIntegrationTest {
             "}\n";
 
         LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver("test.deal", resolver);
         SymbolTable symTable = nr.resolve(parse.program());
@@ -2432,7 +2432,7 @@ public class LuaBackendIntegrationTest {
             "}\n";
 
         LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver("test.deal", resolver);
         SymbolTable symTable = nr.resolve(parse.program());
@@ -2486,7 +2486,7 @@ public class LuaBackendIntegrationTest {
             "}\n";
 
         LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver("test.deal", resolver);
         SymbolTable symTable = nr.resolve(parse.program());
@@ -2545,7 +2545,7 @@ public class LuaBackendIntegrationTest {
             "}\n";
 
         LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
 
         // We expect parser diagnostics for the malformed expression
         boolean hasParserDiags = !parse.diagnostics().isEmpty();
@@ -2590,7 +2590,7 @@ public class LuaBackendIntegrationTest {
             "}\n";
 
         LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
 
         // Should have no parser diagnostics — the unescape fix ensures
         // the sub-lexer receives clean source
@@ -2680,7 +2680,7 @@ public class LuaBackendIntegrationTest {
             "}\n";
 
         LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver("test.deal", resolver);
         SymbolTable symTable = nr.resolve(parse.program());
@@ -2746,7 +2746,7 @@ public class LuaBackendIntegrationTest {
             "}\n";
 
         LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver("test.deal", resolver);
         SymbolTable symTable = nr.resolve(parse.program());
@@ -2805,7 +2805,7 @@ public class LuaBackendIntegrationTest {
             "export async function f(): int { return await g(); }\n";
 
         LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver("test.deal", resolver);
         SymbolTable symTable = nr.resolve(parse.program());
@@ -2857,7 +2857,7 @@ public class LuaBackendIntegrationTest {
             "export async function f(): int { return 5; }\n";
 
         LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver("test.deal", resolver);
         SymbolTable symTable = nr.resolve(parse.program());
@@ -2911,7 +2911,7 @@ public class LuaBackendIntegrationTest {
             "export async function a(): int { return await b(); }\n";
 
         LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver("test.deal", resolver);
         SymbolTable symTable = nr.resolve(parse.program());
@@ -2969,7 +2969,7 @@ public class LuaBackendIntegrationTest {
             "}\n";
 
         LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver("test.deal", resolver);
         SymbolTable symTable = nr.resolve(parse.program());
@@ -3034,7 +3034,7 @@ public class LuaBackendIntegrationTest {
             "}\n";
 
         LexResult lex = new Lexer(dealSrc, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver("test.deal", resolver);
         SymbolTable symTable = nr.resolve(parse.program());
@@ -3093,7 +3093,7 @@ public class LuaBackendIntegrationTest {
     private static JsonableRunResult compileAndRunJsonable(
             String dealSource, String filename, String runnerBody) throws Exception {
         LexResult lex = new Lexer(dealSource, filename).tokenize();
-        ParseResult parse = new Parser(lex.tokens(), filename).parse();
+        ParseResult parse = new Parser(lex.tokens(), filename, lex.directiveEvents()).parse();
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver(filename, resolver);
         SymbolTable symTable = nr.resolve(parse.program());
@@ -3763,7 +3763,7 @@ public class LuaBackendIntegrationTest {
             "export function neg(x: int): int { return -x; }\n"
             + "export function main(): null { return null; }\n";
         LexResult lex = new Lexer(src, "legacy.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "legacy.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "legacy.deal", lex.directiveEvents()).parse();
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver("legacy.deal", resolver);
         SymbolTable symTable = nr.resolve(parse.program());

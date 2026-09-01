@@ -74,7 +74,7 @@ public class LuaAbiBackendTest {
         if (lex.hasErrors()) {
             fail("lex errors: " + lex.diagnostics());
         }
-        ParseResult parse = new Parser(lex.tokens(), filename).parse();
+        ParseResult parse = new Parser(lex.tokens(), filename, lex.directiveEvents()).parse();
         if (parse.hasErrors()) {
             fail("parse errors: " + parse.diagnostics());
         }
@@ -1008,7 +1008,7 @@ public class LuaAbiBackendTest {
             + "export function run(): int { return cfg.repeat(); }\n";
         LexResult lex = new Lexer(source, "test.deal").tokenize();
         if (lex.hasErrors()) fail("lex errors: " + lex.diagnostics());
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         if (parse.hasErrors()) fail("parse errors: " + parse.diagnostics());
         NameResolver nr = new NameResolver("test.deal", resolver);
         SymbolTable symTable = nr.resolve(parse.program());
@@ -1085,7 +1085,7 @@ public class LuaAbiBackendTest {
             + "}\n";
         LexResult lex = new Lexer(source, "test.deal").tokenize();
         if (lex.hasErrors()) fail("lex errors: " + lex.diagnostics());
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         if (parse.hasErrors()) fail("parse errors: " + parse.diagnostics());
         NameResolver nr = new NameResolver("test.deal", resolver);
         SymbolTable symTable = nr.resolve(parse.program());
@@ -1182,7 +1182,7 @@ public class LuaAbiBackendTest {
             + "export function run(): int { return cfg.repeat(); }\n";
         LexResult lex = new Lexer(source, "test.deal").tokenize();
         if (lex.hasErrors()) fail("lex errors: " + lex.diagnostics());
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         if (parse.hasErrors()) fail("parse errors: " + parse.diagnostics());
         StubModuleResolver resolver = new StubModuleResolver();
         resolver.register("host/cfg", insertionOrder);

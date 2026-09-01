@@ -4,8 +4,6 @@ import deal.ast.TokenType;
 import deal.diagnostics.DiagnosticRange;
 import deal.diagnostics.RangeOrigin;
 
-import java.util.List;
-
 /**
  * A token produced by the lexer.
  *
@@ -16,6 +14,11 @@ import java.util.List;
  * {@code 0}. When both are non-negative, the token covers the half-open
  * scalar range {@code [startScalarOffset, startScalarOffset + scalarLength)}
  * in its file.</p>
+ *
+ * <p>Directive events are carried by {@link LexResult#directiveEvents()}
+ * (fixed-name-directive-events D1): tokens carry no directive component,
+ * the EOF token never carries events, and leftover events at EOF stay in
+ * the result's event list as unanchored records.</p>
  *
  * @param type              the token type
  * @param lexeme            the source text of the token
@@ -28,8 +31,6 @@ import java.util.List;
  * @param scalarLength      length of the lexeme in decoded Unicode scalars,
  *                          or {@link #UNKNOWN_OFFSET} when no offset
  *                          information is available
- * @param directives        compiler directives (e.g. @jsonable) attached to
- *                          this token
  */
 public record Token(
     TokenType type,
@@ -38,8 +39,7 @@ public record Token(
     int column,
     int length,
     int startScalarOffset,
-    int scalarLength,
-    List<String> directives
+    int scalarLength
 ) {
     /**
      * Explicit sentinel for "no offset information". Never a valid scalar
@@ -50,21 +50,10 @@ public record Token(
     /**
      * Convenience constructor for backward compatibility: no offset
      * information. Both scalar offset components are set to
-     * {@link #UNKNOWN_OFFSET}, never {@code 0}. Directives default to an
-     * empty list.
-     */
-    public Token(TokenType type, String lexeme, int line, int column, int length) {
-        this(type, lexeme, line, column, length, UNKNOWN_OFFSET, UNKNOWN_OFFSET, List.of());
-    }
-
-    /**
-     * Convenience constructor for backward compatibility: no offset
-     * information. Both scalar offset components are set to
      * {@link #UNKNOWN_OFFSET}, never {@code 0}.
      */
-    public Token(TokenType type, String lexeme, int line, int column, int length,
-                 List<String> directives) {
-        this(type, lexeme, line, column, length, UNKNOWN_OFFSET, UNKNOWN_OFFSET, directives);
+    public Token(TokenType type, String lexeme, int line, int column, int length) {
+        this(type, lexeme, line, column, length, UNKNOWN_OFFSET, UNKNOWN_OFFSET);
     }
 
     public Token {
@@ -73,7 +62,6 @@ public record Token(
         if (line < 1) throw new IllegalArgumentException("line must be >= 1, got " + line);
         if (column < 1) throw new IllegalArgumentException("column must be >= 1, got " + column);
         if (length < 0) throw new IllegalArgumentException("length must be >= 0, got " + length);
-        if (directives == null) throw new IllegalArgumentException("directives must not be null");
     }
 
     /**
@@ -91,18 +79,6 @@ public record Token(
      */
     public int endScalarOffset() {
         return hasScalarOffsets() ? startScalarOffset + scalarLength : UNKNOWN_OFFSET;
-    }
-
-    /**
-     * Returns a new Token with the given directives. All other fields —
-     * including {@code startScalarOffset} and {@code scalarLength} — are
-     * copied verbatim from the receiver (known in, known out; UNKNOWN in,
-     * UNKNOWN out). Never routes through the offset-less convenience
-     * constructors.
-     */
-    public Token withDirectives(List<String> d) {
-        return new Token(type, lexeme, line, column, length,
-            startScalarOffset, scalarLength, List.copyOf(d));
     }
 
     /**
@@ -142,14 +118,7 @@ public record Token(
 
     @Override
     public String toString() {
-        StringBuilder sb = new StringBuilder();
-        sb.append(String.format("%s('%s')@%d:%d",
-            type.name(), lexeme, line, column));
-        if (!directives.isEmpty()) {
-            sb.append(" [");
-            sb.append(String.join(", ", directives));
-            sb.append("]");
-        }
-        return sb.toString();
+        return String.format("%s('%s')@%d:%d",
+            type.name(), lexeme, line, column);
     }
 }

@@ -1321,7 +1321,8 @@ public final class ModuleIdentityAssemblyTest {
         String source = Files.readString(file);
         Lexer lexer = new Lexer(source, file.toString());
         LexResult lexed = lexer.tokenize();
-        ParseResult parsed = new Parser(lexed.tokens(), file.toString()).parse();
+        ParseResult parsed = new Parser(lexed.tokens(), file.toString(),
+            lexed.directiveEvents()).parse();
         for (StatementNode statement : parsed.program().statements()) {
             if (statement instanceof ExportDeclaration export
                     && export.declaration() instanceof ClassDeclaration cd
@@ -1339,7 +1340,8 @@ public final class ModuleIdentityAssemblyTest {
         String source = Files.readString(file);
         LexResult lexed = new Lexer(source, file.toString()).tokenize();
         ParseResult parsed =
-            new Parser(lexed.tokens(), file.toString()).parse();
+            new Parser(lexed.tokens(), file.toString(),
+                lexed.directiveEvents()).parse();
         for (StatementNode statement : parsed.program().statements()) {
             if (statement instanceof ExportDeclaration export
                     && export.declaration() instanceof ClassDeclaration) {

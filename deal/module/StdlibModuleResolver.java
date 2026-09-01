@@ -145,7 +145,8 @@ public final class StdlibModuleResolver {
                 + lex.diagnostics());
         }
 
-        Parser parser = new Parser(lex.tokens(), filename);
+        Parser parser = new Parser(lex.tokens(), filename,
+            lex.directiveEvents());
         ParseResult parseResult = parser.parse();
         if (parseResult.hasErrors()) {
             throw new RuntimeException("Parse errors in " + filename + ": "

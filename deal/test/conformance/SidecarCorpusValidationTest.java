@@ -2,6 +2,7 @@ package deal.test.conformance;
 
 import deal.ast.ImportDeclaration;
 import deal.ast.StatementNode;
+import deal.test.ConformanceHarnessMetadata;
 import deal.checker.CheckResult;
 import deal.checker.ModuleResolver;
 import deal.checker.ModuleResolver.ModuleNotFoundException;
@@ -253,7 +254,8 @@ public class SidecarCorpusValidationTest {
      * One discovered corpus fixture: its corpus-relative slash path, its
      * source text, and its exact {@code @expected} tag.
      */
-    private record Fixture(String corpusPath, String source, String expectedTag) {}
+    private record Fixture(String corpusPath, String source,
+                            String expectedTag, int headerLinesStripped) {}
 
     private static List<Fixture> discover() throws Exception {
         List<Fixture> fixtures = new ArrayList<>();
@@ -269,9 +271,20 @@ public class SidecarCorpusValidationTest {
                 .toList();
             for (Path file : files) {
                 String corpusPath = slash(CORPUS_ROOT.relativize(file));
-                String source = Files.readString(file);
-                String expectedTag = expectedTagOf(source, corpusPath);
-                fixtures.add(new Fixture(corpusPath, source, expectedTag));
+                String raw = Files.readString(file);
+                String expectedTag = expectedTagOf(raw, corpusPath);
+                // ISSUE-0273: every compiler-facing surface of this
+                // validation consumes header-free source (the shared
+                // harness metadata seam); the @expected tag still reads
+                // the raw bytes. The stripped header-line count rebases
+                // sidecar diagnostic line pins (authored in raw-file
+                // coordinates) onto the header-free compile coordinates.
+                String source = ConformanceHarnessMetadata
+                    .stripClassificationHeaders(raw);
+                int headerCount = raw.split("\n", -1).length
+                    - source.split("\n", -1).length;
+                fixtures.add(new Fixture(corpusPath, source, expectedTag,
+                    headerCount));
             }
         }
         return fixtures;
@@ -642,7 +655,7 @@ public class SidecarCorpusValidationTest {
         if (lex.hasErrors()) {
             return paths;
         }
-        ParseResult result = new Parser(lex.tokens(), "<sidecar-compilation-set>")
+        ParseResult result = new Parser(lex.tokens(), "<sidecar-compilation-set>", lex.directiveEvents())
             .parse();
         if (result.hasErrors()) {
             return paths;
@@ -723,8 +736,11 @@ public class SidecarCorpusValidationTest {
         CompilerDiagnostic d = errors.get(0);
         compareDiagnosticField(fixture.corpusPath(), "code",
             pinCode, d.code());
+        // The pinned line was authored in raw corpus-file coordinates;
+        // the stripped compile shifts lines up by the header count.
         compareDiagnosticField(fixture.corpusPath(), "line",
-            String.valueOf(pinLine), String.valueOf(d.line()));
+            String.valueOf(pinLine),
+            String.valueOf(d.line() + fixture.headerLinesStripped()));
         compareDiagnosticField(fixture.corpusPath(), "column",
             String.valueOf(pinColumn), String.valueOf(d.column()));
         compareDiagnosticField(fixture.corpusPath(), "message",
@@ -761,7 +777,7 @@ public class SidecarCorpusValidationTest {
         }
         if (lex.hasErrors()) { return errors; }
 
-        Parser parser = new Parser(lex.tokens(), filename);
+        Parser parser = new Parser(lex.tokens(), filename, lex.directiveEvents());
         ParseResult parseResult = parser.parse();
         for (CompilerDiagnostic d : parseResult.diagnostics()) {
             if ("error".equals(d.severity())) { errors.add(d); }

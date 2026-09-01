@@ -989,7 +989,9 @@ public class JvmConformanceTest {
             all.addAll(lex.diagnostics());
             if (lex.hasErrors()) return all;
 
-            Parser parser = new Parser(lex.tokens(), filename, profile);
+            Parser parser = new Parser(lex.tokens(),
+                    filename, profile,
+                    lex.directiveEvents());
             ParseResult parseResult = parser.parse();
             all.addAll(parseResult.diagnostics());
             if (parseResult.hasErrors()) return all;
@@ -1072,7 +1074,8 @@ public class JvmConformanceTest {
                             + resolved);
                     }
                     Parser parser = new Parser(lex.tokens(),
-                        resolved.toString(), profile);
+                    resolved.toString(), profile,
+                    lex.directiveEvents());
                     ParseResult parseResult = parser.parse();
                     if (parseResult.hasErrors()) {
                         throw new ModuleNotFoundException("Parse errors in "
@@ -1116,7 +1119,8 @@ public class JvmConformanceTest {
                     .tokenize();
                 if (lex.hasErrors()) return null;
                 Parser parser = new Parser(lex.tokens(),
-                    resolved.toString(), profile);
+                    resolved.toString(), profile,
+                    lex.directiveEvents());
                 ParseResult parseResult = parser.parse();
                 if (parseResult.hasErrors()) return null;
                 NameResolver nr = new NameResolver(resolved.toString(), this);
@@ -1138,8 +1142,9 @@ public class JvmConformanceTest {
                     .stripClassificationHeaders(Files.readString(file));
                 LexResult lex = new Lexer(source, file.toString()).tokenize();
                 if (lex.hasErrors()) return symbols;
-                Parser parser = new Parser(lex.tokens(), file.toString(),
-                    profile);
+                Parser parser = new Parser(lex.tokens(),
+                    file.toString(), profile,
+                    lex.directiveEvents());
                 ParseResult parseResult = parser.parse();
                 if (parseResult.hasErrors()) return symbols;
                 String dotted = modulePathOf(file);
@@ -1768,6 +1773,14 @@ public class JvmConformanceTest {
      * (its export list drives auto-invocation). Type checking is NOT
      * re-run here — the orchestrator already checked every module — so
      * this parse cannot act as a checker bypass.
+     *
+     * <p>ISSUE-0273 D8 item 2c/3: this runner parse is NOT an in-memory
+     * seam site — its lexer reads the already-stripped temp copy produced
+     * by the materialization seam, and its single parser construction
+     * keeps the no-events parser form: the orchestrator already validated
+     * the same bytes with full directive evaluation, and re-running
+     * file-directive evaluation and binding here would duplicate that
+     * work.</p>
      */
     private static ProgramNode parseEntryProgram(Path entryFile,
             SemanticProfile profile) throws IOException {

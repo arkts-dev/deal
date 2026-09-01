@@ -37,26 +37,30 @@ public class ParserTest {
 
     private static ParseResult parse(String source) {
         LexResult lex = new Lexer(source, "test.deal").tokenize();
-        return new Parser(lex.tokens(), "test.deal").parse();
+        // ISSUE-0273: the events-carrying constructor — file-directive
+        // evaluation and binding run exactly as in production.
+        return new Parser(lex.tokens(), "test.deal",
+            lex.directiveEvents()).parse();
     }
 
     private static ParseResult parseFile(String source, String filename) {
         LexResult lex = new Lexer(source, filename).tokenize();
-        return new Parser(lex.tokens(), filename).parse();
+        return new Parser(lex.tokens(), filename,
+            lex.directiveEvents()).parse();
     }
 
     /** Parses under the v1.2 profile-aware constructor (I1). */
     private static ParseResult parseV12(String source) {
         LexResult lex = new Lexer(source, "test.deal").tokenize();
         return new Parser(lex.tokens(), "test.deal",
-            SemanticProfile.DEAL_V1_2_INT32).parse();
+            SemanticProfile.DEAL_V1_2_INT32, lex.directiveEvents()).parse();
     }
 
     /** Parses under the profile-aware constructor with the legacy profile. */
     private static ParseResult parseLegacyProfile(String source) {
         LexResult lex = new Lexer(source, "test.deal").tokenize();
         return new Parser(lex.tokens(), "test.deal",
-            SemanticProfile.LEGACY_SAFE_INT).parse();
+            SemanticProfile.LEGACY_SAFE_INT, lex.directiveEvents()).parse();
     }
 
     private static void assertNoParseErrors(ParseResult result, String context) {
@@ -78,6 +82,12 @@ public class ParserTest {
     private static void assertStmtCount(ProgramNode prog, int expected, String context) {
         check(prog.statements().size() == expected,
             context + ": expected " + expected + " statements, got " + prog.statements().size());
+    }
+
+    private static CompilerDiagnostic diagOf(ParseResult r, String code) {
+        return r.diagnostics().stream()
+                .filter(d -> d.code().equals(code))
+                .findFirst().orElse(null);
     }
 
     @SuppressWarnings("unchecked")
@@ -221,6 +231,14 @@ public class ParserTest {
         // @deal-version file directive value validation (DEAL v1.2)
         testDealVersionDirectives();
 
+        // ISSUE-0273 directive binding pins (D4/D7/D10)
+        testExternCWrongFileKind();
+        testExternCDuplicateAndPlacement();
+        testCMarkerOutsideExternC();
+        testCMarkerCardinality();
+        testDeclarationFileJsonableNoEffect();
+        testTemplateEmbeddedDirectives();
+
         // Ranged diagnostic anchors (ISSUE-0223 verification 3)
         testTrailingDirectiveEofAnchor();
         testParserDiagnosticScalarExactness();
@@ -242,74 +260,136 @@ public class ParserTest {
         // A valid 1.2 file directive compiles without diagnostics.
         ParseResult r = parse("// @deal-version 1.2\nexport function probe(): null { return null; }");
         assertNoParseErrors(r, "@deal-version 1.2 accepted");
+        check(r.program().fileDirectives().declaredDealVersion() != null
+                && r.program().fileDirectives().declaredDealVersion()
+                    .equals(new DealVersion(1, 2)),
+            "declared version (1,2) recorded");
+        check(r.program().fileDirectives().effectiveDealVersion()
+                .equals(new DealVersion(1, 2)),
+            "effective version (1,2)");
+        check(r.program().fileDirectives().dealVersionRange() != null
+                && r.program().fileDirectives().dealVersionRange()
+                    .startScalarOffset() == 0
+                && r.program().fileDirectives().dealVersionRange()
+                    .endScalarOffset() == 20,
+            "dealVersionRange = the first event's complete comment range (0,20)");
 
-        // Older language versions are rejected: DEAL v1.2 is not
-        // source-compatible with earlier versions (E1055).
-        r = parse("// @deal-version 1.1\nclass A { x: int = 0; }");
-        assertParseError(r, "E1055", "@deal-version 1.1 rejected");
+        // Omission: declared absent, effective (1,2).
+        r = parse("export function probe(): null { return null; }");
+        assertNoParseErrors(r, "omission accepted");
+        check(r.program().fileDirectives().declaredDealVersion() == null,
+            "declared version absent on omission");
+        check(r.program().fileDirectives().effectiveDealVersion()
+                .equals(new DealVersion(1, 2)),
+            "effective version defaults to (1,2)");
 
-        // E1055 anchors at the directive-carrying CLASS token's full
-        // range: line 2, column 1, SOURCE with exact scalar offsets —
-        // the comment line "// @deal-version 1.1" is 20 scalars plus the
-        // line break, so CLASS starts at scalar offset 21.
-        CompilerDiagnostic e1055 = r.diagnostics().stream()
-                .filter(d -> d.code().equals("E1055"))
-                .findFirst().orElse(null);
-        check(e1055 != null, "E1055 diagnostic present");
-        if (e1055 != null) {
-            check(e1055.range().origin() == RangeOrigin.SOURCE,
-                "E1055 range must be SOURCE, got " + e1055.range().origin());
-            check(e1055.line() == 2 && e1055.column() == 1,
-                "E1055 must anchor at the CLASS token (2,1), got ("
-                    + e1055.line() + "," + e1055.column() + ")");
-            check(e1055.range().startScalarOffset() == 21,
-                "E1055 start offset must be 21, got "
-                    + e1055.range().startScalarOffset());
-            check(e1055.range().endScalarOffset() == 26,
-                "E1055 end offset must be 26, got "
-                    + e1055.range().endScalarOffset());
-            check(e1055.range().scalarLength() == 5,
-                "E1055 scalar length must be 5 (CLASS lexeme), got "
-                    + e1055.range().scalarLength());
+        // Numeric equivalence: 01.02 and 1.02 succeed (D7).
+        r = parse("// @deal-version 01.02\nclass A { x: int = 0; }");
+        assertNoParseErrors(r, "@deal-version 01.02 accepted");
+        check(r.program().fileDirectives().declaredDealVersion() != null
+                && r.program().fileDirectives().declaredDealVersion()
+                    .equals(new DealVersion(1, 2)),
+            "01.02 parses to (1,2)");
+        r = parse("// @deal-version 1.02\nclass A { x: int = 0; }");
+        assertNoParseErrors(r, "@deal-version 1.02 accepted");
+
+        // Delimiter-free @deal-version1.2 (D2/D7).
+        r = parse("// @deal-version1.2\nclass A { x: int = 0; }");
+        assertNoParseErrors(r, "delimiter-free @deal-version1.2 accepted");
+
+        // Empty argument is E1045 at the complete comment range.
+        r = parse("// @deal-version\nclass A { x: int = 0; }");
+        assertParseError(r, "E1045", "@deal-version empty argument rejected");
+        CompilerDiagnostic e1045 = diagOf(r, "E1045");
+        if (e1045 != null) {
+            check(e1045.range().origin() == RangeOrigin.SOURCE
+                    && e1045.range().startScalarOffset() == 0
+                    && e1045.range().endScalarOffset() == 16
+                    && e1045.range().scalarLength() == 16,
+                "E1045 empty argument anchors at the complete comment (0,16), got ("
+                    + e1045.range().startScalarOffset() + ","
+                    + e1045.range().endScalarOffset() + ")");
         }
 
-        // Newer major versions are rejected (E1055).
+        // Multi-value argument is E1045.
+        r = parse("// @deal-version 1.2 1.3\nclass A { x: int = 0; }");
+        assertParseError(r, "E1045", "@deal-version multi-value rejected");
+
+        // Older language versions are rejected: DEAL v1.2 is not
+        // source-compatible with earlier versions (E1046).
+        r = parse("// @deal-version 1.1\nclass A { x: int = 0; }");
+        assertParseError(r, "E1046", "@deal-version 1.1 rejected");
+
+        // E1046 anchors at the complete directive comment range: line 1,
+        // column 1, offsets (0,20) — the comment line
+        // "// @deal-version 1.1" is 20 scalars.
+        CompilerDiagnostic e1046 = diagOf(r, "E1046");
+        check(e1046 != null, "E1046 diagnostic present for 1.1");
+        if (e1046 != null) {
+            check(e1046.range().origin() == RangeOrigin.SOURCE,
+                "E1046 range must be SOURCE, got " + e1046.range().origin());
+            check(e1046.line() == 1 && e1046.column() == 1,
+                "E1046 must anchor at the complete comment (1,1), got ("
+                    + e1046.line() + "," + e1046.column() + ")");
+            check(e1046.range().startScalarOffset() == 0
+                    && e1046.range().endScalarOffset() == 20
+                    && e1046.range().scalarLength() == 20,
+                "E1046 offsets must be (0,20), got ("
+                    + e1046.range().startScalarOffset() + ","
+                    + e1046.range().endScalarOffset() + ")");
+        }
+
+        // Newer major versions are rejected (E1046).
         r = parse("// @deal-version 2.0\nclass A { x: int = 0; }");
-        assertParseError(r, "E1055", "@deal-version 2.0 rejected");
+        assertParseError(r, "E1046", "@deal-version 2.0 rejected");
+
+        // Malformed values are E1046.
+        for (String bad : new String[]{"1.2.3", "1", "1.", ".2", "abc", "1,2",
+                "99999999999999999999.2"}) {
+            r = parse("// @deal-version " + bad + "\nclass A { x: int = 0; }");
+            assertParseError(r, "E1046",
+                "@deal-version '" + bad + "' rejected");
+        }
 
         // A trailing directive with no following declaration still
-        // validates its value (E1055).
+        // validates its value (E1046 at the complete comment range).
         r = parse("// @deal-version 1.1");
-        assertParseError(r, "E1055", "trailing @deal-version 1.1 rejected");
-
-        // The trailing directive attaches to the EOF token: E1055 anchors
-        // at the EOF token's real position — line 1, column 21, scalar
-        // offset 20 — with SOURCE origin and a zero-length range.
-        CompilerDiagnostic e1055Eof = r.diagnostics().stream()
-                .filter(d -> d.code().equals("E1055"))
-                .findFirst().orElse(null);
-        check(e1055Eof != null, "trailing E1055 diagnostic present");
-        if (e1055Eof != null) {
-            check(e1055Eof.range().origin() == RangeOrigin.SOURCE,
-                "trailing E1055 range must be SOURCE, got "
-                    + e1055Eof.range().origin());
-            check(e1055Eof.line() == 1 && e1055Eof.column() == 21,
-                "trailing E1055 must anchor at the EOF token (1,21), got ("
-                    + e1055Eof.line() + "," + e1055Eof.column() + ")");
-            check(e1055Eof.range().startScalarOffset() == 20
-                    && e1055Eof.range().endScalarOffset() == 20
-                    && e1055Eof.range().scalarLength() == 0,
-                "trailing E1055 offsets must be (20,20) with zero length, got ("
-                    + e1055Eof.range().startScalarOffset() + ","
-                    + e1055Eof.range().endScalarOffset() + ")");
+        assertParseError(r, "E1046", "trailing @deal-version 1.1 rejected");
+        CompilerDiagnostic trailing = diagOf(r, "E1046");
+        if (trailing != null) {
+            check(trailing.range().origin() == RangeOrigin.SOURCE
+                    && trailing.range().startScalarOffset() == 0
+                    && trailing.range().endScalarOffset() == 20,
+                "trailing E1046 anchors at the complete comment (0,20), got ("
+                    + trailing.range().startScalarOffset() + ","
+                    + trailing.range().endScalarOffset() + ")");
         }
 
         // A trailing valid directive produces no diagnostics.
         r = parse("// @deal-version 1.2");
         assertNoParseErrors(r, "trailing @deal-version 1.2 accepted");
 
-    }
+        // Placement after the first non-comment token is E1046.
+        r = parse("class A { x: int = 0; }\n// @deal-version 1.2");
+        assertParseError(r, "E1046", "post-token @deal-version rejected");
 
+        // Duplicate is E1046 at the duplicate's complete comment range.
+        r = parse("// @deal-version 1.2\n// @deal-version 1.2");
+        assertParseError(r, "E1046", "duplicate @deal-version rejected");
+        CompilerDiagnostic dup = r.diagnostics().stream()
+                .filter(d -> d.code().equals("E1046")
+                        && d.range().startLine() == 2)
+                .findFirst().orElse(null);
+        check(dup != null, "duplicate E1046 anchors at the second comment");
+        if (dup != null) {
+            check(dup.range().startScalarOffset() == 21
+                    && dup.range().endScalarOffset() == 41
+                    && dup.range().scalarLength() == 20,
+                "duplicate E1046 offsets (21,41), got ("
+                    + dup.range().startScalarOffset() + ","
+                    + dup.range().endScalarOffset() + ")");
+        }
+    }
 
     // =========================================================================
     // Ranged diagnostic anchor fixtures (ISSUE-0223 verification 3)
@@ -1911,7 +1991,7 @@ public class ParserTest {
         // Test warn with Token. The token carries explicit scalar offsets
         // (start 20, length 4): the warning anchor is the token's full
         // SOURCE range with exact offsets (D4/D5).
-        Token tok = new Token(TokenType.IDENTIFIER, "test", 5, 3, 4, 20, 4, List.of());
+        Token tok = new Token(TokenType.IDENTIFIER, "test", 5, 3, 4, 20, 4);
         parser.warn(DiagnosticCode.E1001, "warning from token", tok);
 
         List<CompilerDiagnostic> diags = parser.parse().diagnostics();
@@ -2118,27 +2198,26 @@ public class ParserTest {
             check(warnDiag.message().contains("export class"),
                 "message mentions export class: " + warnDiag.message());
 
-            // Verification 3: the E1043 anchor is the attached EXPORT
-            // token's full range at 2:1 — SOURCE with exact scalar
-            // offsets ("// @jsonable" is 12 scalars plus the line break,
-            // so EXPORT starts at scalar offset 13) — never SYNTHETIC
-            // (1,1).
+            // ISSUE-0273: the E1043 anchor is the complete directive
+            // comment range (parent D6) — line 1, column 1 through column
+            // 13, offsets (0,12) — never the EXPORT token and never
+            // SYNTHETIC (1,1).
             check(warnDiag.range().origin() == RangeOrigin.SOURCE,
                 "E1043 range must be SOURCE, got " + warnDiag.range().origin());
-            check(warnDiag.line() == 2 && warnDiag.column() == 1,
-                "E1043 must anchor at the EXPORT token (2,1), got ("
+            check(warnDiag.line() == 1 && warnDiag.column() == 1,
+                "E1043 must anchor at the complete comment (1,1), got ("
                     + warnDiag.line() + "," + warnDiag.column() + ")");
-            check(warnDiag.range().startScalarOffset() == 13,
-                "E1043 start offset must be 13, got "
+            check(warnDiag.range().startScalarOffset() == 0,
+                "E1043 start offset must be 0, got "
                     + warnDiag.range().startScalarOffset());
-            check(warnDiag.range().endScalarOffset() == 19,
-                "E1043 end offset must be 19, got "
+            check(warnDiag.range().endScalarOffset() == 12,
+                "E1043 end offset must be 12, got "
                     + warnDiag.range().endScalarOffset());
-            check(warnDiag.range().scalarLength() == 6,
-                "E1043 scalar length must be 6 (EXPORT lexeme), got "
+            check(warnDiag.range().scalarLength() == 12,
+                "E1043 scalar length must be 12 (complete comment), got "
                     + warnDiag.range().scalarLength());
-            check(warnDiag.range().endLine() == 2 && warnDiag.range().endColumn() == 7,
-                "E1043 range end must be (2,7), got ("
+            check(warnDiag.range().endLine() == 1 && warnDiag.range().endColumn() == 13,
+                "E1043 range end must be (1,13), got ("
                     + warnDiag.range().endLine() + ","
                     + warnDiag.range().endColumn() + ")");
         }
@@ -2426,9 +2505,11 @@ public class ParserTest {
     static void testJsonableEndToEndLexParse() {
         System.out.println("-- @jsonable end-to-end lex + parse --");
 
-        // Verify that lexing + parsing @jsonable + let produces correct warning
+        // Verify that lexing + parsing @jsonable + let produces the
+        // correct warning through the event pipeline.
         LexResult lex = new Lexer("// @jsonable\nlet x: int = 1;", "test.deal").tokenize();
-        Parser parser = new Parser(lex.tokens(), "test.deal");
+        Parser parser = new Parser(lex.tokens(), "test.deal",
+            lex.directiveEvents());
         ParseResult r = parser.parse();
 
         List<CompilerDiagnostic> diags = r.diagnostics();
@@ -2441,17 +2522,301 @@ public class ParserTest {
                 d -> d.severity().equals("error"));
         check(!hasErrors, "end-to-end: no errors, only warnings");
 
-        // Verify the LET token had the directive from the lexer
-        Token letToken = null;
-        for (Token t : lex.tokens()) {
-            if (t.type() == TokenType.LET) {
-                letToken = t;
-                break;
+        // Verify the event anchored at the LET token (index 0) with no
+        // token-carried directives.
+        check(lex.directiveEvents().size() == 1,
+            "end-to-end: one directive event, got "
+                + lex.directiveEvents().size());
+        check(lex.directiveEvents().get(0).declarationAnchorTokenIndex() != null
+                && lex.directiveEvents().get(0).declarationAnchorTokenIndex() == 0,
+            "end-to-end: the jsonable event anchors at the LET token");
+        check(lex.tokens().get(0).type() == TokenType.LET,
+            "end-to-end: LET is the first token");
+    }
+
+
+    // =========================================================================
+    // ISSUE-0273 directive binding pins (D4/D7/D10)
+    // =========================================================================
+
+    static void testExternCWrongFileKind() {
+        System.out.println("-- @extern-c wrong file kind -> E1046 --");
+
+        // @extern-c in an implementation (.deal) file: E1046 at the
+        // directive's complete comment range and no extern-C state.
+        ParseResult r = parse("// @extern-c\nexport class A { x: int = 0; }");
+        assertParseError(r, "E1046", "@extern-c in a .deal file rejected");
+        check(!r.program().fileDirectives().externC(),
+            "no extern-C state after wrong-file-kind rejection");
+        CompilerDiagnostic d = diagOf(r, "E1046");
+        if (d != null) {
+            check(d.range().startScalarOffset() == 0
+                    && d.range().endScalarOffset() == 12
+                    && d.range().scalarLength() == 12,
+                "E1046 at the complete comment (0,12), got ("
+                    + d.range().startScalarOffset() + ","
+                    + d.range().endScalarOffset() + ")");
+        }
+    }
+
+    static void testExternCDuplicateAndPlacement() {
+        System.out.println("-- @extern-c duplicate/placement -> E1046 --");
+
+        // Duplicate @extern-c in a .d.deal file: E1046 at the duplicate.
+        ParseResult r = parseFile(
+            "// @extern-c\n// @extern-c\nexport class A { x: int = 0; }",
+            "mod.d.deal");
+        assertParseError(r, "E1046", "duplicate @extern-c rejected");
+        check(r.program().fileDirectives().externC(),
+            "the first valid event keeps extern-C effective");
+        CompilerDiagnostic dup = r.diagnostics().stream()
+                .filter(d -> d.code().equals("E1046")
+                        && d.range().startLine() == 2)
+                .findFirst().orElse(null);
+        check(dup != null, "duplicate E1046 at the second comment");
+
+        // @extern-c after a declaration: E1046 and no effective extern-C.
+        r = parseFile(
+            "export class A { x: int = 0; }\n// @extern-c",
+            "mod.d.deal");
+        assertParseError(r, "E1046",
+            "@extern-c after a declaration rejected");
+        check(!r.program().fileDirectives().externC(),
+            "placement violation drops effective extern-C");
+
+        // @extern-c before declarations but with a later import: E1046.
+        r = parseFile(
+            "// @extern-c\nimport * as m from \"./m\"\nexport class A { x: int = 0; }",
+            "mod.d.deal");
+        assertParseError(r, "E1046",
+            "@extern-c followed by an import rejected");
+        check(!r.program().fileDirectives().externC(),
+            "later import drops effective extern-C");
+
+        // Valid placement: imports first, then @extern-c, then classes.
+        r = parseFile(
+            "import * as m from \"./m\"\n// @extern-c\n// @c-struct\nexport class A { x: int = 0; }",
+            "mod.d.deal");
+        assertNoParseErrors(r, "@extern-c after imports accepted");
+        check(r.program().fileDirectives().externC(),
+            "effective extern-C in the valid placement fixture");
+        check(r.program().fileDirectives().externCRange() != null
+                && r.program().fileDirectives().externCRange()
+                    .startScalarOffset() == 25,
+            "externCRange = the first event's complete comment range (25)");
+    }
+
+    static void testCMarkerOutsideExternC() {
+        System.out.println("-- C markers outside extern-C -> E1046 --");
+
+        ParseResult r = parse("// @c-struct\nexport class A { x: int = 0; }");
+        assertParseError(r, "E1046", "@c-struct without @extern-c rejected");
+        CompilerDiagnostic d = diagOf(r, "E1046");
+        if (d != null) {
+            check(d.range().startScalarOffset() == 0
+                    && d.range().endScalarOffset() == 12
+                    && d.range().scalarLength() == 12,
+                "E1046 at the directive range (0,12), got ("
+                    + d.range().startScalarOffset() + ","
+                    + d.range().endScalarOffset() + ")");
+        }
+
+        // The marker was recorded on the class; no JSONABLE metadata.
+        ExportDeclaration ed = (ExportDeclaration) r.program().statements().get(0);
+        ClassDeclaration cd = (ClassDeclaration) ed.declaration();
+        check(cd.directives().contains(DeclarationDirective.C_STRUCT),
+            "C marker recorded on the export-wrapped class");
+        check(!cd.isJsonable(), "no jsonable metadata");
+    }
+
+    static void testCMarkerCardinality() {
+        System.out.println("-- C-marker cardinality -> E7002 --");
+
+        // Zero markers: E7002 at the class span.
+        ParseResult r = parseFile("// @extern-c\nexport class A { x: int = 0; }",
+            "mod.d.deal");
+        assertParseError(r, "E7002", "zero C markers rejected in extern-C file");
+        check(r.program().fileDirectives().externC(), "extern-C effective");
+        CompilerDiagnostic zero = diagOf(r, "E7002");
+        if (zero != null) {
+            check(zero.range().startLine() == 2,
+                "zero-marker E7002 anchors at the class span (line 2), got "
+                    + zero.range().startLine());
+        }
+
+        // Exactly one marker: valid.
+        r = parseFile(
+            "// @extern-c\n// @c-struct\nexport class A { x: int = 0; }",
+            "mod.d.deal");
+        assertNoParseErrors(r, "exactly one C marker accepted");
+        ExportDeclaration ed = (ExportDeclaration) r.program().statements().get(0);
+        ClassDeclaration cd = (ClassDeclaration) ed.declaration();
+        check(cd.directives().contains(DeclarationDirective.C_STRUCT)
+                && !cd.directives().contains(DeclarationDirective.JSONABLE),
+            "the class records C_STRUCT only");
+
+        // Two markers: E7002 at the class span.
+        r = parseFile(
+            "// @extern-c\n// @c-struct\n// @c-pointer\nexport class A { x: int = 0; }",
+            "mod.d.deal");
+        assertParseError(r, "E7002", "two C markers rejected in extern-C file");
+        CompilerDiagnostic two = diagOf(r, "E7002");
+        if (two != null) {
+            check(two.range().startLine() == 4,
+                "two-marker E7002 anchors at the class span (line 4), got "
+                    + two.range().startLine());
+        }
+
+        // A C marker on a non-class declaration in an extern-C file:
+        // E7002 at the declaration node span.
+        r = parseFile(
+            "// @extern-c\n// @c-struct\nexport function f(): int { return 0; }",
+            "mod.d.deal");
+        assertParseError(r, "E7002",
+            "C marker on an exported function rejected in extern-C file");
+        CompilerDirective mark = null;
+        // (range pinned: the export declaration span starts on line 3)
+        CompilerDiagnostic fn = r.diagnostics().stream()
+                .filter(d -> d.code().equals("E7002")
+                        && d.range().startLine() == 3)
+                .findFirst().orElse(null);
+        check(fn != null, "function-marker E7002 anchors at the declaration (line 3)");
+    }
+
+    static void testDeclarationFileJsonableNoEffect() {
+        System.out.println("-- declaration-file @jsonable no-effect (D4) --");
+
+        // @jsonable on an export class in a .d.deal file: no metadata,
+        // no E1043, and explicitly declared C$fromJson/C$toJson
+        // signatures are preserved (no synthetic exports are recorded —
+        // ExportExtractor's synthetic loop keys on isJsonable()).
+        String decl = "// @jsonable\nexport class C { x: int = 0; }\n"
+            + "export function C$fromJson(s: string): C | null;\n"
+            + "export function C$toJson(c: C): string;";
+        ParseResult r = parseFile(decl, "lib.d.deal");
+        assertNoParseErrors(r, "declaration-file @jsonable export class");
+        ExportDeclaration ed = (ExportDeclaration) r.program().statements().get(0);
+        ClassDeclaration cd = (ClassDeclaration) ed.declaration();
+        check(!cd.isJsonable(),
+            "no JSONABLE metadata recorded in a .d.deal file");
+        check(cd.directives().isEmpty(),
+            "no declaration directives recorded, got " + cd.directives());
+        boolean hasE1043 = r.diagnostics().stream()
+                .anyMatch(d -> d.code().equals("E1043"));
+        check(!hasE1043, "no E1043 for the export-class attachment");
+
+        // The program keeps the explicit C$fromJson/C$toJson declarations.
+        check(r.program().statements().size() == 3,
+            "three statements (class + two explicit JSON functions), got "
+                + r.program().statements().size());
+
+        // Attachment to a non-class declaration warns E1043 with no
+        // metadata.
+        r = parseFile("// @jsonable\nexport function f(): int { return 0; }",
+            "lib.d.deal");
+        assertParseError(r, "E1043",
+            "declaration-file @jsonable on a function warns E1043");
+        CompilerDiagnostic w = diagOf(r, "E1043");
+        if (w != null) {
+            check(w.severity().equals("warning"),
+                "E1043 stays a warning, got " + w.severity());
+        }
+
+        // The E1045 argument rule still fires in .d.deal files.
+        r = parseFile("// @jsonable:foo\nexport class C { x: int = 0; }",
+            "lib.d.deal");
+        assertParseError(r, "E1045",
+            "@jsonable:foo in a .d.deal file still produces E1045");
+    }
+
+    static void testTemplateEmbeddedDirectives() {
+        System.out.println("-- template-embedded directive events (D10) --");
+
+        // ${ // @jsonable ... }: exactly one E1043 at the rebased
+        // complete-comment range, no metadata.
+        String src = "let s = `${ // @jsonable\n x}`;";
+        ParseResult r = parse(src);
+        long e1043Count = r.diagnostics().stream()
+                .filter(d -> d.code().equals("E1043")).count();
+        check(e1043Count == 1,
+            "exactly one E1043 for the template-embedded @jsonable, got "
+                + e1043Count + ": " + r.diagnostics());
+        CompilerDiagnostic w = diagOf(r, "E1043");
+        if (w != null) {
+            // The template token starts at column 9 ("let s = `" is 8
+            // scalars + backtick at col 9); content after the backtick:
+            // '${' at cols 10-11; the comment starts at col 13.
+            check(w.range().origin() == RangeOrigin.SOURCE,
+                "rebased E1043 range must be SOURCE");
+            check(w.range().startScalarOffset() == 12
+                    && w.range().endScalarOffset() == 24
+                    && w.range().scalarLength() == 12,
+                "E1043 at the rebased complete comment (12,24), got ("
+                    + w.range().startScalarOffset() + ","
+                    + w.range().endScalarOffset() + ")");
+        }
+        // No JSONABLE metadata anywhere.
+        boolean jsonable = false;
+        for (StatementNode stmt : r.program().statements()) {
+            if (stmt instanceof ClassDeclaration cd && cd.isJsonable()) {
+                jsonable = true;
             }
         }
-        check(letToken != null, "end-to-end: LET token found");
-        check(letToken.directives().contains("@jsonable"),
-            "end-to-end: LET token has @jsonable directive");
+        check(!jsonable, "no metadata from the template-embedded event");
+
+        // An unknown name inside an interpolation: E1044 at the rebased
+        // recovered-name range AND its complete-comment note range in
+        // original-source coordinates (D10.8).
+        String src2 = "let s = `${ // @nope\n x}`;";
+        ParseResult r2 = parse(src2);
+        CompilerDiagnostic e1044 = diagOf(r2, "E1044");
+        check(e1044 != null, "E1044 for the embedded unknown directive");
+        if (e1044 != null) {
+            check(e1044.range().origin() == RangeOrigin.SOURCE,
+                "E1044 primary range must be SOURCE");
+            // The comment starts at original offset 12; '@' at 15; the
+            // name 'nope' runs 16..20.
+            check(e1044.range().startScalarOffset() == 16
+                    && e1044.range().endScalarOffset() == 20,
+                "E1044 at the rebased recovered name (16,20), got ("
+                    + e1044.range().startScalarOffset() + ","
+                    + e1044.range().endScalarOffset() + ")");
+            check(e1044.range().startLine() == 1
+                    && e1044.range().startColumn() == 17,
+                "E1044 at original-source (1,17), got ("
+                    + e1044.range().startLine() + ","
+                    + e1044.range().startColumn() + ")");
+            boolean noteOk = e1044.notes().size() == 1
+                    && e1044.notes().get(0).range() != null
+                    && e1044.notes().get(0).range().origin()
+                        == RangeOrigin.SOURCE
+                    && e1044.notes().get(0).range().startScalarOffset() == 12
+                    && e1044.notes().get(0).range().endScalarOffset() == 20;
+            check(noteOk,
+                "E1044 note range in original-source coordinates (12,20): "
+                    + e1044.notes());
+        }
+
+        // // @deal-version 1.2 inside an interpolation: E1046 (placement —
+        // the truthful preceding count is at least 1).
+        String src3 = "let s = `${ // @deal-version 1.2\n x}`;";
+        ParseResult r3 = parse(src3);
+        CompilerDiagnostic e1046 = diagOf(r3, "E1046");
+        check(e1046 != null,
+            "embedded @deal-version produces E1046 placement, got "
+                + r3.diagnostics());
+
+        // A C marker inside an interpolation: E1046 (no extern-C context).
+        String src4 = "let s = `${ // @c-struct\n x}`;";
+        ParseResult r4 = parse(src4);
+        CompilerDiagnostic e1046c = diagOf(r4, "E1046");
+        check(e1046c != null,
+            "embedded C marker produces E1046, got " + r4.diagnostics());
+        if (e1046c != null) {
+            check(e1046c.range().startScalarOffset() == 12
+                    && e1046c.range().endScalarOffset() == 24,
+                "embedded C-marker E1046 at the rebased directive range (12,24)");
+        }
     }
 
 }
