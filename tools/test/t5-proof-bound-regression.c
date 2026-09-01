@@ -223,6 +223,37 @@ static int send_ack(int fd, const char *nonce)
     return 0;
 }
 
+static int send_cancel(int fd, const char *nonce)
+{
+    char idbuf[16];
+    char line[DEALPG4_MAX_LINE_OTHER_BYTES];
+    dealpg4_field_value f[2];
+    size_t written = 0;
+    size_t off = 0;
+
+    snprintf(idbuf, sizeof idbuf, "%lld", (long long)g_inv_id);
+    f[0].data = idbuf;
+    f[0].len = strlen(idbuf);
+    f[1].data = nonce;
+    f[1].len = DEALPG4_NONCE_HEX_CHARS;
+    if (dealpg4_serialize(DEALPG4_REC_CANCEL, f, 2, line, sizeof line,
+                          &written)
+        != 0)
+        return -1;
+    while (off < written) {
+        ssize_t r = write(fd, line + off, written - off);
+
+        if (r > 0) {
+            off += (size_t)r;
+            continue;
+        }
+        if (r < 0 && errno == EINTR)
+            continue;
+        return -1; /* EPIPE after the supervisor closed the channel */
+    }
+    return 0;
+}
+
 /* === Field accessors over a parsed record ============================== */
 
 static int pfi(const dealpg4_parsed *p, size_t i, int64_t *v)
@@ -590,8 +621,291 @@ static int run_scenario(void)
     return g_failures == 0 ? 0 : 1;
 }
 
+/* === The terminal-CANCEL scenario (ISSUE-0440 remediation) =============
+ * The post-T5 terminal must flow through the same TERMINAL drain/
+ * linger logic as a pre-T5 terminal: after the terminal records are
+ * flushed, the channel stays open for the bounded close-linger window
+ * so a well-formed CANCEL observed while TERMINAL is answered with
+ * REJECT <id> - CANCEL_AUTH_FAILED queued behind the terminal record
+ * and flushed before the channel close. Pre-fix, the T5 branch set
+ * done=1 as soon as terminal_queued was set past the overall deadline,
+ * bypassing the queue-drain wait and the linger window: a CANCEL sent
+ * after the terminal FAILED record was never read and never answered,
+ * and on the proof-bound-expiry landing the queued records received
+ * exactly one instantaneous POLLOUT check before the close. The same
+ * STOP/CONT-past-T5 landing as the main scenario drives the
+ * OVERALL_TIMEOUT terminal; the harness sends the terminal CANCEL as
+ * soon as it reads the REPORT line (the invocation is terminal from
+ * the finalize that queued it) and again after the terminal FAILED —
+ * every successfully written CANCEL must be answered with a REJECT
+ * before the channel EOF, and nothing may follow the REJECTs. */
+static int run_terminal_cancel_scenario(void)
+{
+    int sv[2];
+    pid_t pid;
+    uint64_t t0;
+    rr reader;
+    rec_log log;
+    int acked = 0;
+    int stopped = 0;
+    int continued = 0;
+    int64_t stub_pgid = 0;
+    int64_t stub_sid = 0;
+    int report_count = 0;
+    int failed_count = 0;
+    int reject_count = 0;
+    int sends_ok = 0;
+    int sent_after_report = 0;
+    int sent_after_failed = 0;
+    char line[DEALPG4_MAX_LINE_OTHER_BYTES];
+    int exit_code = -1;
+    int eof = 0;
+
+    script_reset();
+    script_congest(FI_CONGEST_STREAM, STREAM_NO_EOF);
+
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0) {
+        CHECK(0 && "socketpair (terminal CANCEL)");
+        return 1;
+    }
+    t0 = now_ms();
+    pid = fork();
+    if (pid < 0) {
+        CHECK(0 && "fork (terminal CANCEL)");
+        close(sv[0]);
+        close(sv[1]);
+        return 1;
+    }
+    if (pid == 0) {
+        const char *tav[3];
+        int status;
+
+        close(sv[1]); /* the harness's end */
+        {
+            int flags = fcntl(sv[0], F_GETFL);
+            int fdstat = fcntl(sv[0], F_GETFD);
+
+            if (flags >= 0)
+                (void)fcntl(sv[0], F_SETFL, flags | O_NONBLOCK);
+            if (fdstat >= 0)
+                (void)fcntl(sv[0], F_SETFD, fdstat | FD_CLOEXEC);
+        }
+        if (dealpg4_fi_install_overrides(&g_script,
+                                         &dealpg4_supervisor_fi_catalog)
+            != 0)
+            _exit(90);
+        tav[0] = g_target[0];
+        tav[1] = g_target[1];
+        tav[2] = NULL;
+        status = dealpg4_supervise_core(tav, "/tmp", g_nonce, g_inv_id,
+                                        g_budget, sv[0], 0);
+        _exit(status);
+    }
+    close(sv[0]);
+    memset(&reader, 0, sizeof reader);
+    reader.fd = sv[1];
+    memset(&log, 0, sizeof log);
+
+    for (;;) {
+        int64_t now = (int64_t)now_ms();
+        int rc;
+
+        if (now >= t0 + (uint64_t)HARD_BOUND_MS) {
+            kill(pid, SIGKILL);
+            (void)waitpid(pid, NULL, 0);
+            CHECK(0 && "hard bound hit (terminal-CANCEL harness hung)");
+            close(sv[1]);
+            return 1;
+        }
+        rc = rr_line(&reader, 40, line, sizeof line);
+        if (rc == 1) {
+            dealpg4_record_type type;
+            dealpg4_parsed p;
+
+            rec_log_add(&log, line, strlen(line));
+            if (parse_rec(line, &type, &p)) {
+                if (type == DEALPG4_REC_STUB_READY && !acked) {
+                    int64_t v;
+
+                    if (pfi(&p, 2, &v))
+                        stub_pgid = v;
+                    if (pfi(&p, 3, &v))
+                        stub_sid = v;
+                    if (send_ack(sv[1], g_nonce) != 0)
+                        CHECK(0 && "send_ack (terminal CANCEL)");
+                    acked = 1;
+                } else if (type == DEALPG4_REC_REPORT
+                           && !sent_after_report) {
+                    /* Terminal since finalize: the CANCEL is a
+                     * terminal-CANCEL and must be answered with a
+                     * REJECT before the channel close. */
+                    sent_after_report = 1;
+                    if (send_cancel(sv[1], g_nonce) == 0)
+                        sends_ok++;
+                } else if (type == DEALPG4_REC_FAILED
+                           && !sent_after_failed) {
+                    sent_after_failed = 1;
+                    if (send_cancel(sv[1], g_nonce) == 0)
+                        sends_ok++;
+                }
+            }
+        } else if (rc == 0) {
+            eof = 1;
+            break;
+        }
+        if (!stopped && acked && now >= t0 + (uint64_t)STOP_AT_MS) {
+            if (now > t0 + (uint64_t)STOP_AT_MS + 300) {
+                kill(pid, SIGKILL);
+                (void)waitpid(pid, NULL, 0);
+                CHECK(0 && "SIGSTOP missed its window (terminal CANCEL)");
+                close(sv[1]);
+                return 1;
+            }
+            if (kill(pid, SIGSTOP) != 0) {
+                CHECK(0 && "SIGSTOP (terminal CANCEL)");
+                close(sv[1]);
+                return 1;
+            }
+            stopped = 1;
+            for (;;) {
+                if (proc_state_is_T(pid))
+                    break;
+                if ((int64_t)now_ms() > t0 + (uint64_t)STOP_AT_MS + 1000) {
+                    kill(pid, SIGKILL);
+                    (void)waitpid(pid, NULL, 0);
+                    CHECK(0 && "supervisor did not stop (terminal CANCEL)");
+                    close(sv[1]);
+                    return 1;
+                }
+                msleep(5);
+            }
+        }
+        if (stopped && !continued && now >= t0 + (uint64_t)CONT_AT_MS) {
+            if (kill(pid, SIGCONT) != 0) {
+                CHECK(0 && "SIGCONT (terminal CANCEL)");
+                close(sv[1]);
+                return 1;
+            }
+            continued = 1;
+        }
+    }
+    if (!stopped || !continued) {
+        kill(pid, SIGKILL);
+        (void)waitpid(pid, NULL, 0);
+        CHECK(0 && "lost the stop/continue window (terminal CANCEL)");
+        close(sv[1]);
+        return 1;
+    }
+    {
+        uint64_t deadline = t0 + (uint64_t)EXIT_BOUND_MS;
+        int status = -1;
+
+        for (;;) {
+            pid_t r = waitpid(pid, &status, WNOHANG);
+
+            if (r == pid)
+                break;
+            if (r < 0)
+                break;
+            if (now_ms() >= deadline) {
+                kill(pid, SIGKILL);
+                (void)waitpid(pid, NULL, 0);
+                CHECK(0 && "supervisor alive past the post-T5 proof "
+                      "bound (terminal CANCEL)");
+                close(sv[1]);
+                return 1;
+            }
+            msleep(5);
+        }
+        if (WIFEXITED(status))
+            exit_code = WEXITSTATUS(status);
+        else
+            exit_code = -1;
+        CHECK(WIFEXITED(status));
+        CHECK(exit_code == 2);
+    }
+    close(sv[1]);
+
+    if (!eof)
+        CHECK(0 && "control channel never reached EOF (terminal CANCEL)");
+
+    /* Exactly one REPORT OVERALL_TIMEOUT, exactly one terminal FAILED
+     * after it, then every terminal CANCEL the channel delivered is
+     * answered with REJECT <id> - CANCEL_AUTH_FAILED before the
+     * channel EOF — nothing follows the REJECTs. */
+    {
+        size_t i;
+        int after_report = 0;
+        int after_failed = 0;
+
+        for (i = 0; i < log.n; i++) {
+            dealpg4_record_type type;
+            dealpg4_parsed p;
+
+            if (!parse_rec(log.lines[i], &type, &p))
+                continue;
+            if (type == DEALPG4_REC_REPORT) {
+                int64_t v;
+
+                report_count++;
+                CHECK(ptok(&p, 18, "OVERALL_TIMEOUT"));
+                CHECK(pfi(&p, 17, &v) && v == 0);  /* drainEof = 0 */
+                CHECK(pfi(&p, 5, &v) && v > 0);    /* termMs caught up */
+                CHECK(pfi(&p, 6, &v) && v > 0);    /* killMs caught up */
+                CHECK(pfi(&p, 2, &v) && v >= g_budget);
+                after_report = 1;
+            } else if (type == DEALPG4_REC_FAILED) {
+                failed_count++;
+                CHECK(ptok(&p, 1, "OVERALL_TIMEOUT"));
+                CHECK(after_report);
+                after_failed = 1;
+            } else if (type == DEALPG4_REC_REJECT) {
+                int64_t v;
+
+                reject_count++;
+                CHECK(after_failed);
+                CHECK(pfi(&p, 0, &v) && v == g_inv_id);
+                CHECK(ptok(&p, 1, "-"));
+                CHECK(ptok(&p, 2, "CANCEL_AUTH_FAILED"));
+            } else if (after_failed) {
+                CHECK(0 && "record after the terminal FAILED that is "
+                      "not a terminal-CANCEL REJECT");
+            }
+        }
+        CHECK(report_count == 1);
+        CHECK(failed_count == 1);
+        CHECK(sent_after_report == 1);
+        CHECK(sent_after_failed == 1);
+        CHECK(reject_count >= 1);
+        CHECK(reject_count == sends_ok);
+    }
+
+    /* Zero survivors (the same deterministic post-state as the main
+     * scenario). */
+    {
+        uint64_t deadline = now_ms() + 3000;
+
+        while (any_survivor(stub_pgid, stub_sid) && now_ms() < deadline) {
+            reap_round();
+            msleep(20);
+        }
+        reap_round();
+        CHECK(!any_survivor(stub_pgid, stub_sid));
+    }
+
+    return g_failures == 0 ? 0 : 1;
+}
+
 int main(void)
 {
+    /* The harness is the outer: SIGPIPE is ignored so a CANCEL written
+     * after the supervisor closed the channel surfaces as EPIPE (the
+     * harness reports the missing REJECT instead of dying by signal). */
+    if (signal(SIGPIPE, SIG_IGN) == SIG_ERR) {
+        fprintf(stderr, "REGRESSION FAIL: signal(SIGPIPE, SIG_IGN): %s\n",
+                strerror(errno));
+        return 1;
+    }
     /* The harness becomes a subreaper so every process reparented when
      * the supervisor exits is adopted here and deterministically
      * reaped (PR_SET_CHILD_SUBREAPER = 36 on linux-x86_64). */
@@ -606,9 +920,14 @@ int main(void)
     }
     if (run_scenario() != 0)
         return 1;
+    if (run_terminal_cancel_scenario() != 0)
+        return 1;
     printf("REGRESSION PASS: past-T5 never-EOF catch-up terminated at the "
            "post-T5 proof bound — exactly one REPORT OVERALL_TIMEOUT "
            "(drainEof 0, termMs/killMs caught up), exactly one terminal "
-           "FAILED, serve exit 2, zero survivors\n");
+           "FAILED, serve exit 2, zero survivors; the post-T5 terminal "
+           "flows through the TERMINAL drain/linger logic — every "
+           "terminal CANCEL is answered REJECT <id> - CANCEL_AUTH_FAILED "
+           "flushed before the channel close\n");
     return 0;
 }
