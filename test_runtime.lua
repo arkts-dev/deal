@@ -3270,6 +3270,708 @@ test("invoke_async_export invokes exactly one operation per call and never invok
   end, "is sync")
   assert(rejectedCalls == 0, "a rejected export must never be invoked")
 end)
+
+-- ==================== C FFI runtime six-code/atomicity battery (ISSUE-0435) ====================
+-- luajit-ffi-six-code-atomicity-battery B1-B11: the six FFI_* codes, the
+-- full composition, atomicity/replay/single-close/cdef-preservation,
+-- zero default evaluation, and the non-yield proof under real LuaJIT,
+-- against the committed fixture library compiled below by the test
+-- bootstrap with GCC (B3). Every case drives only the production
+-- __rt.load_ffi entry and the published wrappers/plans with
+-- generated-shape inputs (B4); no test-only runtime exposure is used,
+-- and the battery never calls ffi.load and never normalizes ffi.C
+-- access. The battery never invokes __rt.class_plan_ (B11).
+
+-- B3: one fail-closed bootstrap compile of the committed fixture source.
+-- The absolute loader text is derived from the test process's working
+-- directory; a missing GCC or a failed compile fails the battery
+-- immediately (nonzero battery exit -> run_tests.sh gate failure).
+local ffi_batt_abs_path = io.popen("pwd"):read("*l")
+local ffi_batt_events_path = ffi_batt_abs_path .. "/build/ffi-runtime-fixture-events.log"
+local ffi_batt_so_path = ffi_batt_abs_path .. "/build/ffi-runtime-fixture.so"
+local ffi_batt_compile_cmd = "mkdir -p build && gcc -shared -fPIC -O2 -DFIXTURE_EVENTS_PATH='\""
+    .. ffi_batt_events_path
+    .. "\"' -o build/ffi-runtime-fixture.so test/fixtures/ffi-runtime-fixture.c"
+do
+  local compile_status = os.execute(ffi_batt_compile_cmd)
+  if compile_status ~= 0 then
+    error("FFI battery bootstrap failed: fixture GCC compile exited with status "
+        .. tostring(compile_status))
+  end
+  local probe = io.open(ffi_batt_so_path, "r")
+  if probe == nil then
+    error("FFI battery bootstrap failed: " .. ffi_batt_so_path .. " missing after the compile")
+  end
+  probe:close()
+end
+
+-- The event file is removed before each load scenario (B3) so each
+-- scenario's open/close sequence is exact.
+local function ffi_batt_reset_events()
+  os.remove(ffi_batt_events_path)
+end
+
+local function ffi_batt_read_events()
+  local lines = {}
+  local f = io.open(ffi_batt_events_path, "r")
+  if f ~= nil then
+    for line in f:lines() do
+      lines[#lines + 1] = line
+    end
+    f:close()
+  end
+  return lines
+end
+
+-- The import span passed to every load_ffi call (the import site's
+-- spanArgs triplet) and the call span passed to every wrapper call.
+local FFI_BATT_IMPORT_FILE = "test_runtime.lua"
+local FFI_BATT_IMPORT_LINE = 9023
+local FFI_BATT_IMPORT_COL = 41
+local FFI_BATT_CALL_FILE = "test_runtime.lua"
+local FFI_BATT_CALL_LINE = 7077
+local FFI_BATT_CALL_COL = 77
+
+-- B5: each code is asserted through BOTH the assert_error err.code path
+-- and the error_value reification path (the tagged @$builtin/Error
+-- instance a generated catch emits via error_value(err.code,
+-- err.message)).
+local function ffi_batt_assert_reified(err, expected_code)
+  assert(type(err) == "table", "expected an error table for reification")
+  local ev = __rt.error_value(err.code, err.message)
+  assert(ev.__kind == "class", "the reified error must be a tagged class instance")
+  assert(ev.__classname == "@$builtin/Error",
+      "the reified error must carry the canonical Error identity")
+  assert(ev.code == expected_code,
+      "the reified error code must be " .. tostring(expected_code))
+end
+
+-- ===== Generated-shape builders (B4; the settled seam Lua shapes) =====
+
+local FFI_BATT_PTR_IDENTITY = "@deal.test.ffi.fixture/Pointer"
+local FFI_BATT_PAIR_IDENTITY = "@deal.test.ffi.fixture/Pair"
+
+local function ffi_batt_t(kind, desc, cls)
+  return { kind = kind, canonicalDescriptor = desc, canonicalClassIdentity = cls }
+end
+
+-- Private cdef entry texts with digest-qualified private names and
+-- declaration ordinals (adopted D2); the pair struct uses the deal_fN
+-- ordinal members. The battery declares no real target-function
+-- prototype; the loader's handle-scoped private casts use only these.
+local FFI_BATT_TYPEDEFS = {
+  count_call = { "typedef void (*deal_ffi_0435_fn_0001)(void);", "deal_ffi_0435_fn_0001" },
+  call_count = { "typedef int32_t (*deal_ffi_0435_fn_0002)(void);", "deal_ffi_0435_fn_0002" },
+  reset_counter = { "typedef void (*deal_ffi_0435_fn_0003)(void);", "deal_ffi_0435_fn_0003" },
+  add_int = { "typedef int32_t (*deal_ffi_0435_fn_0004)(int32_t, int32_t);", "deal_ffi_0435_fn_0004" },
+  add_number = { "typedef double (*deal_ffi_0435_fn_0005)(double, double);", "deal_ffi_0435_fn_0005" },
+  ["not"] = { "typedef int32_t (*deal_ffi_0435_fn_0006)(int32_t);", "deal_ffi_0435_fn_0006" },
+  echo_string = { "typedef const char *(*deal_ffi_0435_fn_0007)(const char *);", "deal_ffi_0435_fn_0007" },
+  bytes_sum = { "typedef int32_t (*deal_ffi_0435_fn_0008)(const uint8_t *, int32_t);", "deal_ffi_0435_fn_0008" },
+  null_string = { "typedef const char *(*deal_ffi_0435_fn_0009)(void);", "deal_ffi_0435_fn_0009" },
+  bad_utf8 = { "typedef const char *(*deal_ffi_0435_fn_0010)(void);", "deal_ffi_0435_fn_0010" },
+  null_pointer = { "typedef void *(*deal_ffi_0435_fn_0011)(void);", "deal_ffi_0435_fn_0011" },
+  static_pointer = { "typedef void *(*deal_ffi_0435_fn_0012)(void);", "deal_ffi_0435_fn_0012" },
+  pair = { "typedef struct { int32_t deal_f0; double deal_f1; } deal_ffi_0435_pair_t;", "deal_ffi_0435_pair_t" },
+  symbol_missing = { "typedef int32_t (*deal_ffi_0435_fn_0013)(void);", "deal_ffi_0435_fn_0013" },
+}
+
+local function ffi_batt_entries(names)
+  local out = {}
+  for i = 1, #names do
+    local td = FFI_BATT_TYPEDEFS[names[i]]
+    out[i] = { entryDigest = "ffi-battery:entry:" .. names[i],
+               fullText = td[1], ownedNames = { td[2] } }
+  end
+  return out
+end
+
+local FFI_BATT_FN_META = {
+  count_call = { cSymbol = "fixture_count_call", fpt = "deal_ffi_0435_fn_0001",
+                 params = {}, ret = ffi_batt_t("NULL", "null") },
+  call_count = { cSymbol = "fixture_call_count", fpt = "deal_ffi_0435_fn_0002",
+                 params = {}, ret = ffi_batt_t("INT", "int") },
+  reset_counter = { cSymbol = "fixture_reset_counter", fpt = "deal_ffi_0435_fn_0003",
+                    params = {}, ret = ffi_batt_t("NULL", "null") },
+  add_int = { cSymbol = "fixture_add_int", fpt = "deal_ffi_0435_fn_0004",
+              params = { ffi_batt_t("INT", "int"), ffi_batt_t("INT", "int") },
+              ret = ffi_batt_t("INT", "int") },
+  add_number = { cSymbol = "fixture_add_number", fpt = "deal_ffi_0435_fn_0005",
+                 params = { ffi_batt_t("NUMBER", "number"), ffi_batt_t("NUMBER", "number") },
+                 ret = ffi_batt_t("NUMBER", "number") },
+  ["not"] = { cSymbol = "fixture_not", fpt = "deal_ffi_0435_fn_0006",
+              params = { ffi_batt_t("BOOLEAN", "boolean") },
+              ret = ffi_batt_t("BOOLEAN", "boolean") },
+  echo_string = { cSymbol = "fixture_echo_string", fpt = "deal_ffi_0435_fn_0007",
+                  params = { ffi_batt_t("STRING", "string") },
+                  ret = ffi_batt_t("STRING", "string") },
+  bytes_sum = { cSymbol = "fixture_bytes_sum", fpt = "deal_ffi_0435_fn_0008",
+                params = { ffi_batt_t("BYTES", "bytes") },
+                ret = ffi_batt_t("INT", "int") },
+  null_string = { cSymbol = "fixture_null_string", fpt = "deal_ffi_0435_fn_0009",
+                  params = {}, ret = ffi_batt_t("STRING", "string") },
+  bad_utf8 = { cSymbol = "fixture_bad_utf8", fpt = "deal_ffi_0435_fn_0010",
+               params = {}, ret = ffi_batt_t("STRING", "string") },
+  null_pointer = { cSymbol = "fixture_null_pointer", fpt = "deal_ffi_0435_fn_0011",
+                   params = {},
+                   ret = ffi_batt_t("C_POINTER", FFI_BATT_PTR_IDENTITY, FFI_BATT_PTR_IDENTITY) },
+  static_pointer = { cSymbol = "fixture_static_pointer", fpt = "deal_ffi_0435_fn_0012",
+                     params = {},
+                     ret = ffi_batt_t("C_POINTER", FFI_BATT_PTR_IDENTITY, FFI_BATT_PTR_IDENTITY) },
+  symbol_missing = { cSymbol = "fixture_symbol_missing", fpt = "deal_ffi_0435_fn_0013",
+                     params = {}, ret = ffi_batt_t("INT", "int") },
+}
+
+local function ffi_batt_functions(names)
+  local out = {}
+  for i = 1, #names do
+    local meta = FFI_BATT_FN_META[names[i]]
+    local params = {}
+    for j = 1, #meta.params do
+      params[j] = meta.params[j]
+    end
+    out[i] = { dealName = names[i], cSymbol = meta.cSymbol,
+               privateFunctionPointerType = meta.fpt,
+               orderedParams = params, returnType = meta.ret }
+  end
+  return out
+end
+
+local FFI_BATT_FULL_NAMES = {
+  "count_call", "call_count", "reset_counter", "add_int", "add_number",
+  "not", "echo_string", "bytes_sum", "null_string", "bad_utf8",
+  "null_pointer", "static_pointer",
+}
+
+local FFI_BATT_SYMBOL_NAMES = { "add_int", "echo_string", "symbol_missing" }
+local FFI_BATT_SUBSET_NAMES = { "add_int", "add_number", "not", "echo_string", "bytes_sum" }
+
+local function ffi_batt_classes_full()
+  return {
+    { name = "Pair", canonicalClassIdentity = FFI_BATT_PAIR_IDENTITY,
+      qualifiedDealDescriptor = FFI_BATT_PAIR_IDENTITY, kind = "C_STRUCT",
+      orderedFields = {
+        { dealName = "x", fieldOrdinal = 0, type = ffi_batt_t("INT", "int") },
+        { dealName = "y", fieldOrdinal = 1, type = ffi_batt_t("NUMBER", "number") },
+      } },
+    { name = "Pointer", canonicalClassIdentity = FFI_BATT_PTR_IDENTITY,
+      qualifiedDealDescriptor = FFI_BATT_PTR_IDENTITY, kind = "C_POINTER",
+      orderedFields = {} },
+  }
+end
+
+-- Battery-side default-evaluation counter: the pair plan's evaluators
+-- increment it, so it proves zero default evaluation during load and
+-- during ready replay (B6/B7.6; adopted D1/D6 "never invokes evaluators").
+local ffi_batt_evaluator_count = 0
+
+local function ffi_batt_build_plan_list()
+  return {
+    { name = "x", descriptor = "int", optional = false,
+      evaluator = function()
+        ffi_batt_evaluator_count = ffi_batt_evaluator_count + 1
+        return 0
+      end },
+    { name = "y", descriptor = "number", optional = true,
+      evaluator = function()
+        ffi_batt_evaluator_count = ffi_batt_evaluator_count + 1
+        return 0.0
+      end },
+  }
+end
+
+local function ffi_batt_build_plans(plan_list)
+  return {
+    [FFI_BATT_PAIR_IDENTITY] = {
+      plan = plan_list,
+      canonicalPlanContent = "ffi-battery:pair:canonical-plan-content:v1",
+      semanticDefaultContents = "ffi-battery:pair:semantic-default-contents:v1",
+      evaluatorImplementationContents = "ffi-battery:pair:evaluator-implementation-contents:v1",
+      planDigest = "ffi-battery:pair:plan-digest:v1",
+    },
+  }
+end
+
+local function ffi_batt_bindings(moduleKey, names)
+  local cells = {}
+  for i = 1, #names do
+    cells[names[i]] = { state = "UNBOUND", wrapper = nil, errorValue = nil }
+  end
+  return { moduleKey = moduleKey, state = "UNBOUND", cells = cells }
+end
+
+-- Module keys (opaque FfiModuleKey texts, never parsed by the runtime).
+local FFI_BATT_KEY_MISSING = "ffi:deal.test.ffi.fixture/missing-library"
+local FFI_BATT_KEY_SYMBOL = "ffi:deal.test.ffi.fixture/symbol-missing"
+local FFI_BATT_KEY_SUBSET = "ffi:deal.test.ffi.fixture/subset"
+local FFI_BATT_KEY_FULL = "ffi:deal.test.ffi.fixture/full"
+local FFI_BATT_KEY_NONYIELD_OK = "ffi:deal.test.ffi.fixture/non-yield-ok"
+local FFI_BATT_KEY_NONYIELD_FAIL = "ffi:deal.test.ffi.fixture/non-yield-fail"
+
+local function ffi_batt_bundle_missing()
+  return {
+    bundleDigest = "ffi-battery:missing:bundle-digest",
+    identityDigest = "ffi-battery:missing:identity-digest",
+    fullContent = "ffi-battery:missing:cdef-bundle-content:v1",
+    nativeLibrary = { kind = "ABSOLUTE_PATH",
+                      loaderText = "/nonexistent/deal/ffi-fixture-missing.so" },
+    entries = {},
+    functions = {
+      { dealName = "sum_missing", cSymbol = "fixture_add_int",
+        privateFunctionPointerType = "deal_ffi_0435_fn_0004",
+        orderedParams = { ffi_batt_t("INT", "int"), ffi_batt_t("INT", "int") },
+        returnType = ffi_batt_t("INT", "int") },
+    },
+    classes = {},
+  }
+end
+
+local function ffi_batt_bundle_symbol()
+  return {
+    bundleDigest = "ffi-battery:symbol:bundle-digest",
+    identityDigest = "ffi-battery:symbol:identity-digest",
+    fullContent = "ffi-battery:symbol:cdef-bundle-content:v1",
+    nativeLibrary = { kind = "ABSOLUTE_PATH", loaderText = ffi_batt_so_path },
+    entries = ffi_batt_entries(FFI_BATT_SYMBOL_NAMES),
+    functions = ffi_batt_functions(FFI_BATT_SYMBOL_NAMES),
+    classes = {},
+  }
+end
+
+local function ffi_batt_bundle_subset()
+  return {
+    bundleDigest = "ffi-battery:subset:bundle-digest",
+    identityDigest = "ffi-battery:subset:identity-digest",
+    fullContent = "ffi-battery:subset:cdef-bundle-content:v1",
+    nativeLibrary = { kind = "ABSOLUTE_PATH", loaderText = ffi_batt_so_path },
+    entries = ffi_batt_entries(FFI_BATT_SUBSET_NAMES),
+    functions = ffi_batt_functions(FFI_BATT_SUBSET_NAMES),
+    classes = {},
+  }
+end
+
+local FFI_BATT_FULL_ENTRY_NAMES = {
+  "count_call", "call_count", "reset_counter", "add_int", "add_number",
+  "not", "echo_string", "bytes_sum", "null_string", "bad_utf8",
+  "null_pointer", "static_pointer", "pair",
+}
+
+local function ffi_batt_bundle_full()
+  return {
+    bundleDigest = "ffi-battery:full:bundle-digest",
+    identityDigest = "ffi-battery:full:identity-digest",
+    fullContent = "ffi-battery:full:cdef-bundle-content:v1",
+    nativeLibrary = { kind = "ABSOLUTE_PATH", loaderText = ffi_batt_so_path },
+    entries = ffi_batt_entries(FFI_BATT_FULL_ENTRY_NAMES),
+    functions = ffi_batt_functions(FFI_BATT_FULL_NAMES),
+    classes = ffi_batt_classes_full(),
+  }
+end
+
+-- The published ready exports and retained plan list of the successful
+-- full fixture module, shared by the later cases.
+local ffi_batt_exports_full = nil
+local ffi_batt_plan_list = nil
+
+local function ffi_batt_require_full_exports()
+  assert(ffi_batt_exports_full ~= nil, "the full fixture module must be loaded first")
+  return ffi_batt_exports_full
+end
+
+-- ===== Case matrix and atomicity/replay/non-yield cases (B5-B8) =====
+
+test("FFI six-code case 1: FFI_LIBRARY_LOAD (nonexistent loader text) carries the import span, reifies, and opens nothing", function()
+  ffi_batt_reset_events()
+  local names = { "sum_missing" }
+  local bindings = ffi_batt_bindings(FFI_BATT_KEY_MISSING, names)
+  local err = assert_error(function()
+    return __rt.load_ffi(FFI_BATT_KEY_MISSING, ffi_batt_bundle_missing(), {},
+        bindings, FFI_BATT_IMPORT_FILE, FFI_BATT_IMPORT_LINE, FFI_BATT_IMPORT_COL)
+  end, "FFI_LIBRARY_LOAD")
+  assert(err.file == FFI_BATT_IMPORT_FILE, "FFI_LIBRARY_LOAD must carry the import file")
+  assert(err.line == FFI_BATT_IMPORT_LINE, "FFI_LIBRARY_LOAD must carry the import line")
+  assert(err.column == FFI_BATT_IMPORT_COL, "FFI_LIBRARY_LOAD must carry the import column")
+  ffi_batt_assert_reified(err, "FFI_LIBRARY_LOAD")
+  local events = ffi_batt_read_events()
+  assert(#events == 0, "no open ever happened, so the event file must gain zero lines")
+  assert(bindings.state == "FAILED", "the failed bindings must end FAILED")
+  assert(bindings.cells.sum_missing.state == "FAILED", "the cell must end FAILED")
+  assert(bindings.cells.sum_missing.errorValue == err,
+      "the cell must carry the cached error table")
+end)
+
+test("FFI six-code case 2: FFI_SYMBOL_MISSING opens once, closes once, publishes no exports, caches the error, and failed replay re-raises it without retry", function()
+  ffi_batt_reset_events()
+  local names = FFI_BATT_SYMBOL_NAMES
+  local bindings = ffi_batt_bindings(FFI_BATT_KEY_SYMBOL, names)
+  local err = assert_error(function()
+    return __rt.load_ffi(FFI_BATT_KEY_SYMBOL, ffi_batt_bundle_symbol(), {},
+        bindings, FFI_BATT_IMPORT_FILE, FFI_BATT_IMPORT_LINE, FFI_BATT_IMPORT_COL)
+  end, "FFI_SYMBOL_MISSING")
+  assert(err.file == FFI_BATT_IMPORT_FILE, "FFI_SYMBOL_MISSING must carry the import file")
+  assert(err.line == FFI_BATT_IMPORT_LINE, "FFI_SYMBOL_MISSING must carry the import line")
+  assert(err.column == FFI_BATT_IMPORT_COL, "FFI_SYMBOL_MISSING must carry the import column")
+  ffi_batt_assert_reified(err, "FFI_SYMBOL_MISSING")
+  local events = ffi_batt_read_events()
+  assert(#events == 2 and events[1] == "open" and events[2] == "close",
+      "the load must open the library once and close the failed opened handle exactly once, got "
+      .. table.concat(events, ","))
+  -- B7.1: failure publishes no exports and fails the passed bindings
+  -- with the cached error (the raise is the only observable outcome).
+  assert(bindings.state == "FAILED", "the failed bindings must end FAILED")
+  for i = 1, #names do
+    local cell = bindings.cells[names[i]]
+    assert(cell.state == "FAILED", "cell " .. names[i] .. " must end FAILED")
+    assert(cell.wrapper == nil, "no wrapper may be published for " .. names[i])
+    assert(cell.errorValue == err, "cell " .. names[i] .. " must carry the raised error table")
+  end
+  -- B7.2: replaying the exact failed identity with fresh equal-content
+  -- argument tables re-raises the same cached error value (no retry)
+  -- and fails the fresh bindings with that same error; the event file
+  -- still holds exactly one open and one close (no second open/close).
+  local replay_bindings = ffi_batt_bindings(FFI_BATT_KEY_SYMBOL, names)
+  local replay_err = assert_error(function()
+    return __rt.load_ffi(FFI_BATT_KEY_SYMBOL, ffi_batt_bundle_symbol(), {},
+        replay_bindings, FFI_BATT_IMPORT_FILE, FFI_BATT_IMPORT_LINE, FFI_BATT_IMPORT_COL)
+  end, "FFI_SYMBOL_MISSING")
+  assert(replay_err == err,
+      "failed replay must re-raise the same cached error table (reference equality; no retry)")
+  assert(replay_bindings.state == "FAILED", "the fresh replay bindings must end FAILED")
+  for i = 1, #names do
+    local cell = replay_bindings.cells[names[i]]
+    assert(cell.state == "FAILED", "fresh replay cell " .. names[i] .. " must end FAILED")
+    assert(cell.errorValue == err,
+        "fresh replay cell " .. names[i] .. " must carry the same cached error table")
+  end
+  local events2 = ffi_batt_read_events()
+  assert(#events2 == 2 and events2[1] == "open" and events2[2] == "close",
+      "load + replay must leave exactly one open and one close, got "
+      .. table.concat(events2, ","))
+end)
+
+test("FFI cdef preservation: a second module reuses the registered entries as a subset and its wrappers work", function()
+  local names = FFI_BATT_SUBSET_NAMES
+  local bindings = ffi_batt_bindings(FFI_BATT_KEY_SUBSET, names)
+  local exports = __rt.load_ffi(FFI_BATT_KEY_SUBSET, ffi_batt_bundle_subset(), {},
+      bindings, FFI_BATT_IMPORT_FILE, FFI_BATT_IMPORT_LINE, FFI_BATT_IMPORT_COL)
+  assert(type(exports) == "table", "the subset load must publish an exports table")
+  assert(exports.add_int.f(20, 22, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL) == 42,
+      "the subset add_int wrapper must work")
+  assert(exports.add_number.f(1.25, 2.5, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL) == 3.75,
+      "the subset add_number wrapper must work")
+  assert(exports["not"].f(true, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL) == false,
+      "the subset not wrapper must work")
+  assert(exports.echo_string.f("subset", FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL) == "subset",
+      "the subset echo_string wrapper must work")
+  local bytes = __rt.bytes_new(2)
+  __rt.bytes_set(bytes, 0, 7)
+  __rt.bytes_set(bytes, 1, 8)
+  assert(exports.bytes_sum.f(bytes, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL) == 15,
+      "the subset bytes_sum wrapper must work")
+  assert(bindings.state == "READY", "the subset bindings must end READY")
+end)
+
+test("FFI positive composition: the full fixture bundle exercises every pipeline stage, publishes R17-composed wrappers and the retained plan, and never evaluates defaults", function()
+  local names = FFI_BATT_FULL_NAMES
+  local bindings = ffi_batt_bindings(FFI_BATT_KEY_FULL, names)
+  local plan_list = ffi_batt_build_plan_list()
+  local plans = ffi_batt_build_plans(plan_list)
+  local exports = __rt.load_ffi(FFI_BATT_KEY_FULL, ffi_batt_bundle_full(), plans,
+      bindings, FFI_BATT_IMPORT_FILE, FFI_BATT_IMPORT_LINE, FFI_BATT_IMPORT_COL)
+  assert(type(exports) == "table", "the load must publish an exports table")
+  ffi_batt_exports_full = exports
+  ffi_batt_plan_list = plan_list
+  -- Exactly one ready wrapper per declared export name plus the <C>_plan
+  -- entry (R12); nothing else.
+  local key_count = 0
+  for _ in pairs(exports) do
+    key_count = key_count + 1
+  end
+  assert(key_count == 13, "the exports table must carry 12 wrappers plus Pair_plan")
+  local sigs = {
+    count_call = "()->null",
+    call_count = "()->int",
+    reset_counter = "()->null",
+    add_int = "(int,int)->int",
+    add_number = "(number,number)->number",
+    ["not"] = "(boolean)->boolean",
+    echo_string = "(string)->string",
+    bytes_sum = "(bytes)->int",
+    null_string = "()->string",
+    bad_utf8 = "()->string",
+    null_pointer = "()->" .. FFI_BATT_PTR_IDENTITY,
+    static_pointer = "()->" .. FFI_BATT_PTR_IDENTITY,
+  }
+  for i = 1, #names do
+    local name = names[i]
+    local w = exports[name]
+    assert(type(w) == "table" and w.__kind == "function",
+        "export " .. name .. " must be a function_-shaped wrapper table")
+    assert(type(w.f) == "function", "export " .. name .. " must carry a working .f closure")
+    assert(w.sig == sigs[name],
+        "export " .. name .. " must carry the byte-exact composed sig '"
+        .. tostring(sigs[name]) .. "', got '" .. tostring(w.sig) .. "'")
+  end
+  assert(exports["Pair_plan"] == plan_list,
+      "the exported Pair_plan entry must be the retained plan list (reference equality)")
+  -- Roundtrips through the converters (int/number/boolean/string/bytes).
+  assert(exports.add_int.f(2, 3, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL) == 5)
+  assert(exports.add_number.f(2.5, 3.25, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL) == 5.75)
+  assert(exports["not"].f(true, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL) == false)
+  assert(exports["not"].f(false, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL) == true)
+  local echoed = exports.echo_string.f("hello", FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
+  assert(type(echoed) == "string" and echoed == "hello",
+      "the returned echo must be a DEAL Lua string (copied, never freed)")
+  local bytes = __rt.bytes_new(4)
+  __rt.bytes_set(bytes, 0, 1)
+  __rt.bytes_set(bytes, 1, 2)
+  __rt.bytes_set(bytes, 2, 3)
+  __rt.bytes_set(bytes, 3, 4)
+  assert(exports.bytes_sum.f(bytes, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL) == 10)
+  -- The void -> null row.
+  assert(exports.count_call.f(FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL) == __rt.__NULL,
+      "the void counter wrapper must return __rt.__NULL")
+  -- Non-NULL pointer returns produce fresh declared-identity tokens.
+  local tok1 = exports.static_pointer.f(FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
+  local tok2 = exports.static_pointer.f(FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
+  assert(tok1.__kind == "class" and tok1.__classname == FFI_BATT_PTR_IDENTITY,
+      "the pointer token must be tagged with the declared canonical class identity")
+  assert(tok2.__kind == "class" and tok2.__classname == FFI_BATT_PTR_IDENTITY,
+      "the second pointer token must be tagged with the declared canonical class identity")
+  assert(tok1 ~= tok2, "two successive calls must produce distinct token tables")
+  -- Cells and bindings all READY; zero default evaluation during load.
+  assert(bindings.state == "READY", "the bindings must end READY")
+  for i = 1, #names do
+    local cell = bindings.cells[names[i]]
+    assert(cell.state == "READY", "cell " .. names[i] .. " must be READY")
+    assert(cell.wrapper == exports[names[i]],
+        "cell " .. names[i] .. " must carry the published wrapper")
+  end
+  assert(ffi_batt_evaluator_count == 0,
+      "no default evaluator may run during load (zero default evaluation)")
+end)
+
+test("FFI six-code case 3: FFI_INVALID_STRING (embedded U+0000 outbound) raises before the call with the call span", function()
+  local exports = ffi_batt_require_full_exports()
+  exports.reset_counter.f(FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
+  local err = assert_error(function()
+    return exports.echo_string.f("ab\0cd", FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
+  end, "FFI_INVALID_STRING")
+  assert(err.file == FFI_BATT_CALL_FILE, "FFI_INVALID_STRING must carry the call file")
+  assert(err.line == FFI_BATT_CALL_LINE, "FFI_INVALID_STRING must carry the call line")
+  assert(err.column == FFI_BATT_CALL_COL, "FFI_INVALID_STRING must carry the call column")
+  ffi_batt_assert_reified(err, "FFI_INVALID_STRING")
+  assert(exports.call_count.f(FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL) == 0,
+      "the native call must never have run (echo increments on entry; a leaked call would read 1)")
+end)
+
+test("FFI six-code case 4: FFI_NULL_STRING (NULL char* return) raises after the call with native effects retained", function()
+  local exports = ffi_batt_require_full_exports()
+  exports.reset_counter.f(FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
+  local err = assert_error(function()
+    return exports.null_string.f(FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
+  end, "FFI_NULL_STRING")
+  assert(err.file == FFI_BATT_CALL_FILE, "FFI_NULL_STRING must carry the call file")
+  assert(err.line == FFI_BATT_CALL_LINE, "FFI_NULL_STRING must carry the call line")
+  assert(err.column == FFI_BATT_CALL_COL, "FFI_NULL_STRING must carry the call column")
+  ffi_batt_assert_reified(err, "FFI_NULL_STRING")
+  assert(exports.call_count.f(FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL) == 1,
+      "the call must have run: the counter reads exactly one")
+end)
+
+test("FFI six-code case 5: FFI_INVALID_UTF8 (non-UTF-8 return) raises after the call with native effects retained", function()
+  local exports = ffi_batt_require_full_exports()
+  exports.reset_counter.f(FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
+  local err = assert_error(function()
+    return exports.bad_utf8.f(FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
+  end, "FFI_INVALID_UTF8")
+  assert(err.file == FFI_BATT_CALL_FILE, "FFI_INVALID_UTF8 must carry the call file")
+  assert(err.line == FFI_BATT_CALL_LINE, "FFI_INVALID_UTF8 must carry the call line")
+  assert(err.column == FFI_BATT_CALL_COL, "FFI_INVALID_UTF8 must carry the call column")
+  ffi_batt_assert_reified(err, "FFI_INVALID_UTF8")
+  assert(exports.call_count.f(FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL) == 1,
+      "the call must have run: the counter reads exactly one")
+end)
+
+test("FFI six-code case 6: FFI_NULL_POINTER (NULL void* return) raises after the call and publishes no token", function()
+  local exports = ffi_batt_require_full_exports()
+  exports.reset_counter.f(FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
+  local err = assert_error(function()
+    return exports.null_pointer.f(FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
+  end, "FFI_NULL_POINTER")
+  assert(err.file == FFI_BATT_CALL_FILE, "FFI_NULL_POINTER must carry the call file")
+  assert(err.line == FFI_BATT_CALL_LINE, "FFI_NULL_POINTER must carry the call line")
+  assert(err.column == FFI_BATT_CALL_COL, "FFI_NULL_POINTER must carry the call column")
+  ffi_batt_assert_reified(err, "FFI_NULL_POINTER")
+  assert(exports.call_count.f(FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL) == 1,
+      "the call must have run: the counter reads exactly one")
+end)
+
+test("FFI ready replay: the exact full-content identity returns the cached exports, fills fresh cells with the cached wrappers, and never evaluates", function()
+  local exports = ffi_batt_require_full_exports()
+  local fresh_bindings = ffi_batt_bindings(FFI_BATT_KEY_FULL, FFI_BATT_FULL_NAMES)
+  local replays = __rt.load_ffi(FFI_BATT_KEY_FULL, ffi_batt_bundle_full(),
+      ffi_batt_build_plans(ffi_batt_build_plan_list()), fresh_bindings,
+      FFI_BATT_IMPORT_FILE, FFI_BATT_IMPORT_LINE, FFI_BATT_IMPORT_COL)
+  assert(replays == exports,
+      "ready replay must return the cached exports table (reference equality)")
+  assert(fresh_bindings.state == "READY", "the fresh replay bindings must end READY")
+  for i = 1, #FFI_BATT_FULL_NAMES do
+    local name = FFI_BATT_FULL_NAMES[i]
+    local cell = fresh_bindings.cells[name]
+    assert(cell.state == "READY", "fresh replay cell " .. name .. " must be READY")
+    assert(cell.wrapper == exports[name],
+        "fresh replay cell " .. name .. " must carry the cached wrapper table")
+  end
+  assert(exports.add_int.f(2, 3, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL) == 5,
+      "the original wrappers must remain callable")
+  assert(ffi_batt_evaluator_count == 0,
+      "ready replay must perform no default evaluation either")
+end)
+
+test("FFI content-changed replay: a changed loader text or bundle content fails before mutation and gains no open/close lines", function()
+  ffi_batt_reset_events()
+  local exports = ffi_batt_require_full_exports()
+  -- Changed nativeLibrary.loaderText.
+  local b1 = ffi_batt_bindings(FFI_BATT_KEY_FULL, FFI_BATT_FULL_NAMES)
+  local changed_loader = ffi_batt_bundle_full()
+  changed_loader.nativeLibrary = { kind = "ABSOLUTE_PATH",
+      loaderText = ffi_batt_so_path .. ".changed-missing.so" }
+  assert_error(function()
+    return __rt.load_ffi(FFI_BATT_KEY_FULL, changed_loader,
+        ffi_batt_build_plans(ffi_batt_build_plan_list()), b1,
+        FFI_BATT_IMPORT_FILE, FFI_BATT_IMPORT_LINE, FFI_BATT_IMPORT_COL)
+  end, "FFI_LIBRARY_LOAD")
+  assert(b1.state == "UNBOUND", "the changed bindings must stay UNBOUND")
+  for i = 1, #FFI_BATT_FULL_NAMES do
+    local cell = b1.cells[FFI_BATT_FULL_NAMES[i]]
+    assert(cell.state == "UNBOUND" and cell.wrapper == nil and cell.errorValue == nil,
+        "the changed bindings cells must stay UNBOUND")
+  end
+  -- Changed cdefBundle.fullContent.
+  local b2 = ffi_batt_bindings(FFI_BATT_KEY_FULL, FFI_BATT_FULL_NAMES)
+  local changed_content = ffi_batt_bundle_full()
+  changed_content.fullContent = changed_content.fullContent .. "-changed"
+  assert_error(function()
+    return __rt.load_ffi(FFI_BATT_KEY_FULL, changed_content,
+        ffi_batt_build_plans(ffi_batt_build_plan_list()), b2,
+        FFI_BATT_IMPORT_FILE, FFI_BATT_IMPORT_LINE, FFI_BATT_IMPORT_COL)
+  end, "FFI_LIBRARY_LOAD")
+  assert(b2.state == "UNBOUND", "the changed bindings must stay UNBOUND")
+  for i = 1, #FFI_BATT_FULL_NAMES do
+    local cell = b2.cells[FFI_BATT_FULL_NAMES[i]]
+    assert(cell.state == "UNBOUND" and cell.wrapper == nil and cell.errorValue == nil,
+        "the changed bindings cells must stay UNBOUND")
+  end
+  assert(exports.add_int.f(2, 3, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL) == 5,
+      "the previously published exports must stay callable")
+  local events = ffi_batt_read_events()
+  assert(#events == 0, "changed-identity replay must gain no open/close lines")
+end)
+
+test("FFI non-yield proof: one coroutine.resume reaches dead for a successful and a failing load", function()
+  local co = coroutine.create(function()
+    return __rt.load_ffi(FFI_BATT_KEY_NONYIELD_OK, ffi_batt_bundle_full(),
+        ffi_batt_build_plans(ffi_batt_build_plan_list()),
+        ffi_batt_bindings(FFI_BATT_KEY_NONYIELD_OK, FFI_BATT_FULL_NAMES),
+        FFI_BATT_IMPORT_FILE, FFI_BATT_IMPORT_LINE, FFI_BATT_IMPORT_COL)
+  end)
+  local ok, res = coroutine.resume(co)
+  assert(ok == true, "the first resume of the successful load must succeed")
+  assert(type(res) == "table", "the first resume must return the exports table")
+  assert(coroutine.status(co) == "dead",
+      "exactly one coroutine.resume must reach dead: the load never yields")
+  local cof = coroutine.create(function()
+    return __rt.load_ffi(FFI_BATT_KEY_NONYIELD_FAIL, ffi_batt_bundle_missing(), {},
+        ffi_batt_bindings(FFI_BATT_KEY_NONYIELD_FAIL, { "sum_missing" }),
+        FFI_BATT_IMPORT_FILE, FFI_BATT_IMPORT_LINE, FFI_BATT_IMPORT_COL)
+  end)
+  local fok, ferr = coroutine.resume(cof)
+  assert(fok == false, "the failing load must surface its raise through the resume")
+  assert(type(ferr) == "table" and ferr.code == "FFI_LIBRARY_LOAD",
+      "the failing load must raise FFI_LIBRARY_LOAD through the resume")
+  assert(coroutine.status(cof) == "dead",
+      "exactly one coroutine.resume must reach dead: the failing load never yields")
+end)
+
+test("FFI negative-constraint source audits against deal/runtime.lua hold", function()
+  local f = io.open("deal/runtime.lua", "r")
+  assert(f ~= nil, "deal/runtime.lua must be readable for the source audits")
+  local src = f:read("*a")
+  f:close()
+  local marker = "-- ===== C FFI runtime half (v1.2) ====="
+  local start = string.find(src, marker, 1, true)
+  assert(start ~= nil, "the FFI half section marker must exist in deal/runtime.lua")
+  local half = string.sub(src, start)
+  local function absent(what, pattern)
+    assert(string.find(half, pattern, 1, true) == nil,
+        what .. " must be absent from the FFI half")
+  end
+  local function count_all(text, pattern)
+    local n = 0
+    local i = 1
+    while true do
+      local p = string.find(text, pattern, i, true)
+      if p == nil then
+        return n
+      end
+      n = n + 1
+      i = p + 1
+    end
+  end
+  -- (a) No compiler dependency: no new require beyond the existing ffi,
+  -- and no io./manifest/discovery code inside the FFI half.
+  absent("a require call", "require(")
+  absent("file I/O code (io.)", "io.")
+  absent("os/manifest/discovery code (os.)", "os.")
+  assert(count_all(src, 'local ffi = require("ffi")') == 1,
+      "the only runtime require must be the pre-existing local ffi = require('ffi')")
+  -- (b) Canonical descriptors only: every checker word the FFI half
+  -- mentions is a canonical checker, and descriptor parsing reaches
+  -- parse_descriptor.
+  local checkers = {}
+  for w in half:gmatch("check_%a+") do
+    checkers[w] = true
+  end
+  local allowed = {
+    check_int = true, check_number = true, check_boolean = true,
+    check_string = true, check_bytes = true, check_null = true,
+    check_table = true, check_type = true, check_canonical_type = true,
+    check_canonical_ast = true,
+  }
+  for w in pairs(checkers) do
+    assert(allowed[w] == true,
+        "the FFI half must use only canonical checkers, found '" .. w .. "'")
+  end
+  assert(string.find(half, "parse_descriptor", 1, true) ~= nil,
+      "every FFI descriptor check must reach parse_descriptor")
+  -- (c) Exactly one registry-protected resolver cdef entry for
+  -- dlopen/dlsym/dlerror/dlclose, registered through the single
+  -- protected cdef call path, with private casts.
+  assert(count_all(half, "void *dlopen(const char *filename, int flags);") == 1,
+      "exactly one dlopen declaration must exist in the FFI half")
+  assert(count_all(half, "void *dlsym(void *handle, const char *symbol);") == 1,
+      "exactly one dlsym declaration must exist in the FFI half")
+  assert(count_all(half, "char *dlerror(void);") == 1,
+      "exactly one dlerror declaration must exist in the FFI half")
+  assert(count_all(half, "int dlclose(void *handle);") == 1,
+      "exactly one dlclose declaration must exist in the FFI half")
+  assert(count_all(half, "pcall(ffi.cdef,") == 1,
+      "exactly one protected ffi.cdef call path must exist in the FFI half")
+  assert(string.find(half, "ffi.cast(", 1, true) ~= nil,
+      "the FFI half must cast through private function-pointer types")
+  -- (d) Never ffi.C[target] and never ffi.load(...)[target].
+  absent("direct namespace target access (ffi.C[)", "ffi.C[")
+  absent("direct ffi.load target access", "ffi.load(")
+  -- (e) FFI_UNSUPPORTED_BACKEND is compile-time only and never appears
+  -- in deal/runtime.lua.
+  assert(string.find(src, "FFI_UNSUPPORTED_BACKEND", 1, true) == nil,
+      "FFI_UNSUPPORTED_BACKEND must never appear in deal/runtime.lua")
+  -- Additive static non-yield audit (B8's rejected alternative, kept as
+  -- a source-level complement to the behavioral proof).
+  absent("coroutine scheduling", "coroutine")
+end)
+
 -- ==================== Summary ====================
 
 print("")
