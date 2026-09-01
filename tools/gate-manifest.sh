@@ -187,7 +187,7 @@ TEST_MAINS=(
   'fg|=== Running IR Dumper Tests ===|java -ea -cp build deal.test.IrDumperTest'
   'fg|=== Running IR Golden Tests ===|java -ea -cp build deal.test.IrGoldenTest'
   'fg|=== Running Type Descriptor Tests ===|java -ea -cp build deal.test.TypeDescriptorTest'
-  'fg|=== Running Canonical Runtime Type Descriptor Tests (ISSUE-0310/0311) ===|java -ea -cp build deal.test.CanonicalRuntimeTypeDescriptorTest'
+  'fg|=== Running Canonical Runtime Type Descriptor Tests (ISSUE-0310/0311/0314) ===|java -ea -cp build deal.test.CanonicalRuntimeTypeDescriptorTest'
   'fg|=== Running Runtime Type Matcher Tests (ISSUE-0312) ===|java -ea -cp build deal.test.RuntimeTypeMatcherTest'
   'fg|=== Running JS Backend Unit Tests ===|java -ea -cp build deal.test.JsBackendTest'
   'fg|=== Running JS E2E Tests ===|java -ea -cp build deal.test.JsE2eTest'
