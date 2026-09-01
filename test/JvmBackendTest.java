@@ -424,6 +424,7 @@ public class JvmBackendTest {
             new TestCase("testProfilePlumbIntMode", () -> testProfilePlumbIntMode()),
             new TestCase("testInt32TimeBoundary", () -> testInt32TimeBoundary()),
             new TestCase("testInt32BoundarySeamSites", () -> testInt32BoundarySeamSites()),
+            new TestCase("testInt32DeclaredBoundaryMatrix", () -> testInt32DeclaredBoundaryMatrix()),
             new TestCase("testInt32EdgeMatrix", () -> testInt32EdgeMatrix()),
             new TestCase("testInt32NumberPowBand", () -> testInt32NumberPowBand()),
             new TestCase("testInt32NumPowHelperCollision", () -> testInt32NumPowHelperCollision()),
@@ -7350,6 +7351,131 @@ public class JvmBackendTest {
         return new ExecResult(out, exit);
     }
 
+    /** Writes the shared host-module project files for the int32
+     * in-range boundary programs: deal.json (externals host/log), the
+     * declaration bindings, the int32-mapped HostLog implementation
+     * ({@code int}/{@code Integer} carriers — the dynamic value the host
+     * seam range-checks), and the DEAL entry source. */
+    private static void writeHostLogProject(String source, String name)
+            throws IOException {
+        writeFile("deal.json", """
+            {
+              "languageVersion": "1.2",
+              "moduleRoots": ["src"],
+              "externals": {
+                "host/log": { "declaration": "bindings/log.d.deal" }
+              }
+            }
+            """);
+        writeFile("bindings/log.d.deal", """
+            export function add(a: int, b: int): int;
+            export async function fetchInt(): int;
+            export function maybe(): int | null;
+            """);
+        writeFile("HostLog.java", """
+            import java.util.concurrent.CompletableFuture;
+            public final class HostLog {
+                public static Object add(int a, int b) { return Integer.valueOf(a + b); }
+                public static Object fetchInt() { return CompletableFuture.completedFuture(Integer.valueOf(7)); }
+                public static Object maybe() { return null; }
+            }
+            """);
+        writeFile("src/host_" + name + ".deal", source);
+    }
+
+    /** Full-pipeline run of one host-module program under the explicit
+     * {@code DEAL_V1_2_INT32} invocation (orchestrator with the
+     * externals-listed host module → JvmBackend → javac over the
+     * artifacts + the real HostLog class + the runner → java). The host
+     * class declares the int32-mapped signatures — the real boxed value
+     * producer for the in-range boundary programs. */
+    private static ExecResult runInt32HostProject(String source,
+                                                  String name)
+            throws Exception {
+        writeHostLogProject(source, name);
+        Path entryFile = tmpDir.get().resolve("src/host_" + name + ".deal")
+            .toAbsolutePath().normalize();
+        Path outputRoot = tmpDir.get().resolve("build/host_" + name);
+        List<Path> roots = List.of(
+            tmpDir.get().resolve("src").toAbsolutePath());
+        DealConfig config = DealConfig.load(tmpDir.get()).config();
+        check(config != null, "deal.json with externals loads for " + name);
+        CompilerInvocation invocation = CompilerProfileProvider.resolve(
+            ReleaseState.V1_2_ACTIVE, CapabilityRegistry.releaseRegistry());
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputRoot, false, false, false, false,
+            Backend.JVM, config, roots,
+            Path.of(".").toAbsolutePath().normalize(), null, invocation);
+        boolean ok = orchestrator.compile();
+        check(ok, "int32 host orchestrator compile succeeds for " + name
+            + ": " + orchestrator.diagnostics());
+        if (!ok) return new ExecResult("", 1);
+        JvmBackend.JvmCodegenResult res =
+            orchestrator.jvmGeneratedResults().get(entryFile.toString());
+        check(res != null && res.int32Mode(),
+            "codegenAllJvm recorded the real stored int32 mode for " + name);
+        if (res == null || !res.int32Mode()) return new ExecResult("", 1);
+        Files.copy(tmpDir.get().resolve("HostLog.java"),
+            outputRoot.resolve("HostLog.java"));
+        Files.writeString(outputRoot.resolve("JvmConformanceRunner.java"),
+            BackendConformanceTest.buildJvmRunner(parseProgram("""
+                export function main(): null { return null; }
+                export function test(): int { return 0; }
+                """), res.className()));
+        List<String> javaFiles = new ArrayList<>();
+        try (var stream = Files.list(outputRoot)) {
+            stream.filter(p -> p.toString().endsWith(".java"))
+                  .sorted()
+                  .forEach(p -> javaFiles.add(p.getFileName().toString()));
+        }
+        StringBuilder javacErr = new StringBuilder();
+        boolean javacOk = BackendConformanceTest.compileWithJavac(outputRoot,
+            javaFiles, javacErr);
+        if (!javacOk) {
+            throw new RuntimeException("javac failed for " + name + ": "
+                + javacErr);
+        }
+        ProcessBuilder java = new ProcessBuilder("java", "-cp",
+            outputRoot.toString(), "JvmConformanceRunner");
+        java.redirectErrorStream(true);
+        Process p2 = java.start();
+        String out = new String(p2.getInputStream().readAllBytes()).trim();
+        int exit = p2.waitFor();
+        return new ExecResult(out, exit);
+    }
+
+    /** The emitted entry artifact of one host-module program under the
+     * explicit {@code DEAL_V1_2_INT32} invocation (the plumbed
+     * orchestrator path). */
+    private static String int32HostArtifact(String source, String name)
+            throws IOException {
+        writeHostLogProject(source, name);
+        Path entryFile = tmpDir.get().resolve("src/host_" + name + ".deal")
+            .toAbsolutePath().normalize();
+        Path outputRoot = tmpDir.get().resolve("build/host_" + name);
+        List<Path> roots = List.of(
+            tmpDir.get().resolve("src").toAbsolutePath());
+        DealConfig config = DealConfig.load(tmpDir.get()).config();
+        check(config != null, "deal.json with externals loads for " + name);
+        CompilerInvocation invocation = CompilerProfileProvider.resolve(
+            ReleaseState.V1_2_ACTIVE, CapabilityRegistry.releaseRegistry());
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputRoot, false, false, false, false,
+            Backend.JVM, config, roots,
+            Path.of(".").toAbsolutePath().normalize(), null, invocation);
+        boolean ok = orchestrator.compile();
+        check(ok, "int32 host artifact compile succeeds for " + name + ": "
+            + orchestrator.diagnostics());
+        if (!ok) return "";
+        JvmBackend.JvmCodegenResult res =
+            orchestrator.jvmGeneratedResults().get(entryFile.toString());
+        check(res != null && res.int32Mode(),
+            "codegenAllJvm recorded the real stored int32 mode for " + name);
+        if (res == null || !res.int32Mode()) return "";
+        return Files.readString(outputRoot.resolve(res.className() + ".java"));
+    }
+
+
     /** The emitted artifact of {@code source} under the explicit
      * {@code DEAL_V1_2_INT32} profile (the plumbed generate entry, entry
      * module surface). */
@@ -7649,6 +7775,531 @@ public class JvmBackendTest {
         check(!legacyOpt.output().contains("DEAL_ERROR_CODE"),
             "legacy jsonable default raises nothing (no int32 gate): "
                 + legacyOpt.output());
+    }
+
+    /** The ISSUE-0376 anti-hollow matrix: one real compiled program per
+     * declared-int-boundary kind under the explicit
+     * {@code DEAL_V1_2_INT32} invocation — an out-of-range value (the
+     * retained time expression, the one wider producer under the int32
+     * carriers) raising exactly {@code E8004} once at the boundary
+     * before any storage or use, and an in-range value (a host-module
+     * int checked at the host seam, a gated int-array read, or an
+     * integral JSON-shaped double through the table seam) crossing and
+     * staying usable with its exact value asserted at runtime. Each
+     * artifact pins the {@code checkInt(...)} wrap where the seam routes
+     * a wider value, the pass-through where the value is already int
+     * code, and the absence of a bare {@code (int)} cast at the declared
+     * boundary. The two boundary kinds whose out-of-range raise is
+     * structurally impossible under the int32 carriers (await
+     * completion, array element read) are pinned by the invariant that
+     * makes them impossible plus the in-range programs — never by a
+     * skip. */
+    private static void testInt32DeclaredBoundaryMatrix() throws Exception {
+        System.out.println("-- Int32 declared-boundary matrix (every boundary kind, full pipeline) --");
+
+        // ---- Out-of-range: the retained time expression. ----
+
+        // Assignment target.
+        String assignSrc = """
+            import * as time from "std/time"
+            export function main(): null { return null; }
+            export function test(): int {
+              let t: int = 0;
+              t = time.nowMillis();
+              return t;
+            }
+            """;
+        ExecResult assign = runInt32Project(assignSrc, "boundary_assign");
+        check(assign.exitCode() == 1,
+            "int32 assignment boundary run exits 1: " + assign.output());
+        check(countOccurrences(assign.output(),
+                "DEAL_ERROR_CODE: E8004 int out of safe range") == 1,
+            "assignment boundary raises exactly E8004 once: "
+                + assign.output());
+        String assignJava = int32Artifact(assignSrc,
+            "boundary_assign_artifact");
+        check(assignJava.contains(
+                "t = checkInt((java.lang.System.currentTimeMillis() / 1000L) * 1000L);"),
+            "the assignment boundary wraps the retained expression in "
+                + "checkInt: "
+                + assignJava.lines().filter(l -> l.contains("= checkInt("))
+                .findFirst().orElse("<missing>"));
+        check(!assignJava.contains(
+                "(int) (java.lang.System.currentTimeMillis()"),
+            "no bare (int) narrowing of the retained time expression at "
+                + "the assignment boundary");
+
+        // Call argument (direct function call).
+        String callSrc = """
+            import * as time from "std/time"
+            export function main(): null { return null; }
+            function use(p: int): int { return p; }
+            export function test(): int {
+              return use(time.nowMillis());
+            }
+            """;
+        ExecResult callArg = runInt32Project(callSrc, "boundary_callarg");
+        check(callArg.exitCode() == 1,
+            "int32 call-argument boundary run exits 1: "
+                + callArg.output());
+        check(countOccurrences(callArg.output(),
+                "DEAL_ERROR_CODE: E8004 int out of safe range") == 1,
+            "call-argument boundary raises exactly E8004 once: "
+                + callArg.output());
+        String callJava = int32Artifact(callSrc,
+            "boundary_callarg_artifact");
+        check(callJava.contains(
+                "return use(checkInt((java.lang.System.currentTimeMillis() / 1000L) * 1000L));"),
+            "the call argument wraps the retained expression in checkInt");
+        check(!callJava.contains(
+                "(int) (java.lang.System.currentTimeMillis()"),
+            "no bare (int) narrowing of the retained time expression at "
+                + "the call-argument boundary");
+
+        // Callback argument (function-value dispatch).
+        String cbSrc = """
+            import * as time from "std/time"
+            export function main(): null { return null; }
+            function use(p: int): int { return p; }
+            export function test(): int {
+              let f: (x: int) => int = use;
+              return f(time.nowMillis());
+            }
+            """;
+        ExecResult cb = runInt32Project(cbSrc, "boundary_callback");
+        check(cb.exitCode() == 1,
+            "int32 callback-argument boundary run exits 1: "
+                + cb.output());
+        check(countOccurrences(cb.output(),
+                "DEAL_ERROR_CODE: E8004 int out of safe range") == 1,
+            "callback-argument boundary raises exactly E8004 once: "
+                + cb.output());
+        String cbJava = int32Artifact(cbSrc, "boundary_callback_artifact");
+        check(cbJava.contains(
+                "f.invoke(checkInt((java.lang.System.currentTimeMillis() / 1000L) * 1000L))"),
+            "the callback argument wraps the retained expression in "
+                + "checkInt");
+        check(!cbJava.contains(
+                "(int) (java.lang.System.currentTimeMillis()"),
+            "no bare (int) narrowing of the retained time expression at "
+                + "the callback-argument boundary");
+
+        // Array element write — and the raise happens BEFORE any
+        // storage: a catch around the write reads the untouched
+        // element back.
+        String arrWriteSrc = """
+            import * as time from "std/time"
+            export function main(): null { return null; }
+            export function test(): int {
+              let xs: int[] = [1, 2];
+              xs[0] = time.nowMillis();
+              return xs[0];
+            }
+            """;
+        ExecResult arrWrite = runInt32Project(arrWriteSrc,
+            "boundary_arrwrite");
+        check(arrWrite.exitCode() == 1,
+            "int32 array-write boundary run exits 1: " + arrWrite.output());
+        check(countOccurrences(arrWrite.output(),
+                "DEAL_ERROR_CODE: E8004 int out of safe range") == 1,
+            "array-write boundary raises exactly E8004 once: "
+                + arrWrite.output());
+        String arrWriteJava = int32Artifact(arrWriteSrc,
+            "boundary_arrwrite_artifact");
+        check(arrWriteJava.contains(
+                "__intArrayWrite(xs, 0, checkInt((java.lang.System.currentTimeMillis() / 1000L) * 1000L))"),
+            "the array element write wraps the retained expression in "
+                + "checkInt before the storage helper call");
+        check(!arrWriteJava.contains(
+                "(int) (java.lang.System.currentTimeMillis()"),
+            "no bare (int) narrowing of the retained time expression at "
+                + "the array-write boundary");
+        String noStoreSrc = """
+            import * as time from "std/time"
+            export function main(): null { return null; }
+            export function test(): int {
+              let xs: int[] = [1, 2];
+              try {
+                xs[0] = time.nowMillis();
+              } catch (e) {
+                return xs[0];
+              }
+              return 0;
+            }
+            """;
+        ExecResult noStore = runInt32Project(noStoreSrc, "boundary_no_store");
+        check(noStore.exitCode() == 0
+                && noStore.output().contains("1"),
+            "the E8004 raise happens before any storage (the catch reads "
+                + "the untouched element 1): " + noStore.output());
+
+        // Await completion: under the int32 carriers no out-of-range
+        // value can reach the await site itself — a DEAL async
+        // function's declared-int return boundary raises E8004 first,
+        // and a host async completion is checked at the host seam. The
+        // raise is pinned at the async return boundary, and the await
+        // site passes the already-int completion through unchanged.
+        String asyncTimeSrc = """
+            import * as time from "std/time"
+            export function main(): null { return null; }
+            async function g(): int { return time.nowMillis(); }
+            export async function test(): int {
+              return await g();
+            }
+            """;
+        ExecResult asyncTime = runInt32Project(asyncTimeSrc,
+            "boundary_await_site");
+        check(asyncTime.exitCode() == 1,
+            "int32 await-site run exits 1 (the raise surfaces at the "
+                + "async return boundary): " + asyncTime.output());
+        check(countOccurrences(asyncTime.output(),
+                "DEAL_ERROR_CODE: E8004 int out of safe range") == 1,
+            "exactly one E8004 — the async return boundary raises it: "
+                + asyncTime.output());
+        String asyncTimeJava = int32Artifact(asyncTimeSrc,
+            "boundary_await_site_artifact");
+        check(asyncTimeJava.contains(
+                "return checkInt((java.lang.System.currentTimeMillis() / 1000L) * 1000L);"),
+            "the async return boundary wraps the retained expression in "
+                + "checkInt");
+        check(asyncTimeJava.contains("return g();"),
+            "the await completion is already the int carrier and passes "
+                + "through unchanged: "
+                + asyncTimeJava.lines().filter(l -> l.contains("return g"))
+                .findFirst().orElse("<missing>"));
+        check(!asyncTimeJava.contains("checkInt(g())"),
+            "no redundant checkInt wrap around the int-typed DEAL async "
+                + "completion at the await site");
+
+        // Table-read int target: an integral JSON-shaped double outside
+        // the signed32 range stored in the table crosses the shared
+        // $check seam's "int" branch, whose route through checkInt
+        // raises exactly E8004 at the read boundary.
+        String tableOutSrc = """
+            export function main(): null { return null; }
+            export function test(): int {
+              let t: table = {x: 1000000000000.0};
+              let v: int = t.x;
+              return v;
+            }
+            """;
+        ExecResult tableOut = runInt32Project(tableOutSrc,
+            "boundary_tableread_out");
+        check(tableOut.exitCode() == 1,
+            "int32 out-of-range table read run exits 1: "
+                + tableOut.output());
+        check(countOccurrences(tableOut.output(),
+                "DEAL_ERROR_CODE: E8004 int out of safe range") == 1,
+            "out-of-range table read raises exactly E8004 once: "
+                + tableOut.output());
+        String tableOutJava = int32Artifact(tableOutSrc,
+            "boundary_tableread_out_artifact");
+        check(tableOutJava.contains(
+                "int v = ((java.lang.Integer) $check(\"int\", (t).get(\"x\"))).intValue();"),
+            "the table-read int target routes through the shared $check "
+                + "seam's int branch");
+        check(tableOutJava.contains(
+                "if (v instanceof java.lang.Integer i) return checkInt(i);"),
+            "the $check int branch routes through the signed32 checkInt "
+                + "under int32 (the gate runs at the read boundary)");
+
+        // Array element read: no out-of-range value can exist in int32
+        // int storage — the write gate above raises before any store,
+        // so every read yields an in-range int. The read boundary is
+        // pinned by that invariant plus the in-range programs below.
+
+        // ---- In-range: host-module values (the dynamic value crosses
+        // the host seam's signed32 checkInt and returns as the
+        // primitive int carrier), gated int-array reads, and an
+        // integral in-range double through the table seam. Each asserts
+        // the exact stored/returned/passed value at runtime. ----
+
+        // Variable-declaration initializer.
+        String hostInitSrc = """
+            import * as log from "host/log"
+            export function main(): null { return null; }
+            export function test(): int {
+              let t: int = log.add(20, 22);
+              return t;
+            }
+            """;
+        ExecResult hostInit = runInt32HostProject(hostInitSrc,
+            "boundary_init_in");
+        check(hostInit.exitCode() == 0,
+            "in-range host initializer run exits 0: " + hostInit.output());
+        check(hostInit.output().contains("42"),
+            "the in-range value crosses the declaration boundary and "
+                + "stays usable (42): " + hostInit.output());
+        String hostInitJava = int32HostArtifact(hostInitSrc,
+            "boundary_init_in");
+        check(hostInitJava.contains("int t = __host$log$add(20, 22);"),
+            "the host call result is already the int carrier at the "
+                + "declaration boundary (pass-through, no redundant "
+                + "gate): "
+                + hostInitJava.lines().filter(l -> l.contains("int t = "))
+                .findFirst().orElse("<missing>"));
+        check(hostInitJava.contains(
+                "if (v instanceof java.lang.Integer i) return checkInt(i);"),
+            "the dynamic host value crossed the signed32 checkInt at the "
+                + "host seam (the gate ran, never skipped)");
+
+        // Assignment target.
+        String hostAssignSrc = """
+            import * as log from "host/log"
+            export function main(): null { return null; }
+            export function test(): int {
+              let t: int = 0;
+              t = log.add(2, 3);
+              return t;
+            }
+            """;
+        ExecResult hostAssign = runInt32HostProject(hostAssignSrc,
+            "boundary_assign_in");
+        check(hostAssign.exitCode() == 0
+                && hostAssign.output().contains("5"),
+            "in-range assignment value crosses and stays usable (5): "
+                + hostAssign.output());
+        String hostAssignJava = int32HostArtifact(hostAssignSrc,
+            "boundary_assign_in");
+        check(hostAssignJava.contains("t = __host$log$add(2, 3);"),
+            "the host call result passes through the assignment boundary "
+                + "as the int carrier");
+
+        // Return.
+        String hostRetSrc = """
+            import * as log from "host/log"
+            export function main(): null { return null; }
+            export function test(): int {
+              return log.add(6, 7);
+            }
+            """;
+        ExecResult hostRet = runInt32HostProject(hostRetSrc,
+            "boundary_return_in");
+        check(hostRet.exitCode() == 0 && hostRet.output().contains("13"),
+            "in-range return value crosses and stays usable (13): "
+                + hostRet.output());
+        String hostRetJava = int32HostArtifact(hostRetSrc,
+            "boundary_return_in");
+        check(hostRetJava.contains("return __host$log$add(6, 7);"),
+            "the host call result passes through the return boundary as "
+                + "the int carrier");
+
+        // Call argument (direct call).
+        String hostArgSrc = """
+            import * as log from "host/log"
+            export function main(): null { return null; }
+            function use(p: int): int { return p; }
+            export function test(): int {
+              return use(log.add(8, 9));
+            }
+            """;
+        ExecResult hostArg = runInt32HostProject(hostArgSrc,
+            "boundary_callarg_in");
+        check(hostArg.exitCode() == 0 && hostArg.output().contains("17"),
+            "in-range call-argument value crosses and stays usable (17): "
+                + hostArg.output());
+        String hostArgJava = int32HostArtifact(hostArgSrc,
+            "boundary_callarg_in");
+        check(hostArgJava.contains("return use(__host$log$add(8, 9));"),
+            "the host call result passes through the call-argument "
+                + "boundary as the int carrier");
+
+        // Callback argument (function-value dispatch).
+        String hostCbSrc = """
+            import * as log from "host/log"
+            export function main(): null { return null; }
+            function use(p: int): int { return p; }
+            export function test(): int {
+              let f: (x: int) => int = use;
+              return f(log.add(10, 11));
+            }
+            """;
+        ExecResult hostCb = runInt32HostProject(hostCbSrc,
+            "boundary_callback_in");
+        check(hostCb.exitCode() == 0 && hostCb.output().contains("21"),
+            "in-range callback-argument value crosses and stays usable "
+                + "(21): " + hostCb.output());
+        String hostCbJava = int32HostArtifact(hostCbSrc,
+            "boundary_callback_in");
+        check(hostCbJava.contains("f.invoke(__host$log$add(10, 11))"),
+            "the host call result passes through the callback-argument "
+                + "boundary as the int carrier");
+
+        // Await completion (host async, boxed at the host seam).
+        String hostAwaitSrc = """
+            import * as log from "host/log"
+            export function main(): null { return null; }
+            export async function test(): int {
+              return await log.fetchInt();
+            }
+            """;
+        ExecResult hostAwait = runInt32HostProject(hostAwaitSrc,
+            "boundary_await_in");
+        check(hostAwait.exitCode() == 0 && hostAwait.output().contains("7"),
+            "in-range host async completion crosses the await boundary "
+                + "and stays usable (7): " + hostAwait.output());
+        String hostAwaitJava = int32HostArtifact(hostAwaitSrc,
+            "boundary_await_in");
+        check(hostAwaitJava.contains("return __host$log$fetchInt();"),
+            "the host async completion passes through the await boundary "
+                + "as the int carrier (the completion check ran inside "
+                + "the host wrapper)");
+        check(!hostAwaitJava.contains("checkInt(__host$log$fetchInt())"),
+            "no redundant gate around the already-checked host async "
+                + "completion");
+
+        // Array element write (in-range host value).
+        String hostArrWriteSrc = """
+            import * as log from "host/log"
+            export function main(): null { return null; }
+            export function test(): int {
+              let xs: int[] = [0];
+              xs[0] = log.add(12, 13);
+              return xs[0];
+            }
+            """;
+        ExecResult hostArrWrite = runInt32HostProject(hostArrWriteSrc,
+            "boundary_arrwrite_in");
+        check(hostArrWrite.exitCode() == 0
+                && hostArrWrite.output().contains("25"),
+            "in-range array-write value crosses and stays usable (25): "
+                + hostArrWrite.output());
+        String hostArrWriteJava = int32HostArtifact(hostArrWriteSrc,
+            "boundary_arrwrite_in");
+        check(hostArrWriteJava.contains(
+                "__intArrayWrite(xs, 0, __host$log$add(12, 13))"),
+            "the host call result passes through the array-write "
+                + "boundary as the int carrier");
+
+        // Nullable host int return: the DEAL null crosses the
+        // int | null boundary unchanged (the pre-fix seam wrapped the
+        // boxed host value in checkInt and auto-unboxed the null into a
+        // raw NullPointerException — the regression pin).
+        String hostNullSrc = """
+            import * as log from "host/log"
+            export function main(): null { return null; }
+            export function test(): int {
+              let n: int | null = log.maybe();
+              if (n === null) { return 7; }
+              return 0;
+            }
+            """;
+        ExecResult hostNull = runInt32HostProject(hostNullSrc,
+            "boundary_null_in");
+        check(hostNull.exitCode() == 0 && hostNull.output().contains("7"),
+            "the DEAL null from a nullable host return crosses the "
+                + "int | null boundary unchanged (7): " + hostNull.output());
+        String hostNullJava = int32HostArtifact(hostNullSrc,
+            "boundary_null_in");
+        check(hostNullJava.contains(
+                "java.lang.Integer n = __host$log$maybe();"),
+            "the nullable host return passes through the int | null "
+                + "boundary (no null-unsafe checkInt wrap)");
+        check(!hostNullJava.contains("checkInt(__host$log$maybe())"),
+            "no null-unsafe checkInt wrap around the nullable host "
+                + "return");
+
+        // Array element read (in-range, gated storage).
+        String arrReadSrc = """
+            export function main(): null { return null; }
+            export function test(): int {
+              let xs: int[] = [33, 34];
+              let a: int = xs[0];
+              let b: int = xs[1];
+              return a + b;
+            }
+            """;
+        ExecResult arrRead = runInt32Project(arrReadSrc,
+            "boundary_arrread_in");
+        check(arrRead.exitCode() == 0 && arrRead.output().contains("67"),
+            "in-range array reads cross the boundaries and stay usable "
+                + "(67): " + arrRead.output());
+        String arrReadJava = int32Artifact(arrReadSrc,
+            "boundary_arrread_in_artifact");
+        check(arrReadJava.contains("int a = __intArrayRead(xs, 0);"),
+            "the int-array read emits the primitive int carrier at the "
+                + "declaration boundary");
+        check(arrReadJava.contains("int b = __intArrayRead(xs, 1);"),
+            "the second read does the same");
+        check(!arrReadJava.contains("checkInt(__intArrayRead("),
+            "no redundant gate around the in-range gated-storage read");
+
+        // Nullable array read (in-range boxed element, gated at write).
+        String arrNullReadSrc = """
+            export function main(): null { return null; }
+            export function test(): int {
+              let xs: (int | null)[] = [];
+              xs[0] = 42;
+              let n: int | null = xs[0];
+              return int(n);
+            }
+            """;
+        ExecResult arrNullRead = runInt32Project(arrNullReadSrc,
+            "boundary_arrnullread_in");
+        check(arrNullRead.exitCode() == 0
+                && arrNullRead.output().contains("42"),
+            "the in-range boxed nullable read crosses the int | null "
+                + "boundary and stays usable (42): "
+                + arrNullRead.output());
+        String arrNullReadJava = int32Artifact(arrNullReadSrc,
+            "boundary_arrnullread_in_artifact");
+        check(arrNullReadJava.contains(
+                "java.lang.Integer n = __intOrNullArrayRead(xs, 0);"),
+            "the nullable int-array read emits the boxed element carrier "
+                + "at the int | null boundary");
+        check(!arrNullReadJava.contains("checkInt(__intOrNullArrayRead("),
+            "no null-unsafe gate around the in-range nullable read "
+                + "(storage is gated at write)");
+
+        // Table-read int target (in-range integral double).
+        String tableInSrc = """
+            export function main(): null { return null; }
+            export function test(): int {
+              let t: table = {x: 42.0};
+              let v: int = t.x;
+              return v;
+            }
+            """;
+        ExecResult tableIn = runInt32Project(tableInSrc,
+            "boundary_tableread_in");
+        check(tableIn.exitCode() == 0 && tableIn.output().contains("42"),
+            "the in-range integral double crosses the table seam's "
+                + "checkInt and stays usable (42): " + tableIn.output());
+        String tableInJava = int32Artifact(tableInSrc,
+            "boundary_tableread_in_artifact");
+        check(tableInJava.contains(
+                "int v = ((java.lang.Integer) $check(\"int\", (t).get(\"x\"))).intValue();"),
+            "the in-range table read routes through the same $check int "
+                + "branch");
+
+        // ---- Under LEGACY_SAFE_INT the seam adds nothing at any of
+        // these sites — the pre-tree byte shapes stay. ----
+
+        String legacyAssignJava = legacyArtifact(assignSrc,
+            "boundary_assign_legacy");
+        check(legacyAssignJava.contains(
+                "t = (java.lang.System.currentTimeMillis() / 1000L) * 1000L;"),
+            "legacy assignment keeps the pre-tree byte shape (no int32 "
+                + "wrap)");
+        check(!legacyAssignJava.contains(
+                "checkInt((java.lang.System.currentTimeMillis()"),
+            "no int32 gate leaks into the legacy assignment artifact");
+        String legacyCbJava = legacyArtifact(cbSrc, "boundary_cb_legacy");
+        check(legacyCbJava.contains(
+                "f.invoke((java.lang.System.currentTimeMillis() / 1000L) * 1000L)"),
+            "legacy callback argument keeps the pre-tree byte shape (no "
+                + "int32 wrap)");
+        String legacyArrWriteJava = legacyArtifact(arrWriteSrc,
+            "boundary_arrwrite_legacy");
+        check(legacyArrWriteJava.contains(
+                "__intArrayWrite(xs, 0L, (java.lang.System.currentTimeMillis() / 1000L) * 1000L);"),
+            "legacy array element write keeps the pre-tree byte shape "
+                + "(the legacy helper gates the long carrier internally)");
+        String legacyAwaitJava = legacyArtifact(asyncTimeSrc,
+            "boundary_await_legacy");
+        check(legacyAwaitJava.contains("checkInt(g())"),
+            "legacy await keeps its pre-tree checkInt wrap over the long "
+                + "completion (byte-identical)");
     }
 
     /** The signed32 helper edge matrix (ISSUE-0375 anti-hollow; the Task

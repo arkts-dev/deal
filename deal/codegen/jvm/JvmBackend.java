@@ -5783,13 +5783,16 @@ public final class JvmBackend {
                     : javaLocalType(declaredType, cf.span());
                 defaultCode = coerceNullValueCode(defaultCode, def,
                     fieldJava, def.span());
-                // ISSUE-0375 D3 seam: the default expression is a
-                // declared int boundary — a wider (time) or boxed
-                // (host) int value crosses through the signed32
-                // checkInt before the typed field slot (int,
-                // java.lang.Integer, or the Object optional slot),
-                // so javac never sees a narrowing mismatch and an
-                // out-of-range value raises exactly E8004.
+                // ISSUE-0375 D3 seam (completed by ISSUE-0376): the
+                // default expression is a declared int boundary — a
+                // wider int value (the retained time expression)
+                // crosses through the signed32 checkInt before the
+                // typed field slot (int, java.lang.Integer, or the
+                // Object optional slot); a host int value is already
+                // the range-checked carrier (see
+                // intValueCodeIsWiderOrBoxed). javac never sees a
+                // narrowing mismatch and an out-of-range value
+                // raises exactly E8004.
                 defaultCode = adaptIntBoundary(def, defaultCode,
                     declaredType);
             } else {
@@ -8181,8 +8184,9 @@ public final class JvmBackend {
         // the Lua nil); the dummy discard must not unbox it (a null would
         // NPE where LuaJIT silently drops the nil).
         // The dummy-local declaration type follows the EMITTED code
-        // shape: a wider/boxed int code under int32 (the retained time
-        // expression, a host call result) declares its real Java type —
+        // shape: a wider int code under int32 (the retained time
+        // expression — the one wider producer,
+        // intValueCodeIsWiderOrBoxed) declares its real Java type —
         // the value is discarded with no declared boundary, so no
         // checkInt gate runs here (D3: the gate is a declared-boundary
         // seam, never a silent narrowing and never a phantom raise).
@@ -8288,9 +8292,15 @@ public final class JvmBackend {
                 // descriptor (E8001 at this await site). The emitted
                 // await applies the one completion check the blocking
                 // lowering cannot prove from Java types alone: an int
-                // completion routes through checkInt (E8004 — the Java
-                // long representation is wider than the DEAL int safe
-                // range); number/string/boolean completions are proven by
+                // completion routes through checkInt — under
+                // LEGACY_SAFE_INT the Java long representation is wider
+                // than the DEAL int safe range (E8004), and under
+                // DEAL_V1_2_INT32 the completion is already the
+                // primitive int carrier for DEAL async functions and
+                // host async completions alike (the host seam
+                // range-checked the dynamic value), so it passes
+                // through unchanged (ISSUE-0376 D3);
+                // number/string/boolean completions are proven by
                 // the emitted Java types, which spec-v1.2 §JVM backend
                 // contract permits, and a null completion (a
                 // null-returning async function) hoists the void call
@@ -8301,9 +8311,21 @@ public final class JvmBackend {
                 // (the type map already holds the un-narrowed types
                 // here).
                 String raw = emitExpression(aw.callee());
-                yield typeOf(aw) instanceof Type.Int
-                    ? "checkInt(" + raw + ")"
-                    : raw;
+                if (!(typeOf(aw) instanceof Type.Int)) {
+                    yield raw;
+                }
+                // ISSUE-0376 D3 seam: under DEAL_V1_2_INT32 the
+                // completion's emitted Java code is the primitive int
+                // carrier for DEAL async functions and host async
+                // completions alike (the host seam already
+                // range-checked the dynamic value) — it passes through
+                // unchanged, and the wider-value gate stays at the
+                // async function's own declared-int return boundary.
+                // The legacy path keeps the pre-tree checkInt wrap over
+                // the long completion byte-identical.
+                yield int32Mode
+                    ? adaptIntBoundary(aw.callee(), raw, Type.Int.INSTANCE)
+                    : "checkInt(" + raw + ")";
             }
         };
     }
@@ -8620,13 +8642,15 @@ public final class JvmBackend {
                 } else if (valueNode != null) {
                     code = coerceNullValueCode(code, valueNode,
                         "java.lang.Object", valueNode.span());
-                    // ISSUE-0375 D3 seam: the optional slot is a
-                    // declared int boundary — a wider (time) or
-                    // boxed (host) int value (provided or defaulted)
-                    // crosses through the signed32 checkInt before
-                    // boxing into the Object slot, so no unchecked
-                    // boxed Long is ever stored and an out-of-range
-                    // value raises exactly E8004.
+                    // ISSUE-0375 D3 seam (completed by ISSUE-0376):
+                    // the optional slot is a declared int boundary —
+                    // a wider int value (the retained time
+                    // expression, provided or defaulted) crosses
+                    // through the signed32 checkInt before boxing
+                    // into the Object slot; a host int value is
+                    // already the range-checked carrier. No
+                    // unchecked boxed Long is ever stored and an
+                    // out-of-range value raises exactly E8004.
                     code = adaptIntBoundary(valueNode, code,
                         classFieldDeclaredType(cd, cf));
                 }
@@ -9756,20 +9780,26 @@ public final class JvmBackend {
     }
 
     /**
-     * The declared-int-boundary seam (ISSUE-0375 D3): under
-     * {@code DEAL_V1_2_INT32} any value crossing an int-typed declared
-     * boundary (variable-declaration initializer, assignment target,
-     * return, call/callback argument, await completion, array element
-     * write/read, table-read int target, class-construction field,
-     * array-literal element, table write/literal value, binary/unary
-     * operand, array index) routes through the signed32 {@code checkInt}
-     * whenever the value expression's emitted Java type is wider (the
-     * retained {@code emitStdlibTimeMemberCall} long expression — the
-     * D4 pin), boxed (host call results), or foreign. The range gate
-     * runs BEFORE any narrowing, so the narrowing inside
-     * {@code checkInt} is never silent; the emission never applies a
-     * bare {@code (int)} cast at a declared boundary and never leaves a
-     * narrowing mismatch for javac. Under {@code LEGACY_SAFE_INT} the
+     * The declared-int-boundary seam (ISSUE-0375 D3, completed by
+     * ISSUE-0376): under {@code DEAL_V1_2_INT32} any value crossing an
+     * int-typed declared boundary (variable-declaration initializer,
+     * assignment target, return, call/callback argument, await
+     * completion, array element write/read, table-read int target,
+     * class-construction field, array-literal element, table
+     * write/literal value, binary/unary operand, array index) routes
+     * through the signed32 {@code checkInt} whenever the value
+     * expression's emitted Java type is wider than the declared int
+     * carrier — the retained {@code emitStdlibTimeMemberCall} long
+     * expression (the D4 pin) is the one such producer. Boxed and
+     * foreign int values (table reads, host returns, JSON conversions)
+     * are already range-checked by their own shared seams
+     * ({@code $check}/{@code __hostCheck}), whose int branches route
+     * through {@code checkInt} — see
+     * {@link #intValueCodeIsWiderOrBoxed}. The range gate runs BEFORE
+     * any narrowing, so the narrowing inside {@code checkInt} is never
+     * silent; the emission never applies a bare {@code (int)} cast at a
+     * declared boundary and never leaves a narrowing mismatch for
+     * javac. Under {@code LEGACY_SAFE_INT} the
      * code passes through unchanged (byte-identical base emission).
      */
     private String adaptIntBoundary(ExpressionNode e, String code,
@@ -9792,14 +9822,22 @@ public final class JvmBackend {
 
     /**
      * True when, under {@code DEAL_V1_2_INT32}, the emitted Java code of
-     * the int-typed expression {@code e} is wider or boxed relative to
-     * the declared int boundary's primitive {@code int} carrier. The
-     * only such producers in the emitted surface are the retained
+     * the int-typed expression {@code e} is wider relative to the
+     * declared int boundary's primitive {@code int} carrier. The only
+     * such producer in the emitted surface is the retained
      * {@code std/time.nowMillis} expression ({@code long} — the
-     * byte-identical D4 pin) and host-module call results
-     * ({@code java.lang.Integer}, boxed at the host boundary). Every
-     * other int-typed expression emits exactly {@code int} code under
-     * the int32 carriers (checked arithmetic, conversions, array reads,
+     * byte-identical D4 pin, ISSUE-0376 D3). Host-module call results
+     * are NOT wider or boxed here: under the int32 carriers the host
+     * wrapper returns the primitive {@code int} for a non-nullable int
+     * (its dynamic value already passed the signed32 {@code checkInt}
+     * inside the {@code __hostCheck} seam's int branch) and the boxed
+     * {@code java.lang.Integer} for {@code int | null} — a null-safe
+     * pass-through whose stored value the host boundary already
+     * range-checked (a boundary {@code checkInt(...)} wrap would
+     * auto-unbox the DEAL null and raise a raw NullPointerException
+     * where LuaJIT's check_nullable stores it). Every other int-typed
+     * expression emits exactly {@code int} code under the int32
+     * carriers (checked arithmetic, conversions, array reads,
      * literals), so it passes through without a redundant gate.
      */
     private boolean intValueCodeIsWiderOrBoxed(ExpressionNode e) {
@@ -9808,26 +9846,23 @@ public final class JvmBackend {
                 || !(mae.object() instanceof IdentifierExpr id)) {
             return false;
         }
-        return hostAliases.containsKey(id.name())
-            || "std/time".equals(importAliases.get(id.name()));
+        return "std/time".equals(importAliases.get(id.name()));
     }
 
     /**
      * The emitted Java type of an int-typed expression whose code is
-     * wider or boxed under {@code DEAL_V1_2_INT32} ({@code long} for the
-     * retained time expression, {@code java.lang.Integer} for host call
-     * results) — used by materialized temporaries and dummy-local
-     * discards, whose Java declaration type must follow the emitted code
-     * shape, never the declared carrier (a mismatch there is exactly the
-     * javac-rejected artifact D3 forbids).
+     * wider under {@code DEAL_V1_2_INT32} ({@code long} for the retained
+     * time expression, {@code int} for everything else — host call
+     * results included, whose wrappers return the primitive int carrier
+     * per {@link #intValueCodeIsWiderOrBoxed}) — used by materialized
+     * temporaries and dummy-local discards, whose Java declaration type
+     * must follow the emitted code shape, never the declared carrier (a
+     * mismatch there is exactly the javac-rejected artifact D3 forbids).
      */
     private String intValueEmittedJavaType(ExpressionNode e) {
         if (e instanceof CallExpr call
                 && call.callee() instanceof MemberAccessExpr mae
                 && mae.object() instanceof IdentifierExpr id) {
-            if (hostAliases.containsKey(id.name())) {
-                return "java.lang.Integer";
-            }
             if ("std/time".equals(importAliases.get(id.name()))) {
                 return "long";
             }
@@ -11438,13 +11473,18 @@ public final class JvmBackend {
      */
     private String materializeIfEffectful(String code, ExpressionNode v) {
         if (isPureAfterEmission(v)) return code;
-        // A null-typed effectful value (an assignment like `(m = null)`
-        // whose emitted code carries the boxed target's Java type)
-        // materializes into an Object temporary: the DEAL null fits any
-        // reference and the temp is consumed only for its evaluation
-        // effects.
-        String javaType = typeOf(v) instanceof Type.Null
-            ? "java.lang.Object" : javaLocalType(typeOf(v), v.span());
+        // The temporary's Java type follows the EMITTED code shape, not
+        // just the static type (ISSUE-0376 D3 seam): a null-typed
+        // effectful value (an assignment like `(m = null)` whose emitted
+        // code carries the boxed target's Java type) materializes into
+        // an Object temporary (the DEAL null fits any reference and the
+        // temp is consumed only for its evaluation effects), and an
+        // int-typed value whose emitted code is wider under
+        // DEAL_V1_2_INT32 (the retained time expression) declares its
+        // real emitted Java type — a static-type int temporary
+        // (`int __t1 = <long expression>`) is exactly the
+        // javac-rejected artifact D3 forbids.
+        String javaType = materializationTempType(v, null);
         if (javaType == null) return code; // diagnostic already recorded
         String temp = nextEvalTempName();
         preStatements.add(new PreLine(
