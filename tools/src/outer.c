@@ -227,6 +227,10 @@ struct dealpg4_outer_record {
     int64_t fallback_grace_deadline_ms; /* absolute CLOCK_MONOTONIC ms
                                            of the current grace
                                            expiry (0 when idle) */
+    int64_t fallback_advance_ms; /* absolute CLOCK_MONOTONIC ms of the
+                                    next fallback proof advance (the
+                                    FB_PROOF retry cadence on the
+                                    loop's own clock; 0 when idle) */
     int fallback_proof_first_pass;
     int64_t fallback_proof_first_pass_ms;
     pid_t fb_survivor_pids[DEALPG4_OUTER_REC_SURVIVOR_VIEW_MAX];
@@ -299,6 +303,10 @@ typedef struct dealpg4_outer_state {
                             restored before every exit (and in the
                             coordinator child before the exec) */
     uint64_t sigchld_events;
+    uint64_t timer_expiry_count; /* timerfd expirations drained by the
+                                    event loop (the deadline-driven
+                                    wakeup counter — the observable of
+                                    the ppoll blocking discipline) */
     int loop_entered;
     int readiness_fired;
     int cutoff_fired;
@@ -2402,11 +2410,18 @@ static void dealpg4_outer_fallback_run(dealpg4_outer_state *st,
                 /* The proof is clean: the record's single terminal
                  * answer is the synthesized CLEAN <id> cancelled. */
                 r->cleanup_acknowledged = 1;
+                r->fallback_advance_ms = 0;
                 r->fallback_step = DEALPG4_OUTER_FB_DONE;
                 st->fallback_completions++;
                 dealpg4_outer_channel_synthesize(st, r, 1, NULL);
+            } else {
+                /* Work remains: the retry cadence deadline drives the
+                 * next pass (the two-pass confirm and the per-pid
+                 * TERM->KILL escalation advance on the loop's own
+                 * clock — a bounded wakeup, never a spin). */
+                r->fallback_advance_ms = now + 5;
             }
-            return; /* work remains: the next batch retries */
+            return;
         }
         default:
             r->fallback_step = DEALPG4_OUTER_FB_TERM_TARGET;
@@ -4505,10 +4520,20 @@ static void dealpg4_outer_proof_pass(dealpg4_outer_state *st)
 
 /* The earliest applicable absolute deadline the single timerfd
  * carries (D9): the readiness deadline (while COORD_READY is
- * pending), the escalation KILL grace expiry, the pinned escalation
- * deadline totalDeadline - killAndProofReserveMs (while the
- * coordinator is alive post-readiness), the proof pass cadence, and
- * the total deadline. */
+ * pending), the escalation TERM dispatch moment (only while the
+ * dispatch precondition holds — every registry record terminal),
+ * the escalation KILL grace expiry (only once the TERM was
+ * dispatched — the grace clock starts at the dispatch moment), the
+ * pinned escalation deadline totalDeadline - killAndProofReserveMs
+ * (while the coordinator is alive post-readiness and the D8
+ * precondition holds), the proof pass cadence, and the total
+ * deadline. Every entry mirrors the per-batch evaluate dispatch
+ * precondition exactly, so a deferred step never leaves a stale
+ * elapsed deadline in the set: the loop blocks on the earliest
+ * applicable future deadline instead of re-arming an elapsed one at
+ * 'now' (a hot re-arm at 'now' is not a recipe deadline — the timer
+ * would expire immediately every iteration and the loop would
+ * busy-spin until the deferral resolves). */
 static int64_t dealpg4_outer_next_deadline(dealpg4_outer_state *st)
 {
     int64_t d = st->dl.totalDeadline;
@@ -4516,14 +4541,16 @@ static int64_t dealpg4_outer_next_deadline(dealpg4_outer_state *st)
     if (!st->ready_resolved && st->dl.readinessDeadline < d)
         d = st->dl.readinessDeadline;
     if (st->escalation_active && !st->escalation_term_sent
-        && !st->escalation_kill_issued
+        && !st->escalation_kill_issued && st->records_live == 0
         && st->escalation_term_abs_ms < d)
         d = st->escalation_term_abs_ms;
-    if (st->escalation_active && !st->escalation_kill_issued
+    if (st->escalation_active && st->escalation_term_sent
+        && !st->escalation_kill_issued
         && st->escalation_kill_ms < d)
         d = st->escalation_kill_ms;
     if (st->ready_resolved && !st->startup_failed
         && !st->coordinator_reaped && !st->escalation_active
+        && st->records_live == 0
         && st->escalation_deadline < d)
         d = st->escalation_deadline;
     if (st->proof_active && st->proof_next_pass_ms > 0
@@ -4532,23 +4559,36 @@ static int64_t dealpg4_outer_next_deadline(dealpg4_outer_state *st)
     if (st->stall_armed && st->stall_deadline_ms < d)
         d = st->stall_deadline_ms;
     /* Per-record deadlines (the D7 wedge trigger) and the fallback
-     * grace windows (the D7 TERM->grace->KILL escalation). */
+     * step deadlines (the D7 TERM->grace->KILL escalation and the
+     * FB_PROOF retry cadence). The per-record deadline leaves the set
+     * the moment the fallback initiates — the wedge dispatches at the
+     * deadline and a death fallback before the deadline is owned by
+     * the fallback machine from then on — so an elapsed per-record
+     * deadline never re-arms the timerfd at 'now' for the whole
+     * fallback window. */
     {
         size_t i;
 
         for (i = 0; i < st->nrecords; i++) {
             const dealpg4_outer_record *r = &st->records[i];
 
-            if (dealpg4_outer_record_live_state(r->state)
-                && r->deadline_abs_ms > 0 && r->deadline_abs_ms < d)
-                d = r->deadline_abs_ms;
-            if (r->fallback_initiated
-                && (r->fallback_step == DEALPG4_OUTER_FB_GRACE_SUPV
-                    || r->fallback_step
-                           == DEALPG4_OUTER_FB_GRACE_TARGET)
+            if (!dealpg4_outer_record_live_state(r->state))
+                continue;
+            if (!r->fallback_initiated) {
+                if (r->deadline_abs_ms > 0
+                    && r->deadline_abs_ms < d)
+                    d = r->deadline_abs_ms;
+                continue;
+            }
+            if ((r->fallback_step == DEALPG4_OUTER_FB_GRACE_SUPV
+                 || r->fallback_step
+                        == DEALPG4_OUTER_FB_GRACE_TARGET)
                 && r->fallback_grace_deadline_ms > 0
                 && r->fallback_grace_deadline_ms < d)
                 d = r->fallback_grace_deadline_ms;
+            if (r->fallback_advance_ms > 0
+                && r->fallback_advance_ms < d)
+                d = r->fallback_advance_ms;
         }
     }
     return d;
@@ -4827,6 +4867,7 @@ static void dealpg4_outer_expiry(dealpg4_outer_state *st)
     }
     if (expirations == 0 && dealpg4_deadline_armed(&st->timer))
         return; /* spurious readiness: nothing fired */
+    st->timer_expiry_count += expirations;
     dealpg4_outer_evaluate(st);
 }
 
@@ -5246,6 +5287,7 @@ static void dealpg4_outer_copy_view(dealpg4_outer_state *st, int status)
     v.gate_failure = st->gate_failure;
     v.exit_status = status;
     v.sigchld_events = st->sigchld_events;
+    v.timer_expiry_count = st->timer_expiry_count;
     v.ntokens = st->ntokens;
     memcpy(v.tokens, st->tokens, sizeof v.tokens);
 

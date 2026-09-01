@@ -73,6 +73,14 @@
  *     escalates the hanging coordinator at the pinned escalation
  *     deadline, and the best-effort final report flips the gate on
  *     the EPIPE (SHELL_LOST).
+ * 12. Total-cancel — the orphaned outer with a wedged record (the
+ *     deferred-escalation blocking discipline): shell loss begins
+ *     the D8 escalation while the record is live and the child never
+ *     publishes a terminal record, so the record holds live to its
+ *     per-record deadline (the wedge force-termination); the loop
+ *     must block on the per-record deadline for the whole deferral
+ *     window — never busy-spin on the deferred TERM moment (asserted
+ *     through the timerfd-expiry counter bound).
  *
  * Every group's internal assertion failures propagate through the
  * helper child's exit status and the captured stderr; the peer's own
@@ -1218,6 +1226,23 @@ static int fb_peer_main(const char *scenario)
         return 0;
     }
 
+    if (strcmp(scenario, "wedge-hang") == 0) {
+        /* A hanging coordinator with a never-publishing child (the
+         * deferred-escalation window case): the record holds live to
+         * its per-record deadline while the D8 escalation is already
+         * active and deferred — the loop must block on the record
+         * deadline, never busy-spin on the deferred TERM moment. */
+        build_invoke(inv, sizeof inv, "tag", "hang");
+        if (peer_invoke_one(fd, inv, &id) != 0) {
+            fprintf(stderr, "PEER FAIL wedge-hang-invoked\n");
+            return 1;
+        }
+        peer_drain_forever(fd);
+        printf("PEER wedge-hang-eof\n");
+        fflush(stdout);
+        return 0;
+    }
+
     fprintf(stderr, "PEER FAIL unknown-scenario %s\n",
             scenario != NULL ? scenario : "?");
     return 1;
@@ -1924,7 +1949,9 @@ static int orphan_grandchild_fn(int result_fd)
     return status;
 }
 
-static int orphan_helper_fn(int done_wr)
+typedef int (*orphan_grandchild_t)(int);
+
+static int orphan_helper_generic(int done_wr, orphan_grandchild_t fn)
 {
     pid_t pid;
     int devnull;
@@ -1937,7 +1964,7 @@ static int orphan_helper_fn(int done_wr)
         return 125;
     if (pid == 0) {
         close(devnull);
-        return orphan_grandchild_fn(done_wr) & 0xff;
+        return fn(done_wr) & 0xff;
     }
     close(devnull);
     /* The grandchild records shellPid at core entry (~ms); exiting
@@ -1949,6 +1976,11 @@ static int orphan_helper_fn(int done_wr)
             ;
     }
     return 0;
+}
+
+static int orphan_helper_fn(int done_wr)
+{
+    return orphan_helper_generic(done_wr, orphan_grandchild_fn);
 }
 
 static int case_orphan_fn(void)
@@ -2107,6 +2139,134 @@ static int case_epipe_fn(void)
     return 0;
 }
 
+/* 12. Total-cancel — the orphaned outer with a wedged record (the
+ * deferred-escalation blocking discipline): the shell-loss trigger
+ * begins the D8 escalation while the record is still live; the child
+ * never publishes a terminal record, so the record holds live to its
+ * per-record deadline (the wedge force-termination). The loop must
+ * block on the per-record deadline for the whole deferral window —
+ * the pinned ppoll blocking discipline — never busy-spin on the
+ * deferred TERM moment: the timerfd-expiry counter (the deadline-
+ * driven wakeups) stays in the tens, while a hot re-arm at 'now'
+ * would expire the timer every iteration and push the counter into
+ * the millions. */
+static int orphan_wedge_grandchild_fn(int result_fd)
+{
+    char *argv[8];
+    fb_spawn sp;
+    dealpg4_outer_spawn spawn;
+    char line[256];
+    dealpg4_outer_result view;
+    int devnull;
+    int n;
+    int status;
+
+    memset(&sp, 0, sizeof sp);
+    spawn = make_fb_spawn(&sp);
+    (void)unlink("build/.fb-rec-nonce");
+    peer_argv(argv, "wedge-hang");
+    devnull = open("/dev/null", O_WRONLY);
+    if (devnull == -1)
+        return 125;
+    status = dealpg4_outer_core(&FB_LIMITS, NONCE, argv, "build",
+                                devnull, &spawn);
+    close(devnull);
+    memset(&view, 0, sizeof view);
+    dealpg4_outer_last_result(&view);
+    n = snprintf(line, sizeof line,
+                 "status=%d shell=%d proof=%d reaped=%d term=%d "
+                 "live=%d clean=%d synth=%d wedge=%d expiry=%llu\n",
+                 status, view.shell_lost, view.proof_passed,
+                 view.coordinator_reaped, view.escalation_term_sent,
+                 view.records_live, view.records_clean,
+                 view.synthesized_terminals, view.wedge_terminations,
+                 (unsigned long long)view.timer_expiry_count);
+    if (n > 0 && (size_t)n < sizeof line) {
+        ssize_t r = write(result_fd, line, (size_t)n);
+
+        (void)r;
+    }
+    return status;
+}
+
+static int orphan_wedge_helper_fn(int done_wr)
+{
+    return orphan_helper_generic(done_wr, orphan_wedge_grandchild_fn);
+}
+
+static int case_orphan_wedge_fn(void)
+{
+    int done_pipe[2];
+    char buf[256];
+    size_t off = 0;
+    int status;
+    unsigned long long expiry = 0;
+    const char *marker;
+
+    CHECK(pipe(done_pipe) == 0);
+    {
+        pid_t pid = fork();
+
+        CHECK(pid >= 0);
+        if (pid == 0) {
+            close(done_pipe[0]);
+            _exit(orphan_wedge_helper_fn(done_pipe[1]) & 0xff);
+        }
+        close(done_pipe[1]);
+        CHECK(waitpid(pid, &status, 0) == pid);
+        CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    }
+    for (;;) {
+        ssize_t r = read(done_pipe[0], buf + off, sizeof buf - off - 1);
+
+        if (r > 0) {
+            off += (size_t)r;
+            continue;
+        }
+        if (r < 0 && errno == EINTR)
+            continue;
+        break; /* EOF: the grandchild exited */
+    }
+    close(done_pipe[0]);
+    buf[off] = '\0';
+
+    /* The deferral held the D8 precondition: SHELL_LOST began the
+     * escalation while the record was live, the record stayed live
+     * to its per-record deadline (the wedge force-termination — the
+     * synthesized CLEAN cancelled is its single terminal answer),
+     * the escalation TERM dispatched only after the record was
+     * terminal, the hanging coordinator was reaped, and the proof
+     * passed. */
+    CHECK(strstr(buf, "status=1 ") != NULL);
+    CHECK(strstr(buf, "shell=1 ") != NULL);
+    CHECK(strstr(buf, "proof=1 ") != NULL);
+    CHECK(strstr(buf, "reaped=1 ") != NULL);
+    CHECK(strstr(buf, "term=1 ") != NULL); /* the escalation TERM was
+                                              dispatched after the
+                                              record was terminal */
+    CHECK(strstr(buf, "live=0 ") != NULL);
+    CHECK(strstr(buf, "clean=1 ") != NULL);
+    CHECK(strstr(buf, "synth=1 ") != NULL); /* the wedge completion's
+                                               synthesized answer */
+    CHECK(strstr(buf, "wedge=1 ") != NULL); /* the per-record-deadline
+                                               force-termination */
+    marker = strstr(buf, "expiry=");
+    CHECK(marker != NULL);
+    if (marker != NULL && sscanf(marker + 7, "%llu", &expiry) == 1) {
+        /* The ppoll blocking discipline: the deadline-driven wakeups
+         * over the whole run count in the tens (readiness, the
+         * per-record deadline, the grace windows, the proof cadence,
+         * the single immediate post-terminal wakeup) — a busy-spin
+         * re-arming the elapsed TERM moment at 'now' would expire
+         * the timerfd every iteration and push the counter far past
+         * this bound. */
+        CHECK(expiry < 200);
+    } else {
+        CHECK(0);
+    }
+    return 0;
+}
+
 /* === Main ============================================================== */
 
 /* Each case runs in its own capture child: the core's entry preamble
@@ -2155,6 +2315,8 @@ int main(int argc, char **argv)
             return case_orphan_fn() != 0;
         if (strcmp(argv[2], "epipe") == 0)
             return case_epipe_fn() != 0;
+        if (strcmp(argv[2], "orphan-wedge") == 0)
+            return case_orphan_wedge_fn() != 0;
         return 1;
     }
 
@@ -2177,6 +2339,10 @@ int main(int argc, char **argv)
                    case_orphan_fn);
     run_case_child("total-cancel: closed report stdout (EPIPE)",
                    case_epipe_fn);
+    run_case_child(
+        "total-cancel: orphaned outer with a wedged record "
+        "(blocking discipline)",
+        case_orphan_wedge_fn);
 
     /* The core calls forked the suite binary as the coordinator: no
      * child may remain. */

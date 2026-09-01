@@ -717,6 +717,10 @@ typedef struct dealpg4_outer_result {
     int gate_failure;       /* any named gate-failure token recorded */
     int exit_status;        /* the mapped exit status */
     uint64_t sigchld_events; /* SIGCHLD events drained by the loop */
+    uint64_t timer_expiry_count; /* timerfd expirations drained by the
+                                    event loop (the deadline-driven
+                                    wakeup counter — the observable of
+                                    the ppoll blocking discipline) */
     size_t ntokens;         /* named gate tokens recorded */
     char tokens[DEALPG4_OUTER_MAX_TOKENS][DEALPG4_OUTER_TOKEN_BYTES];
 
