@@ -63,9 +63,9 @@
  *  8. Nested-channel PROTOCOL_ERROR battery: a state-unexpected
  *     record, a CR framing defect, and an endless oversize stream
  *     each close the record's channel and initiate that state's
- *     death fallback (the record stays live in its state — the
- *     fallback execution is the fallback child's); the named token
- *     is gate-fatal.
+ *     death fallback; the fallback executions complete the records
+ *     CLEAN cancelled (the synthesized single terminal answers);
+ *     the named token is gate-fatal.
  *  9. Death observation (the single-terminal-answer switch): a
  *     scripted supervisor dies after a verified STUB_READY while a
  *     surviving descendant holds the channel; the outer consumes
@@ -2422,15 +2422,24 @@ static int case_cancel_then_die_fn(void)
     CHECK(view.nested_protocol_errors == 0); /* the CANCEL relay and
                                                 the death are the only
                                                 events */
-    CHECK(view.records_live == 1);
+    CHECK(view.records_live == 0);
+    CHECK(view.records_clean == 1);
+    CHECK(view.synthesized_terminals == 1); /* the fallback execution
+                                               completed the record */
+    CHECK(view.fallback_completions == 1);
     CHECK(dealpg4_outer_registry_record(0, &rv) == 0);
-    CHECK(rv.state == DEALPG4_OUTER_REC_CANCELLING);
+    CHECK(rv.state == DEALPG4_OUTER_REC_CLEAN);
+    CHECK(rv.clean_final == 0); /* the synthesized CLEAN is always
+                                   cancelled */
+    CHECK(rv.cleanup_acknowledged == 1);
     CHECK(rv.pre_cancel_state == DEALPG4_OUTER_REC_STUB_BLOCKED);
     CHECK(rv.fallback_initiated == 1);
     /* The pre-cancel state's death fallback (D4: a nested-supervisor
      * death while CANCELLING applies the pre-cancel state's death
-     * fallback). */
+     * fallback) — the STUB_BLOCKED row TERM/grace/KILLs the retained
+     * stub and proves clean. */
     CHECK(rv.fallback_state == DEALPG4_OUTER_REC_STUB_BLOCKED);
+    CHECK(rv.fallback_step == DEALPG4_OUTER_FB_DONE);
     CHECK(rv.channel_drain_only == 1);
     CHECK(rv.channel_open == 0);
     CHECK(rv.stub_pid > 0); /* retained for the fallback */
@@ -2517,33 +2526,44 @@ static int case_protocol_error_fn(void)
     CHECK(status == DEALPG4_OUTER_EXIT_GATE_FAILURE);
     CHECK(view.nested_protocol_errors == 3);
     CHECK(has_token(&view, "PROTOCOL_ERROR"));
-    CHECK(has_token(&view, "OVERALL_TIMEOUT")); /* the live records
-                                                   held to the total
-                                                   deadline (the
-                                                   fallback execution
-                                                   is the fallback
-                                                   child's) */
-    CHECK(view.nested_terminal_relays == 0); /* no record was relayed */
+    CHECK(has_token(&view, "COORDINATOR_LOST")); /* the peer exited 0
+                                                    while the records
+                                                    were live */
+    CHECK(!has_token(&view, "OVERALL_TIMEOUT")); /* the fallback
+                                                    executions
+                                                    completed every
+                                                    record long before
+                                                    the total
+                                                    deadline */
+    CHECK(view.nested_terminal_relays == 0); /* no nested terminal
+                                                record was relayed */
     CHECK(view.records_total == 3);
-    CHECK(view.records_live == 3); /* the fallback child completes
-                                      them */
+    CHECK(view.records_live == 0);
+    CHECK(view.records_clean == 3); /* the death fallbacks proved
+                                       clean */
+    CHECK(view.synthesized_terminals == 3);
+    CHECK(view.fallback_completions == 3);
     CHECK(dealpg4_outer_registry_record(0, &rv0) == 0);
     CHECK(dealpg4_outer_registry_record(1, &rv1) == 0);
     CHECK(dealpg4_outer_registry_record(2, &rv2) == 0);
-    /* Each record: channel closed, the death fallback initiated for
-     * the state the record was in at the defect. */
+    /* Each record: channel closed, the death fallback executed for
+     * the state the record was in at the defect, the single terminal
+     * answer synthesized. */
     CHECK(rv0.channel_open == 0);
     CHECK(rv0.channel_drain_only == 1);
     CHECK(rv0.fallback_initiated == 1);
     CHECK(rv0.fallback_state == DEALPG4_OUTER_REC_STUB_BLOCKED);
-    CHECK(rv0.state == DEALPG4_OUTER_REC_CANCELLING); /* caller-loss
-                                                         mark */
+    CHECK(rv0.state == DEALPG4_OUTER_REC_CLEAN);
+    CHECK(rv0.clean_final == 0);
+    CHECK(rv0.cleanup_acknowledged == 1);
     CHECK(rv1.channel_open == 0);
     CHECK(rv1.fallback_initiated == 1);
     CHECK(rv1.fallback_state == DEALPG4_OUTER_REC_FORKING);
+    CHECK(rv1.state == DEALPG4_OUTER_REC_CLEAN);
     CHECK(rv2.channel_open == 0);
     CHECK(rv2.fallback_initiated == 1);
     CHECK(rv2.fallback_state == DEALPG4_OUTER_REC_FORKING);
+    CHECK(rv2.state == DEALPG4_OUTER_REC_CLEAN);
     return 0;
 }
 
@@ -2568,9 +2588,16 @@ static int case_death_fn(void)
                                                 relayed */
     CHECK(view.nested_protocol_errors == 0); /* consumed records are
                                                 never classified */
-    CHECK(view.records_live == 1);
+    CHECK(view.records_live == 0);
+    CHECK(view.records_clean == 1);
+    CHECK(view.synthesized_terminals == 1); /* the TARGET_PUBLISHED
+                                               death fallback
+                                               completed the record */
+    CHECK(has_token(&view, "COORDINATOR_LOST"));
     CHECK(dealpg4_outer_registry_record(0, &rv) == 0);
-    CHECK(rv.state == DEALPG4_OUTER_REC_CANCELLING);
+    CHECK(rv.state == DEALPG4_OUTER_REC_CLEAN);
+    CHECK(rv.clean_final == 0);
+    CHECK(rv.cleanup_acknowledged == 1);
     CHECK(rv.fallback_initiated == 1);
     CHECK(rv.fallback_state == DEALPG4_OUTER_REC_TARGET_PUBLISHED);
     CHECK(rv.channel_drain_only == 1);

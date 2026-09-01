@@ -106,9 +106,25 @@
  *    final report, and the exit-status mapping.
  * The nested control-channel state machine (STUB_FORKED/STUB_READY
  * handling, the ACK relay with RELEASED-at-write-completion, the
- * CANCEL fan-out application), the D7 fallbacks/wedge rule, the
- * cancellation execution, and the remaining final-sequence
- * discrimination land with the next sequencing steps.
+ * CANCEL fan-out application) lands with the ISSUE-0297 child.
+ *
+ * This child (ISSUE-0298, epic Sequencing step 6) adds the D7
+ * fallback execution: the per-state death fallbacks (FORKING /
+ * STUB_BLOCKED / TARGET_PUBLISHED / RELEASED, with the CANCELLING
+ * pre-cancel state rule), the wedge rule (a live record at its
+ * per-record deadline without a terminal answer is
+ * TERM/grace/KILLed by pid — the supervisor re-verified at the
+ * deadline, the already-dead case applying that state's death
+ * fallback directly — and completed by its state's death fallback
+ * with cleanupAcknowledged set), the total-cancel CANCEL fan-out
+ * (caller loss / the INVOKE cutoff / shell loss mark every live
+ * record CANCELLING in parallel and relay the CANCEL with the exact
+ * registry nonce), the per-record /proc group/session/adopted proof
+ * with the survivor-token synthesis (GROUP_SURVIVOR |
+ * SESSION_SURVIVOR | ADOPTED_SURVIVOR | ZOMBIE_SURVIVOR), the
+ * COORDINATOR_LOST discrimination slot on broker EOF with live
+ * records, and the D8 escalation TERM deferred until every registry
+ * record is terminal (the parent-D8 precondition).
  */
 #ifndef DEALPG4_OUTER_H
 #define DEALPG4_OUTER_H
@@ -291,6 +307,25 @@ int dealpg4_outer_broker_accept_peer(int listen_fd, pid_t coordinator_pid,
 #define DEALPG4_OUTER_TAG_VIEW_BYTES 128
 #define DEALPG4_OUTER_TOKEN_VIEW_BYTES 32
 
+/* The per-record fallback-executor steps (engine D4/D7 — this
+ * child): the wedge begins with the supervisor force-termination
+ * (TERM by pid -> grace -> KILL by pid -> reap), then the state's
+ * death fallback signals the retained identities (TERM -> grace ->
+ * KILL) and the proof loop decides the clean verdict; a death
+ * fallback begins directly at FB_TERM_TARGET (the supervisor is
+ * already dead). The record view's fallback_step carries these
+ * values (observability for the component tests / battery). */
+enum dealpg4_outer_fallback_step {
+    DEALPG4_OUTER_FB_TERM_SUPV = 0,
+    DEALPG4_OUTER_FB_GRACE_SUPV = 1,
+    DEALPG4_OUTER_FB_KILL_SUPV = 2,
+    DEALPG4_OUTER_FB_TERM_TARGET = 3,
+    DEALPG4_OUTER_FB_GRACE_TARGET = 4,
+    DEALPG4_OUTER_FB_KILL_TARGET = 5,
+    DEALPG4_OUTER_FB_PROOF = 6,
+    DEALPG4_OUTER_FB_DONE = 7
+};
+
 /* Registry record states (parent D2). */
 typedef enum dealpg4_outer_record_state {
     DEALPG4_OUTER_REC_FORKING = 0,         /* inserted pre-fork */
@@ -351,7 +386,15 @@ typedef struct dealpg4_outer_record_view {
                               and post-terminal drop rules) */
     int fallback_initiated; /* this state's death fallback was
                               initiated (the fallback execution is
-                              the fallback child's) */
+                              this child's) */
+    int fallback_wedge;     /* the fallback began as the wedge
+                              force-termination (the supervisor
+                              TERM/grace/KILL precedes the state's
+                              death fallback) */
+    int fallback_step;      /* dealpg4_outer_fallback_step (this
+                              child's executor) */
+    int64_t fallback_grace_deadline_ms; /* absolute ms of the current
+                              grace expiry (0 when idle) */
     int fallback_state;   /* the state whose death fallback applies
                              (the pre-cancel state when the record
                              was CANCELLING) */
@@ -674,6 +717,10 @@ typedef struct dealpg4_outer_result {
     int gate_failure;       /* any named gate-failure token recorded */
     int exit_status;        /* the mapped exit status */
     uint64_t sigchld_events; /* SIGCHLD events drained by the loop */
+    uint64_t timer_expiry_count; /* timerfd expirations drained by the
+                                    event loop (the deadline-driven
+                                    wakeup counter — the observable of
+                                    the ppoll blocking discipline) */
     size_t ntokens;         /* named gate tokens recorded */
     char tokens[DEALPG4_OUTER_MAX_TOKENS][DEALPG4_OUTER_TOKEN_BYTES];
 
@@ -800,6 +847,15 @@ typedef struct dealpg4_outer_result {
                                    answered) */
     int nested_rejects;         /* nested REJECT records consumed
                                    (the supervisor-defect hold) */
+    int wedge_terminations;     /* wedge-rule TERM-by-pid dispatches
+                                   (the per-record deadline
+                                   force-termination) */
+    int fallback_completions;   /* fallback executions completed (the
+                                   outer-synthesized terminal record
+                                   of the fallback) */
+    int cancel_fanout_writes;   /* total-cancel CANCEL fan-out writes
+                                   queued (the parallel cancellation
+                                   of the D7 total-cancel path) */
     int broker_relay_overflow; /* a payload relay was dropped at the
                                    1 MiB per-stream relay cap (the
                                    truncation consequence) */
