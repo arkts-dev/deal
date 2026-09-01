@@ -85,6 +85,22 @@
  * ZOMBIE_SURVIVOR), the COORDINATOR_LOST discrimination slot on
  * broker EOF with live records, and the D8 escalation TERM deferred
  * until every registry record is terminal.
+ *
+ * This child (ISSUE-0299, epic Sequencing step 7) adds the
+ * coordinator death classification with the split immediate
+ * escalation scopes and the final report: the READINESS_TIMEOUT
+ * scope (no FEATURE_READY by T0o + readinessTimeoutMs after a
+ * verified COORD_READY — the immediate D8 bounded escalation with
+ * the full group scope against the pipe-published cross-checked
+ * coordinatorPgid, the readiness obligation discharged only by a
+ * broker close before the live phase), the clean-exit /
+ * COORDINATOR_LOST discrimination over the real reaped waitid status
+ * and the real registry (D8 steps 1-2 skipped for the clean exit and
+ * for COORDINATOR_LOST; the total-cancel completion and the full
+ * final proof still run), the DONE/BYE completion (the ppoll wait for
+ * broker EOF plus the coordinator reap after DONE — never an
+ * escalation on DONE itself), and the final report's reap/adoption
+ * counts line.
  */
 #define _GNU_SOURCE
 #define _POSIX_C_SOURCE 200809L
@@ -347,6 +363,17 @@ typedef struct dealpg4_outer_state {
                                 exec, so a trailing COORD_EXEC_FAILED
                                 is always observed first) */
     int startup_failed;
+    int readiness_timeout_fired; /* READINESS_TIMEOUT decided (D5/D9):
+                                    the FEATURE_READY bound expiry
+                                    with a verified COORD_READY */
+    int readiness_discharged;   /* a broker close before the live
+                                   phase (AUTH_FAILED /
+                                   PROTOCOL_ERROR / EOF) discharged
+                                   the FEATURE_READY obligation —
+                                   the D5 aftermath escalation at the
+                                   pinned escalation deadline owns the
+                                   coordinator, never
+                                   READINESS_TIMEOUT */
     int coord_exec_failed;
     int coordinator_reaped;
     int coordinator_si_code;
@@ -1000,6 +1027,14 @@ static void dealpg4_outer_broker_close(dealpg4_outer_state *st);
  * deterministically rejected. */
 static void dealpg4_outer_broker_close(dealpg4_outer_state *st)
 {
+    /* A broker close before the live phase discharges the
+     * FEATURE_READY obligation (D5 aftermath: the coordinator reaps
+     * on its own or is terminated at the pinned escalation deadline —
+     * never READINESS_TIMEOUT). The discharge keys on the accepted
+     * connection (broker_accepted_any — the AUTH_FAILED peer-cred
+     * path closes the connection without ever opening conn_fd). */
+    if (st->broker_accepted_any && !st->broker_ready_acked)
+        st->readiness_discharged = 1;
     if (st->broker_conn_fd >= 0) {
         close(st->broker_conn_fd);
         st->broker_conn_fd = -1;
@@ -4008,6 +4043,47 @@ static void dealpg4_outer_startup_failed(dealpg4_outer_state *st)
         dealpg4_outer_begin_escalation(st, 0 /* by pid */);
 }
 
+/* READINESS_TIMEOUT (engine D5/D9, the split immediate escalation
+ * scopes): no FEATURE_READY by T0o + readinessTimeoutMs after a
+ * verified COORD_READY. The COORD_READY report was received and
+ * cross-checked, so the coordinator group IS verified — the
+ * immediate D8 bounded escalation runs with the full group scope
+ * against the pipe-published cross-checked coordinatorPgid (step-1
+ * liveness check kill(-coordinatorPgid, 0) == 0 with
+ * getpgrp() != coordinatorPgid, TERM -pgid, grace termGraceMs,
+ * KILL -pgid re-verified, reap to waitid ECHILD, adopted-descendant
+ * scan). The pid-only steps-1-2-skipped form never applies here.
+ * Gate-fatal. Covers a coordinator that execs and never connects,
+ * one that connects and never completes the handshake, and the
+ * bootstrap hang between the COORD_READY write and the exec (the
+ * pre-exec pipe EOF never arrives — no FEATURE_READY is possible by
+ * the deadline either way). The readiness obligation is discharged
+ * only by a broker close before the live phase (AUTH_FAILED /
+ * PROTOCOL_ERROR / EOF — the D5 aftermath: the coordinator reaps on
+ * its own or is terminated at the pinned escalation deadline), so a
+ * discharged run never gets this token. */
+static void dealpg4_outer_readiness_timeout(dealpg4_outer_state *st)
+{
+    if (st->readiness_timeout_fired)
+        return;
+    st->readiness_timeout_fired = 1;
+    st->ready_resolved = 1;
+    st->ready_verified = 1; /* the COORD_READY cross-check held — the
+                               pipe-published pgid is the verified
+                               group identity (never dropped: the
+                               escalation and the final-proof group
+                               item use it) */
+    if (st->ready_pipe_rd >= 0) {
+        close(st->ready_pipe_rd);
+        st->ready_pipe_rd = -1;
+    }
+    st->ready_buf_len = 0;
+    dealpg4_outer_gate_token(st, "READINESS_TIMEOUT");
+    if (st->coordinator_pid > 0 && !st->coordinator_reaped
+        && !st->escalation_active)
+        dealpg4_outer_begin_escalation(st, 1 /* the verified group */);
+}
+
 /* Reap the coordinator (deferred until the readiness decision — see
  * the reaping section). */
 static void dealpg4_outer_try_reap_coord(dealpg4_outer_state *st);
@@ -4538,7 +4614,12 @@ static int64_t dealpg4_outer_next_deadline(dealpg4_outer_state *st)
 {
     int64_t d = st->dl.totalDeadline;
 
-    if (!st->ready_resolved && st->dl.readinessDeadline < d)
+    if ((!st->ready_resolved
+         || (!st->startup_failed && !st->readiness_timeout_fired
+             && !st->readiness_discharged
+             && st->ready_line_verified && !st->broker_ready_acked
+             && !st->coordinator_reaped && !st->escalation_active))
+        && st->dl.readinessDeadline < d)
         d = st->dl.readinessDeadline;
     if (st->escalation_active && !st->escalation_term_sent
         && !st->escalation_kill_issued && st->records_live == 0
@@ -4722,15 +4803,26 @@ static void dealpg4_outer_evaluate(dealpg4_outer_state *st)
             dealpg4_outer_begin_escalation(st, st->ready_verified);
     }
 
-    /* Readiness resolution: the readiness deadline bounds the
-     * COORD_READY wait (D1/D9). A COORD_READY line already verified
-     * by the deadline is never raced by the deadline itself — its
-     * decision completes at the pre-exec pipe EOF (or, for a
-     * bootstrap hang past the deadline, at the total-deadline hard
-     * bound). */
-    if (!st->ready_resolved && now >= st->dl.readinessDeadline
-        && !st->ready_line_verified)
-        dealpg4_outer_startup_failed(st);
+    /* Readiness resolution (D1/D9 + the D5 split immediate
+     * escalation scopes): the readiness deadline T0o +
+     * readinessTimeoutMs bounds both the COORD_READY pipe wait and
+     * the FEATURE_READY broker handshake. No verified COORD_READY by
+     * the deadline is COORDINATOR_STARTUP_FAILED — the group was
+     * never verified, so the immediate escalation is by pid with
+     * steps 1-2 skipped. A verified COORD_READY without a completed
+     * FEATURE_READY handshake by the deadline is READINESS_TIMEOUT —
+     * the group IS verified (COORD_READY was cross-checked), so the
+     * immediate D8 escalation runs with the full group scope against
+     * the pipe-published cross-checked coordinatorPgid. */
+    if (now >= st->dl.readinessDeadline
+        && !st->startup_failed && !st->readiness_timeout_fired
+        && !st->readiness_discharged && !st->coordinator_reaped
+        && !st->escalation_active && !st->broker_ready_acked) {
+        if (!st->ready_line_verified)
+            dealpg4_outer_startup_failed(st);
+        else
+            dealpg4_outer_readiness_timeout(st);
+    }
 
     /* Escalation progression: the KILL step at the grace expiry
      * (the grace clock starts at the TERM dispatch — a deferred TERM
@@ -5214,6 +5306,17 @@ static void dealpg4_outer_report(dealpg4_outer_state *st,
         return;
     if (dealpg4_outer_writeq_queue(&q, line, (size_t)n, 1, 0) != 0)
         return;
+    /* Reap/adoption counts (parent D8 observability: the report
+     * carries the proof's reap/adoption totals next to the proof
+     * result). */
+    n = snprintf(line, sizeof line,
+                 "OUTER counts reaped=%llu adopted=%llu\n",
+                 (unsigned long long)st->reap_count,
+                 (unsigned long long)st->adopt_count);
+    if (n <= 0 || (size_t)n >= sizeof line)
+        return;
+    if (dealpg4_outer_writeq_queue(&q, line, (size_t)n, 1, 0) != 0)
+        return;
     for (i = 0; i < st->ntokens; i++) {
         n = snprintf(line, sizeof line, "OUTER token %s\n",
                      st->tokens[i]);
@@ -5280,6 +5383,7 @@ static void dealpg4_outer_copy_view(dealpg4_outer_state *st, int status)
     v.timerfd_ok = st->timerfd_ok;
     v.signalfd_ok = st->signalfd_ok;
     v.readiness_fired = st->readiness_fired;
+    v.readiness_timeout_fired = st->readiness_timeout_fired;
     v.cutoff_fired = st->cutoff_fired;
     v.total_fired = st->total_fired;
     v.report_flags_captured = st->report_flags_captured;

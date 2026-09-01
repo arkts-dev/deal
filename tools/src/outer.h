@@ -125,6 +125,34 @@
  * COORDINATOR_LOST discrimination slot on broker EOF with live
  * records, and the D8 escalation TERM deferred until every registry
  * record is terminal (the parent-D8 precondition).
+ *
+ * This child (ISSUE-0299, epic Sequencing step 7) adds the
+ * coordinator death classification with the split immediate
+ * escalation scopes and the final report: the clean-exit /
+ * COORDINATOR_LOST discrimination over the real reaped waitid status
+ * and the real registry (reaped status 0 with no live records at
+ * broker EOF/BYE is the clean exit — D8 steps 1-2 skipped, step 3
+ * and the full final proof run, the gate follows the record
+ * outcomes; a nonzero status or EOF with live records — including
+ * exit 0 without BYE while records are live — is COORDINATOR_LOST:
+ * every live record CANCELLING, the total-cancel path to completion,
+ * gate nonzero); the DONE/BYE completion (the outer stays in the
+ * ppoll loop after DONE and waits for broker EOF plus the coordinator
+ * reap, never escalating on DONE itself; the POST_DONE BYE
+ * acceptance closes the outer's end; EOF without BYE feeds the
+ * discrimination; a pre-cutoff close with every record terminal and
+ * exit 0 — and a zero-record coordinator — are the clean exit with
+ * no DONE queued); the READINESS_TIMEOUT scope (no FEATURE_READY by
+ * T0o + readinessTimeoutMs after a verified COORD_READY — the
+ * immediate D8 bounded escalation with the full group scope against
+ * the pipe-published cross-checked coordinatorPgid: liveness check
+ * kill(-coordinatorPgid, 0) == 0 with getpgrp() != coordinatorPgid,
+ * TERM -pgid, grace termGraceMs, KILL -pgid re-verified, reap to
+ * waitid ECHILD, adopted-descendant scan — while
+ * COORDINATOR_STARTUP_FAILED keeps the by-pid scope with steps 1-2
+ * skipped, and a broker close before the live phase discharges the
+ * readiness obligation to the pinned escalation deadline); and the
+ * final report's reap/adoption counts line.
  */
 #ifndef DEALPG4_OUTER_H
 #define DEALPG4_OUTER_H
@@ -708,6 +736,13 @@ typedef struct dealpg4_outer_result {
     int signalfd_ok;        /* signalfd(SIGCHLD) created */
     int readiness_fired;    /* recipe readiness deadline evaluated as
                                fired (T0o + readinessTimeoutMs) */
+    int readiness_timeout_fired; /* READINESS_TIMEOUT decided (D5/D9):
+                                    no FEATURE_READY by the readiness
+                                    deadline after a verified
+                                    COORD_READY — the immediate D8
+                                    escalation ran with the full group
+                                    scope against the pipe-published
+                                    cross-checked coordinatorPgid */
     int cutoff_fired;       /* INVOKE cutoff evaluated as fired
                                (T0o + nestedStopMs) */
     int total_fired;        /* total deadline evaluated as fired
