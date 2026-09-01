@@ -2,14 +2,17 @@ package deal.semantic;
 
 import deal.ast.ArrayLiteralExpr;
 import deal.ast.AssignmentExpr;
+import deal.ast.AwaitExpression;
 import deal.ast.BinaryExpr;
 import deal.ast.BinaryOp;
 import deal.ast.Block;
 import deal.ast.BreakStatement;
 import deal.ast.CallExpr;
+import deal.ast.ClassDeclaration;
 import deal.ast.ContinueStatement;
 import deal.ast.DeleteStatement;
 import deal.ast.Either;
+import deal.ast.ExportDeclaration;
 import deal.ast.ExpressionNode;
 import deal.ast.ExpressionStatement;
 import deal.ast.ForInit;
@@ -17,6 +20,7 @@ import deal.ast.ForOfStatement;
 import deal.ast.ForStatement;
 import deal.ast.FunctionDeclaration;
 import deal.ast.FunctionExpr;
+import deal.ast.HasExpr;
 import deal.ast.IdentifierExpr;
 import deal.ast.IfStatement;
 import deal.ast.ImportDeclaration;
@@ -25,7 +29,9 @@ import deal.ast.LiteralExpr;
 import deal.ast.LiteralValue;
 import deal.ast.MemberAccessExpr;
 import deal.ast.ObjectLiteralExpr;
+import deal.ast.Parameter;
 import deal.ast.Property;
+import deal.ast.ReturnStatement;
 import deal.ast.Span;
 import deal.ast.StatementNode;
 import deal.ast.TemplateLiteralExpr;
@@ -92,10 +98,13 @@ import deal.types.Type;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.EnumMap;
+import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -478,6 +487,35 @@ import java.util.Set;
  * bindings — fail closed as the registry child's resolution). Adapter
  * creation and invocation stay out of this child's window.</p>
  *
+ * <p><b>The recursive-group child (ISSUE-0446).</b> {@link
+ * #lowerModuleGroupCore} drives the same session in group-core mode
+ * (the binding walk plus the closure arms plus the group arms): within
+ * one scope the lowerer builds the reference graph over function
+ * declarations (name references in bodies) and partitions it into SCCs.
+ * An SCC of size >= 2 lowers as exactly one {@code RECURSIVE_GROUP_INIT}
+ * op with the declaration-ordered member {@code {bindings, functions}}
+ * payload — phase 1 allocates a fresh {@code FunctionAllocationIdentity}
+ * per member (pre-assigned at lowering in declaration order, unique per
+ * member, deterministic) and registers each member's
+ * {@code LoweredBody}; phase 2 publishes every member binding cell
+ * atomically (the op has no result slot — the bindings are the observable
+ * effect). Member cells are {@code SHARED_CELL} by construction (B2:
+ * the closed group payload records no cell-kind field, SCC mutual capture
+ * makes every member captured, and no member carries a separate
+ * {@code BINDING_ALLOC}/{@code BINDING_INIT}); member loads resolve to
+ * the group op as the producing allocation at generation 0 (B1 —
+ * {@code BindingProducer.RECURSIVE_GROUP_INIT}). Module-level groups
+ * execute at module-init top in declaration order (B4); nested-scope
+ * groups execute at the first member's declaration position. Member
+ * bodies lower like any function body with captures per the closure
+ * contract (B3). A size-1 SCC — including a self-recursive declaration —
+ * lowers as {@code CLOSURE_NEW} + {@code BINDING_INIT} at the
+ * declaration position (the closure child's arm); no group op is
+ * produced. Group execution (allocation/publication) is realized by the
+ * oracle/emitters — this child produces the op, the member identities,
+ * and the payload; {@code GROUP_SHAPE} validation and member invocation
+ * stay out of this child's window.</p>
+ *
  * <p><b>IDs and determinism (D4/D8/D10).</b> Every id is allocated
  * through the project's {@link SemanticIdAllocator} in the pinned order —
  * dependency order, source order, semantic role, then synthetic ordinal —
@@ -562,10 +600,15 @@ public final class SemanticLowerer {
 
     /**
      * The closed producing-allocation kinds of the binding-core child:
-     * an incarnation is produced by its {@code BINDING_ALLOC} op or by
+     * an incarnation is produced by its {@code BINDING_ALLOC} op, by
      * the {@code FOR_EACH} iteration op (the iteration binding's producing
      * allocation — {@code FOR_EACH} payloads record no cell kind because
-     * iteration bindings are always {@code SHARED_CELL}, B2).
+     * iteration bindings are always {@code SHARED_CELL}, B2), or by the
+     * {@code RECURSIVE_GROUP_INIT} group op (the recursive-group child,
+     * ISSUE-0446: a group member's producing allocation is the group op's
+     * publication phase — members have no separate
+     * {@code BINDING_ALLOC}/{@code BINDING_INIT}, B1/B4, and member cells
+     * are {@code SHARED_CELL} by construction, B2).
      */
     public enum BindingProducer {
 
@@ -573,7 +616,14 @@ public final class SemanticLowerer {
         BINDING_ALLOC,
 
         /** The incarnation's producing allocation is the {@code FOR_EACH} iteration op. */
-        FOR_EACH
+        FOR_EACH,
+
+        /**
+         * The incarnation's producing allocation is the
+         * {@code RECURSIVE_GROUP_INIT} group op (the member's binding
+         * cell is published by the group's atomic publication phase).
+         */
+        RECURSIVE_GROUP_INIT
     }
 
     /**
@@ -787,6 +837,70 @@ public final class SemanticLowerer {
             Objects.requireNonNull(bindingFacts, "bindingFacts must not be null");
             Objects.requireNonNull(closures, "closures must not be null");
             closures = List.copyOf(closures);
+        }
+    }
+
+    /**
+     * One group member's complete fact record (ISSUE-0446 recursive-group
+     * child): the declared name, the member's single {@link BindingId}
+     * (no separate {@code BINDING_ALLOC}/{@code BINDING_INIT} — the
+     * group op's publication phase is the producing allocation), the
+     * member function identity, the pre-assigned member allocation
+     * identity (unique per member, declaration order — the key the
+     * registry's {@code LoweredBody} registration consumes, B4/B5), the
+     * exact signature, the body block identity, and the member body's
+     * captures resolved at the group op's creation site (B3).
+     */
+    public record GroupMemberFacts(String name, BindingId binding, FunctionId functionId,
+                                   ValueId identity, RuntimeDescriptor.Func signature,
+                                   BlockId bodyBlock, List<ClosureCapture> captures) {
+
+        public GroupMemberFacts {
+            Objects.requireNonNull(name, "name must not be null");
+            Objects.requireNonNull(binding, "binding must not be null");
+            Objects.requireNonNull(functionId, "functionId must not be null");
+            Objects.requireNonNull(identity, "identity must not be null");
+            Objects.requireNonNull(signature, "signature must not be null");
+            Objects.requireNonNull(bodyBlock, "bodyBlock must not be null");
+            Objects.requireNonNull(captures, "captures must not be null");
+            captures = List.copyOf(captures);
+        }
+    }
+
+    /**
+     * One produced {@code RECURSIVE_GROUP_INIT} op's complete fact
+     * record (ISSUE-0446 recursive-group child): the op identity, the
+     * declaration-ordered member facts, and the block the group op sits
+     * in (module-init top for module-level groups; the first member's
+     * enclosing block for nested-scope groups — B4).
+     */
+    public record GroupFacts(OpId opId, List<GroupMemberFacts> members, BlockId block) {
+
+        public GroupFacts {
+            Objects.requireNonNull(opId, "opId must not be null");
+            Objects.requireNonNull(members, "members must not be null");
+            Objects.requireNonNull(block, "block must not be null");
+            members = List.copyOf(members);
+        }
+    }
+
+    /**
+     * The result of the group-core entry point: the validated lowering
+     * result, the binding walk's binding facts (with final derived cell
+     * kinds), the produced closures' capture facts in creation order,
+     * and the produced recursive groups' member facts in creation order
+     * (partial on failure, complete on success).
+     */
+    public record GroupCoreResult(LoweringResult lowering, BindingCoreFacts bindingFacts,
+                                  List<ClosureFacts> closures, List<GroupFacts> groups) {
+
+        public GroupCoreResult {
+            Objects.requireNonNull(lowering, "lowering must not be null");
+            Objects.requireNonNull(bindingFacts, "bindingFacts must not be null");
+            Objects.requireNonNull(closures, "closures must not be null");
+            Objects.requireNonNull(groups, "groups must not be null");
+            closures = List.copyOf(closures);
+            groups = List.copyOf(groups);
         }
     }
 
@@ -1355,6 +1469,133 @@ public final class SemanticLowerer {
             lowerer.bindingFacts(), lowerer.closureFacts());
     }
 
+    /**
+     * The recursive-group child's public lowering entry point (ISSUE-0446
+     * sequencing item 3): lowers one checked implementation module
+     * through the binding walk plus the closure arms plus the group arms
+     * — per-scope SCC partition over function declarations (name
+     * references in bodies), one {@code RECURSIVE_GROUP_INIT} op per
+     * size>=2 SCC with the declaration-ordered member
+     * {@code {bindings, functions}} payload and pre-assigned unique
+     * member allocation identities (the keys the registry's one
+     * {@code LoweredBody} per member consumes, B4/B5), module-init-top
+     * placement for module-level groups and first-member-position
+     * placement for nested-scope groups, member cells
+     * {@code SHARED_CELL} by construction with no separate
+     * {@code BINDING_ALLOC}/{@code BINDING_INIT} (B1/B2), member bodies
+     * lowering like any function body with captures per the closure
+     * contract (B3), and size-1 SCCs — self-recursive declarations
+     * included — lowering as {@code CLOSURE_NEW} + {@code BINDING_INIT}
+     * at the declaration position (the closure child's arm) — and
+     * produces the validated unit plus the binding facts, the closure
+     * capture facts, and the group member facts.
+     *
+     * <p>Group-core mode implies closure-core and binding-core mode: the
+     * walk consumes the binding walk's statement and value-expression
+     * seams and the closure child's buffered detached-body walk with
+     * capture collection. The group op has no result slot (the member
+     * bindings are the observable effect); member {@code BINDING_LOAD}s
+     * resolve to the group op as the producing allocation at generation
+     * 0 and publish the member's pre-assigned allocation identity, so
+     * the schema-level {@code R-FUNCTION-BINDING} rule holds by
+     * construction for the one {@code LoweredBody} registration per
+     * member. Group execution (phase 1 identity allocation, phase 2
+     * atomic publication) is realized by the oracle/emitters — this
+     * child produces the op, the member identities, and the payload;
+     * {@code GROUP_SHAPE} validation (the validation child) and member
+     * invocation (E7) stay out of this child's window.</p>
+     *
+     * <p>This entry point is driven by the recursive-group tests; no
+     * production route change — retained/public compilation paths and
+     * {@link #lowerModule} are untouched.</p>
+     *
+     * @param module                the checked implementation module; non-null
+     * @param profile               the invocation's semantic profile
+     *                              (I3 guard: only
+     *                              {@code DEAL_V1_2_INT32} is lowered);
+     *                              non-null
+     * @param constructCoverage     the manifest's reachable-construct rows
+     *                              recorded at lowering start (S1); non-null
+     * @param interfaceHash         the interface index digest the unit is
+     *                              checked against (R-PROFILE); non-null
+     * @param capabilityRegistryHash the invocation's capability-registry
+     *                              digest (R-PROFILE); non-null
+     * @param allocator             the project's semantic-id allocator in
+     *                              dependency order; non-null
+     * @return the validated unit with the binding, closure, and group
+     *         facts, or the first E6005 with the partial facts on failure
+     */
+    public static GroupCoreResult lowerModuleGroupCore(CheckedModuleInput module,
+                                                       SemanticProfile profile,
+                                                       Map<ConstructKind,
+                                                           List<SemanticOpKind>>
+                                                           constructCoverage,
+                                                       String interfaceHash,
+                                                       String capabilityRegistryHash,
+                                                       SemanticIdAllocator allocator) {
+        Objects.requireNonNull(module, "module must not be null");
+        Objects.requireNonNull(profile, "profile must not be null");
+        Objects.requireNonNull(constructCoverage, "constructCoverage must not be null");
+        Objects.requireNonNull(interfaceHash, "interfaceHash must not be null");
+        Objects.requireNonNull(capabilityRegistryHash, "capabilityRegistryHash must not be null");
+        Objects.requireNonNull(allocator, "allocator must not be null");
+        // I3 profile guard: identical to lowerModuleClosureCore — a
+        // non-DEAL_V1_2_INT32 lowering request produces no unit and no
+        // partial session state.
+        if (profile != SemanticProfile.DEAL_V1_2_INT32) {
+            return new GroupCoreResult(new LoweringResult(null, null,
+                List.of(FailureContractRegistry.e6005(
+                    new LoweringFailureDetail(module.moduleId().path(),
+                        SemanticCapability.FOUNDATION_VALUES, LOWER_LEGACY_PROFILE_REJECTED,
+                        profile, LoweredModuleUnit.FORMAT_VERSION, "SemanticLowerer")))),
+                BindingCoreFacts.empty(), List.of(), List.of());
+        }
+        ModuleLowerer lowerer = new ModuleLowerer(module.moduleId(), module.sourceId(),
+            module.checks(), allocator, true, true, true, module.ast().span());
+        try {
+            lowerer.lowerGroupModule(module.ast().statements());
+        } catch (ConstructUnlowered unlowered) {
+            return new GroupCoreResult(new LoweringResult(null, null,
+                List.of(FailureContractRegistry.e6005(
+                    loweringFailureDetail(module.moduleId(), unlowered)))),
+                lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts());
+        } catch (IntLiteralOutOfRange outOfRange) {
+            return new GroupCoreResult(new LoweringResult(null, null,
+                List.of(FailureContractRegistry.e6005(
+                    loweringFailureDetail(module.moduleId(), outOfRange)))),
+                lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts());
+        } catch (ContainerPayloadDescriptors.Defect defect) {
+            return new GroupCoreResult(new LoweringResult(null, null,
+                List.of(FailureContractRegistry.e6005(
+                    loweringFailureDetail(module.moduleId(), defect)))),
+                lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts());
+        } catch (ComparisonSelectorLowering.Defect defect) {
+            return new GroupCoreResult(new LoweringResult(null, null,
+                List.of(ComparisonSelectorLowering.e6005(module.moduleId(), defect))),
+                lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts());
+        }
+        LoweredModuleUnit unit = lowerer.buildUnit(constructCoverage,
+            module.imports().stream().map(ResolvedImport::resolvedModuleId).toList(),
+            interfaceHash, capabilityRegistryHash,
+            ContainerClaimingSeam.E6_GATE_ACTIVATION);
+        Optional<CompilerDiagnostic> validation = SemanticIrValidator.validate(unit,
+            new SemanticIrValidator.ComparisonFacts(interfaceHash,
+                SemanticProfile.DEAL_V1_2_INT32, capabilityRegistryHash));
+        if (validation.isPresent()) {
+            return new GroupCoreResult(new LoweringResult(null, null,
+                List.of(validation.get())),
+                lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts());
+        }
+        Optional<CompilerDiagnostic> chainShape = AddressChainProtocol.validate(unit);
+        if (chainShape.isPresent()) {
+            return new GroupCoreResult(new LoweringResult(null, null,
+                List.of(chainShape.get())),
+                lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts());
+        }
+        return new GroupCoreResult(new LoweringResult(unit, lowerer.bodyTable(), List.of()),
+            lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts());
+    }
+
     // =========================================================================
     // The per-module lowering session (the arms)
     // =========================================================================
@@ -1473,6 +1714,25 @@ public final class SemanticLowerer {
          * the closure arms).
          */
         private final boolean closureCore;
+        /**
+         * The group-core mode flag (ISSUE-0446 recursive-group child):
+         * {@code true} exactly when the session was created by
+         * {@link SemanticLowerer#lowerModuleGroupCore} — the group arms
+         * (per-scope SCC partition over function declarations and one
+         * {@code RECURSIVE_GROUP_INIT} op per size>=2 SCC with
+         * pre-assigned member identities, module-init-top placement for
+         * module-level groups and first-member-position placement for
+         * nested-scope groups) are active on top of the closure arms.
+         * Group-core mode implies closure-core and binding-core mode (the
+         * group walk is the closure walk plus the group arms).
+         */
+        private final boolean groupCore;
+        /**
+         * The produced recursive groups' member facts in creation order
+         * (group-core mode): the fact surface backing
+         * {@link #groupFacts()}.
+         */
+        private final List<GroupFacts> groupFactsList = new ArrayList<>();
         /**
          * The single cell-kind derivation of the session (B2): every
          * {@code BINDING_ALLOC} payload cell kind flows through
@@ -1705,12 +1965,40 @@ public final class SemanticLowerer {
         public ModuleLowerer(ModuleId module, String sourceId, CheckResult checks,
                              SemanticIdAllocator ids, boolean bindingCore,
                              boolean closureCore, Span programSpan) {
+            this(module, sourceId, checks, ids, bindingCore, closureCore, false, programSpan);
+        }
+
+        /**
+         * Creates one lowering session with the binding-core, closure-core,
+         * and group-core mode flags (ISSUE-0444 binding-core child;
+         * ISSUE-0445 closure child; ISSUE-0446 recursive-group child).
+         * Group-core mode implies closure-core and binding-core mode (the
+         * group walk is the closure walk plus the group arms).
+         *
+         * @param module      the module identity; non-null
+         * @param sourceId    the stable source identity carried on every
+         *                    op's origin; non-null
+         * @param checks      the module's checked facts (read-only); non-null
+         * @param ids         the project's allocator in dependency order;
+         *                    non-null
+         * @param bindingCore {@code true} to activate the binding walk's
+         *                    arms and environment
+         * @param closureCore {@code true} to activate the closure arms on
+         *                    top of the binding walk
+         * @param groupCore   {@code true} to activate the group arms on
+         *                    top of the closure walk
+         * @param programSpan the checked program's span; non-null
+         */
+        public ModuleLowerer(ModuleId module, String sourceId, CheckResult checks,
+                             SemanticIdAllocator ids, boolean bindingCore,
+                             boolean closureCore, boolean groupCore, Span programSpan) {
             this.module = Objects.requireNonNull(module, "module must not be null");
             this.sourceId = Objects.requireNonNull(sourceId, "sourceId must not be null");
             this.checks = Objects.requireNonNull(checks, "checks must not be null");
             this.ids = Objects.requireNonNull(ids, "ids must not be null");
             this.bindingCore = bindingCore;
             this.closureCore = closureCore && bindingCore;
+            this.groupCore = groupCore && this.closureCore;
             this.programSpan = Objects.requireNonNull(programSpan,
                 "programSpan must not be null");
             this.moduleInitBlock = ids.nextBlockId(module, nextOrdinal++, 0);
@@ -1754,6 +2042,11 @@ public final class SemanticLowerer {
         /** The closure-core mode flag of this session. */
         public boolean closureCore() {
             return closureCore;
+        }
+
+        /** The group-core mode flag of this session. */
+        public boolean groupCore() {
+            return groupCore;
         }
 
         /** The module identity of this session. */
@@ -1975,6 +2268,58 @@ public final class SemanticLowerer {
         }
 
         /**
+         * The group walk's module entry point (ISSUE-0446 recursive-group
+         * child): the intrinsic bindings and the hoisted module-level
+         * names first (group members register without an ALLOC op and
+         * pre-assign their member allocation identities — B1/B4), then
+         * the module-level {@code RECURSIVE_GROUP_INIT} ops at
+         * module-init top in declaration order (B4: module top level
+         * admits only imports, function declarations, class declarations,
+         * and exports — hoisting the group op is observationally
+         * equivalent to declaration-position execution and places every
+         * member's producing allocation where it dominates every closure
+         * site, B3), then the statements in source order (group members
+         * skip — their bodies were walked at group emission), then the
+         * cell-kind finalization.
+         *
+         * @param statements the module's top-level statements; non-null
+         * @throws IllegalStateException outside group-core mode
+         * @throws ConstructUnlowered    on a construct outside the
+         *         group-core window
+         */
+        public void lowerGroupModule(List<StatementNode> statements) {
+            if (!groupCore) {
+                throw new IllegalStateException(
+                    "lowerGroupModule outside group-core mode (producer defect)");
+            }
+            List<FunctionDeclaration> moduleDeclarations = new ArrayList<>();
+            for (StatementNode statement : statements) {
+                if (statement instanceof FunctionDeclaration function) {
+                    moduleDeclarations.add(function);
+                }
+            }
+            List<List<FunctionDeclaration>> sccs =
+                partitionFunctionDeclarations(moduleDeclarations);
+            Set<FunctionDeclaration> moduleGroupMembers =
+                java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+            List<List<FunctionDeclaration>> moduleGroups = new ArrayList<>();
+            for (List<FunctionDeclaration> scc : sccs) {
+                if (scc.size() >= 2) {
+                    moduleGroups.add(scc);
+                    moduleGroupMembers.addAll(scc);
+                }
+            }
+            seedIntrinsicBindings();
+            hoistModuleLevelAllocs(statements, moduleGroupMembers);
+            // Module-init-top groups in declaration order (B4).
+            for (List<FunctionDeclaration> group : moduleGroups) {
+                lowerGroup(group, true);
+            }
+            lowerBindingStatements(statements, true);
+            finalizeCellKinds();
+        }
+
+        /**
          * The binding walk's complete fact surface: one
          * {@link BindingCoreBinding} per declared name in registration
          * order (partial when the walk failed mid-way).
@@ -2007,6 +2352,18 @@ public final class SemanticLowerer {
          */
         public List<ClosureFacts> closureFacts() {
             return List.copyOf(closureFactsList);
+        }
+
+        /**
+         * The group walk's complete recursive-group fact surface: one
+         * {@link GroupFacts} per produced {@code RECURSIVE_GROUP_INIT}
+         * in creation order, each with its declaration-ordered member
+         * facts (partial when the walk failed mid-way).
+         *
+         * @return the recorded group facts; non-null
+         */
+        public List<GroupFacts> groupFacts() {
+            return List.copyOf(groupFactsList);
         }
 
         /**
@@ -2063,15 +2420,38 @@ public final class SemanticLowerer {
          * declaration position — the closure child's production). Only
          * top-level {@link FunctionDeclaration}/{@link ImportDeclaration}
          * statements hoist; nested-scope declarations allocate at their
-         * position in the main walk.
+         * position in the main walk. The group walk passes its module-
+         * level group members so they register without an ALLOC op (the
+         * group op's publication phase is their producing allocation).
          */
         private void hoistModuleLevelAllocs(List<StatementNode> statements) {
+            hoistModuleLevelAllocs(statements, Set.of());
+        }
+
+        /**
+         * Hoists the module-level names with the given module-level group
+         * members excluded from {@code BINDING_ALLOC} emission (ISSUE-0446
+         * group walk): a group member's name still registers — one
+         * {@link BindingId} per declared name (B1) — with the
+         * {@code RECURSIVE_GROUP_INIT} producing-allocation kind, the
+         * pinned {@code SHARED_CELL} cell kind (B2: the closed group
+         * payload records no cell-kind field, SCC mutual capture makes
+         * every member captured, and members have no separate ALLOC/INIT),
+         * and the member's pre-assigned allocation identity (the key the
+         * registry's one {@code LoweredBody} per member consumes, B4/B5).
+         */
+        private void hoistModuleLevelAllocs(List<StatementNode> statements,
+                                            Set<FunctionDeclaration> groupMembers) {
             for (StatementNode statement : statements) {
                 if (statement instanceof FunctionDeclaration function) {
                     BindingId binding = ids.nextBindingId(module, nextOrdinal++, 0);
+                    boolean grouped = groupMembers.contains(function);
                     BindingCoreIncarnation incarnation = new BindingCoreIncarnation(
-                        INITIAL_LOOP_GENERATION, moduleInitBlock, BindingCellKind.DIRECT,
-                        true, BindingProducer.BINDING_ALLOC, false);
+                        INITIAL_LOOP_GENERATION, moduleInitBlock,
+                        grouped ? BindingCellKind.SHARED_CELL : BindingCellKind.DIRECT,
+                        true, grouped ? BindingProducer.RECURSIVE_GROUP_INIT
+                            : BindingProducer.BINDING_ALLOC,
+                        grouped);
                     registerBinding(function.name(), binding, incarnation);
                     if (closureCore) {
                         // The function-allocation identity of the hoisted
@@ -2082,9 +2462,21 @@ public final class SemanticLowerer {
                         // body — can publish the identity the cell will
                         // hold (loads preserve allocation identity; the
                         // declaration-position CLOSURE_NEW reuses this
-                        // pre-allocated result identity).
+                        // pre-allocated result identity, and a group
+                        // member's publication phase publishes the same
+                        // pre-assigned member identity).
                         ValueId closureIdentity = ids.nextValueId(module, nextOrdinal++, 0);
                         functionIdentity.put(incarnation, closureIdentity);
+                    }
+                    if (grouped) {
+                        // No BINDING_ALLOC for a group member: the
+                        // RECURSIVE_GROUP_INIT op's publication phase
+                        // publishes the member cell (B1/B4) — the closed
+                        // payload records no cell-kind field, so the
+                        // SHARED_CELL fact above is the only recording
+                        // surface and the capture-driven rule yields
+                        // SHARED_CELL for every member anyway (B2).
+                        continue;
                     }
                     emitUserNullOp(SemanticOpKind.BINDING_ALLOC,
                         new KindPayload.BindingAllocPayload(binding, moduleInitBlock, true,
@@ -2113,27 +2505,94 @@ public final class SemanticLowerer {
          * — no position ops), and nested blocks. Every other statement is
          * a foreign construct in this child's window
          * ({@link ConstructUnlowered}).
+         *
+         * <p><b>Group-core mode (ISSUE-0446).</b> The walk partitions the
+         * scope's function declarations into SCCs over the body-reference
+         * graph first (B4): a size>=2 SCC lowers as one
+         * {@code RECURSIVE_GROUP_INIT} op — nested-scope groups at the
+         * first member's declaration position, module-level groups at
+         * module-init top (already emitted by
+         * {@link #lowerGroupModule}, so the walk skips every member) —
+         * and a size-1 SCC — self-recursive declarations included —
+         * lowers as {@code CLOSURE_NEW} + {@code BINDING_INIT} at the
+         * declaration position (the closure child's arm).</p>
          */
         private void lowerBindingStatements(List<StatementNode> statements,
                                            boolean moduleLevel) {
-            for (StatementNode statement : statements) {
-                switch (statement) {
-                    case VariableDeclaration decl -> lowerBindingVarDecl(decl);
-                    case FunctionDeclaration function ->
-                        lowerBindingFunctionDecl(function, moduleLevel);
-                    case ForStatement forStatement -> lowerBindingForLet(forStatement);
-                    case ForOfStatement forOf -> lowerBindingForOf(forOf);
-                    case TryStatement tryStatement -> lowerBindingTry(tryStatement);
-                    case ImportDeclaration ignored -> {
-                        // The alias ALLOC was hoisted to module-init top
-                        // (B1); the MODULE_IMPORT completion write is the
-                        // modules epic's (ISSUE-0239).
+            if (!groupCore) {
+                for (StatementNode statement : statements) {
+                    switch (statement) {
+                        case FunctionDeclaration function ->
+                            lowerBindingFunctionDecl(function, moduleLevel);
+                        default -> lowerBindingStatement(statement);
                     }
-                    case deal.ast.ExpressionStatement expressionStatement ->
-                        lowerBindingExprStatement(expressionStatement);
-                    case Block block -> lowerBindingBlock(block);
-                    default -> throw new ConstructUnlowered(describeStatement(statement));
                 }
+                return;
+            }
+            // Group-core mode: the per-scope SCC partition over function
+            // declarations (name references in bodies, B4).
+            List<FunctionDeclaration> declarations = new ArrayList<>();
+            for (StatementNode statement : statements) {
+                if (statement instanceof FunctionDeclaration function) {
+                    declarations.add(function);
+                }
+            }
+            List<List<FunctionDeclaration>> sccs =
+                partitionFunctionDeclarations(declarations);
+            Map<FunctionDeclaration, List<FunctionDeclaration>> memberGroups =
+                new IdentityHashMap<>();
+            for (List<FunctionDeclaration> scc : sccs) {
+                if (scc.size() >= 2) {
+                    for (FunctionDeclaration member : scc) {
+                        memberGroups.put(member, scc);
+                    }
+                }
+            }
+            for (StatementNode statement : statements) {
+                if (statement instanceof FunctionDeclaration function) {
+                    List<FunctionDeclaration> group = memberGroups.get(function);
+                    if (group == null) {
+                        // Size-1 SCC: CLOSURE_NEW + BINDING_INIT at the
+                        // declaration position (B4).
+                        lowerBindingFunctionDecl(function, moduleLevel);
+                    } else if (!moduleLevel && group.get(0) == function) {
+                        // Nested-scope group: the op executes at the
+                        // first member's declaration position (B4).
+                        lowerGroup(group, false);
+                    }
+                    // Module-level groups were emitted at module-init top
+                    // (lowerGroupModule); non-first nested members were
+                    // lowered at the first member's position.
+                    continue;
+                }
+                lowerBindingStatement(statement);
+            }
+        }
+
+        /**
+         * The binding walk's non-function statement arms (shared by the
+         * binding/closure walk and the group walk): let declarations,
+         * the two-incarnation for-let shape, for-of iteration bindings,
+         * try/catch bindings, import aliases (hoisted — no position
+         * ops), nested blocks, and assignment expression statements.
+         * Every other statement is a foreign construct in this child's
+         * window ({@link ConstructUnlowered}).
+         */
+        private void lowerBindingStatement(StatementNode statement) {
+            switch (statement) {
+                case VariableDeclaration decl -> lowerBindingVarDecl(decl);
+                case ForStatement forStatement -> lowerBindingForLet(forStatement);
+                case ForOfStatement forOf -> lowerBindingForOf(forOf);
+                case TryStatement tryStatement -> lowerBindingTry(tryStatement);
+                case ImportDeclaration ignored -> {
+                    // The alias ALLOC was hoisted to module-init top
+                    // (B1); the MODULE_IMPORT completion write is the
+                    // modules epic's (ISSUE-0239).
+                }
+                case deal.ast.ExpressionStatement expressionStatement ->
+                    lowerBindingExprStatement(expressionStatement);
+                case Block block -> lowerBindingBlock(block);
+                default -> throw new ConstructUnlowered(describeStatement(statement));
             }
         }
 
@@ -2357,6 +2816,175 @@ public final class SemanticLowerer {
                     closureIdentity),
                 function.span(), FailurePolicyId.NO_DEAL_FAILURE);
             emitTarget().addAll(bodyOps);
+        }
+
+        /**
+         * Lowers one size>=2 SCC of function declarations as exactly one
+         * {@code RECURSIVE_GROUP_INIT} op (ISSUE-0446 recursive-group
+         * child, B4): the payload carries the declaration-ordered member
+         * {@code {bindings, functions}} lists; the op has no result slot
+         * (the member bindings are the observable effect).
+         *
+         * <p><b>Identities first (phase 1).</b> Every member's
+         * allocation identity is pre-assigned at lowering — unique per
+         * member, deterministic, declaration order — before any member
+         * body walks, so a sibling reference inside a member body
+         * resolves to the sibling's incarnation (generation 0, producing
+         * allocation = the group op) and publishes the pre-assigned
+         * member identity; the one {@code LoweredBody} registration per
+         * member is keyed by that identity (B4/B5, the keys the registry
+         * consumes). Module-level members reuse the hoist-time
+         * registration and pre-assigned identity (B1); nested-scope
+         * members register at the group position with no
+         * {@code BINDING_ALLOC}/{@code BINDING_INIT} — the publication
+         * phase (phase 2) publishes every member binding cell atomically,
+         * all-or-nothing, after every member identity is allocated.</p>
+         *
+         * <p>Member bodies lower like any function body with captures per
+         * the closure contract (B3): the buffered detached-body walk with
+         * capture collection resolves each body's free bindings at the
+         * group op's creation site. Member cells are {@code SHARED_CELL}
+         * by construction (B2). The group op is emitted at the given
+         * site — module-init top for module-level groups, the first
+         * member's declaration position for nested-scope groups (B4) —
+         * and the member body ops flush after it in declaration order.
+         * Group execution (allocation/publication) is realized by the
+         * oracle/emitters.</p>
+         *
+         * @param members     the SCC's members in declaration order
+         *                    (size >= 2); non-null
+         * @param moduleLevel {@code true} for a module-level group whose
+         *                    op sits at module-init top
+         */
+        private void lowerGroup(List<FunctionDeclaration> members, boolean moduleLevel) {
+            List<BindingId> memberBindings = new ArrayList<>();
+            List<FunctionId> memberFunctions = new ArrayList<>();
+            List<ValueId> memberIdentities = new ArrayList<>();
+            List<FrameEntry> memberEntries = new ArrayList<>();
+            for (FunctionDeclaration member : members) {
+                FrameEntry entry = null;
+                ValueId identity = null;
+                if (moduleLevel) {
+                    entry = frameEntryOf(member.name());
+                    if (entry == null) {
+                        throw new IllegalStateException("hoisted module-level member "
+                            + "registration missing for '" + member.name()
+                            + "' (producer defect)");
+                    }
+                    identity = functionIdentity.get(entry.incarnation());
+                    if (identity == null) {
+                        throw new IllegalStateException("pre-assigned member identity "
+                            + "missing for '" + member.name() + "' (producer defect)");
+                    }
+                } else {
+                    BindingId binding = ids.nextBindingId(module, nextOrdinal++, 0);
+                    BindingCoreIncarnation incarnation = new BindingCoreIncarnation(
+                        INITIAL_LOOP_GENERATION, currentBlock(), BindingCellKind.SHARED_CELL,
+                        true, BindingProducer.RECURSIVE_GROUP_INIT, true);
+                    registerBinding(member.name(), binding, incarnation);
+                    identity = ids.nextValueId(module, nextOrdinal++, 0);
+                    functionIdentity.put(incarnation, identity);
+                    entry = frameEntryOf(member.name());
+                }
+                memberBindings.add(entry.cell().id);
+                memberIdentities.add(identity);
+                memberEntries.add(entry);
+            }
+            // Phase 1 walk: every member body lowers through the buffered
+            // detached-body walk with capture collection (B3) — siblings
+            // resolve because every member binding registered before any
+            // body walk.
+            List<List<SemanticOp>> bodyOpLists = new ArrayList<>();
+            List<List<BindingId>> captureIdLists = new ArrayList<>();
+            List<BlockId> bodyBlocks = new ArrayList<>();
+            List<RuntimeDescriptor.Func> signatures = new ArrayList<>();
+            List<List<CapturedCell>> capturedLists = new ArrayList<>();
+            for (FunctionDeclaration member : members) {
+                BlockId bodyBlock = allocateBlock();
+                FunctionId functionId = ids.nextFunctionId(module, nextOrdinal++, 0);
+                RuntimeDescriptor.Func signature = functionSignatureOf(member);
+                List<SemanticOp> bodyOps = new ArrayList<>();
+                List<CapturedCell> captured = new ArrayList<>();
+                emitTargets.push(bodyOps);
+                captureBorders.push(bindingScopes.size());
+                captureCollectors.push(captured);
+                try {
+                    checkerScopeNodes.push(member);
+                    pushBindingFrame();
+                    blockStack.push(bodyBlock);
+                    for (deal.ast.Parameter parameter : member.params()) {
+                        BindingId binding = ids.nextBindingId(module, nextOrdinal++, 0);
+                        BindingCoreIncarnation incarnation = new BindingCoreIncarnation(
+                            INITIAL_LOOP_GENERATION, bodyBlock, BindingCellKind.DIRECT,
+                            true, BindingProducer.BINDING_ALLOC, false);
+                        registerBinding(parameter.name(), binding, incarnation);
+                        emitUserNullOp(SemanticOpKind.BINDING_ALLOC,
+                            new KindPayload.BindingAllocPayload(binding, bodyBlock, true,
+                                cellKinds.cellKindOf(incarnation), INITIAL_LOOP_GENERATION),
+                            parameter.span(), FailurePolicyId.NO_DEAL_FAILURE);
+                    }
+                    checkerScopeNodes.push(member.body());
+                    lowerBindingStatements(member.body().statements(), false);
+                    checkerScopeNodes.pop();
+                    blockStack.pop();
+                    popBindingFrame();
+                    checkerScopeNodes.pop();
+                } finally {
+                    captureCollectors.pop();
+                    captureBorders.pop();
+                    emitTargets.pop();
+                }
+                List<BindingId> captureIds = new ArrayList<>();
+                for (CapturedCell capture : captured) {
+                    captureIds.add(capture.cell().id);
+                }
+                memberFunctions.add(functionId);
+                bodyOpLists.add(bodyOps);
+                captureIdLists.add(captureIds);
+                bodyBlocks.add(bodyBlock);
+                signatures.add(signature);
+                capturedLists.add(captured);
+            }
+            // Phase 2: exactly one RECURSIVE_GROUP_INIT op — the payload
+            // pins the two-phase execution contract (identities allocated
+            // first, then published atomically); the op carries no result
+            // slot. The origin parentage mirrors the closure child's
+            // CLOSURE_NEW (the enclosing structure op when one exists).
+            Span groupSpan = members.get(0).span();
+            AnchorId groupAnchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+            OpId groupOpId = ids.nextOpId(module, nextOrdinal++, 0);
+            SourceOrigin groupOrigin = new SourceOrigin(sourceId,
+                toSourceSpan(groupSpan), SourceOriginKind.USER, groupAnchor,
+                currentParent());
+            emit(buildOp(groupOpId, SemanticOpKind.RECURSIVE_GROUP_INIT,
+                new KindPayload.RecursiveGroupInitPayload(memberBindings, memberFunctions),
+                null, null, FailurePolicyId.NO_DEAL_FAILURE, groupOrigin));
+            List<GroupMemberFacts> memberFacts = new ArrayList<>();
+            for (int i = 0; i < members.size(); i++) {
+                FunctionDeclaration member = members.get(i);
+                FunctionId functionId = memberFunctions.get(i);
+                List<BindingId> captureIds = captureIdLists.get(i);
+                BlockId bodyBlock = bodyBlocks.get(i);
+                RuntimeDescriptor.Func signature = signatures.get(i);
+                ValueId identity = memberIdentities.get(i);
+                functions.put(functionId, new LoweredFunction(functionId, signature,
+                    captureIds, bodyBlock));
+                registerFunctionBinding(new FunctionAllocationIdentity(identity.id()),
+                    new FunctionExecutionBinding.LoweredBody(functionId, bodyBlock));
+                List<ClosureCapture> captureFacts = new ArrayList<>();
+                for (CapturedCell capture : capturedLists.get(i)) {
+                    captureFacts.add(new ClosureCapture(capture.cell().name,
+                        capture.cell().id, capture.incarnation().generation(),
+                        capture.incarnation().scope(), capture.incarnation().producer()));
+                }
+                memberFacts.add(new GroupMemberFacts(member.name(),
+                    memberEntries.get(i).cell().id, functionId, identity, signature,
+                    bodyBlock, captureFacts));
+            }
+            groupFactsList.add(new GroupFacts(groupOpId, memberFacts, currentBlock()));
+            for (List<SemanticOp> bodyOps : bodyOpLists) {
+                emitTarget().addAll(bodyOps);
+            }
         }
 
         /**
@@ -2598,6 +3226,334 @@ public final class SemanticLowerer {
             blockStack.pop();
             popBindingFrame();
             checkerScopeNodes.pop();
+        }
+
+        // ---------------------------------------------------------------------
+        // The recursive-group SCC partition (ISSUE-0446, B4)
+        // ---------------------------------------------------------------------
+
+        /**
+         * Partitions one scope's function declarations into SCCs over the
+         * body-reference graph (B4): an edge {@code D -> D'} exists iff
+         * D's body references D'.name as a free name — a reference
+         * anywhere in the body tree (nested closures included, matching
+         * the checker's scope-table resolution) that is not shadowed by
+         * D's own scope chain (parameters, block declarations, nested
+         * function names, loop/catch bindings). The returned SCCs carry
+         * their members in declaration order and the SCC list is ordered
+         * by first member's declaration order — deterministic,
+         * byte-identical lowering.
+         *
+         * @param declarations the scope's function declarations in
+         *                     declaration order; non-null
+         * @return the SCCs (size-1 self-recursive SCCs included)
+         */
+        private static List<List<FunctionDeclaration>> partitionFunctionDeclarations(
+                List<FunctionDeclaration> declarations) {
+            List<List<FunctionDeclaration>> sccs = new ArrayList<>();
+            if (declarations.isEmpty()) {
+                return sccs;
+            }
+            Map<FunctionDeclaration, Integer> position = new IdentityHashMap<>();
+            for (int i = 0; i < declarations.size(); i++) {
+                position.put(declarations.get(i), i);
+            }
+            Set<String> names = new LinkedHashSet<>();
+            for (FunctionDeclaration declaration : declarations) {
+                names.add(declaration.name());
+            }
+            Map<FunctionDeclaration, LinkedHashSet<FunctionDeclaration>> edges =
+                new IdentityHashMap<>();
+            for (FunctionDeclaration declaration : declarations) {
+                LinkedHashSet<FunctionDeclaration> targets = new LinkedHashSet<>();
+                Set<String> referenced = freeNameReferences(declaration);
+                for (String name : referenced) {
+                    if (!names.contains(name) || name.equals(declaration.name())) {
+                        continue;
+                    }
+                    for (FunctionDeclaration candidate : declarations) {
+                        if (candidate.name().equals(name)) {
+                            targets.add(candidate);
+                        }
+                    }
+                }
+                edges.put(declaration, targets);
+            }
+            // Tarjan's SCC algorithm over the identity-keyed adjacency
+            // (edges iterated in declaration order — deterministic).
+            IdentityHashMap<FunctionDeclaration, Integer> index =
+                new IdentityHashMap<>();
+            IdentityHashMap<FunctionDeclaration, Integer> lowlink =
+                new IdentityHashMap<>();
+            List<FunctionDeclaration> stack = new ArrayList<>();
+            Set<FunctionDeclaration> onStack =
+                java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+            int[] nextIndex = {0};
+            for (FunctionDeclaration declaration : declarations) {
+                if (!index.containsKey(declaration)) {
+                    strongConnect(declaration, edges, index, lowlink, stack, onStack,
+                        nextIndex, sccs);
+                }
+            }
+            // Deterministic normalization: members in declaration order,
+            // SCCs ordered by first member's declaration order.
+            for (List<FunctionDeclaration> scc : sccs) {
+                scc.sort(Comparator.comparingInt(position::get));
+            }
+            sccs.sort(Comparator.comparingInt(scc -> position.get(scc.get(0))));
+            return sccs;
+        }
+
+        /** One Tarjan recursion step (deterministic edge iteration). */
+        private static void strongConnect(FunctionDeclaration node,
+                                          Map<FunctionDeclaration,
+                                              LinkedHashSet<FunctionDeclaration>> edges,
+                                          IdentityHashMap<FunctionDeclaration, Integer> index,
+                                          IdentityHashMap<FunctionDeclaration, Integer> lowlink,
+                                          List<FunctionDeclaration> stack,
+                                          Set<FunctionDeclaration> onStack,
+                                          int[] nextIndex,
+                                          List<List<FunctionDeclaration>> sccs) {
+            index.put(node, nextIndex[0]);
+            lowlink.put(node, nextIndex[0]);
+            nextIndex[0]++;
+            stack.add(node);
+            onStack.add(node);
+            for (FunctionDeclaration target : edges.get(node)) {
+                if (!index.containsKey(target)) {
+                    strongConnect(target, edges, index, lowlink, stack, onStack,
+                        nextIndex, sccs);
+                    lowlink.put(node, Math.min(lowlink.get(node), lowlink.get(target)));
+                } else if (onStack.contains(target)) {
+                    lowlink.put(node, Math.min(lowlink.get(node), index.get(target)));
+                }
+            }
+            if (lowlink.get(node).equals(index.get(node))) {
+                List<FunctionDeclaration> scc = new ArrayList<>();
+                FunctionDeclaration member;
+                do {
+                    member = stack.remove(stack.size() - 1);
+                    onStack.remove(member);
+                    scc.add(member);
+                } while (member != node);
+                sccs.add(scc);
+            }
+        }
+
+        /**
+         * The free name references of one function declaration's body:
+         * every identifier name referenced anywhere in the body tree that
+         * the declaration's own scope chain does not bind (parameters,
+         * same-block declarations — position-independent per the
+         * checker's scope-table resolution — nested function names, and
+         * loop/catch bindings). Member accesses name only their object
+         * part; object-literal keys and class/property names are never
+         * identifiers.
+         */
+        private static Set<String> freeNameReferences(FunctionDeclaration declaration) {
+            Set<String> references = new LinkedHashSet<>();
+            Set<String> bound = new HashSet<>();
+            for (Parameter parameter : declaration.params()) {
+                bound.add(parameter.name());
+            }
+            walkReferenceBlock(declaration.body(), bound, references);
+            return references;
+        }
+
+        /**
+         * Walks one block for free-name references: the block's own
+         * declarations (at any position — the checker's scope-table
+         * resolution binds them position-independently) join the bound
+         * set before the statements walk; nested blocks and function
+         * bodies extend the bound set with their own declarations.
+         */
+        private static void walkReferenceBlock(Block block, Set<String> bound,
+                                               Set<String> references) {
+            Set<String> local = new HashSet<>(bound);
+            for (StatementNode statement : block.statements()) {
+                String declared = declaredNameOf(statement);
+                if (declared != null) {
+                    local.add(declared);
+                }
+            }
+            for (StatementNode statement : block.statements()) {
+                walkReferenceStatement(statement, local, references);
+            }
+        }
+
+        /**
+         * The declared name a statement binds in its enclosing block, or
+         * {@code null}: let names and nested function names (checker
+         * scope-table resolution binds them position-independently).
+         * For-let loop variables are NOT block bindings — the checker
+         * defines them in the loop's own child scope
+         * ({@code NameResolver.walkFor}), so they never shadow sibling
+         * function names outside the loop.
+         */
+        private static String declaredNameOf(StatementNode statement) {
+            return switch (statement) {
+                case VariableDeclaration decl -> decl.name();
+                case FunctionDeclaration function -> function.name();
+                default -> null;
+            };
+        }
+
+        /** Walks one statement for free-name references. */
+        private static void walkReferenceStatement(StatementNode statement,
+                                                   Set<String> bound,
+                                                   Set<String> references) {
+            switch (statement) {
+                case VariableDeclaration decl ->
+                    walkReferenceExpr(decl.initializer(), bound, references);
+                case FunctionDeclaration function -> {
+                    Set<String> inner = new HashSet<>(bound);
+                    for (Parameter parameter : function.params()) {
+                        inner.add(parameter.name());
+                    }
+                    walkReferenceBlock(function.body(), inner, references);
+                }
+                case Block block -> walkReferenceBlock(block, bound, references);
+                case IfStatement ifStatement -> {
+                    walkReferenceExpr(ifStatement.condition(), bound, references);
+                    walkReferenceBlock(ifStatement.thenBlock(), bound, references);
+                    if (ifStatement.elseBranch().isPresent()) {
+                        Either<IfStatement, Block> branch = ifStatement.elseBranch().get();
+                        switch (branch) {
+                            case Either.Left<IfStatement, Block> left ->
+                                walkReferenceStatement(left.value(), bound, references);
+                            case Either.Right<IfStatement, Block> right ->
+                                walkReferenceBlock(right.value(), bound, references);
+                        }
+                    }
+                }
+                case WhileStatement whileStatement -> {
+                    walkReferenceExpr(whileStatement.condition(), bound, references);
+                    walkReferenceBlock(whileStatement.body(), bound, references);
+                }
+                case ForStatement forStatement -> {
+                    Set<String> loopBound = bound;
+                    if (forStatement.init().isPresent()
+                            && forStatement.init().get() instanceof ForInit.VarDecl varDecl) {
+                        // The checker defines the loop variable in the
+                        // loop's own child scope before walking the
+                        // initializer — it binds throughout the loop,
+                        // never in the enclosing block.
+                        loopBound = new HashSet<>(bound);
+                        loopBound.add(varDecl.decl().name());
+                    }
+                    if (forStatement.init().isPresent()) {
+                        ForInit init = forStatement.init().get();
+                        switch (init) {
+                            case ForInit.VarDecl varDecl ->
+                                walkReferenceExpr(varDecl.decl().initializer(), loopBound,
+                                    references);
+                            case ForInit.AssignExpr assignExpr ->
+                                walkReferenceExpr(assignExpr.expr(), loopBound, references);
+                        }
+                    }
+                    if (forStatement.condition().isPresent()) {
+                        walkReferenceExpr(forStatement.condition().get(), loopBound,
+                            references);
+                    }
+                    if (forStatement.update().isPresent()) {
+                        walkReferenceExpr(forStatement.update().get(), loopBound,
+                            references);
+                    }
+                    walkReferenceBlock(forStatement.body(), loopBound, references);
+                }
+                case ForOfStatement forOf -> {
+                    // The iterable resolves in the parent scope; the loop
+                    // variable binds only inside the body's scope chain.
+                    walkReferenceExpr(forOf.iterable(), bound, references);
+                    Set<String> loopBound = new HashSet<>(bound);
+                    loopBound.add(forOf.varName());
+                    walkReferenceBlock(forOf.body(), loopBound, references);
+                }
+                case TryStatement tryStatement -> {
+                    walkReferenceBlock(tryStatement.tryBlock(), bound, references);
+                    Set<String> catchBound = new HashSet<>(bound);
+                    catchBound.add(tryStatement.catchVar());
+                    walkReferenceBlock(tryStatement.catchBlock(), catchBound, references);
+                }
+                case ExpressionStatement expressionStatement ->
+                    walkReferenceExpr(expressionStatement.expr(), bound, references);
+                case ReturnStatement returnStatement -> {
+                    if (returnStatement.expr().isPresent()) {
+                        walkReferenceExpr(returnStatement.expr().get(), bound, references);
+                    }
+                }
+                case ThrowStatement throwStatement ->
+                    walkReferenceExpr(throwStatement.expr(), bound, references);
+                case DeleteStatement deleteStatement ->
+                    walkReferenceExpr(deleteStatement.target(), bound, references);
+                // Class declarations, break/continue, imports, and
+                // exports reference no sibling function names for the
+                // partition (class defaults are per-construction R4
+                // references, not body references — B4's graph covers
+                // name references in function-declaration bodies).
+                case ClassDeclaration _, BreakStatement _, ContinueStatement _,
+                     ImportDeclaration _, ExportDeclaration _ -> { }
+                default -> { /* no further statement kinds */ }
+            }
+        }
+
+        /** Walks one expression for free-name references. */
+        private static void walkReferenceExpr(ExpressionNode expr, Set<String> bound,
+                                              Set<String> references) {
+            switch (expr) {
+                case LiteralExpr ignored -> { }
+                case IdentifierExpr identifier -> {
+                    if (!bound.contains(identifier.name())) {
+                        references.add(identifier.name());
+                    }
+                }
+                case BinaryExpr binary -> {
+                    walkReferenceExpr(binary.left(), bound, references);
+                    walkReferenceExpr(binary.right(), bound, references);
+                }
+                case UnaryExpr unary -> walkReferenceExpr(unary.expr(), bound, references);
+                case CallExpr call -> {
+                    walkReferenceExpr(call.callee(), bound, references);
+                    for (ExpressionNode arg : call.args()) {
+                        walkReferenceExpr(arg, bound, references);
+                    }
+                }
+                case MemberAccessExpr access ->
+                    walkReferenceExpr(access.object(), bound, references);
+                case IndexExpr index -> {
+                    walkReferenceExpr(index.array(), bound, references);
+                    walkReferenceExpr(index.index(), bound, references);
+                }
+                case ArrayLiteralExpr array -> {
+                    for (ExpressionNode element : array.elements()) {
+                        walkReferenceExpr(element, bound, references);
+                    }
+                }
+                case ObjectLiteralExpr object -> {
+                    for (Property property : object.properties()) {
+                        walkReferenceExpr(property.value(), bound, references);
+                    }
+                }
+                case FunctionExpr functionExpr -> {
+                    Set<String> inner = new HashSet<>(bound);
+                    for (Parameter parameter : functionExpr.params()) {
+                        inner.add(parameter.name());
+                    }
+                    walkReferenceBlock(functionExpr.body(), inner, references);
+                }
+                case HasExpr has -> walkReferenceExpr(has.object(), bound, references);
+                case AssignmentExpr assignment -> {
+                    walkReferenceExpr(assignment.target(), bound, references);
+                    walkReferenceExpr(assignment.value(), bound, references);
+                }
+                case TemplateLiteralExpr template -> {
+                    for (ExpressionNode part : template.parts()) {
+                        walkReferenceExpr(part, bound, references);
+                    }
+                }
+                case AwaitExpression awaitExpression ->
+                    walkReferenceExpr(awaitExpression.callee(), bound, references);
+            }
         }
 
         /**
