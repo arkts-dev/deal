@@ -84,6 +84,7 @@ javac --release 25 -proc:none -d build \
   test/ContainerClaimingSeamTest.java \
   test/ContainerIntegrationTest.java \
   test/BindingCoreLoweringTest.java \
+  test/ClosureLoweringTest.java \
   test/AstAndTypesTest.java \
   test/TypesBytesTest.java \
   test/LexerTest.java \
@@ -375,6 +376,10 @@ java -ea -cp build deal.test.ContainerIntegrationTest
 echo ""
 echo "=== Running Binding Core Lowering Tests (ISSUE-0444 binding-core child) ==="
 java -ea -cp build deal.test.BindingCoreLoweringTest
+
+echo ""
+echo "=== Running Closure Lowering Tests (ISSUE-0445 closure child) ==="
+java -ea -cp build deal.test.ClosureLoweringTest
 
 echo ""
 echo "=== Running Protected Path Ops Tests (ISSUE-0262) ==="

@@ -16,6 +16,7 @@ import deal.ast.ForInit;
 import deal.ast.ForOfStatement;
 import deal.ast.ForStatement;
 import deal.ast.FunctionDeclaration;
+import deal.ast.FunctionExpr;
 import deal.ast.IdentifierExpr;
 import deal.ast.IfStatement;
 import deal.ast.ImportDeclaration;
@@ -55,10 +56,14 @@ import deal.semantic.ir.DeleteTargetKind;
 import deal.semantic.ir.ExportPlan;
 import deal.semantic.ir.FailureContractRegistry;
 import deal.semantic.ir.FailurePolicyId;
+import deal.semantic.ir.FunctionAllocationIdentity;
+import deal.semantic.ir.FunctionExecutionBinding;
+import deal.semantic.ir.FunctionId;
 import deal.semantic.ir.IndexMode;
 import deal.semantic.ir.IntrinsicKind;
 import deal.semantic.ir.IterationMode;
 import deal.semantic.ir.KindPayload;
+import deal.semantic.ir.LoweredFunction;
 import deal.semantic.ir.LoweredModuleUnit;
 import deal.semantic.ir.LoweringContextHash;
 import deal.semantic.ir.LoweringFailureDetail;
@@ -448,6 +453,30 @@ import java.util.Set;
  * lowering of its own. Closure production, adapter creation, and adapter
  * invocation stay out of this child's window.</p>
  *
+ * <p><b>The closure child (ISSUE-0445).</b> {@link
+ * #lowerModuleClosureCore} drives the same session in closure-core mode
+ * (the binding walk plus the closure arms): {@code CLOSURE_NEW}/
+ * {@code LoweredFunction} for every function expression and every size-1
+ * non-group function declaration (the group child partitions SCCs),
+ * capture-by-binding with the capture set collected in first-reference
+ * order during the buffered detached-body walk (the free bindings of the
+ * body resolved through the dominant frame entries at the creation site —
+ * B3/B9 R2/R3 as the resolution model, so doubly-nested captures resolve
+ * transitively along the detaching chain), captures of later-declared
+ * module functions resolving to the hoisted module-init ALLOC (B1), the
+ * closure-capture arm of the B2 {@code SHARED_CELL} cell-kind upgrade
+ * (whole-scope: the finalization re-derivation over the capture-reference
+ * union rewrites every affected {@code BINDING_ALLOC} payload through the
+ * single {@link CellKindDerivation} — no production path writes a
+ * cell-kind literal outside that derivation, and the thunk/adapter arms
+ * are registered by the shape-map child, T7), the {@code LoweredBody}
+ * {@code functionBindings} registrations through the registry child's
+ * registration seam (B5), and static function-identity preservation on
+ * function-typed loads ({@code R-FUNCTION-BINDING} holds by construction;
+ * dynamic function values — parameters, catch bindings, iteration
+ * bindings — fail closed as the registry child's resolution). Adapter
+ * creation and invocation stay out of this child's window.</p>
+ *
  * <p><b>IDs and determinism (D4/D8/D10).</b> Every id is allocated
  * through the project's {@link SemanticIdAllocator} in the pinned order —
  * dependency order, source order, semantic role, then synthetic ordinal —
@@ -550,15 +579,21 @@ public final class SemanticLowerer {
      * One incarnation fact of the binding-core walk: the static
      * per-binding generation ordinal (assigned in lowering order starting
      * at 0), the block the incarnation's producing allocation sits in,
-     * the closed cell kind ({@code DIRECT} everywhere except the pinned
+     * the default cell kind ({@code DIRECT} everywhere except the pinned
      * special cases — for-let per-iteration incarnations and
      * {@code FOR_EACH} iteration bindings are {@code SHARED_CELL}), the
-     * reassignability fact recorded independently of the cell kind, and
-     * the producing-allocation kind.
+     * reassignability fact recorded independently of the cell kind, the
+     * producing-allocation kind, and the pinned-shared-cell marker of the
+     * closed special cases. The <em>final</em> cell kind of an incarnation
+     * is derived by {@link CellKindDerivation} over the union of the
+     * pinned special cases and the registered capture references — every
+     * {@code BINDING_ALLOC} payload and every facts-surface cell kind
+     * flows through that one derivation.
      */
     public record BindingCoreIncarnation(long generation, BlockId scope,
                                          BindingCellKind cellKind, boolean mutable,
-                                         BindingProducer producer) {
+                                         BindingProducer producer,
+                                         boolean pinnedSharedCell) {
 
         public BindingCoreIncarnation {
             Objects.requireNonNull(scope, "scope must not be null");
@@ -616,6 +651,141 @@ public final class SemanticLowerer {
         public BindingCoreResult {
             Objects.requireNonNull(lowering, "lowering must not be null");
             Objects.requireNonNull(facts, "facts must not be null");
+        }
+    }
+
+    /**
+     * The single cell-kind derivation of the BINDINGS capability's
+     * capture-driven cell-kind rule (B2): the final cell kind of every
+     * binding incarnation is derived exactly here, over the union of the
+     * pinned special cases ({@code FOR_EACH} iteration bindings and
+     * for-let per-iteration incarnations — the binding-core defaults)
+     * and the registered capture references. The complete closed iff
+     * ("{@code SHARED_CELL} iff any function capture resolves to the
+     * incarnation") is enforced by construction: cell kinds are emitted
+     * only from this derivation, never from a literal outside it.
+     *
+     * <p><b>Ownership split (B2's three capture arms).</b> The closure
+     * child (ISSUE-0445) registers the {@code CLOSURE_NEW}/
+     * {@code LoweredFunction.captures} arm through
+     * {@link #registerCaptureReference} and re-derives every
+     * {@code BINDING_ALLOC} payload cell kind after the walk (whole-scope
+     * analysis: a closure anywhere in the enclosing scope referencing the
+     * binding upgrades every incarnation of that binding that a capture
+     * resolves to). The shape-map child (T7) registers the two remaining
+     * arms — {@code REEVALUATE_THUNK} {@code capturedBindings} entries and
+     * {@code FUNCTION_ADAPT(SHARED_CELL)} {@code SharedCell} source
+     * references — through the same registration surface and runs the
+     * final derivation after registering them; this child emits and
+     * claims neither arm.</p>
+     *
+     * <p>Capture references are registered per incarnation instance
+     * (identity semantics): two equal-shaped incarnations of different
+     * bindings never alias in the reference set.</p>
+     */
+    public static final class CellKindDerivation {
+
+        /** The registered capture references (identity semantics). */
+        private final Set<BindingCoreIncarnation> captureReferences =
+            java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+
+        /**
+         * Registers one capture reference (B2's closure-capture arm for
+         * this child; the shape-map child registers the thunk/adapter
+         * arms through the same surface): the incarnation the capture
+         * resolves to at the capture's creation site.
+         *
+         * @param incarnation the resolved incarnation; non-null
+         */
+        public void registerCaptureReference(BindingCoreIncarnation incarnation) {
+            captureReferences.add(Objects.requireNonNull(incarnation,
+                "incarnation must not be null"));
+        }
+
+        /** True iff any capture reference resolves to the incarnation. */
+        public boolean isCaptured(BindingCoreIncarnation incarnation) {
+            return captureReferences.contains(incarnation);
+        }
+
+        /** The number of registered capture references. */
+        public int captureReferenceCount() {
+            return captureReferences.size();
+        }
+
+        /**
+         * The derived cell kind of one incarnation: {@code SHARED_CELL}
+         * iff the incarnation is a pinned special case or any registered
+         * capture resolves to it; {@code DIRECT} otherwise (reassignability
+         * alone never forces {@code SHARED_CELL} — the {@code mutable}
+         * flag records it independently).
+         *
+         * @param incarnation the incarnation; non-null
+         * @return the derived {@code DIRECT|SHARED_CELL} kind
+         */
+        public BindingCellKind cellKindOf(BindingCoreIncarnation incarnation) {
+            Objects.requireNonNull(incarnation, "incarnation must not be null");
+            if (incarnation.pinnedSharedCell() || isCaptured(incarnation)) {
+                return BindingCellKind.SHARED_CELL;
+            }
+            return BindingCellKind.DIRECT;
+        }
+    }
+
+    /**
+     * One resolved closure capture of the closure child's fact surface:
+     * the captured binding plus the producing allocation the capture
+     * resolves to at the detaching op's creation site — the dominant
+     * incarnation's generation, the block its producing allocation sits
+     * in, and the producing-allocation kind (B9 R1/R2: the resolution
+     * evaluated at the {@code CLOSURE_NEW} creation site, recursively
+     * along the detaching chain).
+     */
+    public record ClosureCapture(String name, BindingId binding, long generation,
+                                 BlockId scope, BindingProducer producer) {
+
+        public ClosureCapture {
+            Objects.requireNonNull(name, "name must not be null");
+            Objects.requireNonNull(binding, "binding must not be null");
+            Objects.requireNonNull(scope, "scope must not be null");
+            Objects.requireNonNull(producer, "producer must not be null");
+            if (generation < 0) {
+                throw new IllegalArgumentException(
+                    "generation must be >= 0, got " + generation);
+            }
+        }
+    }
+
+    /**
+     * One closure's complete fact record (ISSUE-0445 closure child): the
+     * function identity, the exact signature, the body block identity,
+     * and the resolved captures in first-reference order.
+     */
+    public record ClosureFacts(FunctionId functionId, RuntimeDescriptor.Func signature,
+                               BlockId bodyBlock, List<ClosureCapture> captures) {
+
+        public ClosureFacts {
+            Objects.requireNonNull(functionId, "functionId must not be null");
+            Objects.requireNonNull(signature, "signature must not be null");
+            Objects.requireNonNull(bodyBlock, "bodyBlock must not be null");
+            Objects.requireNonNull(captures, "captures must not be null");
+            captures = List.copyOf(captures);
+        }
+    }
+
+    /**
+     * The result of the closure-core entry point: the validated lowering
+     * result, the binding walk's binding facts (with final derived cell
+     * kinds), and the produced closures' capture facts in creation order
+     * (partial on failure, complete on success).
+     */
+    public record ClosureCoreResult(LoweringResult lowering, BindingCoreFacts bindingFacts,
+                                    List<ClosureFacts> closures) {
+
+        public ClosureCoreResult {
+            Objects.requireNonNull(lowering, "lowering must not be null");
+            Objects.requireNonNull(bindingFacts, "bindingFacts must not be null");
+            Objects.requireNonNull(closures, "closures must not be null");
+            closures = List.copyOf(closures);
         }
     }
 
@@ -1062,6 +1232,128 @@ public final class SemanticLowerer {
             lowerer.bindingFacts());
     }
 
+    /**
+     * The closure child's public lowering entry point (ISSUE-0445
+     * sequencing item 2): lowers one checked implementation module
+     * through the binding walk plus the closure arms — {@code
+     * CLOSURE_NEW}/{@code LoweredFunction} for every function expression
+     * and every size-1 non-group function declaration, capture-by-binding
+     * resolution at the detaching op's creation site recursively along
+     * the detaching chain, the closure-capture arm of the B2
+     * {@code SHARED_CELL} cell-kind upgrade, and the {@code LoweredBody}
+     * {@code functionBindings} registrations through the registry child's
+     * registration seam — and produces the validated unit plus the
+     * binding facts (final derived cell kinds) and the closure capture
+     * facts.
+     *
+     * <p>The walk consumes the binding-core walk's statement and
+     * value-expression seams (never re-implementing them); function
+     * bodies lower through the same arms with capture collection active
+     * during body walks (B9 R2/R3 as the resolution model: a reference
+     * inside a detached body resolves the innermost frame entry — the
+     * function's own scope chain first, outer frames as captures — and
+     * the capture's producing allocation is the dominant incarnation at
+     * the creation site). Function-typed {@code BINDING_LOAD}s preserve
+     * allocation identity statically: a load of a function-typed binding
+     * publishes the producing allocation identity its cell currently
+     * holds (the pre-allocated identity of a hoisted module-level
+     * function, the tracked identity of an initializer/store) so the
+     * schema-level {@code R-FUNCTION-BINDING} rule holds; a function-typed
+     * load whose cell value identity is not statically known (parameters,
+     * catch bindings, iteration bindings) fails closed as the registry
+     * child's resolution (B5).</p>
+     *
+     * <p>This entry point is driven by the closure tests; no production
+     * route change — retained/public compilation paths and
+     * {@link #lowerModule} are untouched.</p>
+     *
+     * @param module                the checked implementation module; non-null
+     * @param profile               the invocation's semantic profile
+     *                              (I3 guard: only
+     *                              {@code DEAL_V1_2_INT32} is lowered);
+     *                              non-null
+     * @param constructCoverage     the manifest's reachable-construct rows
+     *                              recorded at lowering start (S1); non-null
+     * @param interfaceHash         the interface index digest the unit is
+     *                              checked against (R-PROFILE); non-null
+     * @param capabilityRegistryHash the invocation's capability-registry
+     *                              digest (R-PROFILE); non-null
+     * @param allocator             the project's semantic-id allocator in
+     *                              dependency order; non-null
+     * @return the validated unit with the binding and closure facts, or
+     *         the first E6005 with the partial facts on failure
+     */
+    public static ClosureCoreResult lowerModuleClosureCore(CheckedModuleInput module,
+                                                           SemanticProfile profile,
+                                                           Map<ConstructKind,
+                                                               List<SemanticOpKind>>
+                                                               constructCoverage,
+                                                           String interfaceHash,
+                                                           String capabilityRegistryHash,
+                                                           SemanticIdAllocator allocator) {
+        Objects.requireNonNull(module, "module must not be null");
+        Objects.requireNonNull(profile, "profile must not be null");
+        Objects.requireNonNull(constructCoverage, "constructCoverage must not be null");
+        Objects.requireNonNull(interfaceHash, "interfaceHash must not be null");
+        Objects.requireNonNull(capabilityRegistryHash, "capabilityRegistryHash must not be null");
+        Objects.requireNonNull(allocator, "allocator must not be null");
+        // I3 profile guard: identical to lowerModuleBindingCore — a
+        // non-DEAL_V1_2_INT32 lowering request produces no unit and no
+        // partial session state.
+        if (profile != SemanticProfile.DEAL_V1_2_INT32) {
+            return new ClosureCoreResult(new LoweringResult(null, null,
+                List.of(FailureContractRegistry.e6005(
+                    new LoweringFailureDetail(module.moduleId().path(),
+                        SemanticCapability.FOUNDATION_VALUES, LOWER_LEGACY_PROFILE_REJECTED,
+                        profile, LoweredModuleUnit.FORMAT_VERSION, "SemanticLowerer")))),
+                BindingCoreFacts.empty(), List.of());
+        }
+        ModuleLowerer lowerer = new ModuleLowerer(module.moduleId(), module.sourceId(),
+            module.checks(), allocator, true, true, module.ast().span());
+        try {
+            lowerer.lowerBindingModule(module.ast().statements());
+        } catch (ConstructUnlowered unlowered) {
+            return new ClosureCoreResult(new LoweringResult(null, null,
+                List.of(FailureContractRegistry.e6005(
+                    loweringFailureDetail(module.moduleId(), unlowered)))),
+                lowerer.bindingFacts(), lowerer.closureFacts());
+        } catch (IntLiteralOutOfRange outOfRange) {
+            return new ClosureCoreResult(new LoweringResult(null, null,
+                List.of(FailureContractRegistry.e6005(
+                    loweringFailureDetail(module.moduleId(), outOfRange)))),
+                lowerer.bindingFacts(), lowerer.closureFacts());
+        } catch (ContainerPayloadDescriptors.Defect defect) {
+            return new ClosureCoreResult(new LoweringResult(null, null,
+                List.of(FailureContractRegistry.e6005(
+                    loweringFailureDetail(module.moduleId(), defect)))),
+                lowerer.bindingFacts(), lowerer.closureFacts());
+        } catch (ComparisonSelectorLowering.Defect defect) {
+            return new ClosureCoreResult(new LoweringResult(null, null,
+                List.of(ComparisonSelectorLowering.e6005(module.moduleId(), defect))),
+                lowerer.bindingFacts(), lowerer.closureFacts());
+        }
+        LoweredModuleUnit unit = lowerer.buildUnit(constructCoverage,
+            module.imports().stream().map(ResolvedImport::resolvedModuleId).toList(),
+            interfaceHash, capabilityRegistryHash,
+            ContainerClaimingSeam.E6_GATE_ACTIVATION);
+        Optional<CompilerDiagnostic> validation = SemanticIrValidator.validate(unit,
+            new SemanticIrValidator.ComparisonFacts(interfaceHash,
+                SemanticProfile.DEAL_V1_2_INT32, capabilityRegistryHash));
+        if (validation.isPresent()) {
+            return new ClosureCoreResult(new LoweringResult(null, null,
+                List.of(validation.get())),
+                lowerer.bindingFacts(), lowerer.closureFacts());
+        }
+        Optional<CompilerDiagnostic> chainShape = AddressChainProtocol.validate(unit);
+        if (chainShape.isPresent()) {
+            return new ClosureCoreResult(new LoweringResult(null, null,
+                List.of(chainShape.get())),
+                lowerer.bindingFacts(), lowerer.closureFacts());
+        }
+        return new ClosureCoreResult(new LoweringResult(unit, lowerer.bodyTable(), List.of()),
+            lowerer.bindingFacts(), lowerer.closureFacts());
+    }
+
     // =========================================================================
     // The per-module lowering session (the arms)
     // =========================================================================
@@ -1169,6 +1461,82 @@ public final class SemanticLowerer {
          */
         private final boolean bindingCore;
         /**
+         * The closure-core mode flag (ISSUE-0445 closure child):
+         * {@code true} exactly when the session was created by
+         * {@link SemanticLowerer#lowerModuleClosureCore} — the closure
+         * arms ({@code CLOSURE_NEW} for every function expression and
+         * size-1 non-group function declaration), capture collection
+         * during detached-body walks, and the closure-capture arm of the
+         * B2 cell-kind upgrade are active. Closure-core mode implies
+         * binding-core mode (the closure walk is the binding walk plus
+         * the closure arms).
+         */
+        private final boolean closureCore;
+        /**
+         * The single cell-kind derivation of the session (B2): every
+         * {@code BINDING_ALLOC} payload cell kind flows through
+         * {@link CellKindDerivation#cellKindOf} — at emission and again
+         * at the walk-finalization re-derivation over the complete
+         * capture-reference union.
+         */
+        private final CellKindDerivation cellKinds = new CellKindDerivation();
+        /**
+         * The produced lowered functions keyed by {@link FunctionId} (the
+         * unit's {@code functions} map; closure-core mode).
+         */
+        private final Map<FunctionId, LoweredFunction> functions = new LinkedHashMap<>();
+        /**
+         * The produced function-execution-bindings registry keyed by
+         * {@link FunctionAllocationIdentity} (the unit's
+         * {@code functionBindings} map; the registry child's registration
+         * seam, B5 — closure-core mode).
+         */
+        private final Map<FunctionAllocationIdentity, FunctionExecutionBinding>
+            functionBindings = new LinkedHashMap<>();
+        /**
+         * The produced closures' capture facts in creation order
+         * (closure-core mode): the fact surface backing
+         * {@link #closureFacts()}.
+         */
+        private final List<ClosureFacts> closureFactsList = new ArrayList<>();
+        /**
+         * The statically tracked function-value identities of binding
+         * incarnations (closure-core mode, identity-keyed): the
+         * allocation identity the incarnation's cell currently holds.
+         * {@code BINDING_LOAD}s of function-typed bindings publish the
+         * tracked identity (identity preservation — the schema-level
+         * {@code R-FUNCTION-BINDING} rule holds); a load whose
+         * incarnation has no tracked identity fails closed as the
+         * registry child's resolution (B5).
+         */
+        private final IdentityHashMap<BindingCoreIncarnation, ValueId> functionIdentity =
+            new IdentityHashMap<>();
+        /**
+         * The capture borders of the currently open detached-body walks
+         * (closure-core mode), innermost first: the number of binding
+         * frames outside the function recorded before its own frame was
+         * pushed. A reference inside the body resolving to a frame at or
+         * beyond {@code bindingScopes.size() - border} is a capture
+         * (B9 R2/R3 as the resolution model).
+         */
+        private final ArrayDeque<Integer> captureBorders = new ArrayDeque<>();
+        /**
+         * The capture collectors of the currently open detached-body
+         * walks (closure-core mode), innermost first: each collector
+         * records the captured cells in first-reference order for the
+         * {@code CLOSURE_NEW} being built.
+         */
+        private final ArrayDeque<List<CapturedCell>> captureCollectors = new ArrayDeque<>();
+        /**
+         * The emission targets of the session, innermost first: the
+         * session's op list at the bottom, one buffer per open
+         * detached-body walk. Every emission appends to
+         * {@link #emitTarget()}, so a function body's ops can be
+         * collected while the walk runs and flushed after the
+         * {@code CLOSURE_NEW} op that needs the collected captures.
+         */
+        private final ArrayDeque<List<SemanticOp>> emitTargets = new ArrayDeque<>();
+        /**
          * The installed binding-environment resolver (ISSUE-0444): the
          * identifier arm and the variable-assignment arm consult it
          * (after the for-of frames, before the legacy on-demand path) so
@@ -1250,6 +1618,32 @@ public final class SemanticLowerer {
         }
 
         /**
+         * One name resolution of the binding environment (closure-core
+         * mode): the innermost frame entry plus the frame's index
+         * (innermost first) — the frame index decides whether a body
+         * reference resolves inside the function's own scope chain or is
+         * a capture (B9 R2/R3).
+         */
+        private record FrameResolution(FrameEntry entry, int frameIndex) {
+
+            private FrameResolution {
+                Objects.requireNonNull(entry, "entry must not be null");
+                if (frameIndex < 0) {
+                    throw new IllegalArgumentException(
+                        "frameIndex must be >= 0, got " + frameIndex);
+                }
+            }
+        }
+
+        /**
+         * One captured cell of an open detached-body walk: the cell plus
+         * the incarnation the capture resolves to at the creation site
+         * (the dominant incarnation of the resolved frame entry).
+         */
+        private record CapturedCell(BindingCell cell, BindingCoreIncarnation incarnation) {
+        }
+
+        /**
          * Creates one lowering session. The module-init block is the
          * session's first allocation (role {@code BLOCK}).
          *
@@ -1285,17 +1679,44 @@ public final class SemanticLowerer {
          */
         public ModuleLowerer(ModuleId module, String sourceId, CheckResult checks,
                              SemanticIdAllocator ids, boolean bindingCore, Span programSpan) {
+            this(module, sourceId, checks, ids, bindingCore, false, programSpan);
+        }
+
+        /**
+         * Creates one lowering session with the binding-core mode flag
+         * and the closure-core mode flag (ISSUE-0444 binding-core child;
+         * ISSUE-0445 closure child). Closure-core mode implies
+         * binding-core mode (the closure walk is the binding walk plus
+         * the closure arms).
+         *
+         * @param module      the module identity; non-null
+         * @param sourceId    the stable source identity carried on every
+         *                    op's origin; non-null
+         * @param checks      the module's checked facts (read-only); non-null
+         * @param ids         the project's allocator in dependency order;
+         *                    non-null
+         * @param bindingCore {@code true} to activate the binding walk's
+         *                    arms and environment
+         * @param closureCore {@code true} to activate the closure arms on
+         *                    top of the binding walk
+         * @param programSpan the checked program's span; non-null
+         */
+        public ModuleLowerer(ModuleId module, String sourceId, CheckResult checks,
+                             SemanticIdAllocator ids, boolean bindingCore,
+                             boolean closureCore, Span programSpan) {
             this.module = Objects.requireNonNull(module, "module must not be null");
             this.sourceId = Objects.requireNonNull(sourceId, "sourceId must not be null");
             this.checks = Objects.requireNonNull(checks, "checks must not be null");
             this.ids = Objects.requireNonNull(ids, "ids must not be null");
             this.bindingCore = bindingCore;
+            this.closureCore = closureCore && bindingCore;
             this.programSpan = Objects.requireNonNull(programSpan,
                 "programSpan must not be null");
             this.moduleInitBlock = ids.nextBlockId(module, nextOrdinal++, 0);
             this.blockOps.put(moduleInitBlock, new ArrayList<>());
             this.blockTerminated.put(moduleInitBlock, false);
             this.blockStack.push(moduleInitBlock);
+            emitTargets.push(ops);
             if (bindingCore) {
                 bindingScopes.add(new LinkedHashMap<>());
                 installBindingSiteResolver(name -> {
@@ -1327,6 +1748,11 @@ public final class SemanticLowerer {
         /** The binding-core mode flag of this session. */
         public boolean bindingCore() {
             return bindingCore;
+        }
+
+        /** The closure-core mode flag of this session. */
+        public boolean closureCore() {
+            return closureCore;
         }
 
         /** The module identity of this session. */
@@ -1381,24 +1807,34 @@ public final class SemanticLowerer {
             blockStack.pop();
         }
 
-        /** Emits one op into the unit list and the current emission block. */
+        /**
+         * Emits one op into the current emission target (the unit op
+         * list or an open detached-body buffer, the closure child's
+         * buffering) and the current emission block.
+         */
         private void emit(SemanticOp op) {
-            emitAt(ops.size(), op);
+            emitAt(emitTarget().size(), op);
         }
 
         /**
-         * Emits one op at the pinned unit-list position (the structure-op
-         * position of a {@code LOOP}/{@code TRY_CATCH}/{@code
-         * BRANCH(LOGICAL_*)} whose child blocks were lowered before the
-         * op's emission) and records its membership in the current
-         * emission block — the pinned unit order is structure op first,
-         * then its child block ops in payload order.
+         * Emits one op at the pinned target-list position (the
+         * structure-op position of a {@code LOOP}/{@code TRY_CATCH}/
+         * {@code BRANCH(LOGICAL_*)} whose child blocks were lowered
+         * before the op's emission) and records its membership in the
+         * current emission block — the pinned unit order is structure op
+         * first, then its child block ops in payload order. The mark is
+         * relative to the current emission target, so a structure op
+         * lowered inside a buffered detached-body walk keeps its pinned
+         * position within that buffer.
          */
         private void emitAt(int mark, SemanticOp op) {
-            ops.add(mark, op);
+            List<SemanticOp> target = emitTarget();
+            target.add(mark, op);
             BlockId block = blockStack.peek();
-            blockOps.get(block).add(op.opId());
-            opBlocks.put(op.opId(), block);
+            if (blockOps.containsKey(block)) {
+                blockOps.get(block).add(op.opId());
+                opBlocks.put(op.opId(), block);
+            }
         }
 
         /**
@@ -1534,6 +1970,7 @@ public final class SemanticLowerer {
             seedIntrinsicBindings();
             hoistModuleLevelAllocs(statements);
             lowerBindingStatements(statements, true);
+            finalizeCellKinds();
         }
 
         /**
@@ -1546,9 +1983,29 @@ public final class SemanticLowerer {
         public BindingCoreFacts bindingFacts() {
             List<BindingCoreBinding> facts = new ArrayList<>();
             for (BindingCell cell : bindingCells) {
-                facts.add(new BindingCoreBinding(cell.name, cell.id, cell.incarnations));
+                List<BindingCoreIncarnation> derived = new ArrayList<>();
+                for (BindingCoreIncarnation incarnation : cell.incarnations) {
+                    derived.add(new BindingCoreIncarnation(incarnation.generation(),
+                        incarnation.scope(), cellKinds.cellKindOf(incarnation),
+                        incarnation.mutable(), incarnation.producer(),
+                        incarnation.pinnedSharedCell()));
+                }
+                facts.add(new BindingCoreBinding(cell.name, cell.id, derived));
             }
             return new BindingCoreFacts(facts);
+        }
+
+        /**
+         * The closure walk's complete closure fact surface: one
+         * {@link ClosureFacts} per produced {@code CLOSURE_NEW} in
+         * creation order, each with its captures resolved at the
+         * detaching op's creation site (partial when the walk failed
+         * mid-way).
+         *
+         * @return the recorded closure facts; non-null
+         */
+        public List<ClosureFacts> closureFacts() {
+            return List.copyOf(closureFactsList);
         }
 
         /**
@@ -1575,14 +2032,21 @@ public final class SemanticLowerer {
                     continue;
                 }
                 BindingId binding = ids.nextBindingId(module, nextOrdinal++, 0);
-                registerBinding(name, binding, new BindingCoreIncarnation(
+                BindingCoreIncarnation incarnation = new BindingCoreIncarnation(
                     INITIAL_LOOP_GENERATION, moduleInitBlock, BindingCellKind.DIRECT,
-                    false, BindingProducer.BINDING_ALLOC));
+                    false, BindingProducer.BINDING_ALLOC, false);
+                registerBinding(name, binding, incarnation);
                 emitUserNullOp(SemanticOpKind.BINDING_ALLOC,
                     new KindPayload.BindingAllocPayload(binding, moduleInitBlock, false,
-                        BindingCellKind.DIRECT, INITIAL_LOOP_GENERATION),
+                        cellKinds.cellKindOf(incarnation), INITIAL_LOOP_GENERATION),
                     moduleInitSpan(), FailurePolicyId.NO_DEAL_FAILURE);
                 ValueId intrinsicValue = ids.nextValueId(module, nextOrdinal++, 0);
+                // No static function-identity tracking for intrinsics: a
+                // first-class intrinsic value has no closed
+                // FunctionExecutionBinding shape, so a function-typed
+                // load of an intrinsic fails closed as the registry
+                // child's resolution (B5) — this child never emits an
+                // unvalidatable function-typed load.
                 emitUserNullOp(SemanticOpKind.BINDING_INIT,
                     new KindPayload.BindingInitPayload(binding, INITIAL_LOOP_GENERATION,
                         intrinsicValue),
@@ -1604,21 +2068,36 @@ public final class SemanticLowerer {
             for (StatementNode statement : statements) {
                 if (statement instanceof FunctionDeclaration function) {
                     BindingId binding = ids.nextBindingId(module, nextOrdinal++, 0);
-                    registerBinding(function.name(), binding, new BindingCoreIncarnation(
+                    BindingCoreIncarnation incarnation = new BindingCoreIncarnation(
                         INITIAL_LOOP_GENERATION, moduleInitBlock, BindingCellKind.DIRECT,
-                        true, BindingProducer.BINDING_ALLOC));
+                        true, BindingProducer.BINDING_ALLOC, false);
+                    registerBinding(function.name(), binding, incarnation);
+                    if (closureCore) {
+                        // The function-allocation identity of the hoisted
+                        // module-level function is pre-allocated here so a
+                        // capture of a later-declared module function
+                        // (B1; docs/spec-v1.2.md:1217-1221) — a
+                        // function-typed load inside an earlier closure
+                        // body — can publish the identity the cell will
+                        // hold (loads preserve allocation identity; the
+                        // declaration-position CLOSURE_NEW reuses this
+                        // pre-allocated result identity).
+                        ValueId closureIdentity = ids.nextValueId(module, nextOrdinal++, 0);
+                        functionIdentity.put(incarnation, closureIdentity);
+                    }
                     emitUserNullOp(SemanticOpKind.BINDING_ALLOC,
                         new KindPayload.BindingAllocPayload(binding, moduleInitBlock, true,
-                            BindingCellKind.DIRECT, INITIAL_LOOP_GENERATION),
+                            cellKinds.cellKindOf(incarnation), INITIAL_LOOP_GENERATION),
                         function.span(), FailurePolicyId.NO_DEAL_FAILURE);
                 } else if (statement instanceof ImportDeclaration importDecl) {
                     BindingId binding = ids.nextBindingId(module, nextOrdinal++, 0);
-                    registerBinding(importDecl.alias(), binding, new BindingCoreIncarnation(
+                    BindingCoreIncarnation incarnation = new BindingCoreIncarnation(
                         INITIAL_LOOP_GENERATION, moduleInitBlock, BindingCellKind.DIRECT,
-                        false, BindingProducer.BINDING_ALLOC));
+                        false, BindingProducer.BINDING_ALLOC, false);
+                    registerBinding(importDecl.alias(), binding, incarnation);
                     emitUserNullOp(SemanticOpKind.BINDING_ALLOC,
                         new KindPayload.BindingAllocPayload(binding, moduleInitBlock, false,
-                            BindingCellKind.DIRECT, INITIAL_LOOP_GENERATION),
+                            cellKinds.cellKindOf(incarnation), INITIAL_LOOP_GENERATION),
                         importDecl.span(), FailurePolicyId.NO_DEAL_FAILURE);
                 }
             }
@@ -1690,12 +2169,13 @@ public final class SemanticLowerer {
          */
         private void lowerBindingVarDecl(VariableDeclaration decl) {
             BindingId binding = ids.nextBindingId(module, nextOrdinal++, 0);
-            registerBinding(decl.name(), binding, new BindingCoreIncarnation(
+            BindingCoreIncarnation incarnation = new BindingCoreIncarnation(
                 INITIAL_LOOP_GENERATION, currentBlock(), BindingCellKind.DIRECT,
-                true, BindingProducer.BINDING_ALLOC));
+                true, BindingProducer.BINDING_ALLOC, false);
+            registerBinding(decl.name(), binding, incarnation);
             emitUserNullOp(SemanticOpKind.BINDING_ALLOC,
                 new KindPayload.BindingAllocPayload(binding, currentBlock(), true,
-                    BindingCellKind.DIRECT, INITIAL_LOOP_GENERATION),
+                    cellKinds.cellKindOf(incarnation), INITIAL_LOOP_GENERATION),
                 decl.span(), FailurePolicyId.NO_DEAL_FAILURE);
             ValueId value = lowerExpression(decl.initializer());
             if (decl.typeAnnotation().isPresent()) {
@@ -1710,9 +2190,34 @@ public final class SemanticLowerer {
                             CANONICAL_RUNTIME_VALIDATION_ID)),
                     decl.span(), boundaryPolicy, SourceOriginKind.SYNTHETIC, null);
             }
+            if (closureCore && descriptorOf(value) instanceof RuntimeDescriptor.Func) {
+                // The initializer's function identity is the cell's
+                // current value identity (loads preserve allocation
+                // identity; R-FUNCTION-BINDING holds by construction).
+                functionIdentity.put(incarnation, value);
+            }
             emitUserNullOp(SemanticOpKind.BINDING_INIT,
                 new KindPayload.BindingInitPayload(binding, INITIAL_LOOP_GENERATION, value),
                 decl.span(), FailurePolicyId.NO_DEAL_FAILURE);
+        }
+
+        /**
+         * The runtime descriptor of an already-lowered value (closure-core
+         * mode): the result type of the value's producing op in the
+         * current emission target. Used to classify the initializer's
+         * value for the static function-identity tracking.
+         */
+        private RuntimeDescriptor descriptorOf(ValueId value) {
+            List<SemanticOp> target = emitTarget();
+            for (int i = target.size() - 1; i >= 0; i--) {
+                SemanticOp op = target.get(i);
+                if (value.equals(op.result())
+                        && op.resultType() instanceof RuntimeDescriptor descriptor) {
+                    return descriptor;
+                }
+            }
+            throw new IllegalStateException("no produced op publishes value " + value
+                + " (producer defect)");
         }
 
         /**
@@ -1723,46 +2228,155 @@ public final class SemanticLowerer {
          * ALLOCs at the body block's entry (generation 0, {@code DIRECT},
          * no BINDING_INIT — the parameter-transfer write is the invoking
          * machinery's, E7), and the body statements through the binding
-         * walk. {@code CLOSURE_NEW} + {@code BINDING_INIT} stay at the
-         * declaration position for the closure child.
+         * walk.
+         *
+         * <p><b>Closure-core mode (ISSUE-0445).</b> Every size-1
+         * non-group declaration additionally produces {@code CLOSURE_NEW}
+         * + {@code BINDING_INIT} at the declaration position (B4): the
+         * body walks first into a buffer with capture collection active
+         * (the capture set is the body's free bindings in first-reference
+         * order, resolved at the creation site through the dominant frame
+         * entries — B3/B9 R2), then the {@code CLOSURE_NEW} op publishes
+         * the pre-allocated function-allocation identity (module-level
+         * names reuse the hoist-time identity so captures of
+         * later-declared module functions resolve to the hoisted ALLOC —
+         * B1; nested names pre-allocate at the declaration), the
+         * {@code BINDING_INIT} commits it to the name binding as the
+         * immediate commit after the closure creation, and the buffered
+         * body ops flush after the pair.</p>
          */
         private void lowerBindingFunctionDecl(FunctionDeclaration function,
                                               boolean moduleLevel) {
+            BindingCoreIncarnation nameIncarnation = null;
+            BindingId nameBinding = null;
             if (!moduleLevel) {
                 // Nested-scope declarations allocate their name binding at
                 // the declaration position (B1: nested functions are
                 // defined at their position, no hoisting).
-                BindingId binding = ids.nextBindingId(module, nextOrdinal++, 0);
-                registerBinding(function.name(), binding, new BindingCoreIncarnation(
+                nameBinding = ids.nextBindingId(module, nextOrdinal++, 0);
+                nameIncarnation = new BindingCoreIncarnation(
                     INITIAL_LOOP_GENERATION, currentBlock(), BindingCellKind.DIRECT,
-                    true, BindingProducer.BINDING_ALLOC));
+                    true, BindingProducer.BINDING_ALLOC, false);
+                registerBinding(function.name(), nameBinding, nameIncarnation);
                 emitUserNullOp(SemanticOpKind.BINDING_ALLOC,
-                    new KindPayload.BindingAllocPayload(binding, currentBlock(), true,
-                        BindingCellKind.DIRECT, INITIAL_LOOP_GENERATION),
+                    new KindPayload.BindingAllocPayload(nameBinding, currentBlock(), true,
+                        cellKinds.cellKindOf(nameIncarnation), INITIAL_LOOP_GENERATION),
                     function.span(), FailurePolicyId.NO_DEAL_FAILURE);
             }
-            // Module-level name ALLOCs were hoisted (B1): no second
-            // allocation here.
-            BlockId bodyBlock = allocateBlock();
-            checkerScopeNodes.push(function);
-            pushBindingFrame();
-            blockStack.push(bodyBlock);
-            for (deal.ast.Parameter parameter : function.params()) {
-                BindingId binding = ids.nextBindingId(module, nextOrdinal++, 0);
-                registerBinding(parameter.name(), binding, new BindingCoreIncarnation(
-                    INITIAL_LOOP_GENERATION, bodyBlock, BindingCellKind.DIRECT,
-                    true, BindingProducer.BINDING_ALLOC));
-                emitUserNullOp(SemanticOpKind.BINDING_ALLOC,
-                    new KindPayload.BindingAllocPayload(binding, bodyBlock, true,
-                        BindingCellKind.DIRECT, INITIAL_LOOP_GENERATION),
-                    parameter.span(), FailurePolicyId.NO_DEAL_FAILURE);
+            if (!closureCore) {
+                // Module-level name ALLOCs were hoisted (B1): no second
+                // allocation here.
+                BlockId bodyBlock = allocateBlock();
+                checkerScopeNodes.push(function);
+                pushBindingFrame();
+                blockStack.push(bodyBlock);
+                for (deal.ast.Parameter parameter : function.params()) {
+                    BindingId binding = ids.nextBindingId(module, nextOrdinal++, 0);
+                    BindingCoreIncarnation incarnation = new BindingCoreIncarnation(
+                        INITIAL_LOOP_GENERATION, bodyBlock, BindingCellKind.DIRECT,
+                        true, BindingProducer.BINDING_ALLOC, false);
+                    registerBinding(parameter.name(), binding, incarnation);
+                    emitUserNullOp(SemanticOpKind.BINDING_ALLOC,
+                        new KindPayload.BindingAllocPayload(binding, bodyBlock, true,
+                            cellKinds.cellKindOf(incarnation), INITIAL_LOOP_GENERATION),
+                        parameter.span(), FailurePolicyId.NO_DEAL_FAILURE);
+                }
+                checkerScopeNodes.push(function.body());
+                lowerBindingStatements(function.body().statements(), false);
+                checkerScopeNodes.pop();
+                blockStack.pop();
+                popBindingFrame();
+                checkerScopeNodes.pop();
+                return;
             }
-            checkerScopeNodes.push(function.body());
-            lowerBindingStatements(function.body().statements(), false);
-            checkerScopeNodes.pop();
-            blockStack.pop();
-            popBindingFrame();
-            checkerScopeNodes.pop();
+            // --- Closure-core mode: CLOSURE_NEW + BINDING_INIT at the
+            // declaration position over the buffered body walk. ---
+            FrameEntry hoisted = null;
+            if (moduleLevel) {
+                hoisted = frameEntryOf(function.name());
+                if (hoisted == null) {
+                    throw new IllegalStateException("hoisted module-level function ALLOC "
+                        + "missing for '" + function.name() + "' (producer defect)");
+                }
+                nameBinding = hoisted.cell().id;
+                nameIncarnation = hoisted.incarnation();
+            }
+            BlockId bodyBlock = allocateBlock();
+            FunctionId functionId = ids.nextFunctionId(module, nextOrdinal++, 0);
+            ValueId closureIdentity;
+            if (functionIdentity.containsKey(nameIncarnation)) {
+                // The hoist-time pre-allocated identity (B1: captures of
+                // later-declared module functions resolve to the hoisted
+                // ALLOC and publish this identity).
+                closureIdentity = functionIdentity.get(nameIncarnation);
+            } else {
+                closureIdentity = ids.nextValueId(module, nextOrdinal++, 0);
+                functionIdentity.put(nameIncarnation, closureIdentity);
+            }
+            RuntimeDescriptor.Func signature = functionSignatureOf(function);
+            List<SemanticOp> bodyOps = new ArrayList<>();
+            List<CapturedCell> captured = new ArrayList<>();
+            emitTargets.push(bodyOps);
+            captureBorders.push(bindingScopes.size());
+            captureCollectors.push(captured);
+            try {
+                checkerScopeNodes.push(function);
+                pushBindingFrame();
+                blockStack.push(bodyBlock);
+                for (deal.ast.Parameter parameter : function.params()) {
+                    BindingId binding = ids.nextBindingId(module, nextOrdinal++, 0);
+                    BindingCoreIncarnation incarnation = new BindingCoreIncarnation(
+                        INITIAL_LOOP_GENERATION, bodyBlock, BindingCellKind.DIRECT,
+                        true, BindingProducer.BINDING_ALLOC, false);
+                    registerBinding(parameter.name(), binding, incarnation);
+                    emitUserNullOp(SemanticOpKind.BINDING_ALLOC,
+                        new KindPayload.BindingAllocPayload(binding, bodyBlock, true,
+                            cellKinds.cellKindOf(incarnation), INITIAL_LOOP_GENERATION),
+                        parameter.span(), FailurePolicyId.NO_DEAL_FAILURE);
+                }
+                checkerScopeNodes.push(function.body());
+                lowerBindingStatements(function.body().statements(), false);
+                checkerScopeNodes.pop();
+                blockStack.pop();
+                popBindingFrame();
+                checkerScopeNodes.pop();
+            } finally {
+                captureCollectors.pop();
+                captureBorders.pop();
+                emitTargets.pop();
+            }
+            List<BindingId> captureIds = new ArrayList<>();
+            for (CapturedCell capture : captured) {
+                captureIds.add(capture.cell().id);
+            }
+            emitClosureNew(functionId, closureIdentity, signature, captureIds, bodyBlock,
+                function.span(), captured);
+            emitUserNullOp(SemanticOpKind.BINDING_INIT,
+                new KindPayload.BindingInitPayload(nameBinding, INITIAL_LOOP_GENERATION,
+                    closureIdentity),
+                function.span(), FailurePolicyId.NO_DEAL_FAILURE);
+            emitTarget().addAll(bodyOps);
+        }
+
+        /**
+         * The exact function signature of a checked function declaration
+         * (closure-core mode): the {@code Symbol.FunctionSymbol} fact of
+         * the declaration, resolved through the checker's per-scope
+         * symbol table (the scope chain walks to the enclosing scope and
+         * the hoisted module root — never retaining a
+         * {@code NameResolver} instance, D4).
+         */
+        private RuntimeDescriptor.Func functionSignatureOf(FunctionDeclaration function) {
+            SymbolTable scope = checks.scopeMap().get(function);
+            Symbol symbol = (scope == null ? checks.symbolTable() : scope)
+                .resolve(function.name());
+            if (symbol instanceof Symbol.FunctionSymbol functionSymbol) {
+                return (RuntimeDescriptor.Func)
+                    ContainerPayloadDescriptors.resultDescriptorOf(functionSymbol.funcType());
+            }
+            throw new ConstructUnlowered("function declaration '" + function.name()
+                + "' without a checked FunctionSymbol fact (a missing checker fact is a "
+                + "producer defect)");
         }
 
         /**
@@ -1806,21 +2420,29 @@ public final class SemanticLowerer {
             VariableDeclaration decl = varDecl.decl();
             BindingId counter = ids.nextBindingId(module, nextOrdinal++, 0);
             Type counterType = counterTypeOf(statement, decl);
+            if (closureCore
+                    && ContainerPayloadDescriptors.resultDescriptorOf(counterType)
+                        instanceof RuntimeDescriptor.Func) {
+                throw new ConstructUnlowered("function-typed for-let counter (the "
+                    + "per-iteration carry load's function identity is the registry "
+                    + "child's resolution, B5)");
+            }
             BlockId initBlock = allocateBlock();
             BlockId bodyBlock = allocateBlock();
             BlockId updateBlock = allocateBlock();
             checkerScopeNodes.push(statement);
             pushBindingFrame();
             blockStack.push(initBlock);
-            registerBinding(decl.name(), counter, new BindingCoreIncarnation(
+            BindingCoreIncarnation counterIncarnation = new BindingCoreIncarnation(
                 INITIAL_LOOP_GENERATION, initBlock, BindingCellKind.DIRECT,
-                true, BindingProducer.BINDING_ALLOC));
+                true, BindingProducer.BINDING_ALLOC, false);
+            registerBinding(decl.name(), counter, counterIncarnation);
             // Init block: the counter ALLOC, the initializer value ops,
             // the counter INIT, then the first condition production
             // (init-block members — C-D4).
             emitUserNullOp(SemanticOpKind.BINDING_ALLOC,
                 new KindPayload.BindingAllocPayload(counter, initBlock, true,
-                    BindingCellKind.DIRECT, INITIAL_LOOP_GENERATION),
+                    cellKinds.cellKindOf(counterIncarnation), INITIAL_LOOP_GENERATION),
                 decl.span(), FailurePolicyId.NO_DEAL_FAILURE);
             ValueId initializer = lowerExpression(decl.initializer());
             emitUserNullOp(SemanticOpKind.BINDING_INIT,
@@ -1839,12 +2461,13 @@ public final class SemanticLowerer {
             blockStack.push(bodyBlock);
             checkerScopeNodes.push(statement.body());
             pushBindingFrame();
-            registerBinding(decl.name(), counter, new BindingCoreIncarnation(
+            BindingCoreIncarnation perIteration = new BindingCoreIncarnation(
                 1L, bodyBlock, BindingCellKind.SHARED_CELL, true,
-                BindingProducer.BINDING_ALLOC));
+                BindingProducer.BINDING_ALLOC, true);
+            registerBinding(decl.name(), counter, perIteration);
             emitUserNullOp(SemanticOpKind.BINDING_ALLOC,
                 new KindPayload.BindingAllocPayload(counter, bodyBlock, true,
-                    BindingCellKind.SHARED_CELL, 1L),
+                    cellKinds.cellKindOf(perIteration), 1L),
                 decl.span(), FailurePolicyId.NO_DEAL_FAILURE);
             ValueId carry = emitSyntheticValueOp(SemanticOpKind.BINDING_LOAD,
                 new KindPayload.BindingLoadPayload(counter, INITIAL_LOOP_GENERATION),
@@ -1901,12 +2524,12 @@ public final class SemanticLowerer {
             pushBindingFrame();
             registerBinding(statement.varName(), binding, new BindingCoreIncarnation(
                 INITIAL_LOOP_GENERATION, bodyBlock, BindingCellKind.SHARED_CELL,
-                true, BindingProducer.FOR_EACH));
+                true, BindingProducer.FOR_EACH, true));
             AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
             OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
             SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(statement.span()),
-                SourceOriginKind.USER, anchor, null);
-            ops.add(buildOp(opId, SemanticOpKind.FOR_EACH,
+                SourceOriginKind.USER, anchor, currentParent());
+            emit(buildOp(opId, SemanticOpKind.FOR_EACH,
                 new KindPayload.ForEachPayload(IterationMode.STRING_SCALARS, iterable,
                     binding, INITIAL_LOOP_GENERATION, bodyBlock),
                 null, null, FailurePolicyId.TYPE_DESCRIPTOR, origin));
@@ -1945,12 +2568,13 @@ public final class SemanticLowerer {
             checkerScopeNodes.push(statement);
             pushBindingFrame();
             blockStack.push(catchBlock);
-            registerBinding(statement.catchVar(), catchBinding, new BindingCoreIncarnation(
+            BindingCoreIncarnation catchIncarnation = new BindingCoreIncarnation(
                 INITIAL_LOOP_GENERATION, catchBlock, BindingCellKind.DIRECT,
-                true, BindingProducer.BINDING_ALLOC));
+                true, BindingProducer.BINDING_ALLOC, false);
+            registerBinding(statement.catchVar(), catchBinding, catchIncarnation);
             emitUserNullOp(SemanticOpKind.BINDING_ALLOC,
                 new KindPayload.BindingAllocPayload(catchBinding, catchBlock, true,
-                    BindingCellKind.DIRECT, INITIAL_LOOP_GENERATION),
+                    cellKinds.cellKindOf(catchIncarnation), INITIAL_LOOP_GENERATION),
                 statement.span(), FailurePolicyId.NO_DEAL_FAILURE);
             lowerBindingStatements(statement.catchBlock().statements(), false);
             blockStack.pop();
@@ -2071,13 +2695,187 @@ public final class SemanticLowerer {
          * incarnation at the site), or {@code null}.
          */
         private FrameEntry frameEntryOf(String name) {
-            for (Map<String, FrameEntry> frame : bindingScopes) {
-                FrameEntry entry = frame.get(name);
+            FrameResolution resolution = resolveFrame(name);
+            return resolution == null ? null : resolution.entry();
+        }
+
+        /**
+         * The innermost frame entry plus its frame index (innermost
+         * first) of a declared name, or {@code null}: the resolution
+         * surface the closure child's load/store arms and capture
+         * collection use (B9 R1/R2/R3 as the resolution model — the
+         * frame index decides whether a detached-body reference resolves
+         * inside the function's own scope chain or is a capture).
+         */
+        private FrameResolution resolveFrame(String name) {
+            for (int i = 0; i < bindingScopes.size(); i++) {
+                FrameEntry entry = bindingScopes.get(i).get(name);
                 if (entry != null) {
-                    return entry;
+                    return new FrameResolution(entry, i);
                 }
             }
             return null;
+        }
+
+        /** The innermost emission target of the session (the op list or a body buffer). */
+        private List<SemanticOp> emitTarget() {
+            return emitTargets.peek();
+        }
+
+        /**
+         * Registers a body reference as a capture when the reference
+         * resolves outside the innermost open detached-body walk (B3/B9
+         * R2/R3): the resolved incarnation joins the B2 cell-kind
+         * derivation's capture-reference set, and the cell joins the
+         * innermost collector in first-reference order.
+         */
+        private void maybeRegisterCapture(String name, FrameResolution resolution) {
+            if (!closureCore || captureBorders.isEmpty()) {
+                return;
+            }
+            int border = captureBorders.peek();
+            int outsideFrom = bindingScopes.size() - border;
+            if (resolution.frameIndex() < outsideFrom) {
+                return; // the function's own scope chain — not a capture.
+            }
+            registerCaptureReference(resolution.entry());
+        }
+
+        /**
+         * The single capture-reference registration of the walk (B2's
+         * closure-capture arm for this child): the incarnation the
+         * capture resolves to joins the cell-kind derivation, and the
+         * captured cell joins the innermost collector once (first
+         * reference order — deterministic capture lists).
+         */
+        private void registerCaptureReference(FrameEntry entry) {
+            cellKinds.registerCaptureReference(entry.incarnation());
+            List<CapturedCell> collector = captureCollectors.peek();
+            if (collector == null) {
+                return;
+            }
+            for (CapturedCell captured : collector) {
+                if (captured.cell() == entry.cell()) {
+                    return;
+                }
+            }
+            collector.add(new CapturedCell(entry.cell(), entry.incarnation()));
+        }
+
+        /**
+         * The registry child's registration seam (B5, closure-core mode):
+         * exactly one {@link FunctionExecutionBinding} per function
+         * allocation identity, recorded in the unit's
+         * {@code functionBindings}. A duplicate registration is a
+         * producer defect (fail closed, never overwritten).
+         */
+        private void registerFunctionBinding(FunctionAllocationIdentity identity,
+                                             FunctionExecutionBinding binding) {
+            FunctionExecutionBinding previous = functionBindings.putIfAbsent(identity,
+                binding);
+            if (previous != null) {
+                throw new IllegalStateException("duplicate function-binding registration "
+                    + "for " + identity + " (producer defect)");
+            }
+        }
+
+        /**
+         * Emits one {@code CLOSURE_NEW} op publishing the given
+         * function-allocation identity, registers the {@code LoweredBody}
+         * execution binding through the registry seam and the
+         * {@code LoweredFunction} record, and records the closure facts
+         * (resolved captures) in creation order. The closure publishes a
+         * fresh function identity per creation (execution contract);
+         * creation evaluates nothing.
+         */
+        private void emitClosureNew(FunctionId functionId, ValueId result,
+                                    RuntimeDescriptor.Func signature,
+                                    List<BindingId> captures, BlockId bodyBlock, Span span,
+                                    List<CapturedCell> captured) {
+            AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+            OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
+            FunctionExecutionBinding.LoweredBody binding =
+                new FunctionExecutionBinding.LoweredBody(functionId, bodyBlock);
+            SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(span),
+                SourceOriginKind.USER, anchor, currentParent());
+            emit(buildOp(opId, SemanticOpKind.CLOSURE_NEW,
+                new KindPayload.ClosureNewPayload(functionId, signature, captures, binding),
+                result, signature, FailurePolicyId.NO_DEAL_FAILURE, origin));
+            functions.put(functionId, new LoweredFunction(functionId, signature, captures,
+                bodyBlock));
+            registerFunctionBinding(new FunctionAllocationIdentity(result.id()), binding);
+            List<ClosureCapture> captureFacts = new ArrayList<>();
+            for (CapturedCell capture : captured) {
+                captureFacts.add(new ClosureCapture(capture.cell().name, capture.cell().id,
+                    capture.incarnation().generation(), capture.incarnation().scope(),
+                    capture.incarnation().producer()));
+            }
+            closureFactsList.add(new ClosureFacts(functionId, signature, bodyBlock,
+                captureFacts));
+        }
+
+        /**
+         * The walk-finalization re-derivation of the B2 cell kinds over
+         * the complete capture-reference union (whole-scope analysis: a
+         * closure anywhere in the enclosing scope referencing a binding
+         * upgrades every incarnation of that binding that a capture
+         * resolves to). Every {@code BINDING_ALLOC} payload whose derived
+         * kind differs from its emission-time kind is rebuilt in place
+         * with the re-derived payload and contract digest — the final
+         * emitted cell kinds flow from exactly one derivation.
+         */
+        private void finalizeCellKinds() {
+            for (int i = 0; i < ops.size(); i++) {
+                SemanticOp op = ops.get(i);
+                if (!(op.payload() instanceof KindPayload.BindingAllocPayload alloc)) {
+                    continue;
+                }
+                BindingCell cell = cellsById.get(alloc.binding());
+                if (cell == null) {
+                    continue; // not a binding of this walk's environment.
+                }
+                BindingCoreIncarnation incarnation = null;
+                for (BindingCoreIncarnation candidate : cell.incarnations) {
+                    if (candidate.generation() == alloc.generation()
+                            && candidate.scope().equals(alloc.scope())) {
+                        incarnation = candidate;
+                        break;
+                    }
+                }
+                if (incarnation == null) {
+                    throw new IllegalStateException("BINDING_ALLOC of " + alloc.binding()
+                        + " generation " + alloc.generation() + " in " + alloc.scope()
+                        + " matches no registered incarnation (producer defect)");
+                }
+                BindingCellKind finalKind = cellKinds.cellKindOf(incarnation);
+                if (finalKind == alloc.cellKind()) {
+                    continue;
+                }
+                ops.set(i, rebuildAllocOp(op, finalKind));
+            }
+        }
+
+        /**
+         * Rebuilds one {@code BINDING_ALLOC} op with the final derived
+         * cell kind: same identity, origin, result shape, operands, and
+         * policy; the payload's cell kind and the contract snapshot
+         * digest re-derive from the final payload through the single
+         * canonicalizer path.
+         */
+        private SemanticOp rebuildAllocOp(SemanticOp op, BindingCellKind finalKind) {
+            KindPayload.BindingAllocPayload alloc =
+                (KindPayload.BindingAllocPayload) op.payload();
+            KindPayload.BindingAllocPayload rebuilt = new KindPayload.BindingAllocPayload(
+                alloc.binding(), alloc.scope(), alloc.mutable(), finalKind,
+                alloc.generation());
+            OperationContractSnapshot placeholder = contractOf(op.kind(), rebuilt,
+                op.resultType(), op.operandTypes(), op.failurePolicy(), "placeholder");
+            String digest = ContractSnapshotCanonicalizer.digest(placeholder);
+            OperationContractSnapshot contract = contractOf(op.kind(), rebuilt,
+                op.resultType(), op.operandTypes(), op.failurePolicy(), digest);
+            return new SemanticOp(op.opId(), op.kind(), op.origin(), op.result(),
+                op.resultType(), op.operands(), op.operandTypes(), rebuilt,
+                op.failurePolicy(), contract);
         }
 
         /** The pinned origin span of module-init-top synthetic ops (the program span). */
@@ -2130,6 +2928,12 @@ public final class SemanticLowerer {
             return switch (expr) {
                 case LiteralExpr literal -> lowerConst(literal, slot);
                 case IdentifierExpr identifier -> lowerBindingLoad(identifier, slot);
+                case FunctionExpr functionExpr -> {
+                    if (closureCore) {
+                        yield lowerClosureExpr(functionExpr);
+                    }
+                    throw new ConstructUnlowered(describeExpression(expr));
+                }
                 case ArrayLiteralExpr array -> lowerArrayNew(array, slot);
                 case ObjectLiteralExpr object -> lowerTableNew(object, slot);
                 case MemberAccessExpr access -> lowerMemberAccess(access, slot);
@@ -2367,6 +3171,9 @@ public final class SemanticLowerer {
          * target descriptor (A-D6).
          */
         private ValueId lowerVariableAssign(AssignmentExpr assignment, IdentifierExpr target) {
+            if (closureCore) {
+                return lowerVariableAssignClosure(assignment, target);
+            }
             return lowerVariableAssign(assignment, target, null);
         }
 
@@ -2403,6 +3210,55 @@ public final class SemanticLowerer {
                     + "allocation is E6's; only loop bindings and declared variables "
                     + "carry a store identity here)");
             }
+            return emitVariableAssignChain(assignment, target, binding, generation, slot);
+        }
+
+        /**
+         * ASSIGN VARIABLE — the closure walk's variable-assignment arm
+         * (closure-core mode): the target must be a declared binding of
+         * the walk's environment; the store commits the dominant
+         * incarnation at the assignment site (B9 R1) and, inside a
+         * detached-body walk, registers the reference as a capture of the
+         * open {@code CLOSURE_NEW} (stores reference cells — capture
+         * by binding). A store of a function-typed value updates the
+         * incarnation's statically tracked function identity (identity
+         * preservation).
+         */
+        private ValueId lowerVariableAssignClosure(AssignmentExpr assignment,
+                                                   IdentifierExpr target) {
+            FrameResolution resolution = resolveFrame(target.name());
+            if (resolution == null) {
+                throw new ConstructUnlowered("assignment target '" + target.name()
+                    + "' is not a declared binding of the closure walk's environment "
+                    + "(module members are E10's)");
+            }
+            maybeRegisterCapture(target.name(), resolution);
+            ValueId value = emitVariableAssignChain(assignment, target,
+                resolution.entry().cell().id, resolution.entry().incarnation().generation(),
+                null);
+            RuntimeDescriptor targetDescriptor =
+                ContainerPayloadDescriptors.resultDescriptorOf(checkedType(target));
+            if (targetDescriptor instanceof RuntimeDescriptor.Func) {
+                functionIdentity.put(resolution.entry().incarnation(), value);
+            }
+            return value;
+        }
+
+        /**
+         * ASSIGN VARIABLE chain emission (the shared closed shape
+         * {@code [valueOp, boundaryOp(VARIABLE_ASSIGNMENT),
+         * commitOp(BINDING_STORE)]}): the value child, then exactly one
+         * {@code VARIABLE_ASSIGNMENT} boundary carrying the target
+         * binding's declared descriptor and the descriptor-kind policy
+         * with input = the committed value, then the
+         * {@code BINDING_STORE} commit storing
+         * {@code {binding, generation, committed value}} (A-D4/A-D5).
+         * The {@code ASSIGN} result is the committed value with
+         * {@code resultType} = the declared target descriptor (A-D6).
+         */
+        private ValueId emitVariableAssignChain(AssignmentExpr assignment,
+                                                IdentifierExpr target, BindingId binding,
+                                                long generation, ValueId slot) {
             Type targetType = checkedType(target);
             RuntimeDescriptor targetDescriptor =
                 ContainerPayloadDescriptors.resultDescriptorOf(targetType);
@@ -2852,8 +3708,9 @@ public final class SemanticLowerer {
          * publishes the committed value).
          */
         private OpId producerOpId(ValueId value) {
-            for (int i = ops.size() - 1; i >= 0; i--) {
-                SemanticOp op = ops.get(i);
+            List<SemanticOp> target = emitTarget();
+            for (int i = target.size() - 1; i >= 0; i--) {
+                SemanticOp op = target.get(i);
                 if (value.equals(op.result())) {
                     return op.opId();
                 }
@@ -2979,10 +3836,10 @@ public final class SemanticLowerer {
                 claims,
                 coverage,
                 Map.of(),
-                Map.of(),
+                Map.copyOf(functions),
                 new ModuleInitPlan(List.copyOf(imports), moduleInitBlock),
                 ExportPlan.empty(),
-                Map.of(),
+                Map.copyOf(functionBindings),
                 ops());
         }
 
@@ -3135,7 +3992,7 @@ public final class SemanticLowerer {
             BlockId bodyBlock = allocateBlock();
             AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
             OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
-            int mark = ops.size();
+            int mark = emitTarget().size();
             pushBlockParent(opId);
             pushBlock(initBlock);
             ValueId condition;
@@ -3191,7 +4048,7 @@ public final class SemanticLowerer {
             OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
             ValueId condition = statement.condition().isPresent()
                 ? ids.nextValueId(module, nextOrdinal++, 0) : null;
-            int mark = ops.size();
+            int mark = emitTarget().size();
             pushBlockParent(opId);
             pushBlock(initBlock);
             try {
@@ -3273,7 +4130,7 @@ public final class SemanticLowerer {
             BindingId catchBinding = ids.nextBindingId(module, nextOrdinal++, 0);
             AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
             OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
-            int mark = ops.size();
+            int mark = emitTarget().size();
             pushBlockParent(opId);
             pushBlock(tryBlock);
             try {
@@ -3422,6 +4279,19 @@ public final class SemanticLowerer {
          * load-resolution rule: the load carries the innermost matching
          * enclosing {@code FOR_EACH} payload's initial generation; any
          * other identifier is a foreign construct (E6005).
+         *
+         * <p><b>Closure-core mode (ISSUE-0445).</b> The load resolves
+         * the declared binding of the walk's environment through the
+         * frame walk (the function's own scope chain first — B9 R2), and
+         * a reference resolving outside the innermost open detached-body
+         * walk registers the capture (B3: the capture set is the body's
+         * free bindings in first-reference order). A load of a
+         * function-typed binding publishes the incarnation's statically
+         * tracked function identity (loads preserve allocation identity);
+         * a function-typed load whose identity is not statically known
+         * (parameters, catch bindings, iteration bindings — dynamic
+         * function values) fails closed as the registry child's
+         * resolution (B5).</p>
          */
         private ValueId lowerBindingLoad(IdentifierExpr identifier) {
             return lowerBindingLoad(identifier, null);
@@ -3446,6 +4316,16 @@ public final class SemanticLowerer {
                         FailurePolicyId.NO_DEAL_FAILURE, slot);
                 }
             }
+            if (closureCore) {
+                FrameResolution resolution = resolveFrame(identifier.name());
+                if (resolution == null) {
+                    throw new ConstructUnlowered("identifier '" + identifier.name()
+                        + "' is not a declared binding of the closure walk's environment "
+                        + "(class/module members are E9's/E10's)");
+                }
+                maybeRegisterCapture(identifier.name(), resolution);
+                return emitResolvedLoad(identifier, type, resolution.entry());
+            }
             // The binding-environment hook (ISSUE-0444 binding-core child):
             // every declared binding of the walk's environment resolves to
             // its dominant incarnation at the site, so the emitted load
@@ -3463,6 +4343,105 @@ public final class SemanticLowerer {
                 + "' is not a load of an enclosing for-of loop binding or catch "
                 + "binding in this stage's window (binding allocation, non-loop "
                 + "loads, and generation increments/stores are E6's, ISSUE-0235)");
+        }
+
+        /**
+         * Emits one resolved {@code BINDING_LOAD} (closure-core mode):
+         * the payload names the dominant incarnation's
+         * {@code {binding, generation}}; the result publishes the
+         * incarnation's statically tracked function identity for
+         * function-typed loads (identity preservation) or a fresh
+         * {@code ValueId} otherwise.
+         */
+        private ValueId emitResolvedLoad(IdentifierExpr identifier, Type type,
+                                         FrameEntry entry) {
+            RuntimeDescriptor descriptor = ContainerPayloadDescriptors.resultDescriptorOf(type);
+            ValueId result = null;
+            if (descriptor instanceof RuntimeDescriptor.Func) {
+                result = functionIdentity.get(entry.incarnation());
+                if (result == null) {
+                    throw new ConstructUnlowered("function-typed load of '"
+                        + identifier.name() + "' whose cell value identity is not "
+                        + "statically tracked (dynamic function values — parameters, "
+                        + "catch bindings, iteration bindings, and first-class "
+                        + "intrinsics, whose closed binding shape is the registry "
+                        + "child's — are the registry child's resolution, B5)");
+                }
+            }
+            if (result == null) {
+                result = ids.nextValueId(module, nextOrdinal++, 0);
+            }
+            AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+            OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
+            SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(identifier.span()),
+                SourceOriginKind.USER, anchor, currentParent());
+            emit(buildOp(opId, SemanticOpKind.BINDING_LOAD,
+                new KindPayload.BindingLoadPayload(entry.cell().id,
+                    entry.incarnation().generation()),
+                result, descriptor, FailurePolicyId.NO_DEAL_FAILURE, origin));
+            return result;
+        }
+
+        /**
+         * {@code CLOSURE_NEW} — the function-expression arm (closure-core
+         * mode, ISSUE-0445): every function expression produces exactly
+         * one {@code CLOSURE_NEW} publishing a fresh function identity
+         * with the function expression's exact checked signature, the
+         * body's captures in first-reference order (collected during the
+         * buffered body walk — B3), and the {@code LoweredBody} binding.
+         * The body ops flush after the {@code CLOSURE_NEW} op (the
+         * buffered walk runs first so the captures are known when the
+         * payload is built).
+         */
+        private ValueId lowerClosureExpr(FunctionExpr functionExpr) {
+            BlockId bodyBlock = allocateBlock();
+            FunctionId functionId = ids.nextFunctionId(module, nextOrdinal++, 0);
+            Type checkedFunctionType = checkedType(functionExpr);
+            if (!(checkedFunctionType instanceof Type.Func)) {
+                throw new ConstructUnlowered("function expression of non-function checked "
+                    + "type " + typeName(checkedFunctionType) + " (a checked FunctionExpr "
+                    + "must be function-typed)");
+            }
+            RuntimeDescriptor.Func signature = (RuntimeDescriptor.Func)
+                ContainerPayloadDescriptors.resultDescriptorOf(checkedFunctionType);
+            List<SemanticOp> bodyOps = new ArrayList<>();
+            List<CapturedCell> captured = new ArrayList<>();
+            emitTargets.push(bodyOps);
+            captureBorders.push(bindingScopes.size());
+            captureCollectors.push(captured);
+            try {
+                checkerScopeNodes.push(functionExpr.body());
+                pushBindingFrame();
+                blockStack.push(bodyBlock);
+                for (deal.ast.Parameter parameter : functionExpr.params()) {
+                    BindingId binding = ids.nextBindingId(module, nextOrdinal++, 0);
+                    BindingCoreIncarnation incarnation = new BindingCoreIncarnation(
+                        INITIAL_LOOP_GENERATION, bodyBlock, BindingCellKind.DIRECT,
+                        true, BindingProducer.BINDING_ALLOC, false);
+                    registerBinding(parameter.name(), binding, incarnation);
+                    emitUserNullOp(SemanticOpKind.BINDING_ALLOC,
+                        new KindPayload.BindingAllocPayload(binding, bodyBlock, true,
+                            cellKinds.cellKindOf(incarnation), INITIAL_LOOP_GENERATION),
+                        parameter.span(), FailurePolicyId.NO_DEAL_FAILURE);
+                }
+                lowerBindingStatements(functionExpr.body().statements(), false);
+                blockStack.pop();
+                popBindingFrame();
+                checkerScopeNodes.pop();
+            } finally {
+                captureCollectors.pop();
+                captureBorders.pop();
+                emitTargets.pop();
+            }
+            List<BindingId> captureIds = new ArrayList<>();
+            for (CapturedCell capture : captured) {
+                captureIds.add(capture.cell().id);
+            }
+            ValueId result = ids.nextValueId(module, nextOrdinal++, 0);
+            emitClosureNew(functionId, result, signature, captureIds, bodyBlock,
+                functionExpr.span(), captured);
+            emitTarget().addAll(bodyOps);
+            return result;
         }
 
         /** {@code ARRAY_NEW} — element prior steps, the op, then the boundary children. */
@@ -3678,7 +4657,7 @@ public final class SemanticLowerer {
                 left, right, origin, ids, nextOrdinal, 0);
             // The producer consumed exactly one source ordinal (VALUE, OP).
             nextOrdinal++;
-            ops.add(comparison);
+            emit(comparison);
             return (ValueId) comparison.result();
         }
 
@@ -3710,7 +4689,7 @@ public final class SemanticLowerer {
             BlockId selectedBlock = allocateBlock();
             AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
             OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
-            int mark = ops.size();
+            int mark = emitTarget().size();
             pushBlockParent(opId);
             pushBlock(selectedBlock);
             ValueId right;
@@ -4013,7 +4992,7 @@ public final class SemanticLowerer {
             OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
             SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(span),
                 SourceOriginKind.USER, anchor, chainParents.peek());
-            ops.add(buildOp(opId, kind, payload, null, null, policy, origin));
+            emit(buildOp(opId, kind, payload, null, null, policy, origin));
             return opId;
         }
 
@@ -4030,7 +5009,7 @@ public final class SemanticLowerer {
             OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
             SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(span),
                 SourceOriginKind.SYNTHETIC, anchor, null);
-            ops.add(buildOp(opId, kind, payload, value, resultType, List.of(), List.of(),
+            emit(buildOp(opId, kind, payload, value, resultType, List.of(), List.of(),
                 policy, origin));
             return value;
         }
