@@ -11,7 +11,6 @@ import deal.checker.NameResolver;
 import deal.checker.SymbolTable;
 import deal.checker.TypeChecker;
 import deal.codegen.lua.LuaBackend;
-import deal.descriptors.CanonicalRuntimeTypeDescriptor;
 import deal.identity.CanonicalModuleIdentity;
 import deal.identity.ProjectModuleIdentity;
 import deal.module.ModuleIdentityResolver;
@@ -1393,7 +1392,7 @@ public class LuaAbiBackendTest {
     public void hostDeclaredImportedClassKeepsTheDefaultsSeamAndReadsNoPlan() {
         String filename = "hosttest.deal";
         Map<String, Type> exports = new LinkedHashMap<>();
-        exports.put("ServerConfig", Types.classType("ServerConfig", "host.cfg"));
+        exports.put("ServerConfig", IdentityTestFixtures.classType("ServerConfig", "host.cfg"));
         StubModuleResolver resolver = new StubModuleResolver();
         resolver.register("host/cfg", exports);
         resolver.registerClassSymbol("host.cfg", new Symbol.ClassSymbol(
@@ -1402,7 +1401,8 @@ public class LuaAbiBackendTest {
                     "port", false, false, new NamedType(
                         new Span("host.cfg", 1, 1, 1, 1), "int"),
                     java.util.Optional.empty())),
-            "host.cfg"));
+            "host.cfg",
+            IdentityTestFixtures.identityOf("host.cfg", "ServerConfig")));
         CompileResult out = compile(
             "import * as cfg from \"host/cfg\"\n" +
             "export function make(): cfg.ServerConfig {\n" +
@@ -1427,7 +1427,7 @@ public class LuaAbiBackendTest {
     public void dealImportedClassConstructsThroughTheExportedPlan() {
         String filename = "dealimport.deal";
         Map<String, Type> exports = new LinkedHashMap<>();
-        exports.put("Item", Types.classType("Item", "lib"));
+        exports.put("Item", IdentityTestFixtures.classType("Item", "lib"));
         StubModuleResolver resolver = new StubModuleResolver();
         resolver.register("./lib", exports);
         resolver.registerClassSymbol("lib", new Symbol.ClassSymbol(
@@ -1436,7 +1436,8 @@ public class LuaAbiBackendTest {
                     "value", false, false, new NamedType(
                         new Span("lib", 1, 1, 1, 1), "int"),
                     java.util.Optional.empty())),
-            "lib"));
+            "lib",
+            IdentityTestFixtures.identityOf("lib", "Item")));
         // The standalone descriptor surface classifies only the
         // module's own path and the hostModules keys; register "lib" as
         // a project module so the canonical encoder can represent
@@ -1450,9 +1451,7 @@ public class LuaAbiBackendTest {
             new ProjectModuleIdentity("lib", "lib", List.of())));
         ModuleIdentityResolver.IdentityIndex index =
             ModuleIdentityResolver.buildIndex(byPath);
-        CanonicalRuntimeTypeDescriptor descriptors =
-            new CanonicalRuntimeTypeDescriptor(index,
-                index.moduleIdentityLookup());
+
         LexResult lex = new Lexer(
             "import * as lib from \"./lib\"\n" +
             "export function make(): lib.Item {\n" +
@@ -1465,7 +1464,7 @@ public class LuaAbiBackendTest {
             parse.program());
         String lua = LuaBackend.generateWithImports(parse.program(),
             result, filename, filename, Map.of(), Map.of(), false,
-            descriptors);
+            index);
         CompileResult out = new CompileResult(lua, parse.program(), result);
 
         assertThat(out.lua(), containsString(
