@@ -7,6 +7,11 @@ import deal.ast.NullableType;
 import deal.checker.CheckResult;
 import deal.checker.Symbol;
 import deal.checker.SymbolTable;
+import deal.identity.CanonicalClassIdentity;
+import deal.identity.CanonicalClassIdentityIndex;
+import deal.identity.CanonicalModuleIdentity;
+import deal.identity.ProjectModuleIdentity;
+import deal.module.ModuleIdentityResolver;
 import deal.diagnostics.DiagnosticCode;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.semantic.ir.SemanticProfile;
@@ -25,6 +30,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Function;
 
 /**
  * JVM code generator (ISSUE-0091 skeleton, ISSUE-0092 semantic slice —
@@ -635,6 +641,47 @@ public final class JvmBackend {
     private final SymbolTable symbols;
     private final String sourcePath;
     private final String modulePath;
+
+    // v1.2 identity carriage (descriptor-identity-propagation D1): class
+    // descriptor text comes only from
+    // index.descriptorTextFor(identity); the module-path classification
+    // (the module-identity layer's own surface) builds the local
+    // classes' identities and routes imported identities back to their
+    // private wiring paths.  Descriptor text is never computed from the
+    // dotted module path.
+    private final CanonicalClassIdentityIndex identityIndex;
+    private final Function<String, CanonicalModuleIdentity> moduleIdentities;
+
+    /** The static identity index of the public static
+     * {@link #typeDescriptor(Type)} surface: descriptorTextFor projects
+     * from the identity carriers, so one empty-classification index
+     * serves every identity. */
+    private static final CanonicalClassIdentityIndex STATIC_DESCRIPTOR_INDEX =
+        ModuleIdentityResolver.buildIndex(Map.of(
+            "", CanonicalModuleIdentity.BuiltinModule.INSTANCE));
+
+    /** The standalone single-module identity surface of the legacy
+     * generate overloads: both the module path and the source path
+     * classify as project modules whose root text is the path itself
+     * (the checker's standalone default classifies its path the same
+     * way, so local-class identity comparisons align in the
+     * single-module harnesses). */
+    private static Function<String, CanonicalModuleIdentity> standaloneClassification(
+            String modulePath, String sourcePath) {
+        Map<String, CanonicalModuleIdentity> map = new LinkedHashMap<>();
+        map.put("", CanonicalModuleIdentity.BuiltinModule.INSTANCE);
+        // List.of (not Set.of): modulePath and sourcePath may be
+        // equal or null; iterate once per distinct non-empty path.
+        for (String path : List.of(modulePath, sourcePath)) {
+            if (path != null && !path.isEmpty()
+                    && !map.containsKey(path)) {
+                map.put(path,
+                    new CanonicalModuleIdentity.ProjectModule(
+                        new ProjectModuleIdentity(path, path, List.of())));
+            }
+        }
+        return map::get;
+    }
     private final boolean isEntry;
 
     /** True when this artifact must carry the shared $DealRt table
@@ -1139,6 +1186,8 @@ public final class JvmBackend {
                        Map<String, Map<String, ClassDeclaration>> importedClasses,
                        Map<String, Map<String, Type>> hostModules,
                        boolean isEntry, boolean emitSharedTable,
+                       CanonicalClassIdentityIndex identityIndex,
+                       Function<String, CanonicalModuleIdentity> moduleIdentities,
                        SemanticProfile semanticProfile) {
         this.typeMap = typeMap;
         this.symbols = symbols;
@@ -1146,6 +1195,10 @@ public final class JvmBackend {
         this.modulePath = modulePath;
         this.isEntry = isEntry;
         this.emitSharedTable = emitSharedTable;
+        this.identityIndex = Objects.requireNonNull(identityIndex,
+            "identityIndex must not be null");
+        this.moduleIdentities = Objects.requireNonNull(moduleIdentities,
+            "moduleIdentities must not be null");
         this.int32Mode = semanticProfile == SemanticProfile.DEAL_V1_2_INT32;
         this.importResolutions = importResolutions == null
             ? Map.of() : Map.copyOf(importResolutions);
@@ -1365,11 +1418,60 @@ public final class JvmBackend {
                                             boolean isEntry,
                                             boolean emitSharedTable,
                                             SemanticProfile semanticProfile) {
+        // The legacy overload chain supplies the standalone
+        // single-module identity surface (the checker's standalone
+        // default classifies its paths the same way).
+        Function<String, CanonicalModuleIdentity> classification =
+            standaloneClassification(modulePath, sourcePath);
+        ModuleIdentityResolver.IdentityIndex standalone =
+            ModuleIdentityResolver.buildIndex(
+                classificationMap(modulePath, sourcePath));
+        return generate(program, result, sourcePath, modulePath,
+            importResolutions, importedClasses, hostModules, isEntry,
+            emitSharedTable, standalone, classification, semanticProfile);
+    }
+
+    private static Map<String, CanonicalModuleIdentity> classificationMap(
+            String modulePath, String sourcePath) {
+        Map<String, CanonicalModuleIdentity> map = new LinkedHashMap<>();
+        map.put("", CanonicalModuleIdentity.BuiltinModule.INSTANCE);
+        // List.of (not Set.of): modulePath and sourcePath may be
+        // equal or null; iterate once per distinct non-empty path.
+        for (String path : List.of(modulePath, sourcePath)) {
+            if (path != null && !path.isEmpty()
+                    && !map.containsKey(path)) {
+                map.put(path,
+                    new CanonicalModuleIdentity.ProjectModule(
+                        new ProjectModuleIdentity(path, path, List.of())));
+            }
+        }
+        return map;
+    }
+
+    /**
+     * The production identity-carriage generate entry
+     * (descriptor-identity-propagation D1/D2): the orchestrator passes
+     * the compilation's identity index and module-path classification;
+     * every class descriptor this backend emits resolves through
+     * {@code index.descriptorTextFor(identity)} — the same projection
+     * the one descriptor service produces.
+     */
+    public static JvmCodegenResult generate(ProgramNode program, CheckResult result,
+                                            String sourcePath, String modulePath,
+                                            Map<String, String> importResolutions,
+                                            Map<String, Map<String, ClassDeclaration>> importedClasses,
+                                            Map<String, Map<String, Type>> hostModules,
+                                            boolean isEntry,
+                                            boolean emitSharedTable,
+                                            CanonicalClassIdentityIndex identityIndex,
+                                            Function<String, CanonicalModuleIdentity> moduleIdentities,
+                                            SemanticProfile semanticProfile) {
         Objects.requireNonNull(semanticProfile,
             "semanticProfile must not be null");
         JvmBackend backend = new JvmBackend(result.typeMap(), result.symbolTable(),
             sourcePath, modulePath, importResolutions, importedClasses,
-            hostModules, isEntry, emitSharedTable, semanticProfile);
+            hostModules, isEntry, emitSharedTable, identityIndex,
+            moduleIdentities, semanticProfile);
         return backend.generateProgram(program);
     }
 
@@ -4713,17 +4815,76 @@ public final class JvmBackend {
         return "$C_" + javaName(name);
     }
 
-    /** The runtime identity string of a local class: the spec's
-     * {@code ClassDescriptor} ({@code @<modulePath>/<name>}, bare name when
-     * the module path is empty), mirroring the LuaJIT backend's
-     * {@code qualifiedClassName} (runtime-class-identity D2(0)): every
-     * producer and consumer in the module uses the backend-held module
-     * path, never the checker's {@code Type.Class} module path (the
-     * conformance adapter checks with the filename while codegen runs with
-     * {@code Main}). */
+    /** The runtime identity text of a local class: the identity index's
+     * projection of the module-identity layer's identity for the
+     * backend-held module path (v1.2 identity carriage — never a
+     * locally derived dotted spelling).  Every producer and consumer in
+     * the module uses the backend-held identity; the conformance adapter
+     * checks with the filename while codegen runs with {@code Main},
+     * and the locality predicate aligns both sides. */
     private String classIdentity(String name) {
-        return (modulePath == null || modulePath.isEmpty())
-            ? name : "@" + modulePath + "/" + name;
+        return identityIndex.descriptorTextFor(localClassIdentity(name));
+    }
+
+    /**
+     * The canonical class identity of a class declared in THIS module:
+     * the module-identity layer's classification of the backend-held
+     * module path plus the class name (descriptor-identity-propagation
+     * D1).  A module without a public identity fails closed.
+     */
+    private CanonicalClassIdentity localClassIdentity(String name) {
+        String mp = modulePath != null && !modulePath.isEmpty()
+            ? modulePath : "";
+        CanonicalModuleIdentity moduleIdentity = moduleIdentities.apply(mp);
+        if (moduleIdentity == null) {
+            throw new IllegalStateException(
+                "no canonical public module identity for module path '" + mp
+                    + "': a class there can never be represented "
+                    + "(internal invariant violation)");
+        }
+        return new CanonicalClassIdentity(moduleIdentity, name);
+    }
+
+    /** The intrinsic builtin Error class type (E2's synthesis). */
+    private static Type.Class errorClassType() {
+        return Types.classType("Error", new CanonicalClassIdentity(
+            CanonicalModuleIdentity.BuiltinModule.INSTANCE, "Error"));
+    }
+
+    /** A Class type for a class declared in the given wiring path. */
+    private Type.Class classTypeFor(String name, String wiringPath) {
+        CanonicalModuleIdentity moduleIdentity =
+            moduleIdentities.apply(wiringPath == null ? "" : wiringPath);
+        if (moduleIdentity == null) {
+            throw new IllegalStateException(
+                "no canonical public module identity for module path '"
+                    + wiringPath + "': a class there can never be "
+                    + "represented (internal invariant violation)");
+        }
+        return Types.classType(name,
+            new CanonicalClassIdentity(moduleIdentity, name));
+    }
+
+    /**
+     * The private wiring module path of an IMPORTED class type: the
+     * imported module whose classification equals the carried identity
+     * and whose declarations contain the class name.  Identity text is
+     * never reconstructed from this path; the path only keys the
+     * backend's private imported-declaration map.
+     */
+    private String declaringModulePath(Type.Class cls) {
+        for (String module : importAliases.values()) {
+            Map<String, ClassDeclaration> decls = importedClasses.get(module);
+            if (decls == null || !decls.containsKey(cls.name())) {
+                continue;
+            }
+            CanonicalModuleIdentity classified = moduleIdentities.apply(module);
+            if (classified != null
+                    && cls.identity().moduleIdentity().equals(classified)) {
+                return module;
+            }
+        }
+        return null;
     }
 
     // =========================================================================
@@ -4756,12 +4917,8 @@ public final class JvmBackend {
             case Type.Error ignored -> "Error";
             case Type.Array arr -> "[" + typeDescriptor(arr.element()) + "]";
             case Type.Nullable n -> "?" + typeDescriptor(n.inner());
-            case Type.Class cls -> {
-                if (cls.modulePath() != null && !cls.modulePath().isEmpty()) {
-                    yield "@" + cls.modulePath() + "/" + cls.name();
-                }
-                yield cls.name();
-            }
+            case Type.Class cls ->
+                STATIC_DESCRIPTOR_INDEX.descriptorTextFor(cls.identity());
             case Type.Func f -> {
                 StringBuilder sb = new StringBuilder();
                 if (f.isAsync()) sb.append("async");
@@ -4806,7 +4963,7 @@ public final class JvmBackend {
      */
     private String classCheckDescriptor(Type.Class cls) {
         if (isLocalClassType(cls)) return classIdentity(cls.name());
-        return "@" + cls.modulePath() + "/" + cls.name();
+        return identityIndex.descriptorTextFor(cls.identity());
     }
 
     /**
@@ -4851,14 +5008,15 @@ public final class JvmBackend {
      * a bare-name guess.
      */
     private String importedClassModuleRef(Type.Class cls, Span span) {
-        String module = cls.modulePath();
-        Map<String, ClassDeclaration> decls = importedClasses.get(module);
-        if (!importAliases.containsValue(module)
+        String module = declaringModulePath(cls);
+        Map<String, ClassDeclaration> decls = module == null
+            ? null : importedClasses.get(module);
+        if (module == null || !importAliases.containsValue(module)
                 || decls == null || !decls.containsKey(cls.name())) {
             unsupported("values of imported class type '" + cls.name()
-                + "' from module '" + module + "' (the module is not an "
-                + "imported compiled project module of this module, or "
-                + "its class declaration is unavailable)", span);
+                + "' (the declaring module is not an imported compiled "
+                + "project module of this module, or its class "
+                + "declaration is unavailable)", span);
             return null;
         }
         return classNameFor(module);
@@ -4868,14 +5026,15 @@ public final class JvmBackend {
      * {@link #importedClassModuleRef(Type.Class, Span)} (D6): same note
      * rule as {@link #jsonClassRefSynthetic(Type.Class)}. */
     private String importedClassModuleRefSynthetic(Type.Class cls) {
-        String module = cls.modulePath();
-        Map<String, ClassDeclaration> decls = importedClasses.get(module);
-        if (!importAliases.containsValue(module)
+        String module = declaringModulePath(cls);
+        Map<String, ClassDeclaration> decls = module == null
+            ? null : importedClasses.get(module);
+        if (module == null || !importAliases.containsValue(module)
                 || decls == null || !decls.containsKey(cls.name())) {
             unsupportedSynthetic("values of imported class type '" + cls.name()
-                + "' from module '" + module + "' (the module is not an "
-                + "imported compiled project module of this module, or "
-                + "its class declaration is unavailable)",
+                + "' (the declaring module is not an imported compiled "
+                + "project module of this module, or its class "
+                + "declaration is unavailable)",
                 "missing anchor: class declaration span for class '"
                     + cls.name() + "'");
             return null;
@@ -4897,9 +5056,10 @@ public final class JvmBackend {
      * E6000).
      */
     private String importedArrayWrapperName(Type.Class c) {
-        String module = c.modulePath();
-        Map<String, ClassDeclaration> decls = importedClasses.get(module);
-        if (!importAliases.containsValue(module)
+        String module = declaringModulePath(c);
+        Map<String, ClassDeclaration> decls = module == null
+            ? null : importedClasses.get(module);
+        if (module == null || !importAliases.containsValue(module)
                 || decls == null || !decls.containsKey(c.name())) {
             return null;
         }
@@ -4993,8 +5153,51 @@ public final class JvmBackend {
      * value for the local generated class (a broken artifact or a
      * nominal-identity corruption). */
     private boolean isLocalClassType(Type.Class cls) {
-        String mp = cls.modulePath();
-        return mp.isEmpty() || mp.equals(modulePath) || mp.equals(sourcePath);
+        // v1.2 identity carriage: locality is module-identity equality
+        // against the backend-held module path or source path (the
+        // single-module harnesses type with the source filename while
+        // codegen runs with the module path — both classify locally).
+        CanonicalModuleIdentity carried = cls.identity().moduleIdentity();
+        if (carried.equals(CanonicalModuleIdentity.BuiltinModule.INSTANCE)) {
+            return true; // the intrinsic builtin Error class
+        }
+        boolean local = false;
+        String mp = modulePath != null && !modulePath.isEmpty()
+            ? modulePath : "";
+        CanonicalModuleIdentity mine = moduleIdentities.apply(mp);
+        if (carried.equals(mine)) {
+            local = true;
+        }
+        String sp = sourcePath != null && !sourcePath.isEmpty()
+            ? sourcePath : "";
+        if (!local && !sp.isEmpty() && !sp.equals(mp)) {
+            CanonicalModuleIdentity src = moduleIdentities.apply(sp);
+            if (carried.equals(src)) {
+                local = true;
+            }
+        }
+        if (!local) {
+            return false;
+        }
+        // Two files in one directory share the module identity (the
+        // relative components exclude the file stem): an import alias
+        // whose imported declarations contain this class name AND whose
+        // module classification equals the carried identity claims the
+        // class as IMPORTED — exactly the declaring-module routing the
+        // imported-class seams perform. A companion in a different
+        // directory carries a distinct identity and never claims a
+        // local class.
+        for (String module : importAliases.values()) {
+            Map<String, ClassDeclaration> decls = importedClasses.get(module);
+            if (decls == null || !decls.containsKey(cls.name())) {
+                continue;
+            }
+            CanonicalModuleIdentity classified = moduleIdentities.apply(module);
+            if (classified != null && carried.equals(classified)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -5478,8 +5681,9 @@ public final class JvmBackend {
         if (isLocalClassType(cls)) {
             return moduleClasses.get(cls.name());
         }
-        Map<String, ClassDeclaration> decls =
-            importedClasses.get(cls.modulePath());
+        String module = declaringModulePath(cls);
+        Map<String, ClassDeclaration> decls = module == null
+            ? null : importedClasses.get(module);
         return decls == null ? null : decls.get(cls.name());
     }
 
@@ -5491,8 +5695,9 @@ public final class JvmBackend {
         if (isLocalClassType(cls)) {
             cd = moduleClasses.get(cls.name());
         } else {
-            Map<String, ClassDeclaration> decls =
-                importedClasses.get(cls.modulePath());
+            String module = declaringModulePath(cls);
+            Map<String, ClassDeclaration> decls = module == null
+                ? null : importedClasses.get(module);
             cd = decls == null ? null : decls.get(cls.name());
         }
         if (cd == null) return null;
@@ -7938,8 +8143,7 @@ public final class JvmBackend {
         // in a scope pushed before the catch clause text is emitted.
         localScopes.push(new LinkedHashMap<>());
         localTypeScopes.push(new LinkedHashMap<>());
-        String catchName = declareLocal(ts.catchVar(),
-            Types.classType("Error", ""));
+        String catchName = declareLocal(ts.catchVar(), errorClassType());
         emitLine("} catch (java.lang.RuntimeException " + catchName + ") {");
         indent++;
         // ISSUE-0102 closure capture: a catch variable captured by a
@@ -8040,9 +8244,11 @@ public final class JvmBackend {
     }
 
     /** True when {@code c} is the builtin {@code Error} class type (the
-     * checker types throw/catch values as {@code @/Error}). */
+     * checker types throw/catch values with the intrinsic
+     * {@code @$builtin/Error} identity). */
     private static boolean isBuiltinErrorType(Type.Class c) {
-        return "Error".equals(c.name()) && c.modulePath().isEmpty();
+        return c.identity().equals(new CanonicalClassIdentity(
+            CanonicalModuleIdentity.BuiltinModule.INSTANCE, "Error"));
     }
 
     private void emitWhile(WhileStatement ws) {
@@ -8243,7 +8449,7 @@ public final class JvmBackend {
             if (isLocalClassType(eCls) || isLocalClassType(tCls)) {
                 return true;
             }
-            return eCls.modulePath().equals(tCls.modulePath());
+            return eCls.identity().equals(tCls.identity());
         }
         return Types.equals(inner, element);
     }
@@ -8462,20 +8668,21 @@ public final class JvmBackend {
      */
     private String emitImportedClassConstruction(Type.Class cls,
                                                  ObjectLiteralExpr obj) {
-        Map<String, ClassDeclaration> decls = importedClasses.get(cls.modulePath());
+        String module = declaringModulePath(cls);
+        Map<String, ClassDeclaration> decls = module == null
+            ? null : importedClasses.get(module);
         ClassDeclaration cd = decls == null ? null : decls.get(cls.name());
         if (cd == null) {
             unsupported("construction of imported class '" + cls.name()
-                + "' from module '" + cls.modulePath() + "' (its "
-                + "declaration is unavailable — the module is not an "
-                + "imported compiled project module of this module, or "
-                + "the class is not module-level)", obj.span());
+                + "' (its declaration is unavailable — the declaring "
+                + "module is not an imported compiled project module of "
+                + "this module, or the class is not module-level)",
+                obj.span());
             return "null";
         }
-        if (!importAliases.containsValue(cls.modulePath())) {
+        if (module == null || !importAliases.containsValue(module)) {
             unsupported("construction of imported class '" + cls.name()
-                + "' from module '" + cls.modulePath() + "' (the "
-                + "declaring module is not imported)", obj.span());
+                + "' (the declaring module is not imported)", obj.span());
             return "null";
         }
         for (ClassField cf : cd.fields()) {
@@ -8515,7 +8722,7 @@ public final class JvmBackend {
                 return "null";
             }
         }
-        String moduleClass = classNameFor(cls.modulePath());
+        String moduleClass = classNameFor(module);
         return emitClassConstructorCall(cd,
             moduleClass + "." + classNameForClass(cd.name()), obj, false);
     }
@@ -12095,8 +12302,9 @@ public final class JvmBackend {
                         }
                     }
                 } else if (!isBuiltinErrorType(cls)) {
-                    Map<String, ClassDeclaration> decls =
-                        importedClasses.get(cls.modulePath());
+                    String module = declaringModulePath(cls);
+                    Map<String, ClassDeclaration> decls = module == null
+                        ? null : importedClasses.get(module);
                     ClassDeclaration icd = decls == null ? null
                         : decls.get(cls.name());
                     if (icd != null
@@ -12359,13 +12567,13 @@ public final class JvmBackend {
                     Symbol sym = symbols.resolve(nt.name());
                     if (sym instanceof Symbol.ClassSymbol
                             && moduleClasses.containsKey(nt.name())) {
-                        yield new Type.Class(nt.name(), modulePath);
+                        yield classTypeFor(nt.name(), modulePath);
                     }
                     if ("Error".equals(nt.name())
                             && sym instanceof Symbol.ClassSymbol) {
                         // ISSUE-0102: the builtin Error class type maps
                         // to RuntimeException (see javaLocalType).
-                        yield new Type.Class("Error", "");
+                        yield errorClassType();
                     }
                     unsupported("type '" + nt.name() + "' (only local classes "
                         + "are supported)", nt.span());
@@ -12388,7 +12596,7 @@ public final class JvmBackend {
                         qt.span());
                     yield Type.Error.INSTANCE;
                 }
-                yield new Type.Class(qt.typeName(), module);
+                yield classTypeFor(qt.typeName(), module);
             }
             case ArrayType at -> {
                 Type elem = resolveTypeNode(at.elementType());

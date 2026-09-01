@@ -842,20 +842,12 @@ public class CanonicalRuntimeTypeDescriptorTest {
             }
         };
 
-    /**
-     * The module-path classification of the class-free stage: every
-     * module path is unclassified (no public identity), so a
-     * {@link Type.Class} encode raises the pinned absent-identity
-     * invariant violation (the class branch lands through the
-     * registered index of {@link #testEncodeClassBranch()}).
-     */
-    private static final java.util.function.Function<String, deal.identity.CanonicalModuleIdentity>
-        CLASS_FREE_CLASSIFICATION = modulePath -> null;
-
-    /** The per-compilation service under test. */
+    /** The per-compilation service under test: the v1.2 identity-carriage
+     * service takes only the identity index — class text comes from
+     * {@code index.descriptorTextFor(identity)} on the class type's
+     * carried identity. */
     private static final CanonicalRuntimeTypeDescriptor ENCODER =
-        new CanonicalRuntimeTypeDescriptor(CLASS_FREE_INDEX,
-            CLASS_FREE_CLASSIFICATION);
+        new CanonicalRuntimeTypeDescriptor(CLASS_FREE_INDEX);
 
     /** The canonical primitive keyword set (encode never emits a bare name). */
     private static final Set<String> PRIMITIVE_KEYWORDS_SET =
@@ -1006,25 +998,15 @@ public class CanonicalRuntimeTypeDescriptorTest {
         System.out.println("-- encode: per-compilation service contract --");
 
         CanonicalRuntimeTypeDescriptor service =
-            new CanonicalRuntimeTypeDescriptor(CLASS_FREE_INDEX,
-                CLASS_FREE_CLASSIFICATION);
+            new CanonicalRuntimeTypeDescriptor(CLASS_FREE_INDEX);
         check(service != null,
-            "service constructs with the pinned (index, module-path "
-            + "classification) signature");
+            "service constructs with the pinned identity-index signature");
 
         try {
-            new CanonicalRuntimeTypeDescriptor(null, CLASS_FREE_CLASSIFICATION);
+            new CanonicalRuntimeTypeDescriptor(null);
             fail("constructor: null index must be rejected", "no exception was thrown");
         } catch (NullPointerException expected) {
             check(true, "constructor: null index rejected");
-        }
-
-        try {
-            new CanonicalRuntimeTypeDescriptor(CLASS_FREE_INDEX, null);
-            fail("constructor: null module-path classification must be "
-                + "rejected", "no exception was thrown");
-        } catch (NullPointerException expected) {
-            check(true, "constructor: null module-path classification rejected");
         }
 
         try {
@@ -1110,7 +1092,8 @@ public class CanonicalRuntimeTypeDescriptorTest {
 
         IllegalStateException classFailure = null;
         try {
-            ENCODER.encode(new Type.Class("User", "lib.utils"));
+            ENCODER.encode(deal.test.IdentityTestFixtures.classType(
+                "User", "lib.utils"));
         } catch (IllegalStateException expected) {
             classFailure = expected;
         }
@@ -1118,8 +1101,8 @@ public class CanonicalRuntimeTypeDescriptorTest {
                 && classFailure.getMessage() != null
                 && !classFailure.getMessage().isEmpty(),
             "Type.Class encode for an identity-absent class is an explicit "
-            + "internal invariant violation (no module-identity "
-            + "classification, never fallback text)");
+            + "internal invariant violation (the identity is absent from "
+            + "the index, never fallback text)");
     }
 
     static void testEncodeClassBranch() {
@@ -1158,27 +1141,30 @@ public class CanonicalRuntimeTypeDescriptorTest {
                         + descriptorText + "\"");
                 }
             };
-        Map<String, CanonicalModuleIdentity> classification =
-            new java.util.HashMap<>();
-        classification.put("lib.utils", projectModule);
-        classification.put("", CanonicalModuleIdentity.BuiltinModule.INSTANCE);
         CanonicalRuntimeTypeDescriptor service =
-            new CanonicalRuntimeTypeDescriptor(registeredIndex,
-                classification::get);
+            new CanonicalRuntimeTypeDescriptor(registeredIndex);
 
+        // v1.2 identity carriage: class types carry their canonical
+        // identity; encode resolves the index projection from the
+        // identity — never from a module path.
+        CanonicalClassIdentity projectClass =
+            new CanonicalClassIdentity(projectModule, "User");
+        CanonicalClassIdentity builtinError =
+            new CanonicalClassIdentity(
+                CanonicalModuleIdentity.BuiltinModule.INSTANCE, "Error");
         check("@lib/utils/User".equals(
-                service.encode(new Type.Class("User", "lib.utils"))),
+                service.encode(new Type.Class("User", projectClass))),
             "Type.Class encodes to the index-registered project atom "
             + "@lib/utils/User");
         check("@$builtin/Error".equals(
-                service.encode(new Type.Class("Error", ""))),
+                service.encode(new Type.Class("Error", builtinError))),
             "the builtin Error class encodes to @$builtin/Error");
         check("@lib/utils/User".equals(service.encode(
-                Types.classType("User", "lib.utils"))),
+                Types.classType("User", projectClass))),
             "Types.classType encodes to the same index-registered atom");
 
         String classText = service.encode(
-            new Type.Class("User", "lib.utils"));
+            new Type.Class("User", projectClass));
         DescriptorParseResult classParse = parseResult(classText);
         check(classParse instanceof DescriptorAst.ClassAtom c
                 && "@lib/utils/User".equals(c.fullDescriptorText()),
@@ -1190,14 +1176,19 @@ public class CanonicalRuntimeTypeDescriptorTest {
 
         IllegalStateException absentFailure = null;
         try {
-            service.encode(new Type.Class("User", "unclassified.module"));
+            service.encode(new Type.Class("User",
+                new CanonicalClassIdentity(
+                    new CanonicalModuleIdentity.ProjectModule(
+                        new ProjectModuleIdentity("unclassified",
+                            "unclassified", List.of())),
+                    "User")));
         } catch (IllegalStateException expected) {
             absentFailure = expected;
         }
         check(absentFailure != null
                 && absentFailure.getMessage() != null
                 && !absentFailure.getMessage().isEmpty(),
-            "a class in an unclassified module path is the pinned "
+            "a class whose identity is absent from the index is the pinned "
             + "absent-identity invariant violation");
     }
 

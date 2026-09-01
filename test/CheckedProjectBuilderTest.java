@@ -54,6 +54,7 @@ import deal.semantic.ir.ReleaseState;
 import deal.semantic.ir.ResolvedImport;
 import deal.types.Type;
 import deal.types.Types;
+import deal.test.IdentityTestFixtures;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -412,10 +413,10 @@ public class CheckedProjectBuilderTest {
             java.util.Set.of(deal.ast.DeclarationDirective.JSONABLE));
         ProgramNode ast = programOf(new ExportDeclaration(span(), user));
         Map<String, Type> exports = new LinkedHashMap<>();
-        exports.put("User", Types.classType("User", "lib"));
+        exports.put("User", IdentityTestFixtures.classType("User", "lib"));
         exports.put("User$fromJson", new Type.Func(List.of(Type.String.INSTANCE),
-            Types.nullable(Types.classType("User", "lib"))));
-        exports.put("User$toJson", new Type.Func(List.of(Types.classType("User", "lib")),
+            Types.nullable(IdentityTestFixtures.classType("User", "lib"))));
+        exports.put("User$toJson", new Type.Func(List.of(IdentityTestFixtures.classType("User", "lib")),
             Type.String.INSTANCE));
         ModuleFact fact = declFact("lib", ast, exports);
 
@@ -542,9 +543,9 @@ public class CheckedProjectBuilderTest {
                     CanonicalTypeText.render(entry.getKey(), context)),
                 "TypeNode form renders exactly '" + entry.getValue() + "'");
         }
-        check("@/Error".equals(CanonicalTypeText.render(Types.classType("Error", ""))),
+        check("@/Error".equals(CanonicalTypeText.render(IdentityTestFixtures.errorClassType())),
             "the checked builtin Error class renders as @/Error");
-        check("@m/C".equals(CanonicalTypeText.render(Types.classType("C", "m"))),
+        check("@m/C".equals(CanonicalTypeText.render(IdentityTestFixtures.classType("C", "m"))),
             "the checked class type renders as @modulePath/Name");
         check("int[][]".equals(CanonicalTypeText.render(
                 Types.array(Types.array(Type.Int.INSTANCE)))),

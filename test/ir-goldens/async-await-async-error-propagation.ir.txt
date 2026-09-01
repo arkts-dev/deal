@@ -2,7 +2,7 @@ module @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:4:1-6:
   async function inner: int @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:4:1-5:6
     body
       throw @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:4:31-4:87
-        object : Error @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:4:37-4:79
+        object : @$builtin/Error @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:4:37-4:79
           [boundary: class-construct]
           literal "E_INNER" : string @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:4:45-4:53
           literal "inner error" : string @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:4:65-4:77
@@ -28,4 +28,4 @@ module @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:4:1-6:
             return @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:5:108-5:123
               [boundary: async-completion]
               member .code : string @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:5:115-5:120
-                ident e : Error @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:5:115-5:115
+                ident e : @$builtin/Error @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:5:115-5:115

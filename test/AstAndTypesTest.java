@@ -598,10 +598,12 @@ public class AstAndTypesTest {
         check(f1.returnType() == Type.Boolean.INSTANCE, "func (int)=>boolean return type");
         // DEAL v1.2: function types carry no rest arm.
 
-        // Class type
-        Type.Class cls = Types.classType("User", "main");
+        // Class type (v1.2 identity carriage)
+        Type.Class cls = IdentityTestFixtures.classType("User", "main");
         check(cls.name().equals("User"), "Class name");
-        check(cls.modulePath().equals("main"), "Class modulePath");
+        check(cls.identity().equals(
+                IdentityTestFixtures.identityOf("main", "User")),
+            "Class identity (module identity + class name)");
     }
 
     // -----------------------------------------------------------------------
@@ -650,13 +652,16 @@ public class AstAndTypesTest {
         check(!Types.equals(Types.nullable(Type.Int.INSTANCE), Types.nullable(Type.Number.INSTANCE)),
             "int|null != number|null");
 
-        // Class: nominal — name + modulePath must match
-        check(Types.equals(Types.classType("A", "mod"), Types.classType("A", "mod")),
-            "Class A from mod == Class A from mod");
-        check(!Types.equals(Types.classType("A", "mod"), Types.classType("B", "mod")),
-            "Class A != Class B (same module)");
-        check(!Types.equals(Types.classType("A", "mod1"), Types.classType("A", "mod2")),
-            "Class A from mod1 != Class A from mod2");
+        // Class: nominal — canonical class-identity equality
+        check(Types.equals(IdentityTestFixtures.classType("A", "mod"),
+                IdentityTestFixtures.classType("A", "mod")),
+            "Class A from mod == Class A from mod (equal identities)");
+        check(!Types.equals(IdentityTestFixtures.classType("A", "mod"),
+                IdentityTestFixtures.classType("B", "mod")),
+            "Class A != Class B (same module identity)");
+        check(!Types.equals(IdentityTestFixtures.classType("A", "mod1"),
+                IdentityTestFixtures.classType("A", "mod2")),
+            "Class A from mod1 != Class A from mod2 (distinct identities)");
 
         // Function
         Type.Func f1 = Types.func(List.of(Type.Int.INSTANCE), Type.Boolean.INSTANCE);

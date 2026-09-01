@@ -2,6 +2,7 @@ package deal.ir;
 
 import deal.ast.*;
 import deal.checker.CheckResult;
+import deal.identity.CanonicalClassIdentityIndex;
 import deal.checker.Symbol;
 import deal.checker.SymbolTable;
 import deal.types.Type;
@@ -32,6 +33,16 @@ public final class IrDumper implements Visitor<String> {
     private final SymbolTable symbolTable;
     private final String modulePath;
     private final boolean isDeclFile;
+
+    /**
+     * The compilation's canonical class-identity index — class descriptor
+     * text comes only from {@code index.descriptorTextFor(identity)}
+     * (v1.2 identity carriage, descriptor-identity-propagation D1/D2).
+     * {@code null} only for the legacy declaration-file overloads, whose
+     * AST-based descriptor path never reaches a class atom; a class atom
+     * without an index is the pinned internal invariant violation.
+     */
+    private final CanonicalClassIdentityIndex identityIndex;
     private int indent;
 
     private Type currentReturnType;
@@ -42,10 +53,17 @@ public final class IrDumper implements Visitor<String> {
 
     private IrDumper(Map<ExpressionNode, Type> typeMap, SymbolTable symbolTable,
                      String modulePath, boolean isDeclFile) {
+        this(typeMap, symbolTable, modulePath, isDeclFile, null);
+    }
+
+    private IrDumper(Map<ExpressionNode, Type> typeMap, SymbolTable symbolTable,
+                     String modulePath, boolean isDeclFile,
+                     CanonicalClassIdentityIndex identityIndex) {
         this.typeMap = Collections.unmodifiableMap(new HashMap<>(typeMap));
         this.symbolTable = symbolTable != null ? symbolTable : new SymbolTable();
         this.modulePath = modulePath;
         this.isDeclFile = isDeclFile;
+        this.identityIndex = identityIndex;
         this.indent = 0;
     }
 
@@ -54,18 +72,40 @@ public final class IrDumper implements Visitor<String> {
     // =========================================================================
 
     public static String dump(ProgramNode program, CheckResult result, String modulePath) {
+        return dump(program, result, modulePath, null);
+    }
+
+    /**
+     * The identity-aware full-module dump: class descriptor rows project
+     * through {@code index.descriptorTextFor(identity)} byte-for-byte
+     * (descriptor-identity-propagation D2).  Production passes the
+     * compilation's identity index; a class atom without an index is the
+     * pinned internal invariant violation.
+     */
+    public static String dump(ProgramNode program, CheckResult result, String modulePath,
+                              CanonicalClassIdentityIndex identityIndex) {
         if (result == null) {
             throw new IllegalArgumentException("CheckResult must not be null for full-module dump");
         }
         if (result.hasErrors()) {
             return "";
         }
-        IrDumper dumper = new IrDumper(result.typeMap(), result.symbolTable(), modulePath, false);
+        IrDumper dumper = new IrDumper(result.typeMap(), result.symbolTable(),
+            modulePath, false, identityIndex);
         return dumper.visit(program);
     }
 
     public static String dump(ProgramNode program, SymbolTable symbolTable, String modulePath) {
         IrDumper dumper = new IrDumper(Map.of(), symbolTable, modulePath, true);
+        return dumper.visit(program);
+    }
+
+    /** The identity-aware declaration-file overload (identityIndex unused
+     * on the AST-based path; accepted for call-site symmetry). */
+    public static String dump(ProgramNode program, SymbolTable symbolTable, String modulePath,
+                              CanonicalClassIdentityIndex identityIndex) {
+        IrDumper dumper = new IrDumper(Map.of(), symbolTable, modulePath, true,
+            identityIndex);
         return dumper.visit(program);
     }
 
@@ -114,11 +154,15 @@ public final class IrDumper implements Visitor<String> {
             case Type.Array arr -> "[" + specTypeDescriptor(arr.element()) + "]";
             case Type.Nullable n -> "?" + specTypeDescriptor(n.inner());
             case Type.Class cls -> {
-                if (cls.modulePath() != null && !cls.modulePath().isEmpty()) {
-                    yield "@" + cls.modulePath() + "/" + cls.name();
-                } else {
-                    yield cls.name();
+                // v1.2 identity carriage: class text comes only from the
+                // compilation's identity index — never from the retired
+                // dotted module path (descriptor-identity-propagation D2).
+                if (identityIndex == null) {
+                    throw new IllegalStateException(
+                        "IrDumper class descriptor requires the compilation's"
+                            + " identity index (internal invariant violation)");
                 }
+                yield identityIndex.descriptorTextFor(cls.identity());
             }
             case Type.Func f -> {
                 StringBuilder sb = new StringBuilder();

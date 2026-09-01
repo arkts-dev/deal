@@ -1,5 +1,7 @@
 package deal.types;
 
+import deal.identity.CanonicalClassIdentity;
+
 import java.util.List;
 import java.util.Objects;
 
@@ -65,7 +67,7 @@ public final class Types {
      *   <li>Primitives: same enum constant</li>
      *   <li>Array: equal element types</li>
      *   <li>Nullable: equal inner types</li>
-     *   <li>Class: same name AND same modulePath (nominal)</li>
+     *   <li>Class: equal canonical class identities (nominal)</li>
      *   <li>Function: equal paramTypes, equal returnType, AND equal isAsync</li>
      * </ul>
      */
@@ -94,9 +96,12 @@ public final class Types {
                 yield equals(na.inner(), nb.inner());
             }
             case Type.Class ca -> {
+                // v1.2 identity carriage: nominal equality is canonical
+                // class-identity equality (record structural equality
+                // over (moduleIdentity, className)) — never dotted-path
+                // text comparison (descriptor-identity-propagation D1).
                 Type.Class cb = (Type.Class) b;
-                yield ca.name().equals(cb.name())
-                   && ca.modulePath().equals(cb.modulePath());
+                yield ca.identity().equals(cb.identity());
             }
             case Type.Func fa -> {
                 Type.Func fb = (Type.Func) b;
@@ -230,9 +235,13 @@ public final class Types {
         return (Type.Array) canonicalize(new Type.Array(element));
     }
 
-    /** Make a Class type. */
-    public static Type.Class classType(java.lang.String name, java.lang.String modulePath) {
-        return new Type.Class(name, modulePath);
+    /**
+     * Make a Class type carrying its canonical class identity
+     * (descriptor-identity-propagation D1): the identity is supplied by
+     * the module-identity layer, never reconstructed here.
+     */
+    public static Type.Class classType(java.lang.String name, CanonicalClassIdentity identity) {
+        return new Type.Class(name, identity);
     }
 
     /** Make a Function type, with isAsync. */

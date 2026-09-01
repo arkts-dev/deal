@@ -2,13 +2,11 @@ package deal.descriptors;
 
 import deal.identity.CanonicalClassIdentity;
 import deal.identity.CanonicalClassIdentityIndex;
-import deal.identity.CanonicalModuleIdentity;
 import deal.types.Type;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
-import java.util.function.Function;
 
 /**
  * The canonical runtime type descriptor service (DEAL v1.2): one
@@ -110,32 +108,19 @@ public final class CanonicalRuntimeTypeDescriptor {
     private final CanonicalClassIdentityIndex index;
 
     /**
-     * The compilation's module-path classification: checked
-     * {@link Type.Class#modulePath()} &rarr; the canonical public module
-     * identity the module-identity layer assigned (supplied, never
-     * recomputed — design source {@code canonical-type-system-and-runtime-descriptors}
-     * D3/D5; {@code null} for a module path the layer classified as
-     * having no public identity, which {@link #encode} reports as the
-     * pinned invariant violation).
-     */
-    private final Function<String, CanonicalModuleIdentity> moduleIdentities;
-
-    /**
      * Constructs the per-compilation descriptor service over the
-     * compilation's identity index and module-path classification
-     * (design source {@code canonical-type-system-and-runtime-descriptors}
-     * D5: one service instance per compilation, constructed after the
-     * identity layer's surfaces exist).
+     * compilation's identity index (design source
+     * {@code canonical-type-system-and-runtime-descriptors} D5: one
+     * service instance per compilation, constructed after the identity
+     * layer's surfaces exist).  Class text comes only from
+     * {@code index.descriptorTextFor(identity)} — the class type's
+     * carried identity is the input, so no module-path classification
+     * enters the service.
      *
-     * @param index            the canonical class-identity index; non-null
-     * @param moduleIdentities the module-path &rarr; module-identity
-     *                         classification function; non-null
+     * @param index the canonical class-identity index; non-null
      */
-    public CanonicalRuntimeTypeDescriptor(CanonicalClassIdentityIndex index,
-            Function<String, CanonicalModuleIdentity> moduleIdentities) {
+    public CanonicalRuntimeTypeDescriptor(CanonicalClassIdentityIndex index) {
         this.index = Objects.requireNonNull(index, "index must not be null");
-        this.moduleIdentities = Objects.requireNonNull(moduleIdentities,
-            "moduleIdentities must not be null");
     }
 
     /**
@@ -181,25 +166,23 @@ public final class CanonicalRuntimeTypeDescriptor {
 
     /**
      * Encodes a nominal class type through the identity index: the
-     * module-path classification resolves the declaring module's
-     * {@link CanonicalModuleIdentity}, and
-     * {@code index.descriptorTextFor(identity)} supplies the pinned
+     * class carries its {@link CanonicalClassIdentity} (the v1.2
+     * identity carriage, {@code descriptor-identity-propagation} D1),
+     * and {@code index.descriptorTextFor(identity)} supplies the pinned
      * projection text byte-for-byte (never recomputed, never
      * reverse-parsed).
      */
     private String encodeClass(Type.Class cls) {
-        CanonicalModuleIdentity moduleIdentity =
-            moduleIdentities.apply(cls.modulePath());
-        if (moduleIdentity == null) {
+        try {
+            return index.descriptorTextFor(cls.identity());
+        } catch (IllegalStateException e) {
             throw new IllegalStateException(
-                "no canonical public module identity for class '" + cls.name()
-                    + "' declared in module path '" + cls.modulePath()
-                    + "': the module-identity layer classified this module "
-                    + "without a public identity, so a class there can never "
-                    + "be represented (internal invariant violation)");
+                "no index-registered descriptor text for class '" + cls.name()
+                    + "' (identity " + cls.identity() + "): the "
+                    + "module-identity layer never registered the class's "
+                    + "identity, so it can never be represented (internal "
+                    + "invariant violation): " + e.getMessage(), e);
         }
-        return index.descriptorTextFor(
-            new CanonicalClassIdentity(moduleIdentity, cls.name()));
     }
 
     /** The exact {@code async? (p1,...,pn) -&gt; R} function form. */

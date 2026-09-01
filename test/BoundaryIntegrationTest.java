@@ -42,6 +42,7 @@ import deal.semantic.ir.SourceOriginKind;
 import deal.semantic.ir.SourceSpan;
 import deal.semantic.ir.ValueId;
 import deal.types.Type;
+import deal.test.IdentityTestFixtures;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -174,7 +175,7 @@ public class BoundaryIntegrationTest {
     private static final RuntimeDescriptor INT_ARRAY =
         DescriptorService.describe(new Type.Array(Type.Int.INSTANCE));
     private static final RuntimeDescriptor USER =
-        DescriptorService.describe(new Type.Class("User", "src/app"));
+        DescriptorService.describe(IdentityTestFixtures.classType("User", "src/app"));
     private static final RuntimeDescriptor NULLABLE_STRING =
         DescriptorService.describe(new Type.Nullable(Type.String.INSTANCE));
     private static final RuntimeDescriptor.Func FUNC_INT_TO_INT = (RuntimeDescriptor.Func)

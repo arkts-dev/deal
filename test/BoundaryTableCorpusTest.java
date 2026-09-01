@@ -67,6 +67,7 @@ import deal.semantic.ir.SourceSpan;
 import deal.semantic.ir.StdlibFunctionId;
 import deal.semantic.ir.ValueId;
 import deal.types.Type;
+import deal.test.IdentityTestFixtures;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -171,7 +172,7 @@ public class BoundaryTableCorpusTest {
     private static final RuntimeDescriptor ARRAY_INT =
         DescriptorService.describe(new Type.Array(Type.Int.INSTANCE));
     private static final RuntimeDescriptor USER =
-        DescriptorService.describe(new Type.Class("User", "src/app"));
+        DescriptorService.describe(IdentityTestFixtures.classType("User", "src/app"));
     private static final RuntimeDescriptor.Func F_II = (RuntimeDescriptor.Func)
         DescriptorService.describe(new Type.Func(List.of(Type.Int.INSTANCE), Type.Int.INSTANCE));
     private static final RuntimeDescriptor.Func F_IIS = (RuntimeDescriptor.Func)

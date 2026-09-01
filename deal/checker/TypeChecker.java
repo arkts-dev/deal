@@ -2,6 +2,8 @@ package deal.checker;
 
 import deal.ast.*;
 import deal.diagnostics.CompilerDiagnostic;
+import deal.identity.CanonicalClassIdentity;
+import deal.identity.CanonicalModuleIdentity;
 import deal.types.Type;
 import deal.types.Types;
 
@@ -254,15 +256,10 @@ public final class TypeChecker {
             case Type.Array arr          -> isJsonableType(arr.element());
             case Type.Nullable n         -> isJsonableType(n.inner());
             case Type.Class cls          -> {
-                String mPath = cls.modulePath();
-                // For null/empty modulePath, treat as same-module
-                if (mPath == null || mPath.isEmpty()) {
-                    mPath = this.modulePath;
-                }
-                boolean hasFromJson = nameResolver.isFunctionExportedFromModule(
-                    mPath, cls.name() + "$fromJson");
-                boolean hasToJson = nameResolver.isFunctionExportedFromModule(
-                    mPath, cls.name() + "$toJson");
+                boolean hasFromJson = isFunctionExportedFromClassModule(
+                    cls, cls.name() + "$fromJson");
+                boolean hasToJson = isFunctionExportedFromClassModule(
+                    cls, cls.name() + "$toJson");
                 yield hasFromJson && hasToJson;
             }
             default -> false;
@@ -275,14 +272,54 @@ public final class TypeChecker {
      * is a candidate for E4008.
      */
     private boolean isSameModuleJsonable(Type.Class cls) {
-        String mPath = cls.modulePath();
-        // Treat null/empty modulePath as same-module
-        if (mPath != null && !mPath.isEmpty() && !mPath.equals(this.modulePath)) {
+        if (!sameModule(cls)) {
             return false;
         }
         // Check if C$fromJson exists in root symbol table (means the class is @jsonable)
         Symbol sym = rootTable.resolve(cls.name() + "$fromJson");
         return sym instanceof Symbol.FunctionSymbol;
+    }
+
+    /**
+     * True when the class type's carried identity declares in THIS
+     * module (v1.2 identity carriage): the builtin Error identity and
+     * every foreign identity are not same-module.
+     */
+    private boolean sameModule(Type.Class cls) {
+        // The local scope is the authority for locality: two files in
+        // one directory share the module identity (the relative
+        // components exclude the file stem), so identity equality alone
+        // cannot distinguish a local class from a companion's class —
+        // a LOCAL class resolves by bare name to its ClassSymbol in the
+        // current scope.
+        Symbol sym = currentScope.resolve(cls.name());
+        return sym instanceof Symbol.ClassSymbol cs
+            && cs.identity().equals(cls.identity());
+    }
+
+    /**
+     * The C$fromJson/C$toJson export check of {@link #isJsonableType}:
+     * same-module classes check the root symbol table, imported classes
+     * route through the resolver's identity-keyed export lookup.
+     */
+    private boolean isFunctionExportedFromClassModule(Type.Class cls,
+                                                      String functionName) {
+        return nameResolver.isFunctionExportedFromModule(
+            cls.identity().moduleIdentity(), functionName);
+    }
+
+    /**
+     * Resolves the class symbol a {@link Type.Class} names: the local
+     * scope first (byte-for-byte today's behavior for local classes),
+     * then the identity-keyed cross-module routing
+     * (descriptor-identity-propagation D1).
+     */
+    private Symbol.ClassSymbol resolveClassSymbol(Type.Class cls) {
+        Symbol sym = currentScope.resolve(cls.name());
+        if (sym instanceof Symbol.ClassSymbol cs) {
+            return cs;
+        }
+        return nameResolver.resolveClassSymbol(cls);
     }
 
     /**
@@ -696,7 +733,8 @@ public final class TypeChecker {
 
     private void checkThrowStatement(ThrowStatement ts) {
         Type savedExpected = expectedType;
-        Type errorType = Types.classType("Error", "");
+        Type errorType = Types.classType("Error",
+            NameResolver.intrinsicErrorIdentity());
         expectedType = errorType;
         Type exprType = checkExpression(ts.expr());
         expectedType = savedExpected;
@@ -1195,18 +1233,15 @@ public final class TypeChecker {
         Type classTarget = objType;
         if (classTarget instanceof Type.Nullable nullable
                 && nullable.inner() instanceof Type.Class inner
-                && inner.modulePath() != null
-                && !inner.modulePath().isEmpty()
-                && !inner.modulePath().equals(this.modulePath)) {
+                && !sameModule(inner)) {
             classTarget = nullable.inner();
         }
         if (classTarget instanceof Type.Class cls) {
             Symbol sym = currentScope.resolve(cls.name());
-            // If not found locally, try cross-module resolution
+            // If not found locally, try identity-keyed cross-module
+            // resolution
             if (!(sym instanceof Symbol.ClassSymbol)) {
-                Symbol.ClassSymbol importedCs =
-                    nameResolver.resolveClassSymbol(cls.name(), cls.modulePath());
-                if (importedCs != null) sym = importedCs;
+                sym = resolveClassSymbol(cls);
             }
             if (sym instanceof Symbol.ClassSymbol cs) {
                 ClassField cf = IntrinsicResolvers.findField(cs.fields(), field);
@@ -1370,11 +1405,10 @@ public final class TypeChecker {
 
     private Type checkClassConstruction(ObjectLiteralExpr obj, Type.Class cls) {
         Symbol sym = currentScope.resolve(cls.name());
-        // If not found locally, try cross-module resolution
+        // If not found locally, try identity-keyed cross-module
+        // resolution
         if (!(sym instanceof Symbol.ClassSymbol)) {
-            Symbol.ClassSymbol importedCs =
-                nameResolver.resolveClassSymbol(cls.name(), cls.modulePath());
-            if (importedCs != null) sym = importedCs;
+            sym = resolveClassSymbol(cls);
         }
         if (!(sym instanceof Symbol.ClassSymbol cs)) {
             error(DiagnosticCode.E3004, "Unknown class '" + cls.name() + "'", obj.span());
@@ -1503,11 +1537,10 @@ public final class TypeChecker {
         }
 
         Symbol sym = currentScope.resolve(cls.name());
-        // If not found locally, try cross-module resolution
+        // If not found locally, try identity-keyed cross-module
+        // resolution
         if (!(sym instanceof Symbol.ClassSymbol)) {
-            Symbol.ClassSymbol importedCs =
-                nameResolver.resolveClassSymbol(cls.name(), cls.modulePath());
-            if (importedCs != null) sym = importedCs;
+            sym = resolveClassSymbol(cls);
         }
         if (!(sym instanceof Symbol.ClassSymbol cs)) {
             error(DiagnosticCode.E4005, "Class '" + cls.name() + "' not found", has.span());
@@ -1741,7 +1774,7 @@ public final class TypeChecker {
             }
             case Symbol.FunctionSymbol fs -> fs.funcType();
             case Symbol.ClassSymbol cs ->
-                Types.classType(cs.name(), cs.modulePath());
+                Types.classType(cs.name(), cs.identity());
             case Symbol.ModuleSymbol ms -> Type.Table.INSTANCE;
             case Symbol.IntrinsicSymbol is -> is.type();
         };

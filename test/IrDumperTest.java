@@ -111,7 +111,7 @@ public class IrDumperTest {
     static void testEmptyModule() {
         System.out.print("  testEmptyModule... ");
         CompileResult cr = compile("");
-        String ir = IrDumper.dump(cr.program, cr.checkResult, "test");
+        String ir = IrDumper.dump(cr.program, cr.checkResult, "test", INDEX);
         assertContains(ir, "module @test.deal:1:1-1:1", "module header");
         assertNotContains(ir, "function", "no functions");
         assertNotContains(ir, "let", "no lets");
@@ -137,7 +137,7 @@ public class IrDumperTest {
         st.define("x", new Symbol.VariableSymbol("x", Type.Int.INSTANCE, false));
         CheckResult result = new CheckResult(typeMap, st, List.of());
 
-        String ir = IrDumper.dump(prog, result, "test");
+        String ir = IrDumper.dump(prog, result, "test", INDEX);
         assertContains(ir, "import * as M from \"./other\"", "import line");
         assertContains(ir, "[boundary: import]", "import boundary");
         assertContains(ir, "let x: int", "let with type");
@@ -149,7 +149,7 @@ public class IrDumperTest {
         System.out.print("  testFunctionDeclaration... ");
         String source = "function add(a: int, b: int): int { return a + b; }";
         CompileResult cr = compile(source);
-        String ir = IrDumper.dump(cr.program, cr.checkResult, "test");
+        String ir = IrDumper.dump(cr.program, cr.checkResult, "test", INDEX);
 
         assertContains(ir, "function add: int", "function header");
         assertContains(ir, "param a: int", "param a");
@@ -168,7 +168,7 @@ public class IrDumperTest {
         System.out.print("  testVariableDeclaration... ");
         String source = "let x: int = 42\nlet y = 3.14";
         CompileResult cr = compile(source);
-        String ir = IrDumper.dump(cr.program, cr.checkResult, "test");
+        String ir = IrDumper.dump(cr.program, cr.checkResult, "test", INDEX);
 
         assertContains(ir, "let x: int", "typed let");
         assertContains(ir, "[boundary: var-annotation]", "var-annotation boundary");
@@ -182,7 +182,7 @@ public class IrDumperTest {
         System.out.print("  testReturnStatement... ");
         String source = "function f(): null { return; }";
         CompileResult cr = compile(source);
-        String ir = IrDumper.dump(cr.program, cr.checkResult, "test");
+        String ir = IrDumper.dump(cr.program, cr.checkResult, "test", INDEX);
 
         assertContains(ir, "return", "return statement");
         assertNotContains(ir, "[boundary: return]", "no return boundary for null return");
@@ -193,7 +193,7 @@ public class IrDumperTest {
         System.out.print("  testIfStatement... ");
         String source = "function f(): null { if (true) { let x: int = 1; } }";
         CompileResult cr = compile(source);
-        String ir = IrDumper.dump(cr.program, cr.checkResult, "test");
+        String ir = IrDumper.dump(cr.program, cr.checkResult, "test", INDEX);
 
         assertContains(ir, "if @test.deal:", "if statement");
         assertContains(ir, "literal true : boolean", "condition");
@@ -205,7 +205,7 @@ public class IrDumperTest {
         System.out.print("  testWhileStatement... ");
         String source = "function f(): null { while (true) { break; } }";
         CompileResult cr = compile(source);
-        String ir = IrDumper.dump(cr.program, cr.checkResult, "test");
+        String ir = IrDumper.dump(cr.program, cr.checkResult, "test", INDEX);
 
         assertContains(ir, "while", "while statement");
         assertContains(ir, "break", "break statement");
@@ -216,7 +216,7 @@ public class IrDumperTest {
         System.out.print("  testForStatement... ");
         String source = "function f(): null { for (let i: int = 0; i < 10; i = i + 1) { continue; } }";
         CompileResult cr = compile(source);
-        String ir = IrDumper.dump(cr.program, cr.checkResult, "test");
+        String ir = IrDumper.dump(cr.program, cr.checkResult, "test", INDEX);
 
         assertContains(ir, "for", "for statement");
         assertContains(ir, "continue", "continue statement");
@@ -227,7 +227,7 @@ public class IrDumperTest {
         System.out.print("  testTryCatch... ");
         String source = "function f(): null { try { let x: int = 1; } catch (e) { let y: int = 2; } }";
         CompileResult cr = compile(source);
-        String ir = IrDumper.dump(cr.program, cr.checkResult, "test");
+        String ir = IrDumper.dump(cr.program, cr.checkResult, "test", INDEX);
 
         assertContains(ir, "try", "try statement");
         assertContains(ir, "catch e", "catch clause");
@@ -255,17 +255,22 @@ public class IrDumperTest {
         ProgramNode prog = new ProgramNode(span, List.of(fd));
 
         Map<ExpressionNode, Type> typeMap = new HashMap<>();
-        Type errorType = Types.classType("Error", "test");
+        Type errorType = IdentityTestFixtures.classType("Error", "test");
         typeMap.put(errorCall, errorType);
         typeMap.put(errorIdent, errorType);
         typeMap.put(oopsLit, Type.String.INSTANCE);
         SymbolTable st = new SymbolTable();
-        st.define("Error", new Symbol.ClassSymbol("Error", List.of(), "test"));
+        st.define("Error", new Symbol.ClassSymbol("Error", List.of(), "test",
+            IdentityTestFixtures.identityOf("test", "Error")));
         st.define("f", new Symbol.FunctionSymbol("f",
             Types.func(List.of(), Type.Null.INSTANCE)));
         CheckResult result = new CheckResult(typeMap, st, List.of());
 
-        String ir = IrDumper.dump(prog, result, "test");
+        // The v1.2 identity carriage: the dump passes the compilation's
+        // identity index (class text via index.descriptorTextFor).
+        String ir = IrDumper.dump(prog, result, "test",
+            deal.module.ModuleIdentityResolver.buildIndex(Map.of(
+                "", deal.identity.CanonicalModuleIdentity.BuiltinModule.INSTANCE)));
         assertContains(ir, "throw", "throw statement");
         assertContains(ir, "call : @test/Error", "throw expr has Error type");
         System.out.println("OK");
@@ -275,7 +280,7 @@ public class IrDumperTest {
         System.out.print("  testClassDeclaration... ");
         String source = "class Point { x: int = 0; y?: int; }";
         CompileResult cr = compile(source);
-        String ir = IrDumper.dump(cr.program, cr.checkResult, "test");
+        String ir = IrDumper.dump(cr.program, cr.checkResult, "test", INDEX);
 
         assertContains(ir, "class Point", "class header");
         assertContains(ir, "field x: int", "field x");
@@ -301,7 +306,7 @@ public class IrDumperTest {
             }
             """;
         CompileResult cr = compile(source);
-        String ir = IrDumper.dump(cr.program, cr.checkResult, "test");
+        String ir = IrDumper.dump(cr.program, cr.checkResult, "test", INDEX);
 
         assertContains(ir, "unary -", "unary neg");
         assertContains(ir, "unary !", "unary not");
@@ -325,7 +330,7 @@ public class IrDumperTest {
             }
             """;
         CompileResult cr = compile(source);
-        String ir = IrDumper.dump(cr.program, cr.checkResult, "test");
+        String ir = IrDumper.dump(cr.program, cr.checkResult, "test", INDEX);
 
         assertContains(ir, "[boundary: param-entry]", "param-entry boundary");
         assertContains(ir, "[boundary: var-annotation]", "var-annotation boundary");
@@ -344,7 +349,7 @@ public class IrDumperTest {
             }
             """;
         CompileResult cr = compile(source);
-        String ir = IrDumper.dump(cr.program, cr.checkResult, "test");
+        String ir = IrDumper.dump(cr.program, cr.checkResult, "test", INDEX);
 
         assertContains(ir, "[int]", "array descriptor uses brackets");
         assertNotContains(ir, "int[]", "no legacy array format");
@@ -366,7 +371,7 @@ public class IrDumperTest {
             new Span("test.d.deal", 1, 1, 1, 30), fd);
         ProgramNode prog = new ProgramNode(span, List.of(exp));
 
-        String ir = IrDumper.dump(prog, (SymbolTable) null, "std/console");
+        String ir = IrDumper.dump(prog, (SymbolTable) null, "std/console", INDEX);
         assertContains(ir, "module", "decl file has module header");
         assertContains(ir, "export", "decl file has export");
         assertContains(ir, "function log: null", "decl file function");
@@ -383,8 +388,8 @@ public class IrDumperTest {
             function c(): null { return; }
             """;
         CompileResult cr = compile(source);
-        String ir1 = IrDumper.dump(cr.program, cr.checkResult, "test");
-        String ir2 = IrDumper.dump(cr.program, cr.checkResult, "test");
+        String ir1 = IrDumper.dump(cr.program, cr.checkResult, "test", INDEX);
+        String ir2 = IrDumper.dump(cr.program, cr.checkResult, "test", INDEX);
 
         if (ir1.equals(ir2)) {
             passed++;
@@ -399,7 +404,7 @@ public class IrDumperTest {
         System.out.print("  testNullSpanThrows... ");
         ProgramNode prog = new ProgramNode(new Span("test.deal", 1, 1, 1, 1), List.of());
         try {
-            IrDumper.dump(prog, (CheckResult) null, "test");
+            IrDumper.dump(prog, (CheckResult) null, "test", INDEX);
             failed++;
             System.out.println("FAIL: should have thrown for null CheckResult");
         } catch (IllegalArgumentException e) {
@@ -435,7 +440,7 @@ public class IrDumperTest {
         CheckResult result = new CheckResult(typeMap, st, List.of());
 
         try {
-            IrDumper.dump(prog, result, "test");
+            IrDumper.dump(prog, result, "test", INDEX);
             failed++;
             System.out.println("FAIL: should have thrown IllegalStateException for null span");
         } catch (IllegalStateException e) {
@@ -474,7 +479,7 @@ public class IrDumperTest {
         CheckResult result = new CheckResult(typeMap, st, List.of());
 
         try {
-            IrDumper.dump(prog, result, "test");
+            IrDumper.dump(prog, result, "test", INDEX);
             failed++;
             System.out.println("FAIL: should have thrown IllegalStateException for missing typeMap entry");
         } catch (IllegalStateException e) {
@@ -493,7 +498,7 @@ public class IrDumperTest {
         System.out.print("  testSyntheticSpan... ");
         String source = "function f(): null { return; }";
         CompileResult cr = compile(source);
-        String ir = IrDumper.dump(cr.program, cr.checkResult, "test");
+        String ir = IrDumper.dump(cr.program, cr.checkResult, "test", INDEX);
 
         assertContains(ir, "@test.deal:", "spans present");
         System.out.println("OK");
@@ -509,7 +514,7 @@ public class IrDumperTest {
             }
             """;
         CompileResult cr = compile(source);
-        String ir = IrDumper.dump(cr.program, cr.checkResult, "test");
+        String ir = IrDumper.dump(cr.program, cr.checkResult, "test", INDEX);
 
         assertContains(ir, "call : int", "call expr");
         assertContains(ir, "ident compute : (int,int)->int", "callee ident");
@@ -529,7 +534,7 @@ public class IrDumperTest {
             }
             """;
         CompileResult cr = compile(source);
-        String ir = IrDumper.dump(cr.program, cr.checkResult, "test");
+        String ir = IrDumper.dump(cr.program, cr.checkResult, "test", INDEX);
 
         assertContains(ir, "[boundary: table-read]", "table-read boundary on member access");
         System.out.println("OK");
@@ -572,7 +577,7 @@ public class IrDumperTest {
         st.define("x", new Symbol.VariableSymbol("x", Type.Int.INSTANCE, false));
         CheckResult result = new CheckResult(typeMap, st, List.of());
 
-        String ir = IrDumper.dump(prog, result, "test");
+        String ir = IrDumper.dump(prog, result, "test", INDEX);
         assertContains(ir, "[boundary: stdlib-boundary]", "stdlib-boundary on call");
         System.out.println("OK");
     }
@@ -609,7 +614,7 @@ public class IrDumperTest {
         st.define("y", new Symbol.VariableSymbol("y", Type.Int.INSTANCE, false));
         CheckResult result = new CheckResult(typeMap, st, List.of());
 
-        String ir = IrDumper.dump(prog, result, "test");
+        String ir = IrDumper.dump(prog, result, "test", INDEX);
         assertContains(ir, "[boundary: external-boundary]", "external-boundary on call");
         assertContains(ir, "[boundary: host-in]", "host-in on import");
         System.out.println("OK");
@@ -687,7 +692,7 @@ public class IrDumperTest {
             Types.func(List.of(), Type.Int.INSTANCE, true)));
         CheckResult result = new CheckResult(typeMap, st, List.of());
 
-        String ir = IrDumper.dump(prog, result, "test");
+        String ir = IrDumper.dump(prog, result, "test", INDEX);
 
         assertContains(ir, "async function g: int", "async function g header");
         assertContains(ir, "async function f: int", "async function f header");
@@ -743,7 +748,7 @@ public class IrDumperTest {
         st.define("h", new Symbol.VariableSymbol("h", funcType, false));
         CheckResult result = new CheckResult(typeMap, st, List.of());
 
-        String ir = IrDumper.dump(prog, result, "test");
+        String ir = IrDumper.dump(prog, result, "test", INDEX);
 
         // The function identifier type is (int,[int])->null — no rest arm.
         assertContains(ir, "(int,[int])->null", "fixed params use (int,[int])->null");
@@ -753,6 +758,13 @@ public class IrDumperTest {
     }
     // Stub module resolver
     // =========================================================================
+
+    /** The standalone identity index for the dump pins: projection is
+     * identity-driven, so one empty-classification index serves every
+     * harness identity (v1.2 identity carriage). */
+    private static final deal.identity.CanonicalClassIdentityIndex INDEX =
+        deal.module.ModuleIdentityResolver.buildIndex(java.util.Map.of(
+            "", deal.identity.CanonicalModuleIdentity.BuiltinModule.INSTANCE));
 
     static class ModuleResolverStub implements ModuleResolver {
         @Override

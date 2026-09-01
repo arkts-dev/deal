@@ -102,6 +102,33 @@ public class CrossModuleTypingTest {
         }
 
         @Override
+        public Symbol.ClassSymbol resolveClassSymbol(String className,
+                deal.identity.CanonicalModuleIdentity declaringModule,
+                String importingModule)
+                throws ModuleNotFoundException {
+            if (!supportClassSymbols) {
+                return null;
+            }
+            // The harness's single foreign module identity: route by the
+            // identity the fixture class types carry.
+            Symbol.ClassSymbol sym = classSymbols.get(LIB + ":" + className);
+            if (sym != null && sym.identity().moduleIdentity()
+                    .equals(declaringModule)) {
+                return sym;
+            }
+            return null;
+        }
+
+        @Override
+        public boolean isFunctionExportedFromModule(
+                deal.identity.CanonicalModuleIdentity declaringModule,
+                String functionName, String importingModule)
+                throws ModuleNotFoundException {
+            Map<String, Type> exports = modules.get(LIB);
+            return exports != null && exports.containsKey(functionName);
+        }
+
+        @Override
         public Type resolveTypeNodeInModule(TypeNode typeNode,
                 String modulePath, String importingModule)
                 throws ModuleNotFoundException {
@@ -121,7 +148,7 @@ public class CrossModuleTypingTest {
                     case "number" -> Type.Number.INSTANCE;
                     case "string" -> Type.String.INSTANCE;
                     case "table" -> Type.Table.INSTANCE;
-                    default -> Types.classType(nt.name(), modulePath);
+                    default -> IdentityTestFixtures.classType(nt.name(), modulePath);
                 };
                 case ArrayType at -> {
                     Type elem = resolveForeign(at.elementType(), modulePath);
@@ -151,20 +178,23 @@ public class CrossModuleTypingTest {
 
         Symbol.ClassSymbol child = new Symbol.ClassSymbol("Child", List.of(
             new ClassField(s, "value", false, false,
-                new NamedType(s, "int"), Optional.empty())), LIB);
+                new NamedType(s, "int"), Optional.empty())), LIB,
+            IdentityTestFixtures.identityOf(LIB, "Child"));
         Symbol.ClassSymbol parent = new Symbol.ClassSymbol("Parent", List.of(
             new ClassField(s, "children", false, false,
-                new ArrayType(s, new NamedType(s, "Child")), Optional.empty())), LIB);
+                new ArrayType(s, new NamedType(s, "Child")), Optional.empty())), LIB,
+            IdentityTestFixtures.identityOf(LIB, "Parent"));
         Symbol.ClassSymbol maybeChild = new Symbol.ClassSymbol("MaybeChild", List.of(
             new ClassField(s, "child", true, true,
-                new NullableType(s, new NamedType(s, "Child")), Optional.empty())), LIB);
+                new NullableType(s, new NamedType(s, "Child")), Optional.empty())), LIB,
+            IdentityTestFixtures.identityOf(LIB, "MaybeChild"));
         resolver.registerClassSymbol(LIB, child);
         resolver.registerClassSymbol(LIB, parent);
         resolver.registerClassSymbol(LIB, maybeChild);
 
-        Type parentType = Types.classType("Parent", LIB);
-        Type childType = Types.classType("Child", LIB);
-        Type maybeChildType = Types.classType("MaybeChild", LIB);
+        Type parentType = IdentityTestFixtures.classType("Parent", LIB);
+        Type childType = IdentityTestFixtures.classType("Child", LIB);
+        Type maybeChildType = IdentityTestFixtures.classType("MaybeChild", LIB);
         resolver.register(LIB, Map.of(
             "Parent", parentType,
             "Child", childType,
@@ -357,8 +387,9 @@ public class CrossModuleTypingTest {
         Type.Array arr = (Type.Array) memberType;
         assertThat("array element is the companion's Child",
             arr.element(), instanceOf(Type.Class.class));
-        assertThat("element module path is the companion",
-            ((Type.Class) arr.element()).modulePath(), is(LIB));
+        assertThat("element identity is the companion's",
+            ((Type.Class) arr.element()).identity(),
+            is(IdentityTestFixtures.identityOf(LIB, "Child")));
 
         Type indexType = typed.result().typeMap().get(index);
         assertThat("index expression yields Child", indexType, instanceOf(Type.Class.class));

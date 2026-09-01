@@ -5,6 +5,7 @@ import deal.checker.*;
 import deal.codegen.lua.LuaBackend;
 import deal.descriptors.CanonicalRuntimeTypeDescriptor;
 import deal.diagnostics.CompilerDiagnostic;
+import deal.identity.CanonicalClassIdentity;
 import deal.identity.CanonicalModuleIdentity;
 import deal.identity.ProjectModuleIdentity;
 import deal.lexer.*;
@@ -1139,7 +1140,10 @@ public class ConformanceTest {
 
         ConformanceModuleResolver resolver =
             new ConformanceModuleResolver(test.path(), catalog, profile);
-        NameResolver nr = new NameResolver(filename, resolver);
+        NameResolver nr = catalog != null
+            ? new NameResolver(filename, resolver, new HashSet<>(),
+                catalog::classifyModulePath)
+            : new NameResolver(filename, resolver);
         SymbolTable symTable;
         try {
             symTable = nr.resolve(parseResult.program());
@@ -1693,12 +1697,17 @@ public class ConformanceTest {
                 CanonicalModuleIdentity.BuiltinModule.INSTANCE);
         }
 
-        /** The descriptor service built over the current classification. */
+        /** The per-compilation identity index (v1.2 identity carriage):
+         * class text projects from the carried identity, so the index
+         * serves both the descriptor service and the backend's local
+         * class identities. */
+        private ModuleIdentityResolver.IdentityIndex identityIndex() {
+            return ModuleIdentityResolver.buildIndex(moduleIdentities);
+        }
+
+        /** The descriptor service built over the current identity index. */
         private CanonicalRuntimeTypeDescriptor descriptorService() {
-            ModuleIdentityResolver.IdentityIndex index =
-                ModuleIdentityResolver.buildIndex(moduleIdentities);
-            return new CanonicalRuntimeTypeDescriptor(index,
-                index.moduleIdentityLookup());
+            return new CanonicalRuntimeTypeDescriptor(identityIndex());
         }
 
         /** Classifies one module path for the harness identity surface. */
@@ -1707,9 +1716,16 @@ public class ConformanceTest {
                 return CanonicalModuleIdentity.BuiltinModule.INSTANCE;
             }
             if (hostRegistry.isHostModule(modulePath)) {
+                // The harness's injected v1.2 externals classification:
+                // host-fixture modules classify as externals whose raw
+                // import specifier is the dotted key, projecting the
+                // pinned @$external/host.cfg/<Name> /
+                // @$external/host.presence/<Name> atoms
+                // (descriptor-identity-propagation D6). The raw
+                // slash-form require specifier stays verbatim as the
+                // load key and is never turned into descriptor text.
                 String dotted = modulePath.replace('/', '.');
-                return new CanonicalModuleIdentity.ProjectModule(
-                    new ProjectModuleIdentity(dotted, dotted, List.of()));
+                return new CanonicalModuleIdentity.ExternalModule(dotted);
             }
             Path p = Path.of(modulePath).toAbsolutePath().normalize();
             // Classify corpus-relative when the path lives inside the
@@ -1866,7 +1882,8 @@ public class ConformanceTest {
                 // Name resolution rooted at this file.
                 ConformanceModuleResolver resolver =
                     new ConformanceModuleResolver(file, this, profile);
-                NameResolver nr = new NameResolver(filename, resolver);
+                NameResolver nr = new NameResolver(filename, resolver,
+                    new HashSet<>(), this::classifyModulePath);
                 SymbolTable symTable = nr.resolve(parseResult.program());
                 if (nr.diagnostics().stream().anyMatch(
                         d -> "error".equals(d.severity()))) {
@@ -1885,7 +1902,7 @@ public class ConformanceTest {
                 registerModulePath(filename, hostModules);
                 LuaBackend backend = new LuaBackend(
                     result.typeMap(), result.symbolTable(), filename,
-                    filename, descriptorService(), profile);
+                    filename, identityIndex(), profile);
                 String luaSource = backend.generateFromInstance(
                     parseResult.program(), isEntry, importResolutions,
                     hostModules);
@@ -1979,25 +1996,42 @@ public class ConformanceTest {
                         "Parse errors in " + filename);
 
                 // The typing/class-identity module path is the dotted form
-                // (host-module-abi D6): class types and descriptors carry
-                // it; the require path stays the raw slash-form specifier.
+                // (host-module-abi D6); the require path stays the raw
+                // slash-form specifier.  The harness's injected v1.2
+                // externals classification supplies the canonical
+                // identity: ExternalModule(dotted) projects the pinned
+                // @$external/host.cfg/<Name> /
+                // @$external/host.presence/<Name> atoms.
                 String dotted = raw.replace('/', '.');
-                ExportExtractor extractor = new ExportExtractor(dotted, true);
+                CanonicalModuleIdentity hostIdentity =
+                    new CanonicalModuleIdentity.ExternalModule(dotted);
+                Map<String, CanonicalModuleIdentity> classification =
+                    new LinkedHashMap<>();
+                classification.put(dotted, hostIdentity);
+                ExportExtractor extractor = new ExportExtractor(dotted, true,
+                    classification::get);
                 Map<String, Type> exports =
                     extractor.extract(parseResult.program());
 
                 // Class-symbol synthesis: every ClassDeclaration in the
                 // fixture program (incl. ExportDeclaration-wrapped ones)
-                // becomes a ClassSymbol carrying the dotted module path.
+                // becomes a ClassSymbol carrying the canonical class
+                // identity — never the dotted module path.
                 Map<String, Symbol.ClassSymbol> classSymbols = new LinkedHashMap<>();
                 for (StatementNode stmt : parseResult.program().statements()) {
                     if (stmt instanceof ClassDeclaration cd) {
                         classSymbols.put(cd.name(),
-                            new Symbol.ClassSymbol(cd.name(), cd.fields(), dotted));
+                            new Symbol.ClassSymbol(cd.name(), cd.fields(),
+                                dotted,
+                                new CanonicalClassIdentity(hostIdentity,
+                                    cd.name())));
                     } else if (stmt instanceof ExportDeclaration exp
                             && exp.declaration() instanceof ClassDeclaration cd) {
                         classSymbols.put(cd.name(),
-                            new Symbol.ClassSymbol(cd.name(), cd.fields(), dotted));
+                            new Symbol.ClassSymbol(cd.name(), cd.fields(),
+                                dotted,
+                                new CanonicalClassIdentity(hostIdentity,
+                                    cd.name())));
                     }
                 }
 
@@ -2138,6 +2172,82 @@ public class ConformanceTest {
         }
 
         @Override
+        public Symbol.ClassSymbol resolveClassSymbol(String className,
+                CanonicalModuleIdentity declaringModule,
+                String importingModule)
+                throws ModuleNotFoundException {
+            // v1.2 identity carriage: route the carried identity back to
+            // the host fixture (an externals module with the dotted raw
+            // specifier) or to the catalogued companion module.
+            if (declaringModule
+                    instanceof CanonicalModuleIdentity.ExternalModule ext) {
+                if (hostRegistry.isHostModule(ext.rawImportSpecifier())) {
+                    HostRegistry.HostDeclaration decl =
+                        hostRegistry.forModule(ext.rawImportSpecifier());
+                    return decl.classSymbols().get(className);
+                }
+                return null;
+            }
+            if (catalog != null) {
+                for (Map.Entry<Path, CompanionCatalog.Artifact> entry
+                        : catalog.cache.entrySet()) {
+                    CompanionCatalog.Artifact artifact = entry.getValue();
+                    if (artifact.symbolTable() == null) {
+                        continue;
+                    }
+                    CanonicalModuleIdentity classified =
+                        catalog.classifyModulePath(entry.getKey().toString());
+                    if (!declaringModule.equals(classified)) {
+                        continue;
+                    }
+                    Symbol sym = artifact.symbolTable().resolve(className);
+                    if (sym instanceof Symbol.ClassSymbol cs
+                            && cs.identity().moduleIdentity()
+                                .equals(declaringModule)) {
+                        return cs;
+                    }
+                }
+            }
+            return null;
+        }
+
+        @Override
+        public boolean isFunctionExportedFromModule(
+                CanonicalModuleIdentity declaringModule, String functionName,
+                String importingModule)
+                throws ModuleNotFoundException {
+            // Host fixtures: the declared export map.
+            if (declaringModule
+                    instanceof CanonicalModuleIdentity.ExternalModule ext
+                    && hostRegistry.isHostModule(ext.rawImportSpecifier())) {
+                HostRegistry.HostDeclaration decl =
+                    hostRegistry.forModule(ext.rawImportSpecifier());
+                return decl.exports().containsKey(functionName);
+            }
+            // Catalogue companions: their jsonable synthetic exports
+            // live in the declaring module's root symbol table (the
+            // hoisted C$fromJson/C$toJson function symbols), keyed by
+            // the module identity the declaring resolver classified.
+            if (catalog != null) {
+                for (Map.Entry<Path, CompanionCatalog.Artifact> entry
+                        : catalog.cache.entrySet()) {
+                    CompanionCatalog.Artifact artifact = entry.getValue();
+                    if (artifact.symbolTable() == null) {
+                        continue;
+                    }
+                    CanonicalModuleIdentity classified =
+                        catalog.classifyModulePath(entry.getKey().toString());
+                    if (declaringModule.equals(classified)
+                            && artifact.symbolTable().resolve(functionName)
+                                != null) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        @Override
         public Type resolveTypeNodeInModule(TypeNode typeNode,
                 String modulePath, String importingModule)
                 throws ModuleNotFoundException {
@@ -2173,8 +2283,9 @@ public class ConformanceTest {
         private Type resolveHostTypeNode(TypeNode typeNode, String modulePath,
                 HostRegistry.HostDeclaration decl) {
             if (typeNode instanceof NamedType nt) {
-                if (decl.classSymbols().containsKey(nt.name())) {
-                    return Types.classType(nt.name(), modulePath);
+                Symbol.ClassSymbol cs = decl.classSymbols().get(nt.name());
+                if (cs != null) {
+                    return Types.classType(nt.name(), cs.identity());
                 }
                 return null;
             }
@@ -2231,7 +2342,14 @@ public class ConformanceTest {
                 if (parseResult.hasErrors())
                     throw new ModuleNotFoundException("Parse errors in " + filename);
 
-                ExportExtractor extractor = new ExportExtractor(filename, isDecl);
+                // v1.2 identity carriage: the companion's extracted class
+                // types carry the harness classification's identities
+                // (the same surface the companion's own checker and
+                // backend use), never the dotted-path default.
+                ExportExtractor extractor = catalog != null
+                    ? new ExportExtractor(filename, isDecl,
+                        catalog::classifyModulePath)
+                    : new ExportExtractor(filename, isDecl);
                 return extractor.extract(parseResult.program());
             } catch (IOException e) {
                 throw new ModuleNotFoundException("Cannot read: " + file);

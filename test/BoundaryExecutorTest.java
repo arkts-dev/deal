@@ -14,6 +14,7 @@ import deal.semantic.ir.FailurePolicyId;
 import deal.semantic.ir.FailurePolicyRow;
 import deal.semantic.ir.RuntimeDescriptor;
 import deal.types.Type;
+import deal.test.IdentityTestFixtures;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -128,9 +129,9 @@ public class BoundaryExecutorTest {
     private static final RuntimeDescriptor NULL_DESCRIPTOR = DescriptorService.describe(Type.Null.INSTANCE);
     private static final RuntimeDescriptor TABLE = DescriptorService.describe(Type.Table.INSTANCE);
     private static final RuntimeDescriptor USER =
-        DescriptorService.describe(new Type.Class("User", "src/app"));
+        DescriptorService.describe(IdentityTestFixtures.classType("User", "src/app"));
     private static final RuntimeDescriptor BUILTIN_ERROR =
-        DescriptorService.describe(new Type.Class("Error", ""));
+        DescriptorService.describe(IdentityTestFixtures.errorClassType());
     private static final RuntimeDescriptor NUMBER_ARRAY =
         DescriptorService.describe(new Type.Array(Type.Number.INSTANCE));
     private static final RuntimeDescriptor INT_ARRAY =

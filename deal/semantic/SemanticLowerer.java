@@ -2639,7 +2639,7 @@ public final class SemanticLowerer {
                                               ValueId slot) {
             RuntimeDescriptor fieldDescriptor =
                 ContainerPayloadDescriptors.resultDescriptorOf(checkedType(access));
-            ClassId classId = new ClassId(classType.modulePath(), classType.name());
+            ClassId classId = new ClassId(DescriptorService.semanticModulePath(classType.identity()), classType.name());
             OpId chainOpId = ids.nextOpId(module, nextOrdinal++, 0);
             chainParents.push(chainOpId);
             ValueId value;
@@ -2820,7 +2820,7 @@ public final class SemanticLowerer {
          */
         private void lowerClassFieldDelete(DeleteStatement delete, MemberAccessExpr access,
                                            Type.Class classType) {
-            ClassId classId = new ClassId(classType.modulePath(), classType.name());
+            ClassId classId = new ClassId(DescriptorService.semanticModulePath(classType.identity()), classType.name());
             OpId chainOpId = ids.nextOpId(module, nextOrdinal++, 0);
             chainParents.push(chainOpId);
             OpId containerOp;
@@ -3519,7 +3519,8 @@ public final class SemanticLowerer {
             Type type = checkedType(literal);
             if (type instanceof Type.Class classType) {
                 throw new ConstructUnlowered("class-typed object literal "
-                    + classType.modulePath() + "/" + classType.name()
+                    + DescriptorService.semanticModulePath(classType.identity())
+                    + "/" + classType.name()
                     + " (class construction and CLASS_NEW are E9's)");
             }
             if (!(type instanceof Type.Table)) {
@@ -3561,7 +3562,8 @@ public final class SemanticLowerer {
                 return lowerMemberRead(access, slot);
             }
             if (objectType instanceof Type.Class classType) {
-                throw new ConstructUnlowered("class member access " + classType.modulePath()
+                throw new ConstructUnlowered("class member access "
+                    + DescriptorService.semanticModulePath(classType.identity())
                     + "/" + classType.name() + "." + access.field()
                     + " (FIELD_READ is E9's)");
             }
@@ -4184,8 +4186,9 @@ public final class SemanticLowerer {
             return switch (type) {
                 case Type.Array array -> "[" + typeName(array.element()) + "]";
                 case Type.Nullable nullable -> "?" + typeName(nullable.inner());
-                case Type.Class classType -> "@" + classType.modulePath() + "/"
-                    + classType.name();
+                case Type.Class classType -> "@"
+                    + DescriptorService.semanticModulePath(classType.identity())
+                    + "/" + classType.name();
                 case Type.Func func -> "function";
                 default -> String.valueOf(type);
             };

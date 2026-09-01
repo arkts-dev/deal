@@ -1,5 +1,7 @@
 package deal.types;
 
+import deal.identity.CanonicalClassIdentity;
+
 import java.util.List;
 
 /**
@@ -88,14 +90,20 @@ public sealed interface Type
     }
 
     /**
-     * Nominal class type, identified by name and module path.
-     * Uses fully qualified java.lang.String to avoid ambiguity
-     * with the nested {@link Type.String} enum.
+     * Nominal class type, identified by name and canonical class
+     * identity (the v1.2 identity carriage — design source
+     * {@code descriptor-identity-propagation} D1): equality is identity
+     * equality and descriptor text comes only from the compilation's
+     * {@code CanonicalClassIdentityIndex}.  The retired dotted
+     * {@code modulePath} carrier no longer exists; the private
+     * deployment module id stays the import/export wiring key outside
+     * the type.  Uses fully qualified java.lang.String to avoid
+     * ambiguity with the nested {@link Type.String} enum.
      */
-    record Class(java.lang.String name, java.lang.String modulePath) implements Type {
+    record Class(java.lang.String name, CanonicalClassIdentity identity) implements Type {
         public Class {
             if (name == null) throw new IllegalArgumentException("name must not be null");
-            if (modulePath == null) throw new IllegalArgumentException("modulePath must not be null");
+            if (identity == null) throw new IllegalArgumentException("identity must not be null");
         }
     }
 

@@ -996,10 +996,10 @@ public class LuaAbiBackendTest {
         // Mirrors ExportExtractor's synthesized @jsonable helpers exactly:
         // C$fromJson: (string) -> C | null;  C$toJson: (C) -> string.
         hostExports.put("User$fromJson", Types.func(List.of(Type.String.INSTANCE),
-            Types.nullable(Types.classType("User", "host.cfg"))));
+            Types.nullable(IdentityTestFixtures.classType("User", "host.cfg"))));
         hostExports.put("User$toJson", Types.func(
-            List.of(Types.classType("User", "host.cfg")), Type.String.INSTANCE));
-        hostExports.put("User", Types.classType("User", "host.cfg"));
+            List.of(IdentityTestFixtures.classType("User", "host.cfg")), Type.String.INSTANCE));
+        hostExports.put("User", IdentityTestFixtures.classType("User", "host.cfg"));
 
         StubModuleResolver resolver = new StubModuleResolver();
         resolver.register("host/cfg", hostExports);
@@ -1069,7 +1069,7 @@ public class LuaAbiBackendTest {
             Type.String.INSTANCE));
         // export function find(s: string): User | null;
         hostExports.put("find", Types.func(List.of(Type.String.INSTANCE),
-            Types.nullable(Types.classType("User", "host.cfg"))));
+            Types.nullable(IdentityTestFixtures.classType("User", "host.cfg"))));
 
         StubModuleResolver resolver = new StubModuleResolver();
         resolver.register("host/cfg", hostExports);
@@ -1144,12 +1144,12 @@ public class LuaAbiBackendTest {
         insertionOrder.put("ping", Types.func(List.of(), Type.Int.INSTANCE));
         insertionOrder.put("repeat", Types.func(List.of(), Type.Int.INSTANCE));
         insertionOrder.put("User$fromJson", Types.func(List.of(Type.String.INSTANCE),
-            Types.nullable(Types.classType("User", "host.cfg"))));
+            Types.nullable(IdentityTestFixtures.classType("User", "host.cfg"))));
         insertionOrder.put("User$toJson", Types.func(
-            List.of(Types.classType("User", "host.cfg")), Type.String.INSTANCE));
-        insertionOrder.put("User", Types.classType("User", "host.cfg"));
+            List.of(IdentityTestFixtures.classType("User", "host.cfg")), Type.String.INSTANCE));
+        insertionOrder.put("User", IdentityTestFixtures.classType("User", "host.cfg"));
         insertionOrder.put("find", Types.func(List.of(Type.String.INSTANCE),
-            Types.nullable(Types.classType("User", "host.cfg"))));
+            Types.nullable(IdentityTestFixtures.classType("User", "host.cfg"))));
         insertionOrder.put("applyAll", Types.func(
             List.of(Type.String.INSTANCE,
                 Types.array(Types.func(List.of(Type.Int.INSTANCE), Type.Int.INSTANCE))),

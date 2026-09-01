@@ -2,6 +2,7 @@ package deal.checker;
 
 import deal.ast.ClassField;
 import deal.ast.Span;
+import deal.identity.CanonicalClassIdentity;
 import deal.types.Type;
 
 import java.util.List;
@@ -26,8 +27,17 @@ public sealed interface Symbol
     /** A function declaration, carrying its function type. */
     record FunctionSymbol(String name, Type.Func funcType) implements Symbol {}
 
-    /** A class declaration, carrying its fields and the module path it belongs to. */
-    record ClassSymbol(String name, List<ClassField> fields, String modulePath) implements Symbol {}
+    /**
+     * A class declaration, carrying its fields, the canonical class
+     * identity resolved by the module-identity layer
+     * ({@code descriptor-identity-propagation} D1: declared classes
+     * carry their resolved identity; the intrinsic Error class carries
+     * the {@code BuiltinModule} synthesis), and the module path it
+     * belongs to — the private deployment wiring key used for
+     * cross-module routing only, never for descriptor text.
+     */
+    record ClassSymbol(String name, List<ClassField> fields, String modulePath,
+                       CanonicalClassIdentity identity) implements Symbol {}
 
     /**
      * A module imported via {@code import * as Name from "path"}.

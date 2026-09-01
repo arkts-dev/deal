@@ -24,6 +24,7 @@ import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticFormatter;
 import deal.diagnostics.DiagnosticRange;
 import deal.diagnostics.DiagnosticStructuredOutput;
+import deal.identity.CanonicalClassIdentity;
 import deal.parser.*;
 import deal.semantic.CheckedProjectBuildResult;
 import deal.semantic.CheckedProjectBuilder;
@@ -1072,7 +1073,7 @@ public final class CompilationOrchestrator {
             }
 
             ExportExtractor extractor = new ExportExtractor(info.modulePath,
-                info.isDeclarationFile);
+                info.isDeclarationFile, modulePathClassification()::get);
             extractor.setImportModulePaths(importAliasMap);
             info.exports = extractor.extract(info.rawAst);
             List<CompilerDiagnostic> exportDiags = extractor.diagnostics();
@@ -1121,7 +1122,8 @@ public final class CompilationOrchestrator {
             // IR dump for declaration files
             if (dumpIr && info.isDeclarationFile && info.rawAst != null) {
                 try {
-                    String irText = IrDumper.dump(info.rawAst, info.symbolTable, info.modulePath);
+                    String irText = IrDumper.dump(info.rawAst, info.symbolTable,
+                        info.modulePath, buildCanonicalIdentitySurface());
                     if (!irText.isEmpty()) {
                         writeIrDump(info.modulePath, irText);
                     }
@@ -1889,7 +1891,8 @@ public final class CompilationOrchestrator {
 
             long modStart = System.currentTimeMillis();
 
-            NameResolver nr = new NameResolver(info.modulePath, resolver);
+            NameResolver nr = new NameResolver(info.modulePath, resolver,
+                new HashSet<>(), modulePathClassification()::get);
             info.nameResolver = nr;
             SymbolTable symTable = nr.resolve(info.rawAst);
             info.symbolTable = symTable;
@@ -1916,7 +1919,7 @@ public final class CompilationOrchestrator {
                                 correctedExports.put(exportName, fs.funcType());
                             } else if (sym instanceof Symbol.ClassSymbol cs) {
                                 correctedExports.put(exportName,
-                                    Types.classType(cs.name(), cs.modulePath()));
+                                    Types.classType(cs.name(), cs.identity()));
                             }
                         }
                     }
@@ -1933,7 +1936,7 @@ public final class CompilationOrchestrator {
                         && cd.isJsonable()) {
                     Symbol clsSym = symTable.resolve(cd.name());
                     if (clsSym instanceof Symbol.ClassSymbol cs) {
-                        Type clsType = Types.classType(cs.name(), cs.modulePath());
+                        Type clsType = Types.classType(cs.name(), cs.identity());
 
                         // C$fromJson: (string) -> C | null
                         Type.Func fromJsonType = new Type.Func(
@@ -1972,7 +1975,8 @@ public final class CompilationOrchestrator {
             // IR dump for full modules (after type checking, before codegen)
             if (dumpIr && !result.hasErrors() && info.rawAst != null) {
                 try {
-                    String irText = IrDumper.dump(info.rawAst, result, info.modulePath);
+                    String irText = IrDumper.dump(info.rawAst, result,
+                        info.modulePath, buildCanonicalIdentitySurface());
                     if (!irText.isEmpty()) {
                         writeIrDump(info.modulePath, irText);
                     }
@@ -2026,12 +2030,9 @@ public final class CompilationOrchestrator {
             // it; the local legacy dialect producer is retired.
             ModuleIdentityResolver.IdentityIndex identityIndex =
                 buildCanonicalIdentitySurface();
-            CanonicalRuntimeTypeDescriptor descriptorService =
-                new CanonicalRuntimeTypeDescriptor(identityIndex,
-                    identityIndex.moduleIdentityLookup());
             for (ModuleInfo info : modules.values()) {
                 if (info.isDeclarationFile) continue;
-                codegenLuaModule(info, descriptorService);
+                codegenLuaModule(info, identityIndex);
             }
             copyRuntimeLibrary();
             copyStdlibModules();
@@ -2050,7 +2051,7 @@ public final class CompilationOrchestrator {
      * codegenAllJs builds and consumes).
      */
     private void codegenLuaModule(ModuleInfo info,
-                                  CanonicalRuntimeTypeDescriptor descriptors)
+                                  ModuleIdentityResolver.IdentityIndex identityIndex)
             throws IOException {
         long modStart = System.currentTimeMillis();
 
@@ -2105,7 +2106,7 @@ public final class CompilationOrchestrator {
         LuaBackend.GenerationResult gen = LuaBackend.generateToFile(
             info.rawAst, info.checkResult, info.sourcePath, info.modulePath,
             outputRoot, outputPath, sourceMap, importResolutions, hostModules,
-            isEntry, descriptors, invocation.semanticProfile());
+            isEntry, identityIndex, invocation.semanticProfile());
         // Native ranged backend list (T12): the backend emits
         // CompilerDiagnostic entries directly, so the orchestrator merge
         // needs no boundary conversion — real spans keep their exact
@@ -2220,9 +2221,16 @@ public final class CompilationOrchestrator {
             // backend-wide int mode from the invocation's project-wide
             // semantic profile — never from a static flag, a system
             // property, or any source/CLI/environment surface.
+            // v1.2 identity carriage (descriptor-identity-propagation
+            // D1/D2): the compilation's identity index and module-path
+            // classification flow in; every class descriptor the backend
+            // emits resolves through index.descriptorTextFor(identity).
+            ModuleIdentityResolver.IdentityIndex identityIndex =
+                buildCanonicalIdentitySurface();
             JvmBackend.JvmCodegenResult res = JvmBackend.generate(
                 info.rawAst, info.checkResult, info.sourcePath, info.modulePath,
                 importResolutions, importedClasses, hostModules, isEntry,
+                isEntry, identityIndex, identityIndex.moduleIdentityLookup(),
                 invocation.semanticProfile());
             for (CompilerDiagnostic d : res.diagnostics()) {
                 diagnostics.add(d);
@@ -2278,6 +2286,19 @@ public final class CompilationOrchestrator {
      * production (the pinned invariant violation).
      */
     private ModuleIdentityResolver.IdentityIndex buildCanonicalIdentitySurface() {
+        return ModuleIdentityResolver.buildIndex(modulePathClassification());
+    }
+
+    /**
+     * The compilation's module-path classification (the module-identity
+     * layer's single classification map): every known module path plus
+     * the intrinsic builtin Error module path.  The checker, the export
+     * extractor, the IR dumper, and the backends all obtain class
+     * identities exclusively from this surface (v1.2 identity carriage,
+     * descriptor-identity-propagation D1) — never from dotted-path
+     * reconstruction.
+     */
+    private Map<String, CanonicalModuleIdentity> modulePathClassification() {
         Map<String, CanonicalModuleIdentity> modulePathIdentities =
             new HashMap<>();
         modulePathIdentities.put("", CanonicalModuleIdentity.BuiltinModule.INSTANCE);
@@ -2287,7 +2308,7 @@ public final class CompilationOrchestrator {
                 modulePathIdentities.put(info.modulePath, identity);
             }
         }
-        return ModuleIdentityResolver.buildIndex(modulePathIdentities);
+        return modulePathIdentities;
     }
 
     /**
@@ -2972,14 +2993,96 @@ public final class CompilationOrchestrator {
                             cd = c;
                         }
                         if (cd != null && cd.name().equals(className)) {
+                            CanonicalModuleIdentity moduleIdentity =
+                                classifyModuleIdentity(info);
+                            if (moduleIdentity == null) {
+                                throw new IllegalStateException(
+                                    "no canonical public module identity for"
+                                        + " host declaration module '"
+                                        + info.modulePath
+                                        + "': its declared classes can never"
+                                        + " carry an identity (internal"
+                                        + " invariant violation)");
+                            }
                             return new Symbol.ClassSymbol(cd.name(),
-                                cd.fields(), info.modulePath);
+                                cd.fields(), info.modulePath,
+                                new CanonicalClassIdentity(moduleIdentity,
+                                    cd.name()));
                         }
                     }
                     return null;
                 }
             }
             return null;
+        }
+
+        @Override
+        public Symbol.ClassSymbol resolveClassSymbol(String className,
+                CanonicalModuleIdentity declaringModule,
+                String importingModule)
+                throws ModuleNotFoundException {
+            // v1.2 identity carriage: imported classes carry the declaring
+            // source's identity; route on the module-identity
+            // classification (the same single classifier the identity
+            // surface consumes).
+            for (ModuleInfo info : modules.values()) {
+                CanonicalModuleIdentity identity =
+                    classifyModuleIdentity(info);
+                if (identity == null || !identity.equals(declaringModule)) {
+                    continue;
+                }
+                if (info.symbolTable != null) {
+                    Symbol sym = info.symbolTable.resolve(className);
+                    if (sym instanceof Symbol.ClassSymbol cs) return cs;
+                    // Two files in one directory share the module
+                    // identity; the declaring file's table may live in a
+                    // later module — keep scanning.
+                    continue;
+                }
+                // Host declaration synthesis (the modulePath-keyed path's
+                // counterpart): declared classes of an externals-listed
+                // declaration carry the externals identity.
+                for (StatementNode stmt : info.rawAst.statements()) {
+                    ClassDeclaration cd = null;
+                    if (stmt instanceof ClassDeclaration c) {
+                        cd = c;
+                    } else if (stmt instanceof ExportDeclaration ed
+                            && ed.declaration()
+                                instanceof ClassDeclaration c) {
+                        cd = c;
+                    }
+                    if (cd != null && cd.name().equals(className)) {
+                        return new Symbol.ClassSymbol(cd.name(),
+                            cd.fields(), info.modulePath,
+                            new CanonicalClassIdentity(identity,
+                                cd.name()));
+                    }
+                }
+                // Two files in one directory share the module identity;
+                // keep scanning for the declaring module.
+                continue;
+            }
+            return null;
+        }
+
+        @Override
+        public boolean isFunctionExportedFromModule(
+                CanonicalModuleIdentity declaringModule,
+                String functionName, String importingModule)
+                throws ModuleNotFoundException {
+            // v1.2 identity carriage: route on the module-identity
+            // classification; the declaring module's exports map answers
+            // the jsonable synthetic-export queries.
+            for (ModuleInfo info : modules.values()) {
+                CanonicalModuleIdentity identity =
+                    classifyModuleIdentity(info);
+                if (identity != null && identity.equals(declaringModule)
+                        && info.exports != null
+                        && info.exports.containsKey(functionName)) {
+                    return true;
+                }
+            }
+            return false;
         }
 
         /**
@@ -3037,7 +3140,13 @@ public final class CompilationOrchestrator {
             if (cached != null) {
                 return cached;
             }
-            NameResolver built = new NameResolver(info.modulePath, this);
+            // v1.2 identity carriage: the declaration's classes carry the
+            // compilation's classification identities (externals/builtin),
+            // never the standalone dotted-path default — the synthesized
+            // host-class field types must carry the same identity the
+            // host-class symbols carry.
+            NameResolver built = new NameResolver(info.modulePath, this,
+                new HashSet<>(), modulePathClassification()::get);
             declarationResolvers.put(info.modulePath, built);
             built.resolve(info.rawAst);
             return built;

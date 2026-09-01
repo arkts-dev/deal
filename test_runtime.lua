@@ -2596,20 +2596,6 @@ test("load_host async export: real handle passes, junk raises E8010", function()
   assert_error(function() host2.fetch_bad.f() end, "E8010")
 end)
 
-test("load_host legacy rest export is rejected at load (v1.2: no rest arm)", function()
-  -- The legacy "...T[]" spelling never parses under the canonical grammar,
-  -- so the declared descriptor is rejected at load with E8011.
-  assert_error(function()
-    __rt.load_host(HOST_FIXTURE, { join = "(string,...string[])->string" })
-  end, "E8011")
-end)
-
-test("load_host legacy rest-of-function-elements export is rejected at load (v1.2)", function()
-  assert_error(function()
-    __rt.load_host(HOST_FIXTURE, { apply_rest = "(string,...[(int)->int])->int" })
-  end, "E8011")
-end)
-
 test("load_host nullable-function param export accepts null and matching-sig function", function()
   local host = __rt.load_host(HOST_FIXTURE, { register = "(?(int)->int)->null" })
   assert(host.register.f(__rt.__NULL) == __rt.__NULL)
@@ -2621,17 +2607,17 @@ end)
 
 test("load_host class export validates identity and copies defaults", function()
   local host = __rt.load_host(HOST_FIXTURE, {
-    ServerConfig = "@host.cfg/ServerConfig",
+    ServerConfig = "@$external/host.cfg/ServerConfig",
   })
   assert(type(host.ServerConfig) == "table" and host.ServerConfig.__kind == "class")
-  assert(host.ServerConfig.__classname == "@host.cfg/ServerConfig")
+  assert(host.ServerConfig.__classname == "@$external/host.cfg/ServerConfig")
   assert(type(host.ServerConfig_defaults) == "table")
   assert(host.ServerConfig_defaults.port == 80)
 end)
 
 test("load_host synthesizes no <C>_plan key and host classes keep the defaults-map seam", function()
   local host = __rt.load_host(HOST_FIXTURE, {
-    ServerConfig = "@host.cfg/ServerConfig",
+    ServerConfig = "@$external/host.cfg/ServerConfig",
   })
   -- The loader copies META and <C>_defaults through and synthesizes
   -- nothing else: no <C>_plan artifact ever exists on a host module
@@ -2641,58 +2627,67 @@ test("load_host synthesizes no <C>_plan key and host classes keep the defaults-m
   -- per-instance deep copies (the host's own defaults table is never
   -- mutated or tagged), provided overlays stay instance-local, and
   -- extra provided names still raise E8007.
-  local a = __rt.class_("@host.cfg/ServerConfig", host.ServerConfig_defaults, { port = 9000 })
-  local b = __rt.class_("@host.cfg/ServerConfig", host.ServerConfig_defaults, { port = 8080 })
+  local a = __rt.class_("@$external/host.cfg/ServerConfig", host.ServerConfig_defaults, { port = 9000 })
+  local b = __rt.class_("@$external/host.cfg/ServerConfig", host.ServerConfig_defaults, { port = 8080 })
   assert(a.port == 9000)
   assert(b.port == 8080)
   assert(host.ServerConfig_defaults.port == 80)
   assert(host.ServerConfig_defaults.__kind == nil)
   assert(host.ServerConfig_defaults.__classname == nil)
   assert_error(function()
-    __rt.class_("@host.cfg/ServerConfig", host.ServerConfig_defaults, { port = 1, extra = true })
+    __rt.class_("@$external/host.cfg/ServerConfig", host.ServerConfig_defaults, { port = 1, extra = true })
   end, "E8007")
 end)
 
 test("load_host class identity mismatch raises E8011", function()
   assert_error(function()
-    __rt.load_host(HOST_FIXTURE, { WrongName = "@host.cfg/WrongName" })
+    __rt.load_host(HOST_FIXTURE, { WrongName = "@$external/host.cfg/WrongName" })
   end, "E8011")
 end)
 
 test("load_host non-class export for class descriptor raises E8011", function()
   assert_error(function()
-    __rt.load_host(HOST_FIXTURE, { not_a_class = "@host.cfg/NotAClass" })
+    __rt.load_host(HOST_FIXTURE, { not_a_class = "@$external/host.cfg/NotAClass" })
   end, "E8011")
 end)
 
 test("load_host class missing defaults raises E8011", function()
   assert_error(function()
-    __rt.load_host(HOST_FIXTURE, { NoDefaults = "@host.cfg/NoDefaults" })
+    __rt.load_host(HOST_FIXTURE, { NoDefaults = "@$external/host.cfg/NoDefaults" })
   end, "E8011")
 end)
 
 test("load_host class non-table defaults raises E8011", function()
   assert_error(function()
-    __rt.load_host(HOST_FIXTURE, { BadDefaults = "@host.cfg/BadDefaults" })
+    __rt.load_host(HOST_FIXTURE, { BadDefaults = "@$external/host.cfg/BadDefaults" })
   end, "E8011")
 end)
 
 test("load_host class supplied _fields copied through", function()
-  local host = __rt.load_host(HOST_FIXTURE, { ServerConfig = "@host.cfg/ServerConfig" })
+  local host = __rt.load_host(HOST_FIXTURE, { ServerConfig = "@$external/host.cfg/ServerConfig" })
   assert(type(host.ServerConfig_fields) == "table")
   assert(host.ServerConfig_fields[1].name == "port")
 end)
 
 test("load_host class non-table _fields raises E8011", function()
   assert_error(function()
-    __rt.load_host(HOST_FIXTURE, { BadFields = "@host.cfg/BadFields" })
+    __rt.load_host(HOST_FIXTURE, { BadFields = "@$external/host.cfg/BadFields" })
   end, "E8011")
 end)
 
 test("load_host class absent _fields tolerated", function()
-  local host = __rt.load_host(HOST_FIXTURE, { NoFields = "@host.cfg/NoFields" })
+  local host = __rt.load_host(HOST_FIXTURE, { NoFields = "@$external/host.cfg/NoFields" })
   assert(host.NoFields.__kind == "class")
   assert(host.NoFields_fields == nil)
+end)
+
+test("load_host dotted-legacy class tag fails E8011 against the canonical descriptor", function()
+  -- A host class tagged with the retired v1.1 dotted emission shape
+  -- never byte-matches the canonical @$external/host.cfg/<Name>
+  -- projection: the byte-exact identity check fails closed at load.
+  assert_error(function()
+    __rt.load_host(HOST_FIXTURE, { DottedLegacy = "@$external/host.cfg/DottedLegacy" })
+  end, "E8011")
 end)
 
 

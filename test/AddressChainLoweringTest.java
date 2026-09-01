@@ -804,7 +804,7 @@ public class AddressChainLoweringTest {
         MemberAccessExpr target = member(receiver, "f", 3);
         LiteralExpr value = intLit(9, 7);
         AssignmentExpr assignment = assign(target, value);
-        Type.Class classType = new Type.Class("C", "main");
+        Type.Class classType = IdentityTestFixtures.classType("C", "main");
         SymbolTable table = new SymbolTable();
         table.define("c", new Symbol.VariableSymbol("c", classType, false));
         CheckResult checked = checks(Map.of(receiver, classType, target, Type.Int.INSTANCE,
@@ -1047,7 +1047,7 @@ public class AddressChainLoweringTest {
             IdentifierExpr receiver = ident("c", 8);
             MemberAccessExpr target = member(receiver, "f", 10);
             DeleteStatement delete = delete(target);
-            Type.Class classType = new Type.Class("C", "main");
+            Type.Class classType = IdentityTestFixtures.classType("C", "main");
             SymbolTable table = new SymbolTable();
             table.define("c", new Symbol.VariableSymbol("c", classType, false));
             CheckResult checked = checks(

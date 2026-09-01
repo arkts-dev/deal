@@ -4,13 +4,13 @@
   "expected": {
     "mode": "runtime-error",
     "transcript": {
-      "stdout": "DEAL_ERROR_CODE: E8007\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8007\",\"message\":\"extra field 'fallback' in class '@host.presence/Config'\",\"sourceFile\":\"backend-runtime/host-abi/host-class-extra-field.deal\",\"line\":9,\"column\":28}\n",
+      "stdout": "DEAL_ERROR_CODE: E8007\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8007\",\"message\":\"extra field 'fallback' in class '@$external/host.presence/Config'\",\"sourceFile\":\"backend-runtime/host-abi/host-class-extra-field.deal\",\"line\":9,\"column\":28}\n",
       "stderr": ""
     },
     "exitCode": 1,
     "error": {
       "code": "E8007",
-      "message": "extra field 'fallback' in class '@host.presence/Config'",
+      "message": "extra field 'fallback' in class '@$external/host.presence/Config'",
       "sourceFile": "backend-runtime/host-abi/host-class-extra-field.deal",
       "line": 9,
       "column": 28

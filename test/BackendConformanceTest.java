@@ -8,6 +8,7 @@ import deal.codegen.jvm.JvmBackend;
 import deal.codegen.js.HostModuleDeclarations;
 import deal.codegen.js.JsBackend;
 import deal.codegen.lua.LuaBackend;
+import deal.identity.CanonicalClassIdentity;
 import deal.identity.CanonicalClassIdentityIndex;
 import deal.identity.CanonicalModuleIdentity;
 import deal.identity.ProjectModuleIdentity;
@@ -1185,7 +1186,14 @@ public class BackendConformanceTest {
             }
 
             // Check IR assertions — always done for IR assertions
-            String ir = IrDumper.dump(fc.program(), fc.checkResult(), "fixture-" + name);
+            // (v1.2 identity carriage: class rows project through the
+            // identity index; the checker's standalone classification
+            // seeds the identities, and the projection is
+            // identity-driven).
+            String ir = IrDumper.dump(fc.program(), fc.checkResult(),
+                "fixture-" + name,
+                ModuleIdentityResolver.buildIndex(Map.of(
+                    "", CanonicalModuleIdentity.BuiltinModule.INSTANCE)));
 
             List<String> irContains = (List<String>) test.getOrDefault("irContains", List.of());
             List<String> irNotContains = (List<String>) test.getOrDefault("irNotContains", List.of());
@@ -1406,7 +1414,30 @@ public class BackendConformanceTest {
         ModuleResolver resolver = hosts == null || hosts.isEmpty()
             ? (ModuleResolver) new StubModuleResolver()
             : new JsHostResolver(hosts, profile);
-        NameResolver nr = new NameResolver(modulePath, resolver);
+        NameResolver nr;
+        if (hosts == null || hosts.isEmpty()) {
+            nr = new NameResolver(modulePath, resolver);
+        } else {
+            // The v1.2 identity carriage for host-fixture modules: the
+            // checker's classification matches the backend's identity
+            // surface — local "Main" classes project @Main/<C>, host
+            // modules classify as externals with the raw import
+            // specifier (the JS runtime fixtures tag
+            // @$external/host/<name>/<C>).
+            Map<String, CanonicalModuleIdentity> classification =
+                new LinkedHashMap<>();
+            classification.put("", CanonicalModuleIdentity.BuiltinModule.INSTANCE);
+            classification.put(modulePath,
+                new CanonicalModuleIdentity.ProjectModule(
+                    new ProjectModuleIdentity(modulePath, modulePath,
+                        List.of())));
+            for (String raw : hosts.keySet()) {
+                classification.put(raw.replace('/', '.'),
+                    new CanonicalModuleIdentity.ExternalModule(raw));
+            }
+            nr = new NameResolver(modulePath, resolver, new HashSet<>(),
+                classification::get);
+        }
         SymbolTable symTable;
         try {
             symTable = nr.resolve(parseResult.program());
@@ -1483,8 +1514,16 @@ public class BackendConformanceTest {
                 ParseResult parse = new Parser(lex.tokens(),
                     raw + ".d.deal", profile,
                     lex.directiveEvents()).parse();
+                // The host fixture's identity classification: the
+                // externals module with the raw import specifier (the
+                // JS runtime fixture tags @$external/host/<name>/<C>).
+                CanonicalModuleIdentity hostIdentity =
+                    new CanonicalModuleIdentity.ExternalModule(raw);
+                Map<String, CanonicalModuleIdentity> classification =
+                    new LinkedHashMap<>();
+                classification.put(dotted, hostIdentity);
                 ExportExtractor extractor = new ExportExtractor(dotted,
-                    true);
+                    true, classification::get);
                 Map<String, Type> exports = extractor.extract(
                     parse.program());
                 Map<String, Symbol.ClassSymbol> classes =
@@ -1502,7 +1541,9 @@ public class BackendConformanceTest {
                     if (cd != null) {
                         classes.put(cd.name(),
                             new Symbol.ClassSymbol(cd.name(),
-                                cd.fields(), dotted));
+                                cd.fields(), dotted,
+                                new CanonicalClassIdentity(hostIdentity,
+                                    cd.name())));
                     }
                 }
                 HostFixture f = new HostFixture(raw, dotted, exports,
@@ -1531,6 +1572,21 @@ public class BackendConformanceTest {
             HostFixture f = byDotted.get(modulePath);
             if (f != null) {
                 return f.classes.get(className);
+            }
+            return null;
+        }
+
+        @Override
+        public Symbol.ClassSymbol resolveClassSymbol(String className,
+                CanonicalModuleIdentity declaringModule,
+                String importingModule)
+                throws ModuleNotFoundException {
+            if (declaringModule
+                    instanceof CanonicalModuleIdentity.ExternalModule ext) {
+                HostFixture f = byRaw.get(ext.rawImportSpecifier());
+                if (f != null) {
+                    return f.classes.get(className);
+                }
             }
             return null;
         }
@@ -2540,7 +2596,17 @@ public class BackendConformanceTest {
                 raw + ".d.deal").tokenize();
             ParseResult parse = new Parser(lex.tokens(),
                 raw + ".d.deal").parse();
-            ExportExtractor extractor = new ExportExtractor(dotted, true);
+            // v1.2 identity carriage: the host declaration's classes
+            // carry the externals classification (the JS runtime fixture
+            // tags @$external/host/<name>/<C>), never the dotted-path
+            // default.
+            CanonicalModuleIdentity hostIdentity =
+                new CanonicalModuleIdentity.ExternalModule(raw);
+            Map<String, CanonicalModuleIdentity> classification =
+                new LinkedHashMap<>();
+            classification.put(dotted, hostIdentity);
+            ExportExtractor extractor = new ExportExtractor(dotted, true,
+                classification::get);
             Map<String, Type> exports = extractor.extract(parse.program());
             Map<String, List<HostModuleDeclarations.HostField>>
                 classFields = new LinkedHashMap<>();

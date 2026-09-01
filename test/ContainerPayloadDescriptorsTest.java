@@ -12,6 +12,7 @@ import deal.semantic.ir.RuntimeDescriptor;
 import deal.semantic.ir.SemanticCapability;
 import deal.semantic.ir.SemanticProfile;
 import deal.types.Type;
+import deal.test.IdentityTestFixtures;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
@@ -103,10 +104,10 @@ public class ContainerPayloadDescriptorsTest {
                 "String -> the string descriptor"),
             new Case(Type.Table.INSTANCE, RuntimeDescriptor.Table.INSTANCE, "table",
                 "Table -> the table descriptor"),
-            new Case(new Type.Class("User", "src/app"),
+            new Case(IdentityTestFixtures.classType("User", "src/app"),
                 new RuntimeDescriptor.Class(new ClassId("src/app", "User")),
                 "@src/app/User", "Class(name, modulePath) -> Class(new ClassId(modulePath, name))"),
-            new Case(new Type.Class("Error", ""),
+            new Case(IdentityTestFixtures.errorClassType(),
                 new RuntimeDescriptor.Class(ClassId.ERROR),
                 "@/Error", "the builtin Error class type maps to Class(ClassId.ERROR)"),
             new Case(new Type.Array(Type.Int.INSTANCE),
@@ -120,14 +121,14 @@ public class ContainerPayloadDescriptorsTest {
                 new RuntimeDescriptor.Array(new RuntimeDescriptor.Array(
                     new RuntimeDescriptor.Array(RuntimeDescriptor.Int.INSTANCE))),
                 "[[[int]]]", "Array depth 3 recursion"),
-            new Case(new Type.Array(new Type.Nullable(new Type.Class("User", "src/app"))),
+            new Case(new Type.Array(new Type.Nullable(IdentityTestFixtures.classType("User", "src/app"))),
                 new RuntimeDescriptor.Array(new RuntimeDescriptor.Nullable(
                     new RuntimeDescriptor.Class(new ClassId("src/app", "User")))),
                 "[?@src/app/User]", "Array(Nullable(Class)) at depth 2"),
             new Case(new Type.Nullable(Type.String.INSTANCE),
                 new RuntimeDescriptor.Nullable(RuntimeDescriptor.String.INSTANCE),
                 "?string", "Nullable(T) -> Nullable(recurse(T))"),
-            new Case(new Type.Nullable(new Type.Array(new Type.Class("User", "src/app"))),
+            new Case(new Type.Nullable(new Type.Array(IdentityTestFixtures.classType("User", "src/app"))),
                 new RuntimeDescriptor.Nullable(new RuntimeDescriptor.Array(
                     new RuntimeDescriptor.Class(new ClassId("src/app", "User")))),
                 "?[@src/app/User]", "Nullable(Array(Class)) at depth 2"),
@@ -187,7 +188,7 @@ public class ContainerPayloadDescriptorsTest {
         // ClassId construction from (modulePath, name) is pinned inside the
         // class descriptor.
         RuntimeDescriptor user = ContainerPayloadDescriptors.elementDescriptorOf(
-            new Type.Class("User", "src/app"));
+            IdentityTestFixtures.classType("User", "src/app"));
         check(user instanceof RuntimeDescriptor.Class
                 && new ClassId("src/app", "User")
                     .equals(((RuntimeDescriptor.Class) user).classId()),
@@ -421,9 +422,9 @@ public class ContainerPayloadDescriptorsTest {
         List<Type> types = new ArrayList<>(List.of(
             Type.Null.INSTANCE,
             Type.Int.INSTANCE,
-            new Type.Class("User", "src/app"),
-            new Type.Class("Error", ""),
-            new Type.Array(new Type.Nullable(new Type.Class("User", "src/app"))),
+            IdentityTestFixtures.classType("User", "src/app"),
+            IdentityTestFixtures.errorClassType(),
+            new Type.Array(new Type.Nullable(IdentityTestFixtures.classType("User", "src/app"))),
             new Type.Func(List.of(Type.Int.INSTANCE, Type.String.INSTANCE),
                 Type.Boolean.INSTANCE, true)));
         for (Type type : types) {
