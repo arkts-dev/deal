@@ -670,7 +670,9 @@ public final class JvmBackend {
             String modulePath, String sourcePath) {
         Map<String, CanonicalModuleIdentity> map = new LinkedHashMap<>();
         map.put("", CanonicalModuleIdentity.BuiltinModule.INSTANCE);
-        for (String path : Set.of(modulePath, sourcePath)) {
+        // List.of (not Set.of): modulePath and sourcePath may be
+        // equal or null; iterate once per distinct non-empty path.
+        for (String path : List.of(modulePath, sourcePath)) {
             if (path != null && !path.isEmpty()
                     && !map.containsKey(path)) {
                 map.put(path,
@@ -1433,7 +1435,9 @@ public final class JvmBackend {
             String modulePath, String sourcePath) {
         Map<String, CanonicalModuleIdentity> map = new LinkedHashMap<>();
         map.put("", CanonicalModuleIdentity.BuiltinModule.INSTANCE);
-        for (String path : Set.of(modulePath, sourcePath)) {
+        // List.of (not Set.of): modulePath and sourcePath may be
+        // equal or null; iterate once per distinct non-empty path.
+        for (String path : List.of(modulePath, sourcePath)) {
             if (path != null && !path.isEmpty()
                     && !map.containsKey(path)) {
                 map.put(path,

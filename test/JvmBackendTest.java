@@ -402,6 +402,7 @@ public class JvmBackendTest {
             new TestCase("testShadowedInitializer", () -> testShadowedInitializer()),
             new TestCase("testParameterShadowing", () -> testParameterShadowing()),
             new TestCase("testClassSlice", () -> testClassSlice()),
+            new TestCase("testLegacyGenerateOverloadChain", () -> testLegacyGenerateOverloadChain()),
             new TestCase("testTypeDescriptorEmitter", () -> testTypeDescriptorEmitter()),
             new TestCase("testSharedCheckSeam", () -> testSharedCheckSeam()),
             new TestCase("testNullableSlice", () -> testNullableSlice()),
@@ -4761,6 +4762,76 @@ public class JvmBackendTest {
      * shapes are E1049-gated in
      * {@code test/conformance/fixtures/jvm-function-values-slice.json}.
      */
+    /**
+     * Regression guard (MR-0339 review round 1, major finding): the
+     * public 3-arg standalone entry point
+     * {@code JvmBackend.generate(program, result, sourcePath)} chains
+     * with {@code modulePath = sourcePath}, and the standalone
+     * classification helpers must tolerate the equal (or null) paths —
+     * {@code Set.of(modulePath, sourcePath)} threw
+     * {@code IllegalArgumentException: duplicate element} for every
+     * non-null input, breaking the public API with a raw exception
+     * instead of returning a result.
+     */
+    private static void testLegacyGenerateOverloadChain() {
+        System.out.println("-- Legacy generate overload chain: equal module/source paths --");
+
+        String source = """
+            class Point {
+              x: int = 1;
+            }
+            export function test(): int {
+              let p: Point = { x: 3 };
+              return p.x;
+            }
+            """;
+        Frontend f = compileFrontend(source, "jvmtest-overload-chain.deal");
+        check(f.errors().isEmpty(),
+            "overload-chain frontend clean: " + f.errors());
+        if (!f.errors().isEmpty()) return;
+
+        // The exact defect trigger: the 3-arg overload with only the
+        // source path (modulePath defaults to sourcePath inside).
+        JvmBackend.JvmCodegenResult res;
+        try {
+            res = JvmBackend.generate(f.program(), f.checkResult(), "Main");
+        } catch (IllegalArgumentException e) {
+            fail("3-arg generate throws instead of returning a result: "
+                + e);
+            return;
+        }
+        check(!res.hasErrors(),
+            "3-arg generate clean: " + res.diagnostics());
+        if (res.hasErrors()) return;
+        check(res.source().contains("super(\"@Main/Point\")"),
+            "3-arg generate emits the module's class identity text");
+
+        // The 2-arg overload with equal explicit paths drives the same
+        // duplicate-tolerant iteration through the other helper.
+        JvmBackend.JvmCodegenResult equal;
+        try {
+            equal = JvmBackend.generate(f.program(), f.checkResult(),
+                "Main", "Main");
+        } catch (IllegalArgumentException e) {
+            fail("2-arg generate with equal paths throws: " + e);
+            return;
+        }
+        check(!equal.hasErrors(),
+            "2-arg equal-path generate clean: " + equal.diagnostics());
+        check(equal.source().contains("super(\"@Main/Point\")"),
+            "2-arg equal-path generate emits the class identity text");
+
+        // Distinct paths still classify both entries exactly once, and
+        // the module path drives the emitted identity text.
+        JvmBackend.JvmCodegenResult distinct = JvmBackend.generate(
+            f.program(), f.checkResult(), "Main", "models");
+        check(!distinct.hasErrors(),
+            "2-arg distinct-path generate clean: "
+                + distinct.diagnostics());
+        check(distinct.source().contains("super(\"@models/Point\")"),
+            "distinct module path drives the class identity text");
+    }
+
     private static void testFunctionValues() throws Exception {
         System.out.println("-- Function values and wrappers (ISSUE-0098) --");
 

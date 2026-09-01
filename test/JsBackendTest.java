@@ -2086,7 +2086,6 @@ public class JsBackendTest {
             new CanonicalModuleIdentity.ExternalModule("hostmod"));
         ModuleIdentityResolver.IdentityIndex index =
             ModuleIdentityResolver.buildIndex(byPath);
-        java.util.Objects.requireNonNull(hostmodClassification);
 
         Frontend cf = compileFrontend("""
             import * as cfg from "./hostmod"
