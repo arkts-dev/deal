@@ -28,15 +28,20 @@
  *     the scaled readiness deadline -> COORDINATOR_STARTUP_FAILED
  *     with the immediate by-pid escalation (TERM by pid, steps 1-2 of
  *     the group escalation skipped — the group was never verified);
- *  4. COORDINATOR_HANG escalation: a coordinator that traps TERM and
- *     hangs past totalDeadline - killAndProofReserveMs (scaled) ->
- *     step-1 liveness check on the verified group, TERM -pgid, grace
- *     termGraceMs, KILL -pgid (re-verified), reap to ECHILD, adopted
- *     scan clean, proof passes, nonzero gate;
+ *  4. COORDINATOR_HANG escalation: a coordinator that completes the
+ *     readiness handshake (the suite re-execs itself as the broker
+ *     peer) and then traps TERM and hangs past totalDeadline -
+ *     killAndProofReserveMs (scaled) -> step-1 liveness check on the
+ *     verified group, TERM -pgid, grace termGraceMs, KILL -pgid
+ *     (re-verified), reap to ECHILD, adopted scan clean, proof
+ *     passes, nonzero gate (ISSUE-0299: a never-connecting hang is
+ *     now READINESS_TIMEOUT — the handshake-first shape preserves
+ *     the pinned COORDINATOR_HANG trigger);
  *  5. output flood: a coordinator that floods stdout/stderr before
  *     any readiness event — each drain retains exactly the 1 MiB cap
  *     plus the truncation marker, keeps draining to EOF, never
- *     blocks, and the escalation deadline fires on schedule;
+ *     blocks, and the readiness deadline (ISSUE-0299: READINESS_
+ *     TIMEOUT with the full group escalation) fires on schedule;
  *  6. shell loss (closed report stdout): the report write fails with
  *     EPIPE -> the total-cancel trigger fires deterministically
  *     (SHELL_LOST, gate nonzero) even though the coordinator facts
@@ -76,6 +81,7 @@
 #include <string.h>
 #include <sys/prctl.h>
 #include <sys/socket.h>
+#include <sys/un.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -467,9 +473,12 @@ static int readiness_bound_fn(void)
 
 static int hang_escalation_fn(void)
 {
-    char *argv[] = {(char *)"/bin/sh", (char *)"-c",
-                    (char *)"trap '' TERM; while :; do sleep 0.2; done",
-                    NULL};
+    char *argv[4];
+
+    argv[0] = (char *)g_suite_argv0;
+    argv[1] = (char *)"--hang-peer";
+    argv[2] = NULL;
+    argv[3] = NULL;
     char report[1024];
     dealpg4_outer_result view;
     uint64_t before;
@@ -481,9 +490,9 @@ static int hang_escalation_fn(void)
     after = dealpg4_now_ms();
 
     CHECK(status == DEALPG4_OUTER_EXIT_GATE_FAILURE);
-    /* The pinned trigger: escalation at totalDeadline - 5000 (T0o +
-     * 5000 under SCALED), grace 2000, then KILL — all inside the
-     * 10000 ms budget. */
+    /* The pinned trigger (post-readiness hang): escalation at
+     * totalDeadline - 5000 (T0o + 5000 under SCALED), grace 2000,
+     * then KILL — all inside the 10000 ms budget. */
     CHECK(after - before >= 6900);
     CHECK(after - before < 9500);
 
@@ -545,23 +554,28 @@ static int output_flood_fn(void)
     after = dealpg4_now_ms();
 
     CHECK(status == DEALPG4_OUTER_EXIT_GATE_FAILURE);
-    /* The escalation deadline fired on schedule at T0o + 5000 while
+    /* The readiness deadline fired on schedule at T0o + 500 while
      * 3 MiB per stream flowed — the drains never blocked and never
-     * suspended a native deadline. The flood script's sh has the
-     * default TERM disposition, so the escalation TERM kills the
-     * coordinator (the TERM-death path) and the run completes at
-     * ~5.1 s — before the 2000 ms grace expiry and the KILL step. */
-    CHECK(after - before >= 4900);
-    CHECK(after - before < 6500);
+     * suspended a native deadline (ISSUE-0299: a coordinator that
+     * never completes FEATURE_READY by the readiness deadline is
+     * READINESS_TIMEOUT with the immediate full-group escalation).
+     * The flood script's sh has the default TERM disposition, so the
+     * escalation TERM kills the coordinator (the TERM-death path)
+     * and the run completes at ~0.5 s — before the 2000 ms grace
+     * expiry and the KILL step. */
+    CHECK(after - before >= 400);
+    CHECK(after - before < 1500);
 
     memset(&view, 0, sizeof view);
     dealpg4_outer_last_result(&view);
-    CHECK(has_token(&view, "COORDINATOR_HANG"));
+    CHECK(has_token(&view, "READINESS_TIMEOUT"));
+    CHECK(view.readiness_timeout_fired == 1);
     CHECK(view.escalation_term_issued == 1);
     CHECK(view.escalation_term_sent == 1);
     CHECK(view.escalation_group_scope == 1);
     CHECK(view.group_liveness_checked == 1);
-    CHECK(view.escalation_term_ms >= 4900);
+    CHECK(view.escalation_term_ms >= 400);
+    CHECK(view.escalation_term_ms < 1500);
     /* The TERM killed the untrapped sh; the run completed before the
      * grace expiry, so no KILL step ran (the re-verified KILL was
      * never reached). */
@@ -572,6 +586,7 @@ static int output_flood_fn(void)
     CHECK(view.coordinator_si_status == SIGTERM);
     CHECK(view.total_fired == 0);
     CHECK(view.proof_passed == 1);
+    CHECK(view.proof_group_clean == 1);
     CHECK(view.proof_streams_eof == 1);
 
     /* Each drain retained exactly the 1 MiB cap plus the truncation
@@ -866,6 +881,91 @@ static int outer_pipe_failure_fn(void)
     return (g_failures > 0) ? 1 : 0;
 }
 
+/* === Group 4 peer: the post-readiness hang ============================ */
+
+/* The hang peer (group 4 re-execs the suite binary as the
+ * coordinator): completes the readiness handshake over the broker,
+ * then traps TERM and hangs — the COORDINATOR_HANG trigger escalates
+ * it at the pinned deadline (TERM -pgid trapped -> grace -> KILL
+ * -pgid). */
+static int hang_peer_entry(void)
+{
+    const char *path = getenv("DEALPG4_BROKER_PATH");
+    const char *nonce = getenv("DEALPG4_NONCE");
+    struct sockaddr_un sun;
+    char line[256];
+    char cmd[128];
+    int fd;
+    int n;
+
+    if (path == NULL || nonce == NULL)
+        return 42;
+    fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0)
+        return 42;
+    memset(&sun, 0, sizeof sun);
+    sun.sun_family = AF_UNIX;
+    if (strlen(path) >= sizeof sun.sun_path) {
+        close(fd);
+        return 42;
+    }
+    strcpy(sun.sun_path, path);
+    if (connect(fd, (struct sockaddr *)&sun, sizeof sun) != 0) {
+        close(fd);
+        return 42;
+    }
+    n = snprintf(cmd, sizeof cmd, "DEALPG4 HELLO %s\n", nonce);
+    if (n <= 0 || (size_t)n >= sizeof cmd
+        || write(fd, cmd, (size_t)n) != (ssize_t)n)
+        return 42;
+    {
+        size_t off = 0;
+
+        for (;;) {
+            ssize_t r = read(fd, line + off, sizeof line - off - 1);
+
+            if (r <= 0)
+                return 42;
+            off += (size_t)r;
+            line[off] = '\0';
+            if (memchr(line, '\n', off) != NULL)
+                break;
+            if (off >= sizeof line - 1)
+                return 42;
+        }
+    }
+    if (memcmp(line, "DEALPG4 HELLO_OK 4 31", 21) != 0)
+        return 42;
+    n = snprintf(cmd, sizeof cmd, "DEALPG4 FEATURE_READY %s\n", nonce);
+    if (n <= 0 || (size_t)n >= sizeof cmd
+        || write(fd, cmd, (size_t)n) != (ssize_t)n)
+        return 42;
+    {
+        size_t off = 0;
+
+        for (;;) {
+            ssize_t r = read(fd, line + off, sizeof line - off - 1);
+
+            if (r <= 0)
+                return 42;
+            off += (size_t)r;
+            line[off] = '\0';
+            if (memchr(line, '\n', off) != NULL)
+                break;
+            if (off >= sizeof line - 1)
+                return 42;
+        }
+    }
+    if (memcmp(line, "DEALPG4 READY_ACK ", 18) != 0)
+        return 42;
+    close(fd);
+    /* Trapped TERM, then hang: the escalation TERM -pgid is ignored,
+     * the grace passes, the re-verified KILL -pgid reaps this peer. */
+    (void)signal(SIGTERM, SIG_IGN);
+    for (;;)
+        pause();
+}
+
 /* === Group 10: drain-pipe blocking semantics =========================== */
 
 /* Find needle inside the drain's retained window (the window is not
@@ -975,6 +1075,8 @@ int main(int argc, char **argv)
     int status;
 
     g_suite_argv0 = argv[0];
+    if (argc >= 2 && strcmp(argv[1], "--hang-peer") == 0)
+        return hang_peer_entry();
     if (argc >= 2 && strcmp(argv[1], "--coord-pipe-flags-probe") == 0) {
         /* Coordinator probe (group 10 re-execs the suite binary as
          * the scripted coordinator): report the F_GETFL flag words of

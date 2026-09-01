@@ -128,6 +128,16 @@ static const char *g_suite_argv0; /* argv[0] of the suite binary — the
  * completing inside the budget. */
 static const OuterLimits SCALED = {10000, 500, 8000, 2000, 200};
 
+/* HOLD_LIMITS: the two cases that deliberately hold the broker
+ * channel pre-handshake (the second-connection hold and the stall
+ * disarm pause) run under a 4000 ms readiness window — the pinned
+ * FEATURE_READY bound (D5/D9) would otherwise fire READINESS_TIMEOUT
+ * at T0o + 500 while the scenario is still holding the handshake.
+ * The escalation deadline (10000 - 5000 = T0o + 5000) stays beyond
+ * the ~1 s handshake completion, so both runs end in the clean exit
+ * before the pinned deadline. */
+static const OuterLimits HOLD_LIMITS = {10000, 4000, 8000, 2000, 200};
+
 /* Socket-path scan: the outer's broker socket path prefix under the
  * scratch socket dir ("build" relative to the runner CWD). Returns the
  * count of matching entries (0 when the directory does not exist). */
@@ -1649,7 +1659,7 @@ static int second_connection_case(void)
         pid_t pid;
         int rd;
 
-        pid = fork_core_child(&SCALED, argv, &rd);
+        pid = fork_core_child(&HOLD_LIMITS, argv, &rd);
         run_connector_case(0, 0 /* no HELLO — rejected immediately */,
                            "build/.dealpg4-hold-peer-connected");
         reap_core_child(pid, rd, res, sizeof res, &status);
@@ -1775,7 +1785,7 @@ static int stall_disarm_fn(void)
 
     peer_argv(argv, "stall-ok", NULL);
     before = dealpg4_now_ms();
-    status = core_with_report(&SCALED, argv, report, sizeof report);
+    status = core_with_report(&HOLD_LIMITS, argv, report, sizeof report);
     after = dealpg4_now_ms();
     dealpg4_fi_restore_defaults();
 
