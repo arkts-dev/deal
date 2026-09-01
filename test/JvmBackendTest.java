@@ -7241,6 +7241,17 @@ public class JvmBackendTest {
         "    static long intFromNumber(double v) { if (java.lang.Double.isNaN(v)) throw new DealError(\"E8001\", \"expected int, got NaN\"); if (java.lang.Double.isInfinite(v)) throw new DealError(\"E8001\", \"expected int, got infinity\"); if (v != java.lang.Math.floor(v)) throw new DealError(\"E8001\", \"expected int, got non-integer number\"); if (v > 9007199254740991.0 || v < -9007199254740991.0) throw new DealError(\"E8004\", \"int out of safe range\"); return (long) v; }",
         "    static double numberFromInt(long v) { return (double) v; }");
 
+    /** The pre-tree base emission of {@code emitStdlibTimeMemberCall} —
+     * the retained {@code ()->int} time expression
+     * ({@code (java.lang.System.currentTimeMillis() / 1000L) * 1000L};
+     * jvm-int32-gate-activation-tree D4): the expression text must
+     * appear in every emitted artifact byte-for-byte — no time
+     * algorithm added or changed, no new code path introduced. The
+     * ISSUE-0377 time pin compares the artifact's emitted expression
+     * against this constant by equality. */
+    private static final String RETAINED_TIME_EXPRESSION =
+        "(java.lang.System.currentTimeMillis() / 1000L) * 1000L";
+
     // =========================================================================
     // ISSUE-0375 profile-gated carrier/range switch
     // =========================================================================
@@ -7514,15 +7525,20 @@ public class JvmBackendTest {
             java.util.regex.Pattern.quote(needle), -1).length - 1;
     }
 
-    /** The DEAL time-boundary pins (ISSUE-0375 D4/verification 1): under
+    /** The DEAL time-boundary pins (ISSUE-0375 D4 / ISSUE-0377 time pin;
+     * jvm-int32-gate-activation-tree D4, Verification 1): under
      * {@code DEAL_V1_2_INT32} a real compiled program calling
-     * {@code time.nowMillis()} through the full pipeline raises exactly
-     * E8004 with {@code int out of safe range} at the declared int
+     * {@code time.nowMillis()} through the full pipeline (frontend →
+     * checker → JvmBackend → javac → java) raises exactly E8004 with
+     * {@code int out of safe range}, exactly once, at the declared int
      * boundary — pinned at both a declaration initializer and a direct
      * int return. The emitted artifact wraps the byte-identical retained
      * {@code emitStdlibTimeMemberCall} expression in {@code checkInt(...)}
-     * and applies no bare {@code (int)} narrowing to it. The untouched
-     * default invocation keeps the legacy carriers and does not raise. */
+     * and applies no bare {@code (int)} narrowing to it. The emitted
+     * expression text equals the pre-tree base expression byte-for-byte
+     * ({@link #RETAINED_TIME_EXPRESSION}, compared by equality, never by
+     * containment alone). The untouched default invocation keeps the
+     * legacy carriers and does not raise. */
     private static void testInt32TimeBoundary() throws Exception {
         System.out.println("-- Int32 time boundary: E8004 at the declared int boundary --");
 
@@ -7537,10 +7553,14 @@ public class JvmBackendTest {
         ExecResult init = runInt32Project(initSource, "time_init");
         check(init.exitCode() == 1, "int32 time initializer run exits 1: "
             + init.output());
-        check(init.output().contains(
-                "DEAL_ERROR_CODE: E8004 int out of safe range"),
+        check(countOccurrences(init.output(),
+                "DEAL_ERROR_CODE: E8004 int out of safe range") == 1,
             "declaration initializer raises exactly E8004 with the pinned "
-                + "message: " + init.output());
+                + "message, exactly once, at the declared int boundary: "
+                + init.output());
+        check(!init.output().contains("DEAL_ERROR_CODE: E8001"),
+            "the declaration initializer surfaces no other code (never "
+                + "E8001): " + init.output());
 
         String retSource = """
             import * as time from "std/time"
@@ -7551,20 +7571,25 @@ public class JvmBackendTest {
         ExecResult ret = runInt32Project(retSource, "time_return");
         check(ret.exitCode() == 1, "int32 time return run exits 1: "
             + ret.output());
-        check(ret.output().contains(
-                "DEAL_ERROR_CODE: E8004 int out of safe range"),
+        check(countOccurrences(ret.output(),
+                "DEAL_ERROR_CODE: E8004 int out of safe range") == 1,
             "direct int return raises exactly E8004 with the pinned "
-                + "message: " + ret.output());
+                + "message, exactly once, at the declared int boundary: "
+                + ret.output());
+        check(!ret.output().contains("DEAL_ERROR_CODE: E8001"),
+            "the direct int return surfaces no other code (never E8001): "
+                + ret.output());
 
         // Artifact pins: the retained time expression is byte-identical
         // and wrapped by the signed32 checkInt at the boundary; no bare
         // (int) narrowing of the time value exists anywhere in the
         // artifact.
         String java = int32Artifact(initSource, "time_init_pin");
-        check(java.contains("int t = checkInt((java.lang.System.currentTimeMillis() / 1000L) * 1000L);"),
+        check(java.contains(
+                "int t = checkInt(" + RETAINED_TIME_EXPRESSION + ");"),
             "artifact wraps the byte-identical retained time expression in "
                 + "checkInt at the declaration initializer");
-        check(!java.contains("(int) (java.lang.System.currentTimeMillis()"),
+        check(!java.contains("(int) " + RETAINED_TIME_EXPRESSION),
             "no bare (int) narrowing of the retained time expression "
                 + "(the narrowing lives inside checkInt, behind the "
                 + "signed32 gate)");
@@ -7572,13 +7597,57 @@ public class JvmBackendTest {
             "int32 checkInt gate is [-2147483648, 2147483647] with E8004 "
                 + "and the pinned message");
 
+        // The direct int return artifact wraps the same retained
+        // expression at the return boundary.
+        String retJava = int32Artifact(retSource, "time_return_pin");
+        check(retJava.contains(
+                "return checkInt(" + RETAINED_TIME_EXPRESSION + ");"),
+            "the direct int return wraps the retained expression in "
+                + "checkInt: "
+                + retJava.lines().filter(l -> l.contains("return checkInt("))
+                .findFirst().orElse("<missing>"));
+        check(!retJava.contains("(int) " + RETAINED_TIME_EXPRESSION),
+            "no bare (int) narrowing of the retained time expression at "
+                + "the return boundary");
+
+        // Retained-expression byte-identity pins (ISSUE-0377): the
+        // emitted expression text equals the pre-tree base expression
+        // byte-for-byte — extracted from the artifact and compared by
+        // equality, never by containment alone.
+        int wrapStart = java.indexOf("int t = checkInt(");
+        String int32Expr = "";
+        if (wrapStart >= 0) {
+            wrapStart += "int t = checkInt(".length();
+            int wrapEnd = java.indexOf(");", wrapStart);
+            if (wrapEnd > wrapStart) {
+                int32Expr = java.substring(wrapStart, wrapEnd);
+            }
+        }
+        check(RETAINED_TIME_EXPRESSION.equals(int32Expr),
+            "the int32 artifact's checkInt-wrapped time expression is "
+                + "byte-identical to the pre-tree base expression: '"
+                + int32Expr + "'");
+
         // The untouched default invocation stays legacy: the retained
         // expression crosses no int32 gate, the program runs green, and
         // the positive second-truncated value is observable.
         String legacyJava = legacyArtifact(initSource, "time_init_legacy");
-        check(legacyJava.contains("long t = (java.lang.System.currentTimeMillis() / 1000L) * 1000L;"),
+        check(legacyJava.contains(
+                "long t = " + RETAINED_TIME_EXPRESSION + ";"),
             "default (PRE_ACTIVATION → LEGACY_SAFE_INT) artifact keeps the "
                 + "retained expression byte-identical with no int32 wrap");
+        int legacyStart = legacyJava.indexOf("long t = ");
+        String legacyExpr = "";
+        if (legacyStart >= 0) {
+            legacyStart += "long t = ".length();
+            int legacyEnd = legacyJava.indexOf(";", legacyStart);
+            if (legacyEnd > legacyStart) {
+                legacyExpr = legacyJava.substring(legacyStart, legacyEnd);
+            }
+        }
+        check(RETAINED_TIME_EXPRESSION.equals(legacyExpr),
+            "the legacy artifact's time expression is byte-identical to "
+                + "the pre-tree base expression: '" + legacyExpr + "'");
         ExecResult legacy = runLegacyProject(initSource, "time_init_legacy");
         check(legacy.exitCode() == 0, "legacy time run exits 0: "
             + legacy.output());
