@@ -4776,6 +4776,10 @@ public class JvmBackendTest {
     private static void testLegacyGenerateOverloadChain() {
         System.out.println("-- Legacy generate overload chain: equal module/source paths --");
 
+        // The checker's standalone adapter classifies the module path it
+        // is seeded with as its own project root; seed it with "Main"
+        // and drive the backend with the same path (the review probe:
+        // JvmBackend.generate(program, result, "Main")).
         String source = """
             class Point {
               x: int = 1;
@@ -4785,16 +4789,30 @@ public class JvmBackendTest {
               return p.x;
             }
             """;
-        Frontend f = compileFrontend(source, "jvmtest-overload-chain.deal");
-        check(f.errors().isEmpty(),
-            "overload-chain frontend clean: " + f.errors());
-        if (!f.errors().isEmpty()) return;
+        LexResult lex = new Lexer(source, "jvmtest-overload-chain.deal")
+            .tokenize();
+        check(!lex.hasErrors(),
+            "overload-chain probe lexes clean: " + lex.diagnostics());
+        if (lex.hasErrors()) return;
+        ParseResult parse = new Parser(lex.tokens(),
+            "jvmtest-overload-chain.deal", lex.directiveEvents()).parse();
+        check(!parse.hasErrors(),
+            "overload-chain probe parses clean: " + parse.diagnostics());
+        if (parse.hasErrors()) return;
+        NameResolver nr = new NameResolver("Main",
+            new BackendConformanceTest.StubModuleResolver());
+        SymbolTable symTable = nr.resolve(parse.program());
+        CheckResult result = TypeChecker.check("Main", symTable, nr,
+            parse.program());
+        check(result.diagnostics().isEmpty(),
+            "overload-chain probe types clean: " + result.diagnostics());
+        if (!result.diagnostics().isEmpty()) return;
 
         // The exact defect trigger: the 3-arg overload with only the
         // source path (modulePath defaults to sourcePath inside).
         JvmBackend.JvmCodegenResult res;
         try {
-            res = JvmBackend.generate(f.program(), f.checkResult(), "Main");
+            res = JvmBackend.generate(parse.program(), result, "Main");
         } catch (IllegalArgumentException e) {
             fail("3-arg generate throws instead of returning a result: "
                 + e);
@@ -4810,7 +4828,7 @@ public class JvmBackendTest {
         // duplicate-tolerant iteration through the other helper.
         JvmBackend.JvmCodegenResult equal;
         try {
-            equal = JvmBackend.generate(f.program(), f.checkResult(),
+            equal = JvmBackend.generate(parse.program(), result,
                 "Main", "Main");
         } catch (IllegalArgumentException e) {
             fail("2-arg generate with equal paths throws: " + e);
@@ -4824,7 +4842,7 @@ public class JvmBackendTest {
         // Distinct paths still classify both entries exactly once, and
         // the module path drives the emitted identity text.
         JvmBackend.JvmCodegenResult distinct = JvmBackend.generate(
-            f.program(), f.checkResult(), "Main", "models");
+            parse.program(), result, "Main", "models");
         check(!distinct.hasErrors(),
             "2-arg distinct-path generate clean: "
                 + distinct.diagnostics());
