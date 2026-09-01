@@ -15,8 +15,9 @@ import deal.module.CompilationOrchestrator;
 import deal.module.ExportExtractor;
 import deal.module.ModuleIdentityResolver;
 import deal.module.ModuleShapeValidator;
-import deal.module.DealConfig;
 import deal.module.StdlibModuleResolver;
+import deal.project.ProjectContext;
+import deal.project.ProjectLocator;
 import deal.ir.IrDumper;
 import deal.semantic.CompilerInvocation;
 import deal.semantic.ir.SemanticProfile;
@@ -1567,44 +1568,32 @@ public class BackendConformanceTest {
      * captured so fixture output stays clean and failure messages can
      * quote it.
      */
-    private static OrchestratorRun runOrchestrator(Path projectRoot, Path entryFile,
-                                                    Path outputRoot) {
-        return runOrchestrator(projectRoot, entryFile, outputRoot, null);
-    }
-
     /**
-     * Runs the multi-module pipeline with an explicit {@link
-     * CompilationOrchestrator} configuration (ISSUE-0100): fixtures that
-     * declare {@code hosts} write a {@code deal.json} whose
-     * {@code externals} map wires every host import path to its
-     * declaration file, so the orchestrator resolves, discovers, and
-     * types host modules through the production externals path (host
-     * resolution, E2009 gating, and the JVM host-module codegen map).
-     * Fixtures without hosts keep the config-less pipeline (null
-     * configuration, unchanged behavior).
+     * Runs the multi-module pipeline through the ISSUE-0269 production
+     * path: every multi-module fixture project receives an injected
+     * exact-v1.2 {@code deal.json} (moduleRoots {@code "src"}, output
+     * {@code "out"}, backend {@code "jvm"}, plus the externals map
+     * wiring every {@code hosts} import path to its declaration) and
+     * routes through production {@link ProjectLocator} + the
+     * context-driven {@link CompilationOrchestrator} — the effective
+     * backend, output root, roots, externals declarations, stdlib
+     * surface, and deployment identity all come from the published
+     * immutable {@link ProjectContext} (parent D12; the retired
+     * DealConfig/config-less pipeline is gone).
      */
-    private static OrchestratorRun runOrchestrator(Path projectRoot, Path entryFile,
-                                                    Path outputRoot,
-                                                    DealConfig config) {
-        return runOrchestrator(projectRoot, entryFile, outputRoot, config,
-            null);
-    }
-
     /**
      * Runs the multi-module pipeline through the orchestrator's FULL
-     * constructor with the per-case selected invocation (A5 seam): the
-     * catalogued cases pass the LEGACY_REGRESSION + LEGACY_SAFE_INT
-     * invocation, every other case COMMON_SHADOW + DEAL_V1_2_INT32 with
-     * zero shadow-module requests (the A1-updated planner guard admits
-     * the invocation at phase 3.7 and F4 rule 5 leaves every module on
-     * the retained LEGACY route). A null invocation delegates to the
-     * config-only orchestrator constructor, which keeps the release
-     * default invocation (the existing production-path callers).
+     * production constructor with the per-case selected invocation
+     * (A5 seam): the catalogued cases pass the LEGACY_REGRESSION +
+     * LEGACY_SAFE_INT invocation, every other case COMMON_SHADOW +
+     * DEAL_V1_2_INT32 with zero shadow-module requests (the A1-updated
+     * planner guard admits the invocation at phase 3.7 and F4 rule 5
+     * leaves every module on the retained LEGACY route).
      */
-    private static OrchestratorRun runOrchestrator(Path projectRoot, Path entryFile,
-                                                    Path outputRoot,
-                                                    DealConfig config,
+    private static OrchestratorRun runOrchestrator(Path entryFile,
+                                                    ProjectContext context,
                                                     CompilerInvocation invocation) {
+        Path outputRoot = Path.of(context.outputPath().absoluteNormalizedPath());
         ByteArrayOutputStream captured = new ByteArrayOutputStream();
         // The global stream swap is serialized against worker flushes
         // (CONSOLE_LOCK): a parallel fixture file's output block must
@@ -1620,19 +1609,9 @@ public class BackendConformanceTest {
             try {
                 System.setOut(new PrintStream(captured, true, StandardCharsets.UTF_8));
                 System.setErr(new PrintStream(captured, true, StandardCharsets.UTF_8));
-                CompilationOrchestrator orchestrator = invocation == null
-                    ? new CompilationOrchestrator(
-                        entryFile.toAbsolutePath().normalize(),
-                        outputRoot.toAbsolutePath().normalize(),
-                        false, true, false, Backend.JVM,
-                        config, List.of(projectRoot.toAbsolutePath().normalize()),
-                        null)
-                    : new CompilationOrchestrator(
-                        entryFile.toAbsolutePath().normalize(),
-                        outputRoot.toAbsolutePath().normalize(),
-                        false, true, false, false, Backend.JVM,
-                        config, List.of(projectRoot.toAbsolutePath().normalize()),
-                        null, null, invocation);
+                CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+                    context, entryFile.toAbsolutePath().normalize(),
+                    false, true, false, false, null, invocation);
                 boolean success = orchestrator.compile();
                 return new OrchestratorRun(success, orchestrator.diagnostics(),
                     captured.toString(StandardCharsets.UTF_8));
@@ -1681,6 +1660,12 @@ public class BackendConformanceTest {
      */
     private static String entryClassName(String entryRel) {
         String path = entryRel;
+        // ISSUE-0269: the entry key carries the configured-root prefix
+        // (src/...); the orchestrator's module name is the root-relative
+        // path, so the prefix is stripped before deriving the class name.
+        if (path.startsWith("src/")) {
+            path = path.substring("src/".length());
+        }
         if (path.endsWith(".deal")) {
             path = path.substring(0, path.length() - ".deal".length());
         }
@@ -1869,42 +1854,52 @@ public class BackendConformanceTest {
         Path projectRoot = null;
         try {
             projectRoot = Files.createTempDirectory("deal_backend_conf_mm_");
-            Map<String, Path> written = writeModuleFiles(projectRoot, modulesObj);
-            Path entryFile = written.get(entry);
+
+            // ISSUE-0269: the modules live under the representable
+            // configured root "src" (the descriptor root text "src" is a
+            // representable component, so class-exporting fixtures pass
+            // the T7 required-identity gate).
+            Map<String, Path> written = writeModuleFiles(
+                projectRoot.resolve("src"), modulesObj);
+            Path entryFile = projectRoot.resolve("src").resolve(entry);
             Path outputRoot = projectRoot.resolve("out");
 
-            // ISSUE-0100: host fixtures write a real deal.json whose
-            // externals map (spec map form: import path → manifest-relative
-            // declaration) drives production host resolution, discovery,
-            // typing, and the JVM host-module codegen map. The declaration
-            // paths are relative to the project root (the manifest
-            // directory), exactly like the modules map keys.
-            DealConfig config = null;
+            // Every multi-module fixture project receives an injected
+            // exact-v1.2 deal.json (moduleRoots ["src"], output "out",
+            // backend "jvm") — host fixtures additionally carry the
+            // externals map wiring every host import path to its
+            // declaration (spec map form: import path → manifest-relative
+            // declaration under the src root). The harness routes through
+            // production ProjectLocator; a strict locate failure is a
+            // harness failure.
+            StringBuilder dealJson = new StringBuilder();
+            dealJson.append("{\n  \"languageVersion\": \"1.2\",\n");
+            dealJson.append("  \"moduleRoots\": [\"src\"],\n");
+            dealJson.append("  \"output\": \"out\",\n");
+            dealJson.append("  \"backend\": \"jvm\"");
             if (!hosts.isEmpty()) {
-                StringBuilder dealJson = new StringBuilder();
-                dealJson.append("{\n  \"languageVersion\": \"1.2\",\n");
-                dealJson.append("  \"externals\": {\n");
+                dealJson.append(",\n  \"externals\": {\n");
                 boolean first = true;
                 for (Map.Entry<String, Map<String, String>> he
                         : hosts.entrySet()) {
                     if (!first) dealJson.append(",\n");
                     first = false;
                     dealJson.append("    \"").append(he.getKey())
-                        .append("\": { \"declaration\": \"")
+                        .append("\": { \"declaration\": \"src/")
                         .append(he.getValue().get("declaration"))
                         .append("\" }");
                 }
-                dealJson.append("\n  }\n}\n");
-                Files.writeString(projectRoot.resolve("deal.json"), dealJson);
-                DealConfig.DealConfigParseResult configResult =
-                    DealConfig.load(projectRoot);
-                config = configResult.config();
-                if (config == null || !configResult.diagnostics().isEmpty()) {
-                    log("  [" + name + "] FAIL: generated deal.json did "
-                        + "not load");
-                    failed.incrementAndGet();
-                    return false;
-                }
+                dealJson.append("\n  }");
+            }
+            dealJson.append("\n}\n");
+            Files.writeString(projectRoot.resolve("deal.json"), dealJson);
+            ProjectLocator.LocateResult located =
+                ProjectLocator.locate(entryFile.toString(), null);
+            if (located.context() == null) {
+                log("  [" + name + "] FAIL: the injected deal.json did not"
+                    + " locate strictly: " + located.e2010());
+                failed.incrementAndGet();
+                return false;
             }
 
             // ---- Frontend compile-error gate (orchestrator-based) ----
@@ -1914,8 +1909,8 @@ public class BackendConformanceTest {
             // parser/checker/module-discovery produces no such diagnostic
             // and the fixture fails.
             if (expectedCompileError != null) {
-                OrchestratorRun run = runOrchestrator(projectRoot, entryFile,
-                    outputRoot, config, invocation);
+                OrchestratorRun run = runOrchestrator(entryFile,
+                    located.context(), invocation);
                 boolean matched = run.diagnostics().stream()
                     .anyMatch(d -> expectedCompileError.equals(d.code()));
                 // An E6 expectation is a backend-rejection fixture
@@ -2001,8 +1996,8 @@ public class BackendConformanceTest {
             }
 
             // ---- Runtime fixture: the whole project must compile. ----
-            OrchestratorRun run = runOrchestrator(projectRoot, entryFile,
-                outputRoot, config, invocation);
+            OrchestratorRun run = runOrchestrator(entryFile,
+                located.context(), invocation);
             if (!run.success()) {
                 log("  [" + name + "] FAIL: orchestrator compile "
                     + "failed: " + run.diagnostics() + "\n"

@@ -99,6 +99,7 @@ javac --release 25 -proc:none -d build \
   test/LuaBackendTest.java \
   test/LuaBackendIntegrationTest.java \
   test/ModuleSystemTest.java \
+  test/ProjectMigrationIntegrationTest.java \
   test/StdlibDeclParseTest.java \
   test/SourceMapTest.java \
   test/RuntimeSourceLocationTest.java \
@@ -462,6 +463,10 @@ java -ea -cp build deal.test.LuaBackendIntegrationTest
 echo ""
 echo "=== Running Module System Tests ==="
 java -ea -cp build deal.test.ModuleSystemTest
+echo ""
+echo "=== Running Project Migration Integration Tests (ISSUE-0269 T8) ==="
+java -ea -cp build deal.test.ProjectMigrationIntegrationTest
+
 echo ""
 echo "=== Running Source Module Resolver Tests (ISSUE-0267 T6) ==="
 java -ea -cp build deal.module.SourceModuleResolverTest

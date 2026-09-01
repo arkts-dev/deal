@@ -1221,7 +1221,7 @@ public class SourceMapTest {
                     StandardCharsets.UTF_8));
                 CompilationOrchestrator orchestrator =
                     new CompilationOrchestrator(mainSrc, outputRoot, false,
-                        false, true, Backend.JS, (deal.module.DealConfig) null,
+                        false, true, Backend.JS, (Map<String, String>) null,
                         List.of(src), Path.of(".").toAbsolutePath().normalize());
                 ok = orchestrator.compile();
             } finally {
@@ -1373,7 +1373,7 @@ public class SourceMapTest {
                 CompilationOrchestrator orchestrator =
                     new CompilationOrchestrator(mainSrc, outputRoot, false,
                         false, true, Backend.JS,
-                        (deal.module.DealConfig) null, List.of(src),
+                        (Map<String, String>) null, List.of(src),
                         Path.of(".").toAbsolutePath().normalize());
                 ok = orchestrator.compile();
             } finally {
@@ -1447,7 +1447,7 @@ public class SourceMapTest {
                 CompilationOrchestrator orchestrator =
                     new CompilationOrchestrator(mainSrc, outputRoot, false,
                         true, true, false, Backend.JS,
-                        (deal.module.DealConfig) null, List.of(src),
+                        (Map<String, String>) null, List.of(src),
                         Path.of(".").toAbsolutePath().normalize());
                 ok = orchestrator.compile();
             } finally {
@@ -1508,7 +1508,7 @@ public class SourceMapTest {
             CompilationOrchestrator orchestrator =
                 new CompilationOrchestrator(mainSrc, outputRoot, false,
                     false, true, Backend.JS,
-                    (deal.module.DealConfig) null, List.of(src),
+                    (Map<String, String>) null, List.of(src),
                     Path.of(".").toAbsolutePath().normalize());
             boolean ok = orchestrator.compile();
             check(!ok, "the rejected module fails the compilation");
@@ -1615,7 +1615,7 @@ public class SourceMapTest {
         Path outputRoot = proj.resolve(outDirName);
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             mainSrc, outputRoot, false, false, false, Backend.JS,
-            (deal.module.DealConfig) null, List.of(proj.resolve("src")),
+            (Map<String, String>) null, List.of(proj.resolve("src")),
             Path.of(".").toAbsolutePath().normalize());
         boolean ok = orchestrator.compile();
         if (!ok) {

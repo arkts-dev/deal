@@ -19,8 +19,12 @@ import deal.lexer.LexResult;
 import deal.lexer.Lexer;
 import deal.module.ModuleShapeValidator;
 import deal.module.CompilationOrchestrator;
-import deal.module.DealConfig;
-import deal.module.DealConfig.DealConfigParseResult;
+import deal.project.ProjectContext;
+import deal.project.ProjectLocator;
+import deal.project.StrictManifestParser;
+import deal.semantic.CapabilityRegistry;
+import deal.semantic.CompilerProfileProvider;
+import deal.semantic.ir.ReleaseState;
 import deal.parser.ParseResult;
 import deal.parser.Parser;
 import deal.semantic.CapabilityRegistry;
@@ -460,7 +464,7 @@ public class JvmBackendTest {
             new TestCase("testModuleImportBackendEmission", () -> testModuleImportBackendEmission()),
             new TestCase("testModuleImportUseBeforeImportRejected", () -> testModuleImportUseBeforeImportRejected()),
             new TestCase("testOrchestratorJvmSourceMapWarning", () -> testOrchestratorJvmSourceMapWarning()),
-            new TestCase("testDealConfigBackendField", () -> testDealConfigBackendField()),
+            new TestCase("testStrictBackendField", () -> testStrictBackendField()),
             new TestCase("testCliBackendFlag", () -> testCliBackendFlag()),
             new TestCase("testFixtureConfigValidation", () -> testFixtureConfigValidation()),
             new TestCase("testIrDumpExactMigration", () -> testIrDumpExactMigration()));
@@ -3366,7 +3370,7 @@ public class JvmBackendTest {
         List<Path> roots = List.of(tmpDir.get().resolve("src").toAbsolutePath());
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entryFile, outputDir, false, false, false, Backend.JVM,
-            (DealConfig) null, roots,
+            null, roots,
             Path.of(".").toAbsolutePath().normalize());
         boolean success = orchestrator.compile();
         check(success, "for-of over function/nested arrays compiles through "
@@ -3402,7 +3406,7 @@ public class JvmBackendTest {
         List<Path> roots2 = List.of(tmpDir.get().resolve("src2").toAbsolutePath());
         CompilationOrchestrator badOrchestrator = new CompilationOrchestrator(
             badEntry, badOut, false, false, false, Backend.JVM,
-            (DealConfig) null, roots2,
+            null, roots2,
             Path.of(".").toAbsolutePath().normalize());
         boolean badSuccess = badOrchestrator.compile();
         check(!badSuccess,
@@ -3608,7 +3612,7 @@ public class JvmBackendTest {
             List.of(tmpDir.get().resolve("src").toAbsolutePath());
         CompilationOrchestrator catchOrchestrator = new CompilationOrchestrator(
             catchEntry, catchOut, false, false, false, Backend.JVM,
-            (DealConfig) null, catchRoots,
+            null, catchRoots,
             Path.of(".").toAbsolutePath().normalize());
         boolean catchSuccess = catchOrchestrator.compile();
         check(catchSuccess,
@@ -5667,7 +5671,7 @@ public class JvmBackendTest {
 
             CompilationOrchestrator orchestrator = new CompilationOrchestrator(
                 entryFile, outputDir, false, false, false, Backend.JVM,
-                (DealConfig) null, roots, Path.of(".").toAbsolutePath().normalize());
+                null, roots, Path.of(".").toAbsolutePath().normalize());
 
             boolean success = orchestrator.compile();
             check(!success, "cross-module function-value case '" + c.what()
@@ -7409,13 +7413,15 @@ public class JvmBackendTest {
         Path outputRoot = tmpDir.get().resolve("build/host_" + name);
         List<Path> roots = List.of(
             tmpDir.get().resolve("src").toAbsolutePath());
-        DealConfig config = DealConfig.load(tmpDir.get()).config();
-        check(config != null, "deal.json with externals loads for " + name);
+        Map<String, String> externals = Map.of("host/log",
+            tmpDir.get().resolve("bindings/log.d.deal").toString());
+        check(Files.exists(tmpDir.get().resolve("bindings/log.d.deal")),
+            "deal.json with externals loads for " + name);
         CompilerInvocation invocation = CompilerProfileProvider.resolve(
             ReleaseState.V1_2_ACTIVE, CapabilityRegistry.releaseRegistry());
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entryFile, outputRoot, false, false, false, false,
-            Backend.JVM, config, roots,
+            Backend.JVM, externals, roots,
             Path.of(".").toAbsolutePath().normalize(), null, invocation);
         boolean ok = orchestrator.compile();
         check(ok, "int32 host orchestrator compile succeeds for " + name
@@ -7466,13 +7472,15 @@ public class JvmBackendTest {
         Path outputRoot = tmpDir.get().resolve("build/host_" + name);
         List<Path> roots = List.of(
             tmpDir.get().resolve("src").toAbsolutePath());
-        DealConfig config = DealConfig.load(tmpDir.get()).config();
-        check(config != null, "deal.json with externals loads for " + name);
+        Map<String, String> externals = Map.of("host/log",
+            tmpDir.get().resolve("bindings/log.d.deal").toString());
+        check(Files.exists(tmpDir.get().resolve("bindings/log.d.deal")),
+            "deal.json with externals loads for " + name);
         CompilerInvocation invocation = CompilerProfileProvider.resolve(
             ReleaseState.V1_2_ACTIVE, CapabilityRegistry.releaseRegistry());
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entryFile, outputRoot, false, false, false, false,
-            Backend.JVM, config, roots,
+            Backend.JVM, externals, roots,
             Path.of(".").toAbsolutePath().normalize(), null, invocation);
         boolean ok = orchestrator.compile();
         check(ok, "int32 host artifact compile succeeds for " + name + ": "
@@ -9065,6 +9073,7 @@ public class JvmBackendTest {
 
         writeFile("deal.json", """
             {
+              "languageVersion": "1.2",
               "moduleRoots": ["src"],
               "output": "build/jvm",
               "backend": "jvm"
@@ -9083,13 +9092,18 @@ public class JvmBackendTest {
         Path outputDir = tmpDir.get().resolve("build/jvm");
         List<Path> roots = List.of(tmpDir.get().resolve("src").toAbsolutePath());
 
-        DealConfig config = DealConfig.load(tmpDir.get()).config();
-        check(config != null && "jvm".equals(config.backend()),
-            "deal.json backend jvm parsed");
+        // ISSUE-0269: the project routes through production
+        // ProjectLocator + the context-driven orchestrator.
+        ProjectLocator.LocateResult located =
+            ProjectLocator.locate(entryFile.toString(), null);
+        check(located.context() != null && "jvm".equals(located.context().backend()),
+            "strict locate succeeds with the manifest backend jvm: " + located.e2010());
+        outputDir = Path.of(located.context().outputPath().absoluteNormalizedPath());
 
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
-            entryFile, outputDir, false, false, false, Backend.JVM, config, roots,
-            Path.of(".").toAbsolutePath().normalize());
+            located.context(), entryFile, false, false, false, false, null,
+            CompilerProfileProvider.resolve(ReleaseState.PRE_ACTIVATION,
+                CapabilityRegistry.releaseRegistry()));
 
         boolean success = orchestrator.compile();
         check(success, "JVM orchestrator compile succeeds: "
@@ -9141,7 +9155,7 @@ public class JvmBackendTest {
 
         // The pre-ISSUE-0091 constructor (no backend parameter).
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
-            entryFile, outputDir, false, (DealConfig) null, roots,
+            entryFile, outputDir, false, null, roots,
             Path.of(".").toAbsolutePath().normalize());
 
         boolean success = orchestrator.compile();
@@ -9177,7 +9191,7 @@ public class JvmBackendTest {
 
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entryFile, outputDir, false, false, false, Backend.JVM,
-            (DealConfig) null, roots, Path.of(".").toAbsolutePath().normalize());
+            null, roots, Path.of(".").toAbsolutePath().normalize());
 
         boolean success = orchestrator.compile();
         check(!success, "JVM backend rejects function-typed class fields");
@@ -9202,7 +9216,7 @@ public class JvmBackendTest {
         CompilationOrchestrator optionalOrchestrator =
             new CompilationOrchestrator(
                 optionalEntry, optionalOut, false, false, false,
-                Backend.JVM, (DealConfig) null, roots,
+                Backend.JVM, null, roots,
                 Path.of(".").toAbsolutePath().normalize());
         boolean optionalSuccess = optionalOrchestrator.compile();
         check(optionalSuccess,
@@ -10132,7 +10146,7 @@ public class JvmBackendTest {
 
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entryFile, outputDir, false, false, false, Backend.JVM,
-            (DealConfig) null, roots, Path.of(".").toAbsolutePath().normalize());
+            null, roots, Path.of(".").toAbsolutePath().normalize());
 
         boolean success = orchestrator.compile();
         check(success, "JVM backend supports imported-class values: "
@@ -10182,7 +10196,7 @@ public class JvmBackendTest {
 
         CompilationOrchestrator orchestrator2 = new CompilationOrchestrator(
             entryFile2, outputDir2, false, false, false, Backend.JVM,
-            (DealConfig) null, roots2, Path.of(".").toAbsolutePath().normalize());
+            null, roots2, Path.of(".").toAbsolutePath().normalize());
 
         boolean success2 = orchestrator2.compile();
         check(success2, "a same-named local class stays distinct from the "
@@ -10226,7 +10240,7 @@ public class JvmBackendTest {
 
         CompilationOrchestrator orchestrator3 = new CompilationOrchestrator(
             entryFile3, outputDir3, false, false, false, Backend.JVM,
-            (DealConfig) null, roots3, Path.of(".").toAbsolutePath().normalize());
+            null, roots3, Path.of(".").toAbsolutePath().normalize());
 
         boolean success3 = orchestrator3.compile();
         check(success3, "construction of an imported class type compiles: "
@@ -10271,7 +10285,7 @@ public class JvmBackendTest {
 
         CompilationOrchestrator orchestrator4 = new CompilationOrchestrator(
             entryFile4, outputDir4, false, false, false, Backend.JVM,
-            (DealConfig) null, roots4, Path.of(".").toAbsolutePath().normalize());
+            null, roots4, Path.of(".").toAbsolutePath().normalize());
 
         boolean success4 = orchestrator4.compile();
         check(success4, "imported construction with literal defaults "
@@ -10336,7 +10350,7 @@ public class JvmBackendTest {
         CompilationOrchestrator orchestrator5 = new CompilationOrchestrator(
             tmpDir.get().resolve("src5/entry.deal").toAbsolutePath(),
             outputDir5, false, false, false, Backend.JVM,
-            (DealConfig) null, List.of(tmpDir.get().resolve("src5").toAbsolutePath()),
+            null, List.of(tmpDir.get().resolve("src5").toAbsolutePath()),
             Path.of(".").toAbsolutePath().normalize());
         boolean success5 = orchestrator5.compile();
         check(success5, "cross-module nominal check success shape compiles: "
@@ -10359,7 +10373,7 @@ public class JvmBackendTest {
         CompilationOrchestrator orchestrator6 = new CompilationOrchestrator(
             tmpDir.get().resolve("src5/entry_fail.deal").toAbsolutePath(),
             outputDir6, false, false, false, Backend.JVM,
-            (DealConfig) null, List.of(tmpDir.get().resolve("src5").toAbsolutePath()),
+            null, List.of(tmpDir.get().resolve("src5").toAbsolutePath()),
             Path.of(".").toAbsolutePath().normalize());
         boolean success6 = orchestrator6.compile();
         check(success6, "cross-module nominal check failure shape compiles: "
@@ -10402,7 +10416,7 @@ public class JvmBackendTest {
 
         CompilationOrchestrator orchestrator7 = new CompilationOrchestrator(
             entryFile6, outputDir7, false, false, false, Backend.JVM,
-            (DealConfig) null, roots6, Path.of(".").toAbsolutePath().normalize());
+            null, roots6, Path.of(".").toAbsolutePath().normalize());
 
         boolean success7 = orchestrator7.compile();
         check(success7, "imported class value pass-through compiles: "
@@ -10748,7 +10762,7 @@ public class JvmBackendTest {
 
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entryFile, outputDir, false, false, false, Backend.JVM,
-            (DealConfig) null, roots, Path.of(".").toAbsolutePath().normalize());
+            null, roots, Path.of(".").toAbsolutePath().normalize());
 
         boolean success = orchestrator.compile();
         check(success, "unused project-module import compiles: "
@@ -10948,7 +10962,7 @@ public class JvmBackendTest {
         List<Path> roots = List.of(tmpDir.get().resolve("src").toAbsolutePath());
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entryFile, outputDir, false, false, false, Backend.JVM,
-            (DealConfig) null, roots, Path.of(".").toAbsolutePath().normalize());
+            null, roots, Path.of(".").toAbsolutePath().normalize());
         boolean success = orchestrator.compile();
         check(!success, "orchestrator JVM path rejects std/json imports");
         check(orchestrator.diagnostics().stream().anyMatch(d ->
@@ -11143,7 +11157,7 @@ public class JvmBackendTest {
 
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entryFile, outputDir, false, false, false, Backend.JVM,
-            (DealConfig) null, roots, Path.of(".").toAbsolutePath().normalize());
+            null, roots, Path.of(".").toAbsolutePath().normalize());
 
         boolean success = orchestrator.compile();
         check(success, "stdlib-importing project compiles through the "
@@ -11211,7 +11225,7 @@ public class JvmBackendTest {
 
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entryFile, outputDir, false, false, false, Backend.JVM,
-            (DealConfig) null, roots, Path.of(".").toAbsolutePath().normalize());
+            null, roots, Path.of(".").toAbsolutePath().normalize());
 
         boolean success = orchestrator.compile();
         check(success, "relative declaration-file import compiles as a "
@@ -11228,8 +11242,11 @@ public class JvmBackendTest {
                 "the load-time presence check names the declared export");
         }
 
-        // Unsupported declared export shape: a host class export stays
-        // E6000 at the import statement, never silently miscompiled.
+        // A class in an unlisted relative .d.deal is E2010 at the class
+        // name span unconditionally at the declaration (ISSUE-0269, D6
+        // rule (d)) — the retired E6000-at-the-import backend surface
+        // never fires because the frontend gate fails the compile before
+        // codegen.
         writeFile("src/hostlib.d.deal", """
             export class User { name: string; }
             """);
@@ -11241,16 +11258,16 @@ public class JvmBackendTest {
         Path outputDir2 = tmpDir.get().resolve("build/import_decl_class");
         CompilationOrchestrator orchestrator2 = new CompilationOrchestrator(
             entryFile, outputDir2, false, false, false, Backend.JVM,
-            (DealConfig) null, roots, Path.of(".").toAbsolutePath().normalize());
+            null, roots, Path.of(".").toAbsolutePath().normalize());
         boolean success2 = orchestrator2.compile();
-        check(!success2, "host class export fails the JVM compile");
+        check(!success2, "a class in an unlisted declaration fails the JVM compile");
         check(orchestrator2.diagnostics().stream()
-                .anyMatch(d -> "E6000".equals(d.code())
-                    && d.message().contains("host class exports are not supported")),
-            "orchestrator reports E6000 for the host class export: "
+                .anyMatch(d -> "E2010".equals(d.code())
+                    && d.message().contains("Class 'User'")),
+            "the unlisted declaration class is E2010 at the class name span: "
                 + orchestrator2.diagnostics());
         check(!Files.exists(outputDir2.resolve("Entry.java")),
-            "no artifact for the module with the unsupported host export");
+            "no artifact for the module with the identity-less class export");
     }
 
     /** ISSUE-0100 end-to-end: an externals-listed host module compiles
@@ -11268,6 +11285,8 @@ public class JvmBackendTest {
             {
               "languageVersion": "1.2",
               "moduleRoots": ["src"],
+              "output": "build/jvm",
+              "backend": "jvm",
               "externals": {
                 "host/log": { "declaration": "bindings/log.d.deal" }
               }
@@ -11303,13 +11322,19 @@ public class JvmBackendTest {
             """);
 
         Path entryFile = tmpDir.get().resolve("src/entry.deal").toAbsolutePath();
-        Path outputDir = tmpDir.get().resolve("build/host_abi");
-        List<Path> roots = List.of(tmpDir.get().resolve("src").toAbsolutePath());
-        DealConfig config = DealConfig.load(tmpDir.get()).config();
-        check(config != null, "deal.json with externals loads");
+        // ISSUE-0269: the externals-listed project routes through
+        // production ProjectLocator + the context-driven orchestrator
+        // (the retired DealConfig/roots/stdlibDir pipeline is gone).
+        ProjectLocator.LocateResult located =
+            ProjectLocator.locate(entryFile.toString(), null);
+        check(located.context() != null,
+            "deal.json with externals locates strictly: " + located.e2010());
+        Path outputDir =
+            Path.of(located.context().outputPath().absoluteNormalizedPath());
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
-            entryFile, outputDir, false, false, false, Backend.JVM,
-            config, roots, Path.of(".").toAbsolutePath().normalize());
+            located.context(), entryFile, false, false, false, false, null,
+            CompilerProfileProvider.resolve(ReleaseState.PRE_ACTIVATION,
+                CapabilityRegistry.releaseRegistry()));
         boolean success = orchestrator.compile();
         check(success, "externals-listed host module compiles: "
             + orchestrator.diagnostics());
@@ -11376,9 +11401,7 @@ public class JvmBackendTest {
             }
             """);
         Path outputDir2 = tmpDir.get().resolve("build/host_abi_missing");
-        CompilationOrchestrator orchestrator2 = new CompilationOrchestrator(
-            entryFile, outputDir2, false, false, false, Backend.JVM,
-            config, roots, Path.of(".").toAbsolutePath().normalize());
+        CompilationOrchestrator orchestrator2 = jvmTestOrchestrator(entryFile, outputDir2);
         check(orchestrator2.compile(), "missing-export project still compiles (the check is load-time): "
             + orchestrator2.diagnostics());
         Files.copy(tmpDir.get().resolve("HostLogMissing.java"),
@@ -11423,9 +11446,7 @@ public class JvmBackendTest {
             """);
         Path entryBad = tmpDir.get().resolve("src/entry_bad.deal").toAbsolutePath();
         Path outputDir3 = tmpDir.get().resolve("build/host_abi_bad_ret");
-        CompilationOrchestrator orchestrator3 = new CompilationOrchestrator(
-            entryBad, outputDir3, false, false, false, Backend.JVM,
-            config, roots, Path.of(".").toAbsolutePath().normalize());
+        CompilationOrchestrator orchestrator3 = jvmTestOrchestrator(entryBad, outputDir3);
         check(orchestrator3.compile(), "bad-return project compiles: "
             + orchestrator3.diagnostics());
         Files.copy(tmpDir.get().resolve("HostLogBad.java"),
@@ -11468,9 +11489,7 @@ public class JvmBackendTest {
             }
             """);
         Path outputDirSur = tmpDir.get().resolve("build/host_abi_bad_surrogate");
-        CompilationOrchestrator orchestratorSur = new CompilationOrchestrator(
-            entryBad, outputDirSur, false, false, false, Backend.JVM,
-            config, roots, Path.of(".").toAbsolutePath().normalize());
+        CompilationOrchestrator orchestratorSur = jvmTestOrchestrator(entryBad, outputDirSur);
         check(orchestratorSur.compile(), "surrogate-return project compiles: "
             + orchestratorSur.diagnostics());
         Files.copy(tmpDir.get().resolve("HostLogBadSurrogate.java"),
@@ -11509,9 +11528,7 @@ public class JvmBackendTest {
             """);
         Path entryAsync = tmpDir.get().resolve("src/entry_async.deal").toAbsolutePath();
         Path outputDir4 = tmpDir.get().resolve("build/host_abi_async_ok");
-        CompilationOrchestrator orchestrator4 = new CompilationOrchestrator(
-            entryAsync, outputDir4, false, false, false, Backend.JVM,
-            config, roots, Path.of(".").toAbsolutePath().normalize());
+        CompilationOrchestrator orchestrator4 = jvmTestOrchestrator(entryAsync, outputDir4);
         check(orchestrator4.compile(), "async host import compiles: "
             + orchestrator4.diagnostics());
         Files.copy(tmpDir.get().resolve("HostLog.java"),
@@ -11549,9 +11566,7 @@ public class JvmBackendTest {
             }
             """);
         Path outputDir5 = tmpDir.get().resolve("build/host_abi_async_shape");
-        CompilationOrchestrator orchestrator5 = new CompilationOrchestrator(
-            entryAsync, outputDir5, false, false, false, Backend.JVM,
-            config, roots, Path.of(".").toAbsolutePath().normalize());
+        CompilationOrchestrator orchestrator5 = jvmTestOrchestrator(entryAsync, outputDir5);
         check(orchestrator5.compile(), "async shape project compiles: "
             + orchestrator5.diagnostics());
         Files.copy(tmpDir.get().resolve("HostLogAsyncShape.java"),
@@ -11588,9 +11603,7 @@ public class JvmBackendTest {
             }
             """);
         Path outputDir6 = tmpDir.get().resolve("build/host_abi_async_completion");
-        CompilationOrchestrator orchestrator6 = new CompilationOrchestrator(
-            entryAsync, outputDir6, false, false, false, Backend.JVM,
-            config, roots, Path.of(".").toAbsolutePath().normalize());
+        CompilationOrchestrator orchestrator6 = jvmTestOrchestrator(entryAsync, outputDir6);
         check(orchestrator6.compile(), "async completion project compiles: "
             + orchestrator6.diagnostics());
         Files.copy(tmpDir.get().resolve("HostLogAsyncCompletion.java"),
@@ -11631,9 +11644,7 @@ public class JvmBackendTest {
             }
             """);
         Path outputDir7 = tmpDir.get().resolve("build/host_abi_async_surrogate");
-        CompilationOrchestrator orchestrator7 = new CompilationOrchestrator(
-            entryAsync, outputDir7, false, false, false, Backend.JVM,
-            config, roots, Path.of(".").toAbsolutePath().normalize());
+        CompilationOrchestrator orchestrator7 = jvmTestOrchestrator(entryAsync, outputDir7);
         check(orchestrator7.compile(), "async surrogate project compiles: "
             + orchestrator7.diagnostics());
         Files.copy(tmpDir.get().resolve("HostLogAsyncSurrogate.java"),
@@ -11664,6 +11675,22 @@ public class JvmBackendTest {
                 "expected string, got string with unpaired surrogate code units"),
             "the completion boundary rejection carries the seam's message: "
                 + out7);
+    }
+
+    /**
+     * The test-only isolated-phase orchestrator over the externals
+     * wiring of the host-ABI fixture (raw specifier → absolute
+     * declaration path; the production conformance harness routes the
+     * same project shape through ProjectLocator).
+     */
+    private static CompilationOrchestrator jvmTestOrchestrator(Path entryFile,
+            Path outputDir) {
+        return new CompilationOrchestrator(entryFile, outputDir, false, false,
+            false, Backend.JVM,
+            Map.of("host/log",
+                tmpDir.get().resolve("bindings/log.d.deal").toString()),
+            List.of(tmpDir.get().resolve("src").toAbsolutePath()),
+            Path.of(".").toAbsolutePath().normalize());
     }
 
     /** Parses a small DEAL snippet with the real lexer+parser for runner
@@ -11709,7 +11736,7 @@ public class JvmBackendTest {
 
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entryFile, outputDir, false, false, false, Backend.JVM,
-            (DealConfig) null, roots, Path.of(".").toAbsolutePath().normalize());
+            null, roots, Path.of(".").toAbsolutePath().normalize());
 
         boolean success = orchestrator.compile();
         check(success, "multi-module JVM compile succeeds: "
@@ -11766,7 +11793,7 @@ public class JvmBackendTest {
 
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entryFile, outputDir, false, false, false, Backend.JVM,
-            (DealConfig) null, roots, Path.of(".").toAbsolutePath().normalize());
+            null, roots, Path.of(".").toAbsolutePath().normalize());
 
         boolean success = orchestrator.compile();
         check(success, "class-isolation project compiles: "
@@ -11825,7 +11852,7 @@ public class JvmBackendTest {
 
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entryFile, outputDir, false, false, false, Backend.JVM,
-            (DealConfig) null, roots, Path.of(".").toAbsolutePath().normalize());
+            null, roots, Path.of(".").toAbsolutePath().normalize());
 
         boolean success = orchestrator.compile();
         check(success, "sibling-import project compiles: "
@@ -12002,7 +12029,7 @@ public class JvmBackendTest {
 
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entryFile, outputDir, false, false, false, Backend.JVM,
-            (DealConfig) null, roots, Path.of(".").toAbsolutePath().normalize());
+            null, roots, Path.of(".").toAbsolutePath().normalize());
 
         boolean success = orchestrator.compile();
         check(!success, "class-name collision fails the JVM compile");
@@ -12049,7 +12076,7 @@ public class JvmBackendTest {
 
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entryFile, outputDir, false, false, true, Backend.JVM,
-            (DealConfig) null, roots, Path.of(".").toAbsolutePath().normalize());
+            null, roots, Path.of(".").toAbsolutePath().normalize());
 
         ByteArrayOutputStream captured = new ByteArrayOutputStream();
         boolean success;
@@ -12077,7 +12104,7 @@ public class JvmBackendTest {
         Path dumpIrOut = tmpDir.get().resolve("build/sm_dumpir");
         CompilationOrchestrator dumpIrOnly = new CompilationOrchestrator(
             entryFile, dumpIrOut, false, true, true, false, Backend.JVM,
-            (DealConfig) null, roots, Path.of(".").toAbsolutePath().normalize());
+            null, roots, Path.of(".").toAbsolutePath().normalize());
         ByteArrayOutputStream capturedDumpIr = new ByteArrayOutputStream();
         boolean dumpIrSuccess;
         try {
@@ -12096,7 +12123,7 @@ public class JvmBackendTest {
         // Explicit --source-map together with --dump-ir still warns.
         CompilationOrchestrator both = new CompilationOrchestrator(
             entryFile, outputDir, false, true, true, true, Backend.JVM,
-            (DealConfig) null, roots, Path.of(".").toAbsolutePath().normalize());
+            null, roots, Path.of(".").toAbsolutePath().normalize());
         ByteArrayOutputStream capturedBoth = new ByteArrayOutputStream();
         boolean bothSuccess;
         try {
@@ -12111,73 +12138,66 @@ public class JvmBackendTest {
                 + capturedBoth.toString(StandardCharsets.UTF_8));
     }
 
-    private static void testDealConfigBackendField() {
-        System.out.println("-- DealConfig backend field --");
+    /**
+     * Strict backend-field pins (ISSUE-0269): the manifest backend is
+     * exactly {@code "luajit"} | {@code "jvm"} — the tolerant
+     * {@code lua}/{@code js}/case/whitespace variants are E2010 at the
+     * backend value range, and a valid CLI alias {@code lua|luajit|jvm}
+     * overrides a valid manifest (the retired DealConfig surface).
+     */
+    private static void testStrictBackendField() {
+        System.out.println("-- Strict manifest backend field --");
 
         try {
-            DealConfigParseResult r = DealConfig.parse(Path.of("deal.json"),
-                "{\"backend\": \"jvm\"}");
-            check(r.diagnostics().isEmpty(),
-                "deal.json 'jvm' carries no diagnostics: " + r.diagnostics());
-            check(r.config() != null && "jvm".equals(r.config().backend()),
-                "deal.json accepts 'jvm'");
-            DealConfigParseResult lua = DealConfig.parse(Path.of("deal.json"),
-                "{\"backend\": \"luajit\"}");
-            check(lua.diagnostics().isEmpty(),
-                "deal.json 'luajit' carries no diagnostics");
-            check(lua.config() != null && "luajit".equals(lua.config().backend()),
-                "deal.json accepts 'luajit'");
-            // ISSUE-0091 rework round 3: the CLI accepts --backend lua as a
-            // LuaJIT alias; deal.json must accept the same name.
-            DealConfigParseResult alias = DealConfig.parse(Path.of("deal.json"),
-                "{\"backend\": \"lua\"}");
-            check(alias.diagnostics().isEmpty(),
-                "deal.json 'lua' carries no diagnostics");
-            check(alias.config() != null && "lua".equals(alias.config().backend()),
-                "deal.json accepts 'lua' alias");
-            // Case-insensitive spellings, mirroring Backend.fromCliName: the
-            // CLI accepts --backend JVM / Lua, so the manifest must accept
-            // the same spellings (round-8 review flaw).
-            DealConfigParseResult upper = DealConfig.parse(Path.of("deal.json"),
-                "{\"backend\": \"JVM\"}");
-            check(upper.diagnostics().isEmpty(),
-                "deal.json 'JVM' carries no diagnostics");
-            check(upper.config() != null && "JVM".equals(upper.config().backend()),
-                "deal.json accepts 'JVM'");
-            DealConfigParseResult mixed = DealConfig.parse(Path.of("deal.json"),
-                "{\"backend\": \"  Lua \"}");
-            check(mixed.diagnostics().isEmpty(),
-                "deal.json ' Lua ' carries no diagnostics");
-            check(mixed.config() != null
-                    && "  Lua ".equals(mixed.config().backend()),
-                "deal.json accepts ' Lua ' with surrounding whitespace");
+            // Valid strict values parse cleanly through the strict parser.
+            for (String ok : new String[] {
+                    "{\"languageVersion\": \"1.2\", \"backend\": \"jvm\"}",
+                    "{\"languageVersion\": \"1.2\", \"backend\": \"luajit\"}"}) {
+                StrictManifestParser.StrictManifestParseResult r =
+                    StrictManifestParser.parse("deal.json", ok);
+                check(r.failure() == null && r.manifest() != null,
+                    "deal.json " + ok + " parses strictly: " + r.failure());
+            }
+
+            // The retired tolerant aliases are E2010 at the backend value
+            // range (exactly one diagnostic, no manifest published).
+            for (String bad : new String[] {
+                    "{\"languageVersion\": \"1.2\", \"backend\": \"lua\"}",
+                    "{\"languageVersion\": \"1.2\", \"backend\": \"JVM\"}",
+                    "{\"languageVersion\": \"1.2\", \"backend\": \"  Lua \"}",
+                    "{\"languageVersion\": \"1.2\", \"backend\": \"js\"}",
+                    "{\"languageVersion\": \"1.2\", \"backend\": \"wasm\"}"}) {
+                StrictManifestParser.StrictManifestParseResult r =
+                    StrictManifestParser.parse("deal.json", bad);
+                check(r.manifest() == null && r.failure() != null,
+                    "deal.json " + bad + " is rejected strictly");
+                if (r.failure() != null) {
+                    CompilerDiagnostic d = r.failure();
+                    check("E2010".equals(d.code()) && "error".equals(d.severity()),
+                        "unsupported backend is an E2010 error: " + d);
+                    check(d.message().contains("luajit")
+                            && d.message().contains("jvm"),
+                        "error message names supported backends: " + d.message());
+                    check(d.range().origin() == RangeOrigin.SOURCE
+                            && "deal.json".equals(d.range().file()),
+                        "backend E2010 is SOURCE-anchored at the manifest path: "
+                            + d.range());
+                }
+            }
         } catch (Exception e) {
-            fail("DealConfig jvm parse: " + e.getMessage());
+            fail("strict backend field: " + e.getMessage());
         }
 
-        // Unknown backends are a ranged E2012 naming the supported values.
-        DealConfigParseResult bad = DealConfig.parse(Path.of("deal.json"),
-            "{\"backend\": \"wasm\"}");
-        check(bad.config() == null, "unsupported backend yields no config");
-        check(bad.diagnostics().size() == 1,
-            "unsupported backend yields exactly one diagnostic: " + bad.diagnostics());
-        if (bad.diagnostics().size() == 1) {
-            CompilerDiagnostic d = bad.diagnostics().get(0);
-            check("E2012".equals(d.code()) && "error".equals(d.severity()),
-                "unsupported backend is an E2012 error: " + d);
-            check(d.message().contains("luajit")
-                    && d.message().contains("jvm"),
-                "error message names supported backends: " + d.message());
-            check(d.range().origin() == RangeOrigin.SOURCE
-                    && "deal.json".equals(d.range().file()),
-                "backend E2012 is SOURCE-anchored at the manifest path: " + d.range());
-        }
-
-        // End to end: a deal.json "backend": "lua" selects LuaJIT through the
-        // CLI exactly like the --backend lua flag. (The manifest lives in
-        // the entry file's directory — that is where Main.load looks.)
+        // End to end: a valid CLI alias --backend lua selects LuaJIT
+        // through the CLI exactly like --backend luajit; the strict
+        // manifest carries no backend. The per-thread temp root may
+        // still hold the orchestrator-jvm fixture's deal.json — the
+        // alias project must be the only ancestor manifest, so the root
+        // manifest is removed first.
         try {
-            writeFile("lua_proj/src/deal.json", "{\"backend\": \"lua\"}");
+            Files.deleteIfExists(tmpDir.get().resolve("deal.json"));
+            writeFile("lua_proj/deal.json",
+                "{\"languageVersion\": \"1.2\", \"moduleRoots\": [\"src\"]}\n");
             writeFile("lua_proj/src/lua_alias_main.deal",
                 "export function main(): null { return null; }\n"
                 + "export function run(): null {}");
@@ -12186,22 +12206,23 @@ public class JvmBackendTest {
             Path luaOut = tmpDir.get().resolve("build/lua_alias");
             int rc = deal.Main.run(new String[] {
                 "compile", luaEntry.toString(),
-                "--output", luaOut.toString()});
-            check(rc == 0, "deal.json backend 'lua' compiles");
+                "--output", luaOut.toString(),
+                "--backend", "lua"});
+            check(rc == 0, "--backend lua alias compiles");
             check(Files.exists(luaOut.resolve("lua_alias_main.lua")),
-                "deal.json 'lua' emits the .lua artifact");
+                "--backend lua emits the .lua artifact");
             check(!Files.exists(luaOut.resolve("Lua_alias_main.java")),
-                "deal.json 'lua' emits no .java artifact");
+                "--backend lua emits no .java artifact");
         } catch (IOException e) {
             fail("CLI 'lua' alias test IO: " + e.getMessage());
         }
 
-        // End to end: a deal.json "backend": "JVM" (uppercase — the
-        // case-insensitive manifest spelling) selects the JVM backend
-        // through the CLI exactly like --backend jvm. (The manifest lives
-        // in the entry file's directory — that is where Main.load looks.)
+        // End to end: the strict manifest backend "jvm" selects the JVM
+        // backend through the CLI (no --backend flag).
         try {
-            writeFile("jvm_proj/src/deal.json", "{\"backend\": \"JVM\"}");
+            Files.deleteIfExists(tmpDir.get().resolve("deal.json"));
+            writeFile("jvm_proj/deal.json",
+                "{\"languageVersion\": \"1.2\", \"moduleRoots\": [\"src\"], \"backend\": \"jvm\"}\n");
             writeFile("jvm_proj/src/jvm_alias_main.deal",
                 "export function main(): null { return null; }\n"
                 + "export function run(): int { return 6 * 7; }");
@@ -12211,13 +12232,36 @@ public class JvmBackendTest {
             int rc = deal.Main.run(new String[] {
                 "compile", jvmEntry.toString(),
                 "--output", jvmOut.toString()});
-            check(rc == 0, "deal.json backend 'JVM' compiles");
+            check(rc == 0, "deal.json backend 'jvm' compiles");
             check(Files.exists(jvmOut.resolve("Jvm_alias_main.java")),
-                "deal.json 'JVM' emits the .java artifact");
+                "deal.json 'jvm' emits the .java artifact");
             check(!Files.exists(jvmOut.resolve("jvm_alias_main.lua")),
-                "deal.json 'JVM' emits no .lua artifact");
+                "deal.json 'jvm' emits no .lua artifact");
+
+            // A manifest "backend": "lua" is E2010 through the CLI — the
+            // retired tolerant alias never reaches compilation.
+            writeFile("bad_proj/deal.json",
+                "{\"languageVersion\": \"1.2\", \"backend\": \"lua\"}\n");
+            writeFile("bad_proj/src/bad_main.deal",
+                "export function main(): null { return null; }\n");
+            Path badEntry = tmpDir.get().resolve("bad_proj/src/bad_main.deal")
+                .toAbsolutePath();
+            ByteArrayOutputStream badErr = new ByteArrayOutputStream();
+            int badRc;
+            try {
+                ERR_CAPTURE.set(new PrintStream(badErr, true, StandardCharsets.UTF_8));
+                badRc = deal.Main.run(new String[] {
+                    "compile", badEntry.toString(),
+                    "--output", tmpDir.get().resolve("build/bad_alias").toString()});
+            } finally {
+                ERR_CAPTURE.remove();
+            }
+            check(badRc == 1, "deal.json backend 'lua' exits 1");
+            check(badErr.toString(StandardCharsets.UTF_8).contains("E2010"),
+                "deal.json 'lua' is E2010 through the CLI: "
+                    + badErr.toString(StandardCharsets.UTF_8));
         } catch (IOException e) {
-            fail("CLI 'JVM' alias test IO: " + e.getMessage());
+            fail("CLI strict backend test IO: " + e.getMessage());
         }
     }
 
@@ -12225,6 +12269,11 @@ public class JvmBackendTest {
         System.out.println("-- CLI --backend flag --");
 
         try {
+            // ISSUE-0269: the CLI locates exactly one ancestor exact-v1.2
+            // manifest — the temp project carries its own (backend
+            // absent: the CLI flags / default drive the backend).
+            writeFile("deal.json",
+                "{\"languageVersion\": \"1.2\", \"moduleRoots\": [\"src\"]}\n");
             writeFile("src/cli_main.deal", """
                 import * as console from "std/console"
                 export function main(): null { return null; }
@@ -12374,13 +12423,13 @@ public class JvmBackendTest {
             String proj = "irpin00";
             writeFile(proj + "/lib.deal", "export async function plus(a: int, b: int): int { return a + b; }\nexport async function tag(s: string): string { return \"[\" + s + \"]\"; }");
             writeFile(proj + "/main.deal", "import * as lib from \"./lib\"\nexport function main(): null { return null; }\nexport async function test(): int {\n  let s: string = await lib.tag(\"x\");\n  if (s === \"[x]\") { return await lib.plus(2, 3); }\n  return 0;\n}");
-            DealConfig irPinConfig = null;
+            Map<String, String> irPinExternals = null;
             Path irPinRoot = tmpDir.get().resolve(proj).toAbsolutePath().normalize();
             Path irPinEntry = irPinRoot.resolve("main.deal");
             Path irPinOut = irPinRoot.resolve("out");
             CompilationOrchestrator irPinOrch = new CompilationOrchestrator(
                 irPinEntry, irPinOut, false, true, false, Backend.JVM,
-                irPinConfig, List.of(irPinRoot), null);
+                irPinExternals, List.of(irPinRoot), null);
             boolean irPinOk = irPinOrch.compile();
             check(irPinOk, "jvm-async-slice.json :: jvm-async-multi-module: orchestrator --dump-ir compile succeeds: "
                 + irPinOrch.diagnostics());
@@ -12484,22 +12533,18 @@ module @<PROJECT>/main.deal:1:1-7:2
             String proj = "irpin01";
             writeFile(proj + "/" + "bindings/log.d.deal", "export function info(level: int, s: string): null;\nexport function add(a: int, b: int): int;");
             writeFile(proj + "/entry.deal", "import * as log from \"host/log\"\nexport function main(): null {\n  log.info(1, \"hello\");\n  return null;\n}\nexport function run(): int { return log.add(2, 3); }");
-            DealConfig irPinConfig = null;
-            StringBuilder irPinDealJson = new StringBuilder();
-            irPinDealJson.append("{\n  \"languageVersion\": \"1.2\",\n");
-            irPinDealJson.append("  \"externals\": {\n");
-            irPinDealJson.append("    \"" + "host/log" + "\": { \"declaration\": \"" + "bindings/log.d.deal" + "\" }");
-            irPinDealJson.append("\n  }\n}\n");
-            writeFile(proj + "/deal.json", irPinDealJson.toString());
-            DealConfig.DealConfigParseResult irPinCfg =
-                DealConfig.load(tmpDir.get().resolve(proj));
-            irPinConfig = irPinCfg.config();
             Path irPinRoot = tmpDir.get().resolve(proj).toAbsolutePath().normalize();
             Path irPinEntry = irPinRoot.resolve("entry.deal");
             Path irPinOut = irPinRoot.resolve("out");
+            // The test-only isolated-phase path: the externals wiring is
+            // the raw specifier → absolute declaration path map (the
+            // production conformance harness routes the same fixture
+            // through ProjectLocator).
+            Map<String, String> irPinExternals = Map.of("host/log",
+                irPinRoot.resolve("bindings/log.d.deal").toString());
             CompilationOrchestrator irPinOrch = new CompilationOrchestrator(
                 irPinEntry, irPinOut, false, true, false, Backend.JVM,
-                irPinConfig, List.of(irPinRoot), null);
+                irPinExternals, List.of(irPinRoot), null);
             boolean irPinOk = irPinOrch.compile();
             check(irPinOk, "jvm-host-abi-slice.json :: jvm-host-export-presence: orchestrator --dump-ir compile succeeds: "
                 + irPinOrch.diagnostics());
@@ -12567,13 +12612,13 @@ module @<PROJECT>/entry.deal:1:1-6:53
             String proj = "irpin02";
             writeFile(proj + "/lib.deal", "export class Point { x: int = 0; }\nexport function make(x: int): Point { return { x: x }; }\n");
             writeFile(proj + "/main.deal", "import * as lib from \"./lib\"\nfunction use(p: lib.Point): int { return p.x; }\nexport function run(): int {\n  let got: int = use(lib.make(7));\n  return got;\n}\nexport function main(): null { return null; }\n");
-            DealConfig irPinConfig = null;
+            Map<String, String> irPinExternals = null;
             Path irPinRoot = tmpDir.get().resolve(proj).toAbsolutePath().normalize();
             Path irPinEntry = irPinRoot.resolve("main.deal");
             Path irPinOut = irPinRoot.resolve("out");
             CompilationOrchestrator irPinOrch = new CompilationOrchestrator(
                 irPinEntry, irPinOut, false, true, false, Backend.JVM,
-                irPinConfig, List.of(irPinRoot), null);
+                irPinExternals, List.of(irPinRoot), null);
             boolean irPinOk = irPinOrch.compile();
             check(irPinOk, "jvm-integration-join.json :: jvm-join-xmod-class-descriptor: orchestrator --dump-ir compile succeeds: "
                 + irPinOrch.diagnostics());
@@ -12662,13 +12707,13 @@ module @<PROJECT>/main.deal:1:1-8:1
             String proj = "irpin03";
             writeFile(proj + "/lib.deal", "export class Item { tag: string = \"\"; }\nexport function make(tag: string): Item { return { tag: tag }; }\n");
             writeFile(proj + "/main.deal", "import * as lib from \"./lib\"\nexport function run(): string {\n  let holder: table = { item: lib.make(\"x\") };\n  let i: lib.Item = holder.item;\n  return i.tag;\n}\nexport function main(): null { return null; }\n");
-            DealConfig irPinConfig = null;
+            Map<String, String> irPinExternals = null;
             Path irPinRoot = tmpDir.get().resolve(proj).toAbsolutePath().normalize();
             Path irPinEntry = irPinRoot.resolve("main.deal");
             Path irPinOut = irPinRoot.resolve("out");
             CompilationOrchestrator irPinOrch = new CompilationOrchestrator(
                 irPinEntry, irPinOut, false, true, false, Backend.JVM,
-                irPinConfig, List.of(irPinRoot), null);
+                irPinExternals, List.of(irPinRoot), null);
             boolean irPinOk = irPinOrch.compile();
             check(irPinOk, "jvm-integration-join.json :: jvm-join-xmod-table-read-desc: orchestrator --dump-ir compile succeeds: "
                 + irPinOrch.diagnostics());
@@ -12755,13 +12800,13 @@ module @<PROJECT>/main.deal:1:1-8:1
             writeFile(proj + "/modela.deal", "export class Item { tag: string = \"\"; }\nexport function make(tag: string): Item { return { tag: tag }; }\n");
             writeFile(proj + "/modelb.deal", "export class Item { tag: string = \"\"; }\n");
             writeFile(proj + "/main.deal", "import * as modela from \"./modela\"\nimport * as modelb from \"./modelb\"\nexport function run(): string {\n  let holder: table = { item: modela.make(\"a\") };\n  let b: modelb.Item = holder.item;\n  return b.tag;\n}\nexport function main(): null { return null; }\n");
-            DealConfig irPinConfig = null;
+            Map<String, String> irPinExternals = null;
             Path irPinRoot = tmpDir.get().resolve(proj).toAbsolutePath().normalize();
             Path irPinEntry = irPinRoot.resolve("main.deal");
             Path irPinOut = irPinRoot.resolve("out");
             CompilationOrchestrator irPinOrch = new CompilationOrchestrator(
                 irPinEntry, irPinOut, false, true, false, Backend.JVM,
-                irPinConfig, List.of(irPinRoot), null);
+                irPinExternals, List.of(irPinRoot), null);
             boolean irPinOk = irPinOrch.compile();
             check(irPinOk, "jvm-integration-join.json :: jvm-join-xmod-mismatch-desc: orchestrator --dump-ir compile succeeds: "
                 + irPinOrch.diagnostics());
@@ -12858,13 +12903,13 @@ module @<PROJECT>/modelb.deal:1:1-2:1
             String proj = "irpin05";
             writeFile(proj + "/lib.deal", "export function add(a: int, b: int): int { return a + b; }");
             writeFile(proj + "/main.deal", "import * as lib from \"./lib\"\nexport function main(): null { return null; }\n\nexport function run(): int { return lib.add(2, 3); }");
-            DealConfig irPinConfig = null;
+            Map<String, String> irPinExternals = null;
             Path irPinRoot = tmpDir.get().resolve(proj).toAbsolutePath().normalize();
             Path irPinEntry = irPinRoot.resolve("main.deal");
             Path irPinOut = irPinRoot.resolve("out");
             CompilationOrchestrator irPinOrch = new CompilationOrchestrator(
                 irPinEntry, irPinOut, false, true, false, Backend.JVM,
-                irPinConfig, List.of(irPinRoot), null);
+                irPinExternals, List.of(irPinRoot), null);
             boolean irPinOk = irPinOrch.compile();
             check(irPinOk, "jvm-modules-slice.json :: jvm-mod-imported-direct-call: orchestrator --dump-ir compile succeeds: "
                 + irPinOrch.diagnostics());
@@ -12937,13 +12982,13 @@ module @<PROJECT>/main.deal:1:1-4:53
             String proj = "irpin06";
             writeFile(proj + "/lib.deal", "export class Point {\n  x: int = 0;\n  y: int = 0;\n}\nexport function make(x: int, y: int): Point { return { x: x, y: y }; }");
             writeFile(proj + "/main.deal", "import * as lib from \"./lib\"\nexport function main(): null { return null; }\n\nexport function run(): int {\n  let p: lib.Point = lib.make(3, 4);\n  return p.x * 10 + p.y;\n}");
-            DealConfig irPinConfig = null;
+            Map<String, String> irPinExternals = null;
             Path irPinRoot = tmpDir.get().resolve(proj).toAbsolutePath().normalize();
             Path irPinEntry = irPinRoot.resolve("main.deal");
             Path irPinOut = irPinRoot.resolve("out");
             CompilationOrchestrator irPinOrch = new CompilationOrchestrator(
                 irPinEntry, irPinOut, false, true, false, Backend.JVM,
-                irPinConfig, List.of(irPinRoot), null);
+                irPinExternals, List.of(irPinRoot), null);
             boolean irPinOk = irPinOrch.compile();
             check(irPinOk, "jvm-xmod-classes-slice.json :: jvm-xmod-class-export-import: orchestrator --dump-ir compile succeeds: "
                 + irPinOrch.diagnostics());
@@ -13035,13 +13080,13 @@ module @<PROJECT>/main.deal:1:1-7:2
             String proj = "irpin07";
             writeFile(proj + "/lib.deal", "export class Point {\n  x: int = 10;\n  y: int = 20;\n}\nexport function sum(p: Point): int { return p.x + p.y; }");
             writeFile(proj + "/main.deal", "import * as lib from \"./lib\"\nexport function main(): null { return null; }\n\nexport function run(): int {\n  let a: lib.Point = {};\n  let b: lib.Point = { y: 5, x: 2 };\n  return a.x + a.y * 10 + lib.sum(b);\n}");
-            DealConfig irPinConfig = null;
+            Map<String, String> irPinExternals = null;
             Path irPinRoot = tmpDir.get().resolve(proj).toAbsolutePath().normalize();
             Path irPinEntry = irPinRoot.resolve("main.deal");
             Path irPinOut = irPinRoot.resolve("out");
             CompilationOrchestrator irPinOrch = new CompilationOrchestrator(
                 irPinEntry, irPinOut, false, true, false, Backend.JVM,
-                irPinConfig, List.of(irPinRoot), null);
+                irPinExternals, List.of(irPinRoot), null);
             boolean irPinOk = irPinOrch.compile();
             check(irPinOk, "jvm-xmod-classes-slice.json :: jvm-xmod-class-construction-defaults: orchestrator --dump-ir compile succeeds: "
                 + irPinOrch.diagnostics());
@@ -13140,13 +13185,13 @@ module @<PROJECT>/main.deal:1:1-8:2
             String proj = "irpin08";
             writeFile(proj + "/lib.deal", "export class Pair {\n  left: int = 0;\n  right: int = 0;\n}\nexport function sum(p: Pair): int { return p.left + p.right; }");
             writeFile(proj + "/main.deal", "import * as lib from \"./lib\"\nexport function main(): null { return null; }\n\nexport function run(): int {\n  let p: lib.Pair = { left: 5, right: 7 };\n  return lib.sum(p);\n}");
-            DealConfig irPinConfig = null;
+            Map<String, String> irPinExternals = null;
             Path irPinRoot = tmpDir.get().resolve(proj).toAbsolutePath().normalize();
             Path irPinEntry = irPinRoot.resolve("main.deal");
             Path irPinOut = irPinRoot.resolve("out");
             CompilationOrchestrator irPinOrch = new CompilationOrchestrator(
                 irPinEntry, irPinOut, false, true, false, Backend.JVM,
-                irPinConfig, List.of(irPinRoot), null);
+                irPinExternals, List.of(irPinRoot), null);
             boolean irPinOk = irPinOrch.compile();
             check(irPinOk, "jvm-xmod-classes-slice.json :: jvm-xmod-class-param-pass: orchestrator --dump-ir compile succeeds: "
                 + irPinOrch.diagnostics());
@@ -13233,13 +13278,13 @@ module @<PROJECT>/main.deal:1:1-7:2
             String proj = "irpin09";
             writeFile(proj + "/lib.deal", "export class Box {\n  value: int = 0;\n}\nexport function makeBox(): Box { return { value: 7 }; }\nexport function readBox(b: Box): int { return b.value; }");
             writeFile(proj + "/main.deal", "import * as lib from \"./lib\"\nexport function main(): null { return null; }\n\nexport function run(): int {\n  let b: lib.Box = lib.makeBox();\n  b.value = b.value + 5;\n  return lib.readBox(b);\n}");
-            DealConfig irPinConfig = null;
+            Map<String, String> irPinExternals = null;
             Path irPinRoot = tmpDir.get().resolve(proj).toAbsolutePath().normalize();
             Path irPinEntry = irPinRoot.resolve("main.deal");
             Path irPinOut = irPinRoot.resolve("out");
             CompilationOrchestrator irPinOrch = new CompilationOrchestrator(
                 irPinEntry, irPinOut, false, true, false, Backend.JVM,
-                irPinConfig, List.of(irPinRoot), null);
+                irPinExternals, List.of(irPinRoot), null);
             boolean irPinOk = irPinOrch.compile();
             check(irPinOk, "jvm-xmod-classes-slice.json :: jvm-xmod-class-return-mutate-roundtrip: orchestrator --dump-ir compile succeeds: "
                 + irPinOrch.diagnostics());
@@ -13340,13 +13385,13 @@ module @<PROJECT>/main.deal:1:1-8:2
             writeFile(proj + "/modela.deal", "export class Item {\n  tag: string = \"\";\n}\nexport function tag(i: Item): string { return \"a:\" + i.tag; }");
             writeFile(proj + "/modelb.deal", "export class Item {\n  tag: string = \"\";\n}\nexport function tag(i: Item): string { return \"b:\" + i.tag; }");
             writeFile(proj + "/main.deal", "import * as modela from \"./modela\"\nimport * as modelb from \"./modelb\"\nimport * as console from \"std/console\"\nexport function main(): null { return null; }\n\nexport function run(): null {\n  let a: modela.Item = { tag: \"one\" };\n  let b: modelb.Item = { tag: \"two\" };\n  console.log(modela.tag(a));\n  console.log(modelb.tag(b));\n}");
-            DealConfig irPinConfig = null;
+            Map<String, String> irPinExternals = null;
             Path irPinRoot = tmpDir.get().resolve(proj).toAbsolutePath().normalize();
             Path irPinEntry = irPinRoot.resolve("main.deal");
             Path irPinOut = irPinRoot.resolve("out");
             CompilationOrchestrator irPinOrch = new CompilationOrchestrator(
                 irPinEntry, irPinOut, false, true, false, Backend.JVM,
-                irPinConfig, List.of(irPinRoot), null);
+                irPinExternals, List.of(irPinRoot), null);
             boolean irPinOk = irPinOrch.compile();
             check(irPinOk, "jvm-xmod-classes-slice.json :: jvm-xmod-same-name-isolation: orchestrator --dump-ir compile succeeds: "
                 + irPinOrch.diagnostics());
@@ -13477,13 +13522,13 @@ module @<PROJECT>/modelb.deal:1:1-4:62
             String proj = "irpin11";
             writeFile(proj + "/lib.deal", "export class Point {\n  x: int = 0;\n  y: int = 0;\n}\nexport function sum(p: Point): int { return p.x + p.y; }");
             writeFile(proj + "/main.deal", "import * as lib from \"./lib\"\nexport function main(): null { return null; }\n\nfunction shift(p: lib.Point): lib.Point {\n  p.x = p.x + 1;\n  return p;\n}\nexport function run(): int {\n  let p: lib.Point = { x: 3, y: 4 };\n  let q: lib.Point = shift(p);\n  return lib.sum(q) + q.y;\n}");
-            DealConfig irPinConfig = null;
+            Map<String, String> irPinExternals = null;
             Path irPinRoot = tmpDir.get().resolve(proj).toAbsolutePath().normalize();
             Path irPinEntry = irPinRoot.resolve("main.deal");
             Path irPinOut = irPinRoot.resolve("out");
             CompilationOrchestrator irPinOrch = new CompilationOrchestrator(
                 irPinEntry, irPinOut, false, true, false, Backend.JVM,
-                irPinConfig, List.of(irPinRoot), null);
+                irPinExternals, List.of(irPinRoot), null);
             boolean irPinOk = irPinOrch.compile();
             check(irPinOk, "jvm-xmod-classes-slice.json :: jvm-xmod-class-param-return-local-fn: orchestrator --dump-ir compile succeeds: "
                 + irPinOrch.diagnostics());

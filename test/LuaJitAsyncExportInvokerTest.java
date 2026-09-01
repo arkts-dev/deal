@@ -6,7 +6,7 @@ import deal.codegen.lua.LuaJitAsyncExportInvoker.EnvelopeJson;
 import deal.codegen.lua.LuaJitAsyncExportInvoker.Result;
 import deal.codegen.lua.LuaJitAsyncExportInvocationException;
 import deal.module.CompilationOrchestrator;
-import deal.module.DealConfig;
+import deal.project.StrictManifestParser;
 
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
@@ -25,7 +25,9 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.ExecutorService;
@@ -202,18 +204,33 @@ public class LuaJitAsyncExportInvokerTest {
         Files.createDirectories(srcRoot);
         Path entrySource = srcRoot.resolve(entryFileName);
         Files.writeString(entrySource, source);
-        DealConfig config = null;
+        // ISSUE-0269: the strict parser replaces the retired tolerant
+        // DealConfig reader. The isolated-phase orchestrator path takes
+        // the externals map (raw specifier → declaration text resolved
+        // to an absolute path — the synthesized context resolves
+        // relative texts from the entry directory, while the manifest
+        // declares them relative to the project root).
+        Map<String, String> externals = null;
         if (manifestJson != null) {
             Files.writeString(projectDir.resolve("deal.json"), manifestJson);
-            DealConfig.DealConfigParseResult parsed = DealConfig.load(projectDir);
-            assertEquals("the externals manifest must parse cleanly",
-                List.of(), parsed.diagnostics());
-            assertNotNull("the externals manifest must yield a config",
-                parsed.config());
-            config = parsed.config();
+            StrictManifestParser.StrictManifestParseResult parsed =
+                StrictManifestParser.parse(
+                    projectDir.resolve("deal.json").toString(), manifestJson);
+            assertNull("the externals manifest must parse strictly cleanly",
+                parsed.failure());
+            assertNotNull("the externals manifest must yield a manifest",
+                parsed.manifest());
+            externals = new LinkedHashMap<>();
+            for (Map.Entry<String, deal.project.ExternalEntrySpec> entry
+                    : parsed.manifest().externals().entrySet()) {
+                Path declaration = projectDir.resolve(
+                    entry.getValue().declaration().value());
+                externals.put(entry.getKey(),
+                    declaration.toAbsolutePath().normalize().toString());
+            }
         }
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
-            entrySource.toAbsolutePath(), outRoot, false, config,
+            entrySource.toAbsolutePath(), outRoot, false, externals,
             List.of(srcRoot.toAbsolutePath()),
             Path.of("").toAbsolutePath());
         boolean ok = orchestrator.compile();
@@ -1117,6 +1134,7 @@ public class LuaJitAsyncExportInvokerTest {
             }
             """, """
             {
+              "languageVersion": "1.2",
               "moduleRoots": ["src"],
               "externals": {
                 "host/probe": { "declaration": "probe.d.deal" }

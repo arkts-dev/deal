@@ -230,6 +230,56 @@ public final class SourceModuleResolver {
     }
 
     // =========================================================================
+    // The entry-file seam (orchestrator consumption, ISSUE-0269)
+    // =========================================================================
+
+    /**
+     * Publishes the compilation's entry file as a resolved source: the
+     * entry is not reached through an import declaration, so the
+     * orchestrator obtains its {@link SourceModuleLocation} (and thereby
+     * its private semantic identity, {@code deploymentModuleId}, and
+     * module classification) through this seam. The conversion follows
+     * the T1 entry-row matrix: the file must exist as a regular,
+     * readable file with full symlink resolution
+     * ({@link ProtectedPathOps#canonicalizeExisting(String)}); a missing
+     * or unreadable entry is E2003 at the given anchor (the canonical
+     * synthetic shape plus anchor note for an anchorless span). The
+     * published location's {@code normalizedSourcePath} is the entry's
+     * lexical absolute normalized path — the same key the orchestrator
+     * uses for the entry module.
+     *
+     * @param entryPathText the entry file's absolute path text (never
+     *                      null)
+     * @param entrySpan     the anchor for a failure diagnostic (never
+     *                      null)
+     * @return the published location or the single E2003; never null
+     */
+    public ResolveResult resolveEntryFile(String entryPathText, Span entrySpan) {
+        Objects.requireNonNull(entryPathText, "entryPathText");
+        Objects.requireNonNull(entrySpan, "entrySpan");
+        Path lexical;
+        try {
+            lexical = Path.of(entryPathText).toAbsolutePath().normalize();
+        } catch (InvalidPathException e) {
+            return e2003("Module not found: '" + entryPathText
+                + "'. The entry path cannot be materialized: "
+                + e.getMessage(), entrySpan);
+        }
+        ProtectedPathOps.PathResult converted =
+            ProtectedPathOps.canonicalizeExisting(entryPathText);
+        if (converted instanceof ProtectedPathOps.PathResult.Failure failure) {
+            if (failure.kind() == ProtectedPathOps.PathResult.FailureKind.NOT_FOUND) {
+                return e2003("Module not found: " + entryPathText, entrySpan);
+            }
+            return e2003("Cannot read module: " + entryPathText + " ("
+                + failure.reason() + ")", entrySpan);
+        }
+        ProtectedPathOps.PathResult.Success success =
+            (ProtectedPathOps.PathResult.Success) converted;
+        return publish(lexical, success.resolvedPath(), entrySpan, null);
+    }
+
+    // =========================================================================
     // Rule 2: importer-relative resolution
     // =========================================================================
 

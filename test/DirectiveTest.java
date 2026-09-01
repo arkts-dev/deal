@@ -8,7 +8,6 @@ import deal.diagnostics.DiagnosticRange;
 import deal.diagnostics.RangeOrigin;
 import deal.lexer.*;
 import deal.module.CompilationOrchestrator;
-import deal.module.DealConfig;
 import deal.module.ExportExtractor;
 import deal.parser.ParseResult;
 import deal.parser.Parser;
@@ -628,10 +627,13 @@ public class DirectiveTest {
                 "// @spec: Lexical elements — comment semantics\n"
                     + "export function main(): null { return null; }\n");
 
+            // ISSUE-0269: the tolerant DealConfig reader is retired; the
+            // test-only isolated-phase overload synthesizes the internal
+            // ProjectContext, and this manifest declares no externals.
             CompilationOrchestrator orchestrator = new CompilationOrchestrator(
                 srcDir.resolve("main.deal"), tmp.resolve("build"),
                 false, false, false, Backend.LUAJIT,
-                DealConfig.load(tmp).config(),
+                Map.of(),
                 List.of(srcDir), Path.of(".").toAbsolutePath().normalize());
             boolean success = orchestrator.compile();
             check(!success, "the production compile fails on // @spec:");

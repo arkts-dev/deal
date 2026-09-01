@@ -8,14 +8,22 @@ import deal.codegen.jvm.JvmBackend;
 import deal.codegen.js.HostModuleDeclarations;
 import deal.codegen.js.JsBackend;
 import deal.codegen.lua.LuaBackend;
+import deal.identity.CanonicalModuleIdentity;
+import deal.identity.ProjectModuleIdentity;
 import deal.ir.IrDumper;
 import deal.lexer.*;
+import deal.project.ConfiguredModuleRoot;
+import deal.project.ExternalEntry;
+import deal.project.NormalizedDeclarationPath;
+import deal.project.OutputConfigResolver;
+import deal.project.ProjectContext;
+import deal.project.ProjectDeploymentIdentity;
+import deal.project.ProjectLocator;
+import deal.project.ProtectedPathOps;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticFormatter;
 import deal.diagnostics.DiagnosticRange;
 import deal.diagnostics.DiagnosticStructuredOutput;
-import deal.identity.CanonicalModuleIdentity;
-import deal.identity.ProjectModuleIdentity;
 import deal.parser.*;
 import deal.semantic.CheckedProjectBuildResult;
 import deal.semantic.CheckedProjectBuilder;
@@ -34,6 +42,7 @@ import deal.types.Types;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import deal.descriptors.CanonicalRuntimeTypeDescriptor;
@@ -74,17 +83,50 @@ public final class CompilationOrchestrator {
      */
     private final boolean sourceMapExplicit;
     private final Backend backend;
-    private final List<Path> moduleRoots;
+
     /**
-     * The configured root texts, aligned index-wise with
-     * {@link #moduleRoots}: the manifest-spelled root text when the
-     * configuration carries one, else the resolved root path's final
-     * component (the implicit project root).  Consumed by the
-     * canonical identity classification of {@link #codegenAllJs()}
-     * (js-v12-completion-architecture D3).
+     * The single immutable exact-v1.2 project context governing this
+     * compilation (design source
+     * {@code strict-project-context-resolution-identity} D1/D7): the
+     * production constructor consumes the context published by
+     * {@link ProjectLocator}; the test-only isolated-phase constructors
+     * synthesize one from their legacy inputs. The context is the single
+     * authority for module roots, externals declarations, the stdlib
+     * surface, the output path, and the private deployment identity —
+     * the legacy {@code moduleRoots}/{@code stdlibDir} fields and the
+     * {@code externalsDeclarations}/{@code externalsModulePaths} maps
+     * are gone.
      */
-    private final List<String> configuredRootTexts;
-    private final Path stdlibDir;
+    private final ProjectContext context;
+
+    /**
+     * The T6 source resolver over {@link #context}: every import — and
+     * the entry file via {@link SourceModuleResolver#resolveEntryFile} —
+     * resolves through its pinned rules (importer-relative first,
+     * externals declaration authority, configured roots then the pinned
+     * stdlib surface, the 6-module filter, file-keyed E2009; no CWD
+     * module fallback), and every successfully resolved source receives
+     * one private {@link SourceModuleLocation}.
+     */
+    private final SourceModuleResolver sourceResolver;
+
+    /**
+     * The T7 identity assembly over {@link #context}: class declarations
+     * are gated through
+     * {@link ModuleIdentityAssembly#gateClassDeclaration} (the
+     * unconditional E2010 for a class in an identity-less source) and
+     * required public class identities through
+     * {@link ModuleIdentityAssembly#requireClassIdentity}.
+     */
+    private final ModuleIdentityAssembly identityAssembly;
+
+    /**
+     * The published {@link SourceModuleLocation} per module source path
+     * (keyed by the location's {@code normalizedSourcePath}), in
+     * first-publication order.
+     */
+    private final Map<String, SourceModuleLocation> locations =
+        new LinkedHashMap<>();
 
     /**
      * The release-owned compiler invocation resolved at compile start
@@ -159,21 +201,21 @@ public final class CompilationOrchestrator {
      */
     private final Path diagnosticsJsonPath;
 
-    // Host externals (ISSUE-0082, host-module-abi D5):
-    // - externalsDeclarations: raw import path as written → absolute
-    //   declaration source path (manifest-relative resolution).  The
-    //   declaration is authoritative for that name — on-disk candidates are
-    //   not consulted.
-    // - externalsModulePaths: declaration source path → dotted module path
-    //   (the externals key with '/' → '.' — the typing/class-identity name,
-    //   e.g. "host.cfg"; the require path stays the raw key "host/cfg").
-    private final Map<String, String> externalsDeclarations;
-    private final Map<String, String> externalsModulePaths;
+    // Host externals (ISSUE-0082, host-module-abi D5, file-keyed since
+    // ISSUE-0269): the externals declarations live in
+    // ProjectContext.externals (raw import specifier → validated
+    // ExternalEntry). A resolved source whose canonical URI equals an
+    // entry's declaration path carries ExternalModule(that key)
+    // regardless of the import spelling — the classification recorded on
+    // each SourceModuleLocation by the T6 resolver; the dotted
+    // typing/class-identity name for an externals module is derived from
+    // the raw specifier (the legacy externalsModulePaths behavior).
 
     private static final class ModuleInfo {
         final String sourcePath;
         final String modulePath;
         final boolean isDeclarationFile;
+        final SourceModuleLocation location;
         ProgramNode rawAst;
         Map<String, Type> exports;
         SymbolTable symbolTable;
@@ -181,90 +223,158 @@ public final class CompilationOrchestrator {
         ParseResult parseResult;
         NameResolver nameResolver;
 
-        ModuleInfo(String sourcePath, String modulePath, boolean isDeclarationFile) {
+        ModuleInfo(String sourcePath, String modulePath, boolean isDeclarationFile,
+                   SourceModuleLocation location) {
             this.sourcePath = sourcePath;
             this.modulePath = modulePath;
             this.isDeclarationFile = isDeclarationFile;
+            this.location = location;
         }
     }
 
-    public CompilationOrchestrator(Path entryFile, Path outputRoot, boolean verbose,
-                                    DealConfig config, List<Path> moduleRoots,
-                                    Path stdlibDir) {
-        this(entryFile, outputRoot, verbose, false, false, Backend.LUAJIT,
-            config, moduleRoots, stdlibDir);
-    }
-
-    public CompilationOrchestrator(Path entryFile, Path outputRoot, boolean verbose,
-                                    boolean dumpIr,
-                                    DealConfig config, List<Path> moduleRoots,
-                                    Path stdlibDir) {
-        this(entryFile, outputRoot, verbose, dumpIr, false, Backend.LUAJIT,
-            config, moduleRoots, stdlibDir);
-    }
-
-    public CompilationOrchestrator(Path entryFile, Path outputRoot, boolean verbose,
-                                    boolean dumpIr, boolean sourceMap,
-                                    DealConfig config, List<Path> moduleRoots,
-                                    Path stdlibDir) {
-        this(entryFile, outputRoot, verbose, dumpIr, sourceMap, Backend.LUAJIT,
-            config, moduleRoots, stdlibDir);
-    }
-
     /**
-     * Backend-selection entry point (ISSUE-0091). LuaJIT remains the default:
-     * all overloads above delegate with {@link Backend#LUAJIT}.
+     * Production entry point (ISSUE-0269 migration, design source
+     * {@code strict-project-context-resolution-identity} D7 + Failure and
+     * operations): the orchestrator consumes the immutable validated
+     * {@link ProjectContext} published by {@link ProjectLocator} plus the
+     * compilation options. The backend is the context's effective backend
+     * ({@code "luajit"} | {@code "jvm"} — the strict backend set), the
+     * output root is the context's classified
+     * {@link OutputConfigResolver.OutputRef} (created only in the write
+     * phase), and module roots, externals declarations, the stdlib
+     * surface, and the private deployment identity are the context's
+     * validated values. No {@code DealConfig}, no implicit
+     * entry-directory root, no CWD bare-lookup fallback, and no lossy
+     * {@code computeModulePath} participate: module naming derives from
+     * the T5/T6 classification (the dotted root-relative path, the
+     * externals raw specifier with {@code /} → {@code .}, the pinned
+     * stdlib module name) and the private {@code deploymentModuleId} for
+     * unclassified sources.
      *
-     * <p>This overload treats {@code sourceMap} as the explicit request
-     * (pre-ISSUE-0091 callers pass the single source-map flag).
-     *
-     * @param backend the code-generation backend ({@code lua}/{@code luajit}
-     *                or {@code jvm}) selected by the CLI or {@code deal.json}
+     * @param context the validated immutable project context
+     * @param entryFile the entry source file (absolute normalized
+     *                  lexical path — the same path text the T6
+     *                  entry-file seam publishes)
+     * @param verbose verbose phase/timing output
+     * @param dumpIr produce IR dump files
+     * @param sourceMap produce source-map sidecars
+     * @param sourceMapExplicit true when {@code --source-map} was
+     *                         explicitly requested (distinct from the
+     *                         {@code --dump-ir}-derived flag)
+     * @param diagnosticsJsonPath the {@code --diagnostics-json} output
+     *                            path, or null
+     * @param invocation the release-owned compiler invocation
      */
-    public CompilationOrchestrator(Path entryFile, Path outputRoot, boolean verbose,
-                                    boolean dumpIr, boolean sourceMap, Backend backend,
-                                    DealConfig config, List<Path> moduleRoots,
-                                    Path stdlibDir) {
-        this(entryFile, outputRoot, verbose, dumpIr, sourceMap, sourceMap,
-            backend, config, moduleRoots, stdlibDir);
-    }
-
-    /**
-     * Backend-selection entry point (ISSUE-0091). LuaJIT remains the default:
-     * all overloads above delegate with {@link Backend#LUAJIT}.
-     *
-     * @param backend the code-generation backend ({@code lua}/{@code luajit}
-     *                or {@code jvm}) selected by the CLI or {@code deal.json}
-     * @param sourceMapExplicit true when {@code --source-map} was explicitly
-     *                requested; {@code sourceMap} is the effective flag
-     *                (also derived from {@code --dump-ir})
-     */
-    public CompilationOrchestrator(Path entryFile, Path outputRoot, boolean verbose,
-                                    boolean dumpIr, boolean sourceMap,
-                                    boolean sourceMapExplicit, Backend backend,
-                                    DealConfig config, List<Path> moduleRoots,
-                                    Path stdlibDir) {
-        this(entryFile, outputRoot, verbose, dumpIr, sourceMap,
-            sourceMapExplicit, backend, config, moduleRoots, stdlibDir, null,
-            defaultInvocation());
-    }
-
-    /**
-     * Full entry point with the structured-output path (D8): when
-     * {@code diagnosticsJsonPath} is non-null, {@link #compile()} writes
-     * the {@link DiagnosticStructuredOutput} document for every
-     * compilation — successful or failed — without changing the exit
-     * code. A write failure is a deterministic compiler I/O diagnostic on
-     * stderr with exit 1.
-     */
-    public CompilationOrchestrator(Path entryFile, Path outputRoot, boolean verbose,
-                                    boolean dumpIr, boolean sourceMap,
-                                    boolean sourceMapExplicit, Backend backend,
-                                    DealConfig config, List<Path> moduleRoots,
-                                    Path stdlibDir, Path diagnosticsJsonPath,
+    public CompilationOrchestrator(ProjectContext context, Path entryFile,
+                                    boolean verbose, boolean dumpIr,
+                                    boolean sourceMap, boolean sourceMapExplicit,
+                                    Path diagnosticsJsonPath,
                                     CompilerInvocation invocation) {
         this.invocation = java.util.Objects.requireNonNull(invocation,
             "invocation must not be null");
+        this.context = java.util.Objects.requireNonNull(context, "context");
+        this.backend = backendOf(context.backend());
+        this.entryFile = entryFile.toAbsolutePath().normalize();
+        this.outputRoot = Path.of(context.outputPath().absoluteNormalizedPath());
+        this.verbose = verbose;
+        this.dumpIr = dumpIr;
+        this.sourceMap = sourceMap;
+        this.sourceMapExplicit = sourceMapExplicit;
+        this.diagnosticsJsonPath = diagnosticsJsonPath;
+        this.sourceResolver = new SourceModuleResolver(context);
+        this.identityAssembly = new ModuleIdentityAssembly(context);
+    }
+
+    /**
+     * Test-only isolated-phase constructor (parent D10: isolated phase
+     * APIs may omit {@link ProjectContext}; CLI, the production
+     * orchestrator path, and project-level conformance may not). The
+     * legacy inputs — explicit module roots, a stdlib-directory hint,
+     * an externals declarations map (raw import specifier → declaration
+     * path text), the backend, and the output root — are synthesized
+     * into an internal {@link ProjectContext} so every compilation still
+     * flows through the one {@link SourceModuleResolver} +
+     * {@link ModuleIdentityAssembly} pipeline. Production code never
+     * constructs these overloads.
+     */
+    public CompilationOrchestrator(Path entryFile, Path outputRoot, boolean verbose,
+                                    Map<String, String> externalsDeclarations,
+                                    List<Path> moduleRoots, Path stdlibDir) {
+        this(entryFile, outputRoot, verbose, false, false, Backend.LUAJIT,
+            externalsDeclarations, moduleRoots, stdlibDir);
+    }
+
+    /** Test-only isolated-phase overload; see the 6-argument form. */
+    public CompilationOrchestrator(Path entryFile, Path outputRoot, boolean verbose,
+                                    boolean dumpIr,
+                                    Map<String, String> externalsDeclarations,
+                                    List<Path> moduleRoots, Path stdlibDir) {
+        this(entryFile, outputRoot, verbose, dumpIr, false, Backend.LUAJIT,
+            externalsDeclarations, moduleRoots, stdlibDir);
+    }
+
+    /** Test-only isolated-phase overload; see the 6-argument form. */
+    public CompilationOrchestrator(Path entryFile, Path outputRoot, boolean verbose,
+                                    boolean dumpIr, boolean sourceMap,
+                                    Map<String, String> externalsDeclarations,
+                                    List<Path> moduleRoots, Path stdlibDir) {
+        this(entryFile, outputRoot, verbose, dumpIr, sourceMap, Backend.LUAJIT,
+            externalsDeclarations, moduleRoots, stdlibDir);
+    }
+
+    /**
+     * Test-only isolated-phase overload with an explicit backend (the
+     * JS-backend harnesses pass {@link Backend#JS}, which the strict
+     * v1.2 schema cannot select until the skeleton epic extends it);
+     * see the 6-argument form. LuaJIT remains the default: the
+     * overloads above delegate with {@link Backend#LUAJIT}.
+     */
+    public CompilationOrchestrator(Path entryFile, Path outputRoot, boolean verbose,
+                                    boolean dumpIr, boolean sourceMap, Backend backend,
+                                    Map<String, String> externalsDeclarations,
+                                    List<Path> moduleRoots, Path stdlibDir) {
+        this(entryFile, outputRoot, verbose, dumpIr, sourceMap, sourceMap,
+            backend, externalsDeclarations, moduleRoots, stdlibDir);
+    }
+
+    /**
+     * Test-only isolated-phase overload; see the 6-argument form.
+     * {@code sourceMapExplicit} distinguishes the explicit
+     * {@code --source-map} request from the effective {@code sourceMap}
+     * flag (also derived from {@code --dump-ir}).
+     */
+    public CompilationOrchestrator(Path entryFile, Path outputRoot, boolean verbose,
+                                    boolean dumpIr, boolean sourceMap,
+                                    boolean sourceMapExplicit, Backend backend,
+                                    Map<String, String> externalsDeclarations,
+                                    List<Path> moduleRoots, Path stdlibDir) {
+        this(entryFile, outputRoot, verbose, dumpIr, sourceMap,
+            sourceMapExplicit, backend, externalsDeclarations, moduleRoots,
+            stdlibDir, null, defaultInvocation());
+    }
+
+    /**
+     * The canonical test-only isolated-phase constructor: synthesizes the
+     * internal {@link ProjectContext} from the legacy inputs (see
+     * {@link #synthesizeContext}) and installs the one
+     * {@link SourceModuleResolver} + {@link ModuleIdentityAssembly}
+     * pipeline. With the structured-output path set (D8),
+     * {@link #compile()} writes the {@link DiagnosticStructuredOutput}
+     * document for every compilation — successful or failed — without
+     * changing the exit code; a write failure is a deterministic
+     * compiler I/O diagnostic on stderr with exit 1.
+     */
+    public CompilationOrchestrator(Path entryFile, Path outputRoot, boolean verbose,
+                                    boolean dumpIr, boolean sourceMap,
+                                    boolean sourceMapExplicit, Backend backend,
+                                    Map<String, String> externalsDeclarations,
+                                    List<Path> moduleRoots, Path stdlibDir,
+                                    Path diagnosticsJsonPath,
+                                    CompilerInvocation invocation) {
+        this.invocation = java.util.Objects.requireNonNull(invocation,
+            "invocation must not be null");
+        this.context = synthesizeContext(entryFile, outputRoot, backend,
+            externalsDeclarations, moduleRoots, stdlibDir);
         this.backend = backend;
         this.entryFile = entryFile.toAbsolutePath().normalize();
         this.outputRoot = outputRoot.toAbsolutePath().normalize();
@@ -272,42 +382,189 @@ public final class CompilationOrchestrator {
         this.dumpIr = dumpIr;
         this.sourceMap = sourceMap;
         this.sourceMapExplicit = sourceMapExplicit;
-        this.moduleRoots = moduleRoots;
-        List<String> rootTexts = new ArrayList<>(moduleRoots.size());
-        for (int i = 0; i < moduleRoots.size(); i++) {
-            String text = null;
-            if (config != null && config.moduleRoots() != null
-                    && i < config.moduleRoots().size()) {
-                text = config.moduleRoots().get(i);
-            }
-            if (text == null || text.isEmpty()) {
-                Path fileName = moduleRoots.get(i).getFileName();
-                text = fileName != null ? fileName.toString() : "";
-            }
-            rootTexts.add(text);
-        }
-        this.configuredRootTexts = List.copyOf(rootTexts);
-        this.stdlibDir = stdlibDir;
         this.diagnosticsJsonPath = diagnosticsJsonPath;
+        this.sourceResolver = new SourceModuleResolver(context);
+        this.identityAssembly = new ModuleIdentityAssembly(context);
+    }
 
-        Map<String, String> declarations = new HashMap<>();
-        Map<String, String> modulePaths = new HashMap<>();
-        if (config != null) {
-            Path manifestDir = config.configFile() != null
-                ? config.configFile().toAbsolutePath().normalize().getParent()
-                : null;
-            for (Map.Entry<String, String> entry : config.externals().entrySet()) {
+    /**
+     * The strict effective backend of a published context
+     * ({@code "luajit"} → {@link Backend#LUAJIT}, {@code "jvm"} →
+     * {@link Backend#JVM}); any other text is a defensive programming
+     * error for a validated context (the strict backend set is closed)
+     * and fails with {@link IllegalArgumentException}.
+     */
+    private static Backend backendOf(String backendText) {
+        return switch (backendText) {
+            case "luajit" -> Backend.LUAJIT;
+            case "jvm" -> Backend.JVM;
+            default -> throw new IllegalArgumentException(
+                "unsupported effective backend: " + backendText);
+        };
+    }
+
+    /**
+     * Synthesizes the internal {@link ProjectContext} of a test-only
+     * isolated-phase constructor (no {@code ProjectContext} input, parent
+     * D10): the given module roots become {@link ConfiguredModuleRoot}s
+     * through the D4 root conversion (no existence requirement;
+     * longest-existing-directory-prefix symlink resolution) with a
+     * deterministic representable {@code configuredText} derived from the
+     * root's absolute path components (test setups have no manifest
+     * spelling); the externals declarations map becomes
+     * {@link ExternalEntry} records with normalized declaration paths;
+     * the stdlib surface is probed (stdlib-directory hint first, then the
+     * entry directory, then the process CWD) and the six spec-listed
+     * declaration files under the surface are canonicalized; the output
+     * is classified from the given output root; and the private
+     * deployment identity is a deterministic synthetic value over the
+     * entry directory (test-only compilations carry no manifest bytes).
+     * Deterministic for unchanged inputs.
+     */
+    private static ProjectContext synthesizeContext(Path entryFile, Path outputRoot,
+            Backend backend, Map<String, String> externalsDeclarations,
+            List<Path> moduleRoots, Path stdlibDir) {
+        Path entryDir = entryFile.toAbsolutePath().normalize().getParent();
+        String entryDirText = entryDir.toString();
+
+        List<ConfiguredModuleRoot> roots = new ArrayList<>();
+        for (Path root : moduleRoots) {
+            String rootText = root.toAbsolutePath().normalize().toString();
+            ProtectedPathOps.PathResult converted =
+                ProtectedPathOps.normalizePrefixResolved(rootText);
+            String absolute = converted instanceof ProtectedPathOps.PathResult.Success success
+                ? success.resolvedPath().toString()
+                : rootText;
+            roots.add(new ConfiguredModuleRoot(
+                configuredRootTextOf(Path.of(absolute)), absolute, null));
+        }
+
+        String surface = probeLegacySurface(stdlibDir, entryDir);
+        List<String> stdlibDeclarationFiles =
+            resolveSurfaceDeclarationFiles(surface);
+
+        Map<String, ExternalEntry> externals = new LinkedHashMap<>();
+        if (externalsDeclarations != null) {
+            for (Map.Entry<String, String> entry
+                    : externalsDeclarations.entrySet()) {
                 Path declaration = Path.of(entry.getValue());
-                if (manifestDir != null) {
-                    declaration = manifestDir.resolve(declaration);
+                if (!declaration.isAbsolute()) {
+                    declaration = entryDir.resolve(declaration);
                 }
-                String sourcePath = declaration.normalize().toString();
-                declarations.put(entry.getKey(), sourcePath);
-                modulePaths.put(sourcePath, entry.getKey().replace('/', '.'));
+                externals.put(entry.getKey(), new ExternalEntry(entry.getKey(),
+                    new NormalizedDeclarationPath(
+                        declaration.normalize().toString(), null),
+                    null, null));
             }
         }
-        this.externalsDeclarations = Map.copyOf(declarations);
-        this.externalsModulePaths = Map.copyOf(modulePaths);
+
+        OutputConfigResolver.OutputRef output = new OutputConfigResolver.OutputRef(
+            OutputConfigResolver.Source.MANIFEST,
+            outputRoot.isAbsolute() ? OutputConfigResolver.Kind.ABSOLUTE_PATH
+                : OutputConfigResolver.Kind.MANIFEST_RELATIVE_PATH,
+            outputRoot.toString(),
+            outputRoot.toAbsolutePath().normalize().toString(), null);
+
+        return new ProjectContext(
+            entryDir.resolve("deal.json").normalize().toString(),
+            entryDirText,
+            entryDirText,
+            "1.2",
+            roots,
+            output,
+            backend.cliName(),
+            externals,
+            "1.2",
+            surface,
+            stdlibDeclarationFiles,
+            syntheticDeploymentIdentity(entryDir));
+    }
+
+    /**
+     * The deterministic representable {@code configuredText} of a
+     * synthesized root: the root path's final component (no manifest
+     * spelling exists for a test-only context, and the text only feeds
+     * the T7 representability gates and the compilation's
+     * class-identity index — the pre-ISSUE-0269 configured-root-text
+     * fallback for a config-less compile kept byte-identical). A
+     * degenerate root (filesystem root or a relative input) falls back
+     * to the pinned {@code "project"} text.
+     */
+    private static String configuredRootTextOf(Path absoluteRoot) {
+        Path fileName = absoluteRoot.getFileName();
+        return fileName == null || fileName.toString().isEmpty()
+            ? "project" : fileName.toString();
+    }
+
+    /**
+     * The legacy stdlib-surface probe of a synthesized context: the
+     * stdlib-directory hint (the legacy "parent of std/" value) first,
+     * then {@code <entryDirectory>/std}, then the process-CWD
+     * {@code std} directory; absence is a value (null), never an error.
+     * The returned path is fully symlink-resolved when present.
+     */
+    private static String probeLegacySurface(Path stdlibDir, Path entryDir) {
+        Optional<Path> hinted = ProtectedPathOps.probeDirectory(
+            stdlibDir == null ? entryDir.resolve("std")
+                : stdlibDir.resolve("std"));
+        if (hinted.isPresent()) {
+            return hinted.get().toString();
+        }
+        Optional<Path> local = ProtectedPathOps.probeDirectory(
+            entryDir.resolve("std"));
+        if (local.isPresent()) {
+            return local.get().toString();
+        }
+        Optional<Path> distribution = ProtectedPathOps.probeDirectory(
+            Path.of("").toAbsolutePath().resolve("std"));
+        return distribution.map(Path::toString).orElse(null);
+    }
+
+    /**
+     * The six spec-listed stdlib declaration files under a resolved
+     * surface, each fully symlink-resolved (the
+     * {@link ProjectContext#stdlibDeclarationFiles()} derivation of a
+     * synthesized context); missing/non-regular/unresolvable files are
+     * omitted, and an absent surface yields the empty list.
+     */
+    private static List<String> resolveSurfaceDeclarationFiles(String surface) {
+        List<String> files = new ArrayList<>();
+        if (surface == null) {
+            return files;
+        }
+        for (String module : ProjectLocator.SPEC_STDLIB_MODULES) {
+            Path pinned = Path.of(surface).resolve(module + ".d.deal");
+            if (!Files.isRegularFile(pinned)) {
+                continue;
+            }
+            try {
+                files.add(pinned.toRealPath().toString());
+            } catch (IOException ignored) {
+                // No canonical path: no resolved source can equal it.
+            }
+        }
+        return files;
+    }
+
+    /**
+     * The deterministic synthetic deployment identity of a test-only
+     * context: the {@code file:} URI of a synthesized manifest path
+     * under the entry directory plus SHA-256 over the empty manifest
+     * byte array (test-only compilations carry no manifest bytes).
+     */
+    private static ProjectDeploymentIdentity syntheticDeploymentIdentity(
+            Path entryDir) {
+        ProtectedPathOps.UriResult uri = ProtectedPathOps.toFileUri(
+            entryDir.resolve("deal.json"));
+        String uriText = uri instanceof ProtectedPathOps.UriResult.Success success
+            ? success.uri().toString()
+            : "file:" + entryDir.resolve("deal.json");
+        // The pinned module identity-digest facility (the closed compiler
+        // SHA-256 registry owns every digest site; this synthesized
+        // test-only identity reuses it rather than a second digest
+        // implementation).
+        return new ProjectDeploymentIdentity(uriText,
+            IdentityDigests.sha256Hex(new byte[0]));
     }
 
     /**
@@ -518,12 +775,29 @@ public final class CompilationOrchestrator {
             String sourcePath = pending.poll();
             if (modules.containsKey(sourcePath)) continue;
 
+            // The location of this source: imports carry their published
+            // T6 location through the pending queue; the entry file is
+            // published through the resolver's entry-file seam.
+            SourceModuleLocation location = locations.get(sourcePath);
+            if (location == null) {
+                SourceModuleResolver.ResolveResult entryResult =
+                    sourceResolver.resolveEntryFile(sourcePath,
+                        Span.synthetic(sourcePath));
+                if (entryResult instanceof SourceModuleResolver.ResolveResult.Failure f) {
+                    diagnostics.add(f.diagnostic());
+                    hasErrors = true;
+                    continue;
+                }
+                location = ((SourceModuleResolver.ResolveResult.Resolved)
+                    entryResult).location();
+                locations.put(sourcePath, location);
+            }
+
             Path file = Path.of(sourcePath);
             if (!Files.exists(file)) {
-                // Anchorless site (D5): the discovery queue holds no
-                // import declaration for the entry/nonexistent file, so
-                // the diagnostic is synthetic with a note naming the
-                // unresolved path.
+                // Anchorless site (D5): the queue holds no import
+                // declaration for a vanished file, so the diagnostic is
+                // synthetic with a note naming the unresolved path.
                 syntheticError(DiagnosticCode.E2003,
                     "Module not found: " + sourcePath, sourcePath,
                     "missing anchor: unresolved module path '"
@@ -585,46 +859,68 @@ public final class CompilationOrchestrator {
                 hasErrors = true;
             }
 
-            // Externals-listed host declarations carry the dotted externals
-            // key as their typing/class-identity module path (e.g. "host.cfg"
-            // for the raw import path "host/cfg").
-            String externalsModulePath = externalsModulePaths.get(sourcePath);
-            String modulePath = externalsModulePath != null
-                ? externalsModulePath : computeModulePath(file);
-            ModuleInfo info = new ModuleInfo(sourcePath, modulePath, isDecl);
+            // The internal module name derives from the T5/T6
+            // classification: the dotted root-relative path for a
+            // ProjectModule, the externals raw specifier with '/' → '.',
+            // the pinned stdlib module name, and the private
+            // deploymentModuleId for an unclassified source (the lossy
+            // computeModulePath dotted fallbacks are retired).
+            ModuleInfo info = new ModuleInfo(sourcePath,
+                modulePathFor(location), isDecl, location);
             info.rawAst = parseResult.program();
             info.parseResult = parseResult;
             modules.put(sourcePath, info);
 
+            // T7 class-declaration gate (rule (d)): a class in a source
+            // with no public module identity — an out-of-root relative
+            // source, a rooted non-externals .d.deal, or a non-spec
+            // .d.deal inside the std directory — is E2010 at the class
+            // name span unconditionally at the declaration, before any
+            // class/export/default/FFI metadata or artifact is
+            // published. Run only for a cleanly parsed module so partial
+            // ASTs never fabricate gates.
+            if (!parseResult.hasErrors() && parseResult.program() != null) {
+                for (StatementNode stmt : parseResult.program().statements()) {
+                    ClassDeclaration cd = classDeclarationOf(stmt);
+                    if (cd == null) {
+                        continue;
+                    }
+                    ModuleIdentityAssembly.DeclarationResult gate =
+                        identityAssembly.gateClassDeclaration(location,
+                            cd.name(), classSpanOf(cd, sourcePath));
+                    if (gate instanceof ModuleIdentityAssembly.DeclarationResult.Failure f) {
+                        diagnostics.add(f.diagnostic());
+                        hasErrors = true;
+                    }
+                }
+            }
+
             long modElapsed = System.currentTimeMillis() - modStart;
             log("  Parsed: " + sourcePath + " (" + modElapsed + "ms)");
 
-            // Process imports for discovery.  Use tryResolveImportPath to
-            // avoid emitting E2003 here — we will emit it in Phase 3 where
-            // we have precise source locations (or here with the import span).
+            // Process imports for discovery through the T6 resolver's
+            // pinned rules (importer-relative first, externals authority,
+            // configured roots then the pinned stdlib surface, the
+            // 6-module filter, file-keyed E2009; no CWD fallback). A
+            // failed resolution merges its E2003/E2009 at the import
+            // span and fails the compile; a resolved source queues its
+            // lexical path and publishes its location once.
             for (StatementNode stmt : parseResult.program().statements()) {
                 if (stmt instanceof ImportDeclaration imp) {
-                    String importPath = imp.modulePath();
-                    String resolved = tryResolveImportPath(importPath, file);
-                    if (resolved == null) {
-                        // Record E2003 with the import statement's span for
-                        // accurate error location (D5).
-                        error(DiagnosticCode.E2003,
-                            "Module not found: '" + importPath
-                                + "'. Searched in: " + describeSearchPaths(importPath, file)
-                                + externalsDeclarationNote(importPath),
-                            imp.span());
-                    } else if (isUndeclaredExternalHostModule(importPath, resolved)) {
-                        // E2009: a bare import whose resolution lands on a
-                        // non-stdlib declaration file that is not listed in
-                        // deal.json externals (host-module-abi D5(3));
-                        // anchored at the import declaration span (D5).
-                        error(DiagnosticCode.E2009,
-                            "Import of external host module '" + importPath
-                                + "' is not declared in deal.json externals",
-                            imp.span());
-                    } else if (!modules.containsKey(resolved)) {
-                        pending.add(resolved);
+                    SourceModuleResolver.ResolveResult result =
+                        sourceResolver.resolve(info.sourcePath,
+                            imp.modulePath(), imp.span());
+                    if (result instanceof SourceModuleResolver.ResolveResult.Resolved r) {
+                        String target = r.location().normalizedSourcePath();
+                        locations.putIfAbsent(target, r.location());
+                        if (!modules.containsKey(target)) {
+                            pending.add(target);
+                        }
+                    } else {
+                        diagnostics.add(
+                            ((SourceModuleResolver.ResolveResult.Failure) result)
+                                .diagnostic());
+                        hasErrors = true;
                     }
                 }
             }
@@ -634,6 +930,112 @@ public final class CompilationOrchestrator {
         if (verbose) {
             System.out.println("  Phase 0 total: " + phaseElapsed + "ms");
         }
+    }
+
+    /**
+     * The class declaration of a top-level statement, direct or
+     * exported (v1.2 module top level holds only
+     * import/function/class/export).
+     */
+    private static ClassDeclaration classDeclarationOf(StatementNode stmt) {
+        if (stmt instanceof ClassDeclaration cd) {
+            return cd;
+        }
+        if (stmt instanceof ExportDeclaration ed
+                && ed.declaration() instanceof ClassDeclaration cd) {
+            return cd;
+        }
+        return null;
+    }
+
+    /**
+     * The pinned class-name anchor of a class declaration: the
+     * declaration's span (the convention of E4006's class diagnostics),
+     * or the canonical synthetic span for a declaration without one.
+     */
+    private static Span classSpanOf(ClassDeclaration cd, String sourcePath) {
+        return cd.span() != null ? cd.span() : Span.synthetic(sourcePath);
+    }
+
+    /**
+     * The internal module name of a published source location, derived
+     * from its T5/T6 classification (never the lossy
+     * {@code computeModulePath} dotted path): {@code std.<module>} for a
+     * {@code BuiltinModule} source (pinned module order), the externals
+     * raw import specifier with {@code /} → {@code .} for an
+     * {@code ExternalModule} source (the legacy externalsModulePaths
+     * behavior), the dotted root-relative path (suffix stripped) for a
+     * {@code ProjectModule} source, and the private
+     * {@code deploymentModuleId} for an unclassified source.
+     */
+    private String modulePathFor(SourceModuleLocation location) {
+        CanonicalModuleIdentity classification = location.moduleClassification();
+        if (classification instanceof CanonicalModuleIdentity.BuiltinModule) {
+            String stem = stdlibModuleStemOf(location);
+            if (stem != null) {
+                return "std." + stem;
+            }
+        } else if (classification instanceof CanonicalModuleIdentity.ExternalModule external) {
+            return external.rawImportSpecifier().replace('/', '.');
+        } else if (classification instanceof CanonicalModuleIdentity.ProjectModule project) {
+            Path rootPath = Path.of(
+                project.projectIdentity().normalizedRootPath());
+            Path sourcePath = Path.of(location.normalizedSourcePath());
+            String relative = rootPath.relativize(sourcePath).toString();
+            return stripSourceSuffix(relative).replace('/', '.')
+                .replace('\\', '.');
+        }
+        return location.deploymentModuleId();
+    }
+
+    /**
+     * The stdlib module stem ({@code console}...{@code time}) of a
+     * {@code BuiltinModule} source: derived from the canonical resolved
+     * file's stem, restricted to the six pinned names (a partial
+     * surface — e.g. a test-only surface holding a subset of the six
+     * files — keeps the stem-to-name mapping exact; a positional list
+     * index would misname partial surfaces).
+     */
+    private String stdlibModuleStemOf(SourceModuleLocation location) {
+        Path canonicalPath = canonicalPathOf(location);
+        if (canonicalPath == null || canonicalPath.getFileName() == null) {
+            return null;
+        }
+        String name = canonicalPath.getFileName().toString();
+        if (!name.endsWith(".d.deal")) {
+            return null;
+        }
+        String stem = name.substring(0, name.length() - ".d.deal".length());
+        return ModuleIdentityResolver.SPEC_STDLIB_MODULE_NAMES.contains(stem)
+            ? stem : null;
+    }
+
+    /**
+     * The lexical absolute path of a canonical resolved-source URI
+     * (no filesystem access), or null for a non-{@code file:} URI.
+     */
+    private static Path canonicalPathOf(SourceModuleLocation location) {
+        try {
+            Path path = Path.of(URI.create(
+                location.semanticModuleIdentity().canonicalResolvedSourceUri()));
+            return path.normalize();
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    /**
+     * Strips the {@code .deal}/{@code .d.deal} source suffix of one
+     * relative path text.
+     */
+    private static String stripSourceSuffix(String path) {
+        if (path.endsWith(".d.deal")) {
+            return path.substring(0, path.length() - ".d.deal".length());
+        }
+        if (path.endsWith(".deal")) {
+            return path.substring(0, path.length() - ".deal".length());
+        }
+        return path;
     }
 
     private boolean hasLexErrors(LexResult lex) {
@@ -680,6 +1082,42 @@ public final class CompilationOrchestrator {
                 hasErrors = true;
             }
 
+            // T7 required-identity routing (D6 (a)/(b)/(c)): every class
+            // declaration — exported or not — requires its public class
+            // identity here. The LuaJIT backend emits a class tag (and
+            // therefore the canonical descriptor projection) for every
+            // class declaration in an emitted module, and an
+            // unrepresentable identity must fail E2010 at the class name
+            // span before any metadata or artifact is published — never
+            // escape as a backend-dependent raw exception at descriptor
+            // emission (the JVM backend compiles a non-exported class
+            // without a tag, so gating every class makes the behavior
+            // backend-independent). The assembled identity is registered
+            // in the compilation's CanonicalClassIdentityIndex; an
+            // unrepresentable identity (reserved first root component,
+            // forbidden characters, ambiguous containment, an
+            // unrepresentable externals specifier, a builtin class other
+            // than Error) is E2010 at the class name span. The
+            // unconditional identity-less rule (d) already fired in
+            // phase 0, whose failure aborts the compile before this
+            // phase runs, so an identity-less source is never re-gated
+            // here.
+            if (info.rawAst != null) {
+                for (StatementNode stmt : info.rawAst.statements()) {
+                    ClassDeclaration cd = classDeclarationOf(stmt);
+                    if (cd == null) {
+                        continue;
+                    }
+                    ModuleIdentityAssembly.ClassIdentityResult required =
+                        identityAssembly.requireClassIdentity(info.location,
+                            cd.name(), classSpanOf(cd, info.sourcePath));
+                    if (required instanceof ModuleIdentityAssembly.ClassIdentityResult.Failure f) {
+                        diagnostics.add(f.diagnostic());
+                        hasErrors = true;
+                    }
+                }
+            }
+
             // IR dump for declaration files
             if (dumpIr && info.isDeclarationFile && info.rawAst != null) {
                 try {
@@ -713,9 +1151,9 @@ public final class CompilationOrchestrator {
      * signature {@code (): null}; the backend invokes {@code main()} from
      * that module.
      *
-     * <p>Emitted diagnostics:</p>
+     * <p>Emitted diagnostics (ISSUE-0269 D7 re-registration):</p>
      * <ul>
-     *   <li>{@code E2010} — the entry module does not export {@code main}</li>
+     *   <li>{@code E2012} — the entry module does not export {@code main}</li>
      *   <li>{@code E2011} — {@code main} exists but is async or does not
      *       have signature {@code (): null}</li>
      * </ul>
@@ -725,7 +1163,7 @@ public final class CompilationOrchestrator {
         if (entry == null) return; // discovery already reported E2003
 
         String file = entry.sourcePath;
-        // E2010/E2011 anchor at the entry program span (D5): SOURCE-exact
+        // E2012/E2011 anchor at the entry program span (D5): SOURCE-exact
         // at the program start via the T2 program-span obligation,
         // including the empty/whitespace-only entry case
         // (file,1,1,1,1,0,0,0,SOURCE).
@@ -735,11 +1173,11 @@ public final class CompilationOrchestrator {
             ? entry.exports.get("main") : null;
         if (mainType == null) {
             if (programSpan != null) {
-                error(DiagnosticCode.E2010,
+                error(DiagnosticCode.E2012,
                     "Entry module must export 'main' with non-async signature '(): null'",
                     programSpan);
             } else {
-                syntheticError(DiagnosticCode.E2010,
+                syntheticError(DiagnosticCode.E2012,
                     "Entry module must export 'main' with non-async signature '(): null'",
                     file,
                     "missing anchor: entry program span for module '" + file + "'");
@@ -1416,11 +1854,17 @@ public final class CompilationOrchestrator {
         if (info.rawAst != null) {
             for (StatementNode stmt : info.rawAst.statements()) {
                 if (stmt instanceof ImportDeclaration imp) {
-                    String resolved = tryResolveImportPath(imp.modulePath(),
-                        Path.of(info.sourcePath));
-                    if (resolved != null) {
+                    // The same T6 resolution the discovery/typing phases
+                    // used, re-run without diagnostics (an unresolvable
+                    // import would have failed the compile with
+                    // E2003/E2009 before this phase).
+                    SourceModuleResolver.ResolveResult result =
+                        sourceResolver.resolve(info.sourcePath,
+                            imp.modulePath(), imp.span());
+                    if (result instanceof SourceModuleResolver.ResolveResult.Resolved r) {
                         imports.add(new ModuleFact.ImportFact(imp.alias(),
-                            imp.modulePath(), resolved));
+                            imp.modulePath(),
+                            r.location().normalizedSourcePath()));
                     }
                 }
             }
@@ -2031,7 +2475,7 @@ public final class CompilationOrchestrator {
         Map<String, String> importAliasMap = new HashMap<>();
         for (StatementNode stmt : imported.rawAst.statements()) {
             if (stmt instanceof ImportDeclaration imp) {
-                String resolved = tryResolveImportPath(imp.modulePath(),
+                String resolved = resolveImportPath(imp.modulePath(),
                     Path.of(imported.sourcePath));
                 if (resolved != null) {
                     ModuleInfo target = modules.get(resolved);
@@ -2108,17 +2552,18 @@ public final class CompilationOrchestrator {
     }
 
     /**
-     * True when the module is a spec-listed stdlib declaration module
-     * (filesystem-discovered under the stdlib directory or registered as a
-     * classpath resource).  Stdlib imports stay on the trusted raw-require
-     * path (ISSUE-0082, host-module-abi D5(5)).
+     * True when the module is a spec-listed stdlib declaration module:
+     * its published classification is
+     * {@link CanonicalModuleIdentity.BuiltinModule} — the file-keyed
+     * stdlib predicate over the six pinned declaration files under the
+     * resolved {@code ProjectContext.stdlibSurfacePath} (D6 (1);
+     * ISSUE-0269). Stdlib imports stay on the trusted raw-require path
+     * (ISSUE-0082, host-module-abi D5(5)); a same-named file outside
+     * the pinned surface is not builtin.
      */
     private boolean isSpecStdlibModuleInfo(ModuleInfo info) {
-        if (info.sourcePath.startsWith("classpath:")) {
-            return true;
-        }
-        return StdlibModuleResolver.isSpecStdlibModule(
-            info.modulePath.replace('.', '/'));
+        return info.location.moduleClassification()
+            instanceof CanonicalModuleIdentity.BuiltinModule;
     }
 
     private void copyRuntimeLibrary() throws IOException {
@@ -2159,8 +2604,15 @@ public final class CompilationOrchestrator {
             Path destFile = outputRoot.resolve(stdlibModule + ".lua");
             if (Files.exists(destFile)) continue;
 
-            if (stdlibDir != null) {
-                Path srcFile = stdlibDir.resolve(stdlibModule + ".lua");
+            // The pinned stdlib surface is the std directory itself
+            // (ISSUE-0269: the legacy stdlibDir heuristic moved into
+            // ProjectLocator step 6 / the synthesized context), so the
+            // implementation file is <surface>/<name>.lua for the
+            // module std/<name>.
+            String surface = context.stdlibSurfacePath();
+            if (surface != null) {
+                Path srcFile = Path.of(surface).resolve(
+                    stdlibModule.substring("std/".length()) + ".lua");
                 if (Files.exists(srcFile)) {
                     Files.createDirectories(destFile.getParent());
                     Files.copy(srcFile, destFile);
@@ -2231,8 +2683,13 @@ public final class CompilationOrchestrator {
             Path destFile = outputRoot.resolve(stdlibModule + ".js");
             if (Files.exists(destFile)) continue;
 
-            if (stdlibDir != null) {
-                Path srcFile = stdlibDir.resolve(stdlibModule + ".js");
+            // The pinned stdlib surface is the source of the .js
+            // implementations (ISSUE-0269 migration; see
+            // copyStdlibModules).
+            String surface = context.stdlibSurfacePath();
+            if (surface != null) {
+                Path srcFile = Path.of(surface).resolve(
+                    stdlibModule.substring("std/".length()) + ".js");
                 if (Files.exists(srcFile)) {
                     Files.createDirectories(destFile.getParent());
                     Files.copy(srcFile, destFile);
@@ -2281,283 +2738,55 @@ public final class CompilationOrchestrator {
      *
      * @return the resolved source path, or {@code null} if not found
      */
+    /**
+     * Resolves an import path to a source file through the T6 resolver
+     * (the pinned five rules — no legacy buildCandidates, no CWD
+     * bare-lookup fallback, no classpath module fallback). A failed
+     * resolution merges its E2003/E2009 diagnostic at the canonical
+     * synthetic shape plus anchor note when no import declaration span
+     * is available.
+     *
+     * @return the resolved source path (the location's
+     *         {@code normalizedSourcePath}), or {@code null} if not found
+     */
     public String resolveImportPath(String importPath, Path fromFile) {
         return resolveImportPath(importPath, fromFile, null);
     }
 
     /**
-     * Resolves an import path to a source file, anchoring any E2003
-     * re-emission at the given import declaration span when present,
-     * falling back to synthetic plus an anchor note naming the import
-     * path (D5).
+     * Resolves an import path to a source file through the T6 resolver,
+     * anchoring any failure diagnostic at the given import declaration
+     * span when present, falling back to the canonical synthetic shape
+     * plus the anchor note (D5).
      */
     private String resolveImportPath(String importPath, Path fromFile,
                                       Span importSpan) {
-        String resolved = tryResolveImportPath(importPath, fromFile);
-        if (resolved == null) {
-            StringBuilder msg = new StringBuilder("Module not found: '" + importPath
-                + "'. Attempted: ");
-            List<String> candidates = buildCandidates(importPath, fromFile);
-            for (int i = 0; i < candidates.size(); i++) {
-                if (i > 0) msg.append(", ");
-                msg.append(candidates.get(i));
-            }
-            msg.append(externalsDeclarationNote(importPath));
-            if (importSpan != null) {
-                error(DiagnosticCode.E2003, msg.toString(), importSpan);
-            } else {
-                syntheticError(DiagnosticCode.E2003, msg.toString(),
-                    fromFile.toString(),
-                    "missing anchor: import declaration span for import '"
-                        + importPath + "'");
-            }
+        Span anchor = importSpan != null
+            ? importSpan : Span.synthetic(fromFile.toString());
+        SourceModuleResolver.ResolveResult result =
+            sourceResolver.resolve(fromFile.toString(), importPath, anchor);
+        if (result instanceof SourceModuleResolver.ResolveResult.Resolved r) {
+            locations.putIfAbsent(r.location().normalizedSourcePath(),
+                r.location());
+            return r.location().normalizedSourcePath();
         }
-        return resolved;
-    }
-
-    /**
-     * Tries to resolve an import path without emitting diagnostics.
-     * Returns the resolved source file path, or {@code null} if not found.
-     *
-     * <p>For bare imports that look like stdlib module paths (e.g.,
-     * {@code "std/io"}), only spec-listed stdlib modules are resolved.
-     * Non-spec modules like {@code std/io} and {@code std/coroutine} are
-     * rejected with {@code null}, resulting in an E2003 diagnostic.
-     */
-    private String tryResolveImportPath(String importPath, Path fromFile) {
-        // Externals-listed bare imports (ISSUE-0082, host-module-abi D5):
-        // the manifest declaration is authoritative for that name — on-disk
-        // candidates are not consulted.  A missing declaration file yields
-        // null (→ E2003 at the import site).
-        String externalsDeclaration = externalsDeclarations.get(importPath);
-        if (externalsDeclaration != null) {
-            if (Files.exists(Path.of(externalsDeclaration))) {
-                return externalsDeclaration;
-            }
-            return null;
+        CompilerDiagnostic failure =
+            ((SourceModuleResolver.ResolveResult.Failure) result).diagnostic();
+        String key = fromFile + "|" + importPath;
+        if (reportedResolveFailures.add(key)) {
+            diagnostics.add(failure);
+            hasErrors = true;
         }
-
-        // Reject non-spec stdlib modules at the discovery/import-resolution level.
-        // Bare imports that start with "std/" but are not in the spec list
-        // should not resolve (they are not valid stdlib modules).
-        if (importPath.startsWith("std/")
-                && !importPath.startsWith("./")
-                && !importPath.startsWith("../")) {
-            if (!StdlibModuleResolver.isSpecStdlibModule(importPath)) {
-                return null;
-            }
-        }
-
-        List<String> candidates = buildCandidates(importPath, fromFile);
-
-        // Try filesystem candidates
-        for (String candidate : candidates) {
-            if (Files.exists(Path.of(candidate))) {
-                return candidate;
-            }
-        }
-
-        // Fallback: try JAR/classpath resources for bare imports
-        if (!importPath.startsWith("./") && !importPath.startsWith("../")) {
-            String resourcePath = importPath + ".d.deal";
-            InputStream stream = getClass().getClassLoader()
-                .getResourceAsStream(resourcePath);
-            if (stream != null) {
-                try { stream.close(); } catch (IOException ignored) {}
-                return registerResourceModule(resourcePath, importPath);
-            }
-        }
-
         return null;
     }
 
     /**
-     * True when a bare import resolved to a non-stdlib declaration file that
-     * is not listed in deal.json externals (ISSUE-0082, host-module-abi
-     * D5(3)-(4)): bare host modules must be declared in externals, while
-     * relative ({@code ./}, {@code ../}) declaration imports and the stdlib
-     * trusted path are unchanged.
+     * The import-resolution failures already merged into
+     * {@link #diagnostics()} (importer path ‖ specifier), so a
+     * re-resolution of the same import in a later phase never
+     * duplicates a diagnostic.
      */
-    private boolean isUndeclaredExternalHostModule(String importPath, String resolved) {
-        if (importPath.startsWith("./") || importPath.startsWith("../")) {
-            return false;
-        }
-        if (importPath.startsWith("std/")) {
-            return false;
-        }
-        if (resolved.startsWith("classpath:")) {
-            return false;
-        }
-        if (externalsDeclarations.containsKey(importPath)) {
-            return false;
-        }
-        return resolved.endsWith(".d.deal");
-    }
-
-    private List<String> buildCandidates(String importPath, Path fromFile) {
-        List<String> candidates = new ArrayList<>();
-
-        if (importPath.startsWith("./") || importPath.startsWith("../")) {
-            Path resolved = fromFile.getParent().resolve(importPath).normalize();
-            addCandidates(candidates, resolved.toString());
-        } else {
-            for (Path root : moduleRoots) {
-                Path resolved = root.resolve(importPath).normalize();
-                addCandidates(candidates, resolved.toString());
-            }
-            if (stdlibDir != null) {
-                Path resolved = stdlibDir.resolve(importPath).normalize();
-                addCandidates(candidates, resolved.toString());
-            }
-            Path resolved = Path.of("").toAbsolutePath().resolve(importPath).normalize();
-            addCandidates(candidates, resolved.toString());
-        }
-        return candidates;
-    }
-
-    /**
-     * Describes the search paths used for a bare import, for use in
-     * E2003 diagnostic messages.
-     */
-    private String describeSearchPaths(String importPath, Path fromFile) {
-        List<String> candidates = buildCandidates(importPath, fromFile);
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < candidates.size(); i++) {
-            if (i > 0) sb.append(", ");
-            sb.append(candidates.get(i));
-        }
-        return sb.toString();
-    }
-
-    /**
-     * Names the authoritative externals declaration path for an import
-     * listed in deal.json externals, for E2003 messages.  The manifest
-     * declaration is authoritative for that name and on-disk candidates
-     * are not consulted (host-module-abi D5(2)), so a missing declaration
-     * file must point the user at the configured path.  Returns an empty
-     * string for imports without an externals entry.
-     */
-    private String externalsDeclarationNote(String importPath) {
-        String declaration = externalsDeclarations.get(importPath);
-        return declaration != null
-            ? " (externals declaration: " + declaration + ")" : "";
-    }
-
-    private String registerResourceModule(String resourcePath, String importPath) {
-        String syntheticPath = "classpath:" + resourcePath;
-        if (modules.containsKey(syntheticPath)) return syntheticPath;
-
-        try {
-            InputStream stream = getClass().getClassLoader()
-                .getResourceAsStream(resourcePath);
-            if (stream == null) return null;
-
-            String source = new String(stream.readAllBytes());
-            stream.close();
-
-            String modulePath = importPath.replace('/', '.');
-
-            LexResult lex = new Lexer(source, syntheticPath).tokenize();
-            if (hasLexErrors(lex)) {
-                diagnostics.addAll(lex.diagnostics());
-                hasErrors = true;
-                return null;
-            }
-
-            Parser parser = new Parser(lex.tokens(), syntheticPath,
-                lex.directiveEvents());
-            ParseResult parseResult = parser.parse();
-            diagnostics.addAll(parseResult.diagnostics());
-            if (parseResult.hasErrors()) {
-                hasErrors = true;
-            }
-
-            ModuleInfo info = new ModuleInfo(syntheticPath, modulePath, true);
-            info.rawAst = parseResult.program();
-            info.parseResult = parseResult;
-            modules.put(syntheticPath, info);
-
-            return syntheticPath;
-        } catch (IOException e) {
-            return null;
-        }
-    }
-
-    private void addCandidates(List<String> candidates, String basePath) {
-        candidates.add(basePath + ".deal");
-        candidates.add(basePath + "/index.deal");
-        candidates.add(basePath + ".d.deal");
-        candidates.add(basePath + "/index.d.deal");
-    }
-
-    // =========================================================================
-    // Path computation
-    // =========================================================================
-
-    /**
-     * The index of the configured root that most specifically contains
-     * the source file (longest absolute normalized prefix), or {@code -1}
-     * when no root contains it.
-     */
-    private int bestRootIndex(Path sourceFile) {
-        Path absFile = sourceFile.toAbsolutePath().normalize();
-        int bestIndex = -1;
-        int bestLength = -1;
-
-        for (int i = 0; i < moduleRoots.size(); i++) {
-            Path absRoot = moduleRoots.get(i).toAbsolutePath().normalize();
-            if (absFile.startsWith(absRoot)) {
-                int len = absRoot.toString().length();
-                if (len > bestLength) {
-                    bestLength = len;
-                    bestIndex = i;
-                }
-            }
-        }
-        return bestIndex;
-    }
-
-    private String computeModulePath(Path sourceFile) {
-        Path absFile = sourceFile.toAbsolutePath().normalize();
-        int bestRoot = bestRootIndex(sourceFile);
-
-        if (bestRoot >= 0) {
-            Path relative = moduleRoots.get(bestRoot)
-                .toAbsolutePath().normalize().relativize(absFile);
-            String path = relative.toString();
-            if (path.endsWith(".d.deal")) {
-                path = path.substring(0, path.length() - ".d.deal".length());
-            } else if (path.endsWith(".deal")) {
-                path = path.substring(0, path.length() - ".deal".length());
-            }
-            return path.replace('/', '.').replace('\\', '.');
-        }
-
-        // Fallback: use relative path from current working directory.
-        // If the source is under the CWD, use the relative path to avoid
-        // collisions from filename-only resolution.
-        Path cwd = Path.of("").toAbsolutePath().normalize();
-        if (absFile.startsWith(cwd)) {
-            Path relative = cwd.relativize(absFile);
-            String path = relative.toString();
-            if (path.endsWith(".d.deal")) {
-                path = path.substring(0, path.length() - ".d.deal".length());
-            } else if (path.endsWith(".deal")) {
-                path = path.substring(0, path.length() - ".deal".length());
-            }
-            return path.replace('/', '.').replace('\\', '.');
-        }
-
-        // Absolute fallback: just the filename (used only when the file is
-        // outside both module roots and CWD — typically a test scenario).
-        String name = sourceFile.getFileName().toString();
-        if (name.endsWith(".d.deal")) {
-            return name.substring(0, name.length() - ".d.deal".length());
-        } else if (name.endsWith(".deal")) {
-            return name.substring(0, name.length() - ".deal".length());
-        }
-        return name;
-    }
+    private final Set<String> reportedResolveFailures = new HashSet<>();
 
     // =========================================================================
     // Canonical module-identity classification (js-v12-completion-architecture D3)
@@ -2569,44 +2798,23 @@ public final class CompilationOrchestrator {
      * {@code strict-project-context-resolution-identity} D6):
      * externals-listed declarations carry
      * {@code ExternalModule(rawImportSpecifier)} (the manifest key
-     * exactly as written), spec stdlib modules and the intrinsic builtin
-     * {@code Error} module carry {@code BuiltinModule}, and a configured
-     * root-contained source module carries
-     * {@code ProjectModule(configuredRootText, relativeModuleComponents)}
-     * with the defining file's directory components below its most
-     * specific root.  {@code null} means the module has no public
-     * identity (an out-of-root relative source): class-free code stays
-     * valid, and a class there fails closed at descriptor production.
+     * exactly as written), spec stdlib modules carry
+     * {@code BuiltinModule}, and a configured root-contained source
+     * module carries {@code ProjectModule(configuredRootText,
+     * relativeModuleComponents)} — the T6 resolver's file-keyed
+     * classification published on the module's
+     * {@link SourceModuleLocation} (ISSUE-0269; the legacy
+     * specifier-keyed externalsDeclarations/externalsModulePaths maps
+     * and the lossy bestRootIndex computation are retired).
+     * {@code null} means the module has no public identity (an
+     * out-of-root relative source): class-free code stays valid, and a
+     * class there fails closed at descriptor production.
      */
     private CanonicalModuleIdentity classifyModuleIdentity(ModuleInfo info) {
-        String dotted = info.modulePath;
-        if (dotted == null || dotted.isEmpty()) {
-            return CanonicalModuleIdentity.BuiltinModule.INSTANCE;
-        }
-        // Externals-listed declarations: the externals key exactly as
-        // written (dotted module path -> raw key via the declaration path).
-        for (Map.Entry<String, String> entry : externalsDeclarations.entrySet()) {
-            String dottedPath = externalsModulePaths.get(entry.getValue());
-            if (dotted.equals(dottedPath)) {
-                return new CanonicalModuleIdentity.ExternalModule(entry.getKey());
-            }
-        }
-        if (isSpecStdlibModuleInfo(info)) {
-            return CanonicalModuleIdentity.BuiltinModule.INSTANCE;
-        }
-        int rootIndex = bestRootIndex(Path.of(info.sourcePath));
-        if (rootIndex < 0) {
+        if (info.location == null) {
             return null;
         }
-        String rootText = configuredRootTexts.get(rootIndex);
-        if (rootText == null || rootText.isEmpty()) {
-            return null;
-        }
-        Path rootPath = moduleRoots.get(rootIndex);
-        return new CanonicalModuleIdentity.ProjectModule(
-            new ProjectModuleIdentity(rootText,
-                rootPath.toAbsolutePath().normalize().toString(),
-                ModuleIdentityResolver.directoryComponents(dotted)));
+        return info.location.moduleClassification();
     }
 
     // =========================================================================
@@ -2659,7 +2867,6 @@ public final class CompilationOrchestrator {
     final class ModuleResolverImpl implements ModuleResolver {
 
         private final Map<String, ModuleInfo> modules;
-        private final List<CompilerDiagnostic> diagnostics;
         /**
          * The lazily built name resolvers over declaration-file modules
          * (keyed by dotted module path): declaration files skip the
@@ -2677,7 +2884,6 @@ public final class CompilationOrchestrator {
         ModuleResolverImpl(Map<String, ModuleInfo> modules,
                            List<CompilerDiagnostic> diagnostics) {
             this.modules = modules;
-            this.diagnostics = diagnostics;
         }
 
         @Override
@@ -2685,48 +2891,53 @@ public final class CompilationOrchestrator {
                                                 String importingModule,
                                                 Set<String> modulesInProgress)
                 throws ModuleNotFoundException {
-            Path importingFile = null;
+            // Direct internal-name match first: the checker passes dotted
+            // module paths carried by Type.Class values (e.g. an
+            // externals module's "host.x\y"), which are internal names,
+            // never import specifiers.
             for (ModuleInfo info : modules.values()) {
-                if (info.modulePath.equals(importingModule)
-                        || info.sourcePath.equals(importingModule)) {
-                    importingFile = Path.of(info.sourcePath);
-                    break;
-                }
-            }
-            if (importingFile == null) {
-                importingFile = Path.of(importingModule);
-            }
-
-            for (ModuleInfo info : modules.values()) {
-                if (isMatch(modulePath, importingFile, info)) {
+                if (info.modulePath.equals(modulePath)) {
                     return info.exports != null ? info.exports : Map.of();
                 }
             }
-
+            // Otherwise modulePath is the import specifier exactly as
+            // written (e.g. "./lib", "std/console", "host/cfg");
+            // importingModule is the importing module's internal dotted
+            // module name. The T6 resolver derives the resolved source
+            // from the importer's source path, so the importer must be
+            // located by its internal name first.
+            String importerSource = sourcePathForInternalName(importingModule);
+            if (importerSource == null && modules.containsKey(importingModule)) {
+                // Defensive: an importingModule spelled as a source path.
+                importerSource = importingModule;
+            }
+            if (importerSource == null) {
+                throw new ModuleNotFoundException(
+                    "Module not found: " + modulePath);
+            }
+            SourceModuleResolver.ResolveResult result = sourceResolver.resolve(
+                importerSource, modulePath, Span.synthetic(importerSource));
+            if (result instanceof SourceModuleResolver.ResolveResult.Resolved r) {
+                ModuleInfo target = modules.get(
+                    r.location().normalizedSourcePath());
+                if (target != null) {
+                    return target.exports != null ? target.exports : Map.of();
+                }
+            }
             throw new ModuleNotFoundException("Module not found: " + modulePath);
         }
 
-        private boolean isMatch(String importPath, Path fromFile, ModuleInfo info) {
-            if (fromFile == null) return false;
-
-            Path fromDir = fromFile.getParent();
-            if (importPath.startsWith("./") || importPath.startsWith("../")) {
-                Path resolved = fromDir.resolve(importPath).normalize();
-                String resolvedBase = resolved.toString();
-
-                String sourcePath = info.sourcePath;
-                if (sourcePath.equals(resolvedBase + ".deal")) return true;
-                if (sourcePath.equals(resolvedBase + "/index.deal")) return true;
-                if (sourcePath.equals(resolvedBase + ".d.deal")) return true;
-                if (sourcePath.equals(resolvedBase + "/index.d.deal")) return true;
-            } else {
-                if (info.modulePath.equals(importPath.replace('/', '.'))) return true;
-                if (info.sourcePath.startsWith("classpath:")) {
-                    if (info.modulePath.equals(importPath.replace('/', '.'))) return true;
+        /**
+         * The source path of the module whose internal dotted name is
+         * {@code internalName}, or null.
+         */
+        private String sourcePathForInternalName(String internalName) {
+            for (ModuleInfo info : modules.values()) {
+                if (info.modulePath.equals(internalName)) {
+                    return info.sourcePath;
                 }
             }
-
-            return false;
+            return null;
         }
 
         @Override

@@ -26,6 +26,8 @@ import deal.ir.IrDumper;
 import deal.lexer.LexResult;
 import deal.lexer.Lexer;
 import deal.module.CompilationOrchestrator;
+import deal.project.ProjectContext;
+import deal.project.ProjectLocator;
 import deal.parser.ParseResult;
 import deal.parser.Parser;
 import deal.semantic.CanonicalTypeText;
@@ -284,10 +286,9 @@ public class CheckedProjectBuilderTest {
             ResolvedImport hostImport = entryModule.imports().get(0);
             check("Decl".equals(hostImport.alias())
                     && "./declaration_only_lib".equals(hostImport.modulePath())
-                    && hostImport.resolvedModuleId().equals(new ModuleId("declaration_only_lib"))
                     && hostImport.kind() == ExternalModuleKind.HOST,
                 "the importing module's ResolvedImport records alias/raw specifier/"
-                    + "resolved module id/kind = HOST; got " + hostImport);
+                    + "and kind = HOST; got " + hostImport);
             check(entryModule.exports().equals(List.of(
                     new ExportInterface("test_decl_type", "() => int"),
                     new ExportInterface("main", "() => null"))),
@@ -295,16 +296,30 @@ public class CheckedProjectBuilderTest {
                     + "map in declaration order; got " + entryModule.exports());
 
             // Index: every module in the closure, dependency order, HOST entry
-            // derived from the declaration AST.
+            // derived from the declaration AST. ISSUE-0269: the unlisted
+            // declaration module's internal wiring name is its private
+            // deploymentModuleId ("m" + 16 hex — the lossy computeModulePath
+            // dotted path is retired), so the HOST entry key has the pinned
+            // deployment-module-id shape and agrees with the import's
+            // resolvedModuleId instead of the legacy dotted stem.
             Map<ModuleId, ExternalModuleInterface> indexModules = index.modules();
-            check(new ArrayList<>(indexModules.keySet()).equals(List.of(
-                    new ModuleId("declaration_only_lib"),
-                    new ModuleId("declaration-only-import-compile"))),
-                "the index covers the closure in dependency order; got "
-                    + indexModules.keySet());
-            ExternalModuleInterface host = indexModules.get(new ModuleId("declaration_only_lib"));
+            List<ModuleId> indexKeys = new ArrayList<>(indexModules.keySet());
+            check(indexKeys.size() == 2
+                    && indexKeys.get(1).equals(
+                        new ModuleId("declaration-only-import-compile")),
+                "the index covers the closure in dependency order (implementation"
+                    + " entry last); got " + indexKeys);
+            ModuleId hostId = indexKeys.get(0);
+            check(hostId.path().startsWith("m") && hostId.path().length() == 17,
+                "the HOST entry's internal id is a deploymentModuleId"
+                    + " (m + 16 hex); got " + hostId);
+            check(hostImport.resolvedModuleId().equals(hostId),
+                "the import's resolvedModuleId equals the HOST index key; got "
+                    + hostImport.resolvedModuleId() + " vs " + hostId);
+            ExternalModuleInterface host = indexModules.get(hostId);
             check(host != null && host.kind() == ExternalModuleKind.HOST,
-                "declaration_only_lib is a HOST index entry only (never an input entry)");
+                "the declaration module is a HOST index entry only (never an"
+                    + " input entry)");
             check(host.exports().equals(List.of(
                     new ExportInterface("declaredAdd", "(int, int) => int"))),
                 "the HOST entry carries exports = [declaredAdd: (int, int) => int] in "
@@ -819,20 +834,41 @@ public class CheckedProjectBuilderTest {
         try {
             Path src = tmp.resolve("src");
             Files.createDirectories(src);
+            // ISSUE-0269: the class-bearing declaration is
+            // externals-listed (an unlisted declaration class is E2010 at
+            // the class name span), so the fixture routes through
+            // production ProjectLocator with the externals wiring.
             Files.writeString(src.resolve("lib.d.deal"),
                 "export class A { x: int; }\n"
                     + "export class B { y: string; opt?: int; note: string | null; "
                     + "count: int = 1; }\n");
             Files.writeString(src.resolve("main.deal"),
-                "import * as lib from \"./lib\"\n"
+                "import * as lib from \"host/lib\"\n"
                     + "export class C { v: int; }\n"
                     + "export class D { w: boolean; }\n"
                     + "export function main(): null { return null; }\n");
+            Files.writeString(tmp.resolve("deal.json"),
+                "{\n  \"languageVersion\": \"1.2\",\n"
+                    + "  \"moduleRoots\": [\"src\"],\n"
+                    + "  \"output\": \"build\",\n"
+                    + "  \"backend\": \"luajit\",\n"
+                    + "  \"externals\": {\n"
+                    + "    \"host/lib\": { \"declaration\": \"src/lib.d.deal\" }\n"
+                    + "  }\n}\n");
             Path entry = src.resolve("main.deal").toAbsolutePath();
             Path output = tmp.resolve("build");
+            ProjectLocator.LocateResult located =
+                ProjectLocator.locate(entry.toString(), null);
+            check(located.context() != null,
+                "the class fixture locates strictly: " + located.e2010());
+            if (located.context() == null) {
+                return;
+            }
 
             CompilationOrchestrator orchestrator = new CompilationOrchestrator(
-                entry, output, false, null, List.of(src.toAbsolutePath()), null);
+                located.context(), entry, false, false, false, false, null,
+                CompilerProfileProvider.resolve(ReleaseState.PRE_ACTIVATION,
+                    CapabilityRegistry.releaseRegistry()));
             boolean ok = orchestrator.compile();
             check(ok, "the class fixture compiles: " + orchestrator.diagnostics());
             CheckedProjectBuildResult result = orchestrator.checkedProject();
@@ -844,10 +880,10 @@ public class CheckedProjectBuilderTest {
 
             Map<ModuleId, ExternalModuleInterface> indexModules = result.index().modules();
             check(new ArrayList<>(indexModules.keySet()).equals(List.of(
-                    new ModuleId("lib"), new ModuleId("main"))),
-                "dependency order: lib before main; got " + indexModules.keySet());
+                    new ModuleId("host.lib"), new ModuleId("main"))),
+                "dependency order: host.lib before main; got " + indexModules.keySet());
 
-            ExternalModuleInterface lib = indexModules.get(new ModuleId("lib"));
+            ExternalModuleInterface lib = indexModules.get(new ModuleId("host.lib"));
             ExternalModuleInterface main = indexModules.get(new ModuleId("main"));
             check(lib.kind() == ExternalModuleKind.HOST
                     && main.kind() == ExternalModuleKind.IMPLEMENTATION,
@@ -859,12 +895,12 @@ public class CheckedProjectBuilderTest {
             ClassInterface b = lib.classes().get(1);
             ClassInterface c = main.classes().get(0);
             ClassInterface d = main.classes().get(1);
-            check(a.classId().text().equals("@lib/A") && a.constructionEntry().equals(
+            check(a.classId().text().equals("@host.lib/A") && a.constructionEntry().equals(
                     new ClassFactoryId(0)),
-                "lib.A gets constructionEntry 0 with classId @lib/A");
-            check(b.classId().text().equals("@lib/B") && b.constructionEntry().equals(
+                "lib.A gets constructionEntry 0 with classId @host.lib/A");
+            check(b.classId().text().equals("@host.lib/B") && b.constructionEntry().equals(
                     new ClassFactoryId(1)),
-                "lib.B gets constructionEntry 1 with classId @lib/B");
+                "lib.B gets constructionEntry 1 with classId @host.lib/B");
             check(c.classId().text().equals("@main/C") && c.constructionEntry().equals(
                     new ClassFactoryId(2)),
                 "main.C gets constructionEntry 2 with classId @main/C");
@@ -905,22 +941,48 @@ public class CheckedProjectBuilderTest {
 
     /** The pinned canonical JSON of the combined fixture index (golden). */
     private static final String PINNED_INDEX_JSON =
-        "{\"formatVersion\":\"deal.semantic-interface/1\",\"modules\":[{\"classes\":[],\"exports\":[{\"declaredType\":\"(int, int) => int\",\"name\":\"declaredAdd\"}],\"imports\":[],\"initialization\":\"ONCE_AFTER_DEPENDENCIES\",\"kind\":\"HOST\",\"moduleId\":{\"path\":\"lib\",\"type\":\"module\"}},{\"classes\":[],\"exports\":[{\"declaredType\":\"() => int\",\"name\":\"nowMillis\"}],\"imports\":[],\"initialization\":\"ONCE_AFTER_DEPENDENCIES\",\"kind\":\"STDLIB\",\"moduleId\":{\"path\":\"std.time\",\"type\":\"module\"}},{\"classes\":[],\"exports\":[{\"declaredType\":\"() => null\",\"name\":\"main\"}],\"imports\":[{\"alias\":\"lib\",\"kind\":\"HOST\",\"modulePath\":\"./lib\",\"resolvedModuleId\":{\"path\":\"lib\",\"type\":\"module\"}},{\"alias\":\"time\",\"kind\":\"STDLIB\",\"modulePath\":\"std/time\",\"resolvedModuleId\":{\"path\":\"std.time\",\"type\":\"module\"}}],\"initialization\":\"ONCE_AFTER_DEPENDENCIES\",\"kind\":\"IMPLEMENTATION\",\"moduleId\":{\"path\":\"main\",\"type\":\"module\"}}]}";
+        "{\"formatVersion\":\"deal.semantic-interface/1\",\"modules\":[{\"classes\":[],\"exports\":[{\"declaredType\":\"(int, int) => int\",\"name\":\"declaredAdd\"}],\"imports\":[],\"initialization\":\"ONCE_AFTER_DEPENDENCIES\",\"kind\":\"HOST\",\"moduleId\":{\"path\":\"host.lib\",\"type\":\"module\"}},{\"classes\":[],\"exports\":[{\"declaredType\":\"() => int\",\"name\":\"nowMillis\"}],\"imports\":[],\"initialization\":\"ONCE_AFTER_DEPENDENCIES\",\"kind\":\"STDLIB\",\"moduleId\":{\"path\":\"std.time\",\"type\":\"module\"}},{\"classes\":[],\"exports\":[{\"declaredType\":\"() => null\",\"name\":\"main\"}],\"imports\":[{\"alias\":\"lib\",\"kind\":\"HOST\",\"modulePath\":\"host/lib\",\"resolvedModuleId\":{\"path\":\"host.lib\",\"type\":\"module\"}},{\"alias\":\"time\",\"kind\":\"STDLIB\",\"modulePath\":\"std/time\",\"resolvedModuleId\":{\"path\":\"std.time\",\"type\":\"module\"}}],\"initialization\":\"ONCE_AFTER_DEPENDENCIES\",\"kind\":\"IMPLEMENTATION\",\"moduleId\":{\"path\":\"main\",\"type\":\"module\"}}]}";
 
     /** The pinned interface index digest of the combined fixture (golden). */
     private static final String PINNED_INDEX_DIGEST =
-        "3e3b21f607dfba099470394455a35986b02a8b69dc1f208bf7d58de0341d4165";
+        "25b6e4816b1e2ade780ce9c0582a547756d07a285e61ed9ef9257b69b5bac336";
 
+    /**
+     * Writes the combined fixture as an exact-v1.2 project whose
+     * declaration module is externals-listed (ISSUE-0269: an unlisted
+     * declaration carrying classes is E2010 at the class name span, so
+     * declaration-bearing fixtures wire their declarations through the
+     * externals map — the ExternalModule classification admits classes
+     * with the {@code @$external} identity form).
+     */
     private static Path writeCombinedFixture(Path dir) throws Exception {
         Path src = dir.resolve("src");
         Files.createDirectories(src);
         Files.writeString(src.resolve("lib.d.deal"),
             "export function declaredAdd(a: int, b: int): int;\n");
         Files.writeString(src.resolve("main.deal"),
-            "import * as lib from \"./lib\"\n"
+            "import * as lib from \"host/lib\"\n"
                 + "import * as time from \"std/time\"\n"
                 + "export function main(): null { return null; }\n");
+        Files.writeString(dir.resolve("deal.json"),
+            "{\n  \"languageVersion\": \"1.2\",\n"
+                + "  \"moduleRoots\": [\"src\"],\n"
+                + "  \"output\": \"build\",\n"
+                + "  \"backend\": \"luajit\",\n"
+                + "  \"externals\": {\n"
+                + "    \"host/lib\": { \"declaration\": \"src/lib.d.deal\" }\n"
+                + "  }\n}\n");
         return src.resolve("main.deal").toAbsolutePath();
+    }
+
+    /** Locates the combined fixture's manifest through production
+     * ProjectLocator (the ISSUE-0269 production path). */
+    private static ProjectContext locateCombinedFixture(Path entry) {
+        ProjectLocator.LocateResult located =
+            ProjectLocator.locate(entry.toString(), null);
+        check(located.context() != null,
+            "the combined fixture locates strictly: " + located.e2010());
+        return located.context();
     }
 
     static void testDeterminismAndDigestGolden() throws Exception {
@@ -929,19 +991,21 @@ public class CheckedProjectBuilderTest {
         Path tmp = Files.createTempDirectory("deal-checked-project-det");
         try {
             Path entry = writeCombinedFixture(tmp);
-            List<Path> roots = List.of(tmp.resolve("src").toAbsolutePath());
+            ProjectContext context = locateCombinedFixture(entry);
 
             CompilationOrchestrator first = new CompilationOrchestrator(
-                entry, tmp.resolve("build1"), false, null, roots,
-                Path.of("std").toAbsolutePath().normalize());
+                context, entry, false, false, false, false, null,
+                CompilerProfileProvider.resolve(ReleaseState.PRE_ACTIVATION,
+                    CapabilityRegistry.releaseRegistry()));
             check(first.compile(), "first build compiles: " + first.diagnostics());
             CheckedProjectBuildResult firstResult = first.checkedProject();
             check(firstResult != null && !firstResult.hasErrors(),
                 "first build succeeds");
 
             CompilationOrchestrator second = new CompilationOrchestrator(
-                entry, tmp.resolve("build2"), false, null, roots,
-                Path.of("std").toAbsolutePath().normalize());
+                context, entry, false, false, false, false, null,
+                CompilerProfileProvider.resolve(ReleaseState.PRE_ACTIVATION,
+                    CapabilityRegistry.releaseRegistry()));
             check(second.compile(), "second build compiles: " + second.diagnostics());
             CheckedProjectBuildResult secondResult = second.checkedProject();
             check(secondResult != null && !secondResult.hasErrors(),
@@ -982,16 +1046,15 @@ public class CheckedProjectBuilderTest {
         Path tmp = Files.createTempDirectory("deal-checked-project-combined");
         try {
             Path entry = writeCombinedFixture(tmp);
-            List<Path> roots = List.of(tmp.resolve("src").toAbsolutePath());
+            ProjectContext context = locateCombinedFixture(entry);
 
             // T4: the release-owned invocation resolved through the provider;
             // the orchestrator receives it explicitly.
             CompilerInvocation explicitInvocation = CompilerProfileProvider.resolve(
                 ReleaseState.PRE_ACTIVATION, CapabilityRegistry.releaseRegistry());
             CompilationOrchestrator orchestrator = new CompilationOrchestrator(
-                entry, tmp.resolve("build"), false, false, false, false,
-                deal.codegen.Backend.LUAJIT, null, roots,
-                Path.of("std").toAbsolutePath().normalize(), null, explicitInvocation);
+                context, entry, false, false, false, false, null,
+                explicitInvocation);
             boolean ok = orchestrator.compile();
             check(ok, "the combined fixture compiles end-to-end: "
                 + orchestrator.diagnostics());
@@ -1063,16 +1126,34 @@ public class CheckedProjectBuilderTest {
     private static boolean allocatorOrderingWorks(Path tmp) throws Exception {
         Path src = tmp.resolve("src2");
         Files.createDirectories(src);
+        // ISSUE-0269: the class-bearing declaration is externals-listed
+        // (an unlisted declaration class is E2010), routed through
+        // production ProjectLocator.
         Files.writeString(src.resolve("lib.d.deal"),
             "export class A { x: int; }\n"
                 + "export class B { y: string; }\n");
         Files.writeString(src.resolve("entry.deal"),
-            "import * as lib from \"./lib\"\n"
+            "import * as lib from \"host/lib\"\n"
                 + "export class C { v: int; }\n"
                 + "export function main(): null { return null; }\n");
+        Files.writeString(tmp.resolve("deal.json"),
+            "{\n  \"languageVersion\": \"1.2\",\n"
+                + "  \"moduleRoots\": [\"src2\"],\n"
+                + "  \"output\": \"build2\",\n"
+                + "  \"backend\": \"luajit\",\n"
+                + "  \"externals\": {\n"
+                + "    \"host/lib\": { \"declaration\": \"src2/lib.d.deal\" }\n"
+                + "  }\n}\n");
         Path entry = src.resolve("entry.deal").toAbsolutePath();
+        ProjectLocator.LocateResult located =
+            ProjectLocator.locate(entry.toString(), null);
+        if (located.context() == null) {
+            return false;
+        }
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
-            entry, tmp.resolve("build2"), false, null, List.of(src.toAbsolutePath()), null);
+            located.context(), entry, false, false, false, false, null,
+            CompilerProfileProvider.resolve(ReleaseState.PRE_ACTIVATION,
+                CapabilityRegistry.releaseRegistry()));
         if (!orchestrator.compile()) {
             return false;
         }
@@ -1080,7 +1161,7 @@ public class CheckedProjectBuilderTest {
         if (result == null || result.hasErrors()) {
             return false;
         }
-        ExternalModuleInterface lib = result.index().modules().get(new ModuleId("lib"));
+        ExternalModuleInterface lib = result.index().modules().get(new ModuleId("host.lib"));
         ExternalModuleInterface main = result.index().modules().get(new ModuleId("entry"));
         return lib != null && main != null
             && lib.classes().get(0).constructionEntry().equals(new ClassFactoryId(0))

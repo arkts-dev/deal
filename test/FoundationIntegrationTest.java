@@ -5,6 +5,7 @@ import deal.codegen.Backend;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticCode;
 import deal.module.CompilationOrchestrator;
+import deal.project.StrictManifestParser;
 import deal.semantic.ArtifactOwner;
 import deal.semantic.BoundaryRealizationReport;
 import deal.semantic.CapabilityRegistry;
@@ -71,7 +72,6 @@ import deal.ast.UnaryExpr;
 import deal.ast.VariableDeclaration;
 import deal.lexer.LexResult;
 import deal.lexer.Lexer;
-import deal.module.DealConfig;
 import deal.parser.ParseResult;
 import deal.parser.Parser;
 import deal.semantic.SharedValueSemantics;
@@ -1217,6 +1217,12 @@ public class FoundationIntegrationTest {
                     + "ReleaseConfiguration.CURRENT_RELEASE_STATE");
 
             // deal/Main's CLI path consumes the same configuration.
+            // ISSUE-0269: the production CLI locates exactly one
+            // ancestor exact-v1.2 deal.json (the retired config-less
+            // pipeline is gone), so the CLI project carries an injected
+            // deal.json — same as every conformance harness project.
+            Files.writeString(tmp.resolve("deal.json"),
+                "{\"languageVersion\": \"1.2\", \"moduleRoots\": [\"src\"]}\n");
             ByteArrayOutputStream cliOut = new ByteArrayOutputStream();
             PrintStream originalOut = System.out;
             System.setOut(new PrintStream(cliOut, true, StandardCharsets.UTF_8));
@@ -1633,13 +1639,19 @@ public class FoundationIntegrationTest {
             return Path.of("std").toAbsolutePath().normalize();
         }
 
-        /** One orchestrator compile; returns null on failure. */
+        /**
+         * One orchestrator compile; returns null on failure. The
+         * externals map (raw import specifier &rarr; declaration text
+         * relative to the entry directory) drives the test-only
+         * isolated-phase context synthesis (ISSUE-0269: the retired
+         * tolerant DealConfig reader is gone).
+         */
         private static CompilationOrchestrator compile(Path entry, Path out,
                 Backend backend, List<Path> roots, CompilerInvocation invocation,
-                DealConfig config) throws IOException {
+                Map<String, String> externals) throws IOException {
             CompilationOrchestrator orchestrator = new CompilationOrchestrator(
-                entry, out, false, false, false, false, backend, config, roots,
-                stdlibDir(), null, invocation);
+                entry, out, false, false, false, false, backend, externals,
+                roots, stdlibDir(), null, invocation);
             orchestrator.compile();
             return orchestrator;
         }
@@ -2190,12 +2202,30 @@ public class FoundationIntegrationTest {
             return src.resolve("all.deal");
         }
 
-        private static DealConfig loadConfig(Path src) throws IOException {
+        /**
+         * The externals map of the batch project's injected
+         * {@code deal.json}, parsed by the strict parser (ISSUE-0269:
+         * the retired tolerant DealConfig reader is gone); null when the
+         * project carries no manifest. Declaration texts stay exactly as
+         * written (entry-directory-relative in the isolated-phase
+         * synthesis — the batch manifest sits next to the entry).
+         */
+        private static Map<String, String> loadExternals(Path src)
+                throws IOException {
             if (!Files.exists(src.resolve("deal.json"))) {
                 return null;
             }
-            DealConfig.DealConfigParseResult result = DealConfig.load(src);
-            return result.config();
+            StrictManifestParser.StrictManifestParseResult parsed =
+                StrictManifestParser.parse(
+                    src.resolve("deal.json").toString(),
+                    Files.readString(src.resolve("deal.json")));
+            if (parsed.manifest() == null) {
+                return null;
+            }
+            Map<String, String> externals = new LinkedHashMap<>();
+            parsed.manifest().externals().forEach((specifier, spec) ->
+                externals.put(specifier, spec.declaration().value()));
+            return externals;
         }
 
         /** Returns the output dir when the batch compiled; null on failure. */
@@ -2216,7 +2246,7 @@ public class FoundationIntegrationTest {
                 return null; // the flipped provider matrix rejects at resolution
             }
             CompilationOrchestrator orchestrator = compile(entry, out, backend,
-                List.of(src.toAbsolutePath()), invocation, loadConfig(src));
+                List.of(src.toAbsolutePath()), invocation, loadExternals(src));
             if (orchestrator == null || orchestrator.checkedProject() == null
                     || orchestrator.checkedProject().hasErrors()
                     || !Files.exists(out)) {
