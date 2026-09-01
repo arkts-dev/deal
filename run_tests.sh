@@ -3,6 +3,11 @@ set -e
 
 mkdir -p build
 
+# Single compile/test-list authority: tools/gate-manifest.sh provides
+# PROD_SOURCES + TEST_SOURCES (today's javac source list, verbatim) and
+# TEST_MAINS (today's run phase, verbatim). See gate-manifest-authority.
+source tools/gate-manifest.sh
+
 # =========================================================================
 # Single compilation step: compile all source and test files at once.
 # Incremental: when every .java source under deal/ and test/ is older
@@ -28,109 +33,12 @@ echo "=== Compiling all DEAL sources and tests ==="
 # default processor-discovery pass is pure per-task startup cost (the gate
 # budget is shared with the JVM artifact suites; measured ~40% faster
 # compile under load).
+# PROD_SOURCES is expanded unquoted so the manifest's quoted globs are
+# expanded here exactly as they were when the list lived inline; javac
+# receives the identical expanded file list it receives today.
 javac --release 25 -proc:none -d build \
   -cp /usr/share/java/junit4.jar:/usr/share/java/hamcrest-core.jar \
-  deal/source/*.java \
-  deal/ast/*.java \
-  deal/types/*.java \
-  deal/descriptors/*.java \
-  deal/diagnostics/*.java \
-  deal/lexer/*.java \
-  deal/parser/*.java \
-  deal/checker/*.java \
-  deal/codegen/*.java \
-  deal/codegen/lua/*.java \
-  deal/codegen/jvm/*.java \
-  deal/codegen/js/*.java \
-  deal/ir/*.java \
-  deal/semantic/*.java \
-  deal/semantic/ir/*.java \
-  deal/module/*.java \
-  deal/project/*.java \
-  deal/identity/*.java \
-  deal/Main.java \
-  test/StubModuleResolver.java \
-  test/IdentityTestFixtures.java \
-  test/CheckedProjectBuilderTest.java \
-  test/LoweringSupportTest.java \
-  test/MigrationPlannerTest.java \
-  test/StagingPublicationTest.java \
-  test/FoundationIntegrationTest.java \
-  test/InvocationProfileRegistryTest.java \
-  test/DiagnosticRangeTest.java \
-  test/DiagnosticClassificationTest.java \
-  test/LoweringFoundationTest.java \
-  test/SemanticIrSchemaTest.java \
-  test/DescriptorServiceTest.java \
-  test/ContainerPayloadDescriptorsTest.java \
-  test/BoundaryExecutorTest.java \
-  test/ComparisonExecutorTest.java \
-  test/AddressChainProtocolTest.java \
-  test/AddressChainLoweringTest.java \
-  test/ControlFlowLoweringTest.java \
-  test/UnicodeScalarsTest.java \
-  test/BoundaryRealizationReportTest.java \
-  test/FailureContractRegistryTest.java \
-  test/CanonicalJsonTest.java \
-  test/SemanticIrValidatorTest.java \
-  test/BoundaryTableCorpusTest.java \
-  test/BoundaryIntegrationTest.java \
-  test/ControlFlowValidatorTest.java \
-  test/SemanticIrDumperTest.java \
-  test/SemanticTableTest.java \
-  test/ContainerOpsExecutorTest.java \
-  test/ComparisonSelectorLoweringTest.java \
-  test/ContainerLoweringArmsTest.java \
-  test/ContainerClaimingSeamTest.java \
-  test/ContainerIntegrationTest.java \
-  test/BindingCoreLoweringTest.java \
-  test/ClosureLoweringTest.java \
-  test/AstAndTypesTest.java \
-  test/TypesBytesTest.java \
-  test/LexerTest.java \
-  test/ParserTest.java \
-  test/DirectiveTest.java \
-  test/CheckerTest.java \
-  test/IrDumperTest.java \
-  test/IrGoldenTest.java \
-  test/TypeDescriptorTest.java \
-  test/CanonicalRuntimeTypeDescriptorTest.java \
-  test/RuntimeTypeMatcherTest.java \
-  test/BackendConformanceTest.java \
-  test/JvmBackendTest.java \
-  test/JsBackendTest.java \
-  test/JsE2eTest.java \
-  test/LuaBackendTest.java \
-  test/LuaBackendIntegrationTest.java \
-  test/ModuleSystemTest.java \
-  test/ProjectMigrationIntegrationTest.java \
-  test/ProjectIntegrationGatesTest.java \
-  test/StdlibDeclParseTest.java \
-  test/SourceMapTest.java \
-  test/RuntimeSourceLocationTest.java \
-  test/StdlibContractTest.java \
-  test/StdlibTimePreActivationPinTest.java \
-  test/GenerateStdlibGoldenIr.java \
-  test/ConformanceTest.java \
-  test/ConformanceHarnessMetadata.java \
-  test/ConformanceHarnessMetadataTest.java \
-  test/JvmConformanceTest.java \
-  test/JsConformanceTest.java \
-  test/LuaAbiTest.java \
-  test/LuaAbiBackendTest.java \
-  test/LuaJitAsyncExportInvokerTest.java \
-  test/CrossModuleTypingTest.java \
-  test/ProtectedPathOpsTest.java \
-  test/CanonicalIdentityTest.java \
-  deal/test/containment/ContainedProcessBroker.java \
-  deal/test/containment/PreflightCoordinator.java \
-  deal/test/conformance/SidecarSchemaValidator.java \
-  deal/test/conformance/SidecarSchemaValidatorTest.java \
-  deal/test/conformance/SidecarCorpusValidationTest.java \
-  deal/test/containment/ContainedProcessBrokerFramingTest.java \
-  deal/test/containment/ContainedProcessBrokerStateTest.java \
-  deal/project/ProjectLocatorTest.java \
-  deal/module/ModuleIdentityResolverTest.java
+  ${PROD_SOURCES[@]} "${TEST_SOURCES[@]}"
   touch "$STAMP"
 else
   echo "=== DEAL sources and tests unchanged since the last build; reusing build/ ==="
@@ -200,6 +108,13 @@ echo "  Migration gate scans pass (no legacy record, no legacy references, no pr
 # wall-clock budget even on a loaded machine. Each background suite is
 # waited on before the final verdict; any background failure fails the
 # gate exactly like a foreground failure.
+#
+# The run phase is driven by TEST_MAINS from tools/gate-manifest.sh: each
+# record is "<class>|<banner>|<command>"; the dispatcher below reproduces
+# today's run order verbatim — background launches first, then the
+# foreground mains with the guarded luajit/node suites at their positions
+# and the golden-IR check between the pre-activation pin and the
+# conformance harness metadata tests.
 # =========================================================================
 BACKGROUND_PIDS=""
 
@@ -216,392 +131,72 @@ cleanup_background() {
 }
 trap cleanup_background EXIT
 
-echo ""
-echo "=== Launching Backend Conformance Tests (background) ==="
-launch_background java -ea -cp build deal.test.BackendConformanceTest
-
-echo ""
-echo "=== Launching JVM Backend Tests (background) ==="
-launch_background java -ea -cp build deal.test.JvmBackendTest
-
-echo ""
-echo "=== Launching Lua ABI Unit Tests (background; JUnit4 + Hamcrest) ==="
-launch_background java -ea -cp build:/usr/share/java/junit4.jar:/usr/share/java/hamcrest-core.jar org.junit.runner.JUnitCore deal.test.LuaAbiTest deal.test.LuaAbiBackendTest deal.test.CrossModuleTypingTest
-
-echo ""
-echo "=== Launching Conformance Tests (background) ==="
-launch_background java -ea -cp build deal.test.ConformanceTest test/conformance/
-
-echo ""
-echo "=== Launching JVM Conformance Tests (background; ISSUE-0102 origin — ISSUE-0168 capability accounting) ==="
-launch_background java -ea -cp build deal.test.JvmConformanceTest test/conformance/
-
-echo ""
-echo "=== Running ContainedProcessBroker Framing Tests ==="
-java -ea -cp build deal.test.containment.ContainedProcessBrokerFramingTest
-
-echo ""
-echo "=== Running ContainedProcessBroker State Tests ==="
-java -ea -cp build deal.test.containment.ContainedProcessBrokerStateTest
-
-echo ""
-echo "=== Running Diagnostic Range Tests ==="
-java -ea -cp build deal.test.DiagnosticRangeTest
-
-echo ""
-echo "=== Running Diagnostic Classification Tests ==="
-java -ea -cp build deal.test.DiagnosticClassificationTest
-
-echo ""
-echo "=== Running Lowering Foundation Tests (ISSUE-0281) ==="
-java -ea -cp build deal.test.LoweringFoundationTest
-
-echo ""
-echo "=== Running Checked Project Builder Tests (ISSUE-0288) ==="
-java -ea -cp build deal.test.CheckedProjectBuilderTest
-
-echo ""
-echo "=== Running Lowering Support / Requirement Manifest Tests (ISSUE-0289) ==="
-java -ea -cp build deal.test.LoweringSupportTest
-
-echo ""
-echo "=== Running Migration Planner / Route Plan Tests (ISSUE-0290) ==="
-java -ea -cp build deal.semantic.MigrationPlannerTest
-
-echo ""
-echo "=== Running Staging / ABI Validation / Atomic Publication Tests (ISSUE-0291) ==="
-java -ea -cp build deal.semantic.StagingPublicationTest
-
-echo ""
-echo "=== Running Foundation Integration Tests (ISSUE-0292) ==="
-java -ea -cp build deal.test.FoundationIntegrationTest
-
-echo ""
-echo "=== Running Invocation / Profile / Capability Registry Tests (ISSUE-0284) ==="
-java -ea -cp build deal.test.InvocationProfileRegistryTest
-
-echo ""
-echo "=== Running Semantic IR Schema Tests (ISSUE-0282) ==="
-java -ea -cp build deal.test.SemanticIrSchemaTest
-
-echo ""
-echo "=== Running Descriptor Service Tests (ISSUE-0233 D1/D2) ==="
-java -ea -cp build deal.test.DescriptorServiceTest
-
-echo ""
-echo "=== Running Container Payload Descriptor Bridge Tests (ISSUE-0232 D2) ==="
-java -ea -cp build deal.test.ContainerPayloadDescriptorsTest
-
-echo ""
-echo "=== Running Boundary Executor Tests (ISSUE-0364 D3) ==="
-java -ea -cp build deal.test.BoundaryExecutorTest
-
-echo ""
-echo "=== Running Comparison Operand View and Executor Tests (ISSUE-0406, ISSUE-0234 B-D1/B-D2/B-D4) ==="
-java -ea -cp build deal.test.ComparisonExecutorTest
-
-echo ""
-echo "=== Running Address Chain Protocol / Normalized Slot Tests (ISSUE-0234 A-D1/A-D3/A-D9) ==="
-java -ea -cp build deal.test.AddressChainProtocolTest
-
-echo ""
-echo "=== Running Address Chain Lowering Tests (ISSUE-0405 ASSIGN/DELETE chains) ==="
-java -ea -cp build deal.test.AddressChainLoweringTest
-
-echo ""
-echo "=== Running Control Flow Lowering Tests (ISSUE-0409 BRANCH/LOOP/FOR_EACH/TRY_CATCH/THROW/BREAK/CONTINUE/DISCARD) ==="
-java -ea -cp build deal.test.ControlFlowLoweringTest
-
-echo ""
-
-echo "=== Running Unicode Scalars Tests (ISSUE-0382, ISSUE-0232 D5) ==="
-java -ea -cp build deal.test.UnicodeScalarsTest
-
-echo ""
-echo "=== Running Boundary Realization Report Tests (ISSUE-0365 D4) ==="
-java -ea -cp build deal.test.BoundaryRealizationReportTest
-
-echo ""
-echo "=== Running Failure Contract Registry Tests (ISSUE-0285) ==="
-java -ea -cp build deal.test.FailureContractRegistryTest
-
-echo ""
-echo "=== Running Canonical JSON / Snapshot Digest Tests (ISSUE-0283) ==="
-java -ea -cp build deal.test.CanonicalJsonTest
-
-echo ""
-echo "=== Running Semantic IR Validator Tests (ISSUE-0286) ==="
-java -ea -cp build deal.test.SemanticIrValidatorTest
-
-echo ""
-echo "=== Running Boundary Table Corpus Tests (ISSUE-0366, wiki Verification 4) ==="
-java -ea -cp build deal.test.BoundaryTableCorpusTest
-
-echo ""
-echo "=== Running Boundary Integration Tests (ISSUE-0367, decomposition tail) ==="
-java -ea -cp build deal.test.BoundaryIntegrationTest
-
-echo ""
-echo "=== Running Control Flow Validator Tests (ISSUE-0408) ==="
-java -ea -cp build deal.test.ControlFlowValidatorTest
-
-echo ""
-echo "=== Running Semantic IR Dumper / ID Allocator Tests (ISSUE-0287) ==="
-java -ea -cp build deal.test.SemanticIrDumperTest
-
-echo ""
-echo "=== Running Semantic Table / Array Value Model Tests (ISSUE-0383 C2) ==="
-java -ea -cp build deal.test.SemanticTableTest
-
-echo ""
-echo "=== Running Container Ops Executor Tests (ISSUE-0384 C3) ==="
-java -ea -cp build deal.test.ContainerOpsExecutorTest
-
-echo ""
-echo "=== Running Comparison Selector Lowering Tests (ISSUE-0407) ==="
-java -ea -cp build deal.test.ComparisonSelectorLoweringTest
-
-echo ""
-echo "=== Running Container Lowering Arms Tests (ISSUE-0386) ==="
-java -ea -cp build deal.test.ContainerLoweringArmsTest
-
-echo ""
-echo "=== Running Container Claiming Seam Tests (ISSUE-0387) ==="
-java -ea -cp build deal.test.ContainerClaimingSeamTest
-
-echo ""
-echo "=== Running Container Integration Tests (ISSUE-0388, decomposition tail) ==="
-java -ea -cp build deal.test.ContainerIntegrationTest
-
-echo ""
-echo "=== Running Binding Core Lowering Tests (ISSUE-0444 binding-core child) ==="
-java -ea -cp build deal.test.BindingCoreLoweringTest
-
-echo ""
-echo "=== Running Closure Lowering Tests (ISSUE-0445 closure child) ==="
-java -ea -cp build deal.test.ClosureLoweringTest
-
-echo ""
-echo "=== Running Protected Path Ops Tests (ISSUE-0262) ==="
-java -ea -cp build deal.test.ProtectedPathOpsTest
-
-echo ""
-echo "=== Running Identity Carrier Package Tests (ISSUE-0309) ==="
-java -ea -cp build deal.test.CanonicalIdentityTest
-
-echo ""
-echo "=== Running Sidecar Schema Validator Tests (ISSUE-0348) ==="
-java -ea -cp build deal.test.conformance.SidecarSchemaValidatorTest
-
-echo ""
-echo "=== Running Sidecar Corpus Validation Tests (ISSUE-0349) ==="
-java -ea -cp build deal.test.conformance.SidecarCorpusValidationTest
-
-echo ""
-echo "=== Running Strict Manifest Parser Tests (ISSUE-0263 T2) ==="
-java -ea -cp build deal.project.StrictManifestParserTest
-
-echo ""
-echo "=== Running Output Config Resolver Tests (ISSUE-0264 T3) ==="
-java -ea -cp build deal.project.OutputConfigResolverTest
-
-echo ""
-echo "=== Running Project Locator Tests (ISSUE-0265 T4) ==="
-java -ea -cp build deal.project.ProjectLocatorTest
-
-echo ""
-echo "=== Running Module Identity Resolver Classifier Tests (ISSUE-0266 T5) ==="
-java -ea -cp build deal.module.ModuleIdentityResolverTest
-
-echo ""
-echo "=== Running Module Identity Assembly Tests (ISSUE-0268 T7) ==="
-java -ea -cp build deal.module.ModuleIdentityAssemblyTest
-
-echo ""
-echo "=== Running AST/Types Tests ==="
-java -ea -cp build deal.test.AstAndTypesTest
-
-echo ""
-echo "=== Running Types Bytes Tests (ISSUE-0308) ==="
-java -ea -cp build deal.test.TypesBytesTest
-
-echo ""
-echo "=== Running Directive Tests ==="
-java -ea -cp build deal.test.DirectiveTest
-
-echo ""
-echo "=== Running Lexer Tests ==="
-java -ea -cp build deal.test.LexerTest
-
-echo ""
-echo "=== Running Parser Tests ==="
-java -ea -cp build deal.test.ParserTest
-
-echo ""
-echo "=== Running Checker Tests ==="
-java -ea -cp build deal.test.CheckerTest
-
-echo ""
-echo "=== Running IR Dumper Tests ==="
-java -ea -cp build deal.test.IrDumperTest
-
-echo ""
-echo "=== Running IR Golden Tests ==="
-java -ea -cp build deal.test.IrGoldenTest
-
-echo ""
-echo "=== Running Type Descriptor Tests ==="
-java -ea -cp build deal.test.TypeDescriptorTest
-
-echo ""
-echo "=== Running Canonical Runtime Type Descriptor Tests (ISSUE-0310/0311) ==="
-java -ea -cp build deal.test.CanonicalRuntimeTypeDescriptorTest
-echo ""
-echo "=== Running Runtime Type Matcher Tests (ISSUE-0312) ==="
-java -ea -cp build deal.test.RuntimeTypeMatcherTest
-echo ""
-
-echo ""
-echo "=== Running JS Backend Unit Tests ==="
-java -ea -cp build deal.test.JsBackendTest
-
-echo ""
-echo "=== Running JS E2E Tests ==="
-java -ea -cp build deal.test.JsE2eTest
-
-echo ""
-echo "=== Running Lua Backend Tests ==="
-java -ea -cp build deal.test.LuaBackendTest
-
-echo ""
-echo "=== Running Lua Backend Integration Tests ==="
-java -ea -cp build deal.test.LuaBackendIntegrationTest
-
-echo ""
-echo "=== Running Module System Tests ==="
-java -ea -cp build deal.test.ModuleSystemTest
-echo ""
-echo "=== Running Project Migration Integration Tests (ISSUE-0269 T8) ==="
-java -ea -cp build deal.test.ProjectMigrationIntegrationTest
-
-echo ""
-echo "=== Running Project Integration Gates (ISSUE-0270 T9: out-of-root both-backend gates) ==="
-java -ea -cp build deal.test.ProjectIntegrationGatesTest
-
-echo ""
-echo "=== Running Source Module Resolver Tests (ISSUE-0267 T6) ==="
-java -ea -cp build deal.module.SourceModuleResolverTest
-
-echo ""
-echo "=== Running LuaJIT Async Export Invoker Tests (ISSUE-0417 component, ISSUE-0418 verification matrix) ==="
-java -ea -cp build:/usr/share/java/junit4.jar:/usr/share/java/hamcrest-core.jar org.junit.runner.JUnitCore deal.test.LuaJitAsyncExportInvokerTest
-
-echo ""
-echo "=== Running Stdlib .d.deal Parse Tests ==="
-java -ea -cp build deal.test.StdlibDeclParseTest
-
-echo ""
-echo "=== Running Source Map Tests ==="
-java -ea -cp build deal.test.SourceMapTest
-
-echo ""
-echo "=== Running Runtime Source Location Tests ==="
-java -ea -cp build deal.test.RuntimeSourceLocationTest
-
-echo ""
-echo "=== Running Runtime Library Tests ==="
-if command -v luajit &> /dev/null; then
-  luajit test_runtime.lua
-  luajit test_runtime_int32.lua
-else
-  echo "WARNING: luajit not found, skipping runtime library tests"
-fi
-echo ""
-echo "=== Running Lua Async Export Driver Tests ==="
-if command -v luajit &> /dev/null; then
-  luajit test/lua_async_export_driver_test.lua
-else
-  echo "WARNING: luajit not found, skipping async export driver tests"
-fi
-
-echo ""
-echo "=== Running Jsonable Runtime Tests ==="
-if command -v luajit &> /dev/null; then
-  luajit test_runtime_jsonable.lua
-else
-  echo "WARNING: luajit not found, skipping jsonable runtime tests"
-fi
-
-echo ""
-echo "=== Running Jsonable Runtime JS Tests ==="
-if command -v node &> /dev/null; then
-  node test_jsonable_js.js
-else
-  echo "WARNING: node not found, skipping jsonable runtime JS tests"
-fi
-
-echo ""
-echo "=== Running Host ABI Runtime JS Tests ==="
-if command -v node &> /dev/null; then
-  node test_host_js.js
-else
-  echo "WARNING: node not found, skipping host ABI runtime JS tests"
-fi
-
-echo ""
-echo "=== Running Standard Library Tests ==="
-if command -v luajit &> /dev/null; then
-  luajit test_stdlib.lua
-else
-  echo "WARNING: luajit not found, skipping standard library tests"
-fi
-
-echo ""
-echo "=== Running Standard Library JS Tests ==="
-if command -v node &> /dev/null; then
-  node test_stdlib_js.js
-else
-  echo "WARNING: node not found, skipping standard library JS tests"
-fi
-
-echo ""
-echo ""
-echo "=== Running Async Nesting Stress Tests ==="
-if command -v luajit &> /dev/null; then
-  luajit test_async_nesting.lua
-else
-  echo "WARNING: luajit not found, skipping async nesting stress tests"
-fi
-java -ea -cp build deal.test.StdlibContractTest
-
-echo ""
-echo "=== std/time.nowMillis Pre-Activation Pin (ISSUE-0369) ==="
-java -ea -cp build deal.test.StdlibTimePreActivationPinTest
-
-echo ""
-echo "=== Stdlib Golden IR Check ==="
-GOLDEN_FILE="test/goldens/stdlib-declarations.ir.txt"
-TEMP_FILE="/tmp/deal-stdlib-ir-$$.txt"
-java -ea -cp build deal.test.GenerateStdlibGoldenIr "$TEMP_FILE" 2>/dev/null
-if [ "${DEAL_UPDATE_GOLDENS}" = "true" ]; then
-  cp "$TEMP_FILE" "$GOLDEN_FILE"
-  echo "  Golden IR file updated"
-else
-  if diff -q "$GOLDEN_FILE" "$TEMP_FILE" > /dev/null 2>&1; then
-    echo "  Golden IR file is current"
-  else
-    echo "  ERROR: Golden IR file differs from generated output!"
-    echo "  Run 'DEAL_UPDATE_GOLDENS=true ./run_tests.sh' to update."
-    diff "$GOLDEN_FILE" "$TEMP_FILE" || true
-    rm -f "$TEMP_FILE"
-    exit 1
+for record in "${TEST_MAINS[@]}"; do
+  record_class="${record%%|*}"
+  record_rest="${record#*|}"
+  record_banner="${record_rest%%|*}"
+  record_command="${record_rest#*|}"
+  if [ -n "$record_banner" ]; then
+    echo ""
+    echo "$record_banner"
   fi
-fi
-rm -f "$TEMP_FILE"
-
-echo ""
-echo "=== Running Conformance Harness Metadata Seam Tests ==="
-java -ea -cp build deal.test.ConformanceHarnessMetadataTest
+  case "$record_class" in
+    bg)
+      read -r -a record_args <<< "$record_command"
+      launch_background "${record_args[@]}"
+      ;;
+    fg)
+      read -r -a record_args <<< "$record_command"
+      "${record_args[@]}"
+      ;;
+    luajit|node)
+      if command -v "$record_class" &> /dev/null; then
+        # Today's command lines run under the guard; the trailing
+        # WARNING: line is today's skip message, printed only when the
+        # tool is absent.
+        while IFS= read -r record_line; do
+          case "$record_line" in
+            WARNING:*) ;;
+            *)
+              read -r -a record_args <<< "$record_line"
+              "${record_args[@]}"
+              ;;
+          esac
+        done <<< "$record_command"
+      else
+        while IFS= read -r record_line; do
+          case "$record_line" in
+            WARNING:*) echo "$record_line" ;;
+          esac
+        done <<< "$record_command"
+      fi
+      ;;
+    golden-ir)
+      GOLDEN_FILE="test/goldens/stdlib-declarations.ir.txt"
+      TEMP_FILE="/tmp/deal-stdlib-ir-$$.txt"
+      java -ea -cp build deal.test.GenerateStdlibGoldenIr "$TEMP_FILE" 2>/dev/null
+      if [ "${DEAL_UPDATE_GOLDENS}" = "true" ]; then
+        cp "$TEMP_FILE" "$GOLDEN_FILE"
+        echo "  Golden IR file updated"
+      else
+        if diff -q "$GOLDEN_FILE" "$TEMP_FILE" > /dev/null 2>&1; then
+          echo "  Golden IR file is current"
+        else
+          echo "  ERROR: Golden IR file differs from generated output!"
+          echo "  Run 'DEAL_UPDATE_GOLDENS=true ./run_tests.sh' to update."
+          diff "$GOLDEN_FILE" "$TEMP_FILE" || true
+          rm -f "$TEMP_FILE"
+          exit 1
+        fi
+      fi
+      rm -f "$TEMP_FILE"
+      ;;
+    *)
+      echo "INTERNAL ERROR: unknown TEST_MAINS record class '${record_class}'" >&2
+      exit 1
+      ;;
+  esac
+done
 
 echo ""
 echo "=== Waiting for background suites ==="
