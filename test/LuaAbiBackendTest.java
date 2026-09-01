@@ -1395,6 +1395,11 @@ public class LuaAbiBackendTest {
         exports.put("ServerConfig", IdentityTestFixtures.classType("ServerConfig", "host.cfg"));
         StubModuleResolver resolver = new StubModuleResolver();
         resolver.register("host/cfg", exports);
+        // Identity-keyed ClassSymbol routing (v1.2 identity carriage):
+        // the carried identity root is the dotted "host.cfg", so the
+        // stub must expose that path too — the raw "host/cfg" path
+        // stays registered for the import's resolveModule.
+        resolver.register("host.cfg", exports);
         resolver.registerClassSymbol("host.cfg", new Symbol.ClassSymbol(
             "ServerConfig", List.of(
                 new ClassField(new Span("host.cfg", 1, 1, 1, 1),
@@ -1430,6 +1435,10 @@ public class LuaAbiBackendTest {
         exports.put("Item", IdentityTestFixtures.classType("Item", "lib"));
         StubModuleResolver resolver = new StubModuleResolver();
         resolver.register("./lib", exports);
+        // Identity-keyed ClassSymbol routing: the carried identity root
+        // is "lib", so the stub must expose that path too — "./lib"
+        // stays registered for the import's resolveModule.
+        resolver.register("lib", exports);
         resolver.registerClassSymbol("lib", new Symbol.ClassSymbol(
             "Item", List.of(
                 new ClassField(new Span("lib", 1, 1, 1, 1),
