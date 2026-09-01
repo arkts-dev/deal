@@ -3105,6 +3105,17 @@ public final class SemanticLowerer {
             Objects.requireNonNull(assignment, "assignment must not be null");
             ExpressionNode target = assignment.target();
             if (target instanceof IdentifierExpr identifier) {
+                if (closureCore) {
+                    // The closure walk's variable-assignment arm: the
+                    // store commits the dominant incarnation and, inside
+                    // a detached-body walk, registers the reference as a
+                    // capture (stores reference cells — capture by
+                    // binding). The closure walk threads no result slot
+                    // (the slot is the E5 LOOP(FOR) condition
+                    // re-production's; the binding walk re-produces the
+                    // condition with a fresh value).
+                    return lowerVariableAssignClosure(assignment, identifier);
+                }
                 return lowerVariableAssign(assignment, identifier, slot);
             }
             if (target instanceof MemberAccessExpr access) {
