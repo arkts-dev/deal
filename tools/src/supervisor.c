@@ -2988,11 +2988,29 @@ static void dealpg4_supervisor_finalize(dealpg4_supervisor_state *state)
              * record (parent D3). */
             kind = DEALPG4_SUP_TERMINAL_FAILED;
             token = "UNVERIFIED_TARGET_DEATH";
-        } else {
-            /* The group was already gone at cancel time so no signal
-             * was issued (or no stub ever existed). */
+        } else if (state->stub_pid < 0) {
+            /* Never forked: no stub/target ever existed (the
+             * CLEANUP_FAILED / STUB_BOOTSTRAP_FAILED record paths
+             * with a cancel in play) — clean cancelled, nothing ever
+             * ran. */
             kind = DEALPG4_SUP_TERMINAL_CLEAN_CANCELLED;
             token = "-";
+        } else {
+            /* An un-reaped, still-live stub at the terminal
+             * classification — the post-T5 proof-bound expiry of a
+             * tree the escalation could not clean (a D-state
+             * survivor: the pending SIGKILL bounds the eventual
+             * process death but the stub was never reaped), or a T4
+             * survivor-token classification: FAILED with the owning
+             * token, never a false CLEAN final=cancelled while the
+             * target tree still lives. A clean cancel requires the
+             * stub/target to have exited on its own (the reaped
+             * CLD_EXITED case above); every misclassification
+             * direction stays a false failure, never a false clean
+             * (D5(c), parent D3). */
+            kind = DEALPG4_SUP_TERMINAL_FAILED;
+            token = dealpg4_supervisor_class_token(
+                state->classification);
         }
     } else if (state->classification == DEALPG4_SUP_CLASS_SUCCESS) {
         kind = DEALPG4_SUP_TERMINAL_CLEAN_SUCCESS;
