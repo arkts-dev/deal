@@ -94,6 +94,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.IdentityHashMap;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -2723,34 +2724,60 @@ public final class SemanticLowerer {
         }
 
         /**
-         * Registers a body reference as a capture when the reference
-         * resolves outside the innermost open detached-body walk (B3/B9
-         * R2/R3): the resolved incarnation joins the B2 cell-kind
-         * derivation's capture-reference set, and the cell joins the
-         * innermost collector in first-reference order.
+         * Registers a body reference as a capture of every open
+         * detached-body walk whose capture border the resolution lies
+         * outside (B3/B9 R2/R3): the resolved incarnation joins the B2
+         * cell-kind derivation's capture-reference set once, and the
+         * captured cell joins each such walk's collector in
+         * first-reference order. A reference resolving outside the
+         * innermost walk's border is therefore additionally a free
+         * reference of every enclosing walk whose own scope chain
+         * excludes the resolved frame — the doubly-nested detaching
+         * chain of B9 R2(ii): a closure created inside another detached
+         * body resolves its captures in that body's context first, and
+         * the enclosing body's captures must record the same binding so
+         * the chain closes through every intermediate body
+         * ({@code nested-closure-mutation.deal}'s inner-body capture →
+         * make's body capture → the closing R1 step).
          */
         private void maybeRegisterCapture(String name, FrameResolution resolution) {
             if (!closureCore || captureBorders.isEmpty()) {
                 return;
             }
-            int border = captureBorders.peek();
-            int outsideFrom = bindingScopes.size() - border;
-            if (resolution.frameIndex() < outsideFrom) {
-                return; // the function's own scope chain — not a capture.
+            int frameCount = bindingScopes.size();
+            if (resolution.frameIndex() < frameCount - captureBorders.peek()) {
+                return; // the innermost function's own scope chain — not a capture at all.
             }
-            registerCaptureReference(resolution.entry());
+            Iterator<Integer> borders = captureBorders.iterator();
+            Iterator<List<CapturedCell>> collectors = captureCollectors.iterator();
+            while (borders.hasNext() && collectors.hasNext()) {
+                int border = borders.next();
+                List<CapturedCell> collector = collectors.next();
+                // Frames pushed since the walk's entry (its own body
+                // frame included) occupy indices [0, frameCount - border);
+                // a resolution at or beyond that range is outside the
+                // walk's own scope chain and must be its capture too.
+                if (resolution.frameIndex() < frameCount - border) {
+                    continue;
+                }
+                registerCaptureReference(resolution.entry(), collector);
+            }
         }
 
         /**
          * The single capture-reference registration of the walk (B2's
          * closure-capture arm for this child): the incarnation the
          * capture resolves to joins the cell-kind derivation, and the
-         * captured cell joins the innermost collector once (first
-         * reference order — deterministic capture lists).
+         * captured cell joins the given collector once (first-reference
+         * order — deterministic capture lists). One reference event may
+         * register into several open walks' collectors (the detaching-
+         * chain propagation of {@link #maybeRegisterCapture}); the
+         * cell-kind derivation's reference set has identity semantics,
+         * so repeated registrations of one incarnation stay idempotent.
          */
-        private void registerCaptureReference(FrameEntry entry) {
+        private void registerCaptureReference(FrameEntry entry,
+                                              List<CapturedCell> collector) {
             cellKinds.registerCaptureReference(entry.incarnation());
-            List<CapturedCell> collector = captureCollectors.peek();
             if (collector == null) {
                 return;
             }

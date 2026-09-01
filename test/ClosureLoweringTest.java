@@ -72,7 +72,10 @@ import java.util.Map;
  *       window-legal shape pins the same detaching chain: the inner
  *       closure's capture of {@code x} resolves to {@code x}'s producing
  *       ALLOC/INIT in {@code test_nested_closure_mutation}'s body while
- *       the intermediate closure captures nothing;</li>
+ *       the intermediate closure {@code make} records
+ *       {@code captures = [x]} (B9 R2(ii): the inner closure's creation
+ *       site lies inside make's body, so the chain closes inner-body
+ *       capture → make's body capture → the R1 step);</li>
  *   <li>captures of later-declared module functions resolving to the
  *       hoisted module-init ALLOC (B1; docs/spec-v1.2.md:1217-1221) with
  *       function-identity preservation on the load (the load publishes
@@ -416,9 +419,12 @@ public class ClosureLoweringTest {
      * creates the inner closure — pins the same detaching chain. The
      * inner closure's capture of {@code x} resolves through make's body
      * (where {@code x} is itself no local) to {@code x}'s producing
-     * ALLOC/INIT in {@code test_nested_closure_mutation}'s body;
-     * make's own capture set is empty (its body references {@code x}
-     * only inside the inner closure).
+     * ALLOC/INIT in {@code test_nested_closure_mutation}'s body, and
+     * the same reference is a free binding of make's own body region —
+     * the {@code CLOSURE_NEW} creation site of the inner closure sits
+     * inside make's body — so make's capture set carries {@code x} too
+     * (B9 R2(ii): the chain is inner-body capture → make's body capture
+     * → the closing R1 step in test's body).
      */
     static void testDoublyNestedCaptureAlongDetachingChain() {
         System.out.println("-- doubly-nested capture: nested-closure-mutation.deal chain "
@@ -455,48 +461,64 @@ public class ClosureLoweringTest {
         if (closureNews.size() != 3) {
             return;
         }
-        SemanticOp innerClosure = null;
-        for (SemanticOp op : closureNews) {
-            KindPayload.ClosureNewPayload payload =
-                (KindPayload.ClosureNewPayload) op.payload();
-            if (payload.captures().equals(List.of(x.binding()))) {
-                innerClosure = op;
-            }
-        }
-        SemanticLowerer.ClosureFacts makeFacts = null;
-        SemanticLowerer.ClosureFacts innerFacts = null;
-        for (SemanticLowerer.ClosureFacts facts : result.closures()) {
-            if (facts.captures().isEmpty()) {
-                makeFacts = facts;
-            } else if (facts.captures().size() == 1
-                    && facts.captures().get(0).binding().equals(x.binding())) {
-                innerFacts = facts;
-            }
-        }
-        check(makeFacts != null && innerFacts != null,
-            "make's and inner's closure facts found");
-        check(innerClosure != null, "inner's CLOSURE_NEW found (captures = [x])");
-        if (makeFacts == null || innerFacts == null || innerClosure == null) {
+        // Creation order is deterministic: test_nested_closure_mutation
+        // (module-level declaration) first, make (declaration inside
+        // test's body) second, inner (function expression inside make's
+        // body) third — inner's CLOSURE_NEW is emitted into make's body
+        // buffer, which flushes after make's declaration pair.
+        SemanticOp testClosureNew = closureNews.get(0);
+        SemanticOp makeClosureNew = closureNews.get(1);
+        SemanticOp innerClosureNew = closureNews.get(2);
+        KindPayload.ClosureNewPayload testPayload =
+            (KindPayload.ClosureNewPayload) testClosureNew.payload();
+        KindPayload.ClosureNewPayload makePayload =
+            (KindPayload.ClosureNewPayload) makeClosureNew.payload();
+        KindPayload.ClosureNewPayload innerPayload =
+            (KindPayload.ClosureNewPayload) innerClosureNew.payload();
+        check(testPayload.captures().isEmpty(),
+            "test_nested_closure_mutation's CLOSURE_NEW payload carries no captures");
+        check(makePayload.captures().equals(List.of(x.binding())),
+            "make's CLOSURE_NEW payload carries captures = [x] (the inner closure's "
+                + "creation site lies inside make's body, so x is a free binding of "
+                + "make's body region too — B9 R2(ii)); got " + makePayload.captures());
+        check(innerPayload.captures().equals(List.of(x.binding())),
+            "inner's CLOSURE_NEW payload carries captures = [x]");
+
+        // The closure facts records agree with the payloads: make records
+        // captures = [x], inner records captures = [x].
+        SemanticLowerer.ClosureFacts testFacts = closureOf(result.closures(), testClosureNew);
+        SemanticLowerer.ClosureFacts makeFacts = closureOf(result.closures(), makeClosureNew);
+        SemanticLowerer.ClosureFacts innerFacts = closureOf(result.closures(), innerClosureNew);
+        if (testFacts == null || makeFacts == null || innerFacts == null) {
             return;
         }
-        check(makeFacts.captures().isEmpty(),
-            "make's capture set is empty (its body references x only inside the inner "
-                + "closure — the detaching chain, B3)");
-        SemanticOp makeClosureNew = closureNewOf(ops, makeFacts.functionId());
-        if (makeClosureNew != null) {
-            check(((KindPayload.ClosureNewPayload) makeClosureNew.payload()).captures()
-                    .isEmpty(),
-                "make's CLOSURE_NEW payload carries no captures");
-        }
-        SemanticLowerer.ClosureCapture capture = innerFacts.captures().get(0);
+        check(testFacts.captures().isEmpty(),
+            "test_nested_closure_mutation's closure facts record no captures");
+        check(makeFacts.captures().size() == 1
+                && makeFacts.captures().get(0).binding().equals(x.binding()),
+            "make's closure facts record captures = [x] (detaching-chain propagation)");
+        check(innerFacts.captures().size() == 1
+                && innerFacts.captures().get(0).binding().equals(x.binding()),
+            "inner's closure facts record captures = [x]");
+
         BlockId enclosingBody = x.incarnations().get(0).scope();
-        check(capture.generation() == 0
-                && capture.scope().equals(enclosingBody)
-                && capture.producer() == SemanticLowerer.BindingProducer.BINDING_ALLOC,
+        SemanticLowerer.ClosureCapture makeCapture = makeFacts.captures().get(0);
+        SemanticLowerer.ClosureCapture innerCapture = innerFacts.captures().get(0);
+        check(makeCapture.generation() == 0
+                && makeCapture.scope().equals(enclosingBody)
+                && makeCapture.producer() == SemanticLowerer.BindingProducer.BINDING_ALLOC,
+            "make's capture of x resolves along the detaching chain to x's producing "
+                + "ALLOC in test_nested_closure_mutation's body (generation 0, scope "
+                + enclosingBody + "): " + makeCapture);
+        check(makeCapture.binding().equals(x.binding()),
+            "make's capture names x's BindingId (capture by binding, never a copied value)");
+        check(innerCapture.generation() == 0
+                && innerCapture.scope().equals(enclosingBody)
+                && innerCapture.producer() == SemanticLowerer.BindingProducer.BINDING_ALLOC,
             "inner's capture of x resolves along the detaching chain to x's producing "
                 + "ALLOC in test_nested_closure_mutation's body (generation 0, scope "
-                + enclosingBody + "): " + capture);
-        check(capture.binding().equals(x.binding()),
+                + enclosingBody + "): " + innerCapture);
+        check(innerCapture.binding().equals(x.binding()),
             "the capture names x's BindingId (capture by binding, never a copied value)");
 
         // The load inside inner's body names {x, 0} — the chain-closing
@@ -513,17 +535,124 @@ public class ClosureLoweringTest {
         check(xLoads == 1, "exactly one generation-0 load of x (inside inner's body); got "
             + xLoads);
 
-        // The inner closure's CLOSURE_NEW payload carries [x] verbatim.
-        check(((KindPayload.ClosureNewPayload) innerClosure.payload()).captures()
-                .equals(List.of(x.binding())),
-            "inner's CLOSURE_NEW payload carries captures = [x]");
-
-        // Cell kinds: x SHARED_CELL; make DIRECT (its own name is not
-        // captured — make's body holds no free reference of its own).
+        // Cell kinds: x SHARED_CELL; make DIRECT (its own name is never
+        // captured — make's capture list names x, not make itself).
         check(x.incarnations().get(0).cellKind() == BindingCellKind.SHARED_CELL,
             "x is SHARED_CELL (captured by the inner closure through the chain)");
         check(make.incarnations().get(0).cellKind() == BindingCellKind.DIRECT,
-            "make is DIRECT (uncaptured — the chain terminates at x)");
+            "make is DIRECT (its own name is never captured — the chain terminates at x)");
+    }
+
+    /**
+     * Transitive propagation across deeper detaching chains (B9 R2(ii)):
+     * a closure created inside a nested detached body registers its
+     * capture into every enclosing open body whose capture border the
+     * resolution lies outside — triple nesting propagates {@code x}
+     * (declared in {@code outer}) through {@code mid}'s and
+     * {@code inner}'s capture lists, while a binding declared inside
+     * {@code mid}'s own body ({@code z}) stays out of {@code mid}'s
+     * captures (it is mid's own scope chain, so the chain closes there).
+     */
+    static void testTransitivelyNestedCapturePropagation() {
+        System.out.println("-- transitive detaching-chain propagation: triple nesting --");
+
+        SemanticLowerer.ClosureCoreResult result = lowerSlice("""
+            function outer(): null {
+              let x: int = 1;
+              function mid(): null {
+                let z: int = 2;
+                function inner(): null {
+                  let a: int = x;
+                  let b: int = z;
+                }
+              }
+              x = 9;
+            }
+            """);
+        if (result == null || result.lowering().hasErrors() || result.lowering().unit() == null) {
+            if (result != null) {
+                fail("the slice lowers to a validated unit: " + result.lowering().diagnostics());
+            }
+            return;
+        }
+        List<SemanticOp> ops = result.lowering().unit().ops();
+        SemanticLowerer.BindingCoreBinding x = fact(result.bindingFacts(), "x");
+        SemanticLowerer.BindingCoreBinding z = fact(result.bindingFacts(), "z");
+        if (x == null || z == null) {
+            return;
+        }
+        List<SemanticOp> closureNews = ofKind(ops, SemanticOpKind.CLOSURE_NEW);
+        check(closureNews.size() == 3,
+            "one CLOSURE_NEW per function (outer, mid, inner); got " + closureNews.size());
+        if (closureNews.size() != 3) {
+            return;
+        }
+        // Creation order: outer (module-level) first, mid (inside outer's
+        // body) second, inner (inside mid's body) third.
+        SemanticOp outerClosureNew = closureNews.get(0);
+        SemanticOp midClosureNew = closureNews.get(1);
+        SemanticOp innerClosureNew = closureNews.get(2);
+        KindPayload.ClosureNewPayload outerPayload =
+            (KindPayload.ClosureNewPayload) outerClosureNew.payload();
+        KindPayload.ClosureNewPayload midPayload =
+            (KindPayload.ClosureNewPayload) midClosureNew.payload();
+        KindPayload.ClosureNewPayload innerPayload =
+            (KindPayload.ClosureNewPayload) innerClosureNew.payload();
+        check(outerPayload.captures().isEmpty(),
+            "outer's CLOSURE_NEW payload carries no captures (x is outer's own local)");
+        check(midPayload.captures().equals(List.of(x.binding())),
+            "mid's CLOSURE_NEW payload carries captures = [x] (transitive propagation; z "
+                + "is mid's own local, so it never enters mid's captures)");
+        check(innerPayload.captures().equals(List.of(x.binding(), z.binding())),
+            "inner's CLOSURE_NEW payload carries captures = [x, z] in first-reference "
+                + "order; got " + innerPayload.captures());
+
+        SemanticLowerer.ClosureFacts outerFacts = closureOf(result.closures(), outerClosureNew);
+        SemanticLowerer.ClosureFacts midFacts = closureOf(result.closures(), midClosureNew);
+        SemanticLowerer.ClosureFacts innerFacts = closureOf(result.closures(), innerClosureNew);
+        if (outerFacts == null || midFacts == null || innerFacts == null) {
+            return;
+        }
+        check(outerFacts.captures().isEmpty(),
+            "outer's closure facts record no captures");
+        check(midFacts.captures().size() == 1
+                && midFacts.captures().get(0).binding().equals(x.binding()),
+            "mid's closure facts record captures = [x] (transitive propagation)");
+        check(innerFacts.captures().size() == 2
+                && innerFacts.captures().get(0).binding().equals(x.binding())
+                && innerFacts.captures().get(1).binding().equals(z.binding()),
+            "inner's closure facts record captures = [x, z] in first-reference order");
+        if (midFacts.captures().size() == 1 && innerFacts.captures().size() == 2) {
+            BlockId outerBody = x.incarnations().get(0).scope();
+            BlockId midBody = z.incarnations().get(0).scope();
+            SemanticLowerer.ClosureCapture midCapture = midFacts.captures().get(0);
+            SemanticLowerer.ClosureCapture innerX = innerFacts.captures().get(0);
+            SemanticLowerer.ClosureCapture innerZ = innerFacts.captures().get(1);
+            check(midCapture.generation() == 0 && midCapture.scope().equals(outerBody)
+                    && midCapture.producer() == SemanticLowerer.BindingProducer.BINDING_ALLOC,
+                "mid's capture of x resolves to x's producing ALLOC in outer's body: "
+                    + midCapture);
+            check(innerX.generation() == 0 && innerX.scope().equals(outerBody)
+                    && innerX.producer() == SemanticLowerer.BindingProducer.BINDING_ALLOC,
+                "inner's capture of x resolves through the chain to x's producing ALLOC "
+                    + "in outer's body: " + innerX);
+            check(innerZ.generation() == 0 && innerZ.scope().equals(midBody)
+                    && innerZ.producer() == SemanticLowerer.BindingProducer.BINDING_ALLOC,
+                "inner's capture of z resolves to z's producing ALLOC in mid's body "
+                    + "(the chain closes in mid's own scope): " + innerZ);
+        }
+
+        // Cell kinds: x SHARED_CELL; z SHARED_CELL (captured by inner);
+        // mid DIRECT (its own name is never captured).
+        check(x.incarnations().get(0).cellKind() == BindingCellKind.SHARED_CELL,
+            "x is SHARED_CELL (captured through the chain)");
+        check(z.incarnations().get(0).cellKind() == BindingCellKind.SHARED_CELL,
+            "z is SHARED_CELL (captured by inner)");
+        SemanticLowerer.BindingCoreBinding mid = fact(result.bindingFacts(), "mid");
+        if (mid != null) {
+            check(mid.incarnations().get(0).cellKind() == BindingCellKind.DIRECT,
+                "mid is DIRECT (its own name is never captured)");
+        }
     }
 
     /**
@@ -570,23 +699,39 @@ public class ClosureLoweringTest {
         check(laterFn.incarnations().get(0).cellKind() == BindingCellKind.SHARED_CELL,
             "the hoisted ALLOC upgraded to SHARED_CELL (captured by h)");
 
-        // The capture resolution: h captures laterFn at the hoisted ALLOC.
-        SemanticLowerer.ClosureFacts hFacts = null;
+        // The capture resolution: h captures laterFn at the hoisted
+        // ALLOC, and — h's creation site lies inside first's body — the
+        // detaching-chain propagation records laterFn in first's captures
+        // too (B9 R2(ii): the chain closes h's body capture → first's
+        // body capture → the R1 step at the hoisted module-init ALLOC).
+        List<SemanticLowerer.ClosureFacts> laterFnCapturers = new ArrayList<>();
         for (SemanticLowerer.ClosureFacts facts : result.closures()) {
             if (facts.captures().size() == 1
                     && facts.captures().get(0).binding().equals(laterFn.binding())) {
-                hFacts = facts;
+                laterFnCapturers.add(facts);
             }
         }
-        check(hFacts != null, "h's closure facts found (captures = [laterFn])");
-        if (hFacts != null) {
-            SemanticLowerer.ClosureCapture capture = hFacts.captures().get(0);
+        check(laterFnCapturers.size() == 2,
+            "exactly two closure-facts records carry captures = [laterFn] (h and first, "
+                + "the detaching-chain propagation); got " + laterFnCapturers.size());
+        for (SemanticLowerer.ClosureFacts facts : laterFnCapturers) {
+            SemanticLowerer.ClosureCapture capture = facts.captures().get(0);
             check(capture.generation() == 0
                     && capture.scope().equals(moduleInitBlock)
                     && capture.producer() == SemanticLowerer.BindingProducer.BINDING_ALLOC,
-                "the capture resolves to the hoisted ALLOC (generation 0, module-init "
-                    + "block): " + capture);
+                "each chain capture of laterFn resolves to the hoisted ALLOC (generation "
+                    + "0, module-init block): " + capture);
         }
+        int laterFnPayloadCaptures = 0;
+        for (SemanticOp op : ofKind(ops, SemanticOpKind.CLOSURE_NEW)) {
+            if (op.payload() instanceof KindPayload.ClosureNewPayload payload
+                    && payload.captures().equals(List.of(laterFn.binding()))) {
+                laterFnPayloadCaptures++;
+            }
+        }
+        check(laterFnPayloadCaptures == 2,
+            "two CLOSURE_NEW payloads carry captures = [laterFn] (h's and first's); got "
+                + laterFnPayloadCaptures);
 
         // Identity preservation: the load of laterFn inside h's body
         // publishes the same result identity as laterFn's own CLOSURE_NEW
@@ -1073,6 +1218,7 @@ public class ClosureLoweringTest {
 
         testClosureCapturesEnclosingLocalsInFirstReferenceOrder();
         testDoublyNestedCaptureAlongDetachingChain();
+        testTransitivelyNestedCapturePropagation();
         testCaptureOfLaterDeclaredModuleFunctionResolvesToHoistedAlloc();
         testForBodyClosureCapturesPerIterationIncarnation();
         testNarrowedFlowTypesNeverCaptured();
