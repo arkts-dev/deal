@@ -756,7 +756,7 @@ public class ConformanceTest {
 
             Parser parser = new Parser(lex.tokens(), filename,
                 LegacyProfileRegressionCatalog.frontendInvocation()
-                    .semanticProfile());
+                    .semanticProfile(), lex.directiveEvents());
             ParseResult parseResult = parser.parse();
             if (parseResult.hasErrors()) {
                 return parseResult.diagnostics();
@@ -1113,7 +1113,8 @@ public class ConformanceTest {
             return allDiags;
         }
 
-        Parser parser = new Parser(lex.tokens(), filename, profile);
+        Parser parser = new Parser(lex.tokens(), filename,
+                profile, lex.directiveEvents());
         ParseResult parseResult = parser.parse();
         allDiags.addAll(parseResult.diagnostics());
         if (parseResult.hasErrors()) {
@@ -1815,7 +1816,8 @@ public class ConformanceTest {
                 LexResult lex = new Lexer(source, filename).tokenize();
                 if (lex.hasErrors()) return null;
 
-                Parser parser = new Parser(lex.tokens(), filename, profile);
+                Parser parser = new Parser(lex.tokens(), filename,
+                profile, lex.directiveEvents());
                 ParseResult parseResult = parser.parse();
                 if (parseResult.hasErrors()) return null;
 
@@ -1969,7 +1971,8 @@ public class ConformanceTest {
                     throw new ModuleResolver.ModuleNotFoundException(
                         "Lex errors in " + filename);
 
-                Parser parser = new Parser(lex.tokens(), filename, profile);
+                Parser parser = new Parser(lex.tokens(), filename,
+                profile, lex.directiveEvents());
                 ParseResult parseResult = parser.parse();
                 if (parseResult.hasErrors())
                     throw new ModuleResolver.ModuleNotFoundException(
@@ -2218,7 +2221,8 @@ public class ConformanceTest {
                 if (lex.hasErrors())
                     throw new ModuleNotFoundException("Lex errors in " + filename);
 
-                Parser parser = new Parser(lex.tokens(), filename, profile);
+                Parser parser = new Parser(lex.tokens(), filename,
+                profile, lex.directiveEvents());
                 ParseResult parseResult = parser.parse();
                 if (parseResult.hasErrors())
                     throw new ModuleNotFoundException("Parse errors in " + filename);
@@ -2643,7 +2647,11 @@ final class LegacyProfileRegressionCatalog {
         if (lex.hasErrors()) {
             return false;
         }
-        ParseResult parse = new Parser(lex.tokens(), filename, profile).parse();
+        // ISSUE-0273 D8 item 3: in-memory seam site — the parser runs
+        // with the lexer's directive events so directive diagnostics
+        // behave exactly as in production.
+        ParseResult parse = new Parser(lex.tokens(), filename, profile,
+            lex.directiveEvents()).parse();
         return parse.diagnostics().stream().anyMatch(
             d -> "error".equals(d.severity())
                 && "E1036".equals(d.code()));

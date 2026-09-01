@@ -676,7 +676,7 @@ public class JvmBackendTest {
             return new Frontend(null, null, errors);
         }
 
-        Parser parser = new Parser(lex.tokens(), filename);
+        Parser parser = new Parser(lex.tokens(), filename, lex.directiveEvents());
         ParseResult parse = parser.parse();
         for (CompilerDiagnostic d : parse.diagnostics()) {
             if ("error".equals(d.severity())) {
@@ -3080,7 +3080,7 @@ public class JvmBackendTest {
         LexResult lex = new Lexer(source, "jvmtest-jsonable-synth.deal").tokenize();
         check(!lex.hasErrors(), "synthetic-E6000 probe lexes clean: "
             + lex.diagnostics());
-        ParseResult parse = new Parser(lex.tokens(), "jvmtest-jsonable-synth.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "jvmtest-jsonable-synth.deal", lex.directiveEvents()).parse();
         check(!parse.hasErrors(), "synthetic-E6000 probe parses clean: "
             + parse.diagnostics());
         NameResolver nr = new NameResolver("jvmtest-jsonable-synth.deal",
@@ -11673,7 +11673,7 @@ public class JvmBackendTest {
         try {
             LexResult lex = new Lexer(source, "jvmtest-runner.deal").tokenize();
             if (lex.hasErrors()) throw new IllegalStateException("lex: " + lex.diagnostics());
-            ParseResult parse = new Parser(lex.tokens(), "jvmtest-runner.deal").parse();
+            ParseResult parse = new Parser(lex.tokens(), "jvmtest-runner.deal", lex.directiveEvents()).parse();
             if (parse.hasErrors()) throw new IllegalStateException("parse: " + parse.diagnostics());
             return parse.program();
         } catch (IllegalStateException e) {

@@ -282,7 +282,10 @@ public class JsBackendTest {
             return new Frontend(null, null, errors);
         }
 
-        Parser parser = new Parser(lex.tokens(), filename);
+        // ISSUE-0273: the events-carrying parser — @jsonable binding in
+        // the adapter fixtures needs production directive evaluation.
+        Parser parser = new Parser(lex.tokens(), filename,
+            lex.directiveEvents());
         ParseResult parseResult = parser.parse();
         for (CompilerDiagnostic d : parseResult.diagnostics()) {
             if ("error".equals(d.severity())) {
@@ -353,6 +356,36 @@ public class JsBackendTest {
         return JsBackend.generate(f.program(), f.checkResult(),
             "jstest-" + name + ".deal", modulePath, importResolutions,
             hostModules, isEntry);
+    }
+
+    /**
+     * The adapter-shape generation call with an explicit extern-C import
+     * set (fixed-name-directive-events D9): routes through the
+     * production seam with a standalone identity surface, exactly as the
+     * host-ABI class fixture does — the E6003 re-key pin passes the raw
+     * import path here.
+     */
+    private static JsBackend.JsCodegenResult generateWithExternC(
+            String source, String name, String modulePath,
+            Map<String, String> importResolutions,
+            Map<String, HostModuleDeclarations> hostModules,
+            Set<String> externCImports, boolean isEntry) {
+        Frontend f = compileFrontend(source, "jstest-" + name + ".deal");
+        if (f.program() == null) {
+            return null;
+        }
+        Map<String, CanonicalModuleIdentity> byPath =
+            new LinkedHashMap<>();
+        byPath.put("", CanonicalModuleIdentity.BuiltinModule.INSTANCE);
+        byPath.put(modulePath, new CanonicalModuleIdentity.ProjectModule(
+            new ProjectModuleIdentity(modulePath, modulePath, List.of())));
+        ModuleIdentityResolver.IdentityIndex index =
+            ModuleIdentityResolver.buildIndex(byPath);
+        return JsBackend.generate(f.program(), f.checkResult(),
+            "jstest-" + name + ".deal", modulePath, importResolutions,
+            hostModules, externCImports, isEntry, index,
+            index.moduleIdentityLookup(), null,
+            SemanticProfile.LEGACY_SAFE_INT);
     }
 
     /** The adapter-shape generation call over the unshaped frontend
@@ -1799,20 +1832,23 @@ public class JsBackendTest {
         String externDetailText = "JavaScript backend: @extern-c imports "
             + "are not supported (FFI_UNSUPPORTED_BACKEND, "
             + "ISSUE-0169 skeleton)";
-        JsBackend.JsCodegenResult extern = generate("""
-            // @extern-c
+        // ISSUE-0273 D9 re-key: the trigger is the extern-C import set,
+        // not a lexer-attached token directive (the source carries no
+        // @extern-c comment — on an implementation file it would be
+        // E1046).
+        JsBackend.JsCodegenResult extern = generateWithExternC("""
             import * as ffi from "myffi"
             export function test(): int { return 1; }
             """, "rej-extern", "Main", Map.of(),
             Map.of("myffi", new HostModuleDeclarations(Map.of(), Map.of())),
-            false);
+            Set.of("myffi"), false);
         check(extern != null && extern.hasErrors(), "@extern-c import rejected");
         if (extern != null) {
             check(extern.diagnostics().stream().anyMatch(d ->
                     "E6003".equals(d.code())
                         && "error".equals(d.severity())
                         && externDetailText.equals(d.message())
-                        && d.range().startLine() == 2),
+                        && d.range().startLine() == 1),
                 "@extern-c rejection is E6003 with the exact current detail "
                     + "text at the import statement: " + extern.diagnostics());
         }
@@ -2026,7 +2062,7 @@ public class JsBackendTest {
         check(dlex != null && !dlex.hasErrors(),
             "the host declaration lexes clean");
         if (dlex == null || dlex.hasErrors()) return;
-        ParseResult dparse = new Parser(dlex.tokens(), "hostmod.d.deal")
+        ParseResult dparse = new Parser(dlex.tokens(), "hostmod.d.deal", dlex.directiveEvents())
             .parse();
         check(dparse != null && !dparse.hasErrors(),
             "the host declaration parses clean");
@@ -2076,7 +2112,7 @@ public class JsBackendTest {
             cf.checkResult(), "jstest-host-abi-class.deal", "Main",
             Map.of(), Map.of("./hostmod",
                 new HostModuleDeclarations(declExports, declFields)),
-            false, index, index.moduleIdentityLookup(), null,
+            Set.of(), false, index, index.moduleIdentityLookup(), null,
             SemanticProfile.LEGACY_SAFE_INT);
         check(cls != null && !cls.hasErrors(),
             "the host class declared map generates clean: "
@@ -4825,14 +4861,17 @@ public class JsBackendTest {
         // no-partial-artifact rejection model covered — the rejected
         // lib writes no artifact while the clean sibling entry still
         // writes its own (the single-module model lives in
-        // testNoPartialArtifactOnRejection).
+        // testNoPartialArtifactOnRejection). ISSUE-0273 D9 re-key: the
+        // E6003 trigger is an import of an extern-C declaration module —
+        // the @extern-c file directive lives on ffi.d.deal, never on the
+        // importing implementation file (where it is E1046).
         writeFile("rej_proj/deal.json",
             "{\"languageVersion\": \"1.2\", \"backend\": \"js\"}");
         writeFile("rej_proj/src/ffi.d.deal", """
+            // @extern-c
             export function cFn(x: int): int;
             """);
         writeFile("rej_proj/src/lib.deal", """
-            // @extern-c
             import * as ffi from "./ffi"
             export function use(): int { return ffi.cFn(1); }
             """);
@@ -5057,12 +5096,15 @@ public class JsBackendTest {
             Files.writeString(projectDir.resolve("deal.json"),
                 "{\n  \"languageVersion\": \"1.2\",\n  \"backend\": \"js\"\n}\n",
                 StandardCharsets.UTF_8);
+            // ISSUE-0273 D9 re-key: the E6003 trigger is an import of an
+            // extern-C declaration module — the @extern-c file directive
+            // lives on ffi.d.deal (on an implementation file it is
+            // E1046).
             Files.writeString(projectDir.resolve("ffi.d.deal"),
-                "export function cFn(x: int): int;\n",
+                "// @extern-c\nexport function cFn(x: int): int;\n",
                 StandardCharsets.UTF_8);
             Files.writeString(projectDir.resolve("main.deal"),
-                "// @extern-c\n"
-                    + "import * as ffi from \"./ffi\";\n\n"
+                "import * as ffi from \"./ffi\";\n\n"
                     + "export function main(): null {\n"
                     + "  let v: int = ffi.cFn(1);\n"
                     + "  return null;\n"

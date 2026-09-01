@@ -66,7 +66,7 @@ public class SourceMapTest {
 
     private static CompileResult compileWithSourceMap(String source, String filename) {
         LexResult lex = new Lexer(source, filename).tokenize();
-        ParseResult parse = new Parser(lex.tokens(), filename).parse();
+        ParseResult parse = new Parser(lex.tokens(), filename, lex.directiveEvents()).parse();
 
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver(filename, resolver);
@@ -479,7 +479,7 @@ public class SourceMapTest {
         String source = "let x: int = 1;\n";
 
         LexResult lex = new Lexer(source, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver("test.deal", resolver);
         SymbolTable symTable = nr.resolve(parse.program());
@@ -551,7 +551,7 @@ public class SourceMapTest {
             fail("JS case lex errors: " + lex.diagnostics());
             return null;
         }
-        ParseResult parse = new Parser(lex.tokens(), filename).parse();
+        ParseResult parse = new Parser(lex.tokens(), filename, lex.directiveEvents()).parse();
         if (parse.hasErrors()) {
             fail("JS case parse errors: " + parse.diagnostics());
             return null;
@@ -1492,12 +1492,14 @@ public class SourceMapTest {
             // nested-class E6000 (ISSUE-0318), and the retired
             // host-ABI E6000 (ISSUE-0328) no longer drive this
             // pin; the still-live @extern-c E6003 arm keeps the
-            // rejected-module model covered.
+            // rejected-module model covered. ISSUE-0273 D9 re-key: the
+            // trigger is an import of an extern-C declaration module —
+            // the @extern-c file directive lives on host.d.deal.
             Files.writeString(src.resolve("host.d.deal"), """
+                // @extern-c
                 export function hostFn(x: int): int;
                 """);
             Files.writeString(src.resolve("bad.deal"), """
-                // @extern-c
                 import * as host from "./host"
                 export function make(): int { return host.hostFn(1); }
                 """);

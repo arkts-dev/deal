@@ -1376,7 +1376,9 @@ public class BackendConformanceTest {
             return new FrontendCompile(null, null, null, errors);
         }
 
-        Parser parser = new Parser(lex.tokens(), filename, profile);
+        Parser parser = new Parser(lex.tokens(),
+            filename, profile,
+            lex.directiveEvents());
         ParseResult parseResult = parser.parse();
         for (CompilerDiagnostic d : parseResult.diagnostics()) {
             if ("error".equals(d.severity())) {
@@ -1478,7 +1480,8 @@ public class BackendConformanceTest {
                 LexResult lex = new Lexer(declaration,
                     raw + ".d.deal").tokenize();
                 ParseResult parse = new Parser(lex.tokens(),
-                    raw + ".d.deal", profile).parse();
+                    raw + ".d.deal", profile,
+                    lex.directiveEvents()).parse();
                 ExportExtractor extractor = new ExportExtractor(dotted,
                     true);
                 Map<String, Type> exports = extractor.extract(
@@ -1705,7 +1708,7 @@ public class BackendConformanceTest {
                 + lex.diagnostics());
         }
         ParseResult parse = new Parser(lex.tokens(), entryFile.toString(),
-            profile).parse();
+            profile, lex.directiveEvents()).parse();
         if (parse.hasErrors()) {
             throw new IllegalStateException("entry module parse errors: "
                 + parse.diagnostics());
@@ -2249,7 +2252,9 @@ public class BackendConformanceTest {
             LexResult lex = new Lexer(source, filename).tokenize();
             if (lex.hasErrors()) return null;
 
-            Parser parser = new Parser(lex.tokens(), filename, profile);
+            Parser parser = new Parser(lex.tokens(),
+            filename, profile,
+            lex.directiveEvents());
             ParseResult parseResult = parser.parse();
             if (parseResult.hasErrors()) return null;
 
@@ -2630,7 +2635,8 @@ public class BackendConformanceTest {
             res = JsBackend.generate(
                 jsFc.program(), jsFc.checkResult(),
                 "fixture-" + name + ".deal", "Main", Map.of(),
-                hostModules, false, index, index.moduleIdentityLookup(),
+                hostModules, Set.of(), false, index,
+                index.moduleIdentityLookup(),
                 null, SemanticProfile.LEGACY_SAFE_INT);
         }
         if (res.hasErrors()) {

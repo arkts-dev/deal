@@ -1157,7 +1157,7 @@ module.exports = {
             all.addAll(lex.diagnostics());
             if (lex.hasErrors()) return all;
 
-            Parser parser = new Parser(lex.tokens(), filename);
+            Parser parser = new Parser(lex.tokens(), filename, lex.directiveEvents());
             ParseResult parseResult = parser.parse();
             all.addAll(parseResult.diagnostics());
             if (parseResult.hasErrors()) return all;
@@ -1292,7 +1292,7 @@ module.exports = {
                 String source = Files.readString(file);
                 LexResult lex = new Lexer(source, file.toString()).tokenize();
                 if (lex.hasErrors()) return symbols;
-                Parser parser = new Parser(lex.tokens(), file.toString());
+                Parser parser = new Parser(lex.tokens(), file.toString(), lex.directiveEvents());
                 ParseResult parseResult = parser.parse();
                 if (parseResult.hasErrors()) return symbols;
                 String dotted = modulePathOf(file);
@@ -1388,7 +1388,7 @@ module.exports = {
                 return lex.diagnostics();
             }
 
-            Parser parser = new Parser(lex.tokens(), filename);
+            Parser parser = new Parser(lex.tokens(), filename, lex.directiveEvents());
             ParseResult parseResult = parser.parse();
             if (parseResult.hasErrors()) {
                 return parseResult.diagnostics();

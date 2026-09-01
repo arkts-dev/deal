@@ -232,11 +232,25 @@ public class CheckedProjectBuilderTest {
         try {
             Path modulesDir = Path.of("test/conformance/backend-runtime/modules")
                 .toAbsolutePath().normalize();
-            Path entry = modulesDir.resolve("declaration-only-import-compile.deal");
+            // ISSUE-0273: the production orchestrator must lex header-free
+            // sources — materialize stripped copies into the temp project
+            // (the shared harness metadata seam, the same producer-side
+            // rule the JVM harness applies), leaving the corpus bytes
+            // untouched.
+            Path strippedDir = tmp.resolve("stripped");
+            Files.createDirectories(strippedDir);
+            for (String name : List.of("declaration-only-import-compile.deal",
+                    "declaration_only_lib.d.deal")) {
+                Path corpus = modulesDir.resolve(name);
+                Files.writeString(strippedDir.resolve(name),
+                    ConformanceHarnessMetadata.stripClassificationHeaders(
+                        Files.readString(corpus)));
+            }
+            Path entry = strippedDir.resolve("declaration-only-import-compile.deal");
             Path output = tmp.resolve("build");
 
             CompilationOrchestrator orchestrator = new CompilationOrchestrator(
-                entry, output, false, null, List.of(modulesDir),
+                entry, output, false, null, List.of(strippedDir),
                 Path.of("std").toAbsolutePath().normalize());
             boolean ok = orchestrator.compile();
             check(ok, "declaration-only-import-compile.deal compiles through phase 3 + builder: "
@@ -380,7 +394,7 @@ public class CheckedProjectBuilderTest {
         ClassDeclaration user = new ClassDeclaration(span(), "User",
             List.of(new ClassField(span(), "name", false, false, nt("string"),
                 Optional.empty())),
-            true);
+            java.util.Set.of(deal.ast.DeclarationDirective.JSONABLE));
         ProgramNode ast = programOf(new ExportDeclaration(span(), user));
         Map<String, Type> exports = new LinkedHashMap<>();
         exports.put("User", Types.classType("User", "lib"));
@@ -719,11 +733,16 @@ public class CheckedProjectBuilderTest {
         Path declPath = modulesDir.resolve("declaration_only_lib.d.deal");
 
         // Real phase-3 pipeline for the entry module (lexer/parser/NameResolver/
-        // TypeChecker), mirroring the orchestrator's typeCheckAll.
-        String entrySource = Files.readString(entryPath);
+        // TypeChecker), mirroring the orchestrator's typeCheckAll. ISSUE-0273:
+        // classification headers are stripped before the lexer (the shared
+        // harness metadata seam — corpus bytes must never reach a lexer with
+        // directive-shaped classification lines).
+        String entrySource = ConformanceHarnessMetadata
+            .stripClassificationHeaders(Files.readString(entryPath));
         LexResult entryLex = new Lexer(entrySource, entryPath.toString()).tokenize();
         check(!entryLex.hasErrors(), "fixture lexes without errors");
-        ParseResult entryParsed = new Parser(entryLex.tokens(), entryPath.toString()).parse();
+        ParseResult entryParsed = new Parser(entryLex.tokens(), entryPath.toString(),
+            entryLex.directiveEvents()).parse();
         ProgramNode entryProgram = entryParsed.program();
         StubModuleResolver resolver = new StubModuleResolver();
         resolver.register("./declaration_only_lib", Map.of("declaredAdd",
@@ -750,9 +769,11 @@ public class CheckedProjectBuilderTest {
         }
 
         // The declaration file's own AST.
-        String declSource = Files.readString(declPath);
+        String declSource = ConformanceHarnessMetadata
+            .stripClassificationHeaders(Files.readString(declPath));
         LexResult declLex = new Lexer(declSource, declPath.toString()).tokenize();
-        ParseResult declParsed = new Parser(declLex.tokens(), declPath.toString()).parse();
+        ParseResult declParsed = new Parser(declLex.tokens(), declPath.toString(),
+            declLex.directiveEvents()).parse();
         ProgramNode declProgram = declParsed.program();
 
         String entryBefore = IrDumper.dump(entryProgram, checkResult,

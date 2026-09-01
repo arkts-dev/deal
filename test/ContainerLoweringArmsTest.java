@@ -199,7 +199,7 @@ public class ContainerLoweringArmsTest {
 
     private static CheckedSlice checkSlice(String source, ModuleResolver resolver) {
         LexResult lex = new Lexer(source, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         check(parse.diagnostics().isEmpty(), "the slice parses cleanly: " + parse.diagnostics());
         if (!parse.diagnostics().isEmpty()) {
             return null;

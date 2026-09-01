@@ -71,7 +71,7 @@ public class StdlibDeclParseTest {
         }
 
         // Test 2: Parsing succeeds
-        Parser parser = new Parser(lex.tokens(), declFile);
+        Parser parser = new Parser(lex.tokens(), declFile, lex.directiveEvents());
         ParseResult parse = parser.parse();
         check(!parse.hasErrors(), declFile + ": parsing succeeds");
         if (parse.hasErrors()) {

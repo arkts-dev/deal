@@ -55,7 +55,7 @@ public class RuntimeSourceLocationTest {
         }
 
         LexResult lex = new Lexer(dealSource, filename).tokenize();
-        ParseResult parse = new Parser(lex.tokens(), filename).parse();
+        ParseResult parse = new Parser(lex.tokens(), filename, lex.directiveEvents()).parse();
 
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver(filename, resolver);

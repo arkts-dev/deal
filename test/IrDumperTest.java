@@ -69,7 +69,7 @@ public class IrDumperTest {
         if (lex.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()))) {
             throw new RuntimeException("Lex error: " + lex.diagnostics());
         }
-        Parser parser = new Parser(lex.tokens(), filename);
+        Parser parser = new Parser(lex.tokens(), filename, lex.directiveEvents());
         ParseResult parseResult = parser.parse();
         if (parseResult.hasErrors()) {
             throw new RuntimeException("Parse error: " + parseResult.diagnostics());

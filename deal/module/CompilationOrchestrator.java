@@ -560,9 +560,13 @@ public final class CompilationOrchestrator {
             // Phase-0 parsing is profile-aware (signed-int32 foundation
             // I1): under DEAL_V1_2_INT32 the E1036 int32 gate and the
             // -2147483648 immediate-token special case apply; the legacy
-            // parse contract is unchanged otherwise.
+            // parse contract is unchanged otherwise. The lexer's
+            // directive events flow in through the events-carrying
+            // constructor (fixed-name-directive-events D1), so
+            // file-directive evaluation and declaration binding run
+            // exactly as in production.
             Parser parser = new Parser(lex.tokens(), sourcePath,
-                invocation.semanticProfile());
+                invocation.semanticProfile(), lex.directiveEvents());
             ParseResult parseResult = parser.parse();
             diagnostics.addAll(parseResult.diagnostics());
             if (parseResult.hasErrors()) {
@@ -1891,6 +1895,12 @@ public final class CompilationOrchestrator {
             // plus the field-descriptor array) from this record.
             Map<String, HostModuleDeclarations> hostModules =
                 new HashMap<>();
+            // Extern-C imports (fixed-name-directive-events D9): raw
+            // import paths whose resolved module is a declaration file
+            // with effective FileDirectives.externC — the re-keyed JS
+            // E6003 FFI_UNSUPPORTED_BACKEND arm keys on this set at the
+            // import statement.
+            Set<String> externCImports = new HashSet<>();
             if (info.rawAst != null) {
                 for (StatementNode stmt : info.rawAst.statements()) {
                     if (stmt instanceof ImportDeclaration imp) {
@@ -1908,6 +1918,12 @@ public final class CompilationOrchestrator {
                                         && !isSpecStdlibModuleInfo(imported)) {
                                     hostModules.put(imp.modulePath(),
                                         hostDeclarationsOf(imported));
+                                }
+                                if (imported.isDeclarationFile
+                                        && imported.rawAst != null
+                                        && imported.rawAst.fileDirectives()
+                                            .externC()) {
+                                    externCImports.add(imp.modulePath());
                                 }
                             }
                         }
@@ -1930,8 +1946,8 @@ public final class CompilationOrchestrator {
             // runtime $require; LEGACY_SAFE_INT emits no selector.
             JsBackend.JsCodegenResult res = JsBackend.generate(
                 info.rawAst, info.checkResult, info.sourcePath, info.modulePath,
-                importResolutions, hostModules, isEntry, identityIndex,
-                identityIndex.moduleIdentityLookup(),
+                importResolutions, hostModules, externCImports, isEntry,
+                identityIndex, identityIndex.moduleIdentityLookup(),
                 sourceMap ? new SourceMapGenerator() : null,
                 invocation.semanticProfile());
             // Native ranged backend list (T12): the backend emits
@@ -2448,7 +2464,8 @@ public final class CompilationOrchestrator {
                 return null;
             }
 
-            Parser parser = new Parser(lex.tokens(), syntheticPath);
+            Parser parser = new Parser(lex.tokens(), syntheticPath,
+                lex.directiveEvents());
             ParseResult parseResult = parser.parse();
             diagnostics.addAll(parseResult.diagnostics());
             if (parseResult.hasErrors()) {

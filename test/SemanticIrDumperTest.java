@@ -858,7 +858,7 @@ public class SemanticIrDumperTest {
                 fail("the literals fixture failed to lex: " + lex.diagnostics());
                 return;
             }
-            Parser parser = new Parser(lex.tokens(), filename);
+            Parser parser = new Parser(lex.tokens(), filename, lex.directiveEvents());
             ParseResult parseResult = parser.parse();
             if (parseResult.hasErrors()) {
                 fail("the literals fixture failed to parse: " + parseResult.diagnostics());

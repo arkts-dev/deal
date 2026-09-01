@@ -1,7 +1,6 @@
 // @spec: C FFI declaration files — C struct classes
-// @description: a // @c-struct class field of type string is a compile-time error (v1.2 C FFI field allowlist: int, number, boolean, same-file c-pointer classes only)
-// @expected: known-fail compile-error any
-// @issue: ISSUE-0111
+// @description: a @c-struct marker without an @extern-c file directive is E1046 at the directive range (the semantic field-allowlist reason belongs to ISSUE-0162)
+// @expected: compile-error E1046
 // @features: c-ffi, classes, v1.2
 
 // @c-struct

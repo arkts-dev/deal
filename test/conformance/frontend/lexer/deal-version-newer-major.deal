@@ -1,6 +1,6 @@
 // @spec: Lexical elements — v1.2 @deal-version file directive
 // @description: A declaration version with a newer major version is rejected
-// @expected: compile-error E1055
+// @expected: compile-error E1046
 // @features: lexer, directives, deal-version, v1.2
 
 // @deal-version 2.0

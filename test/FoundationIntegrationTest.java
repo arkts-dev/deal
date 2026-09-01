@@ -1661,8 +1661,9 @@ public class FoundationIntegrationTest {
                 return new ParserOutcome(false, lex.diagnostics(), null, null);
             }
             ParseResult result = config.legacyParserConstructor
-                ? new Parser(lex.tokens(), file).parse()
-                : new Parser(lex.tokens(), file, config.parserProfile).parse();
+                ? new Parser(lex.tokens(), file, lex.directiveEvents()).parse()
+                : new Parser(lex.tokens(), file, config.parserProfile,
+                    lex.directiveEvents()).parse();
             Integer locatedLine = null;
             Integer locatedColumn = null;
             if (!result.hasErrors() && c.expected()
@@ -2864,13 +2865,19 @@ public class FoundationIntegrationTest {
             }
             String source = Files.readString(
                 Path.of("test", "conformance", locator));
+            // ISSUE-0273: the production orchestrator lexes header-free
+            // sources — classification headers are stripped at this
+            // materialization (the shared harness metadata seam), never
+            // in production.
+            String stripped = ConformanceHarnessMetadata
+                .stripClassificationHeaders(source);
             CompilerInvocation invocation = rowPresent
                 ? LegacyProfileRegressionCatalog.invocationFor(locator)
                 : LegacyProfileRegressionCatalog.frontendInvocation();
             Path runDir = tmp.resolve("catalog-" + rowPresent);
             Path src = runDir.resolve("src");
             Files.createDirectories(src);
-            Files.writeString(src.resolve("int_convert_range.deal"), source);
+            Files.writeString(src.resolve("int_convert_range.deal"), stripped);
             CompilationOrchestrator orchestrator = compile(
                 src.resolve("int_convert_range.deal").toAbsolutePath(),
                 runDir.resolve("out"), Backend.LUAJIT, List.of(src.toAbsolutePath()),

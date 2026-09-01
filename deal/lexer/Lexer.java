@@ -2,6 +2,8 @@ package deal.lexer;
 
 import deal.ast.TokenType;
 import deal.diagnostics.CompilerDiagnostic;
+import deal.diagnostics.DiagnosticCode;
+import deal.diagnostics.DiagnosticNote;
 import deal.diagnostics.DiagnosticRange;
 import deal.diagnostics.RangeOrigin;
 import deal.source.ScalarSourceCursor;
@@ -9,7 +11,6 @@ import deal.source.ScalarSourceCursor;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import deal.diagnostics.DiagnosticCode;
 
 /**
  * Tokenizer that converts DEAL source text into a list of {@link Token}s.
@@ -20,8 +21,12 @@ import deal.diagnostics.DiagnosticCode;
  * and recovers to continue tokenizing.</p>
  *
  * <p>Recognizes compiler directive comments such as {@code // @jsonable}
- * and attaches them to the next non-comment token via
- * {@link Token#directives()}.</p>
+ * and emits structured {@link CompilerDirective} events
+ * (fixed-name-directive-events D1–D3): fixed-name first-match splitting,
+ * unknown-name and punctuation/empty recovery (E1044 — the only
+ * directive diagnostic the lexer emits), and the ordered next-token
+ * anchoring machine. The events travel in
+ * {@link LexResult#directiveEvents()}; tokens carry no directives.</p>
  *
  * <p>Position tracking is owned by a {@link ScalarSourceCursor}: every
  * position and scalar offset is measured in decoded Unicode scalars (a
@@ -38,6 +43,7 @@ import deal.diagnostics.DiagnosticCode;
  * LexResult result = lexer.tokenize();
  * for (Token t : result.tokens()) { ... }
  * for (CompilerDiagnostic d : result.diagnostics()) { ... }
+ * for (CompilerDirective e : result.directiveEvents()) { ... }
  * }</pre>
  */
 public final class Lexer {
@@ -70,6 +76,18 @@ public final class Lexer {
         Map.entry("as",       TokenType.AS)
     );
 
+    /**
+     * The fixed directive alternatives in matching order (D2): the first
+     * complete literal match after {@code @} is the name.
+     */
+    private static final List<DirectiveName> FIXED_NAMES = List.of(
+        DirectiveName.DEAL_VERSION,
+        DirectiveName.JSONABLE,
+        DirectiveName.EXTERN_C,
+        DirectiveName.C_STRUCT,
+        DirectiveName.C_POINTER
+    );
+
     private final String source;
     private final String file;
 
@@ -83,21 +101,29 @@ public final class Lexer {
 
     private final List<CompilerDiagnostic> diagnostics = new ArrayList<>();
 
+    /** Structured directive events, ordered by eventIndex (D1). */
+    private final List<CompilerDirective> directiveEvents = new ArrayList<>();
+
+    /**
+     * The pending declaration run (D3): event indices into
+     * {@link #directiveEvents}. A declaration directive starts or
+     * extends it; whitespace preserves it; an ordinary comment, block
+     * comment, file directive, or unknown directive clears it without
+     * anchoring. When a non-comment token is about to be emitted, every
+     * event in the still-pending run is anchored at that token's stream
+     * index — anchor before clear before emission.
+     */
+    private final List<Integer> pendingDeclarationRun = new ArrayList<>();
+
+    /** Non-comment tokens emitted so far (the preceding token count). */
+    private int nonCommentTokenCount = 0;
+
     private int pos;      // current UTF-16 index in source (0-based), in lockstep with cursor
 
     // Token start position (set before reading each token)
     private int tokenStartLine;
     private int tokenStartCol;
     private int tokenStartScalarOffset;
-
-    /** Pending compiler directives accumulated from comment lines (D1). */
-    private final List<String> pendingDirectives = new ArrayList<>();
-
-    /** True once at least one non-comment token has been produced. */
-    private boolean anyNonCommentToken = false;
-
-    /** True when a {@code @deal-version} directive has already been seen. */
-    private boolean dealVersionDirectiveSeen = false;
 
     /**
      * Creates a new lexer for the given source text.
@@ -119,37 +145,30 @@ public final class Lexer {
     /**
      * Tokenizes the entire source and returns the result.
      *
-     * @return a {@link LexResult} containing all tokens and any diagnostics
+     * @return a {@link LexResult} containing all tokens, any diagnostics,
+     *         and the ordered directive events
      */
     public LexResult tokenize() {
         List<Token> tokens = new ArrayList<>();
 
         while (pos < source.length()) {
-            Token token = nextToken();
+            Token token = nextToken(tokens.size());
             if (token != null) {
                 tokens.add(token);
             }
         }
 
         // Emit EOF token at the current position: the final cursor position
-        // with zero scalar length (D3).  Directives that were never
-        // consumed by a following token (a trailing comment line or a file
-        // containing only comments) attach to the EOF token so the parser
-        // still validates their values.  Placement is enforced at directive
-        // inspection time, not here: a directive with no preceding
-        // non-comment token satisfies "before the first non-comment token"
-        // vacuously.  Attachment routes through the offset-preserving
-        // withDirectives copy, so the EOF token keeps its final cursor
-        // offsets (D3).
+        // with zero scalar length (D3). EOF performs no anchoring
+        // transition (D3): leftover events stay in directiveEvents as
+        // unanchored records for the parser's placement diagnostics — the
+        // EOF token never carries events (D1).
         Token eof = new Token(TokenType.EOF, "", cursor.line(), cursor.column(), 0,
-            cursor.scalarOffset(), 0, List.of());
-        if (!pendingDirectives.isEmpty()) {
-            eof = eof.withDirectives(List.copyOf(pendingDirectives));
-            pendingDirectives.clear();
-        }
+            cursor.scalarOffset(), 0);
         tokens.add(eof);
 
-        return new LexResult(List.copyOf(tokens), List.copyOf(diagnostics));
+        return new LexResult(List.copyOf(tokens), List.copyOf(diagnostics),
+            List.copyOf(directiveEvents));
     }
 
     // =========================================================================
@@ -158,9 +177,12 @@ public final class Lexer {
 
     /**
      * Reads the next token from the source, or null if at end of input.
-     * Attaches any pending compiler directives to the returned token.
+     * Before the token is emitted, the ordered transition assigns the
+     * token's stream index ({@code nextTokenIndex}) to every event in the
+     * still-pending declaration run, then clears the run, then emits the
+     * token (anchor before clear before emission, D3).
      */
-    private Token nextToken() {
+    private Token nextToken(int nextTokenIndex) {
         skipWhitespaceAndComments();
         if (pos >= source.length()) {
             return null;
@@ -185,17 +207,21 @@ public final class Lexer {
             token = readOperatorOrPunctuation();
         }
 
-        // Attach pending compiler directives to this token (D1).  The
-        // attachment routes through the offset-preserving withDirectives
-        // copy, so makeToken's computed scalar offsets survive on
-        // directive-bearing tokens (D3).
-        if (token != null && !pendingDirectives.isEmpty()) {
-            token = token.withDirectives(List.copyOf(pendingDirectives));
-            pendingDirectives.clear();
-        }
-
         if (token != null) {
-            anyNonCommentToken = true;
+            // D3: anchor before clear before token emission — every event
+            // of one run satisfies
+            // declarationAnchorTokenIndex == precedingNonCommentTokenCount
+            // because no non-comment token can be emitted between event
+            // creation and anchoring.
+            if (!pendingDeclarationRun.isEmpty()) {
+                for (int eventIndex : pendingDeclarationRun) {
+                    directiveEvents.set(eventIndex,
+                        directiveEvents.get(eventIndex)
+                            .withDeclarationAnchor(nextTokenIndex));
+                }
+                pendingDeclarationRun.clear();
+            }
+            nonCommentTokenCount++;
         }
 
         return token;
@@ -250,23 +276,22 @@ public final class Lexer {
     /**
      * Skips a single-line comment: // ... until end of line.
      *
-     * <p>Inspects the comment body for recognized compiler directives
-     * (currently {@code @jsonable}) and buffers them in
-     * {@link #pendingDirectives} for attachment to the next non-comment
-     * token (D1).</p>
-     *
-     * <p>All non-newline scalars are consumed via {@link #bump()} so column
-     * tracking remains accurate when a line comment ends at EOF.</p>
+     * <p>Scans the comment body for a compiler directive event (D1–D2)
+     * and drives the declaration-run machine (D3). All non-newline
+     * scalars are consumed via {@link #bump()} so column tracking remains
+     * accurate when a line comment ends at EOF.</p>
      */
     private void skipLineComment() {
         ScalarSourceCursor.Mark commentStart = cursor.mark(); // first '/'
         bump(); // skip first /
         bump(); // skip second /
 
-        // Inspect comment body for compiler directives (D1)
-        inspectDirective(commentStart);
+        scanDirectiveBody(commentStart);
 
-        // Consume the rest of the line (existing behavior)
+        // Consume the rest of the line (the directive scan has already
+        // advanced through the name and raw argument; this loop consumes
+        // any remaining scalars — the horizontal whitespace and punctuation
+        // after an unknown/empty form — up to the terminator).
         while (pos < source.length()) {
             char c = source.charAt(pos);
             if (c == '\n') {
@@ -285,163 +310,221 @@ public final class Lexer {
     }
 
     /**
-     * Inspects the comment body starting at the current position for
-     * recognized compiler directives.  Recognized directives are added
-     * to {@link #pendingDirectives}.
+     * Scans the comment body starting at the current position for a
+     * compiler directive (D2) and updates the declaration-run machine
+     * (D3). The comment body starts after the consumed {@code //}; the
+     * cursor is left at the first scalar the rest-of-line consumption
+     * loop must still consume.
      *
-     * <p>DEAL v1.2 recognizes exactly five directive names:
-     * {@code deal-version}, {@code jsonable}, {@code extern-c},
-     * {@code c-struct}, and {@code c-pointer}.  {@code @deal-version} is
-     * a file directive: it must occur before the first non-comment token
-     * (E1052), may occur at most once (E1053), and accepts exactly one
-     * non-empty version argument (E1054).  The other recognized names
-     * keep the v1.1 attachment behavior (bare {@code @name} directive on
-     * the following token).  Names outside the recognized set remain
-     * ordinary comments; rejecting them is tracked separately
-     * (ISSUE-0111).</p>
+     * <p>Rules:
+     * <ul>
+     *   <li>Start only when, after {@code //} and optional {@code [ \t]*},
+     *       the next scalar is {@code @}.</li>
+     *   <li>First-match fixed alternatives in the fixed order; every
+     *       remaining pre-terminator scalar is the raw argument (no
+     *       delimiter requirement); a recognized prefix is never
+     *       reclassified as unknown.</li>
+     *   <li>Unknown-name recovery: the maximal
+     *       {@code [A-Za-z][A-Za-z0-9-]*} run → E1044 at the recovered
+     *       name range with a note carrying the complete comment.</li>
+     *   <li>Punctuation/empty forms: E1044 over {@code @} plus the
+     *       maximal adjacent run of scalars that are not space, tab,
+     *       line terminator, or EOF.</li>
+     *   <li>E1044 is the only directive diagnostic the lexer emits.</li>
+     * </ul></p>
      *
-     * <p>The inspection is non-consuming: all lookahead over the name and
-     * argument positions runs on cursor mark/reset snapshots, and the
-     * comment body itself is consumed by {@link #skipLineComment()}
-     * afterwards.</p>
+     * <p>Run machine (D3): a declaration directive starts or extends the
+     * run; an ordinary comment, a file directive, or an unknown directive
+     * clears the run without anchoring it; the breaking directive keeps
+     * its own event/diagnostic.</p>
      */
-    private void inspectDirective(ScalarSourceCursor.Mark commentStart) {
-        ScalarSourceCursor.Mark bodyStart = cursor.mark();
-
-        // Skip optional leading horizontal whitespace between // and '@'.
+    private void scanDirectiveBody(ScalarSourceCursor.Mark commentStart) {
+        // Optional horizontal whitespace between // and '@'.
         int scalar;
         while ((scalar = cursor.peekScalar()) == ' ' || scalar == '\t') {
-            cursor.advance();
+            advanceCursor();
         }
 
-        // Must start with @ to be a directive
+        // Must start with '@' to be a directive; an ordinary comment
+        // clears the run without anchoring (D3).
         if (cursor.peekScalar() != '@') {
-            cursor.reset(bodyStart);
+            pendingDeclarationRun.clear();
             return;
         }
 
-        // Complete directive comment range (parent D6): from the first '/'
-        // of '//' through the last comment scalar — half-open, with the end
-        // at the line terminator's first scalar (or EOF).
-        DiagnosticRange commentRange = completeCommentRange(commentStart);
+        ScalarSourceCursor.Mark atMark = cursor.mark();
+        advanceCursor(); // '@'
+        ScalarSourceCursor.Mark nameStartMark = cursor.mark();
 
-        // Re-walk for the name and argument (non-consuming).
-        cursor.reset(bodyStart);
-        while ((scalar = cursor.peekScalar()) == ' ' || scalar == '\t') {
-            cursor.advance();
-        }
-        cursor.advance(); // '@'
-
-        // Read the directive name: [a-zA-Z0-9-]+
-        StringBuilder name = new StringBuilder();
-        while (true) {
-            int s = cursor.peekScalar();
-            if (s < 0 || !isDirectiveNameChar((char) s)) {
+        // D2 step 2: try the five fixed alternatives in the fixed order.
+        // The first complete literal match is the name.
+        DirectiveName matched = null;
+        for (DirectiveName candidate : FIXED_NAMES) {
+            if (tryMatchLiteral(candidate.text())) {
+                matched = candidate;
                 break;
             }
-            name.append((char) s);
-            cursor.advance();
         }
-        if (name.isEmpty()) {
-            // '@' with no name does not match CompilerDirectiveComment.
-            cursor.reset(bodyStart);
+
+        if (matched != null) {
+            ScalarSourceCursor.Mark nameEndMark = cursor.mark();
+
+            // Raw argument: every remaining pre-terminator scalar.
+            StringBuilder raw = new StringBuilder();
+            while (true) {
+                int s = cursor.peekScalar();
+                if (s < 0 || s == '\n' || s == '\r') {
+                    break;
+                }
+                raw.appendCodePoint(s);
+                advanceCursor();
+            }
+            // The cursor now sits at the terminator's first scalar (or
+            // EOF); the rest-of-line loop below will consume it.
+
+            DiagnosticRange sourceRange = rangeBetween(commentStart,
+                cursor.mark());
+            DiagnosticRange nameRange = rangeBetween(nameStartMark, nameEndMark);
+            CompilerDirective event = new CompilerDirective(
+                directiveEvents.size(), matched, raw.toString(),
+                trimHorizontal(raw.toString()), sourceRange, nameRange,
+                nonCommentTokenCount, null);
+            addDirectiveEvent(event);
+            // D3: a file directive clears the run without anchoring it;
+            // a declaration directive starts or extends it.
+            if (matched.isDeclarationDirective()) {
+                pendingDeclarationRun.add(event.eventIndex());
+            } else {
+                pendingDeclarationRun.clear();
+            }
             return;
         }
 
-        // Read the argument: everything up to the line terminator, with
-        // surrounding horizontal whitespace trimmed.
-        StringBuilder arg = new StringBuilder();
+        // No fixed alternative matches from the first character after '@'.
+        int first = cursor.peekScalar();
+        if (first >= 0 && isAsciiLetter(first)) {
+            // D2 step 3: unknown-name recovery — the maximal
+            // [A-Za-z][A-Za-z0-9-]* run for E1044. A recognized prefix is
+            // never reclassified as unknown (handled above).
+            while (true) {
+                int s = cursor.peekScalar();
+                if (!(isAsciiLetter(s) || (s >= '0' && s <= '9') || s == '-')) {
+                    break;
+                }
+                advanceCursor();
+            }
+            ScalarSourceCursor.Mark nameEndMark = cursor.mark();
+            DiagnosticRange complete = completeCommentRangeFrom(commentStart);
+            DiagnosticRange nameRange = rangeBetween(nameStartMark, nameEndMark);
+            errorWithNote(DiagnosticCode.E1044,
+                "Unrecognized compiler directive", nameRange, complete);
+            CompilerDirective event = new CompilerDirective(
+                directiveEvents.size(), null, "", "", complete, nameRange,
+                nonCommentTokenCount, null);
+            addDirectiveEvent(event);
+            // Unknown directives break runs without anchoring (D3).
+            pendingDeclarationRun.clear();
+            return;
+        }
+
+        // D2 step 4: punctuation/empty form — E1044 over '@' plus the
+        // maximal adjacent run of scalars that are not space, tab, line
+        // terminator, or EOF.
         while (true) {
             int s = cursor.peekScalar();
-            if (s < 0 || s == '\n' || s == '\r') {
+            if (s < 0 || s == ' ' || s == '\t' || s == '\n' || s == '\r') {
                 break;
             }
-            arg.appendCodePoint(s);
-            cursor.advance();
+            advanceCursor();
         }
-        String argument = arg.toString().trim();
+        ScalarSourceCursor.Mark runEndMark = cursor.mark();
+        DiagnosticRange complete = completeCommentRangeFrom(commentStart);
+        DiagnosticRange runRange = rangeBetween(atMark, runEndMark);
+        errorWithNote(DiagnosticCode.E1044,
+            "Unrecognized compiler directive", runRange, complete);
+        CompilerDirective event = new CompilerDirective(
+            directiveEvents.size(), null, "", "", complete, runRange,
+            nonCommentTokenCount, null);
+        addDirectiveEvent(event);
+        pendingDeclarationRun.clear();
+    }
 
-        cursor.reset(bodyStart);
-
-        switch (name.toString()) {
-            case "deal-version" -> {
-                if (dealVersionDirectiveSeen) {
-                    error(DiagnosticCode.E1053,
-                        "Duplicate @deal-version directive (each file directive may occur at most once)",
-                        commentRange);
-                }
-                dealVersionDirectiveSeen = true;
-                if (anyNonCommentToken) {
-                    error(DiagnosticCode.E1052,
-                        "@deal-version must occur before the first non-comment token",
-                        commentRange);
-                }
-                if (argument.isEmpty()) {
-                    error(DiagnosticCode.E1054,
-                        "@deal-version requires exactly one non-empty version argument",
-                        commentRange);
-                } else if (hasInternalWhitespace(argument)) {
-                    error(DiagnosticCode.E1054,
-                        "@deal-version requires exactly one non-empty version argument, got: '"
-                            + argument + "'",
-                        commentRange);
-                } else {
-                    pendingDirectives.add("@deal-version " + argument);
-                }
-            }
-            case "jsonable", "extern-c", "c-struct", "c-pointer" -> {
-                // v1.1-compatible attachment: the bare directive name
-                // attaches to the following token; any trailing text is
-                // not part of the directive.
-                pendingDirectives.add("@" + name);
-            }
-            default -> {
-                // v1.1-compatible: an unrecognized directive name stays
-                // an ordinary comment.  Rejecting it with E1056 is the
-                // tracked follow-up ISSUE-0111.
-            }
-        }
+    /** Appends one event to the ordered event list (D1). */
+    private void addDirectiveEvent(CompilerDirective event) {
+        directiveEvents.add(event);
     }
 
     /**
-     * Computes the complete directive comment range without consuming: from
-     * the first {@code /} of {@code //} (the cursor position recorded in
-     * {@code commentStart}) through the last comment scalar, half-open with
-     * the end at the line terminator's first scalar (or EOF). The cursor is
-     * restored to {@code commentStart} before returning.
+     * Tries to match the given ASCII literal at the current cursor
+     * position without a net position change on failure: on a complete
+     * match the cursor advances past the literal and returns true;
+     * otherwise the cursor is restored and false is returned.
      */
-    private DiagnosticRange completeCommentRange(ScalarSourceCursor.Mark commentStart) {
-        cursor.reset(commentStart);
-        int startLine = cursor.line();
-        int startCol = cursor.column();
-        int startOffset = cursor.scalarOffset();
+    private boolean tryMatchLiteral(String literal) {
+        ScalarSourceCursor.Mark mark = cursor.mark();
+        for (int i = 0; i < literal.length(); i++) {
+            if (cursor.peekScalar() != literal.charAt(i)) {
+                resetCursor(mark);
+                return false;
+            }
+            advanceCursor();
+        }
+        return true;
+    }
 
+    /**
+     * Computes the complete directive comment range without a net
+     * position change: from the first {@code /} of {@code //} (the
+     * cursor position recorded in {@code commentStart}) through the last
+     * comment scalar, half-open with the end at the line terminator's
+     * first scalar (or EOF). The cursor position at entry is restored
+     * before returning.
+     */
+    private DiagnosticRange completeCommentRangeFrom(ScalarSourceCursor.Mark commentStart) {
+        ScalarSourceCursor.Mark current = cursor.mark();
+        resetCursor(commentStart);
         int s;
         while ((s = cursor.peekScalar()) >= 0 && s != '\n' && s != '\r') {
-            cursor.advance();
+            advanceCursor();
         }
-        int endOffset = cursor.scalarOffset();
-        DiagnosticRange range = new DiagnosticRange(file, startLine, startCol,
-            cursor.line(), cursor.column(), startOffset, endOffset,
-            endOffset - startOffset, RangeOrigin.SOURCE);
-
-        cursor.reset(commentStart);
+        DiagnosticRange range = rangeBetween(commentStart, cursor.mark());
+        resetCursor(current);
         return range;
     }
 
-    private static boolean isDirectiveNameChar(char c) {
-        return (c >= 'a' && c <= 'z')
-            || (c >= 'A' && c <= 'Z')
-            || (c >= '0' && c <= '9')
-            || c == '-';
+    /**
+     * The half-open SOURCE range from the position recorded in
+     * {@code start} through the position recorded in {@code end}.
+     */
+    private DiagnosticRange rangeBetween(ScalarSourceCursor.Mark start,
+                                         ScalarSourceCursor.Mark end) {
+        int startOffset = start.scalarOffset();
+        int endOffset = end.scalarOffset();
+        return new DiagnosticRange(file, start.line(), start.column(),
+            end.line(), end.column(), startOffset, endOffset,
+            endOffset - startOffset, RangeOrigin.SOURCE);
     }
 
-    private static boolean hasInternalWhitespace(String s) {
-        for (int i = 0; i < s.length(); i++) {
-            char c = s.charAt(i);
-            if (c == ' ' || c == '\t') return true;
+    /** Strips only U+0020 and U+0009 from both ends (D2). */
+    private static String trimHorizontal(String raw) {
+        int start = 0;
+        int end = raw.length();
+        while (start < end) {
+            char c = raw.charAt(start);
+            if (c != ' ' && c != '\t') break;
+            start++;
         }
-        return false;
+        while (end > start) {
+            char c = raw.charAt(end - 1);
+            if (c != ' ' && c != '\t') break;
+            end--;
+        }
+        return raw.substring(start, end);
+    }
+
+    private static boolean isAsciiLetter(int scalar) {
+        return (scalar >= 'a' && scalar <= 'z')
+            || (scalar >= 'A' && scalar <= 'Z');
     }
 
     /**
@@ -453,7 +536,9 @@ public final class Lexer {
      * <p>All non-newline characters are consumed via {@link #bump()} so
      * that subsequent tokens on the same line report correct column
      * positions.  Unterminated block comments produce E1004 anchored at
-     * the complete comment range (comment start through EOF, D5).</p>
+     * the complete comment range (comment start through EOF, D5).
+     * A block comment breaks a pending declaration run without anchoring
+     * it (D3).</p>
      */
     private void skipBlockComment() {
         int startLine = cursor.line();
@@ -461,6 +546,9 @@ public final class Lexer {
         int startOffset = cursor.scalarOffset();
         bump(); // skip first /
         bump(); // skip *
+
+        // D3: an ordinary (block) comment clears the run without anchoring.
+        pendingDeclarationRun.clear();
 
         while (pos < source.length()) {
             char c = source.charAt(pos);
@@ -941,6 +1029,24 @@ public final class Lexer {
     }
 
     /**
+     * Advances the cursor during non-consuming directive lookahead while
+     * keeping the UTF-16 {@code pos} in lockstep (the scalar cursor is
+     * the owner; {@code pos} must always mirror {@code cursor.index()}).
+     */
+    private void advanceCursor() {
+        cursor.advance();
+        pos = cursor.index();
+    }
+
+    /**
+     * Restores a cursor mark while keeping {@code pos} in lockstep.
+     */
+    private void resetCursor(ScalarSourceCursor.Mark mark) {
+        cursor.reset(mark);
+        pos = cursor.index();
+    }
+
+    /**
      * Handles a newline (\\n or \\r) through the cursor: one scalar offset;
      * the line increments and the column resets to 1 (the cursor's CRLF
      * rule suppresses the line change for an LF following a consumed CR).
@@ -965,13 +1071,13 @@ public final class Lexer {
     /**
      * Creates a token at the current token start position with the given
      * type and lexeme. Records the token-start scalar offset captured in
-     * {@link #nextToken()} and computes {@code scalarLength} as the cursor
-     * distance consumed since (D3).
+     * {@link #nextToken(int)} and computes {@code scalarLength} as the
+     * cursor distance consumed since (D3).
      */
     private Token makeToken(TokenType type, String lexeme) {
         int scalarLen = cursor.scalarOffset() - tokenStartScalarOffset;
         return new Token(type, lexeme, tokenStartLine, tokenStartCol,
-            lexeme.length(), tokenStartScalarOffset, scalarLen, List.of());
+            lexeme.length(), tokenStartScalarOffset, scalarLen);
     }
 
     // =========================================================================
@@ -985,6 +1091,17 @@ public final class Lexer {
      */
     private void error(DiagnosticCode code, String message, DiagnosticRange range) {
         diagnostics.add(CompilerDiagnostic.error(code, message, range));
+    }
+
+    /**
+     * Emits a ranged {@link CompilerDiagnostic} with one secondary-range
+     * note carrying the complete directive comment (E1044, D6).
+     */
+    private void errorWithNote(DiagnosticCode code, String message,
+                               DiagnosticRange range, DiagnosticRange noteRange) {
+        diagnostics.add(new CompilerDiagnostic(code.code(), "error", message,
+            range, List.of(new DiagnosticNote(
+                "complete directive comment", noteRange)), code));
     }
 
     /**

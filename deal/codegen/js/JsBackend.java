@@ -196,11 +196,12 @@ import java.util.TreeMap;
  * E2010/E2011) are unchanged.
  *
  * <p>ISSUE-0252 rejection pass: the D8 rejection table with exact
- * error-severity diagnostics at their documented sites — a
- * {@code @extern-c}-marked import is E6003 containing
+ * error-severity diagnostics at their documented sites — an import of
+ * an extern-C declaration module is E6003 containing
  * {@code FFI_UNSUPPORTED_BACKEND} at the import statement, keyed on
- * the parser-propagated {@code ImportDeclaration.directives()} marker
- * component ({@link #rejectUnsupportedImport}, live at this merge,
+ * the orchestrator-built extern-C import set
+ * (fixed-name-directive-events D9;
+ * {@link #rejectUnsupportedImport}, live at this merge,
  * never a dead placeholder, and preceding any host handling);
  * a non-stdlib declaration-file import (a {@code hostModules} entry)
  * emits the {@code $rt.loadHost} binding with the emitter-rendered
@@ -368,6 +369,12 @@ public final class JsBackend {
     // slices (T4/T6); retained here for the module shape.
     private final Map<String, String> importResolutions;
     private final Map<String, HostModuleDeclarations> hostModules;
+    /**
+     * Raw import paths whose resolved module is an extern-C declaration
+     * file (fixed-name-directive-events D9): the re-keyed E6003
+     * {@code FFI_UNSUPPORTED_BACKEND} arm keys on this set.
+     */
+    private final Set<String> externCImports;
     private final boolean isEntry;
     /**
      * The backend-wide int mode derived from the invocation's
@@ -492,6 +499,7 @@ public final class JsBackend {
                       String sourcePath, String modulePath,
                       Map<String, String> importResolutions,
                       Map<String, HostModuleDeclarations> hostModules,
+                      Set<String> externCImports,
                       boolean isEntry,
                       CanonicalRuntimeTypeDescriptor descriptors,
                       SourceMapGenerator sourceMapGenerator,
@@ -502,6 +510,7 @@ public final class JsBackend {
         this.modulePath = modulePath;
         this.importResolutions = importResolutions;
         this.hostModules = hostModules;
+        this.externCImports = externCImports;
         this.isEntry = isEntry;
         this.descriptors = descriptors;
         this.sourceMapGenerator = sourceMapGenerator;
@@ -630,8 +639,9 @@ public final class JsBackend {
         ModuleIdentityResolver.IdentityIndex standalone =
             ModuleIdentityResolver.buildIndex(byPath);
         return generate(program, result, sourcePath, modulePath,
-            importResolutions, hostModules, isEntry, standalone,
-            standalone.moduleIdentityLookup(), sourceMap, semanticProfile);
+            importResolutions, hostModules, Set.<String>of(), isEntry,
+            standalone, standalone.moduleIdentityLookup(), sourceMap,
+            semanticProfile);
     }
 
     /**
@@ -662,6 +672,10 @@ public final class JsBackend {
      *                         {@code ModuleIdentityResolver.IdentityIndex})
      * @param moduleIdentities the compilation's dotted-module-path &rarr;
      *                         module-identity classification
+     * @param externCImports   raw import paths whose resolved module is
+     *                         an extern-C declaration file
+     *                         (fixed-name-directive-events D9) — the
+     *                         re-keyed E6003 arm keys on this set
      * @param sourceMap        the mapping recorder (or {@code null})
      * @param semanticProfile  the project-wide semantic profile
      */
@@ -669,6 +683,7 @@ public final class JsBackend {
                                            String sourcePath, String modulePath,
                                            Map<String, String> importResolutions,
                                            Map<String, HostModuleDeclarations> hostModules,
+                                           Set<String> externCImports,
                                            boolean isEntry,
                                            CanonicalClassIdentityIndex identityIndex,
                                            Function<String, CanonicalModuleIdentity> moduleIdentities,
@@ -680,6 +695,8 @@ public final class JsBackend {
             "importResolutions must not be null");
         java.util.Objects.requireNonNull(hostModules,
             "hostModules must not be null");
+        java.util.Objects.requireNonNull(externCImports,
+            "externCImports must not be null");
         java.util.Objects.requireNonNull(identityIndex,
             "identityIndex must not be null");
         java.util.Objects.requireNonNull(moduleIdentities,
@@ -687,7 +704,8 @@ public final class JsBackend {
         java.util.Objects.requireNonNull(semanticProfile,
             "semanticProfile must not be null");
         JsBackend backend = new JsBackend(result.typeMap(), result.symbolTable(),
-            sourcePath, modulePath, importResolutions, hostModules, isEntry,
+            sourcePath, modulePath, importResolutions, hostModules,
+            externCImports, isEntry,
             new CanonicalRuntimeTypeDescriptor(identityIndex, moduleIdentities),
             sourceMap, semanticProfile);
         return backend.generateProgram(program);
@@ -739,10 +757,10 @@ public final class JsBackend {
         // spec-stdlib raw path emits <relpath>/std/<name>, an
         // importResolutions entry a project-module relative require,
         // and a hostModules entry the loadHost binding (D1 below). The
-        // rejection pass runs first: a @extern-c-marked import (E6003)
+        // rejection pass runs first: an extern-C import (E6003)
         // emits its diagnostic and no binding — a rejected import never
         // reaches the require path (js-backend-emitter D8). The E6003
-        // arm precedes any host handling, so an @extern-c-marked host
+        // arm precedes any host handling, so an extern-C host
         // path rejects before the loadHost binding is consulted.
         List<String> importBindings = new ArrayList<>();
         for (StatementNode stmt : program.statements()) {
@@ -1132,23 +1150,24 @@ public final class JsBackend {
 
     /**
      * The D8 import-classification rejections, fired before any import
-     * binding is computed (js-backend-emitter D8). A
-     * {@code @extern-c}-marked import — keyed on the
-     * parser-propagated {@code ImportDeclaration.directives()}
-     * component — is E6003 containing {@code FFI_UNSUPPORTED_BACKEND}
-     * at the import statement
+     * binding is computed (js-backend-emitter D8; re-keyed by
+     * fixed-name-directive-events D9). An import whose raw path is
+     * marked in the orchestrator-built extern-C import set — the
+     * resolved module is a declaration file with effective
+     * {@code FileDirectives.externC} — is E6003 containing
+     * {@code FFI_UNSUPPORTED_BACKEND} at the import statement
      * (deal-v1.2-directives-and-c-ffi-declarations D8: an incapable
      * backend rejects {@code @extern-c} before any artifact write).
      * The former host-ABI E6000 arm retired with ISSUE-0328: a
      * non-stdlib declaration-file import (a {@code hostModules} entry)
      * now emits the {@code $rt.loadHost} binding with the declared map
      * (js-v12-host-abi-completion D1). The E6003 arm precedes any host
-     * handling, so an {@code @extern-c}-marked host path rejects before
-     * the loadHost binding is consulted. Spec-stdlib raw paths and
+     * handling, so an extern-C host path rejects before the loadHost
+     * binding is consulted. Spec-stdlib raw paths and
      * {@code importResolutions} entries are never rejected here.
      */
     private boolean rejectUnsupportedImport(ImportDeclaration imp) {
-        if (imp.directives().contains("@extern-c")) {
+        if (externCImports.contains(imp.modulePath())) {
             diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E6003,
                 "JavaScript backend: @extern-c imports are not supported "
                     + "(FFI_UNSUPPORTED_BACKEND, ISSUE-0169 skeleton)",

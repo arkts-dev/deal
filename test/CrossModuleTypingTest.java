@@ -190,7 +190,7 @@ public class CrossModuleTypingTest {
     private static TypedProgram check(String source, TypingResolver resolver) {
         String filename = "main.deal";
         LexResult lex = new Lexer(source, filename).tokenize();
-        ParseResult parse = new Parser(lex.tokens(), filename).parse();
+        ParseResult parse = new Parser(lex.tokens(), filename, lex.directiveEvents()).parse();
         NameResolver nr = new NameResolver(filename, resolver);
         SymbolTable symTable = nr.resolve(parse.program());
         assertTrue("name-resolution diagnostics: " + nr.diagnostics(),
