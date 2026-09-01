@@ -58,7 +58,9 @@ import java.util.regex.Pattern;
  *   <li>The registry: 24 entries, all SHADOW, in the S4 capability order
  *       with LUAJIT before JVM; the digest equals a stored golden
  *       recomputed in a fresh JVM invocation byte-identically; no
- *       consumer axis and no promotion transition logic.</li>
+ *       consumer axis and exactly one pure promotion/demotion
+ *       transition derivation ({@code withState}, D3) that carries
+ *       no gate policy.</li>
  *   <li>The CLI: inventing {@code --profile}/{@code --purpose} fails with
  *       "unknown option"; existing CLI behaviors are unchanged;
  *       {@code deal/Main.java} constructs PUBLIC_BUILD through the
@@ -584,7 +586,7 @@ public class InvocationProfileRegistryTest {
             check(entry.target() == expectedTarget,
                 "entry " + i + " target is " + expectedTarget + "; got " + entry.target());
             check(entry.state() == CapabilityRegistry.State.SHADOW,
-                "entry " + i + " is SHADOW (nothing is PROMOTED in this epic)");
+                "entry " + i + " is SHADOW (the release default is all SHADOW)");
         }
 
         // Every capability × target pair resolves to SHADOW.
@@ -611,8 +613,9 @@ public class InvocationProfileRegistryTest {
             check(true, "entries() rejects clear()");
         }
 
-        // No promotion transition logic: the class declares no mutation or
-        // transition method — all public methods are pinned accessors.
+        // The single closed transition surface (ISSUE-0241 D3): the class
+        // declares exactly one pure derivation method plus the pinned
+        // accessors — no mutation method exists.
         Set<String> publicMethods = new LinkedHashSet<>();
         for (Method m : CapabilityRegistry.class.getDeclaredMethods()) {
             if (Modifier.isPublic(m.getModifiers())) {
@@ -620,12 +623,103 @@ public class InvocationProfileRegistryTest {
             }
         }
         check(publicMethods.equals(Set.of("releaseRegistry", "entries", "state",
-                "canonicalJson", "capabilityRegistryHash")),
-            "the registry public surface is exactly the five pinned accessors; got "
-                + publicMethods);
+                "canonicalJson", "capabilityRegistryHash", "withState")),
+            "the registry public surface is exactly the six pinned accessors plus "
+                + "the withState transition surface; got " + publicMethods);
         for (Field f : CapabilityRegistry.class.getDeclaredFields()) {
             check(Modifier.isFinal(f.getModifiers()),
                 "registry field " + f.getName() + " is final (no in-place transition)");
+        }
+
+        // D3 surface invariants (ISSUE-0241's own verification of its
+        // landed transition surface): pure and total over the closed
+        // axes (no gate policy — every combination derives), null
+        // components rejected with the existing null policy,
+        // immutable-producing, closed-shape-preserving,
+        // digest-recomputing, no-op idempotent.
+        String releaseDigest = registry.capabilityRegistryHash();
+        for (SemanticCapability capability : SemanticCapability.values()) {
+            for (Target target : Target.values()) {
+                for (CapabilityRegistry.State state : CapabilityRegistry.State.values()) {
+                    CapabilityRegistry derived =
+                        registry.withState(capability, target, state);
+                    check(derived != registry,
+                        "withState(" + capability + ", " + target + ", " + state
+                            + ") returns a fresh instance (D3.2 immutable-producing)");
+                    int differing = 0;
+                    boolean differingEntryIsRequested = false;
+                    for (int i = 0; i < CapabilityRegistry.ENTRY_COUNT; i++) {
+                        CapabilityRegistry.Entry derivedEntry =
+                            derived.entries().get(i);
+                        if (!entries.get(i).equals(derivedEntry)) {
+                            differing++;
+                            differingEntryIsRequested =
+                                derivedEntry.capability() == capability
+                                    && derivedEntry.target() == target
+                                    && derivedEntry.state() == state;
+                        }
+                    }
+                    if (registry.state(capability, target) == state) {
+                        check(differing == 0 && derived.entries().equals(entries),
+                            "withState(" + capability + ", " + target + ", " + state
+                                + ") with the source's own state yields byte-identical "
+                                + "entries (D3.2/D3.5; got " + differing
+                                + " differing entries)");
+                    } else {
+                        check(differing == 1 && differingEntryIsRequested,
+                            "withState(" + capability + ", " + target + ", " + state
+                                + ") changes exactly the single " + capability + " × "
+                                + target + " entry to " + state + " (D3.2/D3.3; got "
+                                + differing + " differing entries)");
+                    }
+                    check(derived.entries().size() == CapabilityRegistry.ENTRY_COUNT
+                            && derived.state(capability, target) == state,
+                        "withState(" + capability + ", " + target + ", " + state
+                            + ") preserves the closed 24-entry cross product and "
+                            + "resolves the requested state (D3.3)");
+                    check(derived.capabilityRegistryHash().equals(
+                            CanonicalJson.sha256Hex(CanonicalJson.serializeBytes(
+                                derived.canonicalJson()))),
+                        "withState(" + capability + ", " + target + ", " + state
+                            + ") recomputes the digest over the result's own "
+                            + "entries (D3.4)");
+                    CapabilityRegistry noop = derived.withState(capability, target,
+                        derived.state(capability, target));
+                    check(noop.entries().equals(derived.entries())
+                            && noop.capabilityRegistryHash().equals(
+                                derived.capabilityRegistryHash()),
+                        "withState(" + capability + ", " + target + ", " + state
+                            + ") composed with its own state is a no-op idempotent "
+                            + "(D3.5)");
+                }
+            }
+        }
+        check(registry.capabilityRegistryHash().equals(releaseDigest)
+                && registry.entries().stream()
+                    .allMatch(e -> e.state() == CapabilityRegistry.State.SHADOW),
+            "the release default stays all-SHADOW with its pinned digest across "
+                + "every withState derivation (D3.2 source-immutability)");
+        try {
+            registry.withState(null, Target.LUAJIT, CapabilityRegistry.State.PROMOTED);
+            fail("withState(null, ...) must be rejected");
+        } catch (NullPointerException expected) {
+            check(true, "withState(null, ...) is rejected with the existing null "
+                + "policy (D3.1)");
+        }
+        try {
+            registry.withState(SemanticCapability.SIGNED_INT32, null,
+                CapabilityRegistry.State.PROMOTED);
+            fail("withState(c, null, ...) must be rejected");
+        } catch (NullPointerException expected) {
+            check(true, "withState(c, null, ...) is rejected with the existing null "
+                + "policy (D3.1)");
+        }
+        try {
+            registry.withState(SemanticCapability.SIGNED_INT32, Target.LUAJIT, null);
+            fail("withState(c, t, null) must be rejected");
+        } catch (NullPointerException expected) {
+            check(true, "withState(c, t, null) is rejected with the existing null "
+                + "policy (D3.1)");
         }
 
         // Entry record shape: exactly {capability, target, state} — no
