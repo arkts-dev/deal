@@ -1038,14 +1038,6 @@ public final class CompilationOrchestrator {
         return path;
     }
 
-    /**
-     * True when a top-level statement exports a class declaration.
-     */
-    private static boolean exportedBy(StatementNode stmt) {
-        return stmt instanceof ExportDeclaration ed
-            && ed.declaration() instanceof ClassDeclaration;
-    }
-
     private boolean hasLexErrors(LexResult lex) {
         return lex.diagnostics().stream().anyMatch(d -> "error".equals(d.severity()));
     }
@@ -1090,21 +1082,30 @@ public final class CompilationOrchestrator {
                 hasErrors = true;
             }
 
-            // T7 required-identity routing (D6 (a)/(b)/(c)): an exported
-            // class publishes class metadata (export metadata and, down
-            // the pipeline, descriptor/plan/FFI metadata), so its public
-            // class identity is required here — the assembled identity is
-            // registered in the compilation's CanonicalClassIdentityIndex
-            // and an unrepresentable identity (reserved first root
-            // component, forbidden characters, ambiguous containment, an
+            // T7 required-identity routing (D6 (a)/(b)/(c)): every class
+            // declaration — exported or not — requires its public class
+            // identity here. The LuaJIT backend emits a class tag (and
+            // therefore the canonical descriptor projection) for every
+            // class declaration in an emitted module, and an
+            // unrepresentable identity must fail E2010 at the class name
+            // span before any metadata or artifact is published — never
+            // escape as a backend-dependent raw exception at descriptor
+            // emission (the JVM backend compiles a non-exported class
+            // without a tag, so gating every class makes the behavior
+            // backend-independent). The assembled identity is registered
+            // in the compilation's CanonicalClassIdentityIndex; an
+            // unrepresentable identity (reserved first root component,
+            // forbidden characters, ambiguous containment, an
             // unrepresentable externals specifier, a builtin class other
-            // than Error) is E2010 at the class name span before any
-            // metadata or artifact is published. The unconditional
-            // identity-less rule (d) already fired in phase 0.
+            // than Error) is E2010 at the class name span. The
+            // unconditional identity-less rule (d) already fired in
+            // phase 0, whose failure aborts the compile before this
+            // phase runs, so an identity-less source is never re-gated
+            // here.
             if (info.rawAst != null) {
                 for (StatementNode stmt : info.rawAst.statements()) {
                     ClassDeclaration cd = classDeclarationOf(stmt);
-                    if (cd == null || !exportedBy(stmt)) {
+                    if (cd == null) {
                         continue;
                     }
                     ModuleIdentityAssembly.ClassIdentityResult required =

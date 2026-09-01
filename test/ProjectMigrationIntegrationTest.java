@@ -225,6 +225,132 @@ public class ProjectMigrationIntegrationTest {
     }
 
     // =========================================================================
+    // 2.5. A non-exported class whose public identity is unrepresentable
+    //      is E2010 at the class name span before any artifact — never a
+    //      backend-dependent raw descriptor-emission exception.
+    // =========================================================================
+
+    private static void testNonExportedClassUnrepresentableIdentityIsE2010()
+            throws Exception {
+        System.out.println("-- Non-exported class, unrepresentable identity: "
+            + "E2010 at the class name span, no raw exception --");
+
+        // (a) Reserved-first-component configured root ($external): the
+        // public class identity of a non-exported class is required like
+        // any exported class's, so the unrepresentable root fails E2010
+        // in phase 1 instead of crashing the LuaJIT class-tag emission
+        // (the pre-fix behavior: raw IllegalStateException, exit 2).
+        Path reserved = Files.createTempDirectory("deal_mig_reserved_");
+        try {
+            write(reserved, "deal.json",
+                "{\n  \"languageVersion\": \"1.2\",\n"
+                    + "  \"moduleRoots\": [\"$external\"],\n"
+                    + "  \"output\": \"build/lua\",\n"
+                    + "  \"backend\": \"luajit\"\n}\n");
+            write(reserved, "$external/main.deal",
+                "class C { x: int = 1; }\n"
+                    + "export function main(): null { return null; }\n");
+            Path entry = reserved.resolve("$external/main.deal")
+                .toAbsolutePath();
+
+            String[] run = runCliCapturingErr(new String[]{
+                "compile", entry.toString()});
+            check("1".equals(run[0]),
+                "the non-exported class under a reserved root exits 1 (never"
+                    + " the raw exit 2): " + run[1]);
+            check(run[1].contains("E2010")
+                    && run[1].contains("Class 'C'")
+                    && run[1].contains("not representable"),
+                "the non-exported class under a reserved root is E2010 at the"
+                    + " class name span: " + run[1]);
+            check(run[1].contains("main.deal:1:1")
+                    && run[1].contains("[span "),
+                "the E2010 carries the complete SOURCE class-name range"
+                    + " (main.deal:1:1): " + run[1]);
+            check(!run[1].contains("Exception")
+                    && !run[1].contains("\tat ")
+                    && !run[1].contains("deal: internal error"),
+                "no raw exception escapes the reserved-root class path: "
+                    + run[1]);
+            check(!Files.exists(reserved.resolve("build/lua/main.lua")),
+                "no artifact is published for the rejected non-exported"
+                    + " class");
+
+            // (b) Exported control: the identical exported class pins the
+            // same E2010 surface at the class declaration span (1:8).
+            write(reserved, "$external/exported.deal",
+                "export class C { x: int = 1; }\n"
+                    + "export function main(): null { return null; }\n");
+            String[] exportedRun = runCliCapturingErr(new String[]{
+                "compile", reserved.resolve("$external/exported.deal")
+                    .toAbsolutePath().toString()});
+            check("1".equals(exportedRun[0])
+                    && exportedRun[1].contains("E2010")
+                    && exportedRun[1].contains("exported.deal:1:8"),
+                "the exported variant keeps the pinned E2010 at the class"
+                    + " declaration span (exported.deal:1:8): "
+                    + exportedRun[1]);
+
+            // (c) Class-free control: class-free code under the same
+            // unrepresentable root stays valid (unrepresentable identity
+            // invalidates no class-free module).
+            write(reserved, "$external/free.deal",
+                "export function main(): null { return null; }\n");
+            String[] freeRun = runCliCapturingErr(new String[]{
+                "compile", reserved.resolve("$external/free.deal")
+                    .toAbsolutePath().toString()});
+            check("0".equals(freeRun[0]),
+                "class-free code under the unrepresentable root still"
+                    + " compiles: " + freeRun[1]);
+        } finally {
+            deleteRecursively(reserved);
+        }
+
+        // (d) Forbidden relative component (contiguous '->' in a source
+        // directory): the same gate fires for the non-exported class
+        // before any artifact.
+        Path arrow = Files.createTempDirectory("deal_mig_arrow_");
+        try {
+            write(arrow, "deal.json",
+                "{\n  \"languageVersion\": \"1.2\",\n"
+                    + "  \"moduleRoots\": [\"src\"],\n"
+                    + "  \"output\": \"build/lua\",\n"
+                    + "  \"backend\": \"luajit\"\n}\n");
+            write(arrow, "src/sub->dir/main.deal",
+                "class D { x: int = 1; }\n"
+                    + "export function main(): null { return null; }\n");
+            Path entry = arrow.resolve("src/sub->dir/main.deal")
+                .toAbsolutePath();
+
+            String[] run = runCliCapturingErr(new String[]{
+                "compile", entry.toString()});
+            check("1".equals(run[0]),
+                "the non-exported class under a '->'-bearing directory exits"
+                    + " 1 (never the raw exit 2): " + run[1]);
+            check(run[1].contains("E2010")
+                    && run[1].contains("Class 'D'")
+                    && run[1].contains("'sub->dir'")
+                    && run[1].contains("not representable"),
+                "the '->' relative component is E2010 at the class name span: "
+                    + run[1]);
+            check(run[1].contains("main.deal:1:1")
+                    && run[1].contains("[span "),
+                "the E2010 carries the complete SOURCE class-name range"
+                    + " (main.deal:1:1): " + run[1]);
+            check(!run[1].contains("Exception")
+                    && !run[1].contains("\tat ")
+                    && !run[1].contains("deal: internal error"),
+                "no raw exception escapes the '->'-component class path: "
+                    + run[1]);
+            check(!Files.exists(arrow.resolve("build/lua/main.lua")),
+                "no artifact is published for the rejected '->'-component"
+                    + " class");
+        } finally {
+            deleteRecursively(arrow);
+        }
+    }
+
+    // =========================================================================
     // 3. Zero/two ancestor manifests: one E2010 with the pinned synthetic
     //    range and candidate notes; --diagnostics-json carries the range.
     // =========================================================================
@@ -630,6 +756,7 @@ public class ProjectMigrationIntegrationTest {
 
         testSingleManifestProjectRunsBothBackends();
         testOutOfRootClassIsE2010();
+        testNonExportedClassUnrepresentableIdentityIsE2010();
         testAncestorManifestDiscovery();
         testMalformedManifestBeforeOverride();
         testCliOverrides();
