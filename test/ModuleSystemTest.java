@@ -1333,10 +1333,13 @@ public class ModuleSystemTest {
             }
         }
 
-        // Verify the generated code references the imported defaults table
+        // Verify the generated code constructs through the imported
+        // default plan (emitter page D4: alias["<C>_plan"]).
         String genCode = Files.readString(outputDir.resolve("cc_main.lua"));
-        check(genCode.contains("V.Vec_defaults"),
-            "Cross-module class construction: generated code uses V.Vec_defaults");
+        check(genCode.contains("V.Vec_plan"),
+            "Cross-module class construction: generated code uses V.Vec_plan");
+        check(genCode.contains("__rt.class_plan_("),
+            "Cross-module class construction: generated code uses class_plan_");
     }
 
     private static void testCrossModuleClassHas() throws Exception {

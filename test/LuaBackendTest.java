@@ -223,14 +223,104 @@ public class LuaBackendTest {
         }
     }
 
+    /**
+     * Structural well-formedness fallback (used when luajit is
+     * unavailable). ISSUE-0340 plan artifacts embed
+     * {@code function() ... end} evaluator closures that end without a
+     * closing parenthesis, so the old {@code function(}/{@code end)}
+     * pairing no longer balances. Balance Lua block keywords instead:
+     * {@code function}/{@code if}/{@code for}/{@code while}/{@code do}
+     * open a block closed by {@code end}; {@code repeat} closes by
+     * {@code until}. Keywords inside strings and line comments are
+     * ignored (the emitted artifacts quote user strings and carry
+     * {@code --} line comments only).
+     */
     private static boolean structuralLuaCheck(String lua) {
-        int funcCount = countOccurrences(lua, "function(");
-        int endFuncCount = countOccurrences(lua, "end)");
-        if (funcCount != endFuncCount) {
-            System.err.println("Structural check: function( count " + funcCount + " != end) count " + endFuncCount);
+        Deque<String> stack = new ArrayDeque<>();
+        int i = 0;
+        int n = lua.length();
+        while (i < n) {
+            char c = lua.charAt(i);
+            if (c == '"' || c == '\'') {
+                i = skipLuaStringLiteral(lua, i, c);
+                continue;
+            }
+            if (c == '-' && i + 1 < n && lua.charAt(i + 1) == '-') {
+                i = skipLuaLineComment(lua, i);
+                continue;
+            }
+            if (Character.isLetter(c) || c == '_') {
+                int j = i;
+                while (j < n && (Character.isLetterOrDigit(lua.charAt(j))
+                        || lua.charAt(j) == '_')) {
+                    j++;
+                }
+                String word = lua.substring(i, j);
+                switch (word) {
+                    case "function", "if", "for", "while",
+                         "repeat" -> stack.push(word);
+                    case "do" -> {
+                        // A `for`/`while` clause's own `do` shares the
+                        // loop's single `end`; only a bare `do ... end`
+                        // block opens its own block.
+                        if (stack.isEmpty()
+                                || (!"for".equals(stack.peek())
+                                    && !"while".equals(stack.peek()))) {
+                            stack.push(word);
+                        }
+                    }
+                    case "end" -> {
+                        if (stack.isEmpty()) {
+                            System.err.println("Structural check: unbalanced end");
+                            return false;
+                        }
+                        stack.pop();
+                    }
+                    case "until" -> {
+                        if (stack.isEmpty()
+                                || !"repeat".equals(stack.pop())) {
+                            System.err.println("Structural check: until without repeat");
+                            return false;
+                        }
+                    }
+                    default -> { }
+                }
+                i = j;
+                continue;
+            }
+            i++;
+        }
+        if (!stack.isEmpty()) {
+            System.err.println("Structural check: unclosed blocks "
+                + stack.size());
             return false;
         }
         return true;
+    }
+
+    /** Skips a Lua quoted string literal opened at {@code i} (quote
+     * {@code q}); returns the index after the closing quote. */
+    private static int skipLuaStringLiteral(String lua, int i, char q) {
+        int n = lua.length();
+        i++;
+        while (i < n) {
+            char c = lua.charAt(i);
+            if (c == '\\') { i += 2; continue; }
+            if (c == q) return i + 1;
+            i++;
+        }
+        return n;
+    }
+
+    /** Skips a {@code --} line comment starting at {@code i} (the first
+     * dash); returns the index after the newline. */
+    private static int skipLuaLineComment(String lua, int i) {
+        int n = lua.length();
+        i += 2;
+        while (i < n && lua.charAt(i) != '\n') {
+            i++;
+        }
+        return Math.min(i + 1, n);
     }
 
     private static int countOccurrences(String s, String sub) {
@@ -654,11 +744,17 @@ public class LuaBackendTest {
             "class User { name: string = \"\"; nick?: string; }"
         );
         assertNoErrors(out, "class decl");
-        assertContains(out.lua, "User_defaults", "defaults table");
+        assertContains(out.lua, "User_plan", "default-plan artifact");
         assertContains(out.lua, "__deal[\"User_meta\"] = __rt.export_class",
             "export class meta");
-        assertContains(out.lua, "name = \"\"", "required field in defaults");
-        assertContains(out.lua, "nick = __MISSING", "optional field with __MISSING");
+        assertContains(out.lua,
+            "{ name = \"name\", descriptor = \"string\", optional = false, evaluator = function() return \"\" end }",
+            "required field plan entry with evaluator");
+        assertContains(out.lua,
+            "{ name = \"nick\", descriptor = \"string\", optional = true }",
+            "optional field plan entry without evaluator");
+        check(!out.lua.contains("nick = __MISSING"),
+            "no eager __MISSING defaults table");
     }
 
     // =========================================================================
@@ -672,10 +768,10 @@ public class LuaBackendTest {
             "let u: User = { name: \"Ada\" };"
         );
         assertNoErrors(out, "class construction");
-        assertContains(out.lua, "__rt.class_(", "class_ call");
+        assertContains(out.lua, "__rt.class_plan_(", "class_plan_ call");
         assertContains(out.lua, "\"@test.deal/User\"", "qualified class identity");
         assertContains(out.lua, "name = \"Ada\"", "provided field");
-        assertContains(out.lua, "User_defaults", "references module-level defaults");
+        assertContains(out.lua, "User_plan", "references module-level plan");
     }
 
     // =========================================================================
@@ -697,7 +793,7 @@ public class LuaBackendTest {
         } else {
             check(false, "instance-constructor path: expected no errors");
         }
-        assertContains(instanceOut.lua, "__rt.class_(\"@test.deal/User\"",
+        assertContains(instanceOut.lua, "__rt.class_plan_(\"@test.deal/User\"",
             "instance path emits qualified construction tag");
         assertContains(instanceOut.lua, "__rt.export_class(\"@test.deal/User\")",
             "instance path emits qualified META tag");
@@ -2387,8 +2483,8 @@ public class LuaBackendTest {
         assertContains(out.lua, "\"name\"", "name field in descriptor");
         assertContains(out.lua, "jtype = \"string\"", "string jtype");
         assertContains(out.lua, "jtype = \"int\"", "int jtype");
-        // Check defaults and meta still emitted
-        assertContains(out.lua, "__deal[\"User_defaults\"] = ", "User_defaults");
+        // Check the default plan and meta still emitted
+        assertContains(out.lua, "__deal[\"User_plan\"] = ", "User_plan");
         assertContains(out.lua, "__deal[\"User_meta\"] = ", "User_meta");
         // Structural check only: LuaJIT on this system lacks $ identifier support,
         // but the generated code is structurally valid.
@@ -2405,7 +2501,7 @@ public class LuaBackendTest {
             "C$fromJson wrapper");
         assertContains(out.lua, "\"(string)->?@test.deal/User\"", "fromJson signature (canonical nullable)");
         assertContains(out.lua, "pcall(__json_parse, s)", "pcall wrapping json parse");
-        assertContains(out.lua, "__rt.json_from_json(", "json_from_json call");
+        assertContains(out.lua, "__rt.json_from_plan(", "json_from_plan call");
         assertContains(out.lua, "return __NULL", "return null on failure");
         assertContains(out.lua, "if instance == nil then return __NULL end", "nil check");
         check(structuralLuaCheck(out.lua), "valid Lua (structural)");
@@ -2473,8 +2569,8 @@ public class LuaBackendTest {
         check(bFieldsPos >= 0, "B_fields exists");
         check(aFieldsPos >= 0, "A_fields exists");
         check(bFieldsPos < aFieldsPos, "B_fields emitted before A_fields (topological sort)");
-        // Check that A_fields references B_defaults and B_fields
-        assertContains(lua, "B_defaults", "A references B_defaults");
+        // Check that A_fields references B_plan and B_fields
+        assertContains(lua, "B_plan", "A references B_plan");
         assertContains(lua, "B_fields", "A references B_fields");
         check(structuralLuaCheck(lua), "valid Lua (structural)");
     }
@@ -2507,9 +2603,9 @@ public class LuaBackendTest {
         assertNotContains(out.lua, "Plain$toJson", "no Plain$toJson for non-jsonable");
         // Should NOT have std.json loading
         assertNotContains(out.lua, "require(\"std.json\")", "no std.json for non-jsonable");
-        // Still has defaults and meta
-        assertContains(out.lua, "__deal[\"Plain_defaults\"] = ",
-            "Plain_defaults still emitted");
+        // Still has the default plan and meta
+        assertContains(out.lua, "__deal[\"Plain_plan\"] = ",
+            "Plain_plan still emitted");
         assertContains(out.lua, "__deal[\"Plain_meta\"] = ", "Plain_meta still emitted");
         check(isValidLua(out.lua), "valid Lua");  // non-jsonable: no $ identifiers
     }

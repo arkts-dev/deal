@@ -1,0 +1,46 @@
+// @spec: Classes — @jsonable nested classes
+// @description: @jsonable fromJson decodes nested compiler classes at depth >= 3 — a class-typed field inside a nested class's sub-document must reconstruct the tagged instances, never silently yield the DEAL null; X$fromJson('{"y":{"z":{"n":7}}}') round-trips through X$toJson with y.z.n preserved
+// @expected: runtime-ok
+// @features: jsonable, nested
+
+// @jsonable
+export class Z {
+  n: int = 0;
+}
+
+// @jsonable
+export class Y {
+  z: Z = {};
+}
+
+// @jsonable
+export class X {
+  y: Y = {};
+}
+
+export function test_fromjson_nested_depth3(): null {
+  let x: X | null = X$fromJson("{\"y\":{\"z\":{\"n\":7}}}");
+  if (x === null) {
+    throw { code: "TEST_FAIL", message: "depth3 fromJson returned null" };
+  }
+  if (x !== null) {
+    if (x.y.z.n !== 7) {
+      throw { code: "TEST_FAIL", message: "depth3 nested value mismatch" };
+    }
+    let again: string = X$toJson(x);
+    let x2: X | null = X$fromJson(again);
+    if (x2 === null) {
+      throw { code: "TEST_FAIL", message: "depth3 re-roundtrip returned null" };
+    }
+    if (x2 !== null) {
+      if (x2.y.z.n !== 7) {
+        throw { code: "TEST_FAIL", message: "depth3 re-roundtrip value mismatch" };
+      }
+    }
+  }
+  return null;
+}
+
+export function main(): null {
+  return null;
+}

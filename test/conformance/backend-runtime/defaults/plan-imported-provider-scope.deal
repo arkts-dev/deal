@@ -1,0 +1,19 @@
+// @spec: Classes — Construction
+// @description: v1.2 default plans: defaults declared in module A run in A's declaring-module scope when module B imports and constructs the class — the provider's module-local default function executes through the imported plan (the consumer module has no binding for the provider-local name).
+// @expected: runtime-ok
+// @features: classes, defaults, modules
+
+import * as P from "./plan_provider_lib"
+
+export function test_plan_imported_provider_scope(): null {
+  let a: P.Provider = {};
+  let b: P.Provider = {};
+  if (a.value !== 7 || b.value !== 7) {
+    throw { code: "TEST_FAIL", message: "provider-scope default result mismatch" };
+  }
+  return null;
+}
+
+export function main(): null {
+  return null;
+}

@@ -1,12 +1,19 @@
 package deal.test;
 
+import deal.ast.ClassField;
+import deal.ast.NamedType;
 import deal.ast.ProgramNode;
+import deal.ast.Span;
+import deal.checker.Symbol;
 import deal.parser.ParseResult;
 import deal.checker.CheckResult;
 import deal.checker.NameResolver;
 import deal.checker.SymbolTable;
 import deal.checker.TypeChecker;
 import deal.codegen.lua.LuaBackend;
+import deal.identity.CanonicalModuleIdentity;
+import deal.identity.ProjectModuleIdentity;
+import deal.module.ModuleIdentityResolver;
 import deal.lexer.LexResult;
 import deal.lexer.Lexer;
 import deal.parser.Parser;
@@ -70,6 +77,21 @@ public class LuaAbiBackendTest {
     }
 
     private static CompileResult compile(String source, String filename) {
+        return compile(source, filename, new StubModuleResolver(),
+            Map.of());
+    }
+
+    /**
+     * Host-module-aware compile variant: the caller-supplied resolver
+     * registers the imported module surfaces, and the hostModules map
+     * flows into the backend exactly like the conformance harness's
+     * host registry (raw import path → declared export name → Type),
+     * so the host-class discriminator can be inspected on the emitted
+     * chunk.
+     */
+    private static CompileResult compile(String source, String filename,
+            StubModuleResolver resolver,
+            Map<String, Map<String, Type>> hostModules) {
         LexResult lex = new Lexer(source, filename).tokenize();
         if (lex.hasErrors()) {
             fail("lex errors: " + lex.diagnostics());
@@ -78,7 +100,6 @@ public class LuaAbiBackendTest {
         if (parse.hasErrors()) {
             fail("parse errors: " + parse.diagnostics());
         }
-        StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver(filename, resolver);
         SymbolTable symTable = nr.resolve(parse.program());
         if (nr.diagnostics().stream().anyMatch(
@@ -90,7 +111,10 @@ public class LuaAbiBackendTest {
         if (result.hasErrors()) {
             fail("type errors: " + result.diagnostics());
         }
-        String lua = LuaBackend.generate(parse.program(), result, filename);
+        String lua = hostModules.isEmpty()
+            ? LuaBackend.generate(parse.program(), result, filename)
+            : LuaBackend.generateWithImports(parse.program(), result,
+                filename, filename, Map.of(), hostModules);
         assertNotNull(lua);
         return new CompileResult(lua, parse.program(), result);
     }
@@ -238,7 +262,7 @@ public class LuaAbiBackendTest {
         // The fromJson/toJson bodies reference the namespace artifacts
         // (defaultsRefForTypeNode / fieldsRefForTypeNode module-level forms).
         assertThat(out.lua(), containsString(
-            "__rt.json_from_json(\"@test.deal/User\", parsed, __deal[\"User_defaults\"], __deal[\"User_fields\"])"));
+            "__rt.json_from_plan(\"@test.deal/User\", __deal[\"User_plan\"], parsed, \"test.deal\", 2, 8)"));
         assertThat(out.lua(), containsString(
             "__rt.json_to_json(\"@test.deal/User\", v, __deal[\"User_fields\"])"));
         assertThat(out.lua(), containsString("__deal[\"User_meta\"] = __rt.export_class(\"@test.deal/User\")"));
@@ -277,11 +301,11 @@ public class LuaAbiBackendTest {
             "}\n";
         CompileResult out = compile(source);
 
-        assertThat(out.lua(), containsString("__deal[\"C_defaults\"] = {[\"end\"] = 0}"));
+        assertThat(out.lua(), containsString("__deal[\"C_plan\"] = {{ name = \"end\", descriptor = \"int\", optional = false, evaluator = function() return 0 end }}"));
         assertThat(out.lua(), containsString("__deal[\"C_meta\"] = __rt.export_class(\"@test.deal/C\")"));
         assertThat(out.lua(), containsString(
-            "__rt.class_(\"@test.deal/C\", __deal[\"C_defaults\"], {[\"end\"] = 1},"));
-        assertThat(out.lua(), not(containsString("local C_defaults")));
+            "__rt.class_plan_(\"@test.deal/C\", __deal[\"C_plan\"], {[\"end\"] = 1},"));
+        assertThat(out.lua(), not(containsString("local C_plan")));
 
         assumeLuajit();
         RunResult run = runLua(out.lua(), "local c = __mod.make_c.f()\nprint(c[\"end\"])");
@@ -307,9 +331,9 @@ public class LuaAbiBackendTest {
             "export function get(): int { return 0; }\n";
         CompileResult out = compile(source);
 
-        assertThat(out.lua(), containsString("local C_defaults = {x = 0}"));
+        assertThat(out.lua(), containsString("local C_plan = {{ name = \"x\", descriptor = \"int\", optional = false, evaluator = function() return 0 end }}"));
         assertThat(out.lua(), containsString("local C_meta = __rt.export_class(\"@test.deal/C\")"));
-        assertThat(out.lua(), not(containsString("__deal[\"C_defaults\"]")));
+        assertThat(out.lua(), not(containsString("__deal[\"C_plan\"]")));
         assertThat(out.lua(), not(containsString("__deal[\"C_meta\"]")));
     }
 
@@ -328,9 +352,9 @@ public class LuaAbiBackendTest {
             "}\n";
         CompileResult out = compile(source);
 
-        assertThat(out.lua(), containsString("local C_defaults = {x = 0}"));
+        assertThat(out.lua(), containsString("local C_plan = {{ name = \"x\", descriptor = \"int\", optional = false, evaluator = function() return 0 end }}"));
         assertThat(out.lua(), containsString("local C_meta = __rt.export_class(\"@test.deal/C\")"));
-        assertThat(out.lua(), not(containsString("__deal[\"C_defaults\"]")));
+        assertThat(out.lua(), not(containsString("__deal[\"C_plan\"]")));
         assertThat(out.lua(), not(containsString("__deal[\"C_meta\"]")));
 
         assumeLuajit();
@@ -362,12 +386,12 @@ public class LuaAbiBackendTest {
             "}\n";
         CompileResult out = compile(source);
 
-        assertThat(out.lua(), containsString("__deal[\"C_defaults\"] = {x = 0}"));
-        assertThat(out.lua(), containsString("local C_defaults = {y = 0}"));
+        assertThat(out.lua(), containsString("__deal[\"C_plan\"] = {{ name = \"x\", descriptor = \"int\", optional = false, evaluator = function() return 0 end }}"));
+        assertThat(out.lua(), containsString("local C_plan = {{ name = \"y\", descriptor = \"int\", optional = false, evaluator = function() return 0 end }}"));
         // The construction references the scope-local artifact by bare name;
         // the module-level namespace entry must not be used for it.
-        assertThat(out.lua(), containsString("__rt.class_(\"@test.deal/C\", C_defaults, {y = 7},"));
-        assertThat(out.lua(), not(containsString("__rt.class_(\"@test.deal/C\", __deal[\"C_defaults\"]")));
+        assertThat(out.lua(), containsString("__rt.class_plan_(\"@test.deal/C\", C_plan, {y = 7},"));
+        assertThat(out.lua(), not(containsString("__rt.class_plan_(\"@test.deal/C\", __deal[\"C_plan\"]")));
 
         assumeLuajit();
         RunResult run = runLua(out.lua(), "print(__mod.test_shadow.f())");
@@ -415,13 +439,13 @@ public class LuaAbiBackendTest {
         CompileResult out = compile(source);
 
         // Construction inside the declaring then-branch: bare scope-local ref.
-        assertThat(out.lua(), containsString("__rt.class_(\"@test.deal/C\", C_defaults, {y = 5},"));
+        assertThat(out.lua(), containsString("__rt.class_plan_(\"@test.deal/C\", C_plan, {y = 5},"));
         // Construction in the else branch (then-branch local invisible):
         // module-level namespace entry.
         assertThat(out.lua(), containsString(
-            "__rt.class_(\"@test.deal/C\", __deal[\"C_defaults\"], {x = 2},"));
+            "__rt.class_plan_(\"@test.deal/C\", __deal[\"C_plan\"], {x = 2},"));
         assertThat(out.lua(), not(containsString(
-            "__rt.class_(\"@test.deal/C\", C_defaults, {x = 2},")));
+            "__rt.class_plan_(\"@test.deal/C\", C_plan, {x = 2},")));
 
         assumeLuajit();
         RunResult run = runLua(out.lua(),
@@ -448,9 +472,9 @@ public class LuaAbiBackendTest {
             "}\n";
         CompileResult out = compile(source);
 
-        assertThat(out.lua(), containsString("local C_defaults = {y = 0}"));
+        assertThat(out.lua(), containsString("local C_plan = {{ name = \"y\", descriptor = \"int\", optional = false, evaluator = function() return 0 end }}"));
         assertThat(out.lua(), containsString(
-            "__rt.class_(\"@test.deal/C\", __deal[\"C_defaults\"], {x = 2},"));
+            "__rt.class_plan_(\"@test.deal/C\", __deal[\"C_plan\"], {x = 2},"));
 
         assumeLuajit();
         RunResult run = runLua(out.lua(), "print(__mod.f.f())");
@@ -475,11 +499,11 @@ public class LuaAbiBackendTest {
             "}\n";
         CompileResult out = compile(source);
 
-        assertThat(out.lua(), containsString("local C_defaults = {y = 0}"));
+        assertThat(out.lua(), containsString("local C_plan = {{ name = \"y\", descriptor = \"int\", optional = false, evaluator = function() return 0 end }}"));
         assertThat(out.lua(), containsString(
-            "__rt.class_(\"@test.deal/C\", __deal[\"C_defaults\"], {x = 2},"));
+            "__rt.class_plan_(\"@test.deal/C\", __deal[\"C_plan\"], {x = 2},"));
         assertThat(out.lua(), not(containsString(
-            "__rt.class_(\"@test.deal/C\", C_defaults, {x = 2},")));
+            "__rt.class_plan_(\"@test.deal/C\", C_plan, {x = 2},")));
 
         assumeLuajit();
         RunResult run = runLua(out.lua(), "print(__mod.f.f())");
@@ -507,14 +531,14 @@ public class LuaAbiBackendTest {
             "export function g(): int { return 1; }\n";
         CompileResult out = compile(source);
 
-        assertThat(out.lua(), containsString("local C_defaults = {x = 0}"));
+        assertThat(out.lua(), containsString("local C_plan = {{ name = \"x\", descriptor = \"int\", optional = false, evaluator = function() return 0 end }}"));
         assertThat(out.lua(), containsString("local C_meta = __rt.export_class(\"@test.deal/C\")"));
         assertThat(out.lua(), containsString("exports.C = C_meta"));
-        assertThat(out.lua(), containsString("exports.C_defaults = C_defaults"));
+        assertThat(out.lua(), containsString("exports.C_plan = C_plan"));
         assertThat(out.lua(), not(containsString("exports.C = __deal[\"C_meta\"]")));
-        assertThat(out.lua(), not(containsString("exports.C_defaults = __deal[\"C_defaults\"]")));
+        assertThat(out.lua(), not(containsString("exports.C_plan = __deal[\"C_plan\"]")));
         assertThat(out.lua(), not(containsString("__deal[\"C_meta\"]")));
-        assertThat(out.lua(), not(containsString("__deal[\"C_defaults\"]")));
+        assertThat(out.lua(), not(containsString("__deal[\"C_plan\"]")));
 
         assumeLuajit();
         // Imported-module construction: a consumer constructs C through the
@@ -523,8 +547,8 @@ public class LuaAbiBackendTest {
             "local __rt = require(\"deal.runtime\")\n" +
             "print(__mod.g.f())\n" +
             "if __mod.C == nil then error(\"exports.C is nil\") end\n" +
-            "if __mod.C_defaults == nil then error(\"exports.C_defaults is nil\") end\n" +
-            "local c = __rt.class_(\"@test.deal/C\", __mod.C_defaults, {x = 3}, nil, nil, nil)\n" +
+            "if __mod.C_plan == nil then error(\"exports.C_plan is nil\") end\n" +
+            "local c = __rt.class_plan_(\"@test.deal/C\", __mod.C_plan, {x = 3}, nil, nil, nil)\n" +
             "print(c.x)");
         assertEquals("luajit exit 0, got: " + run.output(), 0, run.exit());
         assertThat(run.output(), containsString("1"));
@@ -555,11 +579,11 @@ public class LuaAbiBackendTest {
         // The deferred pass references the scope-local defaults/fields and
         // never writes namespace keys for the non-module-level class.
         assertThat(out.lua(), containsString(
-            "__rt.json_from_json(\"@test.deal/C\", parsed, C_defaults, C_fields)"));
+            "__rt.json_from_plan(\"@test.deal/C\", C_plan, parsed, \"test.deal\", 2, 8)"));
         assertThat(out.lua(), not(containsString("__deal[\"C_fields\"]")));
         assertThat(out.lua(), not(containsString("__deal[\"C$fromJson\"]")));
         assertThat(out.lua(), not(containsString("__deal[\"C$toJson\"]")));
-        assertThat(out.lua(), not(containsString("__deal[\"C_defaults\"]")));
+        assertThat(out.lua(), not(containsString("__deal[\"C_plan\"]")));
         assertThat(out.lua(), not(containsString("__deal[\"C_meta\"]")));
         assertDollarOnlyInQuotedKeys(out.lua());
 
@@ -606,10 +630,10 @@ public class LuaAbiBackendTest {
         // five export keys serve the same class identity (the
         // pre-namespace backend's chunk-end bare-name resolution).
         assertThat(out.lua(), containsString("exports.C = C_meta"));
-        assertThat(out.lua(), containsString("exports.C_defaults = C_defaults"));
+        assertThat(out.lua(), containsString("exports.C_plan = C_plan"));
         assertThat(out.lua(), not(containsString("exports.C = __deal[\"C_meta\"]")));
         assertThat(out.lua(), not(containsString(
-            "exports.C_defaults = __deal[\"C_defaults\"]")));
+            "exports.C_plan = __deal[\"C_plan\"]")));
         assertDollarOnlyInQuotedKeys(out.lua());
 
         assumeLuajit();
@@ -617,9 +641,9 @@ public class LuaAbiBackendTest {
             "local c = __mod[\"C$fromJson\"].f(\"{\\\"y\\\": 9}\")\n" +
             "print(c == nil and \"BROKEN\" or c.y)\n" +
             "if __mod.C_fields == nil then print(\"nil fields\") else print(\"fields ok\") end\n" +
-            "if __mod.C_defaults == nil then error(\"C_defaults is nil\") end\n" +
-            "if __mod.C_defaults.y ~= 0 then error(\"block defaults lost\") end\n" +
-            "if __mod.C_defaults.x ~= nil then error(\"module defaults leaked\") end");
+            "if __mod.C_plan == nil then error(\"C_plan is nil\") end\n" +
+            "if __mod.C_plan[1].name ~= \"y\" then error(\"block plan lost\") end\n" +
+            "if #__mod.C_plan ~= 1 then error(\"module plan leaked\") end");
         assertEquals("luajit exit 0, got: " + run.output(), 0, run.exit());
         assertThat(run.output(), containsString("9"));
         assertThat(run.output(), containsString("fields ok"));
@@ -645,22 +669,22 @@ public class LuaAbiBackendTest {
         CompileResult out = compile(source);
 
         assertThat(out.lua(), containsString("exports.C = __deal[\"C_meta\"]"));
-        assertThat(out.lua(), containsString("exports.C_defaults = __deal[\"C_defaults\"]"));
+        assertThat(out.lua(), containsString("exports.C_plan = __deal[\"C_plan\"]"));
         assertThat(out.lua(), containsString("exports.C_fields = __deal[\"C_fields\"]"));
         assertThat(out.lua(), containsString("exports[\"C$fromJson\"] = __deal[\"C$fromJson\"]"));
         assertThat(out.lua(), containsString("exports[\"C$toJson\"] = __deal[\"C$toJson\"]"));
         assertThat(out.lua(), not(containsString("exports.C = C_meta")));
-        assertThat(out.lua(), not(containsString("exports.C_defaults = C_defaults")));
+        assertThat(out.lua(), not(containsString("exports.C_plan = C_plan")));
         assertDollarOnlyInQuotedKeys(out.lua());
 
         assumeLuajit();
         RunResult run = runLua(out.lua(),
             "local __rt = require(\"deal.runtime\")\n" +
             "print(__mod.g.f())\n" +
-            "if __mod.C_defaults == nil then error(\"C_defaults is nil\") end\n" +
-            "if __mod.C_defaults.x ~= 0 then error(\"module defaults lost\") end\n" +
-            "if __mod.C_defaults.y ~= nil then error(\"block defaults leaked\") end\n" +
-            "local c = __rt.class_(\"@test.deal/C\", __mod.C_defaults, {x = 3}, nil, nil, nil)\n" +
+            "if __mod.C_plan == nil then error(\"C_plan is nil\") end\n" +
+            "if __mod.C_plan[1].name ~= \"x\" then error(\"module plan lost\") end\n" +
+            "if #__mod.C_plan ~= 1 then error(\"block plan leaked\") end\n" +
+            "local c = __rt.class_plan_(\"@test.deal/C\", __mod.C_plan, {x = 3}, nil, nil, nil)\n" +
             "print(c.x)\n" +
             "local d = __mod[\"C$fromJson\"].f(\"{\\\"x\\\":9}\")\n" +
             "print(d.x)");
@@ -688,21 +712,21 @@ public class LuaAbiBackendTest {
             "export function g(): int { return 1; }\n";
         CompileResult out = compile(source);
 
-        assertThat(out.lua(), containsString("local C_defaults = {y = 0}"));
+        assertThat(out.lua(), containsString("local C_plan = {{ name = \"y\", descriptor = \"int\", optional = false, evaluator = function() return 0 end }}"));
         assertThat(out.lua(), containsString("exports.C = C_meta"));
-        assertThat(out.lua(), containsString("exports.C_defaults = C_defaults"));
+        assertThat(out.lua(), containsString("exports.C_plan = C_plan"));
         assertThat(out.lua(), not(containsString("exports.C = __deal[\"C_meta\"]")));
         assertThat(out.lua(), not(containsString(
-            "exports.C_defaults = __deal[\"C_defaults\"]")));
+            "exports.C_plan = __deal[\"C_plan\"]")));
 
         assumeLuajit();
         RunResult run = runLua(out.lua(),
             "local __rt = require(\"deal.runtime\")\n" +
             "print(__mod.g.f())\n" +
-            "if __mod.C_defaults == nil then error(\"C_defaults is nil\") end\n" +
-            "if __mod.C_defaults.y ~= 0 then error(\"block defaults lost\") end\n" +
-            "if __mod.C_defaults.x ~= nil then error(\"module defaults leaked\") end\n" +
-            "local c = __rt.class_(\"@test.deal/C\", __mod.C_defaults, {y = 2}, nil, nil, nil)\n" +
+            "if __mod.C_plan == nil then error(\"C_plan is nil\") end\n" +
+            "if __mod.C_plan[1].name ~= \"y\" then error(\"block plan lost\") end\n" +
+            "if #__mod.C_plan ~= 1 then error(\"module plan leaked\") end\n" +
+            "local c = __rt.class_plan_(\"@test.deal/C\", __mod.C_plan, {y = 2}, nil, nil, nil)\n" +
             "print(c.y)");
         assertEquals("luajit exit 0, got: " + run.output(), 0, run.exit());
         assertThat(run.output(), containsString("1"));
@@ -728,18 +752,18 @@ public class LuaAbiBackendTest {
         CompileResult out = compile(source);
 
         assertThat(out.lua(), containsString("exports.C = __deal[\"C_meta\"]"));
-        assertThat(out.lua(), containsString("exports.C_defaults = __deal[\"C_defaults\"]"));
+        assertThat(out.lua(), containsString("exports.C_plan = __deal[\"C_plan\"]"));
         assertThat(out.lua(), not(containsString("exports.C = C_meta")));
-        assertThat(out.lua(), not(containsString("exports.C_defaults = C_defaults")));
+        assertThat(out.lua(), not(containsString("exports.C_plan = C_plan")));
 
         assumeLuajit();
         RunResult run = runLua(out.lua(),
             "local __rt = require(\"deal.runtime\")\n" +
             "print(__mod.f.f())\n" +
-            "if __mod.C_defaults == nil then error(\"C_defaults is nil\") end\n" +
-            "if __mod.C_defaults.x ~= 0 then error(\"module defaults lost\") end\n" +
-            "if __mod.C_defaults.y ~= nil then error(\"function-local defaults leaked\") end\n" +
-            "local c = __rt.class_(\"@test.deal/C\", __mod.C_defaults, {x = 3}, nil, nil, nil)\n" +
+            "if __mod.C_plan == nil then error(\"C_plan is nil\") end\n" +
+            "if __mod.C_plan[1].name ~= \"x\" then error(\"module plan lost\") end\n" +
+            "if #__mod.C_plan ~= 1 then error(\"function-local plan leaked\") end\n" +
+            "local c = __rt.class_plan_(\"@test.deal/C\", __mod.C_plan, {x = 3}, nil, nil, nil)\n" +
             "print(c.x)");
         assertEquals("luajit exit 0, got: " + run.output(), 0, run.exit());
         assertThat(run.output(), containsString("1"));
@@ -763,14 +787,14 @@ public class LuaAbiBackendTest {
         CompileResult out = compile(source);
 
         assertThat(out.lua(), containsString("exports.C = C_meta"));
-        assertThat(out.lua(), containsString("exports.C_defaults = C_defaults"));
+        assertThat(out.lua(), containsString("exports.C_plan = C_plan"));
         assertThat(out.lua(), not(containsString("exports.C = __deal[\"C_meta\"]")));
 
         assumeLuajit();
         RunResult run = runLua(out.lua(),
             "print(__mod.f.f())\n" +
             "print(tostring(__mod.C))\n" +
-            "print(tostring(__mod.C_defaults))");
+            "print(tostring(__mod.C_plan))");
         assertEquals("luajit exit 0, got: " + run.output(), 0, run.exit());
         assertThat(run.output(), containsString("1"));
         assertThat(run.output(), containsString("nil"));
@@ -803,12 +827,12 @@ public class LuaAbiBackendTest {
             "}\n";
         CompileResult out = compile(source);
 
-        assertThat(out.lua(), containsString("__deal[\"C_defaults\"] = {x = 0}"));
-        assertThat(out.lua(), containsString("local C_defaults = {y = 0}"));
-        assertThat(out.lua(), containsString("__rt.class_(\"@test.deal/C\", C_defaults, {y = 6},"));
+        assertThat(out.lua(), containsString("__deal[\"C_plan\"] = {{ name = \"x\", descriptor = \"int\", optional = false, evaluator = function() return 0 end }}"));
+        assertThat(out.lua(), containsString("local C_plan = {{ name = \"y\", descriptor = \"int\", optional = false, evaluator = function() return 0 end }}"));
+        assertThat(out.lua(), containsString("__rt.class_plan_(\"@test.deal/C\", C_plan, {y = 6},"));
         // The sibling function constructs the module-level class: namespace.
         assertThat(out.lua(), containsString(
-            "__rt.class_(\"@test.deal/C\", __deal[\"C_defaults\"], {x = 3},"));
+            "__rt.class_plan_(\"@test.deal/C\", __deal[\"C_plan\"], {x = 3},"));
 
         assumeLuajit();
         RunResult run = runLua(out.lua(),
@@ -857,7 +881,7 @@ public class LuaAbiBackendTest {
         CompileResult out = compile(source);
 
         assertThat(out.lua(), containsString("exports.User = __deal[\"User_meta\"]"));
-        assertThat(out.lua(), containsString("exports.User_defaults = __deal[\"User_defaults\"]"));
+        assertThat(out.lua(), containsString("exports.User_plan = __deal[\"User_plan\"]"));
         assertThat(out.lua(), containsString("exports.User_fields = __deal[\"User_fields\"]"));
         assertThat(out.lua(), containsString("exports[\"User$fromJson\"] = __deal[\"User$fromJson\"]"));
         assertThat(out.lua(), containsString("exports[\"User$toJson\"] = __deal[\"User$toJson\"]"));
@@ -942,7 +966,7 @@ public class LuaAbiBackendTest {
         // The A_fields descriptor references B artifacts in namespace form
         // (the NamedType branch of defaultsRef/fieldsRef).
         assertThat(out.lua(), containsString(
-            "defaults = __deal[\"B_defaults\"], fields = __deal[\"B_fields\"]"));
+            "plan = __deal[\"B_plan\"], fields = __deal[\"B_fields\"]"));
         assertDollarOnlyInQuotedKeys(out.lua());
     }
 
@@ -1228,4 +1252,285 @@ public class LuaAbiBackendTest {
         assertTrue("User$fromJson before repeat (sorted)",
             repeatPos >= 0 && fromJsonPos < repeatPos);
     }
+
+
+    // =========================================================================
+    // ISSUE-0340: default-plan artifacts, construction sites, discriminator
+    // =========================================================================
+
+    /**
+     * Compiler-class plan lowering (emitter page D4): the module-level
+     * declaration assigns the {@code <C>_plan} artifact during chunk
+     * load — an ordered field-entry list with evaluator closures in
+     * class source order — and the chunk never invokes an evaluator.
+     * The export surface carries the PLAN key for compiler classes
+     * only; construction sites route through {@code __rt.class_plan_}
+     * with the plan reference and the literal's span args.
+     */
+    @Test
+    public void planArtifactAssignedAtLoadExportedAndUsedAtConstruction()
+            throws Exception {
+        String source =
+            "export class C {\n" +
+            "  x: int = 0;\n" +
+            "  items: table = {};\n" +
+            "}\n" +
+            "export function make(): C {\n" +
+            "  return { x: 5 };\n" +
+            "}\n";
+        CompileResult out = compile(source);
+
+        assertThat(out.lua(), containsString(
+            "__deal[\"C_plan\"] = {{ name = \"x\", descriptor = \"int\", "
+                + "optional = false, evaluator = function() return 0 end }, "
+                + "{ name = \"items\", descriptor = \"table\", "
+                + "optional = false, evaluator = function() return {} end }}"));
+        assertThat(out.lua(), containsString("exports.C_plan = __deal[\"C_plan\"]"));
+        assertThat(out.lua(), not(containsString("exports.C_defaults")));
+        assertThat(out.lua(), not(containsString("__deal[\"C_defaults\"]")));
+        assertThat(out.lua(), containsString(
+            "__rt.class_plan_(\"@test.deal/C\", __deal[\"C_plan\"], {x = 5}, "
+                + "\"test.deal\", 6, 10)"));
+
+        assumeLuajit();
+        // Two constructions never share the mutable table default (the
+        // evaluator constructs it per attempt).
+        RunResult run = runLua(out.lua(),
+            "local a = __mod.make.f()\n"
+            + "local b = __mod.make.f()\n"
+            + "a.items.tag = 1\n"
+            + "print(b.items.tag == nil and \"FRESH\" or \"SHARED\")");
+        assertEquals("luajit exit 0, got: " + run.output(), 0, run.exit());
+        assertThat(run.output(), containsString("FRESH"));
+    }
+
+    /**
+     * The zero-invocation load-time pin: a default expression calling a
+     * function declared LATER in the module lives only inside the
+     * evaluator closure. A load-time invocation would index the
+     * not-yet-assigned function wrapper (nil) and crash the chunk; the
+     * chunk loads and the first construction runs the evaluator exactly
+     * once.
+     */
+    @Test
+    public void evaluatorClosuresAreNeverInvokedAtModuleLoad() throws Exception {
+        String source =
+            "class C {\n" +
+            "  x: int = later();\n" +
+            "}\n" +
+            "function later(): int { return 7; }\n" +
+            "export function make(): C { return {}; }\n";
+        CompileResult out = compile(source);
+
+        assertThat(out.lua(), containsString(
+            "evaluator = function() return later.f() end"));
+        // The default expression appears exactly once — inside the
+        // evaluator closure — never as a load-time chunk statement.
+        int calls = 0;
+        int idx = 0;
+        while ((idx = out.lua().indexOf("later.f()", idx)) != -1) {
+            calls++;
+            idx += "later.f()".length();
+        }
+        assertEquals("exactly one later.f() call site (the evaluator)", 1, calls);
+
+        assumeLuajit();
+        RunResult run = runLua(out.lua(),
+            "print(__mod.make.f().x)\n"
+            + "print(__mod.make.f().x)");
+        assertEquals("luajit exit 0, got: " + run.output(), 0, run.exit());
+        assertThat(run.output(), containsString("7"));
+    }
+
+    /**
+     * E8007-before-defaults phase-order pin through the emitted plan
+     * (runtime page D4 phase 1): the frontend E4002 gate rejects extra
+     * fields in compiler-class literals at compile time, so the
+     * source-visible corpus probe pins the provided-value arm (E8002)
+     * instead — this test drives the emitted {@code <C>_plan} artifact
+     * through {@code __rt.class_plan_} directly under real LuaJIT. The
+     * evaluator raises E8005 when invoked, so an out-of-order default
+     * evaluation would surface E8005 before the extra-field check; the
+     * driver observes E8007 with the evaluator untouched.
+     */
+    @Test
+    public void extraProvidedFieldRaisesE8007BeforeAnyDefaultEvaluation()
+            throws Exception {
+        String source =
+            "export class C {\n" +
+            "  x: int = 1 / 0;\n" +
+            "}\n" +
+            "export function make(): C { return {}; }\n";
+        CompileResult out = compile(source);
+
+        assertThat(out.lua(), containsString(
+            "evaluator = function() return __rt.int_div(1, 0,"));
+
+        assumeLuajit();
+        RunResult run = runLua(out.lua(),
+            "local __rt = require(\"deal.runtime\")\n"
+            + "local ok, err = pcall(__rt.class_plan_, "
+            + "\"@test.deal/C\", __mod.C_plan, {extra = 1}, "
+            + "\"t.deal\", 3, 5)\n"
+            + "if ok then error(\"extra provided field did not raise\") end\n"
+            + "if err == nil or err.code ~= \"E8007\" then\n"
+            + "  error(\"expected E8007, got \" .. tostring(err and err.code))\n"
+            + "end\n"
+            + "print(\"E8007-BEFORE-DEFAULTS\")\n");
+        assertEquals("luajit exit 0, got: " + run.output(), 0, run.exit());
+        assertThat(run.output(), containsString("E8007-BEFORE-DEFAULTS"));
+    }
+
+    /**
+     * Host-class discriminator (emitter page D4/D7): an imported class
+     * whose dotted modulePath equals the dotted form of a hostModules
+     * key constructs through exactly today's emission —
+     * {@code __rt.class_} over {@code alias[\"<C>_defaults\"]} — and no
+     * {@code <C>_plan} is read or exported for it.
+     */
+    @Test
+    public void hostDeclaredImportedClassKeepsTheDefaultsSeamAndReadsNoPlan() {
+        String filename = "hosttest.deal";
+        Map<String, Type> exports = new LinkedHashMap<>();
+        exports.put("ServerConfig", IdentityTestFixtures.classType("ServerConfig", "host.cfg"));
+        StubModuleResolver resolver = new StubModuleResolver();
+        resolver.register("host/cfg", exports);
+        // Identity-keyed ClassSymbol routing (v1.2 identity carriage):
+        // the carried identity root is the dotted "host.cfg", so the
+        // stub must expose that path too — the raw "host/cfg" path
+        // stays registered for the import's resolveModule.
+        resolver.register("host.cfg", exports);
+        resolver.registerClassSymbol("host.cfg", new Symbol.ClassSymbol(
+            "ServerConfig", List.of(
+                new ClassField(new Span("host.cfg", 1, 1, 1, 1),
+                    "port", false, false, new NamedType(
+                        new Span("host.cfg", 1, 1, 1, 1), "int"),
+                    java.util.Optional.empty())),
+            "host.cfg",
+            IdentityTestFixtures.identityOf("host.cfg", "ServerConfig")));
+        CompileResult out = compile(
+            "import * as cfg from \"host/cfg\"\n" +
+            "export function make(): cfg.ServerConfig {\n" +
+            "  return { port: 9090 };\n" +
+            "}\n",
+            filename, resolver, Map.of("host/cfg", exports));
+
+        assertThat(out.lua(), containsString(
+            "__rt.class_(\"@host.cfg/ServerConfig\", "
+                + "cfg.ServerConfig_defaults, {port = 9090}, "
+                + "\"hosttest.deal\", 3, 10)"));
+        assertThat(out.lua(), not(containsString("ServerConfig_plan")));
+    }
+
+    /**
+     * DEAL-imported discriminator arm: the same construction shape for
+     * a compiler-declared imported class routes through
+     * {@code __rt.class_plan_} over the provider's exported
+     * {@code alias[\"<C>_plan\"]}.
+     */
+    @Test
+    public void dealImportedClassConstructsThroughTheExportedPlan() {
+        String filename = "dealimport.deal";
+        Map<String, Type> exports = new LinkedHashMap<>();
+        exports.put("Item", IdentityTestFixtures.classType("Item", "lib"));
+        StubModuleResolver resolver = new StubModuleResolver();
+        resolver.register("./lib", exports);
+        // Identity-keyed ClassSymbol routing: the carried identity root
+        // is "lib", so the stub must expose that path too — "./lib"
+        // stays registered for the import's resolveModule.
+        resolver.register("lib", exports);
+        resolver.registerClassSymbol("lib", new Symbol.ClassSymbol(
+            "Item", List.of(
+                new ClassField(new Span("lib", 1, 1, 1, 1),
+                    "value", false, false, new NamedType(
+                        new Span("lib", 1, 1, 1, 1), "int"),
+                    java.util.Optional.empty())),
+            "lib",
+            IdentityTestFixtures.identityOf("lib", "Item")));
+        // The standalone descriptor surface classifies only the
+        // module's own path and the hostModules keys; register "lib" as
+        // a project module so the canonical encoder can represent
+        // @lib/Item (the conformance harness's module-path
+        // classification analog).
+        Map<String, CanonicalModuleIdentity> byPath = new LinkedHashMap<>();
+        byPath.put("", CanonicalModuleIdentity.BuiltinModule.INSTANCE);
+        byPath.put(filename, new CanonicalModuleIdentity.ProjectModule(
+            new ProjectModuleIdentity(filename, filename, List.of())));
+        byPath.put("lib", new CanonicalModuleIdentity.ProjectModule(
+            new ProjectModuleIdentity("lib", "lib", List.of())));
+        ModuleIdentityResolver.IdentityIndex index =
+            ModuleIdentityResolver.buildIndex(byPath);
+
+        LexResult lex = new Lexer(
+            "import * as lib from \"./lib\"\n" +
+            "export function make(): lib.Item {\n" +
+            "  return { value: 3 };\n" +
+            "}\n", filename).tokenize();
+        ParseResult parse = new Parser(lex.tokens(), filename).parse();
+        NameResolver nr = new NameResolver(filename, resolver);
+        SymbolTable symTable = nr.resolve(parse.program());
+        CheckResult result = TypeChecker.check(filename, symTable, nr,
+            parse.program());
+        String lua = LuaBackend.generateWithImports(parse.program(),
+            result, filename, filename, Map.of(), Map.of(), false,
+            index);
+        CompileResult out = new CompileResult(lua, parse.program(), result);
+
+        assertThat(out.lua(), containsString(
+            "__rt.class_plan_(\"@lib/Item\", lib.Item_plan, {value = 3}, "
+                + "\"dealimport.deal\", 3, 10)"));
+        assertThat(out.lua(), not(containsString("Item_defaults")));
+    }
+
+    /**
+     * Depth >= 3 nested compiler-class fromJson decode (the ISSUE-0340
+     * review-cycle fix): the generated nested class-field decoder walks
+     * the sub-document's own class-typed fields through
+     * {@code fdesc.fields} before {@code __rt.json_from_plan} validates
+     * them, so X$fromJson of a document whose nested class field itself
+     * contains a class field reconstructs tagged instances at every
+     * level instead of silently yielding the DEAL null. Pins the emitted
+     * walk plus the runtime round-trip under real LuaJIT.
+     */
+    @Test
+    public void jsonableFromJsonNestedDepth3WalksSubFieldsBeforePlan()
+            throws Exception {
+        String source =
+            "// @jsonable\n" +
+            "export class Z {\n" +
+            "  n: int = 0;\n" +
+            "}\n" +
+            "// @jsonable\n" +
+            "export class Y {\n" +
+            "  z: Z = {};\n" +
+            "}\n" +
+            "// @jsonable\n" +
+            "export class X {\n" +
+            "  y: Y = {};\n" +
+            "}\n" +
+            "export function test_jsonable_fromjson_nested_depth3(): null {\n" +
+            "  let x: X | null = X$fromJson(\"{\\\"y\\\":{\\\"z\\\":{\\\"n\\\":7}}}\");\n" +
+            "  if (x === null) { throw { code: \"TEST_FAIL\", message: \"depth3 fromJson null\" }; }\n" +
+            "  if (x !== null) {\n" +
+            "    if (x.y.z.n !== 7) { throw { code: \"TEST_FAIL\", message: \"depth3 value mismatch\" }; }\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}\n";
+        CompileResult out = compile(source);
+
+        // The plan branch pre-tags the sub-document's own class-typed
+        // fields before json_from_plan validates them.
+        assertThat(out.lua(), containsString(
+            "for _, sub in ipairs(fdesc.fields) do"));
+        assertThat(out.lua(), containsString(
+            "return __rt.json_from_plan(fdesc.className, fdesc.plan, raw)"));
+
+        // Runtime round-trip: the depth-3 document decodes to a tagged
+        // instance (TEST_FAIL would throw and fail the run otherwise).
+        assumeLuajit();
+        RunResult run = runLua(out.lua(), autoInvokeProbe());
+        assertEquals("depth-3 fromJson round-trip must pass under "
+            + "LuaJIT: " + run.output(), 0, run.exit());
+    }
+
 }

@@ -83,7 +83,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  *       @jsonable JVM defects: nested-array {@code fromJson} javac
  *       collision; table-field nested arrays E8001; the fromJson
  *       top-level input gate (ISSUE-0101 promotion).</li>
- *   <li><b>JVM-GAP-HOST-ABI-SHAPES</b> (12 entries) — JVM host ABI
+ *   <li><b>JVM-GAP-HOST-ABI-SHAPES</b> (13 entries) — JVM host ABI
  *       unsupported declared shapes: host class exports,
  *       array/function-typed parameters and returns (E6000), and the
  *       Lua pre-wrapped export form.</li>
@@ -100,6 +100,11 @@ import java.util.concurrent.atomic.AtomicInteger;
  *       cutover: the LuaJIT-owned canonical-boundary E8010
  *       signature-mismatch expectation requires the canonical matcher's
  *       function row; JVM descriptors are ISSUE-0277's.</li>
+ *   <li><b>JVM-GAP-DEFAULTS-PLANS</b> (2 entries) — the v1.2
+ *       default-plan lane (ISSUE-0340, LuaJIT-owned): imported
+ *       non-literal defaults evaluate in the declaring module's scope
+ *       under LuaJIT (E6000 on the JVM imported-class slice) and the
+ *       phase-order Error-catch probe is outside the JVM slice.</li>
  *   <li><b>JVM-GAP-INT32</b> — the signed-int32 runtime gate: the
  *       retained v1.2 JVM route (the ISSUE-0375 carrier switch plus the
  *       profile-selected helper bodies) now raises E8004 for every
@@ -339,6 +344,39 @@ public class JvmConformanceTest {
         skip("backend-runtime/host-abi/host-prewrapped-bad.deal",
             "the Lua pre-wrapped export form; no JVM analog.",
             "JVM-GAP-HOST-ABI-SHAPES");
+        skip("backend-runtime/defaults/plan-host-discriminator.deal",
+            "host class exports unsupported on JVM: E3004 \"Unknown "
+                + "class 'ServerConfig'\" (the JVM externals path "
+                + "synthesizes no host class symbols and the backend "
+                + "rejects host class exports — same root cause as "
+                + "host-class-export).", "JVM-GAP-HOST-ABI-SHAPES");
+
+        // ---- JVM-GAP-DEFAULTS-PLANS: the v1.2 default-plan lane
+        // (ISSUE-0340, LuaJIT-owned) ----
+        // The defaults corpus pins per-attempt default plans: imported
+        // non-literal defaults run in the declaring module's scope under
+        // LuaJIT (the provider's module-local default function executes
+        // through the imported plan), and the phase-order fixture probes
+        // provided-value evaluation before defaults with a caught E8002
+        // (an Error | null local with a catch-block assignment). The JVM
+        // backend evaluates defaults inline per call and rejects
+        // non-literal defaults on imported classes with E6000
+        // (JvmBackend's declared scope), and its slice rejects the
+        // Error-typed nullable local plus the catch-assignment pattern
+        // of the phase-order probe. Both fixtures stay LuaJIT/JS-lane
+        // pins until JVM default plans land (ISSUE-0277).
+        skip("backend-runtime/defaults/plan-imported-provider-scope.deal",
+            "E6000: non-literal default expression on an imported class "
+                + "(JVM defaults evaluate in the declaring module's "
+                + "scope under LuaJIT; the JVM imported-class slice "
+                + "rejects them).", "JVM-GAP-DEFAULTS-PLANS");
+        skip("backend-runtime/defaults/plan-phase-order-provided-before-defaults.deal",
+            "E6000: the Error | null catch-probe local and the "
+                + "catch-block assignment are outside the JVM slice "
+                + "(class-typed local values are local-module-class "
+                + "only and catch assignments reject forward "
+                + "references), so the caught-E8002 phase-order probe "
+                + "cannot compile.", "JVM-GAP-DEFAULTS-PLANS");
 
         // ---- JVM-GAP-XMOD-FNVALUE: cross-module function values ----
         skip("backend-runtime/closures/closure-returned-from-module.deal",
@@ -412,7 +450,12 @@ public class JvmConformanceTest {
         "JVM-GAP-DESCRIPTORS", "canonical descriptor cutover — the "
             + "LuaJIT-owned canonical-boundary E8010 signature-mismatch "
             + "expectation requires the canonical matcher's function row "
-            + "(ISSUE-0336); JVM descriptors are ISSUE-0277's"
+            + "(ISSUE-0336); JVM descriptors are ISSUE-0277's",
+        "JVM-GAP-DEFAULTS-PLANS", "v1.2 default-plan lane — imported "
+            + "non-literal defaults evaluate in the declaring module's "
+            + "scope under LuaJIT (E6000 on the JVM imported-class "
+            + "slice) and the phase-order Error-catch probe is outside "
+            + "the JVM slice (ISSUE-0340 is the LuaJIT emitter cutover)"
     );
 
     // =========================================================================
@@ -504,8 +547,20 @@ public class JvmConformanceTest {
                 + "    if (\"__NULL__\".equals(s)) return null;\n"
                 + "    return s;\n"
                 + "  }\n"
+                + "}\n"),
+        Map.entry("planprobe",
+            "final class HostPlanprobe {\n"
+                + "  private static long n = 0L;\n"
+                + "  public static Object nextValue() {\n"
+                + "    n = n + 1;\n"
+                + "    return Long.valueOf(n * 10L);\n"
+                + "  }\n"
+                + "  public static Object valueCount() {\n"
+                + "    return Long.valueOf(n);\n"
+                + "  }\n"
                 + "}\n")
     );
+
 
     // =========================================================================
     // Data types and counters

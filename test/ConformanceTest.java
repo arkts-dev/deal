@@ -1138,6 +1138,31 @@ public class ConformanceTest {
             return allDiags;
         }
 
+        // Identity-keyed ClassSymbol routing pre-pass (v1.2 identity
+        // carriage): the resolver's identity-keyed branch resolves
+        // imported class symbols from the catalog cache, so every
+        // companion dependency must be compiled into the cache before
+        // the consumer is type-checked — a fixture constructing an
+        // imported class literal (e.g.
+        // defaults/plan-imported-provider-scope.deal) otherwise fails
+        // with E3004 "Unknown class". CompanionCatalog.compile runs
+        // the same dependency pre-pass; this diagnostics pass mirrors
+        // it so the two passes type the fixture identically.
+        if (catalog != null) {
+            Path fileDir = test.path().toAbsolutePath().normalize()
+                .getParent();
+            for (StatementNode stmt : parseResult.program().statements()) {
+                if (stmt instanceof ImportDeclaration imp) {
+                    Path resolved = resolveCompanionPath(
+                        imp.modulePath(), fileDir);
+                    if (resolved != null) {
+                        catalog.artifactFor(
+                            resolved.toAbsolutePath().normalize());
+                    }
+                }
+            }
+        }
+
         ConformanceModuleResolver resolver =
             new ConformanceModuleResolver(test.path(), catalog, profile);
         NameResolver nr = catalog != null

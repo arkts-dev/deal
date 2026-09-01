@@ -182,12 +182,13 @@ public class LuaAbiTest {
     // =========================================================================
 
     @Test
-    public void helperKeyDerivesAllFiveKinds() {
+    public void helperKeyDerivesAllSixKinds() {
         assertThat(LuaAbi.helperKey("User", HelperKind.DEFAULTS), is("User_defaults"));
         assertThat(LuaAbi.helperKey("User", HelperKind.META), is("User_meta"));
         assertThat(LuaAbi.helperKey("User", HelperKind.FIELDS), is("User_fields"));
         assertThat(LuaAbi.helperKey("User", HelperKind.FROM_JSON), is("User$fromJson"));
         assertThat(LuaAbi.helperKey("User", HelperKind.TO_JSON), is("User$toJson"));
+        assertThat(LuaAbi.helperKey("User", HelperKind.PLAN), is("User_plan"));
         // Kinds with every enum constant.
         for (HelperKind kind : HelperKind.values()) {
             assertThat("raw DEAL name preserved per kind",
@@ -195,7 +196,9 @@ public class LuaAbiTest {
                 containsString(kind == HelperKind.DEFAULTS ? "_defaults"
                     : kind == HelperKind.META ? "_meta"
                     : kind == HelperKind.FIELDS ? "_fields"
-                    : kind == HelperKind.FROM_JSON ? "$fromJson" : "$toJson"));
+                    : kind == HelperKind.FROM_JSON ? "$fromJson"
+                    : kind == HelperKind.TO_JSON ? "$toJson"
+                    : "_plan"));
         }
     }
 
