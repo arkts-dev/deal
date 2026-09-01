@@ -12,6 +12,7 @@ import deal.types.Type;
 import deal.types.Types;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
@@ -56,6 +57,18 @@ import java.util.Set;
  *       for every generated tree with per-member legacy-spelling negative
  *       pins, bytes at depth &gt;= 50, and bytes through sync/async
  *       function parameter/return positions.</li>
+ *   <li>The class-bearing encode totality (ISSUE-0314): the pinned
+ *       example identities ({@code @lib/utils/User},
+ *       {@code @$external/pkg/Cls},
+ *       {@code @$external/host.cfg/ServerConfig},
+ *       {@code @$builtin/Error}) plus grammatical-but-arbitrary
+ *       anti-hollow and dotted-project entries registered in a
+ *       contract-conformant in-repo test index; a property corpus over
+ *       class-bearing trees nested in arrays/nullables/functions with
+ *       byte-identical {@code render(parse(encode(T))) == encode(T)}
+ *       round trips, index-text verbatim pass-through, per-member
+ *       legacy/bare/dotted negative pins, T2 reverse-lookup pins, and
+ *       index-miss invariant violations at any nesting depth.</li>
  * </ul>
  */
 public class CanonicalRuntimeTypeDescriptorTest {
@@ -64,7 +77,7 @@ public class CanonicalRuntimeTypeDescriptorTest {
     private static int failed = 0;
 
     public static void main(String[] args) {
-        System.out.println("=== Running Canonical Runtime Type Descriptor Tests (ISSUE-0310/0311) ===");
+        System.out.println("=== Running Canonical Runtime Type Descriptor Tests (ISSUE-0310/0311/0314) ===");
 
         testBytesAtomTie();
         testPrimitiveRoundTrips();
@@ -86,6 +99,11 @@ public class CanonicalRuntimeTypeDescriptorTest {
         testEncodePinnedShapes();
         testEncodeInvariantViolations();
         testEncodeClassBranch();
+        testEncodeClassBearingIndexContract();
+        testEncodeClassBearingPins();
+        testEncodeClassBearingIndexMiss();
+        testEncodeClassBearingCorpus();
+        testEncodeClassBearingDeepNesting();
         testEncodePropertyCorpus();
         testEncodeDeepNesting();
 
@@ -1265,4 +1283,829 @@ public class CanonicalRuntimeTypeDescriptorTest {
         check(mixedAst != null && maxDepth(mixedAst) >= depth,
             "encode: mixed atom tree reaches depth " + depth);
     }
+    // =========================================================================
+    // Class-bearing encode (ISSUE-0314): totality through the class branch and
+    // the class-bearing round-trip property corpus over a contract-conformant
+    // in-repo test index (T2's contract; the real index is E2's)
+    // =========================================================================
+
+    /** Pinned example identity: project module {@code lib} + relative
+     * component {@code utils}, class {@code User} → {@code @lib/utils/User}. */
+    private static final CanonicalClassIdentity PROJECT_USER_IDENTITY =
+        new CanonicalClassIdentity(
+            new CanonicalModuleIdentity.ProjectModule(
+                new ProjectModuleIdentity("lib", "/lib", List.of("utils"))),
+            "User");
+
+    /** Pinned example identity: externals module {@code pkg}, class
+     * {@code Cls} → {@code @$external/pkg/Cls}. */
+    private static final CanonicalClassIdentity EXTERNAL_PKG_CLS_IDENTITY =
+        new CanonicalClassIdentity(
+            new CanonicalModuleIdentity.ExternalModule("pkg"), "Cls");
+
+    /** Pinned example identity: dotted externals specifier {@code host.cfg},
+     * class {@code ServerConfig} → {@code @$external/host.cfg/ServerConfig}. */
+    private static final CanonicalClassIdentity EXTERNAL_HOST_CFG_SERVER_CONFIG_IDENTITY =
+        new CanonicalClassIdentity(
+            new CanonicalModuleIdentity.ExternalModule("host.cfg"),
+            "ServerConfig");
+
+    /** Pinned example identity: the intrinsic builtin {@code Error} →
+     * {@code @$builtin/Error}. */
+    private static final CanonicalClassIdentity BUILTIN_ERROR_IDENTITY =
+        new CanonicalClassIdentity(
+            CanonicalModuleIdentity.BuiltinModule.INSTANCE, "Error");
+
+    /**
+     * Anti-hollow entry: a grammatical-but-arbitrary projection text
+     * unrelated to the identity's class name ({@code DeclaredName} vs
+     * {@code VaultedName}) and to any module spelling.  Emitting it
+     * verbatim proves the class branch never recomputes text from the
+     * class name or a path; the round trips below prove parse/render
+     * agreement rather than self-approval.
+     */
+    private static final CanonicalClassIdentity ANTI_HOLLOW_IDENTITY =
+        new CanonicalClassIdentity(
+            new CanonicalModuleIdentity.ExternalModule("hollow"),
+            "DeclaredName");
+    private static final String ANTI_HOLLOW_TEXT = "@$external/hollow/VaultedName";
+
+    /** A dot-bearing multi-component project identity whose index text
+     * ({@code @root.two/sub.one/Other}) differs from its dotted
+     * modulePath spelling ({@code @root.two.sub.one/Other}) — the
+     * text-opacity / verbatim-pass-through pin. */
+    private static final CanonicalClassIdentity DOTTED_PROJECT_IDENTITY =
+        new CanonicalClassIdentity(
+            new CanonicalModuleIdentity.ProjectModule(
+                new ProjectModuleIdentity("root.two", "/root.two",
+                    List.of("sub.one"))),
+            "Other");
+    private static final String DOTTED_PROJECT_TEXT = "@root.two/sub.one/Other";
+
+    /** The registered (identity → text) half of the class-bearing test
+     * index bijection (structurally keyed by record equality). */
+    private static final Map<CanonicalClassIdentity, String> CLASS_BEARING_TEXTS =
+        Map.of(
+            PROJECT_USER_IDENTITY, "@lib/utils/User",
+            EXTERNAL_PKG_CLS_IDENTITY, "@$external/pkg/Cls",
+            EXTERNAL_HOST_CFG_SERVER_CONFIG_IDENTITY,
+                "@$external/host.cfg/ServerConfig",
+            BUILTIN_ERROR_IDENTITY, "@$builtin/Error",
+            ANTI_HOLLOW_IDENTITY, ANTI_HOLLOW_TEXT,
+            DOTTED_PROJECT_IDENTITY, DOTTED_PROJECT_TEXT);
+
+    /** The registered (text → identity) half of the class-bearing test
+     * index bijection (keyed byte-for-byte). */
+    private static final Map<String, CanonicalClassIdentity> CLASS_BEARING_IDENTITIES =
+        Map.of(
+            "@lib/utils/User", PROJECT_USER_IDENTITY,
+            "@$external/pkg/Cls", EXTERNAL_PKG_CLS_IDENTITY,
+            "@$external/host.cfg/ServerConfig",
+                EXTERNAL_HOST_CFG_SERVER_CONFIG_IDENTITY,
+            "@$builtin/Error", BUILTIN_ERROR_IDENTITY,
+            ANTI_HOLLOW_TEXT, ANTI_HOLLOW_IDENTITY,
+            DOTTED_PROJECT_TEXT, DOTTED_PROJECT_IDENTITY);
+
+    /** The contract-conformant in-repo test index (T2's contract): forward
+     * and reverse lookups over the pinned entries; absent lookups are the
+     * pinned invariant violation, never null and never invented text. */
+    private static final CanonicalClassIdentityIndex CLASS_BEARING_INDEX =
+        new CanonicalClassIdentityIndex() {
+            @Override
+            public String descriptorTextFor(CanonicalClassIdentity identity) {
+                String text = CLASS_BEARING_TEXTS.get(identity);
+                if (text == null) {
+                    throw new IllegalStateException(
+                        "absent from the class-bearing test index: " + identity);
+                }
+                return text;
+            }
+
+            @Override
+            public CanonicalClassIdentity identityForDescriptorText(
+                    String descriptorText) {
+                CanonicalClassIdentity identity =
+                    CLASS_BEARING_IDENTITIES.get(descriptorText);
+                if (identity == null) {
+                    throw new IllegalStateException(
+                        "absent from the class-bearing test index: \""
+                            + descriptorText + "\"");
+                }
+                return identity;
+            }
+        };
+
+    /** The per-compilation service over the class-bearing index: every
+     * class-free and class-bearing corpus member runs through this one
+     * instance (the one Type→text authority). */
+    private static final CanonicalRuntimeTypeDescriptor CLASS_BEARING_ENCODER =
+        new CanonicalRuntimeTypeDescriptor(CLASS_BEARING_INDEX);
+
+    /** The class leaf pool: the pinned example identities plus the
+     * anti-hollow and dotted-project entries. */
+    private static final Type.Class[] CLASS_BEARING_LEAVES = {
+        new Type.Class("User", PROJECT_USER_IDENTITY),
+        new Type.Class("Cls", EXTERNAL_PKG_CLS_IDENTITY),
+        new Type.Class("ServerConfig", EXTERNAL_HOST_CFG_SERVER_CONFIG_IDENTITY),
+        new Type.Class("Error", BUILTIN_ERROR_IDENTITY),
+        new Type.Class("DeclaredName", ANTI_HOLLOW_IDENTITY),
+        new Type.Class("Other", DOTTED_PROJECT_IDENTITY),
+    };
+
+    /** Every class name the corpus can carry (plus the anti-hollow
+     * projection name): the bare-name scan set. */
+    private static final Set<String> CLASS_BEARING_NAMES = Set.of(
+        "User", "Cls", "ServerConfig", "Error", "DeclaredName", "Other",
+        "VaultedName");
+
+    /** A class-bearing or class-free leaf (class leaves biased 3:1 so the
+     * mixed generator covers class atoms in every position). */
+    private static Type genClassBearingLeaf(Random rnd) {
+        if (rnd.nextInt(4) == 0) {
+            return PRIMITIVE_TYPES[rnd.nextInt(PRIMITIVE_TYPES.length)];
+        }
+        return CLASS_BEARING_LEAVES[rnd.nextInt(CLASS_BEARING_LEAVES.length)];
+    }
+
+    /** A non-null, non-nullable leaf for {@code ?D} inner positions. */
+    private static Type genClassBearingNonNullableLeaf(Random rnd,
+                                                       boolean forceClass) {
+        if (forceClass || rnd.nextInt(4) != 0) {
+            return CLASS_BEARING_LEAVES[rnd.nextInt(CLASS_BEARING_LEAVES.length)];
+        }
+        return NON_NULL_PRIMITIVE_TYPES[rnd.nextInt(NON_NULL_PRIMITIVE_TYPES.length)];
+    }
+
+    private static Type genClassBearingFunction(Random rnd, int depth,
+                                                boolean forceClass) {
+        boolean async = rnd.nextBoolean();
+        int count = rnd.nextInt(4);
+        List<Type> params = new ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            params.add(genClassBearingTypeTree(rnd, depth - 1, forceClass));
+        }
+        return new Type.Func(params,
+            genClassBearingTypeTree(rnd, depth - 1, forceClass), async);
+    }
+
+    private static Type genClassBearingNonNullable(Random rnd, int depth,
+                                                   boolean forceClass) {
+        if (depth <= 0) {
+            return genClassBearingNonNullableLeaf(rnd, forceClass);
+        }
+        switch (rnd.nextInt(3)) {
+            case 0:
+                return genClassBearingNonNullableLeaf(rnd, forceClass);
+            case 1:
+                return new Type.Array(
+                    genClassBearingTypeTree(rnd, depth - 1, forceClass));
+            default:
+                return genClassBearingFunction(rnd, depth - 1, forceClass);
+        }
+    }
+
+    /** Generates a legal type tree; when {@code forceClass} every leaf is a
+     * class leaf (guaranteed class-bearing members), otherwise leaves are a
+     * biased class/primitive mix (class-free members remain possible). */
+    private static Type genClassBearingTypeTree(Random rnd, int depth,
+                                                boolean forceClass) {
+        if (depth <= 0) {
+            return forceClass
+                ? CLASS_BEARING_LEAVES[rnd.nextInt(CLASS_BEARING_LEAVES.length)]
+                : genClassBearingLeaf(rnd);
+        }
+        switch (rnd.nextInt(4)) {
+            case 0:
+                return forceClass
+                    ? CLASS_BEARING_LEAVES[rnd.nextInt(CLASS_BEARING_LEAVES.length)]
+                    : genClassBearingLeaf(rnd);
+            case 1:
+                return new Type.Array(
+                    genClassBearingTypeTree(rnd, depth - 1, forceClass));
+            case 2:
+                return new Type.Nullable(
+                    genClassBearingNonNullable(rnd, depth - 1, forceClass));
+            default:
+                return genClassBearingFunction(rnd, depth - 1, forceClass);
+        }
+    }
+
+    /** Whether a type tree carries at least one {@link Type.Class} leaf. */
+    private static boolean containsClass(Type type) {
+        return switch (type) {
+            case Type.Class ignored -> true;
+            case Type.Array a -> containsClass(a.element());
+            case Type.Nullable n -> containsClass(n.inner());
+            case Type.Func f -> {
+                for (Type param : f.paramTypes()) {
+                    if (containsClass(param)) {
+                        yield true;
+                    }
+                }
+                yield containsClass(f.returnType());
+            }
+            default -> false;
+        };
+    }
+
+    /** The class-leaf text substitution of one spelling builder. */
+    @FunctionalInterface
+    private interface ClassTextMapper {
+        String classText(Type.Class c);
+    }
+
+    /** Rebuilds canonical descriptor text independently, with class leaves
+     * substituted through the given spelling mapper. */
+    private static String buildDescriptorText(Type type, ClassTextMapper classText) {
+        if (type instanceof Type.Class c) {
+            return classText.classText(c);
+        }
+        if (type instanceof Type.Array a) {
+            return "[" + buildDescriptorText(a.element(), classText) + "]";
+        }
+        if (type instanceof Type.Nullable n) {
+            return "?" + buildDescriptorText(n.inner(), classText);
+        }
+        if (type instanceof Type.Func f) {
+            StringBuilder sb = new StringBuilder();
+            if (f.isAsync()) {
+                sb.append("async");
+            }
+            sb.append('(');
+            for (int i = 0; i < f.paramTypes().size(); i++) {
+                if (i > 0) {
+                    sb.append(',');
+                }
+                sb.append(buildDescriptorText(f.paramTypes().get(i), classText));
+            }
+            sb.append(")->").append(buildDescriptorText(f.returnType(), classText));
+            return sb.toString();
+        }
+        return primitiveKeyword(type);
+    }
+
+    /** The canonical keyword of a primitive type (encode's primitive arm). */
+    private static String primitiveKeyword(Type type) {
+        if (type == Type.Null.INSTANCE) {
+            return "null";
+        }
+        if (type == Type.Boolean.INSTANCE) {
+            return "boolean";
+        }
+        if (type == Type.Int.INSTANCE) {
+            return "int";
+        }
+        if (type == Type.Number.INSTANCE) {
+            return "number";
+        }
+        if (type == Type.String.INSTANCE) {
+            return "string";
+        }
+        if (type == Type.Bytes.INSTANCE) {
+            return CanonicalRuntimeTypeDescriptor.BYTES_DESCRIPTOR;
+        }
+        if (type == Type.Table.INSTANCE) {
+            return "table";
+        }
+        throw new IllegalArgumentException("not a primitive: " + type);
+    }
+
+    /** The v1.1 dotted modulePath spelling of a class leaf:
+     * {@code @<rootText[.relative...]|specifier>/<Name>}; the bare name
+     * for the builtin. */
+    private static String dottedModuleLeaf(Type.Class c) {
+        CanonicalClassIdentity id = c.identity();
+        if (id.moduleIdentity() instanceof CanonicalModuleIdentity.ProjectModule pm) {
+            StringBuilder dotted =
+                new StringBuilder(pm.projectIdentity().configuredRootText());
+            for (String component : pm.projectIdentity().relativeModuleComponents()) {
+                dotted.append('.').append(component);
+            }
+            return "@" + dotted + "/" + id.className();
+        }
+        if (id.moduleIdentity() instanceof CanonicalModuleIdentity.ExternalModule em) {
+            return "@" + em.rawImportSpecifier() + "/" + id.className();
+        }
+        return id.className();
+    }
+
+    /** The dotted class-name-position spelling of a class leaf:
+     * {@code @<dotted module run>.<Name>}; the bare name for the builtin. */
+    private static String dottedClassNameLeaf(Type.Class c) {
+        CanonicalClassIdentity id = c.identity();
+        if (id.moduleIdentity() instanceof CanonicalModuleIdentity.ProjectModule pm) {
+            StringBuilder dotted =
+                new StringBuilder(pm.projectIdentity().configuredRootText());
+            for (String component : pm.projectIdentity().relativeModuleComponents()) {
+                dotted.append('.').append(component);
+            }
+            return "@" + dotted + "." + id.className();
+        }
+        if (id.moduleIdentity() instanceof CanonicalModuleIdentity.ExternalModule em) {
+            return "@" + em.rawImportSpecifier() + "." + id.className();
+        }
+        return id.className();
+    }
+
+    /** Whether the text contains any corpus class name as an identifier run. */
+    private static boolean containsAnyClassName(String text) {
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (isIdentifierChar(c)) {
+                int start = i;
+                while (i < text.length() && isIdentifierChar(text.charAt(i))) {
+                    i++;
+                }
+                if (CLASS_BEARING_NAMES.contains(text.substring(start, i))) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static boolean isIdentifierChar(char c) {
+        return (c >= 'A' && c <= 'Z')
+            || (c >= 'a' && c <= 'z')
+            || (c >= '0' && c <= '9')
+            || c == '_';
+    }
+
+    /** The carried class identities of every class leaf, in tree order. */
+    private static List<CanonicalClassIdentity> classLeafIdentities(Type type) {
+        List<CanonicalClassIdentity> out = new ArrayList<>();
+        if (type instanceof Type.Class c) {
+            out.add(c.identity());
+        } else if (type instanceof Type.Array a) {
+            out.addAll(classLeafIdentities(a.element()));
+        } else if (type instanceof Type.Nullable n) {
+            out.addAll(classLeafIdentities(n.inner()));
+        } else if (type instanceof Type.Func f) {
+            for (Type param : f.paramTypes()) {
+                out.addAll(classLeafIdentities(param));
+            }
+            out.addAll(classLeafIdentities(f.returnType()));
+        }
+        return out;
+    }
+
+    /** The full texts of every class atom in a parsed atom tree. */
+    private static List<String> classAtomTexts(DescriptorAst ast) {
+        List<String> out = new ArrayList<>();
+        if (ast instanceof DescriptorAst.ClassAtom c) {
+            out.add(c.fullDescriptorText());
+        } else if (ast instanceof DescriptorAst.ArrayAtom a) {
+            out.addAll(classAtomTexts(a.element()));
+        } else if (ast instanceof DescriptorAst.NullableAtom n) {
+            out.addAll(classAtomTexts(n.inner()));
+        } else if (ast instanceof DescriptorAst.FunctionAtom f) {
+            for (DescriptorAst param : f.params()) {
+                out.addAll(classAtomTexts(param));
+            }
+            out.addAll(classAtomTexts(f.returnType()));
+        }
+        return out;
+    }
+
+    /**
+     * The full per-member class-bearing verification: encode totality,
+     * byte-identity with the index-driven reference, legacy/bare/dotted
+     * negative pins, purity, the strict-parse round trip (T3), the
+     * verbatim class-atom pass-through, and the T2 reverse lookup.
+     * Returns the parsed atom (or null after a counted failure).
+     */
+    private static DescriptorAst assertClassBearingEncodeMember(Type type,
+                                                                String label) {
+        boolean hasClass = containsClass(type);
+        String text;
+        try {
+            text = CLASS_BEARING_ENCODER.encode(type);
+        } catch (Throwable t) {
+            fail(label, "encode threw for legal type " + type + ": " + t);
+            return null;
+        }
+        check(text != null && !text.isEmpty(), label + ": encoded text present");
+        if (text == null || text.isEmpty()) {
+            return null;
+        }
+
+        // Legacy-spelling negative pins per corpus member.
+        check(text.indexOf("[]") < 0,
+            label + ": no legacy T[] spelling in " + quote(text));
+        check(text.indexOf('|') < 0,
+            label + ": no legacy T|null spelling in " + quote(text));
+        check(text.indexOf("...") < 0,
+            label + ": no rest-parameter spelling in " + quote(text));
+
+        // Byte-identity with the index: class leaves are the index text
+        // verbatim (multi-component roots stay text-opaque; never
+        // recomputed from the class name or a path).
+        String reference = buildDescriptorText(
+            type, c -> CLASS_BEARING_INDEX.descriptorTextFor(c.identity()));
+        if (!text.equals(reference)) {
+            fail(label, "encode(T) is not byte-identical to the index-driven "
+                + "reference: " + quote(text) + " vs " + quote(reference));
+        } else {
+            check(true, label + ": byte-identical to the index-driven reference");
+        }
+
+        if (hasClass) {
+            check(text.indexOf('@') >= 0, label + ": class atom present");
+            // Never the v1.1 dotted modulePath spelling (@<dotted>/<Name>
+            // or the bare builtin name).
+            String dotted = buildDescriptorText(
+                type, CanonicalRuntimeTypeDescriptorTest::dottedModuleLeaf);
+            check(!text.equals(dotted),
+                label + ": never the dotted modulePath spelling " + quote(dotted));
+            // Never the dotted class-name-position spelling.
+            String dottedClassName = buildDescriptorText(
+                type, CanonicalRuntimeTypeDescriptorTest::dottedClassNameLeaf);
+            check(!text.equals(dottedClassName),
+                label + ": never the dotted class-name spelling "
+                    + quote(dottedClassName));
+        } else {
+            check(text.indexOf('@') < 0,
+                label + ": no class atom for a class-free member in " + quote(text));
+        }
+
+        // Never a bare class name: after removing every index-registered
+        // atom text from the emission, no corpus class name may remain.
+        String remainder = text;
+        for (String atom : CLASS_BEARING_TEXTS.values()) {
+            remainder = remainder.replace(atom, "");
+        }
+        check(!containsAnyClassName(remainder),
+            label + ": no bare class-name text remains in " + quote(text));
+
+        // Pure: a repeated encode is byte-identical.
+        check(text.equals(CLASS_BEARING_ENCODER.encode(type)),
+            label + ": encode is pure and deterministic");
+
+        // The combined check through T3's strict parser: round trips prove
+        // parse/render agreement, never self-approval.
+        DescriptorParseResult result = parseResult(text);
+        if (!(result instanceof DescriptorAst ast)) {
+            fail(label, "strict parse rejected encode(T) " + quote(text)
+                + ": " + result);
+            return null;
+        }
+        String rendered = CanonicalRuntimeTypeDescriptor.render(ast);
+        if (!text.equals(rendered)) {
+            fail(label, "render(parse(encode(T))) != encode(T) for "
+                + quote(text) + ": rendered " + quote(rendered));
+        } else {
+            check(true, label + ": render(parse(encode(T))) == encode(T) "
+                + "byte-identically");
+        }
+        DescriptorParseResult again = parseResult(rendered);
+        if (!(again instanceof DescriptorAst ast2) || !ast2.equals(ast)) {
+            fail(label, "parse(render(ast)) did not round-trip for " + quote(text));
+        } else {
+            check(true, label + ": parse(render(ast)) round-trips");
+        }
+
+        // Verbatim class-atom pass-through: the emitted atoms are exactly
+        // the tree's index texts, and T2's reverse lookup maps each back
+        // to the tree's carried identity.
+        List<String> atomTexts = classAtomTexts(ast);
+        List<String> expectedTexts = new ArrayList<>();
+        Map<String, CanonicalClassIdentity> textToIdentity = new HashMap<>();
+        for (CanonicalClassIdentity identity : classLeafIdentities(type)) {
+            String atomText = CLASS_BEARING_INDEX.descriptorTextFor(identity);
+            expectedTexts.add(atomText);
+            textToIdentity.put(atomText, identity);
+        }
+        atomTexts.sort(String::compareTo);
+        expectedTexts.sort(String::compareTo);
+        if (!atomTexts.equals(expectedTexts)) {
+            fail(label, "emitted class atoms differ from the tree's index texts: "
+                + atomTexts + " vs " + expectedTexts);
+        } else {
+            check(true, label + ": every class atom is exactly an index-registered text");
+        }
+        for (String atomText : atomTexts) {
+            CanonicalClassIdentity identity;
+            try {
+                identity = CLASS_BEARING_INDEX.identityForDescriptorText(atomText);
+            } catch (Throwable t) {
+                fail(label, "T2 reverse lookup threw for " + quote(atomText)
+                    + ": " + t);
+                continue;
+            }
+            CanonicalClassIdentity expected = textToIdentity.get(atomText);
+            check(expected != null && expected.equals(identity),
+                label + ": reverse lookup of " + quote(atomText)
+                    + " returns the tree's carried identity");
+        }
+        return ast;
+    }
+
+    // =========================================================================
+    // Class-bearing index contract (T2 bijection)
+    // =========================================================================
+
+    static void testEncodeClassBearingIndexContract() {
+        System.out.println("-- encode: class-bearing index contract (T2 bijection) --");
+
+        // Structural keying: equal (moduleIdentity, className) pairs key
+        // the same text regardless of object identity.
+        check(ANTI_HOLLOW_TEXT.equals(CLASS_BEARING_INDEX.descriptorTextFor(
+                new CanonicalClassIdentity(
+                    new CanonicalModuleIdentity.ExternalModule("hollow"),
+                    "DeclaredName"))),
+            "structurally equal identity values key the same index text");
+
+        // The forward/reverse bijection over every registered entry.
+        String[] texts = {
+            "@lib/utils/User",
+            "@$external/pkg/Cls",
+            "@$external/host.cfg/ServerConfig",
+            "@$builtin/Error",
+            ANTI_HOLLOW_TEXT,
+            DOTTED_PROJECT_TEXT,
+        };
+        CanonicalClassIdentity[] identities = {
+            PROJECT_USER_IDENTITY,
+            EXTERNAL_PKG_CLS_IDENTITY,
+            EXTERNAL_HOST_CFG_SERVER_CONFIG_IDENTITY,
+            BUILTIN_ERROR_IDENTITY,
+            ANTI_HOLLOW_IDENTITY,
+            DOTTED_PROJECT_IDENTITY,
+        };
+        for (int i = 0; i < texts.length; i++) {
+            check(texts[i].equals(
+                    CLASS_BEARING_INDEX.descriptorTextFor(identities[i])),
+                "forward lookup " + identities[i] + " -> " + texts[i]);
+            check(identities[i].equals(
+                    CLASS_BEARING_INDEX.identityForDescriptorText(texts[i])),
+                "reverse lookup " + texts[i] + " -> " + identities[i]);
+        }
+
+        // Absent lookups are the pinned invariant violation, never null.
+        CanonicalClassIdentity absentIdentity = new CanonicalClassIdentity(
+            new CanonicalModuleIdentity.ExternalModule("unregistered"), "User");
+        IllegalStateException forwardFailure = null;
+        try {
+            CLASS_BEARING_INDEX.descriptorTextFor(absentIdentity);
+        } catch (IllegalStateException expected) {
+            forwardFailure = expected;
+        }
+        check(forwardFailure != null && forwardFailure.getMessage() != null
+                && !forwardFailure.getMessage().isEmpty(),
+            "absent forward lookup is the pinned invariant violation");
+
+        IllegalStateException reverseFailure = null;
+        try {
+            CLASS_BEARING_INDEX.identityForDescriptorText("@unregistered/User");
+        } catch (IllegalStateException expected) {
+            reverseFailure = expected;
+        }
+        check(reverseFailure != null && reverseFailure.getMessage() != null
+                && !reverseFailure.getMessage().isEmpty(),
+            "absent reverse lookup is the pinned invariant violation");
+    }
+
+    // =========================================================================
+    // Class-bearing pinned example identities and negative spellings
+    // =========================================================================
+
+    static void testEncodeClassBearingPins() {
+        System.out.println("-- encode: class-bearing pinned example identities --");
+
+        check("@lib/utils/User".equals(CLASS_BEARING_ENCODER.encode(
+                new Type.Class("User", PROJECT_USER_IDENTITY))),
+            "project User encodes to the pinned @lib/utils/User");
+        check("@$external/pkg/Cls".equals(CLASS_BEARING_ENCODER.encode(
+                new Type.Class("Cls", EXTERNAL_PKG_CLS_IDENTITY))),
+            "externals Cls encodes to the pinned @$external/pkg/Cls");
+        check("@$external/host.cfg/ServerConfig".equals(CLASS_BEARING_ENCODER.encode(
+                new Type.Class("ServerConfig",
+                    EXTERNAL_HOST_CFG_SERVER_CONFIG_IDENTITY))),
+            "dotted externals specifier encodes to @$external/host.cfg/ServerConfig");
+        check("@$builtin/Error".equals(CLASS_BEARING_ENCODER.encode(
+                new Type.Class("Error", BUILTIN_ERROR_IDENTITY))),
+            "builtin Error encodes to @$builtin/Error");
+        check("@lib/utils/User".equals(CLASS_BEARING_ENCODER.encode(
+                Types.classType("User", PROJECT_USER_IDENTITY))),
+            "Types.classType carries the identity into the class branch");
+
+        // Multi-component roots stay text-opaque: three components, the
+        // index text passed through verbatim, never the dotted spellings.
+        String projectText = CLASS_BEARING_ENCODER.encode(
+            new Type.Class("User", PROJECT_USER_IDENTITY));
+        check(projectText.indexOf('/') == 4 && projectText.lastIndexOf('/') == 10,
+            "@lib/utils/User keeps its two separators (three opaque components)");
+        check(!"@lib.utils/User".equals(projectText),
+            "the dotted modulePath spelling @lib.utils/User is never emitted");
+        check(!"@lib.utils.User".equals(projectText),
+            "the dotted class-name spelling @lib.utils.User is never emitted");
+        DescriptorAst projectAtom = atomOf(projectText);
+        check(projectAtom instanceof DescriptorAst.ClassAtom c
+                && "@lib/utils/User".equals(c.fullDescriptorText()),
+            "the project atom round-trips byte-for-byte with its full text");
+
+        // The v1.1 dotted emission shape @host.cfg/ServerConfig is never
+        // the emission for the dotted-externals identity.
+        String hostText = CLASS_BEARING_ENCODER.encode(
+            new Type.Class("ServerConfig",
+                EXTERNAL_HOST_CFG_SERVER_CONFIG_IDENTITY));
+        check(!"@host.cfg/ServerConfig".equals(hostText),
+            "the v1.1 dotted emission shape @host.cfg/ServerConfig is never emitted");
+        check(!"@host.cfg.ServerConfig".equals(hostText),
+            "the dotted class-name shape @host.cfg.ServerConfig is never emitted");
+
+        // The builtin never emits the bare v1.1 Error spelling.
+        String builtinText = CLASS_BEARING_ENCODER.encode(
+            new Type.Class("Error", BUILTIN_ERROR_IDENTITY));
+        check(!"Error".equals(builtinText),
+            "the bare v1.1 Error spelling is never emitted");
+        check(!"@$builtin.Error".equals(builtinText),
+            "the dotted class-name shape @$builtin.Error is never emitted");
+
+        // Anti-hollow: the arbitrary-but-grammatical projection is emitted
+        // verbatim — no recomputation from the class name or the module
+        // spelling.
+        String hollowText = CLASS_BEARING_ENCODER.encode(
+            new Type.Class("DeclaredName", ANTI_HOLLOW_IDENTITY));
+        check(ANTI_HOLLOW_TEXT.equals(hollowText),
+            "the anti-hollow entry is emitted byte-for-byte: " + quote(hollowText));
+        check(hollowText.indexOf("DeclaredName") < 0,
+            "no recomputation from the carried class name");
+        check(hollowText.indexOf("@hollow/") < 0,
+            "no recomputation from a module-path spelling");
+        assertAtom(ANTI_HOLLOW_TEXT,
+            "the anti-hollow text is grammatical and round-trips");
+        check(ANTI_HOLLOW_IDENTITY.equals(
+                CLASS_BEARING_INDEX.identityForDescriptorText(ANTI_HOLLOW_TEXT)),
+            "the anti-hollow text reverse-looks-up to its identity");
+
+        // The dot-bearing multi-component project text stays opaque and
+        // verbatim; the fully dotted spellings are never the emission.
+        String dottedText = CLASS_BEARING_ENCODER.encode(
+            new Type.Class("Other", DOTTED_PROJECT_IDENTITY));
+        check(DOTTED_PROJECT_TEXT.equals(dottedText),
+            "the multi-component project text @root.two/sub.one/Other is emitted verbatim");
+        check(!"@root.two.sub.one/Other".equals(dottedText),
+            "the dotted modulePath spelling @root.two.sub.one/Other is never emitted");
+        check(!"@root.two.sub.one.Other".equals(dottedText),
+            "the dotted class-name spelling @root.two.sub.one.Other is never emitted");
+    }
+
+    // =========================================================================
+    // Index-miss invariant violations (no fallback text at any depth)
+    // =========================================================================
+
+    static void testEncodeClassBearingIndexMiss() {
+        System.out.println("-- encode: index-miss invariant violations (no fallback text) --");
+
+        // Same class name, unregistered module.
+        Type.Class unregisteredModule = new Type.Class("User",
+            new CanonicalClassIdentity(
+                new CanonicalModuleIdentity.ExternalModule("other"), "User"));
+        try {
+            CLASS_BEARING_ENCODER.encode(unregisteredModule);
+            fail("index-miss: unregistered module must fail",
+                "no exception was thrown");
+        } catch (IllegalStateException expected) {
+            check(expected.getMessage() != null
+                    && expected.getMessage().contains("User"),
+                "index-miss: unregistered module is the pinned invariant violation");
+        }
+
+        // Registered module, unregistered class name.
+        Type.Class unregisteredClass = new Type.Class("Other",
+            new CanonicalClassIdentity(
+                new CanonicalModuleIdentity.ExternalModule("pkg"), "Other"));
+        try {
+            CLASS_BEARING_ENCODER.encode(unregisteredClass);
+            fail("index-miss: unregistered class must fail",
+                "no exception was thrown");
+        } catch (IllegalStateException expected) {
+            check(expected.getMessage() != null
+                    && expected.getMessage().contains("Other"),
+                "index-miss: unregistered class is the pinned invariant violation");
+        }
+
+        // The same miss nested inside arrays/nullables/functions: the
+        // failure propagates and no partial text is produced at any
+        // nesting depth.
+        Type[] nested = {
+            new Type.Array(unregisteredModule),
+            new Type.Nullable(unregisteredModule),
+            new Type.Func(List.of(unregisteredModule), Type.Int.INSTANCE),
+            new Type.Func(List.of(), unregisteredModule, true),
+            new Type.Array(new Type.Nullable(new Type.Func(
+                List.of(unregisteredModule),
+                new Type.Array(unregisteredModule)))),
+        };
+        for (int i = 0; i < nested.length; i++) {
+            final int index = i;
+            try {
+                CLASS_BEARING_ENCODER.encode(nested[index]);
+                fail("index-miss nested case " + index + " must fail",
+                    "no exception was thrown");
+            } catch (IllegalStateException expected) {
+                check(true, "index-miss nested case " + index
+                    + " propagates as the invariant violation");
+            }
+        }
+    }
+
+    // =========================================================================
+    // The class-bearing property corpus (the combined check)
+    // =========================================================================
+
+    static void testEncodeClassBearingCorpus() {
+        System.out.println("-- encode: class-bearing property corpus --");
+
+        Random rnd = new Random(0x0314_CAFE_5EEDL);
+        int classMembers = 0;
+        int classFreeMembers = 0;
+        for (int i = 0; i < 400; i++) {
+            Type tree;
+            if (i % 4 == 0) {
+                // Forced class-bearing members: every leaf is a class.
+                tree = genClassBearingTypeTree(rnd, 12, true);
+            } else if (i % 4 == 1) {
+                // Class-free members through the same encoder (T4).
+                tree = genTypeTree(rnd, 12);
+            } else {
+                // Mixed members: a biased class/primitive mix.
+                tree = genClassBearingTypeTree(rnd, 12, false);
+            }
+            if (containsClass(tree)) {
+                classMembers++;
+            } else {
+                classFreeMembers++;
+            }
+            assertClassBearingEncodeMember(tree, "class-bearing corpus member " + i);
+        }
+        check(classMembers >= 100,
+            "at least a quarter of the corpus members are class-bearing ("
+                + classMembers + ")");
+        check(classFreeMembers >= 100,
+            "the corpus also exercises the class-free encode path ("
+                + classFreeMembers + ")");
+    }
+
+    // =========================================================================
+    // Class-bearing deep nesting (depth >= 50)
+    // =========================================================================
+
+    static void testEncodeClassBearingDeepNesting() {
+        System.out.println("-- encode: class-bearing deep nesting (depth >= 50) --");
+
+        final int depth = 60;
+        Type user = new Type.Class("User", PROJECT_USER_IDENTITY);
+
+        // Pure array nesting around a class leaf.
+        Type arrayDeep = user;
+        for (int i = 0; i < depth; i++) {
+            arrayDeep = new Type.Array(arrayDeep);
+        }
+        DescriptorAst arrayAst = assertClassBearingEncodeMember(arrayDeep,
+            "encode: class array nesting at depth " + depth);
+        check(arrayAst != null && maxDepth(arrayAst) >= depth,
+            "encode: class array atom tree reaches depth " + depth);
+
+        // Alternating array/nullable nesting around a class leaf.
+        Type alternated = user;
+        for (int i = 0; i < depth; i++) {
+            alternated = (i % 2 == 0)
+                ? new Type.Array(alternated)
+                : new Type.Nullable(alternated);
+        }
+        DescriptorAst altAst = assertClassBearingEncodeMember(alternated,
+            "encode: class array/nullable alternation at depth " + depth);
+        check(altAst != null && maxDepth(altAst) >= depth,
+            "encode: class alternated atom tree reaches depth " + depth);
+
+        // Exact sync/async function nesting with the class leaf in the
+        // parameter and in the return position at every level.
+        Type funcs = user;
+        for (int i = 0; i < depth; i++) {
+            funcs = new Type.Func(List.of(funcs), user, i % 2 == 0);
+        }
+        DescriptorAst funcAst = assertClassBearingEncodeMember(funcs,
+            "encode: class sync/async function nesting at depth " + depth);
+        check(funcAst != null && maxDepth(funcAst) >= depth,
+            "encode: class function atom tree reaches depth " + depth);
+
+        // Mixed array/nullable/function nesting with a class parameter and
+        // a class return at every function level.
+        Type mixed = user;
+        for (int i = 0; i < depth; i++) {
+            switch (i % 3) {
+                case 0 -> mixed = new Type.Array(mixed);
+                case 1 -> mixed = new Type.Nullable(mixed);
+                default -> mixed = new Type.Func(
+                    List.of(mixed, Type.Bytes.INSTANCE), user, i % 2 == 0);
+            }
+        }
+        DescriptorAst mixedAst = assertClassBearingEncodeMember(mixed,
+            "encode: class mixed nesting at depth " + depth);
+        check(mixedAst != null && maxDepth(mixedAst) >= depth,
+            "encode: class mixed atom tree reaches depth " + depth);
+    }
+
 }

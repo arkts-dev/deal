@@ -169,12 +169,17 @@ public final class CanonicalRuntimeTypeDescriptor {
      * class carries its {@link CanonicalClassIdentity} (the v1.2
      * identity carriage, {@code descriptor-identity-propagation} D1),
      * and {@code index.descriptorTextFor(identity)} supplies the pinned
-     * projection text byte-for-byte (never recomputed, never
-     * reverse-parsed).
+     * projection text byte-for-byte (never recomputed from the class
+     * name, a path, or any dotted spelling, never reverse-parsed).
+     * An identity absent from the index — or an index that returns
+     * {@code null} — is the pinned internal invariant violation: the
+     * failure propagates at any nesting depth and no fallback text is
+     * ever produced.
      */
     private String encodeClass(Type.Class cls) {
+        String text;
         try {
-            return index.descriptorTextFor(cls.identity());
+            text = index.descriptorTextFor(cls.identity());
         } catch (IllegalStateException e) {
             throw new IllegalStateException(
                 "no index-registered descriptor text for class '" + cls.name()
@@ -183,6 +188,15 @@ public final class CanonicalRuntimeTypeDescriptor {
                     + "identity, so it can never be represented (internal "
                     + "invariant violation): " + e.getMessage(), e);
         }
+        if (text == null) {
+            throw new IllegalStateException(
+                "the identity index returned null descriptor text for class '"
+                    + cls.name() + "' (identity " + cls.identity()
+                    + "): the index contract never returns null and no "
+                    + "fallback text may be produced (internal invariant "
+                    + "violation)");
+        }
+        return text;
     }
 
     /** The exact {@code async? (p1,...,pn) -&gt; R} function form. */
