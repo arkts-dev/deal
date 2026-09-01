@@ -140,3 +140,43 @@ void *fixture_static_pointer(void)
     fixture_counter++;
     return (void *)&fixture_static;
 }
+
+/* Private ABI-layout struct definitions for the pinned by-value struct
+ * functions below: the battery's cdef bundle keeps declaring its own
+ * private types, so these definitions only guarantee ABI layout. */
+typedef struct {
+    int32_t deal_f0;
+    double deal_f1;
+} deal_ffi_0435_pair_t;
+
+typedef struct {
+    void *deal_f0;
+} deal_ffi_0435_ptr_box_t;
+
+/* Returns {x, y} by value; no counter effect. */
+deal_ffi_0435_pair_t fixture_make_pair(int32_t x, double y)
+{
+    deal_ffi_0435_pair_t r;
+    r.deal_f0 = x;
+    r.deal_f1 = y;
+    return r;
+}
+
+/* Returns {p} by value; no counter effect. */
+deal_ffi_0435_ptr_box_t fixture_make_ptr_box(void *p)
+{
+    deal_ffi_0435_ptr_box_t r;
+    r.deal_f0 = p;
+    return r;
+}
+
+/* Increments the in-process counter on entry, then returns {NULL} by
+ * value: the counter proves the native call ran even though the
+ * inbound conversion fails on the NULL pointer field. */
+deal_ffi_0435_ptr_box_t fixture_make_null_ptr_box(void)
+{
+    deal_ffi_0435_ptr_box_t r;
+    fixture_counter++;
+    r.deal_f0 = NULL;
+    return r;
+}
