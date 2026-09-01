@@ -100,6 +100,7 @@ javac --release 25 -proc:none -d build \
   test/LuaBackendIntegrationTest.java \
   test/ModuleSystemTest.java \
   test/ProjectMigrationIntegrationTest.java \
+  test/ProjectIntegrationGatesTest.java \
   test/StdlibDeclParseTest.java \
   test/SourceMapTest.java \
   test/RuntimeSourceLocationTest.java \
@@ -466,6 +467,10 @@ java -ea -cp build deal.test.ModuleSystemTest
 echo ""
 echo "=== Running Project Migration Integration Tests (ISSUE-0269 T8) ==="
 java -ea -cp build deal.test.ProjectMigrationIntegrationTest
+
+echo ""
+echo "=== Running Project Integration Gates (ISSUE-0270 T9: out-of-root both-backend gates) ==="
+java -ea -cp build deal.test.ProjectIntegrationGatesTest
 
 echo ""
 echo "=== Running Source Module Resolver Tests (ISSUE-0267 T6) ==="
