@@ -1,0 +1,9 @@
+import * as c from "std/console";
+import * as str from "std/string";
+
+export function main(): null {
+  let name: string = "deal";
+  let message: string = str.trim(` smoke ${name} `);
+  c.log(message);
+  return null;
+}
