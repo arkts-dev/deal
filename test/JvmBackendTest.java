@@ -7413,13 +7413,15 @@ public class JvmBackendTest {
         Path outputRoot = tmpDir.get().resolve("build/host_" + name);
         List<Path> roots = List.of(
             tmpDir.get().resolve("src").toAbsolutePath());
-        DealConfig config = DealConfig.load(tmpDir.get()).config();
-        check(config != null, "deal.json with externals loads for " + name);
+        Map<String, String> externals = Map.of("host/log",
+            tmpDir.get().resolve("bindings/log.d.deal").toString());
+        check(Files.exists(tmpDir.get().resolve("bindings/log.d.deal")),
+            "deal.json with externals loads for " + name);
         CompilerInvocation invocation = CompilerProfileProvider.resolve(
             ReleaseState.V1_2_ACTIVE, CapabilityRegistry.releaseRegistry());
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entryFile, outputRoot, false, false, false, false,
-            Backend.JVM, config, roots,
+            Backend.JVM, externals, roots,
             Path.of(".").toAbsolutePath().normalize(), null, invocation);
         boolean ok = orchestrator.compile();
         check(ok, "int32 host orchestrator compile succeeds for " + name
@@ -7470,13 +7472,15 @@ public class JvmBackendTest {
         Path outputRoot = tmpDir.get().resolve("build/host_" + name);
         List<Path> roots = List.of(
             tmpDir.get().resolve("src").toAbsolutePath());
-        DealConfig config = DealConfig.load(tmpDir.get()).config();
-        check(config != null, "deal.json with externals loads for " + name);
+        Map<String, String> externals = Map.of("host/log",
+            tmpDir.get().resolve("bindings/log.d.deal").toString());
+        check(Files.exists(tmpDir.get().resolve("bindings/log.d.deal")),
+            "deal.json with externals loads for " + name);
         CompilerInvocation invocation = CompilerProfileProvider.resolve(
             ReleaseState.V1_2_ACTIVE, CapabilityRegistry.releaseRegistry());
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entryFile, outputRoot, false, false, false, false,
-            Backend.JVM, config, roots,
+            Backend.JVM, externals, roots,
             Path.of(".").toAbsolutePath().normalize(), null, invocation);
         boolean ok = orchestrator.compile();
         check(ok, "int32 host artifact compile succeeds for " + name + ": "
