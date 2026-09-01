@@ -1,3 +1,8 @@
 WORKLOG.md
 *.class
 build/
+# Release distribution build outputs (release-distribution-build-and-verify
+# P7): dist/ and the release archive are build outputs, never committed.
+# release/evidence/ (the E8 retention directory) stays commit-visible.
+dist/
+release/deal-*.tar
