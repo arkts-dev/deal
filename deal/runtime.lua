@@ -3137,7 +3137,11 @@ function ffi_converters.inbound(kind, meta, result, classIndex, planIndex, file,
       local member = result["deal_f" .. fld.fieldOrdinal]
       local ft = fld.type.kind
       if ft == "INT" or ft == "NUMBER" then
-        provided[fld.dealName] = member
+        -- D7 inbound numeric unboxing: normalize every INT/NUMBER member
+        -- to a Lua number at the slot-fill site; when tonumber returns
+        -- nil the raw member passes through so plan-entry phase 3 raises
+        -- E8001 through the forwarded span (the single E8001 surface).
+        provided[fld.dealName] = tonumber(member) or member
       elseif ft == "BOOLEAN" then
         if type(member) == "boolean" then
           provided[fld.dealName] = member

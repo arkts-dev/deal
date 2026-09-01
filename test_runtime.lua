@@ -3280,7 +3280,9 @@ end)
 -- __rt.load_ffi entry and the published wrappers/plans with
 -- generated-shape inputs (B4); no test-only runtime exposure is used,
 -- and the battery never calls ffi.load and never normalizes ffi.C
--- access. The battery never invokes __rt.class_plan_ (B11).
+-- access. The B-series never invokes __rt.class_plan_ (B11); the
+-- C-series below (ISSUE-0443) invokes the entry only through the
+-- retained exported plan and the inbound C_STRUCT delegation.
 
 -- B3: one fail-closed bootstrap compile of the committed fixture source.
 -- The absolute loader text is derived from the test process's working
@@ -3947,6 +3949,185 @@ test("FFI non-yield proof: one coroutine.resume reaches dead for a successful an
       "exactly one coroutine.resume must reach dead: the failing load never yields")
 end)
 
+-- ==================== C-series: class_plan_ routing battery (ISSUE-0443) ====================
+-- luajit-ffi-class-plan-consumption-verification C1-C10: construction
+-- through the retained exported FFI plan, E8007/E8001/E8004 through the
+-- plan entry with the battery's forwarded call span, evaluator-counter
+-- deltas (zero at load — preserved B6/B7 absolutes — exactly one per
+-- attempt at READY), inbound by-value struct results (direct and field)
+-- publishing tagged classes with Lua-number numeric members (the D7
+-- inbound unboxing), FFI_NULL_POINTER direct (preserved B5 case 6) and
+-- field with native effects retained, and failed conversion publishing
+-- no class; C10 extends the negative-constraint audit below with the
+-- byte-level items (f)-(l).
+
+test("C-series precheck (G1(d)): the consumed entry is a function and a smoke construction through the retained plan publishes a tagged Pair", function()
+  local exports = ffi_batt_require_full_exports()
+  assert(type(__rt.class_plan_) == "function",
+      "the C-series fail-closed precheck requires __rt.class_plan_ to be a function")
+  local smoke = __rt.class_plan_(FFI_BATT_PAIR_IDENTITY, exports["Pair_plan"],
+      { x = 7 }, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
+  assert(smoke.__classname == FFI_BATT_PAIR_IDENTITY,
+      "the smoke construction through the retained plan must carry the canonical Pair identity")
+  assert(smoke.__kind == "class",
+      "the smoke construction through the retained plan must be tagged __kind == 'class'")
+end)
+
+test("C1: construction through the retained exported FFI plan yields a tagged instance with provided values and absent optional omission (evaluator delta 0)", function()
+  local exports = ffi_batt_require_full_exports()
+  local before = ffi_batt_evaluator_count
+  local inst = __rt.class_plan_(FFI_BATT_PAIR_IDENTITY, exports["Pair_plan"],
+      { x = 7 }, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
+  assert(inst.__classname == FFI_BATT_PAIR_IDENTITY,
+      "the constructed instance must carry the canonical Pair identity")
+  assert(inst.__kind == "class",
+      "the constructed instance must be tagged __kind == 'class'")
+  assert(inst.x == 7, "the provided field x must be copied through")
+  assert(inst.y == nil, "the omitted optional field y must stay absent")
+  assert(ffi_batt_evaluator_count - before == 0,
+      "no evaluator may run: x is provided and y is an omitted optional")
+end)
+
+test("C2: omitted required defaults evaluate exactly once per attempt at READY through the retained plan", function()
+  local exports = ffi_batt_require_full_exports()
+  local before = ffi_batt_evaluator_count
+  local a = __rt.class_plan_(FFI_BATT_PAIR_IDENTITY, exports["Pair_plan"],
+      {}, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
+  assert(a.x == 0, "the first construction's defaulted x must be 0")
+  assert(a.y == nil, "the omitted optional y must stay absent")
+  assert(ffi_batt_evaluator_count - before == 1,
+      "exactly one evaluator may run per attempt (x's; y is an omitted optional)")
+  local b = __rt.class_plan_(FFI_BATT_PAIR_IDENTITY, exports["Pair_plan"],
+      {}, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
+  assert(b.x == 0, "the second construction's defaulted x must be 0")
+  assert(ffi_batt_evaluator_count - before == 2,
+      "the second attempt must run exactly one more evaluator")
+  assert(a ~= b, "each attempt must publish a distinct instance table")
+end)
+
+test("C3: an extra provided field through the retained plan raises E8007 with the call span before any default evaluation", function()
+  local exports = ffi_batt_require_full_exports()
+  local before = ffi_batt_evaluator_count
+  local err = assert_error(function()
+    return __rt.class_plan_(FFI_BATT_PAIR_IDENTITY, exports["Pair_plan"],
+        { x = 1, z = 9 }, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
+  end, "E8007")
+  assert(err.file == FFI_BATT_CALL_FILE, "E8007 must carry the call file")
+  assert(err.line == FFI_BATT_CALL_LINE, "E8007 must carry the call line")
+  assert(err.column == FFI_BATT_CALL_COL, "E8007 must carry the call column")
+  assert(ffi_batt_evaluator_count - before == 0,
+      "no default evaluation may run before the extra-name rejection")
+end)
+
+test("C4: a provided-field validation failure raises E8001 through the plan entry with the call span and publishes nothing", function()
+  local exports = ffi_batt_require_full_exports()
+  local err = assert_error(function()
+    return __rt.class_plan_(FFI_BATT_PAIR_IDENTITY, exports["Pair_plan"],
+        { x = "not-an-int" }, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
+  end, "E8001")
+  assert(err.file == FFI_BATT_CALL_FILE, "E8001 must carry the call file")
+  assert(err.line == FFI_BATT_CALL_LINE, "E8001 must carry the call line")
+  assert(err.column == FFI_BATT_CALL_COL, "E8001 must carry the call column")
+end)
+
+test("C5: an int range failure raises E8004 through the plan entry with the call span and publishes nothing", function()
+  local exports = ffi_batt_require_full_exports()
+  local err = assert_error(function()
+    return __rt.class_plan_(FFI_BATT_PAIR_IDENTITY, exports["Pair_plan"],
+        { x = 2147483648 }, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
+  end, "E8004")
+  assert(err.file == FFI_BATT_CALL_FILE, "E8004 must carry the call file")
+  assert(err.line == FFI_BATT_CALL_LINE, "E8004 must carry the call line")
+  assert(err.column == FFI_BATT_CALL_COL, "E8004 must carry the call column")
+end)
+
+-- C6's battery-local generated-shape plan: the required x evaluator
+-- returns an out-of-range int so plan-entry phase 3 raises E8004 after
+-- exactly one default evaluation.
+local function ffi_batt_build_out_of_range_plan_list()
+  return {
+    { name = "x", descriptor = "int", optional = false,
+      evaluator = function()
+        ffi_batt_evaluator_count = ffi_batt_evaluator_count + 1
+        return 2147483648
+      end },
+    { name = "y", descriptor = "number", optional = true,
+      evaluator = function()
+        ffi_batt_evaluator_count = ffi_batt_evaluator_count + 1
+        return 0.0
+      end },
+  }
+end
+
+test("C6: an evaluator result that fails phase-3 validation runs the evaluator exactly once and raises E8004 with the call span", function()
+  local plan = ffi_batt_build_out_of_range_plan_list()
+  local before = ffi_batt_evaluator_count
+  local err = assert_error(function()
+    return __rt.class_plan_(FFI_BATT_PAIR_IDENTITY, plan, {},
+        FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
+  end, "E8004")
+  assert(ffi_batt_evaluator_count - before == 1,
+      "the x evaluator must run exactly once per attempt")
+  assert(err.file == FFI_BATT_CALL_FILE, "E8004 must carry the call file")
+  assert(err.line == FFI_BATT_CALL_LINE, "E8004 must carry the call line")
+  assert(err.column == FFI_BATT_CALL_COL, "E8004 must carry the call column")
+end)
+
+test("C7: inbound direct by-value struct against the remediated row publishes a tagged class with Lua-number numeric members (the D7 unboxing proof)", function()
+  local exports = ffi_batt_require_full_exports()
+  local inst = exports.make_pair.f(3, 4.5,
+      FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
+  assert(type(inst) == "table", "make_pair must publish a table instance")
+  assert(inst.__classname == FFI_BATT_PAIR_IDENTITY,
+      "the inbound Pair instance must carry the canonical class identity")
+  assert(inst.__kind == "class",
+      "the inbound Pair instance must be tagged __kind == 'class'")
+  assert(inst.x == 3, "the inbound x member must be 3")
+  assert(type(inst.x) == "number",
+      "the inbound x member must be a Lua number by construction (the D7 unboxing)")
+  assert(inst.y == 4.5, "the inbound y member must be 4.5")
+  assert(type(inst.y) == "number",
+      "the inbound y member must be a Lua number by construction (the D7 unboxing)")
+  local inst2 = exports.make_pair.f(3, 4.5,
+      FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
+  assert(inst2.__classname == FFI_BATT_PAIR_IDENTITY and inst2.__kind == "class",
+      "the second inbound Pair instance must be tagged identically")
+  assert(inst2 ~= inst, "two calls must produce distinct instance tables")
+end)
+
+test("C8: inbound by-value struct with a non-NULL pointer field publishes a tagged PtrBox whose ptr is a tagged token with a non-nil __ptr", function()
+  local exports = ffi_batt_require_full_exports()
+  local tok = exports.static_pointer.f(
+      FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
+  assert(tok.__kind == "class" and tok.__classname == FFI_BATT_PTR_IDENTITY,
+      "the static_pointer token must be tagged with the Pointer identity")
+  local box = exports.make_ptr_box.f(tok,
+      FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
+  assert(type(box) == "table", "make_ptr_box must publish a table instance")
+  assert(box.__classname == FFI_BATT_PTRBOX_IDENTITY,
+      "the inbound PtrBox instance must carry the canonical class identity")
+  assert(box.__kind == "class",
+      "the inbound PtrBox instance must be tagged __kind == 'class'")
+  assert(type(box.ptr) == "table", "the ptr field must be a token table")
+  assert(box.ptr.__kind == "class" and box.ptr.__classname == FFI_BATT_PTR_IDENTITY,
+      "the ptr field must be tagged with the Pointer identity")
+  assert(box.ptr.__ptr ~= nil, "the ptr field must carry a non-nil __ptr")
+end)
+
+test("C9: an inbound field NULL pointer raises FFI_NULL_POINTER with the call span, keeps native effects, and publishes no class", function()
+  local exports = ffi_batt_require_full_exports()
+  exports.reset_counter.f(FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
+  local err = assert_error(function()
+    return exports.make_null_ptr_box.f(
+        FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
+  end, "FFI_NULL_POINTER")
+  assert(err.file == FFI_BATT_CALL_FILE, "FFI_NULL_POINTER must carry the call file")
+  assert(err.line == FFI_BATT_CALL_LINE, "FFI_NULL_POINTER must carry the call line")
+  assert(err.column == FFI_BATT_CALL_COL, "FFI_NULL_POINTER must carry the call column")
+  assert(exports.call_count.f(FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL) == 1,
+      "the native call must have run: the counter reads exactly one")
+end)
+
 test("FFI negative-constraint source audits against deal/runtime.lua hold", function()
   local f = io.open("deal/runtime.lua", "r")
   assert(f ~= nil, "deal/runtime.lua must be readable for the source audits")
@@ -4020,6 +4201,38 @@ test("FFI negative-constraint source audits against deal/runtime.lua hold", func
   -- in deal/runtime.lua.
   assert(string.find(src, "FFI_UNSUPPORTED_BACKEND", 1, true) == nil,
       "FFI_UNSUPPORTED_BACKEND must never appear in deal/runtime.lua")
+  -- C10 (f): exactly one __rt.class_plan_ definition exists in
+  -- deal/runtime.lua — the ISSUE-0276 entry the C-series consumes; it
+  -- is never re-realized.
+  assert(count_all(src, "function __rt.class_plan_") == 1,
+      "exactly one __rt.class_plan_ definition must exist in deal/runtime.lua")
+  -- C10 (g): inside the FFI half exactly one call-form reference (the
+  -- inbound C_STRUCT delegation) out of exactly two textual references
+  -- (the R15 doc comment plus the delegation call).
+  assert(count_all(half, "__rt.class_plan_(") == 1,
+      "exactly one call-form __rt.class_plan_( must exist in the FFI half (the inbound delegation)")
+  assert(count_all(half, "class_plan_") == 2,
+      "exactly two textual class_plan_ references must exist in the FFI half (the R15 doc comment plus the delegation call)")
+  -- C10 (h): no E8007 production in the half — the extra-field surface
+  -- is the plan entry's, never duplicated FFI-side.
+  absent("an E8007 production", '"E8007"')
+  -- C10 (i): the half invokes no evaluator (the evaluatorImplementationContents
+  -- identity field is content plumbing, not invocation).
+  absent("an evaluator invocation", "evaluator(")
+  -- C10 (j): exactly one public FFI entry assignment in the half.
+  assert(count_all(half, "__rt.load_ffi =") == 1,
+      "exactly one __rt.load_ffi = public-entry assignment must exist in the FFI half")
+  -- C10 (k): exactly two __classname assignment sites (the two C_POINTER
+  -- token-tagging rows) out of three textual references (plus the
+  -- outbound-row doc comment).
+  assert(count_all(half, "__classname =") == 2,
+      "exactly two __classname = assignment sites must exist in the FFI half (the C_POINTER token-tagging rows)")
+  assert(count_all(half, "__classname") == 3,
+      "exactly three textual __classname references must exist in the FFI half (the outbound doc comment plus the two assignments)")
+  -- C10 (l): exactly one tonumber( production in the half — the D7
+  -- inbound INT/NUMBER unboxing.
+  assert(count_all(half, "tonumber(") == 1,
+      "exactly one tonumber( production must exist in the FFI half (the D7 inbound unboxing)")
   -- Additive static non-yield audit (B8's rejected alternative, kept as
   -- a source-level complement to the behavioral proof).
   absent("coroutine scheduling", "coroutine")
