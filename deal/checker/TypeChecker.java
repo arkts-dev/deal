@@ -89,6 +89,7 @@ public final class TypeChecker {
         return new CheckResult(
             Map.copyOf(checker.typeMap),
             checker.rootTable,
+            Map.copyOf(scopeMap),
             List.copyOf(checker.diagnostics)
         );
     }

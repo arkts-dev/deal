@@ -8,8 +8,12 @@ import deal.ast.Block;
 import deal.ast.CallExpr;
 import deal.ast.DeleteStatement;
 import deal.ast.ExpressionNode;
+import deal.ast.ForInit;
 import deal.ast.ForOfStatement;
+import deal.ast.ForStatement;
+import deal.ast.FunctionDeclaration;
 import deal.ast.IdentifierExpr;
+import deal.ast.ImportDeclaration;
 import deal.ast.IndexExpr;
 import deal.ast.LiteralExpr;
 import deal.ast.LiteralValue;
@@ -19,15 +23,19 @@ import deal.ast.Property;
 import deal.ast.Span;
 import deal.ast.StatementNode;
 import deal.ast.TemplateLiteralExpr;
+import deal.ast.TryStatement;
 import deal.ast.UnaryExpr;
 import deal.ast.UnaryOp;
+import deal.ast.VariableDeclaration;
 import deal.checker.CheckResult;
 import deal.checker.Symbol;
+import deal.checker.SymbolTable;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.semantic.ir.AddressChainProtocol;
 import deal.semantic.ir.AnchorId;
 import deal.semantic.ir.AssignTargetKind;
 import deal.semantic.ir.BinarySelector;
+import deal.semantic.ir.BindingCellKind;
 import deal.semantic.ir.BindingId;
 import deal.semantic.ir.BlockId;
 import deal.semantic.ir.BoundaryKind;
@@ -35,6 +43,7 @@ import deal.semantic.ir.BoundaryRealization;
 import deal.semantic.ir.ClassId;
 import deal.semantic.ir.ConstructKind;
 import deal.semantic.ir.ContractSnapshotCanonicalizer;
+import deal.semantic.ir.ControlSelector;
 import deal.semantic.ir.DeleteTargetKind;
 import deal.semantic.ir.ExportPlan;
 import deal.semantic.ir.FailureContractRegistry;
@@ -72,6 +81,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -301,6 +311,23 @@ import java.util.Set;
  * {@code DESCRIPTOR_UNREPRESENTABLE} — never an invented descriptor,
  * never a crash.</p>
  *
+ * <p><b>The binding-core child (ISSUE-0444).</b> {@link
+ * #lowerModuleBindingCore} drives the same session in binding-core mode:
+ * one {@code BindingId} per declared name, static per-incarnation
+ * generation ordinals, {@code BINDING_ALLOC/INIT/LOAD/STORE} with the
+ * closed {@code DIRECT|SHARED_CELL} defaults and special cases
+ * (for-let per-iteration incarnations and {@code FOR_EACH} iteration
+ * bindings are {@code SHARED_CELL}), module-init-top intrinsic bindings,
+ * hoisted module-level function ALLOCs, the two-incarnation for-let
+ * {@code LOOP} shape, and {@code FOR_EACH} iteration-binding producing
+ * allocations — with identifier loads and assignment stores resolving
+ * the dominant incarnation through the installed
+ * {@link BindingSiteResolver}. The walk consumes the value-expression
+ * seam for initializer/assignment/condition value ops and the comparison
+ * producer for comparison operands; it implements no expression-value
+ * lowering of its own. Closure production, adapter creation, and adapter
+ * invocation stay out of this child's window.</p>
+ *
  * <p><b>IDs and determinism (D4/D8/D10).</b> Every id is allocated
  * through the project's {@link SemanticIdAllocator} in the pinned order —
  * dependency order, source order, semantic role, then synthetic ordinal —
@@ -363,18 +390,151 @@ public final class SemanticLowerer {
     public static final String CANONICAL_RUNTIME_VALIDATION_ID = "runtime-validation";
 
     /**
-     * The pinned initial generation of every for-of loop binding (D1/D6)
-     * and of every variable-assignment store in this stage's window (E6
-     * owns generation increments): the {@code FOR_EACH} payload's
-     * {@code generation} field and the {@code BINDING_STORE} commit's
-     * {@code generation} field carry this initial generation, never
-     * rewritten; loads of the loop binding inside the body carry it and
-     * the body-runner resolves the effective generation as initial +
-     * current iteration index at execution. Binding allocation and
-     * generation increments/stores are E6's (ISSUE-0235); this stage
-     * only pins the payload value.
+     * The pinned initial generation of every for-of loop binding (D1/D6),
+     * of every variable-assignment store in this stage's E5 window, and
+     * of every first-incarnation binding of the binding-core child (the
+     * for-let per-iteration incarnation is the pinned generation 1 —
+     * B1): the {@code FOR_EACH} payload's {@code generation} field and
+     * the {@code BINDING_STORE} commit's {@code generation} field carry
+     * this initial generation, never rewritten; loads of the loop binding
+     * inside the body carry it and the body-runner resolves the effective
+     * generation as initial + current iteration index at execution.
+     * Binding allocation and generation ordinals are the binding-core
+     * child's ({@link #lowerModuleBindingCore}, ISSUE-0444/ISSUE-0235);
+     * this stage's E3/E5 window only pins the payload value.
      */
     public static final long INITIAL_LOOP_GENERATION = 0L;
+
+    // =========================================================================
+    // The binding-core child (ISSUE-0444): incarnations, generations, cell kinds
+    // =========================================================================
+
+    /**
+     * The closed producing-allocation kinds of the binding-core child:
+     * an incarnation is produced by its {@code BINDING_ALLOC} op or by
+     * the {@code FOR_EACH} iteration op (the iteration binding's producing
+     * allocation — {@code FOR_EACH} payloads record no cell kind because
+     * iteration bindings are always {@code SHARED_CELL}, B2).
+     */
+    public enum BindingProducer {
+
+        /** The incarnation's producing allocation is its {@code BINDING_ALLOC} op. */
+        BINDING_ALLOC,
+
+        /** The incarnation's producing allocation is the {@code FOR_EACH} iteration op. */
+        FOR_EACH
+    }
+
+    /**
+     * One incarnation fact of the binding-core walk: the static
+     * per-binding generation ordinal (assigned in lowering order starting
+     * at 0), the block the incarnation's producing allocation sits in,
+     * the closed cell kind ({@code DIRECT} everywhere except the pinned
+     * special cases — for-let per-iteration incarnations and
+     * {@code FOR_EACH} iteration bindings are {@code SHARED_CELL}), the
+     * reassignability fact recorded independently of the cell kind, and
+     * the producing-allocation kind.
+     */
+    public record BindingCoreIncarnation(long generation, BlockId scope,
+                                         BindingCellKind cellKind, boolean mutable,
+                                         BindingProducer producer) {
+
+        public BindingCoreIncarnation {
+            Objects.requireNonNull(scope, "scope must not be null");
+            Objects.requireNonNull(cellKind, "cellKind must not be null");
+            Objects.requireNonNull(producer, "producer must not be null");
+            if (generation < 0) {
+                throw new IllegalArgumentException(
+                    "generation must be >= 0, got " + generation);
+            }
+        }
+    }
+
+    /**
+     * One declared name's binding-core facts: the single globally unique
+     * {@link BindingId} of the declared name and its incarnations in
+     * allocation (source) order.
+     */
+    public record BindingCoreBinding(String name, BindingId binding,
+                                     List<BindingCoreIncarnation> incarnations) {
+
+        public BindingCoreBinding {
+            Objects.requireNonNull(name, "name must not be null");
+            Objects.requireNonNull(binding, "binding must not be null");
+            Objects.requireNonNull(incarnations, "incarnations must not be null");
+            incarnations = List.copyOf(incarnations);
+        }
+    }
+
+    /**
+     * The binding-core walk's complete fact surface: one entry per
+     * declared name in the pinned registration order (intrinsic bindings
+     * first, then module-level hoisted names in declaration order, then
+     * every remaining declaration in source order).
+     */
+    public record BindingCoreFacts(List<BindingCoreBinding> bindings) {
+
+        /** The empty fact set (the failure-path value). */
+        public static BindingCoreFacts empty() {
+            return new BindingCoreFacts(List.of());
+        }
+
+        public BindingCoreFacts {
+            Objects.requireNonNull(bindings, "bindings must not be null");
+            bindings = List.copyOf(bindings);
+        }
+    }
+
+    /**
+     * The result of the binding-core entry point: the validated lowering
+     * result plus the walk's binding facts (partial on failure, complete
+     * on success).
+     */
+    public record BindingCoreResult(LoweringResult lowering, BindingCoreFacts facts) {
+
+        public BindingCoreResult {
+            Objects.requireNonNull(lowering, "lowering must not be null");
+            Objects.requireNonNull(facts, "facts must not be null");
+        }
+    }
+
+    /**
+     * The dominant-incarnation resolver of the binding environment
+     * (ISSUE-0444 binding-core child): the identifier arm and the
+     * variable-assignment arm consult this hook when installed so every
+     * {@code BINDING_LOAD}/{@code BINDING_STORE} they emit names the
+     * dominant incarnation at the site (B9 R1). Absent (the default in
+     * this stage's E3/E5 window), the pre-existing frame/on-demand
+     * resolution is unchanged.
+     */
+    @FunctionalInterface
+    public interface BindingSiteResolver {
+
+        /**
+         * The dominant incarnation of the named declared binding at the
+         * current site, or {@code null} when the name is not a declared
+         * binding of the installed environment.
+         *
+         * @param name the source identifier name; non-null
+         * @return the dominant incarnation, or {@code null}
+         */
+        BindingSite resolve(String name);
+    }
+
+    /**
+     * One generation-pinned binding reference of the installed resolver:
+     * the binding identity plus the dominant generation at the site.
+     */
+    public record BindingSite(BindingId binding, long generation) {
+
+        public BindingSite {
+            Objects.requireNonNull(binding, "binding must not be null");
+            if (generation < 0) {
+                throw new IllegalArgumentException(
+                    "generation must be >= 0, got " + generation);
+            }
+        }
+    }
 
     private SemanticLowerer() {
         // Static entry points plus the per-module lowering session; no instances.
@@ -626,6 +786,121 @@ public final class SemanticLowerer {
         return new LoweringResult(unit, List.of());
     }
 
+    /**
+     * The binding-core child's public lowering entry point (ISSUE-0444
+     * sequencing item 1): lowers one checked implementation module
+     * through the binding walk — one {@code BindingId} per declared name,
+     * static per-incarnation generation ordinals, {@code
+     * BINDING_ALLOC/INIT/LOAD/STORE} production with the closed
+     * {@code DIRECT|SHARED_CELL} defaults and special cases, hoisted
+     * module-level function ALLOCs and module-init-top intrinsic
+     * bindings, the two-incarnation for-let shape, and {@code FOR_EACH}
+     * iteration-binding producing allocations — and produces the validated
+     * unit plus the walk's binding facts.
+     *
+     * <p>The walk consumes the value-expression seam of
+     * {@link ModuleLowerer} for initializer/assignment/condition value
+     * ops (never re-implementing expression-value lowering); comparison
+     * operands lower through the single comparison producer
+     * {@link ComparisonSelectorLowering} (the values epic's producer),
+     * and identifier loads plus variable-assignment stores resolve
+     * through the installed {@link BindingSiteResolver} so every
+     * {@code BINDING_LOAD}/{@code BINDING_STORE} payload names the
+     * dominant incarnation at the site (B9 R1). The produced unit passes
+     * the closed validator, the production-time address-chain protocol,
+     * and the claiming seam under the pinned E6-gate activation
+     * ({@code BINDINGS} activates for {@code BINDING_LOAD}; binding-core
+     * units defer the row per unit because the full family set includes
+     * the closure child's {@code RECURSIVE_GROUP_INIT}/
+     * {@code CLOSURE_NEW}).</p>
+     *
+     * <p>This entry point is driven by the binding-core tests; no
+     * production route change — retained/public compilation paths and
+     * {@link #lowerModule} are untouched.</p>
+     *
+     * @param module                the checked implementation module; non-null
+     * @param profile               the invocation's semantic profile
+     *                              (I3 guard: only
+     *                              {@code DEAL_V1_2_INT32} is lowered);
+     *                              non-null
+     * @param constructCoverage     the manifest's reachable-construct rows
+     *                              recorded at lowering start (S1); non-null
+     * @param interfaceHash         the interface index digest the unit is
+     *                              checked against (R-PROFILE); non-null
+     * @param capabilityRegistryHash the invocation's capability-registry
+     *                              digest (R-PROFILE); non-null
+     * @param allocator             the project's semantic-id allocator in
+     *                              dependency order; non-null
+     * @return the validated unit with the binding facts, or the first
+     *         E6005 with the partial facts on failure
+     */
+    public static BindingCoreResult lowerModuleBindingCore(CheckedModuleInput module,
+                                                           SemanticProfile profile,
+                                                           Map<ConstructKind,
+                                                               List<SemanticOpKind>>
+                                                               constructCoverage,
+                                                           String interfaceHash,
+                                                           String capabilityRegistryHash,
+                                                           SemanticIdAllocator allocator) {
+        Objects.requireNonNull(module, "module must not be null");
+        Objects.requireNonNull(profile, "profile must not be null");
+        Objects.requireNonNull(constructCoverage, "constructCoverage must not be null");
+        Objects.requireNonNull(interfaceHash, "interfaceHash must not be null");
+        Objects.requireNonNull(capabilityRegistryHash, "capabilityRegistryHash must not be null");
+        Objects.requireNonNull(allocator, "allocator must not be null");
+        // I3 profile guard: identical to lowerModule — a non-DEAL_V1_2_INT32
+        // lowering request produces no unit and no partial session state.
+        if (profile != SemanticProfile.DEAL_V1_2_INT32) {
+            return new BindingCoreResult(new LoweringResult(null,
+                List.of(FailureContractRegistry.e6005(
+                    new LoweringFailureDetail(module.moduleId().path(),
+                        SemanticCapability.FOUNDATION_VALUES, LOWER_LEGACY_PROFILE_REJECTED,
+                        profile, LoweredModuleUnit.FORMAT_VERSION, "SemanticLowerer")))),
+                BindingCoreFacts.empty());
+        }
+        ModuleLowerer lowerer = new ModuleLowerer(module.moduleId(), module.sourceId(),
+            module.checks(), allocator, true, module.ast().span());
+        try {
+            lowerer.lowerBindingModule(module.ast().statements());
+        } catch (ConstructUnlowered unlowered) {
+            return new BindingCoreResult(new LoweringResult(null,
+                List.of(FailureContractRegistry.e6005(
+                    loweringFailureDetail(module.moduleId(), unlowered)))),
+                lowerer.bindingFacts());
+        } catch (IntLiteralOutOfRange outOfRange) {
+            return new BindingCoreResult(new LoweringResult(null,
+                List.of(FailureContractRegistry.e6005(
+                    loweringFailureDetail(module.moduleId(), outOfRange)))),
+                lowerer.bindingFacts());
+        } catch (ContainerPayloadDescriptors.Defect defect) {
+            return new BindingCoreResult(new LoweringResult(null,
+                List.of(FailureContractRegistry.e6005(
+                    loweringFailureDetail(module.moduleId(), defect)))),
+                lowerer.bindingFacts());
+        } catch (ComparisonSelectorLowering.Defect defect) {
+            return new BindingCoreResult(new LoweringResult(null,
+                List.of(ComparisonSelectorLowering.e6005(module.moduleId(), defect))),
+                lowerer.bindingFacts());
+        }
+        LoweredModuleUnit unit = lowerer.buildUnit(constructCoverage,
+            module.imports().stream().map(ResolvedImport::resolvedModuleId).toList(),
+            interfaceHash, capabilityRegistryHash,
+            ContainerClaimingSeam.E6_GATE_ACTIVATION);
+        Optional<CompilerDiagnostic> validation = SemanticIrValidator.validate(unit,
+            new SemanticIrValidator.ComparisonFacts(interfaceHash,
+                SemanticProfile.DEAL_V1_2_INT32, capabilityRegistryHash));
+        if (validation.isPresent()) {
+            return new BindingCoreResult(new LoweringResult(null, List.of(validation.get())),
+                lowerer.bindingFacts());
+        }
+        Optional<CompilerDiagnostic> chainShape = AddressChainProtocol.validate(unit);
+        if (chainShape.isPresent()) {
+            return new BindingCoreResult(new LoweringResult(null, List.of(chainShape.get())),
+                lowerer.bindingFacts());
+        }
+        return new BindingCoreResult(new LoweringResult(unit, List.of()), lowerer.bindingFacts());
+    }
+
     // =========================================================================
     // The per-module lowering session (the arms)
     // =========================================================================
@@ -671,6 +946,96 @@ public final class SemanticLowerer {
          */
         private final IdentityHashMap<Symbol.VariableSymbol, BindingId> variableBindings =
             new IdentityHashMap<>();
+        /**
+         * The binding-core mode flag (ISSUE-0444 binding-core child):
+         * {@code true} exactly when the session was created by
+         * {@link SemanticLowerer#lowerModuleBindingCore} — the binding
+         * walk's statement arms, the comparison-operand routing through
+         * the comparison producer, and the binding-environment identifier
+         * resolution are active; {@code false} (the default) preserves
+         * the E3/E5 window behavior byte-for-byte.
+         */
+        private final boolean bindingCore;
+        /**
+         * The installed binding-environment resolver (ISSUE-0444): the
+         * identifier arm and the variable-assignment arm consult it
+         * (after the for-of frames, before the legacy on-demand path) so
+         * every {@code BINDING_LOAD}/{@code BINDING_STORE} they emit
+         * names the dominant incarnation at the site. {@code null} in
+         * the E3/E5 window.
+         */
+        private BindingSiteResolver bindingSiteResolver;
+        /**
+         * The binding environment's scope frames (binding-core mode),
+         * innermost first: each frame maps a declared name to the
+         * incarnation dominant <em>within that frame</em> — the frame
+         * entry snapshots the dominant incarnation of the name at frame
+         * entry, a registration during the frame replaces the entry, and
+         * resolution walks the frames innermost-first. This keeps the
+         * for-let's update block resolving the generation-0 counter after
+         * the body frame (whose entry names generation 1) is popped.
+         * Every cell ever registered stays recorded in
+         * {@link #bindingCells}.
+         */
+        private final List<Map<String, FrameEntry>> bindingScopes = new ArrayList<>();
+        /**
+         * The checker's per-scoped-statement symbol tables, innermost
+         * first: the current stack of scope-map key nodes (blocks,
+         * function declarations, for statements, try statements) so the
+         * walk resolves declared types of nested bindings without
+         * retaining any {@code NameResolver} instance (D4).
+         */
+        private final ArrayDeque<StatementNode> checkerScopeNodes = new ArrayDeque<>();
+        /**
+         * The registered binding cells in registration order (binding-core
+         * mode): the fact surface backing {@link #bindingFacts()}.
+         */
+        private final List<BindingCell> bindingCells = new ArrayList<>();
+        /**
+         * The registered binding cells by {@link BindingId}: a binding's
+         * multiple incarnations (the for-let counter and its per-iteration
+         * incarnation share one identity) append to exactly one cell.
+         */
+        private final Map<BindingId, BindingCell> cellsById = new LinkedHashMap<>();
+        /**
+         * The current structured-region block identities of the binding
+         * walk, innermost first (module-init block at the bottom): the
+         * scope every {@code BINDING_ALLOC} emitted at the current site
+         * carries (B9 R1's same-block/structured-ancestor resolution
+         * blocks).
+         */
+        private final ArrayDeque<BlockId> blockStack = new ArrayDeque<>();
+        /**
+         * The checked program's span: the pinned origin span of the
+         * module-init-top intrinsic ALLOC/INIT ops (synthetic module
+         * entry ops with no statement span of their own).
+         */
+        private final Span programSpan;
+
+        /**
+         * One binding cell of the binding environment (binding-core mode):
+         * the declared name, its single globally unique {@link BindingId},
+         * and its incarnations in allocation order.
+         */
+        private static final class BindingCell {
+
+            final String name;
+            final BindingId id;
+            final List<BindingCoreIncarnation> incarnations = new ArrayList<>();
+
+            BindingCell(String name, BindingId id) {
+                this.name = Objects.requireNonNull(name, "name must not be null");
+                this.id = Objects.requireNonNull(id, "id must not be null");
+            }
+        }
+
+        /**
+         * One scope-frame entry: the name's cell plus the incarnation
+         * dominant within the frame (the frame-level visibility fact that
+         * resolves loads/stores at the site).
+         */
+        private record FrameEntry(BindingCell cell, BindingCoreIncarnation incarnation) {
+        }
 
         /**
          * Creates one lowering session. The module-init block is the
@@ -685,11 +1050,69 @@ public final class SemanticLowerer {
          */
         public ModuleLowerer(ModuleId module, String sourceId, CheckResult checks,
                              SemanticIdAllocator ids) {
+            this(module, sourceId, checks, ids, false,
+                new Span(sourceId, 1, 1, 1, 1, Span.UNKNOWN_OFFSET, Span.UNKNOWN_OFFSET));
+        }
+
+        /**
+         * Creates one lowering session with the binding-core mode flag
+         * (ISSUE-0444 binding-core child). In binding-core mode the
+         * module scope frame is opened at construction and the
+         * binding-environment resolver is installed, so the identifier
+         * arm and the variable-assignment arm resolve declared bindings
+         * against the walk's dominant incarnations.
+         *
+         * @param module      the module identity; non-null
+         * @param sourceId    the stable source identity carried on every
+         *                    op's origin; non-null
+         * @param checks      the module's checked facts (read-only); non-null
+         * @param ids         the project's allocator in dependency order;
+         *                    non-null
+         * @param bindingCore {@code true} to activate the binding walk's
+         *                    arms and environment
+         */
+        public ModuleLowerer(ModuleId module, String sourceId, CheckResult checks,
+                             SemanticIdAllocator ids, boolean bindingCore, Span programSpan) {
             this.module = Objects.requireNonNull(module, "module must not be null");
             this.sourceId = Objects.requireNonNull(sourceId, "sourceId must not be null");
             this.checks = Objects.requireNonNull(checks, "checks must not be null");
             this.ids = Objects.requireNonNull(ids, "ids must not be null");
+            this.bindingCore = bindingCore;
+            this.programSpan = Objects.requireNonNull(programSpan,
+                "programSpan must not be null");
             this.moduleInitBlock = ids.nextBlockId(module, nextOrdinal++, 0);
+            if (bindingCore) {
+                blockStack.push(moduleInitBlock);
+                bindingScopes.add(new LinkedHashMap<>());
+                installBindingSiteResolver(name -> {
+                    FrameEntry entry = frameEntryOf(name);
+                    if (entry == null) {
+                        return null;
+                    }
+                    return new BindingSite(entry.cell().id,
+                        entry.incarnation().generation());
+                });
+            }
+        }
+
+        /**
+         * Installs the binding-environment resolver consulted by the
+         * identifier arm and the variable-assignment arm (ISSUE-0444
+         * binding-core child). Installing a resolver never changes the
+         * E3/E5 window's pre-existing frame/on-demand resolution — the
+         * resolver is consulted only after the for-of frames and only
+         * when it resolves the name.
+         *
+         * @param resolver the dominant-incarnation resolver; non-null
+         */
+        public void installBindingSiteResolver(BindingSiteResolver resolver) {
+            this.bindingSiteResolver = Objects.requireNonNull(resolver,
+                "resolver must not be null");
+        }
+
+        /** The binding-core mode flag of this session. */
+        public boolean bindingCore() {
+            return bindingCore;
         }
 
         /** The module identity of this session. */
@@ -744,6 +1167,584 @@ public final class SemanticLowerer {
                     "closeForEachScope without an open loop-binding frame (producer defect)");
             }
             frames.remove(0);
+        }
+
+        // ---------------------------------------------------------------------
+        // The binding-core walk (ISSUE-0444 binding-core child)
+        // ---------------------------------------------------------------------
+
+        /**
+         * Lowers the module's top-level statements through the
+         * binding-core walk: first the module-init-top bindings — the
+         * {@code int}/{@code number} intrinsic bindings (ALLOC + INIT at
+         * module-init top, the retained per-module wrapper shape,
+         * {@code deal/codegen/lua/LuaBackend.java:668-674}) and the
+         * hoisted module-level function-name ALLOCs plus import-alias
+         * ALLOCs in declaration order (B1) — then the statements in
+         * source order.
+         *
+         * @param statements the module's top-level statements; non-null
+         * @throws IllegalStateException outside binding-core mode
+         * @throws ConstructUnlowered    on a construct outside the
+         *         binding-core window
+         */
+        public void lowerBindingModule(List<StatementNode> statements) {
+            if (!bindingCore) {
+                throw new IllegalStateException(
+                    "lowerBindingModule outside binding-core mode (producer defect)");
+            }
+            seedIntrinsicBindings();
+            hoistModuleLevelAllocs(statements);
+            lowerBindingStatements(statements, true);
+        }
+
+        /**
+         * The binding walk's complete fact surface: one
+         * {@link BindingCoreBinding} per declared name in registration
+         * order (partial when the walk failed mid-way).
+         *
+         * @return the recorded binding facts; non-null
+         */
+        public BindingCoreFacts bindingFacts() {
+            List<BindingCoreBinding> facts = new ArrayList<>();
+            for (BindingCell cell : bindingCells) {
+                facts.add(new BindingCoreBinding(cell.name, cell.id, cell.incarnations));
+            }
+            return new BindingCoreFacts(facts);
+        }
+
+        /**
+         * Seeds the {@code int}/{@code number} intrinsic bindings at
+         * module-init top (B1): exactly the root
+         * {@code Symbol.IntrinsicSymbol} bindings of those two names
+         * (shadowed-by-declaration names resolve to the user declaration,
+         * never the intrinsic — the checker removes the root binding
+         * before defining the shadow, so the symbol fact decides). Each
+         * intrinsic binding gets one ALLOC (generation 0, {@code DIRECT},
+         * not mutable) and one INIT whose operand is the pinned
+         * intrinsic-function-value identity: a dedicated {@code ValueId}
+         * allocated in the pinned order. No closed op produces an
+         * intrinsic function value — the values seam has no
+         * intrinsic-value arm and this child never implements
+         * expression-value lowering — so the identity is wired as the
+         * INIT operand and materialized by the invocation layer (E7); the
+         * child emits no placeholder op, never a {@code CONST}, never a
+         * closure.
+         */
+        private void seedIntrinsicBindings() {
+            for (String name : List.of("int", "number")) {
+                if (!(checks.symbolTable().resolve(name) instanceof Symbol.IntrinsicSymbol)) {
+                    continue;
+                }
+                BindingId binding = ids.nextBindingId(module, nextOrdinal++, 0);
+                registerBinding(name, binding, new BindingCoreIncarnation(
+                    INITIAL_LOOP_GENERATION, moduleInitBlock, BindingCellKind.DIRECT,
+                    false, BindingProducer.BINDING_ALLOC));
+                emitUserNullOp(SemanticOpKind.BINDING_ALLOC,
+                    new KindPayload.BindingAllocPayload(binding, moduleInitBlock, false,
+                        BindingCellKind.DIRECT, INITIAL_LOOP_GENERATION),
+                    moduleInitSpan(), FailurePolicyId.NO_DEAL_FAILURE);
+                ValueId intrinsicValue = ids.nextValueId(module, nextOrdinal++, 0);
+                emitUserNullOp(SemanticOpKind.BINDING_INIT,
+                    new KindPayload.BindingInitPayload(binding, INITIAL_LOOP_GENERATION,
+                        intrinsicValue),
+                    moduleInitSpan(), FailurePolicyId.NO_DEAL_FAILURE);
+            }
+        }
+
+        /**
+         * Hoists the module-level function-name ALLOCs and import-alias
+         * ALLOCs to the top of the module-init block in declaration order
+         * (B1: the retained per-scope pre-declaration shape; the
+         * {@code CLOSURE_NEW} + {@code BINDING_INIT} stay at the
+         * declaration position — the closure child's production). Only
+         * top-level {@link FunctionDeclaration}/{@link ImportDeclaration}
+         * statements hoist; nested-scope declarations allocate at their
+         * position in the main walk.
+         */
+        private void hoistModuleLevelAllocs(List<StatementNode> statements) {
+            for (StatementNode statement : statements) {
+                if (statement instanceof FunctionDeclaration function) {
+                    BindingId binding = ids.nextBindingId(module, nextOrdinal++, 0);
+                    registerBinding(function.name(), binding, new BindingCoreIncarnation(
+                        INITIAL_LOOP_GENERATION, moduleInitBlock, BindingCellKind.DIRECT,
+                        true, BindingProducer.BINDING_ALLOC));
+                    emitUserNullOp(SemanticOpKind.BINDING_ALLOC,
+                        new KindPayload.BindingAllocPayload(binding, moduleInitBlock, true,
+                            BindingCellKind.DIRECT, INITIAL_LOOP_GENERATION),
+                        function.span(), FailurePolicyId.NO_DEAL_FAILURE);
+                } else if (statement instanceof ImportDeclaration importDecl) {
+                    BindingId binding = ids.nextBindingId(module, nextOrdinal++, 0);
+                    registerBinding(importDecl.alias(), binding, new BindingCoreIncarnation(
+                        INITIAL_LOOP_GENERATION, moduleInitBlock, BindingCellKind.DIRECT,
+                        false, BindingProducer.BINDING_ALLOC));
+                    emitUserNullOp(SemanticOpKind.BINDING_ALLOC,
+                        new KindPayload.BindingAllocPayload(binding, moduleInitBlock, false,
+                            BindingCellKind.DIRECT, INITIAL_LOOP_GENERATION),
+                        importDecl.span(), FailurePolicyId.NO_DEAL_FAILURE);
+                }
+            }
+        }
+
+        /**
+         * The binding-core statement walk (ISSUE-0444): exactly the
+         * binding-relevant statement arms — let declarations, function
+         * declarations (hoisted name ALLOCs plus parameter ALLOCs at the
+         * body block's entry), the two-incarnation for-let shape, for-of
+         * iteration bindings, try/catch bindings, import aliases (hoisted
+         * — no position ops), and nested blocks. Every other statement is
+         * a foreign construct in this child's window
+         * ({@link ConstructUnlowered}).
+         */
+        private void lowerBindingStatements(List<StatementNode> statements,
+                                           boolean moduleLevel) {
+            for (StatementNode statement : statements) {
+                switch (statement) {
+                    case VariableDeclaration decl -> lowerBindingVarDecl(decl);
+                    case FunctionDeclaration function ->
+                        lowerBindingFunctionDecl(function, moduleLevel);
+                    case ForStatement forStatement -> lowerBindingForLet(forStatement);
+                    case ForOfStatement forOf -> lowerBindingForOf(forOf);
+                    case TryStatement tryStatement -> lowerBindingTry(tryStatement);
+                    case ImportDeclaration ignored -> {
+                        // The alias ALLOC was hoisted to module-init top
+                        // (B1); the MODULE_IMPORT completion write is the
+                        // modules epic's (ISSUE-0239).
+                    }
+                    case deal.ast.ExpressionStatement expressionStatement ->
+                        lowerBindingExprStatement(expressionStatement);
+                    case Block block -> lowerBindingBlock(block);
+                    default -> throw new ConstructUnlowered(describeStatement(statement));
+                }
+            }
+        }
+
+        /**
+         * The binding walk's expression-statement arm: exactly assignment
+         * statements lower (the variable-assignment {@code BINDING_STORE}
+         * commit naming the dominant incarnation is this child's op; the
+         * chain's committed-value result is dropped exactly like the
+         * for-let update block's — no {@code DISCARD}, which is E5's).
+         * Every other expression statement is a foreign construct.
+         */
+        private void lowerBindingExprStatement(
+                deal.ast.ExpressionStatement statement) {
+            if (!(statement.expr() instanceof AssignmentExpr)) {
+                throw new ConstructUnlowered("expression statement "
+                    + describeExpression(statement.expr()) + " (DISCARD is E5's, "
+                    + "ISSUE-0234; the binding walk admits assignment statements only)");
+            }
+            lowerExpression(statement.expr());
+        }
+
+        /**
+         * The binding walk's {@code let} arm: one ALLOC (generation 0,
+         * {@code DIRECT}, mutable — the closed default cell kind for
+         * ordinary declarations), the initializer's value ops through the
+         * value-expression seam, the declaration boundary for annotated
+         * declarations ({@code VARIABLE_DECLARATION} with the declared
+         * descriptor and the descriptor-kind policy; inferred
+         * declarations carry no boundary and init directly — the Binding
+         * lifecycle contract shape), then exactly one BINDING_INIT. The
+         * binding is registered before the initializer lowers (the
+         * checker defines the name before walking the initializer), so
+         * pre-init stores resolve the generation-0 incarnation.
+         */
+        private void lowerBindingVarDecl(VariableDeclaration decl) {
+            BindingId binding = ids.nextBindingId(module, nextOrdinal++, 0);
+            registerBinding(decl.name(), binding, new BindingCoreIncarnation(
+                INITIAL_LOOP_GENERATION, currentBlock(), BindingCellKind.DIRECT,
+                true, BindingProducer.BINDING_ALLOC));
+            emitUserNullOp(SemanticOpKind.BINDING_ALLOC,
+                new KindPayload.BindingAllocPayload(binding, currentBlock(), true,
+                    BindingCellKind.DIRECT, INITIAL_LOOP_GENERATION),
+                decl.span(), FailurePolicyId.NO_DEAL_FAILURE);
+            ValueId value = lowerExpression(decl.initializer());
+            if (decl.typeAnnotation().isPresent()) {
+                RuntimeDescriptor descriptor =
+                    ContainerPayloadDescriptors.resultDescriptorOf(declaredTypeOf(decl));
+                FailurePolicyId boundaryPolicy = descriptor instanceof RuntimeDescriptor.Func
+                    ? FailurePolicyId.FUNCTION_SIGNATURE : FailurePolicyId.TYPE_DESCRIPTOR;
+                emitNullOp(SemanticOpKind.BOUNDARY,
+                    new KindPayload.BoundaryPayload(BoundaryKind.VARIABLE_DECLARATION,
+                        descriptor, value,
+                        new BoundaryRealization.RuntimeValidation(
+                            CANONICAL_RUNTIME_VALIDATION_ID)),
+                    decl.span(), boundaryPolicy, SourceOriginKind.SYNTHETIC, null);
+            }
+            emitUserNullOp(SemanticOpKind.BINDING_INIT,
+                new KindPayload.BindingInitPayload(binding, INITIAL_LOOP_GENERATION, value),
+                decl.span(), FailurePolicyId.NO_DEAL_FAILURE);
+        }
+
+        /**
+         * The binding walk's function-declaration arm: the module-level
+         * name ALLOC was hoisted (B1); a nested-scope declaration emits
+         * its name ALLOC at the declaration position in the enclosing
+         * block. The body then gets its block identity, the parameter
+         * ALLOCs at the body block's entry (generation 0, {@code DIRECT},
+         * no BINDING_INIT — the parameter-transfer write is the invoking
+         * machinery's, E7), and the body statements through the binding
+         * walk. {@code CLOSURE_NEW} + {@code BINDING_INIT} stay at the
+         * declaration position for the closure child.
+         */
+        private void lowerBindingFunctionDecl(FunctionDeclaration function,
+                                              boolean moduleLevel) {
+            if (!moduleLevel) {
+                // Nested-scope declarations allocate their name binding at
+                // the declaration position (B1: nested functions are
+                // defined at their position, no hoisting).
+                BindingId binding = ids.nextBindingId(module, nextOrdinal++, 0);
+                registerBinding(function.name(), binding, new BindingCoreIncarnation(
+                    INITIAL_LOOP_GENERATION, currentBlock(), BindingCellKind.DIRECT,
+                    true, BindingProducer.BINDING_ALLOC));
+                emitUserNullOp(SemanticOpKind.BINDING_ALLOC,
+                    new KindPayload.BindingAllocPayload(binding, currentBlock(), true,
+                        BindingCellKind.DIRECT, INITIAL_LOOP_GENERATION),
+                    function.span(), FailurePolicyId.NO_DEAL_FAILURE);
+            }
+            // Module-level name ALLOCs were hoisted (B1): no second
+            // allocation here.
+            BlockId bodyBlock = ids.nextBlockId(module, nextOrdinal++, 0);
+            checkerScopeNodes.push(function);
+            pushBindingFrame();
+            blockStack.push(bodyBlock);
+            for (deal.ast.Parameter parameter : function.params()) {
+                BindingId binding = ids.nextBindingId(module, nextOrdinal++, 0);
+                registerBinding(parameter.name(), binding, new BindingCoreIncarnation(
+                    INITIAL_LOOP_GENERATION, bodyBlock, BindingCellKind.DIRECT,
+                    true, BindingProducer.BINDING_ALLOC));
+                emitUserNullOp(SemanticOpKind.BINDING_ALLOC,
+                    new KindPayload.BindingAllocPayload(binding, bodyBlock, true,
+                        BindingCellKind.DIRECT, INITIAL_LOOP_GENERATION),
+                    parameter.span(), FailurePolicyId.NO_DEAL_FAILURE);
+            }
+            checkerScopeNodes.push(function.body());
+            lowerBindingStatements(function.body().statements(), false);
+            checkerScopeNodes.pop();
+            blockStack.pop();
+            popBindingFrame();
+            checkerScopeNodes.pop();
+        }
+
+        /**
+         * The binding walk's for-let arm (B1): exactly two incarnations
+         * of one {@link BindingId} — the counter (generation 0, ALLOC +
+         * INIT in the {@code LOOP} init block with the first condition
+         * production; condition/update references and the body-top INIT
+         * operand name generation 0) and the per-iteration incarnation
+         * (generation 1, {@code SHARED_CELL}, ALLOC at the top of the
+         * body block, INIT from the generation-0 load; body references
+         * resolve generation 1) — the retained per-iteration copy shape
+         * ({@code deal/codegen/lua/LuaBackend.java:1489-1492}). The
+         * {@code LOOP(FOR)} op carries
+         * {@code {initBlock, condition, bodyBlock, updateBlock}} with the
+         * init block = one-time init including the first condition
+         * production and the update block = update ops + condition
+         * re-production (the control-flow epic's placement contract,
+         * {@code control-flow-structures} C-D4). A for without a let
+         * initializer, without a condition, or with a non-assignment
+         * update is outside this child's window.
+         */
+        private void lowerBindingForLet(ForStatement statement) {
+            if (statement.init().isEmpty()
+                    || !(statement.init().get() instanceof ForInit.VarDecl varDecl)) {
+                throw new ConstructUnlowered("for statement without a let initializer "
+                    + "(the binding-core child lowers exactly the for-let shape; a "
+                    + "non-let for is the control-flow epic's)");
+            }
+            if (statement.condition().isEmpty()) {
+                throw new ConstructUnlowered("for-let without a condition (the LOOP payload "
+                    + "carries the condition value — an unconditional for is outside this "
+                    + "child's window)");
+            }
+            if (statement.update().isPresent()
+                    && !(statement.update().get() instanceof AssignmentExpr)) {
+                throw new ConstructUnlowered("for-let update expression "
+                    + statement.update().get().getClass().getSimpleName()
+                    + " (the pinned shape is the assignment chain in the update block; "
+                    + "another update shape is outside this child's window)");
+            }
+            VariableDeclaration decl = varDecl.decl();
+            BindingId counter = ids.nextBindingId(module, nextOrdinal++, 0);
+            Type counterType = counterTypeOf(statement, decl);
+            BlockId initBlock = ids.nextBlockId(module, nextOrdinal++, 0);
+            BlockId bodyBlock = ids.nextBlockId(module, nextOrdinal++, 0);
+            BlockId updateBlock = ids.nextBlockId(module, nextOrdinal++, 0);
+            checkerScopeNodes.push(statement);
+            pushBindingFrame();
+            blockStack.push(initBlock);
+            registerBinding(decl.name(), counter, new BindingCoreIncarnation(
+                INITIAL_LOOP_GENERATION, initBlock, BindingCellKind.DIRECT,
+                true, BindingProducer.BINDING_ALLOC));
+            // Init block: the counter ALLOC, the initializer value ops,
+            // the counter INIT, then the first condition production
+            // (init-block members — C-D4).
+            emitUserNullOp(SemanticOpKind.BINDING_ALLOC,
+                new KindPayload.BindingAllocPayload(counter, initBlock, true,
+                    BindingCellKind.DIRECT, INITIAL_LOOP_GENERATION),
+                decl.span(), FailurePolicyId.NO_DEAL_FAILURE);
+            ValueId initializer = lowerExpression(decl.initializer());
+            emitUserNullOp(SemanticOpKind.BINDING_INIT,
+                new KindPayload.BindingInitPayload(counter, INITIAL_LOOP_GENERATION,
+                    initializer),
+                decl.span(), FailurePolicyId.NO_DEAL_FAILURE);
+            ValueId condition = lowerExpression(statement.condition().get());
+            emitUserNullOp(SemanticOpKind.LOOP,
+                new KindPayload.LoopPayload(ControlSelector.FOR, initBlock, condition,
+                    bodyBlock, updateBlock),
+                statement.span(), FailurePolicyId.NO_DEAL_FAILURE);
+            blockStack.pop();
+            // Body block: the per-iteration incarnation (generation 1,
+            // SHARED_CELL) at the body top, INIT from the generation-0
+            // load, then the body statements (dominant generation 1).
+            blockStack.push(bodyBlock);
+            checkerScopeNodes.push(statement.body());
+            pushBindingFrame();
+            registerBinding(decl.name(), counter, new BindingCoreIncarnation(
+                1L, bodyBlock, BindingCellKind.SHARED_CELL, true,
+                BindingProducer.BINDING_ALLOC));
+            emitUserNullOp(SemanticOpKind.BINDING_ALLOC,
+                new KindPayload.BindingAllocPayload(counter, bodyBlock, true,
+                    BindingCellKind.SHARED_CELL, 1L),
+                decl.span(), FailurePolicyId.NO_DEAL_FAILURE);
+            ValueId carry = emitSyntheticValueOp(SemanticOpKind.BINDING_LOAD,
+                new KindPayload.BindingLoadPayload(counter, INITIAL_LOOP_GENERATION),
+                decl.span(), ContainerPayloadDescriptors.resultDescriptorOf(counterType),
+                FailurePolicyId.NO_DEAL_FAILURE);
+            emitUserNullOp(SemanticOpKind.BINDING_INIT,
+                new KindPayload.BindingInitPayload(counter, 1L, carry),
+                decl.span(), FailurePolicyId.NO_DEAL_FAILURE);
+            lowerBindingStatements(statement.body().statements(), false);
+            popBindingFrame();
+            checkerScopeNodes.pop();
+            blockStack.pop();
+            // Update block: the update's assignment chain, then the
+            // condition re-production (update-block members — C-D4;
+            // both reference the generation-0 counter).
+            blockStack.push(updateBlock);
+            if (statement.update().isPresent()) {
+                lowerExpression(statement.update().get());
+            }
+            lowerExpression(statement.condition().get());
+            blockStack.pop();
+            popBindingFrame();
+            checkerScopeNodes.pop();
+        }
+
+        /**
+         * The binding walk's for-of arm: the iterable's prior steps, the
+         * {@code FOR_EACH} op (the iteration binding's producing
+         * allocation — no {@code BINDING_ALLOC} exists for it; the
+         * payload's binding generation is the incarnation's ordinal, and
+         * the fresh per-iteration cell comes from the op's per-iteration
+         * allocation semantics, never a new ordinal), then the body
+         * statements under the iteration-binding frame. The iteration
+         * binding is classified {@code SHARED_CELL} (B2 — the
+         * per-iteration cell exists precisely for capture semantics; the
+         * payload records no cell kind). A string-typed iterable lowers
+         * ({@code STRING_SCALARS}); an array iterable is the
+         * control-flow epic's ({@code FOR_EACH(ARRAY_VALUES)}).
+         */
+        private void lowerBindingForOf(ForOfStatement statement) {
+            Type iterableType = checkedType(statement.iterable());
+            if (iterableType instanceof Type.Array) {
+                throw new ConstructUnlowered("array for-of (FOR_EACH(ARRAY_VALUES) is E5's, "
+                    + "ISSUE-0234; an array-typed iterable reaching the binding-core walk "
+                    + "fails hard)");
+            }
+            if (!(iterableType instanceof Type.String)) {
+                throw new ConstructUnlowered("for-of over a non-string, non-array iterable "
+                    + typeName(iterableType) + " (this child lowers string iterables only)");
+            }
+            ValueId iterable = lowerExpression(statement.iterable());
+            BindingId binding = ids.nextBindingId(module, nextOrdinal++, 0);
+            BlockId bodyBlock = ids.nextBlockId(module, nextOrdinal++, 0);
+            pushBindingFrame();
+            registerBinding(statement.varName(), binding, new BindingCoreIncarnation(
+                INITIAL_LOOP_GENERATION, bodyBlock, BindingCellKind.SHARED_CELL,
+                true, BindingProducer.FOR_EACH));
+            AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+            OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
+            SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(statement.span()),
+                SourceOriginKind.USER, anchor, null);
+            ops.add(buildOp(opId, SemanticOpKind.FOR_EACH,
+                new KindPayload.ForEachPayload(IterationMode.STRING_SCALARS, iterable,
+                    binding, INITIAL_LOOP_GENERATION, bodyBlock),
+                null, null, FailurePolicyId.TYPE_DESCRIPTOR, origin));
+            checkerScopeNodes.push(statement.body());
+            blockStack.push(bodyBlock);
+            lowerBindingStatements(statement.body().statements(), false);
+            blockStack.pop();
+            checkerScopeNodes.pop();
+            popBindingFrame();
+        }
+
+        /**
+         * The binding walk's try/catch arm: the {@code TRY_CATCH} op
+         * carrying the try block, the catch binding (this child's single
+         * {@link BindingId} for the catch name), and the catch block;
+         * the catch binding's ALLOC sits at the catch block's entry
+         * (generation 0, {@code DIRECT}, mutable, no BINDING_INIT — the
+         * catch-entry write is {@code TRY_CATCH}'s, ISSUE-0234). The
+         * control-flow epic refines the op's execution; this child
+         * supplies the binding model the structure operates on.
+         */
+        private void lowerBindingTry(TryStatement statement) {
+            BlockId tryBlock = ids.nextBlockId(module, nextOrdinal++, 0);
+            BlockId catchBlock = ids.nextBlockId(module, nextOrdinal++, 0);
+            BindingId catchBinding = ids.nextBindingId(module, nextOrdinal++, 0);
+            emitUserNullOp(SemanticOpKind.TRY_CATCH,
+                new KindPayload.TryCatchPayload(tryBlock, catchBinding, catchBlock),
+                statement.span(), FailurePolicyId.NO_DEAL_FAILURE);
+            checkerScopeNodes.push(statement.tryBlock());
+            pushBindingFrame();
+            blockStack.push(tryBlock);
+            lowerBindingStatements(statement.tryBlock().statements(), false);
+            blockStack.pop();
+            popBindingFrame();
+            checkerScopeNodes.pop();
+            checkerScopeNodes.push(statement);
+            pushBindingFrame();
+            blockStack.push(catchBlock);
+            registerBinding(statement.catchVar(), catchBinding, new BindingCoreIncarnation(
+                INITIAL_LOOP_GENERATION, catchBlock, BindingCellKind.DIRECT,
+                true, BindingProducer.BINDING_ALLOC));
+            emitUserNullOp(SemanticOpKind.BINDING_ALLOC,
+                new KindPayload.BindingAllocPayload(catchBinding, catchBlock, true,
+                    BindingCellKind.DIRECT, INITIAL_LOOP_GENERATION),
+                statement.span(), FailurePolicyId.NO_DEAL_FAILURE);
+            lowerBindingStatements(statement.catchBlock().statements(), false);
+            blockStack.pop();
+            popBindingFrame();
+            checkerScopeNodes.pop();
+        }
+
+        /**
+         * The binding walk's nested-block arm: one fresh block identity
+         * plus a scope frame, then the block's statements (blocks are
+         * the structured graph nodes the dominant-incarnation walk
+         * resolves against, B9 R1).
+         */
+        private void lowerBindingBlock(Block block) {
+            BlockId blockId = ids.nextBlockId(module, nextOrdinal++, 0);
+            checkerScopeNodes.push(block);
+            pushBindingFrame();
+            blockStack.push(blockId);
+            lowerBindingStatements(block.statements(), false);
+            blockStack.pop();
+            popBindingFrame();
+            checkerScopeNodes.pop();
+        }
+
+        /**
+         * The declared type of a let declaration (the annotated type for
+         * annotated declarations, the inferred type otherwise): resolved
+         * from the checker's per-scoped-statement symbol table of the
+         * innermost enclosing scope (or the root table at module level)
+         * so nested declarations resolve without retaining any
+         * {@code NameResolver} instance (D4); falls back to the
+         * initializer's checked type when no symbol fact exists.
+         */
+        private Type declaredTypeOf(VariableDeclaration decl) {
+            SymbolTable scope = currentCheckerScope();
+            if (scope != null) {
+                Symbol symbol = scope.resolveLocal(decl.name());
+                if (symbol instanceof Symbol.VariableSymbol variable
+                        && variable.type() != null) {
+                    return variable.type();
+                }
+            }
+            return checkedType(decl.initializer());
+        }
+
+        /**
+         * The for-let counter's declared type: resolved from the
+         * checker's for-scope symbol table (the counter symbol, inferred
+         * type included), falling back to the initializer's checked type.
+         */
+        private Type counterTypeOf(ForStatement statement, VariableDeclaration decl) {
+            Map<StatementNode, SymbolTable> scopeMap = checks.scopeMap();
+            SymbolTable scope = scopeMap.get(statement);
+            if (scope != null) {
+                Symbol symbol = scope.resolveLocal(decl.name());
+                if (symbol instanceof Symbol.VariableSymbol variable
+                        && variable.type() != null) {
+                    return variable.type();
+                }
+            }
+            return checkedType(decl.initializer());
+        }
+
+        /**
+         * The innermost checker scope for declared-type resolution: the
+         * scope-map table of the innermost scope-keyed node currently
+         * being walked, or the root symbol table at module level.
+         */
+        private SymbolTable currentCheckerScope() {
+            if (checkerScopeNodes.isEmpty()) {
+                return checks.symbolTable();
+            }
+            return checks.scopeMap().get(checkerScopeNodes.peek());
+        }
+
+        /** The block identity binding ALLOCs in the current site carry as their scope. */
+        private BlockId currentBlock() {
+            return blockStack.peek();
+        }
+
+        /** Pushes one binding-environment scope frame (innermost first). */
+        private void pushBindingFrame() {
+            bindingScopes.add(0, new LinkedHashMap<>());
+        }
+
+        /** Pops the innermost binding-environment scope frame. */
+        private void popBindingFrame() {
+            if (bindingScopes.isEmpty()) {
+                throw new IllegalStateException(
+                    "popBindingFrame without an open binding frame (producer defect)");
+            }
+            bindingScopes.remove(0);
+        }
+
+        /**
+         * Registers one incarnation of a declared name: the first
+         * registration of a {@link BindingId} allocates its cell; later
+         * incarnations of the same identity (the for-let counter's
+         * per-iteration incarnation) append to the same cell, and a
+         * shadowing redeclaration (a new {@link BindingId}) creates a new
+         * cell and replaces the innermost frame entry.
+         */
+        private void registerBinding(String name, BindingId binding,
+                                     BindingCoreIncarnation incarnation) {
+            BindingCell cell = cellsById.get(binding);
+            if (cell == null) {
+                cell = new BindingCell(name, binding);
+                cellsById.put(binding, cell);
+                bindingCells.add(cell);
+            }
+            Map<String, FrameEntry> frame = bindingScopes.get(0);
+            frame.put(name, new FrameEntry(cell, incarnation));
+            cell.incarnations.add(incarnation);
+        }
+
+        /**
+         * The innermost frame entry of a declared name (the dominant
+         * incarnation at the site), or {@code null}.
+         */
+        private FrameEntry frameEntryOf(String name) {
+            for (Map<String, FrameEntry> frame : bindingScopes) {
+                FrameEntry entry = frame.get(name);
+                if (entry != null) {
+                    return entry;
+                }
+            }
+            return null;
+        }
+
+        /** The pinned origin span of module-init-top synthetic ops (the program span). */
+        private Span moduleInitSpan() {
+            return programSpan;
         }
 
         // ---------------------------------------------------------------------
@@ -948,9 +1949,17 @@ public final class SemanticLowerer {
             }
             BindingId binding;
             long generation;
+            BindingSite site = bindingSiteResolver == null
+                ? null : bindingSiteResolver.resolve(target.name());
             if (frame != null) {
                 binding = frame.binding();
                 generation = frame.generation();
+            } else if (site != null) {
+                // The binding-environment hook (ISSUE-0444 binding-core
+                // child): the store commits the dominant incarnation at
+                // the assignment site (B9 R1).
+                binding = site.binding();
+                generation = site.generation();
             } else if (checks.symbolTable().resolve(target.name())
                     instanceof Symbol.VariableSymbol variable) {
                 binding = variableBindings.computeIfAbsent(variable,
@@ -1455,10 +2464,28 @@ public final class SemanticLowerer {
                                            List<ModuleId> imports,
                                            String interfaceHash,
                                            String capabilityRegistryHash) {
+            return buildUnit(constructCoverage, imports, interfaceHash, capabilityRegistryHash,
+                ContainerClaimingSeam.E3_WINDOW_ACTIVATION);
+        }
+
+        /**
+         * Builds the validated unit under the named claiming-seam
+         * activation state (the binding-core entry passes the pinned
+         * E6-gate activation — {@code BINDINGS} activates for
+         * {@code BINDING_LOAD} — while the E3/E5 window keeps the
+         * E3-window activation).
+         */
+        public LoweredModuleUnit buildUnit(Map<ConstructKind, List<SemanticOpKind>>
+                                               constructCoverage,
+                                           List<ModuleId> imports,
+                                           String interfaceHash,
+                                           String capabilityRegistryHash,
+                                           Set<SemanticCapability> activation) {
             Objects.requireNonNull(constructCoverage, "constructCoverage must not be null");
             Objects.requireNonNull(imports, "imports must not be null");
             Objects.requireNonNull(interfaceHash, "interfaceHash must not be null");
             Objects.requireNonNull(capabilityRegistryHash, "capabilityRegistryHash must not be null");
+            Objects.requireNonNull(activation, "activation must not be null");
             EnumMap<ConstructKind, List<SemanticOpKind>> coverage =
                 new EnumMap<>(ConstructKind.class);
             for (Map.Entry<ConstructKind, List<SemanticOpKind>> entry
@@ -1476,9 +2503,9 @@ public final class SemanticLowerer {
             }
             List<SemanticOp> produced = List.copyOf(ops);
             Set<SemanticCapability> claims = ContainerClaimingSeam.deriveClaims(produced,
-                ContainerClaimingSeam.E3_WINDOW_ACTIVATION);
+                activation);
             ContainerClaimingSeam.SeamResult seam = ContainerClaimingSeam.check(produced,
-                ContainerClaimingSeam.E3_WINDOW_ACTIVATION, claims, module);
+                activation, claims, module);
             if (seam.failure() != null) {
                 throw new IllegalStateException(
                     "the claiming seam's derivation-invariant guard fired inside the unit "
@@ -1573,6 +2600,19 @@ public final class SemanticLowerer {
                 if (frame.name().equals(identifier.name())) {
                     return emitValueOp(SemanticOpKind.BINDING_LOAD,
                         new KindPayload.BindingLoadPayload(frame.binding(), frame.generation()),
+                        identifier.span(), ContainerPayloadDescriptors.resultDescriptorOf(type),
+                        FailurePolicyId.NO_DEAL_FAILURE);
+                }
+            }
+            // The binding-environment hook (ISSUE-0444 binding-core child):
+            // every declared binding of the walk's environment resolves to
+            // its dominant incarnation at the site, so the emitted load
+            // names {binding, generation} of that incarnation (B9 R1).
+            if (bindingSiteResolver != null) {
+                BindingSite site = bindingSiteResolver.resolve(identifier.name());
+                if (site != null) {
+                    return emitValueOp(SemanticOpKind.BINDING_LOAD,
+                        new KindPayload.BindingLoadPayload(site.binding(), site.generation()),
                         identifier.span(), ContainerPayloadDescriptors.resultDescriptorOf(type),
                         FailurePolicyId.NO_DEAL_FAILURE);
                 }
@@ -1722,12 +2762,51 @@ public final class SemanticLowerer {
             if (isArithmeticOperator(binary.op())) {
                 return lowerArithmeticBinary(binary);
             }
+            if (bindingCore && isComparisonOperator(binary.op())) {
+                // The binding walk consumes the single comparison producer
+                // (the values epic's producer) for condition/initializer
+                // comparison operands — this child never implements
+                // comparison-selector lowering itself.
+                return lowerComparisonBinary(binary);
+            }
             throw new ConstructUnlowered("binary selector " + binary.op()
                 + " of checked type " + typeName(type)
                 + " (comparison selectors are the comparison producer "
                 + "ComparisonSelectorLowering's; logical operators lower to "
                 + "selector-bearing BRANCH — EVALUATION_ORDER; string + lowers to "
                 + "STRING_CONCAT, never BINARY)");
+        }
+
+        /** True iff the operator is one of the six comparison operators (B-D3). */
+        private static boolean isComparisonOperator(BinaryOp op) {
+            return switch (op) {
+                case EQ, NEQ, LT, LTE, GT, GTE -> true;
+                case ADD, SUB, MUL, DIV, MOD, POW, AND, OR -> false;
+            };
+        }
+
+        /**
+         * One {@code BINARY} comparison op through the single comparison
+         * producer (B-D3): operands complete in source order (the
+         * binding-environment loads included), the producer selects the
+         * closed selector from the checked operand types, stamps the
+         * snapshot digest, and allocates its result/op ids at the
+         * session's next source ordinal — the produced op appends to the
+         * session in source order.
+         */
+        private ValueId lowerComparisonBinary(BinaryExpr binary) {
+            ValueId left = lowerExpression(binary.left());
+            ValueId right = lowerExpression(binary.right());
+            AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+            SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(binary.span()),
+                SourceOriginKind.USER, anchor, chainParents.peek());
+            SemanticOp comparison = ComparisonSelectorLowering.produce(module,
+                binary.op(), checkedType(binary.left()), checkedType(binary.right()),
+                left, right, origin, ids, nextOrdinal, 0);
+            // The producer consumed exactly one source ordinal (VALUE, OP).
+            nextOrdinal++;
+            ops.add(comparison);
+            return (ValueId) comparison.result();
         }
 
         /** {@code STRING_CONCAT} — the string-{@code +} arm; never {@code BINARY}. */
@@ -1978,6 +3057,42 @@ public final class SemanticLowerer {
                     + "defect — never an invented op)");
             }
             return type;
+        }
+
+        /**
+         * Emits one result-less source-positioned USER op (a declaration
+         * or structured op of the binding walk: {@code BINDING_ALLOC}/
+         * {@code BINDING_INIT}/{@code LOOP}/{@code FOR_EACH}/
+         * {@code TRY_CATCH}) and returns its op id — the binding walk's
+         * counterpart of {@link #emitValueOp} for ops whose result slot
+         * is {@code none}.
+         */
+        private OpId emitUserNullOp(SemanticOpKind kind, KindPayload payload, Span span,
+                                    FailurePolicyId policy) {
+            AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+            OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
+            SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(span),
+                SourceOriginKind.USER, anchor, chainParents.peek());
+            ops.add(buildOp(opId, kind, payload, null, null, policy, origin));
+            return opId;
+        }
+
+        /**
+         * Emits one value-producing SYNTHETIC op without operands (the
+         * for-let body-top generation-0 carry load — a synthetic step
+         * with no source expression of its own) and returns its value id.
+         */
+        private ValueId emitSyntheticValueOp(SemanticOpKind kind, KindPayload payload,
+                                             Span span, RuntimeDescriptor resultType,
+                                             FailurePolicyId policy) {
+            ValueId value = ids.nextValueId(module, nextOrdinal++, 0);
+            AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+            OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
+            SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(span),
+                SourceOriginKind.SYNTHETIC, anchor, null);
+            ops.add(buildOp(opId, kind, payload, value, resultType, List.of(), List.of(),
+                policy, origin));
+            return value;
         }
 
         /** Emits one value-producing USER op without operands and returns its value id. */
