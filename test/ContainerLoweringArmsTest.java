@@ -100,6 +100,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Verifies the ISSUE-0386 container/string lowering arms of the common
@@ -745,7 +746,8 @@ public class ContainerLoweringArmsTest {
             "the load resultType is D(checked type) = string");
         check(load.failurePolicy() == FailurePolicyId.NO_DEAL_FAILURE,
             "the load policy NO_DEAL_FAILURE");
-        checkOrigin("loop-binding load", load, innerIterable.span(), SourceOriginKind.USER, null);
+        checkOrigin("loop-binding load", load, innerIterable.span(), SourceOriginKind.USER,
+            outerOp.opId());
 
         SemanticOp innerOp = ops.get(3);
         KindPayload.ForEachPayload innerPayload = (KindPayload.ForEachPayload) innerOp.payload();
@@ -1431,27 +1433,34 @@ public class ContainerLoweringArmsTest {
     static void testConstructUnloweredNegatives() {
         System.out.println("-- Fail-closed arms: CONSTRUCT_UNLOWERED --");
 
-        // (a) Array for-of — a hard compile failure in this stage's window.
-        CheckedSlice arrayForOf = checkSlice("for (let x: int of [1, 2]) {}");
-        if (arrayForOf != null) {
-            ForOfStatement statement = first(arrayForOf.program(), ForOfStatement.class);
-            if (statement != null) {
-                SemanticLowerer.ModuleLowerer lowerer = lowerer(arrayForOf.checks());
+        // (a) Index read — a hard compile failure in this stage's window
+        // (INDEX_NORMALIZE/INDEX_READ are the address-chain epic's read
+        // arm, not yet landed).
+        CheckedSlice indexRead = checkSlice("""
+            function f(xs: int[]): null {
+              let n: int = xs[0]
+              return null
+            }
+            """);
+        if (indexRead != null) {
+            IndexExpr expression = first(indexRead.program(), IndexExpr.class);
+            if (expression != null) {
+                SemanticLowerer.ModuleLowerer lowerer = lowerer(indexRead.checks());
                 RuntimeException defect = null;
                 try {
-                    lowerer.lowerForOfStatement(statement);
+                    lowerer.lowerExpression(expression);
                 } catch (SemanticLowerer.ConstructUnlowered unlowered) {
                     defect = unlowered;
                 }
-                check(defect != null, "the array for-of arm raises ConstructUnlowered");
-                checkConstructDetail("array for-of", defect, "FOR_EACH(ARRAY_VALUES)");
+                check(defect != null, "the index-read arm raises ConstructUnlowered");
+                checkConstructDetail("index read", defect, "INDEX_READ");
                 check(lowerer.ops().isEmpty(),
-                    "the array for-of arm produced no ops (hard failure, never a partial unit)");
+                    "the index-read arm produced no ops (hard failure, never a partial unit)");
             }
             // The module-level seam: exactly the pinned LoweringFailureDetail,
             // no unit, never a reroute.
             SemanticLowerer.LoweringResult result = SemanticLowerer.lowerModule(
-                moduleOf(arrayForOf), SemanticProfile.DEAL_V1_2_INT32, Map.of(),
+                moduleOf(indexRead), SemanticProfile.DEAL_V1_2_INT32, Map.of(),
                 INTERFACE_HASH, REGISTRY_HASH,
                 SemanticIdAllocator.over(List.of(MODULE)));
             check(result != null && result.hasErrors() && result.unit() == null,
@@ -1685,8 +1694,11 @@ public class ContainerLoweringArmsTest {
         if (validation.isPresent()) {
             return;
         }
-        check(unit.requiredCapabilities().isEmpty(),
-            "the E3-window unit claims the empty capability set (D9 item 4)");
+        check(unit.requiredCapabilities().equals(Set.of(SemanticCapability.DESCRIPTORS,
+                SemanticCapability.BOUNDARIES)),
+            "the unit claims exactly {DESCRIPTORS, BOUNDARIES} at E5's gate (the five "
+                + "ARRAY_LITERAL_ELEMENT boundary children fully evidence both "
+                + "single-family rows; the other active rows are under-evidenced)");
 
         List<SemanticOp> ops = unit.ops();
         check(ops.size() == 15,
@@ -1853,7 +1865,8 @@ public class ContainerLoweringArmsTest {
         }
         LoweredModuleUnit unit = first.unit();
         check(unit.requiredCapabilities().isEmpty(),
-            "the E3-window corpus unit claims ∅ (staged hand-offs are the claiming seam's)");
+            "the corpus unit claims ∅ at E5's gate (every active home row is "
+                + "under-evidenced)");
         List<SemanticOpKind> kinds = new ArrayList<>();
         for (SemanticOp op : unit.ops()) {
             kinds.add(op.kind());

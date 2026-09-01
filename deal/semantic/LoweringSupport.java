@@ -740,7 +740,11 @@ public final class LoweringSupport {
             }
             case DeleteStatement deleteStatement -> {
                 scan.cover(ConstructKind.DELETE);
-                walkExpression(deleteStatement.target(), module, scan);
+                // The target's own member/index access is the write
+                // position of the delete chain (D14) — the commit ops are
+                // MEMBER_DELETE/INDEX_DELETE, named by the DELETE row,
+                // never by the read rows; its receiver/key walk normally.
+                walkWriteTarget(deleteStatement.target(), module, scan);
             }
             case TryStatement tryStatement -> {
                 scan.cover(ConstructKind.TRY_CATCH_THROW);
@@ -883,7 +887,13 @@ public final class LoweringSupport {
             }
             case AssignmentExpr assignmentExpr -> {
                 scan.cover(ConstructKind.ASSIGNMENT);
-                walkExpression(assignmentExpr.target(), module, scan);
+                // The target's own member/index access is the write
+                // position of the address chain (D14: MEMBER_WRITE/
+                // INDEX_WRITE commit ops — never MEMBER_READ/INDEX_READ),
+                // so it records no MEMBER_ACCESS/INDEX_ACCESS row; its
+                // receiver and key sub-expressions are ordinary reads and
+                // walk normally.
+                walkWriteTarget(assignmentExpr.target(), module, scan);
                 walkExpression(assignmentExpr.value(), module, scan);
             }
             case TemplateLiteralExpr templateLiteralExpr -> {
@@ -901,6 +911,31 @@ public final class LoweringSupport {
                                      ModuleScan scan) throws FactDefect {
         for (ExpressionNode element : elements) {
             walkExpression(element, module, scan);
+        }
+    }
+
+    /**
+     * Walks an assignment/delete target's sub-expressions without
+     * recording a read row for the target's own member/index access: the
+     * write position of the address chain (D14) produces the commit ops
+     * ({@code MEMBER_WRITE}/{@code INDEX_WRITE},
+     * {@code MEMBER_DELETE}/{@code INDEX_DELETE}), which are named by the
+     * {@code ASSIGNMENT}/{@code DELETE} rows, never by the
+     * {@code MEMBER_ACCESS}/{@code INDEX_ACCESS} read rows. The target's
+     * receiver and key sub-expressions are ordinary reads and record
+     * their own rows ({@code INDEX_ACCESS} for a chained receiver, etc.).
+     * A non-member/index target (an identifier) walks normally.
+     */
+    private static void walkWriteTarget(ExpressionNode target, CheckedModuleInput module,
+                                        ModuleScan scan) throws FactDefect {
+        switch (target) {
+            case MemberAccessExpr member ->
+                walkExpression(member.object(), module, scan);
+            case IndexExpr index -> {
+                walkExpression(index.array(), module, scan);
+                walkExpression(index.index(), module, scan);
+            }
+            default -> walkExpression(target, module, scan);
         }
     }
 

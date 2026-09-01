@@ -66,6 +66,7 @@ javac --release 25 -proc:none -d build \
   test/ComparisonExecutorTest.java \
   test/AddressChainProtocolTest.java \
   test/AddressChainLoweringTest.java \
+  test/ControlFlowLoweringTest.java \
   test/UnicodeScalarsTest.java \
   test/BoundaryRealizationReportTest.java \
   test/FailureContractRegistryTest.java \
@@ -304,6 +305,10 @@ java -ea -cp build deal.test.AddressChainProtocolTest
 echo ""
 echo "=== Running Address Chain Lowering Tests (ISSUE-0405 ASSIGN/DELETE chains) ==="
 java -ea -cp build deal.test.AddressChainLoweringTest
+
+echo ""
+echo "=== Running Control Flow Lowering Tests (ISSUE-0409 BRANCH/LOOP/FOR_EACH/TRY_CATCH/THROW/BREAK/CONTINUE/DISCARD) ==="
+java -ea -cp build deal.test.ControlFlowLoweringTest
 
 echo ""
 

@@ -111,33 +111,29 @@ import java.util.Set;
  * — each asserted against the exact pinned shapes, orders, and
  * policies.</p>
  *
- * <p><b>Layer 3 (pinned now; its whole-pipeline run executes at the
- * valid-until gate E5's gate).</b> The full fixed source corpus (arrays,
- * tables, templates, length, scalar iteration) is committed as one module
- * in {@code test/fixtures/container-fixed-corpus.deal} with the pinned
+ * <p><b>Layer 3 (executed now; E5's gate is open).</b> The full fixed
+ * source corpus (arrays, tables, templates, length, scalar iteration) is
+ * committed as one module in
+ * {@code test/fixtures/container-fixed-corpus.deal} with the pinned
  * construct list — the array literal, table literal, string {@code +},
  * template, and array {@code .length} expressions each in an expression
- * statement (→ {@code DISCARD}, E5's C-D8 arm; the parser reads a
+ * statement (→ {@code DISCARD}, C-D8; the parser reads a
  * statement-leading {@code {} as a block, so the pinned table-literal
  * statement is the parenthesized form — the parser unwraps the parens and
- * the AST expression is the table literal itself); the table member read in
- * an if-condition with an empty then-block (→ {@code BRANCH}, E5's C-D7
- * arm — the if-condition is the only variable-free table-read context at
- * E5's gate); the string for-of with a string-literal iterable and an
- * empty body; no while/for, no return, no array for-of, no variable
- * declaration, and no numeric literal. The gate probes E5's two
- * positioning production arms (expression-statement {@code DISCARD} and
- * if-condition {@code BRANCH}): in E3's window both probes fail with the
- * pinned E6005 {@code CONSTRUCT_UNLOWERED}, so the gate records E5's gate
- * as the valid-until boundary and does not execute the full-corpus
- * pipeline — the refusal itself is asserted as correct stage behavior,
- * never a defect; when the E5 arms land (both probes succeed), the same
- * test executes the corpus's whole-pipeline run and verifies exactly this
+ * the AST expression is the table literal itself); the table member read
+ * in an if-condition with an empty then-block (→ {@code BRANCH}, C-D3);
+ * the string for-of with a string-literal iterable and an empty body; no
+ * while/for, no return, no array for-of, no variable declaration, and no
+ * numeric literal. The gate probes E5's two positioning production arms
+ * (expression-statement {@code DISCARD} and if-condition
+ * {@code BRANCH}): both arms landed at E5's gate, so the same test
+ * executes the corpus's whole-pipeline run and verifies exactly this
  * design's shapes, orders, and determinism and the pinned claim state —
  * {@code {DESCRIPTORS, BOUNDARIES}} claimed;
  * {@code FOUNDATION_VALUES}, {@code CONTAINERS_AND_STRINGS}, and
  * {@code EVALUATION_ORDER} (the corpus's {@code BRANCH}/{@code DISCARD}
- * ops without {@code LOOP}) deferred per unit — R-CAPABILITY and
+ * ops without {@code LOOP} — each recording the per-unit
+ * {@code EVALUATION_ORDER} deferral) deferred per unit — R-CAPABILITY and
  * R-COVERAGE green with no E6005. An extension adding a while/for
  * statement would change the pinned claim state and is outside this
  * epic's pinned integration tail.</p>
@@ -699,24 +695,46 @@ public class ContainerIntegrationTest {
                     + "interpolation operand; got " + loadCount);
         }
 
-        // The ∅-claim staged unit: derived claims empty, one recorded
-        // staged hand-off per op (the claiming seam's real outcomes).
+        // The ∅-claim unit at E5's gate: derived claims empty (every
+        // active home row is under-evidenced), the FOUNDATION_VALUES and
+        // CONTAINERS_AND_STRINGS per-unit deferrals recorded, the BINDINGS
+        // row staged until E6's gate (the claiming seam's real outcomes).
         check(unit.requiredCapabilities().isEmpty(),
-            "the corpus unit's derived claim set is ∅ (every E3 op's home row is inactive "
-                + "during the tail)");
+            "the corpus unit's derived claim set is ∅ at E5's gate (FOUNDATION_VALUES and "
+                + "CONTAINERS_AND_STRINGS are under-evidenced, BINDINGS is staged)");
         check(!artifacts.manifest().capabilities().equals(unit.requiredCapabilities()),
             "the manifest's plan-time FOUNDATION_VALUES claim (routing) and the unit's ∅ "
                 + "claim set diverge exactly as the foundation pins");
         ContainerClaimingSeam.SeamResult seam = ContainerClaimingSeam.check(ops,
-            ContainerClaimingSeam.E3_WINDOW_ACTIVATION, unit.requiredCapabilities(), MODULE);
+            ContainerClaimingSeam.E5_GATE_ACTIVATION, unit.requiredCapabilities(), MODULE);
         check(seam.failure() == null, "the seam fires no E6005 for the corpus unit");
         check(seam.derivedClaims().isEmpty(), "the seam derives the empty claim set");
-        check(seam.outcomes().size() == 16
-                && countOutcomes(seam.outcomes(),
-                    ContainerClaimingSeam.OutcomeKind.STAGED_HAND_OFF) == 16,
-            "the seam records exactly 16 staged hand-offs — one per op at its home row "
-                + "(7 CONST + 5 STRING_CONCAT → FOUNDATION_VALUES, 2 BINDING_LOAD → BINDINGS, "
-                + "2 FOR_EACH → CONTAINERS_AND_STRINGS); got " + seam.outcomes().size());
+        check(seam.outcomes().size() == 16,
+            "the seam records exactly 16 outcomes: 12 FOUNDATION_VALUES deferrals "
+                + "(7 CONST + 5 STRING_CONCAT) + 2 CONTAINERS_AND_STRINGS deferrals "
+                + "(the 2 FOR_EACH ops) + 2 BINDINGS staged hand-offs; got "
+                + seam.outcomes().size());
+        long deferredFoundation = 0;
+        long deferredContainers = 0;
+        long stagedBindings = 0;
+        for (ContainerClaimingSeam.RecordedOutcome outcome : seam.outcomes()) {
+            if (outcome.home() == SemanticCapability.FOUNDATION_VALUES
+                    && outcome.outcome() == ContainerClaimingSeam.OutcomeKind.DEFERRED) {
+                deferredFoundation++;
+            }
+            if (outcome.home() == SemanticCapability.CONTAINERS_AND_STRINGS
+                    && outcome.outcome() == ContainerClaimingSeam.OutcomeKind.DEFERRED) {
+                deferredContainers++;
+            }
+            if (outcome.home() == SemanticCapability.BINDINGS
+                    && outcome.outcome() == ContainerClaimingSeam.OutcomeKind.STAGED_HAND_OFF) {
+                stagedBindings++;
+            }
+        }
+        check(deferredFoundation == 12 && deferredContainers == 2 && stagedBindings == 2,
+            "the outcome mix is exactly 12 FOUNDATION_VALUES deferrals + 2 "
+                + "CONTAINERS_AND_STRINGS deferrals + 2 BINDINGS staged hand-offs; got "
+                + deferredFoundation + "/" + deferredContainers + "/" + stagedBindings);
 
         // Deterministic dump: a second full pipeline repetition (fresh
         // checked project, manifest, allocator, and lowering) produces a
@@ -826,7 +844,7 @@ public class ContainerIntegrationTest {
         // derivation and the seam fails closed.
         try {
             ContainerClaimingSeam.check(unit.ops(),
-                ContainerClaimingSeam.E3_WINDOW_ACTIVATION,
+                ContainerClaimingSeam.E5_GATE_ACTIVATION,
                 Set.of(SemanticCapability.FOUNDATION_VALUES), MODULE);
             fail("a corrupted claim (FOUNDATION_VALUES without UNARY/BINARY evidence) must "
                 + "fail the seam closed");
@@ -938,7 +956,8 @@ public class ContainerIntegrationTest {
         check(load.resultType().equals(RuntimeDescriptor.String.INSTANCE)
                 && load.failurePolicy() == FailurePolicyId.NO_DEAL_FAILURE,
             "the load carries D(checked type) = string and NO_DEAL_FAILURE");
-        checkOrigin("loop-binding load", load, identifier.span(), SourceOriginKind.USER, null);
+        checkOrigin("loop-binding load", load, identifier.span(), SourceOriginKind.USER,
+            outerOp.opId());
         checkEmptyOperands("loop-binding load", load);
         KindPayload.ForEachPayload innerPayload =
             (KindPayload.ForEachPayload) ops.get(3).payload();
@@ -1615,9 +1634,10 @@ public class ContainerIntegrationTest {
         check(result.failure() == null,
             "the corpus run is green with exactly its derived claim state — E6005 never "
                 + "fires for the corpus");
-        check(result.outcomes().size() == 25,
-            "25 recorded outcomes: 12 FOUNDATION_VALUES deferrals + 7 "
-                + "CONTAINERS_AND_STRINGS deferrals + 3 boundary children × 2 claimed "
+        check(result.outcomes().size() == 31,
+            "31 recorded outcomes: 12 FOUNDATION_VALUES deferrals + 7 "
+                + "CONTAINERS_AND_STRINGS deferrals + 6 EVALUATION_ORDER deferrals "
+                + "(BRANCH + 5 DISCARDS without LOOP) + 3 boundary children × 2 claimed "
                 + "rows; got " + result.outcomes().size());
         long deferredFv = 0;
         long deferredCs = 0;
@@ -1646,12 +1666,18 @@ public class ContainerIntegrationTest {
         check(claimed == 6,
             "the 3 boundary children record the DESCRIPTORS and BOUNDARIES claimed "
                 + "outcomes (each single-family row fully evidenced); got " + claimed);
-        check(result.outcomes().stream().noneMatch(outcome ->
-                outcome.opKind() == SemanticOpKind.BRANCH
-                    || outcome.opKind() == SemanticOpKind.DISCARD),
-            "the corpus's BRANCH/DISCARD ops record no op-side outcome in this seam — "
-                + "their outcomes are recorded by E5's producer under the shared mechanism "
-                + "(D9 item 4)");
+        long deferredEvaluation = 0;
+        for (ContainerClaimingSeam.RecordedOutcome outcome : result.outcomes()) {
+            if (outcome.home() == SemanticCapability.EVALUATION_ORDER
+                    && outcome.outcome() == ContainerClaimingSeam.OutcomeKind.DEFERRED) {
+                deferredEvaluation++;
+            }
+        }
+        check(deferredEvaluation == 6,
+            "the corpus's BRANCH and 5 DISCARD ops each record the EVALUATION_ORDER "
+                + "per-unit deferral (the row is active at E5's gate and the corpus carries "
+                + "no LOOP op — E5's producer records the outcomes under the shared "
+                + "mechanism); got " + deferredEvaluation);
         LoweredModuleUnit unit = unit(derived, LAYER_3_PINNED_COVERAGE, ops);
         assertPass(SemanticIrValidator.validate(unit, facts()),
             "the corpus unit with claims {DESCRIPTORS, BOUNDARIES} passes R-CAPABILITY and "
@@ -1708,35 +1734,24 @@ public class ContainerIntegrationTest {
         }
 
         // The gate probes E5's two positioning production arms
-        // (expression-statement DISCARD, if-condition BRANCH).
+        // (expression-statement DISCARD, if-condition BRANCH): both arms
+        // landed at E5's gate, so the full-corpus pipeline executes.
         boolean discardLanded = probePositioningArm("\"probe\";",
             "expression statement (DISCARD is E5's, ISSUE-0234)", SemanticOpKind.DISCARD);
         boolean branchLanded = probePositioningArm("if ({p: true}.p) {}",
             "if statement (BRANCH(IF) is E5's, ISSUE-0234)", SemanticOpKind.BRANCH);
-
-        if (discardLanded && branchLanded) {
-            // --- The E5 gate is open: execute the pinned full-corpus
-            //     whole-pipeline run and verify exactly this design's
-            //     shapes, orders, determinism, and claim state. ---
-            System.out.println("Layer 3 gate: E5's positioning arms landed — executing the "
-                + "pinned full-corpus pipeline at E5's gate.");
-            testLayer3CorpusPipelineE5Gate(slice);
+        check(discardLanded, "the DISCARD positioning arm landed at E5's gate");
+        check(branchLanded, "the BRANCH positioning arm landed at E5's gate");
+        if (!discardLanded || !branchLanded) {
+            fail("E5's gate is closed: the two positioning production arms "
+                + "(expression-statement DISCARD and if-condition BRANCH) land together "
+                + "at E5's gate — a broken constituent state");
             return;
         }
-        if (discardLanded || branchLanded) {
-            fail("the layer-3 gate is half-open: E5's two positioning production arms "
-                + "(expression-statement DISCARD and if-condition BRANCH) land together at "
-                + "E5's gate, never one at a time — a broken constituent state");
-            return;
-        }
-
-        // --- E3's window: the gate records the pinned expectation without
-        //     executing the full-corpus pipeline. ---
-        System.out.println("Layer 3 gate: E3's window — recording the pinned E5-gate "
-            + "expectation; the full-corpus pipeline is not executed.");
 
         // The recorded valid-until boundary is E5's gate: the activation
-        // hand-off state at that gate is the pinned set.
+        // hand-off state at that gate is the pinned set, growing
+        // monotonically from E3's window.
         check(ContainerClaimingSeam.E5_GATE_ACTIVATION.equals(Set.of(
                 SemanticCapability.SIGNED_INT32, SemanticCapability.FOUNDATION_VALUES,
                 SemanticCapability.DESCRIPTORS, SemanticCapability.BOUNDARIES,
@@ -1750,18 +1765,12 @@ public class ContainerIntegrationTest {
                     ContainerClaimingSeam.E3_WINDOW_ACTIVATION),
             "the activation states grow monotonically from E3's window to E5's gate");
 
-        // The full-corpus pipeline is not executed in E3's window:
-        // attempting it fails with the pinned E6005 CONSTRUCT_UNLOWERED at
-        // the first E5-owned construct (correct stage behavior, never a
-        // defect, never a reroute).
-        SemanticLowerer.LoweringResult refused = lowerPipeline(artifacts);
-        assertConstructUnlowered(refused,
-            "expression statement (DISCARD is E5's, ISSUE-0234)");
-
-        // The pinned claim-state expectation is recorded and verified now
-        // over the corpus's pinned derived op set (the exact op multiset
-        // the corpus's construct list derives at the E5 gate).
-        assertPinnedE5ClaimState(pinnedCorpusOpSet());
+        // --- The E5 gate is open: execute the pinned full-corpus
+        //     whole-pipeline run and verify exactly this design's
+        //     shapes, orders, determinism, and claim state. ---
+        System.out.println("Layer 3 gate: E5's positioning arms landed — executing the "
+            + "pinned full-corpus pipeline at E5's gate.");
+        testLayer3CorpusPipelineE5Gate(slice);
     }
 
     /**

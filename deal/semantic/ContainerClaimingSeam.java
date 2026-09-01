@@ -41,7 +41,12 @@ import java.util.Set;
  *       {@code DESCRIPTORS} and {@code BOUNDARIES} (each a single-family
  *       {@code {BOUNDARY}} row, so one such child fully evidences both
  *       rows);</li>
- *   <li>{@code BINDING_LOAD} → {@code BINDINGS}.</li>
+ *   <li>{@code BINDING_LOAD} → {@code BINDINGS};</li>
+ *   <li>{@code BRANCH}/{@code LOOP}/{@code DISCARD} →
+ *       {@code EVALUATION_ORDER} (E5's home rows, recorded by E5's
+ *       producer under this shared mechanism — the three evidence
+ *       families of the catalog row; {@code BREAK}/{@code CONTINUE}/
+ *       {@code TRY_CATCH}/{@code THROW} carry no home row).</li>
  * </ul>
  *
  * <p>Every other op kind and every other boundary kind has no home row in
@@ -135,8 +140,8 @@ import java.util.Set;
  * container ops and {@code FOR_EACH} without
  * {@code INDEX_*}/{@code OPTIONAL_READ}/{@code HAS_FIELD}), and
  * {@code EVALUATION_ORDER} (the corpus's {@code BRANCH}/{@code DISCARD}
- * ops without {@code LOOP} — those op-side outcomes are recorded by E5's
- * producer under this shared mechanism).</p>
+ * ops without {@code LOOP} — each records the per-unit
+ * {@code EVALUATION_ORDER} deferral under this shared mechanism).</p>
  *
  * <p>The seam is pure and deterministic: one pass over the produced op
  * set, capabilities in the closed declaration order, home rows in the
@@ -330,6 +335,7 @@ public final class ContainerClaimingSeam {
                 default -> List.of();
             };
             case BINDING_LOAD -> List.of(SemanticCapability.BINDINGS);
+            case BRANCH, LOOP, DISCARD -> List.of(SemanticCapability.EVALUATION_ORDER);
             default -> List.of();
         };
     }

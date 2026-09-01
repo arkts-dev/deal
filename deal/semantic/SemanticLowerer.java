@@ -5,14 +5,19 @@ import deal.ast.AssignmentExpr;
 import deal.ast.BinaryExpr;
 import deal.ast.BinaryOp;
 import deal.ast.Block;
+import deal.ast.BreakStatement;
 import deal.ast.CallExpr;
+import deal.ast.ContinueStatement;
 import deal.ast.DeleteStatement;
+import deal.ast.Either;
 import deal.ast.ExpressionNode;
+import deal.ast.ExpressionStatement;
 import deal.ast.ForInit;
 import deal.ast.ForOfStatement;
 import deal.ast.ForStatement;
 import deal.ast.FunctionDeclaration;
 import deal.ast.IdentifierExpr;
+import deal.ast.IfStatement;
 import deal.ast.ImportDeclaration;
 import deal.ast.IndexExpr;
 import deal.ast.LiteralExpr;
@@ -23,10 +28,12 @@ import deal.ast.Property;
 import deal.ast.Span;
 import deal.ast.StatementNode;
 import deal.ast.TemplateLiteralExpr;
+import deal.ast.ThrowStatement;
 import deal.ast.TryStatement;
 import deal.ast.UnaryExpr;
 import deal.ast.UnaryOp;
 import deal.ast.VariableDeclaration;
+import deal.ast.WhileStatement;
 import deal.checker.CheckResult;
 import deal.checker.Symbol;
 import deal.checker.SymbolTable;
@@ -42,8 +49,8 @@ import deal.semantic.ir.BoundaryKind;
 import deal.semantic.ir.BoundaryRealization;
 import deal.semantic.ir.ClassId;
 import deal.semantic.ir.ConstructKind;
-import deal.semantic.ir.ContractSnapshotCanonicalizer;
 import deal.semantic.ir.ControlSelector;
+import deal.semantic.ir.ContractSnapshotCanonicalizer;
 import deal.semantic.ir.DeleteTargetKind;
 import deal.semantic.ir.ExportPlan;
 import deal.semantic.ir.FailureContractRegistry;
@@ -71,6 +78,7 @@ import deal.semantic.ir.SemanticOpKind;
 import deal.semantic.ir.SemanticProfile;
 import deal.semantic.ir.SemanticValue;
 import deal.semantic.ir.SourceOrigin;
+import deal.semantic.ir.StructuredBodyTable;
 import deal.semantic.ir.SourceOriginKind;
 import deal.semantic.ir.SourceSpan;
 import deal.semantic.ir.UnarySelector;
@@ -268,10 +276,124 @@ import java.util.Set;
  *       generation, body}}, result none, policy
  *       {@code TYPE_DESCRIPTOR}, origin = the for-of span; the iterable
  *       expression is one prior step. The body block is lowered
- *       recursively under the loop-binding frame; every statement other
- *       than a for-of (or a transparent block of them) reaching the body
- *       arm fails hard.</li>
+ *       recursively under the loop-binding frame;</li>
+ *   <li>{@link ForOfStatement} with an array-typed iterable
+ *       ({@code [T]}) → one {@code FOR_EACH {mode: ARRAY_VALUES,
+ *       iterable, binding, generation, body}} (control-flow-structures
+ *       C-D5: the iterable completes exactly once before START; the op
+ *       snapshots the array reference and the initial length and visits
+ *       slot indices {@code 0..initialLength-1} in increasing order with
+ *       the op's own {@code TYPE_DESCRIPTOR} terminal check against the
+ *       element descriptor derived from the recorded array operand type,
+ *       {@code [T]} → element {@code T}; a fresh binding per iteration,
+ *       mechanics E6). The element type is derived fail-closed through
+ *       the {@code ContainerPayloadDescriptors} bridge — an
+ *       unrepresentable element ({@code bytes}) is E6005
+ *       {@code DESCRIPTOR_UNREPRESENTABLE}, never an invented
+ *       descriptor.</li>
  * </ul>
+ *
+ * <p><b>The E5 control-flow arms (pinned; ISSUE-0409).</b> Over checked
+ * facts, the arms lower every checked control-flow construct into the
+ * pinned structured ops of control-flow-structures C-D3..C-D8 with the
+ * per-op execution contracts recorded for consumers, and produce the
+ * {@link StructuredBodyTable} block-membership record for the unit
+ * (C-D1):</p>
+ *
+ * <ul>
+ *   <li>{@link IfStatement} → {@code BRANCH(IF) {selector: IF,
+ *       condition, selectedBlock, alternateBlock}}: the condition's
+ *       producing ops complete in the enclosing block before the
+ *       {@code BRANCH} op; exactly one of {@code selectedBlock}/
+ *       {@code alternateBlock} executes; the {@code else} branch is
+ *       {@code alternateBlock} (an {@code else if} chain nests its
+ *       {@code BRANCH} op inside the alternate block); an absent
+ *       {@code else} produces {@code alternateBlock = null}; SUCCESS
+ *       publishes no result;</li>
+ *   <li>{@link BinaryExpr} with {@code &&}/{@code ||} → {@code
+ *       BRANCH(LOGICAL_AND/LOGICAL_OR)} (never {@code BINARY}): the
+ *       left operand completes before START as the condition; the right
+ *       operand's producing ops live in {@code selectedBlock} and
+ *       execute only when the left value does not decide the result
+ *       (AND: left false → result false, block skipped; OR: left true →
+ *       result true, block skipped). The op's result {@code ValueId} is
+ *       the right operand's value identity (result type {@code
+ *       D(boolean)} — a boolean either way, checker-pinned boolean
+ *       operands). Chained {@code &&}/{@code ||} lower to nested
+ *       {@code BRANCH}es in source order;</li>
+ *   <li>{@link WhileStatement} → {@code LOOP(WHILE) {selector: WHILE,
+ *       initBlock = the per-iteration condition block, condition,
+ *       bodyBlock, updateBlock = null}}: repeat { execute
+ *       {@code initBlock}; evaluate the condition value; if false →
+ *       SUCCESS; execute {@code bodyBlock} }; the condition ops are
+ *       explicit members of {@code initBlock} (C-D1), never an inferred
+ *       subgraph; no speculative body execution;</li>
+ *   <li>{@link ForStatement} → {@code LOOP(FOR) {selector: FOR,
+ *       initBlock = one-time init including the first condition
+ *       production, condition, bodyBlock, updateBlock = [update ops,
+ *       condition-producing ops]}}: execute {@code initBlock} once;
+ *       repeat { evaluate the condition value; if false → SUCCESS;
+ *       execute {@code bodyBlock}; execute {@code updateBlock} }. The
+ *       condition {@code ValueId} is produced once in {@code initBlock}
+ *       and re-produced by the {@code updateBlock} production (the most
+ *       recently produced value of the condition {@code ValueId} wins —
+ *       one value identity, re-produced per iteration). A test-less
+ *       {@code for (;;)} produces exactly one {@code CONST} op with the
+ *       boolean value {@code true} in {@code initBlock} as the
+ *       condition production, and {@code updateBlock} carries only the
+ *       update ops (no condition production). A {@code let}-declared
+ *       for-initializer is E6's {@code BINDING_ALLOC} — fail closed;</li>
+ *   <li>{@link TryStatement} → {@code TRY_CATCH {tryBlock,
+ *       catchBinding, catchBlock}} (C-D6: execute {@code tryBlock};
+ *       success → SUCCESS, catch skipped; a DEAL failure raised inside
+ *       {@code tryBlock} is reified as an {@code Error} value bound to
+ *       {@code catchBinding} — binding init mechanics E6 — and
+ *       {@code catchBlock} executes; a failure raised from
+ *       {@code catchBlock} becomes the {@code TRY_CATCH} FAILURE with
+ *       its own code/message/origin preserved and {@code cause} = the
+ *       original caught failure snapshot). The catch binding identity
+ *       is allocated by this stage and a load of the catch variable
+ *       inside {@code catchBlock} lowers to {@code BINDING_LOAD}
+ *       carrying that binding with the pinned initial generation;</li>
+ *   <li>{@link ThrowStatement} → {@code THROW {errorValue}}: the operand
+ *       completes before START; the op never succeeds; policy
+ *       {@code THROW_TRANSFER} — code/message from the supplied
+ *       {@code Error} value's fields, origin = the THROW origin, frames
+ *       active; control transfers to the nearest enclosing
+ *       {@code TRY_CATCH}, else the error escapes as the host-visible
+ *       {@code DEALRuntimeError};</li>
+ *   <li>{@link BreakStatement}/{@link ContinueStatement} →
+ *       {@code BREAK}/{@code CONTINUE {loopId = the innermost enclosing
+ *       loop op ({@code LOOP} or {@code FOR_EACH}) recorded by the
+ *       lowerer}} (C-D7: BREAK exits the target loop; CONTINUE — FOR:
+ *       execute {@code updateBlock} then re-test; WHILE: execute the
+ *       condition block ({@code initBlock}) then re-test; FOR_EACH:
+ *       next slot index; transfer across an enclosing {@code TRY_CATCH}
+ *       boundary is legal). The checker's E2000 pins source-level loop
+ *       placement, so a missing target is a producer defect;</li>
+ *   <li>{@link ExpressionStatement} → {@code DISCARD {value}}: the
+ *       value's producing ops already completed before the op; START →
+ *       SUCCESS with no result; origin kind {@code SYNTHETIC} (C-D8 —
+ *       the intentional discard is audited in the op stream and traces,
+ *       never inferred away).</li>
+ * </ul>
+ *
+ * <p><b>Block membership (C-D1).</b> Every op the session produces is a
+ * member of exactly one block (the block stack of the session); the
+ * module-init block is the root block of the unit's module-level
+ * statements; every payload-referenced {@code BlockId} exists in the
+ * produced {@link StructuredBodyTable} (empty child blocks included);
+ * block ops record the enclosing structure op as {@code parentOpId}.
+ * The unit-production seam validates the produced unit plus table
+ * through {@link ControlFlowValidator} (C-D2 — block tree, dominance,
+ * exits; violations are E6005 {@code CONTROL_BLOCK_TREE}/
+ * {@code CONTROL_EXIT}). A source statement following a terminator
+ * ({@code THROW}/{@code BREAK}/{@code CONTINUE}) in the same block is
+ * unreachable and fails closed ({@code CONSTRUCT_UNLOWERED}) — the
+ * validated block model never admits an op after a terminator in its
+ * block. The condition of a {@code LOOP(FOR)} is re-produced in
+ * {@code updateBlock} publishing the same condition {@code ValueId}
+ * (the slot-threaded expression lowering below).</p>
  *
  * <p><b>Value-operation arms.</b> The I3 slice adds the value-operation
  * arms to the shape map ({@code CONST} of every scalar kind,
@@ -284,14 +406,12 @@ import java.util.Set;
  *
  * <p><b>Fail-closed arms (exactly one outcome each).</b> A construct
  * reaching an arm without a lowering arm raises {@link ConstructUnlowered}
- * — array for-of ({@code FOR_EACH(ARRAY_VALUES)} is E5's), class-typed
- * object literals ({@code CLASS_NEW} is E9's), class member access
- * ({@code FIELD_READ} is E9's), module member access ({@code EXPORT_READ}
- * is E10's), {@code .length} on bytes (ISSUE-0158), comparison and
- * logical binary operators (the comparison producer
- * {@link ComparisonSelectorLowering}'s and the selector-bearing
- * {@code BRANCH} of EVALUATION_ORDER), ordinary calls ({@code CALL} is
- * E7's), and every other foreign construct. An {@code IntLiteral}
+ * — class-typed object literals ({@code CLASS_NEW} is E9's), class
+ * member access ({@code FIELD_READ} is E9's), module member access
+ * ({@code EXPORT_READ} is E10's), {@code .length} on bytes
+ * (ISSUE-0158), comparison binary operators (the comparison producer
+ * {@link ComparisonSelectorLowering}'s), ordinary calls ({@code CALL}
+ * is E7's), and every other foreign construct. An {@code IntLiteral}
  * outside signed32 at the
  * {@code CONST} arm raises {@link IntLiteralOutOfRange} — the same
  * fail-closed discipline for a scalar outside the closed scalar set
@@ -339,17 +459,18 @@ import java.util.Set;
  * twice through fresh allocators produces byte-identical validated units
  * and dumps.</p>
  *
- * <p><b>Claiming (D9 items 2–4, E3 window).</b> Units built by this
+ * <p><b>Claiming (D9 items 2–4, at E5's gate).</b> Units built by this
  * stage derive their claim set through {@link ContainerClaimingSeam} (the
  * unit-producer claiming seam, ISSUE-0387): the full-evidence claim
- * derivation over the produced ops and the then-active rows, checked with
+ * derivation over the produced ops and the then-active rows — at E5's
+ * gate the active rows are
+ * {@link ContainerClaimingSeam#E5_GATE_ACTIVATION} — checked with
  * the derived set as the unit's claims (the derivation-invariant guard —
  * the E6005 {@code OPERATION_OUTSIDE_CLAIMED_CAPABILITY} firing condition
  * can never trigger inside the producer because the unit claims exactly
- * its derived set). During E3's tail every produced op's home row is
- * inactive ({@link ContainerClaimingSeam#E3_WINDOW_ACTIVATION}), so the
- * tail units claim the empty capability set and every op is a recorded
- * staged hand-off. The manifest's plan-time claims are routing facts and
+ * its derived set). A unit fully evidencing an active row claims it; an
+ * under-evidenced row defers per unit and the still-staged rows record
+ * staged hand-offs. The manifest's plan-time claims are routing facts and
  * stay untouched.</p>
  */
 public final class SemanticLowerer {
@@ -647,17 +768,23 @@ public final class SemanticLowerer {
     }
 
     /**
-     * The result of the module-level unit production: the validated unit,
-     * or {@code null} with exactly the first E6005 diagnostic on failure
-     * (a lowered-away construct, an unrepresentable descriptor, or a
-     * validator rejection of the produced unit).
+     * The result of the module-level unit production: the validated unit
+     * plus its produced {@link StructuredBodyTable} (C-D1), or
+     * {@code null}/{@code null} with exactly the first E6005 diagnostic
+     * on failure (a lowered-away construct, an unrepresentable
+     * descriptor, a validator rejection of the produced unit, an
+     * address-chain protocol violation, or a control-flow validation
+     * rejection).
      *
      * @param unit        the validated {@link LoweredModuleUnit}, or
      *                    {@code null} on failure
+     * @param table       the produced block-membership table of the unit
+     *                    (C-D1), or {@code null} on failure
      * @param diagnostics empty on success, otherwise the failure
      *                    diagnostics
      */
-    public record LoweringResult(LoweredModuleUnit unit, List<CompilerDiagnostic> diagnostics) {
+    public record LoweringResult(LoweredModuleUnit unit, StructuredBodyTable table,
+                                 List<CompilerDiagnostic> diagnostics) {
 
         public LoweringResult {
             Objects.requireNonNull(diagnostics, "diagnostics must not be null");
@@ -690,6 +817,24 @@ public final class SemanticLowerer {
     }
 
     /**
+     * One catch-binding frame of the lowering environment (C-D6): the
+     * enclosing {@code TRY_CATCH}'s catch-variable name and its
+     * producer-allocated {@link BindingId}. A {@code BINDING_LOAD} of
+     * the frame's name carries the frame's binding with the pinned
+     * initial generation; the try/catch arm pushes exactly one frame
+     * while lowering the catch block. Binding init mechanics are E6's
+     * (ISSUE-0235) — this stage pins the binding identity and the load
+     * resolution only.
+     */
+    public record CatchFrame(String name, BindingId binding) {
+
+        public CatchFrame {
+            Objects.requireNonNull(name, "name must not be null");
+            Objects.requireNonNull(binding, "binding must not be null");
+        }
+    }
+
+    /**
      * Lowers one checked implementation module through this stage and
      * produces the validated unit (the unit-production seam, S1): the
      * module's top-level statements lower through the positionable
@@ -699,10 +844,15 @@ public final class SemanticLowerer {
      * construct-coverage rows are recorded onto the unit at lowering
      * start, descriptor defects convert to E6005
      * {@code DESCRIPTOR_UNREPRESENTABLE}, and the produced unit must pass
-     * the closed validator plus the production-time address-chain
-     * protocol (A-D1 — the first rejection is the returned diagnostic).
-     * In E3's window the unit claims the empty capability set derived
-     * through the claiming seam (D9 items 2/4).
+     * the closed validator, the production-time address-chain protocol
+     * (A-D1), and the production-time control-flow validation of
+     * {@link ControlFlowValidator} over the unit plus its produced
+     * {@link StructuredBodyTable} (C-D2 — block tree, dominance, exits;
+     * the first rejection is the returned diagnostic). At E5's gate the
+     * unit's capability claim set is derived through the claiming seam
+     * under {@link ContainerClaimingSeam#E5_GATE_ACTIVATION} (D9 item
+     * 5(c) — {@code CONTAINERS_AND_STRINGS} and {@code EVALUATION_ORDER}
+     * activate).
      *
      * <p><b>I3 profile guard.</b> The invocation profile is a required
      * input: a lowering request whose profile is not
@@ -724,7 +874,8 @@ public final class SemanticLowerer {
      *                              digest (R-PROFILE); non-null
      * @param allocator             the project's semantic-id allocator in
      *                              dependency order; non-null
-     * @return the validated unit, or the first E6005 on failure
+     * @return the validated unit plus its block-membership table, or
+     *         the first E6005 on failure
      */
     public static LoweringResult lowerModule(CheckedModuleInput module,
                                              SemanticProfile profile,
@@ -743,7 +894,7 @@ public final class SemanticLowerer {
         // before any id is allocated — a LEGACY_SAFE_INT lowering request
         // produces no unit and no partial session state.
         if (profile != SemanticProfile.DEAL_V1_2_INT32) {
-            return new LoweringResult(null, List.of(FailureContractRegistry.e6005(
+            return new LoweringResult(null, null, List.of(FailureContractRegistry.e6005(
                 new LoweringFailureDetail(module.moduleId().path(),
                     SemanticCapability.FOUNDATION_VALUES, LOWER_LEGACY_PROFILE_REJECTED,
                     profile, LoweredModuleUnit.FORMAT_VERSION, "SemanticLowerer"))));
@@ -753,15 +904,15 @@ public final class SemanticLowerer {
         try {
             lowerer.lowerStatements(module.ast().statements());
         } catch (ConstructUnlowered unlowered) {
-            return new LoweringResult(null,
+            return new LoweringResult(null, null,
                 List.of(FailureContractRegistry.e6005(
                     loweringFailureDetail(module.moduleId(), unlowered))));
         } catch (IntLiteralOutOfRange outOfRange) {
-            return new LoweringResult(null,
+            return new LoweringResult(null, null,
                 List.of(FailureContractRegistry.e6005(
                     loweringFailureDetail(module.moduleId(), outOfRange))));
         } catch (ContainerPayloadDescriptors.Defect defect) {
-            return new LoweringResult(null,
+            return new LoweringResult(null, null,
                 List.of(FailureContractRegistry.e6005(
                     loweringFailureDetail(module.moduleId(), defect))));
         }
@@ -772,7 +923,7 @@ public final class SemanticLowerer {
             new SemanticIrValidator.ComparisonFacts(interfaceHash,
                 SemanticProfile.DEAL_V1_2_INT32, capabilityRegistryHash));
         if (validation.isPresent()) {
-            return new LoweringResult(null, List.of(validation.get()));
+            return new LoweringResult(null, null, List.of(validation.get()));
         }
         // E5 production-time check (A-D1): the closed address-chain
         // protocol runs after the foundation validator — every produced
@@ -781,9 +932,18 @@ public final class SemanticLowerer {
         // E6005 (ADDRESS_CHAIN_SHAPE | SINGLE_EVALUATION).
         Optional<CompilerDiagnostic> chainShape = AddressChainProtocol.validate(unit);
         if (chainShape.isPresent()) {
-            return new LoweringResult(null, List.of(chainShape.get()));
+            return new LoweringResult(null, null, List.of(chainShape.get()));
         }
-        return new LoweringResult(unit, List.of());
+        // E5 production-time check (C-D2): the produced block-membership
+        // table of the unit must pass the control-flow validator — block
+        // tree, dominance, and exit checks; the first violation is the
+        // returned E6005 (CONTROL_BLOCK_TREE | CONTROL_EXIT).
+        StructuredBodyTable table = lowerer.bodyTable();
+        Optional<CompilerDiagnostic> controlFlow = ControlFlowValidator.validate(unit, table);
+        if (controlFlow.isPresent()) {
+            return new LoweringResult(null, null, List.of(controlFlow.get()));
+        }
+        return new LoweringResult(unit, table, List.of());
     }
 
     /**
@@ -851,7 +1011,7 @@ public final class SemanticLowerer {
         // I3 profile guard: identical to lowerModule — a non-DEAL_V1_2_INT32
         // lowering request produces no unit and no partial session state.
         if (profile != SemanticProfile.DEAL_V1_2_INT32) {
-            return new BindingCoreResult(new LoweringResult(null,
+            return new BindingCoreResult(new LoweringResult(null, null,
                 List.of(FailureContractRegistry.e6005(
                     new LoweringFailureDetail(module.moduleId().path(),
                         SemanticCapability.FOUNDATION_VALUES, LOWER_LEGACY_PROFILE_REJECTED,
@@ -863,22 +1023,22 @@ public final class SemanticLowerer {
         try {
             lowerer.lowerBindingModule(module.ast().statements());
         } catch (ConstructUnlowered unlowered) {
-            return new BindingCoreResult(new LoweringResult(null,
+            return new BindingCoreResult(new LoweringResult(null, null,
                 List.of(FailureContractRegistry.e6005(
                     loweringFailureDetail(module.moduleId(), unlowered)))),
                 lowerer.bindingFacts());
         } catch (IntLiteralOutOfRange outOfRange) {
-            return new BindingCoreResult(new LoweringResult(null,
+            return new BindingCoreResult(new LoweringResult(null, null,
                 List.of(FailureContractRegistry.e6005(
                     loweringFailureDetail(module.moduleId(), outOfRange)))),
                 lowerer.bindingFacts());
         } catch (ContainerPayloadDescriptors.Defect defect) {
-            return new BindingCoreResult(new LoweringResult(null,
+            return new BindingCoreResult(new LoweringResult(null, null,
                 List.of(FailureContractRegistry.e6005(
                     loweringFailureDetail(module.moduleId(), defect)))),
                 lowerer.bindingFacts());
         } catch (ComparisonSelectorLowering.Defect defect) {
-            return new BindingCoreResult(new LoweringResult(null,
+            return new BindingCoreResult(new LoweringResult(null, null,
                 List.of(ComparisonSelectorLowering.e6005(module.moduleId(), defect))),
                 lowerer.bindingFacts());
         }
@@ -890,15 +1050,16 @@ public final class SemanticLowerer {
             new SemanticIrValidator.ComparisonFacts(interfaceHash,
                 SemanticProfile.DEAL_V1_2_INT32, capabilityRegistryHash));
         if (validation.isPresent()) {
-            return new BindingCoreResult(new LoweringResult(null, List.of(validation.get())),
-                lowerer.bindingFacts());
+            return new BindingCoreResult(new LoweringResult(null, null,
+                List.of(validation.get())), lowerer.bindingFacts());
         }
         Optional<CompilerDiagnostic> chainShape = AddressChainProtocol.validate(unit);
         if (chainShape.isPresent()) {
-            return new BindingCoreResult(new LoweringResult(null, List.of(chainShape.get())),
-                lowerer.bindingFacts());
+            return new BindingCoreResult(new LoweringResult(null, null,
+                List.of(chainShape.get())), lowerer.bindingFacts());
         }
-        return new BindingCoreResult(new LoweringResult(unit, List.of()), lowerer.bindingFacts());
+        return new BindingCoreResult(new LoweringResult(unit, lowerer.bodyTable(), List.of()),
+            lowerer.bindingFacts());
     }
 
     // =========================================================================
@@ -916,9 +1077,14 @@ public final class SemanticLowerer {
      * <p>The session emits operations in the pinned order — element prior
      * steps in source order, then the consuming op, then its boundary
      * children in source order; the iterable's prior steps, then the
-     * {@code FOR_EACH} op, then the body ops — so {@link #ops()} is the
+     * {@code FOR_EACH} op, then the body ops; a structure op, then its
+     * child blocks in payload order ({@code LOOP}: init, body, update;
+     * {@code BRANCH}: selected, alternate) — so {@link #ops()} is the
      * unit's produced-operation list in source order and the id
-     * allocation sequence follows the same order.</p>
+     * allocation sequence follows the same order. Every op is recorded
+     * as a member of exactly the current emission block (C-D1); the
+     * produced {@link StructuredBodyTable} is available through
+     * {@link #bodyTable()}.</p>
      */
     public static final class ModuleLowerer {
 
@@ -930,6 +1096,52 @@ public final class SemanticLowerer {
         private long nextOrdinal = 0;
         private final List<SemanticOp> ops = new ArrayList<>();
         private final List<ForEachFrame> frames = new ArrayList<>();
+        /**
+         * The catch-binding frames (C-D6): the innermost enclosing
+         * {@code TRY_CATCH} catch variables. A {@code BINDING_LOAD} of a
+         * frame's name carries the frame's binding and the pinned
+         * initial generation; the try/catch arm pushes exactly one frame
+         * while lowering the catch block (binding init mechanics E6).
+         */
+        private final List<CatchFrame> catchFrames = new ArrayList<>();
+        /**
+         * The block-membership production state (C-D1): the ordered ops
+         * per block and the inverse membership, plus the emission block
+         * stack. Every emitted op becomes a member of exactly the top
+         * block; child blocks are pushed while their contents are
+         * lowered. The produced {@link StructuredBodyTable} is built at
+         * {@link #bodyTable()}.
+         */
+        private final java.util.LinkedHashMap<BlockId, List<OpId>> blockOps =
+            new java.util.LinkedHashMap<>();
+        private final java.util.LinkedHashMap<OpId, BlockId> opBlocks =
+            new java.util.LinkedHashMap<>();
+        /**
+         * The enclosing structure-op parents (C-D3..C-D6): the innermost
+         * structure op whose block is currently being lowered. Every op
+         * emitted inside a structure's child block records that
+         * structure as its {@code parentOpId} — block ops record the
+         * structure op, and nested structure ops record their enclosing
+         * structure op.
+         */
+        private final ArrayDeque<OpId> blockParents = new ArrayDeque<>();
+        /**
+         * The innermost enclosing loop ops (C-D7): {@code BREAK}/
+         * {@code CONTINUE} record the top loop as their target — the
+         * checker's E2000 pins source-level loop placement, so a missing
+         * target is a producer defect. Pushed while lowering a loop or
+         * for-of body block.
+         */
+        private final ArrayDeque<OpId> loopTargets = new ArrayDeque<>();
+        /**
+         * The per-block termination flags (C-D2 dominance): a
+         * {@code THROW}/{@code BREAK}/{@code CONTINUE} terminates its
+         * block; a following statement in the same block is unreachable
+         * source and fails closed — the validated block model never
+         * admits an op after a terminator in its block.
+         */
+        private final java.util.LinkedHashMap<BlockId, Boolean> blockTerminated =
+            new java.util.LinkedHashMap<>();
         /**
          * The enclosing address-chain parents (A-D2): the innermost chain
          * op currently being built. Every op emitted while a chain is
@@ -1081,8 +1293,10 @@ public final class SemanticLowerer {
             this.programSpan = Objects.requireNonNull(programSpan,
                 "programSpan must not be null");
             this.moduleInitBlock = ids.nextBlockId(module, nextOrdinal++, 0);
+            this.blockOps.put(moduleInitBlock, new ArrayList<>());
+            this.blockTerminated.put(moduleInitBlock, false);
+            this.blockStack.push(moduleInitBlock);
             if (bindingCore) {
-                blockStack.push(moduleInitBlock);
                 bindingScopes.add(new LinkedHashMap<>());
                 installBindingSiteResolver(name -> {
                     FrameEntry entry = frameEntryOf(name);
@@ -1128,6 +1342,130 @@ public final class SemanticLowerer {
         /** The module-init block identity (the session's first allocation). */
         public BlockId moduleInitBlockId() {
             return moduleInitBlock;
+        }
+
+        // ---------------------------------------------------------------------
+        // Block-membership machinery (C-D1) and the structure-op parents
+        // ---------------------------------------------------------------------
+
+        /**
+         * Allocates one child block of the session: a fresh
+         * {@link BlockId} registered in the block-membership state with
+         * an empty op list (C-D1 — every payload-referenced block exists
+         * in the produced table, empty blocks included).
+         *
+         * @return the fresh block identity
+         */
+        private BlockId allocateBlock() {
+            BlockId block = ids.nextBlockId(module, nextOrdinal++, 0);
+            blockOps.put(block, new ArrayList<>());
+            blockTerminated.put(block, false);
+            return block;
+        }
+
+        /** Pushes one allocated block as the current emission block. */
+        private void pushBlock(BlockId block) {
+            if (!blockOps.containsKey(block)) {
+                throw new IllegalStateException(
+                    "pushing an unregistered block (producer defect)");
+            }
+            blockStack.push(block);
+        }
+
+        /** Pops the current emission block (the outer block resumes). */
+        private void popBlock() {
+            if (blockStack.size() <= 1) {
+                throw new IllegalStateException(
+                    "popping the root module-init block (producer defect)");
+            }
+            blockStack.pop();
+        }
+
+        /** Emits one op into the unit list and the current emission block. */
+        private void emit(SemanticOp op) {
+            emitAt(ops.size(), op);
+        }
+
+        /**
+         * Emits one op at the pinned unit-list position (the structure-op
+         * position of a {@code LOOP}/{@code TRY_CATCH}/{@code
+         * BRANCH(LOGICAL_*)} whose child blocks were lowered before the
+         * op's emission) and records its membership in the current
+         * emission block — the pinned unit order is structure op first,
+         * then its child block ops in payload order.
+         */
+        private void emitAt(int mark, SemanticOp op) {
+            ops.add(mark, op);
+            BlockId block = blockStack.peek();
+            blockOps.get(block).add(op.opId());
+            opBlocks.put(op.opId(), block);
+        }
+
+        /**
+         * The parentage of the next USER op: the innermost address-chain
+         * parent wins, then the innermost structure-op parent (block ops
+         * record the enclosing structure op), else {@code null} at
+         * module top level.
+         */
+        private OpId currentParent() {
+            OpId chain = chainParents.peek();
+            if (chain != null) {
+                return chain;
+            }
+            return blockParents.peek();
+        }
+
+        /** Pushes one structure op as the current block-op parent. */
+        private void pushBlockParent(OpId structureOpId) {
+            blockParents.push(structureOpId);
+        }
+
+        /** Pops the current structure-op parent. */
+        private void popBlockParent() {
+            if (blockParents.isEmpty()) {
+                throw new IllegalStateException(
+                    "popping an empty block-parent stack (producer defect)");
+            }
+            blockParents.pop();
+        }
+
+        /** Pushes one loop op as the innermost break/continue target. */
+        private void pushLoopTarget(OpId loopOpId) {
+            loopTargets.push(loopOpId);
+        }
+
+        /** Pops the innermost break/continue target. */
+        private void popLoopTarget() {
+            if (loopTargets.isEmpty()) {
+                throw new IllegalStateException(
+                    "popping an empty loop-target stack (producer defect)");
+            }
+            loopTargets.pop();
+        }
+
+        /**
+         * Marks the current emission block terminated after a
+         * {@code THROW}/{@code BREAK}/{@code CONTINUE} emission (C-D2
+         * dominance: no op may follow a terminator in its block).
+         */
+        private void terminateBlock() {
+            blockTerminated.put(blockStack.peek(), true);
+        }
+
+        /**
+         * Fails closed when the current emission block already carries a
+         * terminator: a source statement following a
+         * {@code THROW}/{@code BREAK}/{@code CONTINUE} in the same block
+         * is unreachable and not representable in the validated block
+         * model — {@code CONSTRUCT_UNLOWERED}, never a silent drop and
+         * never an inferred block.
+         */
+        private void ensureBlockOpen() {
+            if (Boolean.TRUE.equals(blockTerminated.get(blockStack.peek()))) {
+                throw new ConstructUnlowered("statement after a terminator "
+                    + "(THROW/BREAK/CONTINUE) in the same block — unreachable source "
+                    + "statements are not representable in the validated block model");
+            }
         }
 
         // ---------------------------------------------------------------------
@@ -1405,7 +1743,7 @@ public final class SemanticLowerer {
             }
             // Module-level name ALLOCs were hoisted (B1): no second
             // allocation here.
-            BlockId bodyBlock = ids.nextBlockId(module, nextOrdinal++, 0);
+            BlockId bodyBlock = allocateBlock();
             checkerScopeNodes.push(function);
             pushBindingFrame();
             blockStack.push(bodyBlock);
@@ -1468,9 +1806,9 @@ public final class SemanticLowerer {
             VariableDeclaration decl = varDecl.decl();
             BindingId counter = ids.nextBindingId(module, nextOrdinal++, 0);
             Type counterType = counterTypeOf(statement, decl);
-            BlockId initBlock = ids.nextBlockId(module, nextOrdinal++, 0);
-            BlockId bodyBlock = ids.nextBlockId(module, nextOrdinal++, 0);
-            BlockId updateBlock = ids.nextBlockId(module, nextOrdinal++, 0);
+            BlockId initBlock = allocateBlock();
+            BlockId bodyBlock = allocateBlock();
+            BlockId updateBlock = allocateBlock();
             checkerScopeNodes.push(statement);
             pushBindingFrame();
             blockStack.push(initBlock);
@@ -1559,7 +1897,7 @@ public final class SemanticLowerer {
             }
             ValueId iterable = lowerExpression(statement.iterable());
             BindingId binding = ids.nextBindingId(module, nextOrdinal++, 0);
-            BlockId bodyBlock = ids.nextBlockId(module, nextOrdinal++, 0);
+            BlockId bodyBlock = allocateBlock();
             pushBindingFrame();
             registerBinding(statement.varName(), binding, new BindingCoreIncarnation(
                 INITIAL_LOOP_GENERATION, bodyBlock, BindingCellKind.SHARED_CELL,
@@ -1591,8 +1929,8 @@ public final class SemanticLowerer {
          * supplies the binding model the structure operates on.
          */
         private void lowerBindingTry(TryStatement statement) {
-            BlockId tryBlock = ids.nextBlockId(module, nextOrdinal++, 0);
-            BlockId catchBlock = ids.nextBlockId(module, nextOrdinal++, 0);
+            BlockId tryBlock = allocateBlock();
+            BlockId catchBlock = allocateBlock();
             BindingId catchBinding = ids.nextBindingId(module, nextOrdinal++, 0);
             emitUserNullOp(SemanticOpKind.TRY_CATCH,
                 new KindPayload.TryCatchPayload(tryBlock, catchBinding, catchBlock),
@@ -1627,7 +1965,7 @@ public final class SemanticLowerer {
          * resolves against, B9 R1).
          */
         private void lowerBindingBlock(Block block) {
-            BlockId blockId = ids.nextBlockId(module, nextOrdinal++, 0);
+            BlockId blockId = allocateBlock();
             checkerScopeNodes.push(block);
             pushBindingFrame();
             blockStack.push(blockId);
@@ -1764,18 +2102,42 @@ public final class SemanticLowerer {
          *         stage's window
          */
         public ValueId lowerExpression(ExpressionNode expr) {
+            return lowerExpression(expr, null);
+        }
+
+        /**
+         * Lowers one checked expression through the D1 shape map with an
+         * explicit result slot: the expression's final producing op
+         * publishes {@code slot} instead of a fresh {@link ValueId}
+         * ({@code null} allocates one). The pinned use is the
+         * {@code LOOP(FOR)} condition re-production — the
+         * {@code updateBlock} condition production re-publishes the
+         * {@code initBlock} production's condition {@code ValueId} (one
+         * value identity, the most recently produced value of the
+         * condition {@code ValueId} wins at execution). Only the final
+         * producing op takes the slot; every intermediate op allocates
+         * its own value.
+         *
+         * @param expr the checked expression; non-null
+         * @param slot the result slot of the final producing op, or
+         *             {@code null} to allocate a fresh value
+         * @return the produced {@link ValueId} (the slot when given)
+         * @throws ConstructUnlowered on a construct without an arm in this
+         *         stage's window
+         */
+        public ValueId lowerExpression(ExpressionNode expr, ValueId slot) {
             Objects.requireNonNull(expr, "expr must not be null");
             return switch (expr) {
-                case LiteralExpr literal -> lowerConst(literal);
-                case IdentifierExpr identifier -> lowerBindingLoad(identifier);
-                case ArrayLiteralExpr array -> lowerArrayNew(array);
-                case ObjectLiteralExpr object -> lowerTableNew(object);
-                case MemberAccessExpr access -> lowerMemberAccess(access);
-                case BinaryExpr binary -> lowerBinary(binary);
-                case TemplateLiteralExpr template -> lowerTemplate(template);
-                case UnaryExpr unary -> lowerUnary(unary);
-                case CallExpr call -> lowerIntrinsicCall(call);
-                case AssignmentExpr assignment -> lowerAssignment(assignment);
+                case LiteralExpr literal -> lowerConst(literal, slot);
+                case IdentifierExpr identifier -> lowerBindingLoad(identifier, slot);
+                case ArrayLiteralExpr array -> lowerArrayNew(array, slot);
+                case ObjectLiteralExpr object -> lowerTableNew(object, slot);
+                case MemberAccessExpr access -> lowerMemberAccess(access, slot);
+                case BinaryExpr binary -> lowerBinary(binary, slot);
+                case TemplateLiteralExpr template -> lowerTemplate(template, slot);
+                case UnaryExpr unary -> lowerUnary(unary, slot);
+                case CallExpr call -> lowerIntrinsicCall(call, slot);
+                case AssignmentExpr assignment -> lowerAssignment(assignment, slot);
                 default -> throw new ConstructUnlowered(describeExpression(expr));
             };
         }
@@ -1796,28 +2158,79 @@ public final class SemanticLowerer {
         public OpId lowerForOfStatement(ForOfStatement stmt) {
             Objects.requireNonNull(stmt, "stmt must not be null");
             Type iterableType = checkedType(stmt.iterable());
-            if (iterableType instanceof Type.Array) {
-                throw new ConstructUnlowered("array for-of (FOR_EACH(ARRAY_VALUES) is E5's, "
-                    + "ISSUE-0234; an array-typed iterable reaching an E3 arm fails hard)");
+            if (iterableType instanceof Type.Array arrayType) {
+                return lowerArrayForOf(stmt, arrayType);
             }
             if (!(iterableType instanceof Type.String)) {
                 throw new ConstructUnlowered("for-of over a non-string, non-array iterable "
-                    + typeName(iterableType) + " (this stage lowers string iterables only)");
+                    + typeName(iterableType) + " (this stage lowers string and array "
+                    + "iterables only)");
             }
-            BlockId bodyBlock = ids.nextBlockId(module, nextOrdinal++, 0);
+            BlockId bodyBlock = allocateBlock();
             ValueId iterable = lowerExpression(stmt.iterable());
             ForEachFrame frame = openForEachScope(stmt.varName());
             AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
             OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
             SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(stmt.span()),
-                SourceOriginKind.USER, anchor, null);
-            ops.add(buildOp(opId, SemanticOpKind.FOR_EACH,
+                SourceOriginKind.USER, anchor, currentParent());
+            emit(buildOp(opId, SemanticOpKind.FOR_EACH,
                 new KindPayload.ForEachPayload(IterationMode.STRING_SCALARS, iterable,
                     frame.binding(), frame.generation(), bodyBlock),
                 null, null, FailurePolicyId.TYPE_DESCRIPTOR, origin));
+            pushBlockParent(opId);
+            pushBlock(bodyBlock);
+            pushLoopTarget(opId);
             try {
                 lowerStatements(stmt.body().statements());
             } finally {
+                popLoopTarget();
+                popBlock();
+                popBlockParent();
+                closeForEachScope();
+            }
+            return opId;
+        }
+
+        /**
+         * {@code FOR_EACH(ARRAY_VALUES)} — the array for-of arm (C-D5):
+         * the iterable operand completes exactly once before START as one
+         * prior step in the enclosing block; the op snapshots the array
+         * reference and the initial length and visits slot indices
+         * {@code 0..initialLength-1} in increasing order with the op's
+         * own {@code TYPE_DESCRIPTOR} terminal check against the element
+         * descriptor derived from the recorded array operand type
+         * ({@code [T]} → element {@code T}) — a missing element fails
+         * E8001 {@code expected {T}, got missing} at the {@code FOR_EACH}
+         * origin before the body runs; then a fresh binding per iteration
+         * (mechanics E6 — the payload pins the binding identity and the
+         * initial generation) and the body block executes.
+         * {@code BREAK}/{@code CONTINUE} target this op's {@code OpId}.
+         * The element type is derived fail-closed through the descriptor
+         * bridge — an unrepresentable element ({@code bytes}) is a
+         * producer defect, never an invented descriptor.
+         */
+        private OpId lowerArrayForOf(ForOfStatement stmt, Type.Array arrayType) {
+            ContainerPayloadDescriptors.elementDescriptorOf(arrayType.element());
+            BlockId bodyBlock = allocateBlock();
+            ValueId iterable = lowerExpression(stmt.iterable());
+            ForEachFrame frame = openForEachScope(stmt.varName());
+            AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+            OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
+            SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(stmt.span()),
+                SourceOriginKind.USER, anchor, currentParent());
+            emit(buildOp(opId, SemanticOpKind.FOR_EACH,
+                new KindPayload.ForEachPayload(IterationMode.ARRAY_VALUES, iterable,
+                    frame.binding(), frame.generation(), bodyBlock),
+                null, null, FailurePolicyId.TYPE_DESCRIPTOR, origin));
+            pushBlockParent(opId);
+            pushBlock(bodyBlock);
+            pushLoopTarget(opId);
+            try {
+                lowerStatements(stmt.body().statements());
+            } finally {
+                popLoopTarget();
+                popBlock();
+                popBlockParent();
                 closeForEachScope();
             }
             return opId;
@@ -1844,18 +2257,32 @@ public final class SemanticLowerer {
          *         A-D9 map
          */
         public ValueId lowerAssignment(AssignmentExpr assignment) {
+            return lowerAssignment(assignment, null);
+        }
+
+        /**
+         * Lowers one checked assignment with an explicit result slot:
+         * the slot threads to the RHS expression's final producing op,
+         * whose value identity the {@code ASSIGN} op publishes (A-D6).
+         *
+         * @param assignment the checked assignment expression; non-null
+         * @param slot       the committed-value slot, or {@code null} to
+         *                   allocate fresh
+         * @return the committed value's {@link ValueId}
+         */
+        public ValueId lowerAssignment(AssignmentExpr assignment, ValueId slot) {
             Objects.requireNonNull(assignment, "assignment must not be null");
             ExpressionNode target = assignment.target();
             if (target instanceof IdentifierExpr identifier) {
-                return lowerVariableAssign(assignment, identifier);
+                return lowerVariableAssign(assignment, identifier, slot);
             }
             if (target instanceof MemberAccessExpr access) {
                 Type objectType = checkedType(access.object());
                 if (objectType instanceof Type.Table) {
-                    return lowerTableMemberAssign(assignment, access);
+                    return lowerTableMemberAssign(assignment, access, slot);
                 }
                 if (objectType instanceof Type.Class classType) {
-                    return lowerClassFieldAssign(assignment, access, classType);
+                    return lowerClassFieldAssign(assignment, access, classType, slot);
                 }
                 throw new ConstructUnlowered("assignment target '" + access.field()
                     + "' on " + typeName(objectType) + " (no closed A-D9 chain shape for "
@@ -1865,10 +2292,10 @@ public final class SemanticLowerer {
             if (target instanceof IndexExpr index) {
                 Type containerType = checkedType(index.array());
                 if (containerType instanceof Type.Table) {
-                    return lowerTableIndexAssign(assignment, index);
+                    return lowerTableIndexAssign(assignment, index, slot);
                 }
                 if (containerType instanceof Type.Array arrayType) {
-                    return lowerArrayIndexAssign(assignment, index, arrayType);
+                    return lowerArrayIndexAssign(assignment, index, arrayType, slot);
                 }
                 throw new ConstructUnlowered("assignment target index on "
                     + typeName(containerType) + " (no closed A-D9 chain shape for this "
@@ -1940,6 +2367,11 @@ public final class SemanticLowerer {
          * target descriptor (A-D6).
          */
         private ValueId lowerVariableAssign(AssignmentExpr assignment, IdentifierExpr target) {
+            return lowerVariableAssign(assignment, target, null);
+        }
+
+        private ValueId lowerVariableAssign(AssignmentExpr assignment, IdentifierExpr target,
+                                            ValueId slot) {
             ForEachFrame frame = null;
             for (ForEachFrame candidate : frames) {
                 if (candidate.name().equals(target.name())) {
@@ -1981,7 +2413,7 @@ public final class SemanticLowerer {
             OpId boundaryOp;
             OpId commitOp;
             try {
-                value = lowerExpression(assignment.value());
+                value = lowerExpression(assignment.value(), slot);
                 valueOp = producerOpId(value);
                 FailurePolicyId boundaryPolicy = targetDescriptor instanceof RuntimeDescriptor.Func
                     ? FailurePolicyId.FUNCTION_SIGNATURE : FailurePolicyId.TYPE_DESCRIPTOR;
@@ -2000,8 +2432,8 @@ public final class SemanticLowerer {
             }
             AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
             SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(assignment.span()),
-                SourceOriginKind.USER, anchor, chainParents.peek());
-            ops.add(buildOp(chainOpId, SemanticOpKind.ASSIGN,
+                SourceOriginKind.USER, anchor, currentParent());
+            emit(buildOp(chainOpId, SemanticOpKind.ASSIGN,
                 new KindPayload.AssignPayload(AssignTargetKind.VARIABLE,
                     List.of(valueOp, boundaryOp, commitOp)),
                 value, targetDescriptor, FailurePolicyId.NO_DEAL_FAILURE, origin));
@@ -2016,6 +2448,11 @@ public final class SemanticLowerer {
          */
         private ValueId lowerTableMemberAssign(AssignmentExpr assignment,
                                                MemberAccessExpr access) {
+            return lowerTableMemberAssign(assignment, access, null);
+        }
+
+        private ValueId lowerTableMemberAssign(AssignmentExpr assignment,
+                                               MemberAccessExpr access, ValueId slot) {
             if (access.object() instanceof IdentifierExpr identifier
                     && checks.symbolTable().resolve(identifier.name())
                         instanceof Symbol.ModuleSymbol) {
@@ -2033,7 +2470,7 @@ public final class SemanticLowerer {
             try {
                 ValueId container = lowerExpression(access.object());
                 containerOp = producerOpId(container);
-                value = lowerExpression(assignment.value());
+                value = lowerExpression(assignment.value(), slot);
                 valueOp = producerOpId(value);
                 commitOp = emitNullOp(SemanticOpKind.MEMBER_WRITE,
                     new KindPayload.MemberWritePayload(container, access.field(), value),
@@ -2044,8 +2481,8 @@ public final class SemanticLowerer {
             }
             AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
             SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(assignment.span()),
-                SourceOriginKind.USER, anchor, chainParents.peek());
-            ops.add(buildOp(chainOpId, SemanticOpKind.ASSIGN,
+                SourceOriginKind.USER, anchor, currentParent());
+            emit(buildOp(chainOpId, SemanticOpKind.ASSIGN,
                 new KindPayload.AssignPayload(AssignTargetKind.TABLE_SLOT,
                     List.of(containerOp, valueOp, commitOp)),
                 value, targetDescriptor, FailurePolicyId.NO_DEAL_FAILURE, origin));
@@ -2062,6 +2499,11 @@ public final class SemanticLowerer {
          * targets, A-D3).
          */
         private ValueId lowerTableIndexAssign(AssignmentExpr assignment, IndexExpr index) {
+            return lowerTableIndexAssign(assignment, index, null);
+        }
+
+        private ValueId lowerTableIndexAssign(AssignmentExpr assignment, IndexExpr index,
+                                              ValueId slot) {
             if (!(checkedType(index.index()) instanceof Type.String)) {
                 throw new ConstructUnlowered("table index assignment key of checked type "
                     + typeName(checkedType(index.index())) + " (A-D10's E3018 checker gate "
@@ -2083,16 +2525,16 @@ public final class SemanticLowerer {
                 containerOp = producerOpId(container);
                 ValueId key = lowerExpression(index.index());
                 keyOp = producerOpId(key);
-                value = lowerExpression(assignment.value());
+                value = lowerExpression(assignment.value(), slot);
                 valueOp = producerOpId(value);
-                ValueId slot = emitChainChildOp(SemanticOpKind.INDEX_NORMALIZE,
+                ValueId normalizedSlot = emitChainChildOp(SemanticOpKind.INDEX_NORMALIZE,
                     new KindPayload.IndexNormalizePayload(IndexMode.TABLE_WRITE, key, key),
                     index.span(),
                     ContainerPayloadDescriptors.resultDescriptorOf(Type.String.INSTANCE),
                     FailurePolicyId.NO_DEAL_FAILURE);
-                normalizeOp = producerOpId(slot);
+                normalizeOp = producerOpId(normalizedSlot);
                 commitOp = emitNullOp(SemanticOpKind.INDEX_WRITE,
-                    new KindPayload.IndexWritePayload(container, slot, value),
+                    new KindPayload.IndexWritePayload(container, normalizedSlot, value),
                     index.span(), FailurePolicyId.NO_DEAL_FAILURE,
                     SourceOriginKind.SYNTHETIC, chainOpId);
             } finally {
@@ -2100,8 +2542,8 @@ public final class SemanticLowerer {
             }
             AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
             SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(assignment.span()),
-                SourceOriginKind.USER, anchor, chainParents.peek());
-            ops.add(buildOp(chainOpId, SemanticOpKind.ASSIGN,
+                SourceOriginKind.USER, anchor, currentParent());
+            emit(buildOp(chainOpId, SemanticOpKind.ASSIGN,
                 new KindPayload.AssignPayload(AssignTargetKind.TABLE_SLOT,
                     List.of(containerOp, keyOp, valueOp, normalizeOp, commitOp)),
                 value, targetDescriptor, FailurePolicyId.NO_DEAL_FAILURE, origin));
@@ -2121,6 +2563,11 @@ public final class SemanticLowerer {
          */
         private ValueId lowerArrayIndexAssign(AssignmentExpr assignment, IndexExpr index,
                                               Type.Array arrayType) {
+            return lowerArrayIndexAssign(assignment, index, arrayType, null);
+        }
+
+        private ValueId lowerArrayIndexAssign(AssignmentExpr assignment, IndexExpr index,
+                                              Type.Array arrayType, ValueId slot) {
             RuntimeDescriptor elementDescriptor =
                 ContainerPayloadDescriptors.elementDescriptorOf(arrayType.element());
             OpId chainOpId = ids.nextOpId(module, nextOrdinal++, 0);
@@ -2138,19 +2585,19 @@ public final class SemanticLowerer {
                 containerOp = producerOpId(container);
                 ValueId key = lowerExpression(index.index());
                 keyOp = producerOpId(key);
-                value = lowerExpression(assignment.value());
+                value = lowerExpression(assignment.value(), slot);
                 valueOp = producerOpId(value);
                 ValueId length = emitChainChildOp(SemanticOpKind.ARRAY_LENGTH,
                     new KindPayload.ArrayLengthPayload(container), index.span(),
                     ContainerPayloadDescriptors.resultDescriptorOf(Type.Int.INSTANCE),
                     FailurePolicyId.INT32_RESULT);
                 lengthOp = producerOpId(length);
-                ValueId slot = emitChainChildOp(SemanticOpKind.INDEX_NORMALIZE,
+                ValueId normalizedSlot = emitChainChildOp(SemanticOpKind.INDEX_NORMALIZE,
                     new KindPayload.IndexNormalizePayload(IndexMode.ARRAY_WRITE, key, length),
                     index.span(),
                     ContainerPayloadDescriptors.resultDescriptorOf(Type.Int.INSTANCE),
                     FailurePolicyId.NO_DEAL_FAILURE);
-                normalizeOp = producerOpId(slot);
+                normalizeOp = producerOpId(normalizedSlot);
                 boundaryOp = emitNullOp(SemanticOpKind.BOUNDARY,
                     new KindPayload.BoundaryPayload(BoundaryKind.ARRAY_ELEMENT_ASSIGNMENT,
                         elementDescriptor, value,
@@ -2159,7 +2606,7 @@ public final class SemanticLowerer {
                     index.span(), FailurePolicyId.ARRAY_WRITE_BOUNDS_THEN_ELEMENT,
                     SourceOriginKind.SYNTHETIC, chainOpId);
                 commitOp = emitNullOp(SemanticOpKind.INDEX_WRITE,
-                    new KindPayload.IndexWritePayload(container, slot, value),
+                    new KindPayload.IndexWritePayload(container, normalizedSlot, value),
                     index.span(), FailurePolicyId.NO_DEAL_FAILURE,
                     SourceOriginKind.SYNTHETIC, chainOpId);
             } finally {
@@ -2167,8 +2614,8 @@ public final class SemanticLowerer {
             }
             AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
             SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(assignment.span()),
-                SourceOriginKind.USER, anchor, chainParents.peek());
-            ops.add(buildOp(chainOpId, SemanticOpKind.ASSIGN,
+                SourceOriginKind.USER, anchor, currentParent());
+            emit(buildOp(chainOpId, SemanticOpKind.ASSIGN,
                 new KindPayload.AssignPayload(AssignTargetKind.ARRAY_SLOT,
                     List.of(containerOp, keyOp, valueOp, lengthOp, normalizeOp, boundaryOp,
                         commitOp)),
@@ -2184,6 +2631,12 @@ public final class SemanticLowerer {
          */
         private ValueId lowerClassFieldAssign(AssignmentExpr assignment,
                                               MemberAccessExpr access, Type.Class classType) {
+            return lowerClassFieldAssign(assignment, access, classType, null);
+        }
+
+        private ValueId lowerClassFieldAssign(AssignmentExpr assignment,
+                                              MemberAccessExpr access, Type.Class classType,
+                                              ValueId slot) {
             RuntimeDescriptor fieldDescriptor =
                 ContainerPayloadDescriptors.resultDescriptorOf(checkedType(access));
             ClassId classId = new ClassId(classType.modulePath(), classType.name());
@@ -2196,7 +2649,7 @@ public final class SemanticLowerer {
             try {
                 ValueId container = lowerExpression(access.object());
                 containerOp = producerOpId(container);
-                value = lowerExpression(assignment.value());
+                value = lowerExpression(assignment.value(), slot);
                 valueOp = producerOpId(value);
                 commitOp = emitNullOp(SemanticOpKind.FIELD_WRITE,
                     new KindPayload.FieldWritePayload(container, classId, access.field(),
@@ -2208,8 +2661,8 @@ public final class SemanticLowerer {
             }
             AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
             SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(assignment.span()),
-                SourceOriginKind.USER, anchor, chainParents.peek());
-            ops.add(buildOp(chainOpId, SemanticOpKind.ASSIGN,
+                SourceOriginKind.USER, anchor, currentParent());
+            emit(buildOp(chainOpId, SemanticOpKind.ASSIGN,
                 new KindPayload.AssignPayload(AssignTargetKind.CLASS_FIELD,
                     List.of(containerOp, valueOp, commitOp)),
                 value, fieldDescriptor, FailurePolicyId.NO_DEAL_FAILURE, origin));
@@ -2244,8 +2697,8 @@ public final class SemanticLowerer {
             }
             AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
             SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(delete.span()),
-                SourceOriginKind.USER, anchor, chainParents.peek());
-            ops.add(buildOp(chainOpId, SemanticOpKind.DELETE,
+                SourceOriginKind.USER, anchor, currentParent());
+            emit(buildOp(chainOpId, SemanticOpKind.DELETE,
                 new KindPayload.DeletePayload(DeleteTargetKind.TABLE_SLOT,
                     List.of(containerOp, commitOp)),
                 null, null, FailurePolicyId.NO_DEAL_FAILURE, origin));
@@ -2276,14 +2729,14 @@ public final class SemanticLowerer {
                 containerOp = producerOpId(container);
                 ValueId key = lowerExpression(index.index());
                 keyOp = producerOpId(key);
-                ValueId slot = emitChainChildOp(SemanticOpKind.INDEX_NORMALIZE,
+                ValueId normalizedSlot = emitChainChildOp(SemanticOpKind.INDEX_NORMALIZE,
                     new KindPayload.IndexNormalizePayload(IndexMode.TABLE_WRITE, key, key),
                     index.span(),
                     ContainerPayloadDescriptors.resultDescriptorOf(Type.String.INSTANCE),
                     FailurePolicyId.NO_DEAL_FAILURE);
-                normalizeOp = producerOpId(slot);
+                normalizeOp = producerOpId(normalizedSlot);
                 commitOp = emitNullOp(SemanticOpKind.INDEX_DELETE,
-                    new KindPayload.IndexDeletePayload(container, slot),
+                    new KindPayload.IndexDeletePayload(container, normalizedSlot),
                     index.span(), FailurePolicyId.NO_DEAL_FAILURE,
                     SourceOriginKind.SYNTHETIC, chainOpId);
             } finally {
@@ -2291,8 +2744,8 @@ public final class SemanticLowerer {
             }
             AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
             SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(delete.span()),
-                SourceOriginKind.USER, anchor, chainParents.peek());
-            ops.add(buildOp(chainOpId, SemanticOpKind.DELETE,
+                SourceOriginKind.USER, anchor, currentParent());
+            emit(buildOp(chainOpId, SemanticOpKind.DELETE,
                 new KindPayload.DeletePayload(DeleteTargetKind.TABLE_SLOT,
                     List.of(containerOp, keyOp, normalizeOp, commitOp)),
                 null, null, FailurePolicyId.NO_DEAL_FAILURE, origin));
@@ -2330,21 +2783,21 @@ public final class SemanticLowerer {
                     ContainerPayloadDescriptors.resultDescriptorOf(Type.Int.INSTANCE),
                     FailurePolicyId.INT32_RESULT);
                 lengthOp = producerOpId(length);
-                ValueId slot = emitChainChildOp(SemanticOpKind.INDEX_NORMALIZE,
+                ValueId normalizedSlot = emitChainChildOp(SemanticOpKind.INDEX_NORMALIZE,
                     new KindPayload.IndexNormalizePayload(IndexMode.ARRAY_WRITE, key, length),
                     index.span(),
                     ContainerPayloadDescriptors.resultDescriptorOf(Type.Int.INSTANCE),
                     FailurePolicyId.NO_DEAL_FAILURE);
-                normalizeOp = producerOpId(slot);
+                normalizeOp = producerOpId(normalizedSlot);
                 boundaryOp = emitNullOp(SemanticOpKind.BOUNDARY,
                     new KindPayload.BoundaryPayload(BoundaryKind.ARRAY_ELEMENT_DELETE,
-                        elementDescriptor, slot,
+                        elementDescriptor, normalizedSlot,
                         new BoundaryRealization.RuntimeValidation(
                             CANONICAL_RUNTIME_VALIDATION_ID)),
                     index.span(), FailurePolicyId.ARRAY_DELETE_BOUNDS,
                     SourceOriginKind.SYNTHETIC, chainOpId);
                 commitOp = emitNullOp(SemanticOpKind.INDEX_DELETE,
-                    new KindPayload.IndexDeletePayload(container, slot),
+                    new KindPayload.IndexDeletePayload(container, normalizedSlot),
                     index.span(), FailurePolicyId.NO_DEAL_FAILURE,
                     SourceOriginKind.SYNTHETIC, chainOpId);
             } finally {
@@ -2352,8 +2805,8 @@ public final class SemanticLowerer {
             }
             AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
             SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(delete.span()),
-                SourceOriginKind.USER, anchor, chainParents.peek());
-            ops.add(buildOp(chainOpId, SemanticOpKind.DELETE,
+                SourceOriginKind.USER, anchor, currentParent());
+            emit(buildOp(chainOpId, SemanticOpKind.DELETE,
                 new KindPayload.DeletePayload(DeleteTargetKind.ARRAY_SLOT,
                     List.of(containerOp, keyOp, lengthOp, normalizeOp, boundaryOp, commitOp)),
                 null, null, FailurePolicyId.NO_DEAL_FAILURE, origin));
@@ -2384,8 +2837,8 @@ public final class SemanticLowerer {
             }
             AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
             SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(delete.span()),
-                SourceOriginKind.USER, anchor, chainParents.peek());
-            ops.add(buildOp(chainOpId, SemanticOpKind.DELETE,
+                SourceOriginKind.USER, anchor, currentParent());
+            emit(buildOp(chainOpId, SemanticOpKind.DELETE,
                 new KindPayload.DeletePayload(DeleteTargetKind.CLASS_FIELD,
                     List.of(containerOp, commitOp)),
                 null, null, FailurePolicyId.NO_DEAL_FAILURE, origin));
@@ -2428,7 +2881,7 @@ public final class SemanticLowerer {
             OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
             SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(span),
                 SourceOriginKind.SYNTHETIC, anchor, parent);
-            ops.add(buildOp(opId, kind, payload, value, resultType, List.of(), List.of(),
+            emit(buildOp(opId, kind, payload, value, resultType, List.of(), List.of(),
                 policy, origin));
             return value;
         }
@@ -2442,11 +2895,13 @@ public final class SemanticLowerer {
          * operations: the manifest's construct-coverage rows recorded at
          * lowering start (each row must carry the closed construct→op
          * detector table verbatim, S4), the capability claim set derived
-         * through the claiming seam's full-evidence derivation
-         * ({@link ContainerClaimingSeam}) — the empty set during E3's
-         * tail, where every produced op's home row is inactive (D9 items
-         * 2/4) — the module-init plan over the session's init block, and
-         * the produced operations in source order.
+         * through the claiming seam's full-evidence derivation under
+         * {@link ContainerClaimingSeam#E5_GATE_ACTIVATION} (D9 item 5(c):
+         * {@code CONTAINERS_AND_STRINGS} and {@code EVALUATION_ORDER}
+         * activate at E5's gate — this epic's gate; a unit fully
+         * evidencing an active row claims it, an under-evidenced row
+         * defers per unit), the module-init plan over the session's init
+         * block, and the produced operations in source order.
          *
          * @param constructCoverage      the manifest's reachable-construct
          *                               rows; non-null
@@ -2465,15 +2920,17 @@ public final class SemanticLowerer {
                                            String interfaceHash,
                                            String capabilityRegistryHash) {
             return buildUnit(constructCoverage, imports, interfaceHash, capabilityRegistryHash,
-                ContainerClaimingSeam.E3_WINDOW_ACTIVATION);
+                ContainerClaimingSeam.E5_GATE_ACTIVATION);
         }
 
         /**
          * Builds the validated unit under the named claiming-seam
          * activation state (the binding-core entry passes the pinned
          * E6-gate activation — {@code BINDINGS} activates for
-         * {@code BINDING_LOAD} — while the E3/E5 window keeps the
-         * E3-window activation).
+         * {@code BINDING_LOAD} — while the E5 window derives the claim
+         * set under the E5-gate activation:
+         * {@code CONTAINERS_AND_STRINGS} and {@code EVALUATION_ORDER}
+         * activate).
          */
         public LoweredModuleUnit buildUnit(Map<ConstructKind, List<SemanticOpKind>>
                                                constructCoverage,
@@ -2529,12 +2986,38 @@ public final class SemanticLowerer {
                 ops());
         }
 
+        /**
+         * Builds the produced {@link StructuredBodyTable} (C-D1): the
+         * ordered ops per block and the inverse membership over every
+         * allocated block of the session — empty child blocks included.
+         * Every op emitted by the session is a member of exactly one
+         * block; the module-init block is the root of the module-level
+         * statements. The table is validated with the unit by
+         * {@link ControlFlowValidator} at the unit-production seam
+         * (C-D2).
+         *
+         * @return the produced block-membership table (defensively
+         *         copied by the record)
+         */
+        public StructuredBodyTable bodyTable() {
+            Map<BlockId, List<OpId>> ordered = new java.util.LinkedHashMap<>();
+            for (Map.Entry<BlockId, List<OpId>> entry : blockOps.entrySet()) {
+                ordered.put(entry.getKey(), List.copyOf(entry.getValue()));
+            }
+            Map<OpId, BlockId> inverse = new java.util.LinkedHashMap<>();
+            for (Map.Entry<OpId, BlockId> entry : opBlocks.entrySet()) {
+                inverse.put(entry.getKey(), entry.getValue());
+            }
+            return new StructuredBodyTable(ordered, inverse);
+        }
+
         // ---------------------------------------------------------------------
-        // Statement arms (E3's positionable window)
+        // Statement arms (the E5 positionable window)
         // ---------------------------------------------------------------------
 
         private void lowerStatements(List<StatementNode> statements) {
             for (StatementNode statement : statements) {
+                ensureBlockOpen();
                 if (statement instanceof ForOfStatement forOf) {
                     lowerForOfStatement(forOf);
                     continue;
@@ -2547,8 +3030,350 @@ public final class SemanticLowerer {
                     lowerStatements(block.statements());
                     continue;
                 }
+                if (statement instanceof IfStatement ifStatement) {
+                    lowerIfStatement(ifStatement);
+                    continue;
+                }
+                if (statement instanceof WhileStatement whileStatement) {
+                    lowerWhileStatement(whileStatement);
+                    continue;
+                }
+                if (statement instanceof ForStatement forStatement) {
+                    lowerForStatement(forStatement);
+                    continue;
+                }
+                if (statement instanceof TryStatement tryStatement) {
+                    lowerTryCatch(tryStatement);
+                    continue;
+                }
+                if (statement instanceof ThrowStatement throwStatement) {
+                    lowerThrow(throwStatement);
+                    continue;
+                }
+                if (statement instanceof BreakStatement breakStatement) {
+                    lowerBreak(breakStatement);
+                    continue;
+                }
+                if (statement instanceof ContinueStatement continueStatement) {
+                    lowerContinue(continueStatement);
+                    continue;
+                }
+                if (statement instanceof ExpressionStatement expressionStatement) {
+                    lowerDiscard(expressionStatement);
+                    continue;
+                }
                 throw new ConstructUnlowered(describeStatement(statement));
             }
+        }
+
+        // ---------------------------------------------------------------------
+        // The E5 control-flow arms (control-flow-structures C-D3..C-D8)
+        // ---------------------------------------------------------------------
+
+        /**
+         * {@code BRANCH(IF)} — the if-statement arm (C-D3): the
+         * condition's producing ops complete in the enclosing block
+         * before the {@code BRANCH} op; exactly one of
+         * {@code selectedBlock}/{@code alternateBlock} executes; the
+         * {@code else} branch lowers inside {@code alternateBlock} (an
+         * {@code else if} chain nests its {@code BRANCH} op there); an
+         * absent {@code else} produces {@code alternateBlock = null};
+         * SUCCESS publishes no result. Block ops record the
+         * {@code BRANCH} as {@code parentOpId}.
+         */
+        private void lowerIfStatement(IfStatement statement) {
+            ValueId condition = lowerExpression(statement.condition());
+            BlockId selectedBlock = allocateBlock();
+            boolean hasElse = statement.elseBranch().isPresent();
+            BlockId alternateBlock = hasElse ? allocateBlock() : null;
+            AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+            OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
+            SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(statement.span()),
+                SourceOriginKind.USER, anchor, currentParent());
+            emit(buildOp(opId, SemanticOpKind.BRANCH,
+                new KindPayload.BranchPayload(ControlSelector.IF, condition, selectedBlock,
+                    alternateBlock),
+                null, null, FailurePolicyId.NO_DEAL_FAILURE, origin));
+            pushBlockParent(opId);
+            pushBlock(selectedBlock);
+            try {
+                lowerStatements(statement.thenBlock().statements());
+            } finally {
+                popBlock();
+            }
+            if (hasElse) {
+                pushBlock(alternateBlock);
+                try {
+                    switch (statement.elseBranch().get()) {
+                        case Either.Left<IfStatement, Block> left ->
+                            lowerIfStatement(left.value());
+                        case Either.Right<IfStatement, Block> right ->
+                            lowerStatements(right.value().statements());
+                    }
+                } finally {
+                    popBlock();
+                }
+            }
+            popBlockParent();
+        }
+
+        /**
+         * {@code LOOP(WHILE)} — the while-statement arm (C-D4): the
+         * per-iteration condition block is {@code initBlock} (the
+         * condition's producing ops are explicit members of
+         * {@code initBlock}, never an inferred subgraph);
+         * {@code updateBlock = null}; execution repeats { execute
+         * {@code initBlock}; evaluate the condition value; if false →
+         * SUCCESS; execute {@code bodyBlock} }. The {@code LOOP} op
+         * precedes its child block ops in the unit list (payload order:
+         * init, body). No speculative body execution; conditions
+         * re-evaluate per iteration. Block ops record the {@code LOOP}
+         * as {@code parentOpId}.
+         */
+        private void lowerWhileStatement(WhileStatement statement) {
+            BlockId initBlock = allocateBlock();
+            BlockId bodyBlock = allocateBlock();
+            AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+            OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
+            int mark = ops.size();
+            pushBlockParent(opId);
+            pushBlock(initBlock);
+            ValueId condition;
+            try {
+                condition = lowerExpression(statement.condition());
+            } finally {
+                popBlock();
+            }
+            pushBlock(bodyBlock);
+            pushLoopTarget(opId);
+            try {
+                lowerStatements(statement.body().statements());
+            } finally {
+                popLoopTarget();
+                popBlock();
+            }
+            popBlockParent();
+            SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(statement.span()),
+                SourceOriginKind.USER, anchor, currentParent());
+            emitAt(mark, buildOp(opId, SemanticOpKind.LOOP,
+                new KindPayload.LoopPayload(ControlSelector.WHILE, initBlock, condition,
+                    bodyBlock, null),
+                null, null, FailurePolicyId.NO_DEAL_FAILURE, origin));
+        }
+
+        /**
+         * {@code LOOP(FOR)} — the for-statement arm (C-D4): the
+         * one-time {@code initBlock} carries the init ops (an
+         * assignment-expression initializer lowers through the address
+         * chain; a {@code let}-declared initializer is E6's
+         * {@code BINDING_ALLOC} and fails closed) and the first
+         * condition production; {@code updateBlock} carries the update
+         * ops then the condition-producing ops (the condition
+         * {@code ValueId} is produced once in {@code initBlock} and
+         * re-produced by the {@code updateBlock} production — one value
+         * identity, the most recently produced value wins at
+         * execution). Execution: {@code initBlock} once; repeat {
+         * condition; body; updateBlock }. A test-less {@code for (;;)}
+         * produces exactly one {@code CONST} op with the boolean value
+         * {@code true} in {@code initBlock} as the condition production
+         * ({@code SYNTHETIC}, the for-statement span) and
+         * {@code updateBlock} carries only the update ops — a constant
+         * needs no per-iteration re-production. The {@code LOOP} op
+         * precedes its child block ops in the unit list (payload order:
+         * init, body, update). Block ops record the {@code LOOP} as
+         * {@code parentOpId}.
+         */
+        private void lowerForStatement(ForStatement statement) {
+            BlockId initBlock = allocateBlock();
+            BlockId bodyBlock = allocateBlock();
+            BlockId updateBlock = allocateBlock();
+            AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+            OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
+            ValueId condition = statement.condition().isPresent()
+                ? ids.nextValueId(module, nextOrdinal++, 0) : null;
+            int mark = ops.size();
+            pushBlockParent(opId);
+            pushBlock(initBlock);
+            try {
+                statement.init().ifPresent(init -> {
+                    switch (init) {
+                        case ForInit.AssignExpr assign -> {
+                            lowerExpression(assign.expr());
+                        }
+                        case ForInit.VarDecl decl -> throw new ConstructUnlowered(
+                            "for-loop let-declared initializer (BINDING_ALLOC is E6's, "
+                                + "ISSUE-0235)");
+                    }
+                });
+                if (statement.condition().isPresent()) {
+                    lowerExpression(statement.condition().get(), condition);
+                } else {
+                    // The test-less FOR row: exactly one CONST true in
+                    // initBlock as the condition production.
+                    condition = emitValueOpWith(SemanticOpKind.CONST,
+                        new KindPayload.ConstPayload(new ScalarValue.Boolean(true)),
+                        statement.span(),
+                        ContainerPayloadDescriptors.resultDescriptorOf(
+                            Type.Boolean.INSTANCE),
+                        FailurePolicyId.NO_DEAL_FAILURE, null, SourceOriginKind.SYNTHETIC);
+                }
+            } finally {
+                popBlock();
+            }
+            pushBlock(bodyBlock);
+            pushLoopTarget(opId);
+            try {
+                lowerStatements(statement.body().statements());
+            } finally {
+                popLoopTarget();
+                popBlock();
+            }
+            pushBlock(updateBlock);
+            try {
+                statement.update().ifPresent(update -> lowerExpression(update));
+                if (statement.condition().isPresent()) {
+                    // The per-iteration condition re-production: the same
+                    // condition ValueId, re-produced by the updateBlock
+                    // production (most recently produced value wins).
+                    lowerExpression(statement.condition().get(), condition);
+                }
+            } finally {
+                popBlock();
+            }
+            popBlockParent();
+            SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(statement.span()),
+                SourceOriginKind.USER, anchor, currentParent());
+            emitAt(mark, buildOp(opId, SemanticOpKind.LOOP,
+                new KindPayload.LoopPayload(ControlSelector.FOR, initBlock, condition,
+                    bodyBlock, updateBlock),
+                null, null, FailurePolicyId.NO_DEAL_FAILURE, origin));
+        }
+
+        /**
+         * {@code TRY_CATCH} — the try/catch arm (C-D6): execute
+         * {@code tryBlock}; success → SUCCESS (catch skipped, no
+         * result); a DEAL failure (an E8 error) raised inside
+         * {@code tryBlock} is reified as an {@code Error} value
+         * ({@code {code, message}}) bound to {@code catchBinding}
+         * (binding init mechanics E6 — this stage allocates the binding
+         * identity) and {@code catchBlock} executes; a failure raised
+         * from {@code catchBlock} becomes the {@code TRY_CATCH} FAILURE
+         * with its own code/message/origin preserved and
+         * {@code cause} = the original caught failure snapshot. Only
+         * DEAL failures are catchable. A load of the catch variable
+         * inside {@code catchBlock} lowers to {@code BINDING_LOAD}
+         * carrying the catch binding with the pinned initial
+         * generation. The {@code TRY_CATCH} op precedes its child block
+         * ops in the unit list (payload order: try, catch). Block ops
+         * record the {@code TRY_CATCH} as {@code parentOpId}.
+         */
+        private void lowerTryCatch(TryStatement statement) {
+            BlockId tryBlock = allocateBlock();
+            BlockId catchBlock = allocateBlock();
+            BindingId catchBinding = ids.nextBindingId(module, nextOrdinal++, 0);
+            AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+            OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
+            int mark = ops.size();
+            pushBlockParent(opId);
+            pushBlock(tryBlock);
+            try {
+                lowerStatements(statement.tryBlock().statements());
+            } finally {
+                popBlock();
+            }
+            catchFrames.add(0, new CatchFrame(statement.catchVar(), catchBinding));
+            pushBlock(catchBlock);
+            try {
+                lowerStatements(statement.catchBlock().statements());
+            } finally {
+                popBlock();
+                catchFrames.remove(0);
+            }
+            popBlockParent();
+            SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(statement.span()),
+                SourceOriginKind.USER, anchor, currentParent());
+            emitAt(mark, buildOp(opId, SemanticOpKind.TRY_CATCH,
+                new KindPayload.TryCatchPayload(tryBlock, catchBinding, catchBlock),
+                null, null, FailurePolicyId.NO_DEAL_FAILURE, origin));
+        }
+
+        /**
+         * {@code THROW} — the throw arm (C-D6): the operand completes
+         * before START; the op never succeeds; policy
+         * {@code THROW_TRANSFER} — code/message from the supplied
+         * {@code Error} value's fields, origin = the THROW origin,
+         * frames active; control transfers to the nearest enclosing
+         * {@code TRY_CATCH}, else the error escapes as the host-visible
+         * {@code DEALRuntimeError}. {@code THROW} terminates its block
+         * (C-D2 dominance).
+         */
+        private void lowerThrow(ThrowStatement statement) {
+            ValueId errorValue = lowerExpression(statement.expr());
+            emitNullOp(SemanticOpKind.THROW,
+                new KindPayload.ThrowPayload(errorValue), statement.span(),
+                FailurePolicyId.THROW_TRANSFER, SourceOriginKind.USER, currentParent());
+            terminateBlock();
+        }
+
+        /**
+         * {@code BREAK} — the break arm (C-D7): payload {@code loopId} =
+         * the innermost enclosing loop op ({@code LOOP} or
+         * {@code FOR_EACH}) recorded by the lowerer; BREAK exits the
+         * target loop; effects completed before the transfer remain.
+         * The checker's E2000 pins source-level loop placement, so a
+         * missing target is a producer defect ({@code
+         * CONSTRUCT_UNLOWERED}), never an invented target and never a
+         * silent fallthrough. {@code BREAK} terminates its block.
+         */
+        private void lowerBreak(BreakStatement statement) {
+            OpId target = loopTargets.peek();
+            if (target == null) {
+                throw new ConstructUnlowered("break without an enclosing loop target (the "
+                    + "checker's E2000 pins source-level loop placement — a missing "
+                    + "checker fact is a producer defect)");
+            }
+            emitNullOp(SemanticOpKind.BREAK,
+                new KindPayload.BreakPayload(target), statement.span(),
+                FailurePolicyId.NO_DEAL_FAILURE, SourceOriginKind.USER, currentParent());
+            terminateBlock();
+        }
+
+        /**
+         * {@code CONTINUE} — the continue arm (C-D7): payload
+         * {@code loopId} = the innermost enclosing loop op; CONTINUE
+         * proceeds to the target loop's next iteration — FOR: execute
+         * {@code updateBlock} then re-test; WHILE: execute the condition
+         * block ({@code initBlock}) then re-test; FOR_EACH: next slot
+         * index. Transfer across an enclosing {@code TRY_CATCH} boundary
+         * is legal. A missing target is a producer defect (see
+         * {@link #lowerBreak}). {@code CONTINUE} terminates its block.
+         */
+        private void lowerContinue(ContinueStatement statement) {
+            OpId target = loopTargets.peek();
+            if (target == null) {
+                throw new ConstructUnlowered("continue without an enclosing loop target (the "
+                    + "checker's E2000 pins source-level loop placement — a missing "
+                    + "checker fact is a producer defect)");
+            }
+            emitNullOp(SemanticOpKind.CONTINUE,
+                new KindPayload.ContinuePayload(target), statement.span(),
+                FailurePolicyId.NO_DEAL_FAILURE, SourceOriginKind.USER, currentParent());
+            terminateBlock();
+        }
+
+        /**
+         * {@code DISCARD} — the expression-statement arm (C-D8): the
+         * value's producing ops already completed before the op; START →
+         * SUCCESS with no result; origin kind {@code SYNTHETIC} — the
+         * intentional discard is audited in the op stream and traces,
+         * never inferred away.
+         */
+        private void lowerDiscard(ExpressionStatement statement) {
+            ValueId value = lowerExpression(statement.expr());
+            emitNullOp(SemanticOpKind.DISCARD,
+                new KindPayload.DiscardPayload(value), statement.span(),
+                FailurePolicyId.NO_DEAL_FAILURE, SourceOriginKind.SYNTHETIC,
+                currentParent());
         }
 
         // ---------------------------------------------------------------------
@@ -2567,6 +3392,10 @@ public final class SemanticLowerer {
          * out-of-range value, and the in-range cast is exact.
          */
         private ValueId lowerConst(LiteralExpr literal) {
+            return lowerConst(literal, null);
+        }
+
+        private ValueId lowerConst(LiteralExpr literal, ValueId slot) {
             Type type = checkedType(literal);
             ScalarValue scalar = switch (literal.value()) {
                 case LiteralValue.NullLiteral ignored -> ScalarValue.Null.INSTANCE;
@@ -2585,7 +3414,7 @@ public final class SemanticLowerer {
             };
             return emitValueOp(SemanticOpKind.CONST, new KindPayload.ConstPayload(scalar),
                 literal.span(), ContainerPayloadDescriptors.resultDescriptorOf(type),
-                FailurePolicyId.NO_DEAL_FAILURE);
+                FailurePolicyId.NO_DEAL_FAILURE, slot);
         }
 
         /**
@@ -2595,13 +3424,26 @@ public final class SemanticLowerer {
          * other identifier is a foreign construct (E6005).
          */
         private ValueId lowerBindingLoad(IdentifierExpr identifier) {
+            return lowerBindingLoad(identifier, null);
+        }
+
+        private ValueId lowerBindingLoad(IdentifierExpr identifier, ValueId slot) {
             Type type = checkedType(identifier);
             for (ForEachFrame frame : frames) {
                 if (frame.name().equals(identifier.name())) {
                     return emitValueOp(SemanticOpKind.BINDING_LOAD,
                         new KindPayload.BindingLoadPayload(frame.binding(), frame.generation()),
                         identifier.span(), ContainerPayloadDescriptors.resultDescriptorOf(type),
-                        FailurePolicyId.NO_DEAL_FAILURE);
+                        FailurePolicyId.NO_DEAL_FAILURE, slot);
+                }
+            }
+            for (CatchFrame frame : catchFrames) {
+                if (frame.name().equals(identifier.name())) {
+                    return emitValueOp(SemanticOpKind.BINDING_LOAD,
+                        new KindPayload.BindingLoadPayload(frame.binding(),
+                            INITIAL_LOOP_GENERATION),
+                        identifier.span(), ContainerPayloadDescriptors.resultDescriptorOf(type),
+                        FailurePolicyId.NO_DEAL_FAILURE, slot);
                 }
             }
             // The binding-environment hook (ISSUE-0444 binding-core child):
@@ -2618,13 +3460,17 @@ public final class SemanticLowerer {
                 }
             }
             throw new ConstructUnlowered("identifier '" + identifier.name()
-                + "' is not a load of an enclosing for-of loop binding in this stage's "
-                + "window (binding allocation, non-loop loads, and generation "
-                + "increments/stores are E6's, ISSUE-0235)");
+                + "' is not a load of an enclosing for-of loop binding or catch "
+                + "binding in this stage's window (binding allocation, non-loop "
+                + "loads, and generation increments/stores are E6's, ISSUE-0235)");
         }
 
         /** {@code ARRAY_NEW} — element prior steps, the op, then the boundary children. */
         private ValueId lowerArrayNew(ArrayLiteralExpr literal) {
+            return lowerArrayNew(literal, null);
+        }
+
+        private ValueId lowerArrayNew(ArrayLiteralExpr literal, ValueId slot) {
             Type type = checkedType(literal);
             if (!(type instanceof Type.Array arrayType)) {
                 throw new ConstructUnlowered("array literal of non-array checked type "
@@ -2636,7 +3482,7 @@ public final class SemanticLowerer {
             for (ExpressionNode element : literal.elements()) {
                 values.add(lowerExpression(element));
             }
-            ValueId result = ids.nextValueId(module, nextOrdinal++, 0);
+            ValueId result = slot != null ? slot : ids.nextValueId(module, nextOrdinal++, 0);
             AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
             OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
             List<OpId> boundaryIds = new ArrayList<>();
@@ -2653,17 +3499,23 @@ public final class SemanticLowerer {
                 children.add(child);
             }
             SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(literal.span()),
-                SourceOriginKind.USER, anchor, chainParents.peek());
-            ops.add(buildOp(opId, SemanticOpKind.ARRAY_NEW,
+                SourceOriginKind.USER, anchor, currentParent());
+            emit(buildOp(opId, SemanticOpKind.ARRAY_NEW,
                 new KindPayload.ArrayNewPayload(elementDescriptor, values, boundaryIds),
                 result, ContainerPayloadDescriptors.resultDescriptorOf(arrayType),
                 FailurePolicyId.NO_DEAL_FAILURE, origin));
-            ops.addAll(children);
+            for (SemanticOp child : children) {
+                emit(child);
+            }
             return result;
         }
 
         /** {@code TABLE_NEW} — entry values in source order, then the op. */
         private ValueId lowerTableNew(ObjectLiteralExpr literal) {
+            return lowerTableNew(literal, null);
+        }
+
+        private ValueId lowerTableNew(ObjectLiteralExpr literal, ValueId slot) {
             Type type = checkedType(literal);
             if (type instanceof Type.Class classType) {
                 throw new ConstructUnlowered("class-typed object literal "
@@ -2683,11 +3535,15 @@ public final class SemanticLowerer {
             return emitValueOp(SemanticOpKind.TABLE_NEW,
                 new KindPayload.TableNewPayload(entries), literal.span(),
                 ContainerPayloadDescriptors.resultDescriptorOf(Type.Table.INSTANCE),
-                FailurePolicyId.NO_DEAL_FAILURE);
+                FailurePolicyId.NO_DEAL_FAILURE, slot);
         }
 
         /** {@code ARRAY_LENGTH}/{@code MEMBER_READ} — the member-access dispatch. */
         private ValueId lowerMemberAccess(MemberAccessExpr access) {
+            return lowerMemberAccess(access, null);
+        }
+
+        private ValueId lowerMemberAccess(MemberAccessExpr access, ValueId slot) {
             // Module member access first: the checker types a module-symbol
             // object as `table`, so the symbol fact must win over the type
             // fact (EXPORT_READ is E10's).
@@ -2699,10 +3555,10 @@ public final class SemanticLowerer {
             }
             Type objectType = checkedType(access.object());
             if (objectType instanceof Type.Array && "length".equals(access.field())) {
-                return lowerArrayLength(access);
+                return lowerArrayLength(access, slot);
             }
             if (objectType instanceof Type.Table) {
-                return lowerMemberRead(access);
+                return lowerMemberRead(access, slot);
             }
             if (objectType instanceof Type.Class classType) {
                 throw new ConstructUnlowered("class member access " + classType.modulePath()
@@ -2712,7 +3568,7 @@ public final class SemanticLowerer {
             if (objectType instanceof Type.Bytes) {
                 throw new ConstructUnlowered("member access '" + access.field()
                     + "' on bytes (bytes value semantics are ISSUE-0158's; a bytes member "
-                    + "access reaching an E3 arm fails hard)");
+                    + "access reaching an E5 arm fails hard)");
             }
             throw new ConstructUnlowered("member access '" + access.field() + "' on "
                 + typeName(objectType) + " (no member-access arm for this receiver shape "
@@ -2721,25 +3577,33 @@ public final class SemanticLowerer {
 
         /** {@code ARRAY_LENGTH} — the receiver is one prior step, never re-evaluated. */
         private ValueId lowerArrayLength(MemberAccessExpr access) {
+            return lowerArrayLength(access, null);
+        }
+
+        private ValueId lowerArrayLength(MemberAccessExpr access, ValueId slot) {
             ValueId receiver = lowerExpression(access.object());
             return emitValueOp(SemanticOpKind.ARRAY_LENGTH,
                 new KindPayload.ArrayLengthPayload(receiver), access.span(),
                 ContainerPayloadDescriptors.resultDescriptorOf(Type.Int.INSTANCE),
-                FailurePolicyId.INT32_RESULT);
+                FailurePolicyId.INT32_RESULT, slot);
         }
 
         /** {@code MEMBER_READ} — the missing-aware read plus its contextual child. */
         private ValueId lowerMemberRead(MemberAccessExpr access) {
+            return lowerMemberRead(access, null);
+        }
+
+        private ValueId lowerMemberRead(MemberAccessExpr access, ValueId slot) {
             Type contextualType = checkedType(access);
             RuntimeDescriptor resultType =
                 ContainerPayloadDescriptors.resultDescriptorOf(contextualType);
             ValueId receiver = lowerExpression(access.object());
-            ValueId result = ids.nextValueId(module, nextOrdinal++, 0);
+            ValueId result = slot != null ? slot : ids.nextValueId(module, nextOrdinal++, 0);
             AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
             OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
             SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(access.span()),
-                SourceOriginKind.USER, anchor, chainParents.peek());
-            ops.add(buildOp(opId, SemanticOpKind.MEMBER_READ,
+                SourceOriginKind.USER, anchor, currentParent());
+            emit(buildOp(opId, SemanticOpKind.MEMBER_READ,
                 new KindPayload.MemberReadPayload(receiver, access.field()),
                 result, resultType, FailurePolicyId.NO_DEAL_FAILURE, origin));
             FailurePolicyId childPolicy = resultType instanceof RuntimeDescriptor.Func
@@ -2755,12 +3619,19 @@ public final class SemanticLowerer {
 
         /** {@code STRING_CONCAT}/{@code BINARY} — the binary dispatch (I3 arithmetic). */
         private ValueId lowerBinary(BinaryExpr binary) {
+            return lowerBinary(binary, null);
+        }
+
+        private ValueId lowerBinary(BinaryExpr binary, ValueId slot) {
             Type type = checkedType(binary);
             if (binary.op() == BinaryOp.ADD && type instanceof Type.String) {
-                return lowerStringConcat(binary);
+                return lowerStringConcat(binary, slot);
+            }
+            if (binary.op() == BinaryOp.AND || binary.op() == BinaryOp.OR) {
+                return lowerLogicalBranch(binary, slot);
             }
             if (isArithmeticOperator(binary.op())) {
-                return lowerArithmeticBinary(binary);
+                return lowerArithmeticBinary(binary, slot);
             }
             if (bindingCore && isComparisonOperator(binary.op())) {
                 // The binding walk consumes the single comparison producer
@@ -2772,10 +3643,10 @@ public final class SemanticLowerer {
             throw new ConstructUnlowered("binary selector " + binary.op()
                 + " of checked type " + typeName(type)
                 + " (comparison selectors are the comparison producer "
-                + "ComparisonSelectorLowering's; logical operators lower to "
-                + "selector-bearing BRANCH — EVALUATION_ORDER; string + lowers to "
+                + "ComparisonSelectorLowering's; string + lowers to "
                 + "STRING_CONCAT, never BINARY)");
         }
+
 
         /** True iff the operator is one of the six comparison operators (B-D3). */
         private static boolean isComparisonOperator(BinaryOp op) {
@@ -2809,15 +3680,66 @@ public final class SemanticLowerer {
             return (ValueId) comparison.result();
         }
 
+        /**
+         * {@code BRANCH(LOGICAL_AND/LOGICAL_OR)} — the logical short-circuit
+         * arm (C-D3; never {@code BINARY}): the left operand completes
+         * before START as the condition; the right operand's producing ops
+         * live in {@code selectedBlock} and execute only when the left
+         * value does not decide the result — AND: left false → result
+         * false, block skipped; OR: left true → result true, block
+         * skipped. The op's result {@code ValueId} is the right operand's
+         * value identity (result type {@code D(boolean)} — a boolean
+         * either way, checker-pinned boolean operands). Chained
+         * {@code &&}/{@code ||} lower to nested {@code BRANCH}es in
+         * source order. Block ops record the {@code BRANCH} as
+         * {@code parentOpId}; the {@code BRANCH} op precedes its child
+         * block ops in the unit list.
+         */
+        private ValueId lowerLogicalBranch(BinaryExpr binary, ValueId slot) {
+            if (!(checkedType(binary.left()) instanceof Type.Boolean)
+                    || !(checkedType(binary.right()) instanceof Type.Boolean)) {
+                throw new ConstructUnlowered("logical operator " + binary.op()
+                    + " over a non-boolean checked operand (the checker pins boolean "
+                    + "operands — a missing checker fact is a producer defect)");
+            }
+            ControlSelector selector = binary.op() == BinaryOp.AND
+                ? ControlSelector.LOGICAL_AND : ControlSelector.LOGICAL_OR;
+            ValueId left = lowerExpression(binary.left());
+            BlockId selectedBlock = allocateBlock();
+            AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+            OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
+            int mark = ops.size();
+            pushBlockParent(opId);
+            pushBlock(selectedBlock);
+            ValueId right;
+            try {
+                right = lowerExpression(binary.right(), slot);
+            } finally {
+                popBlock();
+                popBlockParent();
+            }
+            SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(binary.span()),
+                SourceOriginKind.USER, anchor, currentParent());
+            emitAt(mark, buildOp(opId, SemanticOpKind.BRANCH,
+                new KindPayload.BranchPayload(selector, left, selectedBlock, null),
+                right, ContainerPayloadDescriptors.resultDescriptorOf(Type.Boolean.INSTANCE),
+                FailurePolicyId.NO_DEAL_FAILURE, origin));
+            return right;
+        }
+
         /** {@code STRING_CONCAT} — the string-{@code +} arm; never {@code BINARY}. */
         private ValueId lowerStringConcat(BinaryExpr binary) {
+            return lowerStringConcat(binary, null);
+        }
+
+        private ValueId lowerStringConcat(BinaryExpr binary, ValueId slot) {
             ValueId left = lowerExpression(binary.left());
             ValueId right = lowerExpression(binary.right());
             return emitValueOp(SemanticOpKind.STRING_CONCAT,
                 new KindPayload.StringConcatPayload(List.of(left, right)),
                 binary.span(),
                 ContainerPayloadDescriptors.resultDescriptorOf(Type.String.INSTANCE),
-                FailurePolicyId.NO_DEAL_FAILURE);
+                FailurePolicyId.NO_DEAL_FAILURE, slot);
         }
 
         /** True iff the operator is one of the six arithmetic operators (I3). */
@@ -2840,6 +3762,10 @@ public final class SemanticLowerer {
          * ({@link ConstructUnlowered}) — never a guessed selector.
          */
         private ValueId lowerArithmeticBinary(BinaryExpr binary) {
+            return lowerArithmeticBinary(binary, null);
+        }
+
+        private ValueId lowerArithmeticBinary(BinaryExpr binary, ValueId slot) {
             Type leftType = checkedType(binary.left());
             BinarySelector selector;
             if (leftType instanceof Type.Int) {
@@ -2877,7 +3803,7 @@ public final class SemanticLowerer {
                 List.of(valueDescriptorOf(leftType),
                     valueDescriptorOf(checkedType(binary.right()))),
                 binary.span(), valueDescriptorOf(checkedType(binary)),
-                SemanticIrValidator.binaryPolicy(selector));
+                SemanticIrValidator.binaryPolicy(selector), slot);
         }
 
         /**
@@ -2890,6 +3816,10 @@ public final class SemanticLowerer {
          * and the result descriptor from the checked result type.
          */
         private ValueId lowerUnary(UnaryExpr unary) {
+            return lowerUnary(unary, null);
+        }
+
+        private ValueId lowerUnary(UnaryExpr unary, ValueId slot) {
             Type operandType = checkedType(unary.expr());
             UnarySelector selector;
             switch (unary.op()) {
@@ -2920,7 +3850,7 @@ public final class SemanticLowerer {
                 new KindPayload.UnaryPayload(selector),
                 List.of(operand), List.of(valueDescriptorOf(operandType)),
                 unary.span(), valueDescriptorOf(checkedType(unary)),
-                SemanticIrValidator.unaryPolicy(selector));
+                SemanticIrValidator.unaryPolicy(selector), slot);
         }
 
         /**
@@ -2935,6 +3865,10 @@ public final class SemanticLowerer {
          * bytes(...)} is the bytes exclusion.
          */
         private ValueId lowerIntrinsicCall(CallExpr call) {
+            return lowerIntrinsicCall(call, null);
+        }
+
+        private ValueId lowerIntrinsicCall(CallExpr call, ValueId slot) {
             IntrinsicKind kind = intrinsicKindOf(call);
             ExpressionNode argument = call.args().get(0);
             Type argumentType = checkedType(argument);
@@ -2943,7 +3877,7 @@ public final class SemanticLowerer {
                 new KindPayload.IntrinsicCallPayload(kind, input),
                 List.of(input), List.of(valueDescriptorOf(argumentType)),
                 call.span(), valueDescriptorOf(checkedType(call)),
-                SemanticIrValidator.intrinsicPolicy(kind));
+                SemanticIrValidator.intrinsicPolicy(kind), slot);
         }
 
         /**
@@ -3017,6 +3951,10 @@ public final class SemanticLowerer {
 
         /** {@code STRING_CONCAT} — the template arm with fragment {@code CONST} steps. */
         private ValueId lowerTemplate(TemplateLiteralExpr template) {
+            return lowerTemplate(template, null);
+        }
+
+        private ValueId lowerTemplate(TemplateLiteralExpr template, ValueId slot) {
             List<ValueId> fragments = new ArrayList<>();
             List<ExpressionNode> parts = template.parts();
             for (int i = 0; i < parts.size(); i++) {
@@ -3037,7 +3975,7 @@ public final class SemanticLowerer {
                 new KindPayload.StringConcatPayload(fragments),
                 template.span(),
                 ContainerPayloadDescriptors.resultDescriptorOf(Type.String.INSTANCE),
-                FailurePolicyId.NO_DEAL_FAILURE);
+                FailurePolicyId.NO_DEAL_FAILURE, slot);
         }
 
         // ---------------------------------------------------------------------
@@ -3099,7 +4037,19 @@ public final class SemanticLowerer {
         private ValueId emitValueOp(SemanticOpKind kind, KindPayload payload, Span span,
                                     RuntimeDescriptor resultType, FailurePolicyId policy) {
             return emitOperandOp(kind, payload, List.of(), List.of(), span, resultType,
-                policy);
+                policy, null);
+        }
+
+        /**
+         * Emits one value-producing USER op without operands publishing the
+         * given result slot ({@code null} allocates one) and returns its
+         * value id (the slot when given).
+         */
+        private ValueId emitValueOp(SemanticOpKind kind, KindPayload payload, Span span,
+                                    RuntimeDescriptor resultType, FailurePolicyId policy,
+                                    ValueId slot) {
+            return emitOperandOp(kind, payload, List.of(), List.of(), span, resultType,
+                policy, slot);
         }
 
         /**
@@ -3112,12 +4062,47 @@ public final class SemanticLowerer {
                                       List<ValueId> operands,
                                       List<RuntimeDescriptor> operandTypes, Span span,
                                       RuntimeDescriptor resultType, FailurePolicyId policy) {
-            ValueId value = ids.nextValueId(module, nextOrdinal++, 0);
+            return emitOperandOp(kind, payload, operands, operandTypes, span, resultType,
+                policy, null);
+        }
+
+        /**
+         * Emits one value-producing USER op with the given result slot:
+         * the op publishes {@code slot} instead of a fresh value
+         * ({@code null} allocates one) — the pinned mechanism of the
+         * {@code LOOP(FOR)} condition re-production (one condition value
+         * identity, re-produced by each block execution).
+         */
+        private ValueId emitOperandOp(SemanticOpKind kind, KindPayload payload,
+                                      List<ValueId> operands,
+                                      List<RuntimeDescriptor> operandTypes, Span span,
+                                      RuntimeDescriptor resultType, FailurePolicyId policy,
+                                      ValueId slot) {
+            ValueId value = slot != null ? slot : ids.nextValueId(module, nextOrdinal++, 0);
             AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
             OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
             SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(span),
-                SourceOriginKind.USER, anchor, chainParents.peek());
-            ops.add(buildOp(opId, kind, payload, value, resultType, operands, operandTypes,
+                SourceOriginKind.USER, anchor, currentParent());
+            emit(buildOp(opId, kind, payload, value, resultType, operands, operandTypes,
+                policy, origin));
+            return value;
+        }
+
+        /**
+         * Emits one value-producing op of the given origin kind publishing
+         * the given result slot ({@code null} allocates one) — the
+         * test-less FOR condition {@code CONST true} production (a
+         * {@code SYNTHETIC} op, the for-statement span).
+         */
+        private ValueId emitValueOpWith(SemanticOpKind kind, KindPayload payload, Span span,
+                                        RuntimeDescriptor resultType, FailurePolicyId policy,
+                                        ValueId slot, SourceOriginKind originKind) {
+            ValueId value = slot != null ? slot : ids.nextValueId(module, nextOrdinal++, 0);
+            AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+            OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
+            SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(span), originKind,
+                anchor, currentParent());
+            emit(buildOp(opId, kind, payload, value, resultType, List.of(), List.of(),
                 policy, origin));
             return value;
         }
@@ -3127,7 +4112,7 @@ public final class SemanticLowerer {
                                 FailurePolicyId policy, SourceOriginKind originKind,
                                 OpId parent) {
             SemanticOp op = buildNullOp(kind, payload, span, policy, originKind, parent);
-            ops.add(op);
+            emit(op);
             return op.opId();
         }
 
@@ -3237,13 +4222,13 @@ public final class SemanticLowerer {
                 case deal.ast.ReturnStatement ignored ->
                     "return statement (RETURN is E7's)";
                 case deal.ast.IfStatement ignored ->
-                    "if statement (BRANCH(IF) is E5's, ISSUE-0234)";
+                    "if statement (BRANCH(IF) is the E5 control-flow arm)";
                 case deal.ast.WhileStatement ignored ->
-                    "while statement (LOOP(WHILE) is E5's, ISSUE-0234)";
+                    "while statement (LOOP(WHILE) is the E5 control-flow arm)";
                 case deal.ast.ForStatement ignored ->
-                    "for statement (LOOP(FOR) is E5's, ISSUE-0234)";
+                    "for statement (LOOP(FOR) is the E5 control-flow arm)";
                 case deal.ast.ExpressionStatement ignored ->
-                    "expression statement (DISCARD is E5's, ISSUE-0234)";
+                    "expression statement (DISCARD is the E5 control-flow arm)";
                 case deal.ast.ImportDeclaration ignored ->
                     "import declaration (IMPORT_EXPORT_ENTRY is E10's)";
                 case deal.ast.ExportDeclaration ignored ->
@@ -3251,13 +4236,13 @@ public final class SemanticLowerer {
                 case deal.ast.ClassDeclaration ignored ->
                     "class declaration (class layouts and CLASS_NEW are E9's)";
                 case deal.ast.TryStatement ignored ->
-                    "try statement (TRY_CATCH is E5's, ISSUE-0234)";
+                    "try statement (TRY_CATCH is the E5 control-flow arm)";
                 case deal.ast.ThrowStatement ignored ->
-                    "throw statement (THROW is E5's, ISSUE-0234)";
+                    "throw statement (THROW is the E5 control-flow arm)";
                 case deal.ast.BreakStatement ignored ->
-                    "break statement (matching loop-ID transfer is E5's, ISSUE-0234)";
+                    "break statement (matching loop-ID transfer is the E5 control-flow arm)";
                 case deal.ast.ContinueStatement ignored ->
-                    "continue statement (matching loop-ID transfer is E5's, ISSUE-0234)";
+                    "continue statement (matching loop-ID transfer is the E5 control-flow arm)";
                 default -> statement.getClass().getSimpleName() + " statement";
             };
         }

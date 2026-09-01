@@ -1803,7 +1803,7 @@ public class LoweringFoundationTest {
         System.out.println("-- I3 foreign constructs: E6005 naming the construct --");
 
         ValueSlice slice = checkValueSlice("""
-            if (true) {}
+            let x = 1
             """);
         if (slice == null) {
             return;
@@ -1813,7 +1813,7 @@ public class LoweringFoundationTest {
             VALUE_INTERFACE_HASH, VALUE_REGISTRY_HASH,
             SemanticIdAllocator.over(List.of(VALUE_MODULE)));
         check(result != null && result.hasErrors() && result.unit() == null,
-            "a module with an if-statement fails hard with no unit (never a reroute)");
+            "a module with a variable declaration fails hard with no unit (never a reroute)");
         if (result != null && result.hasErrors()) {
             check(result.diagnostics().size() == 1,
                 "exactly one E6005 diagnostic; got " + result.diagnostics().size());
@@ -1822,8 +1822,8 @@ public class LoweringFoundationTest {
                     && diagnostic.message()
                         .contains(SemanticLowerer.CONSTRUCT_UNLOWERED),
                 "the E6005 names CONSTRUCT_UNLOWERED: " + diagnostic.message());
-            check(diagnostic.message().contains("if statement"),
-                "the E6005 names the construct (if statement): "
+            check(diagnostic.message().contains("variable declaration"),
+                "the E6005 names the construct (variable declaration): "
                     + diagnostic.message());
         }
     }

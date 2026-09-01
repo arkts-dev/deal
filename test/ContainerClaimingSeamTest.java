@@ -556,17 +556,44 @@ public class ContainerClaimingSeamTest {
             op(SemanticOpKind.BINARY,
                 new KindPayload.BinaryPayload(BinarySelector.INT32_ADD, null, null),
                 nextValue(), INT, FailurePolicyId.INT32_RESULT, null),
-            op(SemanticOpKind.BRANCH,
-                new KindPayload.BranchPayload(ControlSelector.IF, nextValue(), new BlockId(1),
-                    null),
+            op(SemanticOpKind.BREAK, new KindPayload.BreakPayload(nextOpId()), null, null,
+                FailurePolicyId.NO_DEAL_FAILURE, null),
+            op(SemanticOpKind.CONTINUE, new KindPayload.ContinuePayload(nextOpId()), null,
+                null, FailurePolicyId.NO_DEAL_FAILURE, null),
+            op(SemanticOpKind.TRY_CATCH,
+                new KindPayload.TryCatchPayload(new BlockId(1), new BindingId(1),
+                    new BlockId(2)),
                 null, null, FailurePolicyId.NO_DEAL_FAILURE, null),
-            op(SemanticOpKind.DISCARD, new KindPayload.DiscardPayload(nextValue()), null, null,
-                FailurePolicyId.NO_DEAL_FAILURE, null));
+            op(SemanticOpKind.THROW, new KindPayload.ThrowPayload(nextValue()), null, null,
+                FailurePolicyId.THROW_TRANSFER, null));
         for (SemanticOp foreignOp : foreignOps) {
             check(ContainerClaimingSeam.homeRows(foreignOp).isEmpty(),
-                foreignOp.kind() + " has no home row in this seam (another construct epic's "
-                    + "production)");
+                foreignOp.kind() + " has no home row in this seam (its producer records "
+                    + "its op-side outcomes)");
         }
+
+        // E5's home rows: BRANCH/LOOP/DISCARD home to EVALUATION_ORDER (the
+        // catalog's three evidence families, recorded by E5's producer
+        // under the shared mechanism).
+        check(ContainerClaimingSeam.homeRows(
+                op(SemanticOpKind.BRANCH,
+                    new KindPayload.BranchPayload(ControlSelector.IF, nextValue(),
+                        new BlockId(1), null),
+                    null, null, FailurePolicyId.NO_DEAL_FAILURE, null))
+                .equals(List.of(SemanticCapability.EVALUATION_ORDER)),
+            "BRANCH homes to EVALUATION_ORDER");
+        check(ContainerClaimingSeam.homeRows(
+                op(SemanticOpKind.LOOP,
+                    new KindPayload.LoopPayload(ControlSelector.WHILE, null, nextValue(),
+                        new BlockId(1), null),
+                    null, null, FailurePolicyId.NO_DEAL_FAILURE, null))
+                .equals(List.of(SemanticCapability.EVALUATION_ORDER)),
+            "LOOP homes to EVALUATION_ORDER");
+        check(ContainerClaimingSeam.homeRows(
+                op(SemanticOpKind.DISCARD, new KindPayload.DiscardPayload(nextValue()), null,
+                    null, FailurePolicyId.NO_DEAL_FAILURE, null))
+                .equals(List.of(SemanticCapability.EVALUATION_ORDER)),
+            "DISCARD homes to EVALUATION_ORDER");
     }
 
     // =========================================================================
@@ -939,19 +966,24 @@ public class ContainerClaimingSeamTest {
             check(result.failure() == null,
                 "the corpus run is green with exactly its derived claim state — E6005 never "
                     + "fires for the corpus");
-            check(result.outcomes().size() == 11,
-                "11 recorded outcomes: 2 FOUNDATION_VALUES deferrals + 5 "
-                    + "CONTAINERS_AND_STRINGS deferrals + 2 boundary children × 2 claimed "
+            check(result.outcomes().size() == 13,
+                "13 recorded outcomes: 2 FOUNDATION_VALUES deferrals + 5 "
+                    + "CONTAINERS_AND_STRINGS deferrals + 2 EVALUATION_ORDER deferrals "
+                    + "(BRANCH/DISCARD without LOOP) + 2 boundary children × 2 claimed "
                     + "rows; got " + result.outcomes().size());
             for (SemanticOp op : corpusOps) {
                 if (op.kind() == SemanticOpKind.BRANCH
                         || op.kind() == SemanticOpKind.DISCARD) {
-                    check(outcomeOf(result.outcomes(), op.opId(),
-                            SemanticCapability.EVALUATION_ORDER) == null
-                            && result.outcomes().stream().noneMatch(outcome ->
-                                outcome.opId().equals(op.opId())),
-                        op.kind() + " records no op-side outcome in this seam — its outcomes "
-                            + "are recorded by E5's producer under the shared mechanism");
+                    ContainerClaimingSeam.RecordedOutcome outcome =
+                        outcomeOf(result.outcomes(), op.opId(),
+                            SemanticCapability.EVALUATION_ORDER);
+                    check(outcome != null
+                            && outcome.outcome()
+                                == ContainerClaimingSeam.OutcomeKind.DEFERRED,
+                        op.kind() + " records the EVALUATION_ORDER per-unit deferral "
+                            + "(the row is active at E5's gate and the corpus carries no "
+                            + "LOOP op — E5's producer records the outcome under the "
+                            + "shared mechanism)");
                 }
             }
             for (SemanticOpKind deferredKind : List.of(SemanticOpKind.CONST,
@@ -1031,16 +1063,31 @@ public class ContainerClaimingSeamTest {
     // =========================================================================
 
     private static void assertSeamOnUnit(LoweredModuleUnit unit, String what) {
-        check(unit.requiredCapabilities().isEmpty(),
-            what + " unit claims ∅ (derived through the seam in E3's tail window)");
+        // At E5's gate the unit's claim set is derived under
+        // E5_GATE_ACTIVATION (CONTAINERS_AND_STRINGS and EVALUATION_ORDER
+        // active); the seam re-run must derive exactly the recorded set
+        // and fire no E6005.
+        Set<SemanticCapability> expected =
+            ContainerClaimingSeam.deriveClaims(unit.ops(),
+                ContainerClaimingSeam.E5_GATE_ACTIVATION);
+        check(unit.requiredCapabilities().equals(expected),
+            what + " unit claims exactly its E5-gate derived set " + expected + "; got "
+                + unit.requiredCapabilities());
         ContainerClaimingSeam.SeamResult seam = ContainerClaimingSeam.check(unit.ops(),
-            ContainerClaimingSeam.E3_WINDOW_ACTIVATION, unit.requiredCapabilities(), MODULE);
+            ContainerClaimingSeam.E5_GATE_ACTIVATION, unit.requiredCapabilities(), MODULE);
         check(seam.failure() == null, what + " seam check fires no E6005");
-        check(seam.derivedClaims().isEmpty(), what + " seam derived claims are ∅");
-        if (!seam.outcomes().isEmpty()) {
-            check(seam.outcomes().stream().allMatch(outcome -> outcome.outcome()
-                    == ContainerClaimingSeam.OutcomeKind.STAGED_HAND_OFF),
-                what + " seam records every op as a staged hand-off");
+        check(seam.derivedClaims().equals(expected),
+            what + " seam derived claims equal the recorded set");
+        for (ContainerClaimingSeam.RecordedOutcome outcome : seam.outcomes()) {
+            if (outcome.outcome() == ContainerClaimingSeam.OutcomeKind.CLAIMED) {
+                check(unit.requiredCapabilities().contains(outcome.home()),
+                    what + " claimed outcome " + outcome.home()
+                        + " is in the recorded claim set");
+            } else {
+                check(!unit.requiredCapabilities().contains(outcome.home()),
+                    what + " non-claimed outcome " + outcome.home()
+                        + " is outside the recorded claim set");
+            }
         }
     }
 
@@ -1560,24 +1607,30 @@ public class ContainerClaimingSeamTest {
         }
         LoweredModuleUnit unit = result.unit();
 
-        // The derived ∅ claim set and the recorded staged hand-offs.
+        // The derived ∅ claim set and the recorded deferrals/staged
+        // hand-offs at E5's gate.
         check(unit.requiredCapabilities().isEmpty(),
-            "the corpus unit's derived claim set is ∅ (every E3 op's home row is inactive "
-                + "during the tail)");
+            "the corpus unit's derived claim set is ∅ at E5's gate (FOUNDATION_VALUES and "
+                + "CONTAINERS_AND_STRINGS under-evidenced, BINDINGS staged)");
         check(!manifest.capabilities().equals(unit.requiredCapabilities()),
             "the manifest's plan-time FOUNDATION_VALUES claim (routing) and the unit's ∅ "
                 + "claim set diverge exactly as the foundation pins");
         ContainerClaimingSeam.SeamResult seam = ContainerClaimingSeam.check(unit.ops(),
-            ContainerClaimingSeam.E3_WINDOW_ACTIVATION, unit.requiredCapabilities(), MODULE);
+            ContainerClaimingSeam.E5_GATE_ACTIVATION, unit.requiredCapabilities(), MODULE);
         check(seam.failure() == null, "the seam fires no E6005 for the corpus unit");
         check(seam.derivedClaims().isEmpty(), "the seam derives the empty claim set");
         check(seam.outcomes().size() == 4,
-            "the seam records exactly 4 staged hand-offs: CONST → FOUNDATION_VALUES, "
-                + "BINDING_LOAD → BINDINGS, and the two FOR_EACH ops → "
-                + "CONTAINERS_AND_STRINGS; got " + seam.outcomes().size());
-        check(countOutcomes(seam.outcomes(), ContainerClaimingSeam.OutcomeKind.STAGED_HAND_OFF)
-                == seam.outcomes().size(),
-            "every recorded outcome is a staged hand-off");
+            "the seam records exactly 4 outcomes: CONST → FOUNDATION_VALUES deferral, "
+                + "BINDING_LOAD → BINDINGS staged hand-off, and the two FOR_EACH ops → "
+                + "CONTAINERS_AND_STRINGS deferrals; got " + seam.outcomes().size());
+        long deferred = countOutcomes(seam.outcomes(),
+            ContainerClaimingSeam.OutcomeKind.DEFERRED);
+        long staged = countOutcomes(seam.outcomes(),
+            ContainerClaimingSeam.OutcomeKind.STAGED_HAND_OFF);
+        check(deferred == 3 && staged == 1,
+            "the recorded outcomes are exactly 3 deferrals (CONST + 2 FOR_EACH) and 1 "
+                + "staged hand-off (BINDING_LOAD); got " + deferred + " deferrals, "
+                + staged + " staged");
         List<SemanticOpKind> kinds = new ArrayList<>();
         for (SemanticOp op : unit.ops()) {
             kinds.add(op.kind());
