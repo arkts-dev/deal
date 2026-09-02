@@ -711,6 +711,20 @@ public final class JvmBackend {
      * pre-scan; empty for the standalone single-module adapter. */
     private final List<Type> collectedShapes;
 
+    /** The compilation-wide class-declaration identity surface
+     * (ISSUE-0301 D4 shared-scope emission): canonical class identity
+     * &rarr; declaring module path for every class of every checked
+     * project module, supplied by the orchestrator's collection seam.
+     * The entry module's shared-scope wrapper pre-registration resolves
+     * a collected shape's class reference through this surface when the
+     * declaring module is one the entry does not import directly (its
+     * own {@link #importAliases}/{@link #importedClasses} maps cannot
+     * name it), so every emitted wrapper references the real declaring
+     * module's emitted class. Empty for the standalone single-module
+     * adapter, whose collected set contains only shapes of its own
+     * module. */
+    private final Map<CanonicalClassIdentity, String> sharedClassDeclarations;
+
     /**
      * The backend-wide int mode derived from the invocation's
      * project-wide semantic profile (ISSUE-0374 profile plumb): true
@@ -1224,7 +1238,8 @@ public final class JvmBackend {
                        SemanticProfile semanticProfile,
                        List<Type> sharedShapes,
                        CanonicalClassIdentityIndex identityIndex,
-                       Function<String, CanonicalModuleIdentity> moduleIdentities) {
+                       Function<String, CanonicalModuleIdentity> moduleIdentities,
+                       Map<CanonicalClassIdentity, String> sharedClassDeclarations) {
         this.typeMap = typeMap;
         this.symbols = symbols;
         this.sourcePath = sourcePath;
@@ -1264,6 +1279,8 @@ public final class JvmBackend {
         // are the complete one-module set.
         this.collectedShapes = sharedShapes == null
             ? List.of() : List.copyOf(sharedShapes);
+        this.sharedClassDeclarations = sharedClassDeclarations == null
+            ? Map.of() : Map.copyOf(sharedClassDeclarations);
     }
 
     /**
@@ -1328,7 +1345,8 @@ public final class JvmBackend {
         JvmBackend collector = new JvmBackend(result.typeMap(),
             result.symbolTable(), sourcePath, modulePath,
             importResolutions, importedClasses, hostModules, false, false,
-            semanticProfile, null, identityIndex, moduleIdentities);
+            semanticProfile, null, identityIndex, moduleIdentities,
+            Map.of());
         return collector.collectModuleShapes(program);
     }
 
@@ -1510,7 +1528,13 @@ public final class JvmBackend {
                 }
             };
             case QualifiedType qt -> {
-                String module = importResolutions.get(qt.moduleName());
+                // The alias-keyed importAliases table — the same table
+                // the real resolver and the collection pre-scan populate
+                // — names the declaring module. importResolutions is
+                // keyed by the RAW import path ("./util"), so an
+                // alias-keyed lookup there silently dropped every
+                // qualified-class shape from the project-wide set.
+                String module = importAliases.get(qt.moduleName());
                 Map<String, ClassDeclaration> decls =
                     module == null ? null : importedClasses.get(module);
                 if (decls == null || !decls.containsKey(qt.typeName())) {
@@ -1975,7 +1999,7 @@ public final class JvmBackend {
         return generate(program, result, sourcePath, modulePath,
             importResolutions, importedClasses, hostModules, isEntry,
             emitSharedTable, standalone, classification, semanticProfile,
-            sharedShapes);
+            sharedShapes, Map.of());
     }
 
     /**
@@ -1994,6 +2018,15 @@ public final class JvmBackend {
      *                     single-module adapter, whose lazy
      *                     registrations are the complete one-module
      *                     set)
+     * @param sharedClassDeclarations the compilation-wide
+     *                     class-declaration identity surface (canonical
+     *                     class identity &rarr; declaring module path)
+     *                     built by the orchestrator's collection seam;
+     *                     the entry module's shared-scope wrapper
+     *                     pre-registration resolves class references
+     *                     through it when the declaring module is one
+     *                     the entry does not import directly (empty for
+     *                     the standalone single-module adapter)
      */
     public static JvmCodegenResult generate(ProgramNode program, CheckResult result,
                                             String sourcePath, String modulePath,
@@ -2005,13 +2038,15 @@ public final class JvmBackend {
                                             CanonicalClassIdentityIndex identityIndex,
                                             Function<String, CanonicalModuleIdentity> moduleIdentities,
                                             SemanticProfile semanticProfile,
-                                            List<Type> sharedShapes) {
+                                            List<Type> sharedShapes,
+                                            Map<CanonicalClassIdentity, String> sharedClassDeclarations) {
         Objects.requireNonNull(semanticProfile,
             "semanticProfile must not be null");
         JvmBackend backend = new JvmBackend(result.typeMap(), result.symbolTable(),
             sourcePath, modulePath, importResolutions, importedClasses,
             hostModules, isEntry, emitSharedTable, semanticProfile,
-            sharedShapes, identityIndex, moduleIdentities);
+            sharedShapes, identityIndex, moduleIdentities,
+            sharedClassDeclarations);
         return backend.generateProgram(program);
     }
 
@@ -5015,13 +5050,14 @@ public final class JvmBackend {
         String wrapper = orNull
             ? classOrNullArrayWrapperName(c.name())
             : classArrayWrapperName(c.name());
-        if (isLocalClassType(c)) {
-            return moduleClasses.containsKey(c.name())
-                ? classNameFor(modulePath) + "." + wrapper : null;
-        }
         if (isHostModuleClass(c)) {
             return null;
         }
+        if (isLocalClassType(c) && moduleClasses.containsKey(c.name())) {
+            return classNameFor(modulePath) + "." + wrapper;
+        }
+        // Same fallback as silentClassJavaType: the direct-import alias
+        // map first, then the compilation-wide identity surface.
         String module = declaringModulePath(c);
         if (module == null) {
             return null;
@@ -5047,15 +5083,17 @@ public final class JvmBackend {
         if (isBuiltinErrorType(c)) {
             return "java.lang.RuntimeException";
         }
-        if (isLocalClassType(c)) {
-            return moduleClasses.containsKey(c.name())
-                ? classNameFor(modulePath) + "."
-                    + classNameForClass(c.name())
-                : null;
-        }
         if (isHostModuleClass(c)) {
             return null;
         }
+        if (isLocalClassType(c) && moduleClasses.containsKey(c.name())) {
+            return classNameFor(modulePath) + "."
+                + classNameForClass(c.name());
+        }
+        // An imported class, or a sibling-module class whose directory
+        // identity this module shares, resolves through
+        // declaringModulePath — the direct-import alias map first, then
+        // the compilation-wide identity surface.
         String module = declaringModulePath(c);
         if (module == null) {
             return null;
@@ -5770,7 +5808,11 @@ public final class JvmBackend {
     /**
      * The private wiring module path of an IMPORTED class type: the
      * imported module whose classification equals the carried identity
-     * and whose declarations contain the class name.  Identity text is
+     * and whose declarations contain the class name, resolved through
+     * this module's direct imports first; when they cannot name the
+     * declaring module (the shared-scope pre-registration of a shape
+     * collected from another module), the compilation-wide
+     * class-declaration identity surface supplies it.  Identity text is
      * never reconstructed from this path; the path only keys the
      * backend's private imported-declaration map.
      */
@@ -5786,7 +5828,15 @@ public final class JvmBackend {
                 return module;
             }
         }
-        return null;
+        // ISSUE-0301 shared-scope emission: a collected shape may
+        // reference a class whose declaring module this backend
+        // instance (the entry) does not import — its own
+        // importAliases/importedClasses maps cannot name it. Resolve
+        // through the compilation-wide identity surface the
+        // orchestrator's collection seam built (canonical class
+        // identity → declaring module path) instead of the entry's
+        // direct imports.
+        return sharedClassDeclarations.get(cls.identity());
     }
 
     // =========================================================================

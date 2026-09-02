@@ -424,6 +424,7 @@ public class JvmBackendTest {
             new TestCase("testSharedCarrierCheckBehaviors", () -> testSharedCarrierCheckBehaviors()),
             new TestCase("testSharedCarrierCrossModuleIdentity", () -> testSharedCarrierCrossModuleIdentity()),
             new TestCase("testSharedCarrierHostClassShapes", () -> testSharedCarrierHostClassShapes()),
+            new TestCase("testSharedCarrierIndirectClassShape", () -> testSharedCarrierIndirectClassShape()),
             new TestCase("testCrossModuleFunctionValues", () -> testCrossModuleFunctionValues()),
             new TestCase("testUseBeforeDeclarationRejected", () -> testUseBeforeDeclarationRejected()),
             new TestCase("testFunctionBodyModuleFieldAccessGuards", () -> testFunctionBodyModuleFieldAccessGuards()),
@@ -6303,6 +6304,128 @@ public class JvmBackendTest {
                     + "referencing the never-emitted host Java class "
                     + "(pre-fix: 'abstract HostCfg.$C_ServerConfig "
                     + "invoke();')");
+        }
+    }
+
+    /**
+     * ISSUE-0301 qualified imported-class shapes in a NON-ENTRY module:
+     * a checker-legal project where a non-entry module declares a
+     * function with a qualified imported-class parameter must compile
+     * into a javac-clean artifact set — the entry module's shared
+     * {@code $DealRt} declares the collected wrapper classes and their
+     * invoke signatures reference the real declaring module's emitted
+     * class. Pre-fix defects: the silent collection resolver looked the
+     * import ALIAS up in the RAW-path-keyed importResolutions map, so
+     * the shape was silently dropped (Type.Error) from the project-wide
+     * set, and the entry's shared-scope pre-registration resolved class
+     * references only through its own direct imports, so a shape
+     * referencing a class from a module the entry does not import
+     * produced an artifact javac rejected ("cannot find symbol: class
+     * Fn1_$$asrc$sU_R_I") after the CLI reported success. Both breaks
+     * reproduce through the real orchestrator pipeline; the second
+     * variant (entry directly imports the declaring module) pins the
+     * alias-keyed collection fix, the first pins the compilation-wide
+     * class-declaration identity surface.
+     */
+    private static void testSharedCarrierIndirectClassShape()
+            throws Exception {
+        System.out.println("-- Shared carrier indirect qualified-class shape (ISSUE-0301) --");
+
+        writeFile("src/util.deal", """
+            export class U {
+              x: int = 0;
+            }
+            """);
+        writeFile("src/lib.deal", """
+            import * as util from "./util"
+            export function make(): util.U { return { x: 5 }; }
+            export function inc(u: util.U): int { return u.x; }
+            """);
+        writeFile("src/entry.deal", """
+            import * as lib from "./lib"
+            export function main(): null { return null; }
+            export function run(): int { return 42; }
+            """);
+
+        Path entryFile = tmpDir.get().resolve("src/entry.deal")
+            .toAbsolutePath().normalize();
+        List<Path> roots = List.of(
+            tmpDir.get().resolve("src").toAbsolutePath());
+
+        // Variant 1: the entry imports ONLY lib — the declaring module
+        // (util) is not one of the entry's direct imports, so the
+        // wrapper's Util.$C_U invoke reference must resolve through the
+        // compilation-wide class-declaration identity surface.
+        Path outputDir1 = tmpDir.get().resolve("build/indirect_class_shape");
+        CompilationOrchestrator orchestrator1 = new CompilationOrchestrator(
+            entryFile, outputDir1, false, false, false, false, Backend.JVM,
+            null, roots, Path.of(".").toAbsolutePath().normalize());
+        boolean ok1 = orchestrator1.compile();
+        check(ok1, "indirect qualified-class project compiles (entry "
+            + "imports only lib): " + orchestrator1.diagnostics());
+        if (ok1) {
+            Path entryArtifact = outputDir1.resolve("Entry.java");
+            check(Files.exists(entryArtifact),
+                "the two-pass site writes the clean entry artifact");
+            if (Files.exists(entryArtifact)) {
+                String artifact = Files.readString(entryArtifact);
+                check(artifact.contains("Fn1_$$asrc$sU_R_I")
+                        && artifact.contains("invoke(Util.$C_U p0)"),
+                    "the entry's shared $DealRt declares the collected "
+                        + "(util.U)->int wrapper whose invoke references "
+                        + "the real declaring module's class (pre-fix: "
+                        + "the shape was dropped by the raw-path-keyed "
+                        + "silent resolver and Lib.java referenced a "
+                        + "wrapper javac rejected as 'cannot find "
+                        + "symbol')");
+                check(artifact.contains("Fn0_R_$$asrc$sU")
+                        && artifact.contains("Util.$C_U invoke()"),
+                    "the ()->util.U wrapper (the make export) is "
+                        + "pre-registered the same way");
+            }
+            ExecResult exec = runJvmArtifacts(outputDir1,
+                parseProgram("export function run(): int { return 42; }"),
+                "Entry");
+            check(exec.exitCode() == 0 && exec.output().contains("42"),
+                "the full artifact set is javac-clean and executes: "
+                    + exec.output());
+        }
+
+        // Variant 2: the entry imports lib AND util directly — the shape
+        // is dropped during the NON-ENTRY module's collection (the
+        // alias-keyed silent resolver) unless the silent QualifiedType
+        // arm uses the alias map; the entry's own direct imports then
+        // resolve the wrapper reference.
+        writeFile("src/entry.deal", """
+            import * as lib from "./lib"
+            import * as util from "./util"
+            export function main(): null { return null; }
+            export function run(): int { return 42; }
+            """);
+        Path outputDir2 = tmpDir.get().resolve("build/direct_class_shape");
+        CompilationOrchestrator orchestrator2 = new CompilationOrchestrator(
+            entryFile, outputDir2, false, false, false, false, Backend.JVM,
+            null, roots, Path.of(".").toAbsolutePath().normalize());
+        boolean ok2 = orchestrator2.compile();
+        check(ok2, "direct-import qualified-class project compiles (entry "
+            + "imports lib and util): " + orchestrator2.diagnostics());
+        if (ok2) {
+            Path entryArtifact = outputDir2.resolve("Entry.java");
+            check(Files.exists(entryArtifact),
+                "the two-pass site writes the clean entry artifact");
+            if (Files.exists(entryArtifact)) {
+                String artifact = Files.readString(entryArtifact);
+                check(artifact.contains("Fn1_$$asrc$sU_R_I")
+                        && artifact.contains("invoke(Util.$C_U p0)"),
+                    "the shared $DealRt declares the (util.U)->int "
+                        + "wrapper in the direct-import variant too");
+            }
+            ExecResult exec = runJvmArtifacts(outputDir2,
+                parseProgram("export function run(): int { return 42; }"),
+                "Entry");
+            check(exec.exitCode() == 0 && exec.output().contains("42"),
+                "the direct-import artifact set is javac-clean and "
+                    + "executes: " + exec.output());
         }
     }
 

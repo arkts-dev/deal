@@ -2231,6 +2231,44 @@ public final class CompilationOrchestrator {
         // exists).
         ModuleIdentityResolver.IdentityIndex identityIndex =
             buildCanonicalIdentitySurface();
+        // Compilation-wide class-declaration identity surface (ISSUE-0301
+        // D4 shared-scope emission): canonical class identity → declaring
+        // module path for every class of every checked project module.
+        // The entry module's shared-scope wrapper pre-registration
+        // resolves a collected shape's class reference through this map
+        // when the declaring module is one the entry does not import
+        // directly (its own importAliases/importedClasses maps cannot
+        // name it), so the wrapper's invoke signature always references
+        // the real declaring module's emitted class. Deterministic:
+        // module order, then source order per module; the first
+        // declaration of an identity wins. Host declarations are
+        // excluded (their class exports keep the host ABI lane's
+        // import-time E6000s, and the union filter below drops
+        // host-referencing shapes before any module pre-registers
+        // them).
+        Map<CanonicalClassIdentity, String> classDeclaringModules =
+            new LinkedHashMap<>();
+        for (ModuleInfo info : modules.values()) {
+            if (info.isDeclarationFile) continue;
+            CanonicalModuleIdentity moduleIdentity =
+                classifyModuleIdentity(info);
+            if (moduleIdentity == null) continue;
+            for (StatementNode stmt : info.rawAst.statements()) {
+                ClassDeclaration cd = null;
+                if (stmt instanceof ClassDeclaration c) {
+                    cd = c;
+                } else if (stmt instanceof ExportDeclaration ed
+                        && ed.declaration() instanceof ClassDeclaration c) {
+                    cd = c;
+                }
+                if (cd != null) {
+                    classDeclaringModules.putIfAbsent(
+                        new CanonicalClassIdentity(moduleIdentity,
+                            cd.name()),
+                        info.modulePath);
+                }
+            }
+        }
         // Pre-codegen collection pass (ISSUE-0301 D4, the shared
         // runtime value surface): walk every checked module's types and
         // collect the closed project-wide shape set — function-signature
@@ -2293,7 +2331,8 @@ public final class CompilationOrchestrator {
                 ctx.importResolutions, ctx.importedClasses, ctx.hostModules,
                 isEntry, isEntry, identityIndex,
                 identityIndex.moduleIdentityLookup(),
-                invocation.semanticProfile(), projectShapes);
+                invocation.semanticProfile(), projectShapes,
+                classDeclaringModules);
             for (CompilerDiagnostic d : res.diagnostics()) {
                 diagnostics.add(d);
                 hasErrors = true;
@@ -2374,7 +2413,6 @@ public final class CompilationOrchestrator {
     }
 
     /**
-     * JS use site (ISSUE-0247 core slice, js-backend-emitter D3): the JVM    /**
      * JS use site (ISSUE-0247 core slice, js-backend-emitter D3): the JVM
      * two-pass model — pass 1 generates every module and merges
      * diagnostics, pass 2 writes one {@code <modulePath with '/' for
