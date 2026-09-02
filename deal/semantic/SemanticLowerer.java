@@ -51,6 +51,7 @@ import deal.semantic.ir.AssignTargetKind;
 import deal.semantic.ir.BinarySelector;
 import deal.semantic.ir.BindingCellKind;
 import deal.semantic.ir.BindingId;
+import deal.semantic.ir.BindingImmutabilityProof;
 import deal.semantic.ir.BlockId;
 import deal.semantic.ir.BoundaryKind;
 import deal.semantic.ir.BoundaryRealization;
@@ -953,6 +954,38 @@ public final class SemanticLowerer {
     }
 
     /**
+     * The result of the creation-rule entry point (ISSUE-0449
+     * creation-rule child): the validated lowering result, the binding
+     * walk's binding facts, the produced closures' capture facts, the
+     * produced recursive groups' member facts, the derived proof fact
+     * surface, and the creation-rule classification facts — one
+     * {@link AdapterCreationRule.PositionClassification} per classified
+     * function-typed position in walk order (partial on failure,
+     * complete on success). The unit the walk produced contains zero
+     * {@code FUNCTION_ADAPT} ops (mode selection, payload construction,
+     * and emission are the shape-map child's) and the classification is
+     * purely observational: the same walk's emitted ops are
+     * byte-identical to the proof child's for the same checked module.
+     */
+    public record CreationRuleCoreResult(
+            LoweringResult lowering, BindingCoreFacts bindingFacts,
+            List<ClosureFacts> closures, List<GroupFacts> groups,
+            BindingImmutabilityAnalysis.BindingImmutabilityFacts proofFacts,
+            AdapterCreationRule.CreationRuleFacts creationFacts) {
+
+        public CreationRuleCoreResult {
+            Objects.requireNonNull(lowering, "lowering must not be null");
+            Objects.requireNonNull(bindingFacts, "bindingFacts must not be null");
+            Objects.requireNonNull(closures, "closures must not be null");
+            Objects.requireNonNull(groups, "groups must not be null");
+            Objects.requireNonNull(proofFacts, "proofFacts must not be null");
+            Objects.requireNonNull(creationFacts, "creationFacts must not be null");
+            closures = List.copyOf(closures);
+            groups = List.copyOf(groups);
+        }
+    }
+
+    /**
      * The dominant-incarnation resolver of the binding environment
      * (ISSUE-0444 binding-core child): the identifier arm and the
      * variable-assignment arm consult this hook when installed so every
@@ -1775,6 +1808,148 @@ public final class SemanticLowerer {
             lowerer.proofFacts());
     }
 
+    /**
+     * The creation-rule child's public lowering entry point (ISSUE-0449
+     * sequencing item 6): lowers one checked implementation module
+     * through the binding walk plus the closure arms plus the group
+     * arms plus the proof analysis plus the closed creation-rule
+     * classification (B6) — for every function-typed value flow the
+     * walk classifies the position by checker facts
+     * ({@code CheckResult.typeMap}, {@code Types.equals} /
+     * {@code Types.isAssignable}) before choosing any shape, exactly
+     * per the closed rule: exact-signature initializer/assignment
+     * positions store the value directly with no {@code FUNCTION_ADAPT}
+     * (the direct-store flow is this child's production);
+     * assignable-but-not-exact positions classify to exactly one
+     * adaptation candidate with the derived source signature (the
+     * source expression's checked type) and target signature (the
+     * declared binding signature), the recorded proof fact for the
+     * shape-map child (B7), the prepared wiring point (the adapted
+     * position's own {@code VARIABLE_DECLARATION}/
+     * {@code VARIABLE_ASSIGNMENT} boundary chain — B9's creation-wiring
+     * target), and the producer facts the registry child's
+     * host/external materialization seam supplies; non-assignable
+     * positions record the {@code FUNCTION_SIGNATURE} E8010 failure
+     * expectation at the position's own boundary (the executed check is
+     * E4's machinery); every typed boundary position — parameter,
+     * return, host/external/callback parameter/return, array/table/
+     * class element, JSON, and every other {@link BoundaryKind} — never
+     * adapts (the classifier admits no adaptation arm for any position
+     * other than {@code VARIABLE_DECLARATION}/
+     * {@code VARIABLE_ASSIGNMENT}, and the walk's direct value flow
+     * into the position's boundary slot is the wiring E4's boundary
+     * producer consumes).
+     *
+     * <p><b>Zero emission.</b> The produced unit contains zero
+     * {@code FUNCTION_ADAPT} ops — mode selection, payload construction,
+     * and emission are the shape-map child's obligations, so every
+     * emitted adapter carries its closed-map mode from birth — and the
+     * classification changes no emitted op: the same walk's unit dump
+     * is byte-identical to the proof child's for the same checked
+     * module. Boundary-op production and execution stay E4's; all
+     * invocation phases stay E7's.</p>
+     *
+     * <p>This entry point is driven by the creation-rule tests; no
+     * production route change — retained/public compilation paths and
+     * {@link #lowerModule} are untouched.</p>
+     *
+     * @param module                the checked implementation module; non-null
+     * @param profile               the invocation's semantic profile
+     *                              (I3 guard: only
+     *                              {@code DEAL_V1_2_INT32} is lowered);
+     *                              non-null
+     * @param constructCoverage     the manifest's reachable-construct rows
+     *                              recorded at lowering start (S1); non-null
+     * @param interfaceHash         the interface index digest the unit is
+     *                              checked against (R-PROFILE); non-null
+     * @param capabilityRegistryHash the invocation's capability-registry
+     *                              digest (R-PROFILE); non-null
+     * @param allocator             the project's semantic-id allocator in
+     *                              dependency order; non-null
+     * @return the validated unit with the binding, closure, group,
+     *         proof, and creation-rule classification facts, or the
+     *         first E6005 with the partial facts on failure
+     */
+    public static CreationRuleCoreResult lowerModuleCreationRuleCore(
+            CheckedModuleInput module,
+            SemanticProfile profile,
+            Map<ConstructKind, List<SemanticOpKind>> constructCoverage,
+            String interfaceHash,
+            String capabilityRegistryHash,
+            SemanticIdAllocator allocator) {
+        Objects.requireNonNull(module, "module must not be null");
+        Objects.requireNonNull(profile, "profile must not be null");
+        Objects.requireNonNull(constructCoverage, "constructCoverage must not be null");
+        Objects.requireNonNull(interfaceHash, "interfaceHash must not be null");
+        Objects.requireNonNull(capabilityRegistryHash, "capabilityRegistryHash must not be null");
+        Objects.requireNonNull(allocator, "allocator must not be null");
+        // I3 profile guard: identical to lowerModuleImmutabilityCore — a
+        // non-DEAL_V1_2_INT32 lowering request produces no unit and no
+        // partial session state.
+        if (profile != SemanticProfile.DEAL_V1_2_INT32) {
+            return new CreationRuleCoreResult(new LoweringResult(null, null,
+                List.of(FailureContractRegistry.e6005(
+                    new LoweringFailureDetail(module.moduleId().path(),
+                        SemanticCapability.FOUNDATION_VALUES, LOWER_LEGACY_PROFILE_REJECTED,
+                        profile, LoweredModuleUnit.FORMAT_VERSION, "SemanticLowerer")))),
+                BindingCoreFacts.empty(), List.of(), List.of(),
+                BindingImmutabilityAnalysis.BindingImmutabilityFacts.empty(),
+                AdapterCreationRule.CreationRuleFacts.empty());
+        }
+        ModuleLowerer lowerer = new ModuleLowerer(module.moduleId(), module.sourceId(),
+            module.checks(), allocator, true, true, true, true, true, module.ast().span());
+        try {
+            lowerer.lowerGroupModule(module.ast().statements());
+        } catch (ConstructUnlowered unlowered) {
+            return new CreationRuleCoreResult(new LoweringResult(null, null,
+                List.of(FailureContractRegistry.e6005(
+                    loweringFailureDetail(module.moduleId(), unlowered)))),
+                lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
+                lowerer.proofFacts(), lowerer.creationRuleFacts());
+        } catch (IntLiteralOutOfRange outOfRange) {
+            return new CreationRuleCoreResult(new LoweringResult(null, null,
+                List.of(FailureContractRegistry.e6005(
+                    loweringFailureDetail(module.moduleId(), outOfRange)))),
+                lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
+                lowerer.proofFacts(), lowerer.creationRuleFacts());
+        } catch (ContainerPayloadDescriptors.Defect defect) {
+            return new CreationRuleCoreResult(new LoweringResult(null, null,
+                List.of(FailureContractRegistry.e6005(
+                    loweringFailureDetail(module.moduleId(), defect)))),
+                lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
+                lowerer.proofFacts(), lowerer.creationRuleFacts());
+        } catch (ComparisonSelectorLowering.Defect defect) {
+            return new CreationRuleCoreResult(new LoweringResult(null, null,
+                List.of(ComparisonSelectorLowering.e6005(module.moduleId(), defect))),
+                lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
+                lowerer.proofFacts(), lowerer.creationRuleFacts());
+        }
+        LoweredModuleUnit unit = lowerer.buildUnit(constructCoverage,
+            module.imports().stream().map(ResolvedImport::resolvedModuleId).toList(),
+            interfaceHash, capabilityRegistryHash,
+            ContainerClaimingSeam.E6_GATE_ACTIVATION);
+        Optional<CompilerDiagnostic> validation = SemanticIrValidator.validate(unit,
+            new SemanticIrValidator.ComparisonFacts(interfaceHash,
+                SemanticProfile.DEAL_V1_2_INT32, capabilityRegistryHash));
+        if (validation.isPresent()) {
+            return new CreationRuleCoreResult(new LoweringResult(null, null,
+                List.of(validation.get())),
+                lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
+                lowerer.proofFacts(), lowerer.creationRuleFacts());
+        }
+        Optional<CompilerDiagnostic> chainShape = AddressChainProtocol.validate(unit);
+        if (chainShape.isPresent()) {
+            return new CreationRuleCoreResult(new LoweringResult(null, null,
+                List.of(chainShape.get())),
+                lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
+                lowerer.proofFacts(), lowerer.creationRuleFacts());
+        }
+        return new CreationRuleCoreResult(
+            new LoweringResult(unit, lowerer.bodyTable(), List.of()),
+            lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
+            lowerer.proofFacts(), lowerer.creationRuleFacts());
+    }
+
     // =========================================================================
     // The per-module lowering session (the arms)
     // =========================================================================
@@ -1929,6 +2104,29 @@ public final class SemanticLowerer {
          */
         private final BindingImmutabilityAnalysis assignmentAnalysis =
             new BindingImmutabilityAnalysis();
+        /**
+         * The creation-rule-analysis mode flag (ISSUE-0449 creation-rule
+         * child): {@code true} exactly when the session was created by
+         * {@link SemanticLowerer#lowerModuleCreationRuleCore} — the
+         * closed creation-rule classification (B6) records one
+         * {@link AdapterCreationRule.PositionClassification} per
+         * function-typed position in walk order, the fact surface
+         * available through {@link #creationRuleFacts()}. The analysis
+         * is purely observational: it emits zero ops, changes no op of
+         * the shared walk, and the produced unit therefore contains
+         * zero {@code FUNCTION_ADAPT} ops (mode selection, payload
+         * construction, and emission are the shape-map child's).
+         * {@code false} (the default in every other mode) preserves the
+         * other walks' behavior byte-for-byte.
+         */
+        private final boolean creationRuleAnalysis;
+        /**
+         * The recorded creation-rule position classifications in walk
+         * order (creation-rule-analysis mode): the fact surface backing
+         * {@link #creationRuleFacts()}.
+         */
+        private final List<AdapterCreationRule.PositionClassification>
+            creationClassifications = new ArrayList<>();
         /**
          * The produced recursive groups' member facts in creation order
          * (group-core mode): the fact surface backing
@@ -2229,6 +2427,48 @@ public final class SemanticLowerer {
                              SemanticIdAllocator ids, boolean bindingCore,
                              boolean closureCore, boolean groupCore,
                              boolean proofAnalysis, Span programSpan) {
+            this(module, sourceId, checks, ids, bindingCore, closureCore, groupCore,
+                proofAnalysis, false, programSpan);
+        }
+
+        /**
+         * Creates one lowering session with the binding-core, closure-core,
+         * group-core, proof-analysis, and creation-rule-analysis mode
+         * flags (ISSUE-0444 binding-core child; ISSUE-0445 closure child;
+         * ISSUE-0446 recursive-group child; ISSUE-0448 proof child;
+         * ISSUE-0449 creation-rule child). Creation-rule-analysis mode
+         * rides on top of the walk flags (the creation-rule entry point
+         * passes all five): it classifies every function-typed position
+         * the walk reaches by checker facts per the closed B6 rule and
+         * records the classifications; it emits zero ops and changes no
+         * emitted op of the shared walk.
+         *
+         * @param module              the module identity; non-null
+         * @param sourceId            the stable source identity carried on
+         *                            every op's origin; non-null
+         * @param checks              the module's checked facts (read-only);
+         *                            non-null
+         * @param ids                 the project's allocator in dependency
+         *                            order; non-null
+         * @param bindingCore         {@code true} to activate the binding
+         *                            walk's arms and environment
+         * @param closureCore         {@code true} to activate the closure
+         *                            arms on top of the binding walk
+         * @param groupCore           {@code true} to activate the group arms
+         *                            on top of the closure walk
+         * @param proofAnalysis       {@code true} to activate the
+         *                            conservative assignment analysis on
+         *                            top of the walk
+         * @param creationRuleAnalysis {@code true} to activate the closed
+         *                            creation-rule classification on top
+         *                            of the walk
+         * @param programSpan         the checked program's span; non-null
+         */
+        public ModuleLowerer(ModuleId module, String sourceId, CheckResult checks,
+                             SemanticIdAllocator ids, boolean bindingCore,
+                             boolean closureCore, boolean groupCore,
+                             boolean proofAnalysis, boolean creationRuleAnalysis,
+                             Span programSpan) {
             this.module = Objects.requireNonNull(module, "module must not be null");
             this.sourceId = Objects.requireNonNull(sourceId, "sourceId must not be null");
             this.checks = Objects.requireNonNull(checks, "checks must not be null");
@@ -2237,6 +2477,7 @@ public final class SemanticLowerer {
             this.closureCore = closureCore && bindingCore;
             this.groupCore = groupCore && this.closureCore;
             this.proofAnalysis = proofAnalysis;
+            this.creationRuleAnalysis = creationRuleAnalysis;
             this.programSpan = Objects.requireNonNull(programSpan,
                 "programSpan must not be null");
             this.moduleInitBlock = ids.nextBlockId(module, nextOrdinal++, 0);
@@ -2623,6 +2864,23 @@ public final class SemanticLowerer {
         }
 
         /**
+         * The creation-rule walk's complete classification fact surface
+         * (creation-rule-analysis mode): one
+         * {@link AdapterCreationRule.PositionClassification} per
+         * classified function-typed position in walk order (partial
+         * when the walk failed mid-way; the empty surface outside
+         * creation-rule-analysis mode).
+         *
+         * @return the classification fact surface; non-null
+         */
+        public AdapterCreationRule.CreationRuleFacts creationRuleFacts() {
+            if (!creationRuleAnalysis) {
+                return AdapterCreationRule.CreationRuleFacts.empty();
+            }
+            return new AdapterCreationRule.CreationRuleFacts(creationClassifications);
+        }
+
+        /**
          * Seeds the {@code int}/{@code number} intrinsic bindings at
          * module-init top (B1): exactly the root
          * {@code Symbol.IntrinsicSymbol} bindings of those two names
@@ -2900,12 +3158,13 @@ public final class SemanticLowerer {
                     cellKinds.cellKindOf(incarnation), INITIAL_LOOP_GENERATION),
                 decl.span(), FailurePolicyId.NO_DEAL_FAILURE);
             ValueId value = lowerExpression(decl.initializer());
+            OpId declarationBoundary = null;
             if (decl.typeAnnotation().isPresent()) {
                 RuntimeDescriptor descriptor =
                     ContainerPayloadDescriptors.resultDescriptorOf(declaredTypeOf(decl));
                 FailurePolicyId boundaryPolicy = descriptor instanceof RuntimeDescriptor.Func
                     ? FailurePolicyId.FUNCTION_SIGNATURE : FailurePolicyId.TYPE_DESCRIPTOR;
-                emitNullOp(SemanticOpKind.BOUNDARY,
+                declarationBoundary = emitNullOp(SemanticOpKind.BOUNDARY,
                     new KindPayload.BoundaryPayload(BoundaryKind.VARIABLE_DECLARATION,
                         descriptor, value,
                         new BoundaryRealization.RuntimeValidation(
@@ -2918,9 +3177,145 @@ public final class SemanticLowerer {
                 // identity; R-FUNCTION-BINDING holds by construction).
                 functionIdentity.put(incarnation, value);
             }
-            emitUserNullOp(SemanticOpKind.BINDING_INIT,
+            OpId initOp = emitUserNullOp(SemanticOpKind.BINDING_INIT,
                 new KindPayload.BindingInitPayload(binding, INITIAL_LOOP_GENERATION, value),
                 decl.span(), FailurePolicyId.NO_DEAL_FAILURE);
+            if (creationRuleAnalysis) {
+                classifyVarDeclPosition(decl, value, declarationBoundary, initOp);
+            }
+        }
+
+        /**
+         * The creation-rule classification of one function-typed
+         * {@code let} declaration position (B6; creation-rule-analysis
+         * mode): the closed variable-position classification over the
+         * initializer's checked type (the source signature) and the
+         * declared/inferred binding type (the target signature), the
+         * recorded proof fact of an identifier binding source (B7), the
+         * prepared wiring point — the position's own
+         * {@code VARIABLE_DECLARATION} boundary op for annotated
+         * declarations, the {@code BINDING_INIT} op for inferred
+         * declarations (no boundary exists there) — and the registry
+         * child's producer facts of a host/external function-value
+         * source (T4). The classification emits zero ops and changes
+         * nothing: exact positions store directly (this child's
+         * production), adapt positions record exactly one candidate for
+         * the shape-map child, and the produced unit contains zero
+         * {@code FUNCTION_ADAPT} ops.
+         */
+        private void classifyVarDeclPosition(VariableDeclaration decl, ValueId value,
+                                             OpId declarationBoundary, OpId initOp) {
+            Type targetType = declaredTypeOf(decl);
+            if (!(targetType instanceof Type.Func)) {
+                // Not a function-typed position — the creation rule's
+                // window (the ordinary flow's descriptor-kind rule is
+                // the boundary machinery's).
+                return;
+            }
+            Type sourceType = checkedType(decl.initializer());
+            Optional<BindingImmutabilityProof> proof = sourceProofOf(decl.initializer());
+            Optional<FunctionBindingRegistry.FunctionValueMaterialization> producerFacts =
+                sourceProducerFactsOf(value);
+            AdapterCreationRule.WiringPoint wiringPoint = declarationBoundary != null
+                ? new AdapterCreationRule.WiringPoint(declarationBoundary,
+                    AdapterCreationRule.WiringTargetKind.VARIABLE_DECLARATION_BOUNDARY)
+                : new AdapterCreationRule.WiringPoint(initOp,
+                    AdapterCreationRule.WiringTargetKind.BINDING_INIT);
+            creationClassifications.add(AdapterCreationRule.classifyVariablePosition(
+                BoundaryKind.VARIABLE_DECLARATION, sourceType, targetType, proof,
+                wiringPoint, producerFacts));
+        }
+
+        /**
+         * The creation-rule classification of one function-typed
+         * variable-assignment position (B6; creation-rule-analysis
+         * mode): the closed variable-position classification over the
+         * RHS's checked type (the source signature) and the target
+         * binding's declared type (the target signature), the recorded
+         * proof fact of an identifier binding source (B7), the prepared
+         * wiring point (the position's own {@code VARIABLE_ASSIGNMENT}
+         * boundary op), and the registry child's producer facts of a
+         * host/external function-value source (T4). Zero emission: the
+         * walk's {@code [valueOp, boundaryOp, commitOp]} chain is
+         * unchanged and the unit contains zero {@code FUNCTION_ADAPT}
+         * ops.
+         */
+        private void classifyVariableAssignPosition(AssignmentExpr assignment,
+                                                    IdentifierExpr target, ValueId value,
+                                                    OpId boundaryOp) {
+            Type targetType = checkedType(target);
+            if (!(targetType instanceof Type.Func)) {
+                // Not a function-typed position — the creation rule's
+                // window.
+                return;
+            }
+            Type sourceType = checkedType(assignment.value());
+            Optional<BindingImmutabilityProof> proof = sourceProofOf(assignment.value());
+            Optional<FunctionBindingRegistry.FunctionValueMaterialization> producerFacts =
+                sourceProducerFactsOf(value);
+            creationClassifications.add(AdapterCreationRule.classifyVariablePosition(
+                BoundaryKind.VARIABLE_ASSIGNMENT, sourceType, targetType, proof,
+                new AdapterCreationRule.WiringPoint(boundaryOp,
+                    AdapterCreationRule.WiringTargetKind.VARIABLE_ASSIGNMENT_BOUNDARY),
+                producerFacts));
+        }
+
+        /**
+         * The closed typed-boundary-position classification record (B6;
+         * creation-rule-analysis mode): a boundary position never
+         * adapts — the classifier records the {@code BOUNDARY_DIRECT}
+         * classification and the recorded E8010
+         * {@code FUNCTION_SIGNATURE} expectation for a mismatched
+         * function-typed pair; the boundary op, its function-descriptor
+         * cell, and the executed check are E4's machinery. The walk's
+         * direct value flow into the position's boundary slot is the
+         * wiring E4's boundary producer consumes.
+         */
+        private void recordBoundaryClassification(BoundaryKind kind, Type sourceType,
+                                                  Type targetType) {
+            creationClassifications.add(
+                AdapterCreationRule.classifyBoundaryPosition(kind, sourceType, targetType));
+        }
+
+        /**
+         * The recorded proof fact of an identifier binding source (B7):
+         * present exactly when the source is an {@code IdentifierExpr}
+         * whose dominant incarnation at the position carries the
+         * conservative {@code BindingImmutabilityProof} — the fact the
+         * shape-map child's VALUE arm consumes (an unproven binding is
+         * the SHARED_CELL arm's). Non-identifier sources carry no proof
+         * fact (materialized operands and member reads are the
+         * shape-map child's VALUE/REEVALUATE_THUNK arms — the closed
+         * map's decision, not this child's).
+         */
+        private Optional<BindingImmutabilityProof> sourceProofOf(ExpressionNode source) {
+            if (!(source instanceof IdentifierExpr identifier)) {
+                return Optional.empty();
+            }
+            FrameResolution resolution = resolveFrame(identifier.name());
+            if (resolution == null) {
+                return Optional.empty();
+            }
+            return proofFacts().proofOf(resolution.entry().cell().id,
+                resolution.entry().incarnation().generation());
+        }
+
+        /**
+         * The registry child's producer facts of the source value's
+         * producing allocation (the T4 host/external materialization
+         * seam): present exactly when the source's allocation identity
+         * has a recorded host/external function-value materialization —
+         * the fact the adaptation candidate carries for the shape-map
+         * child's import-read arm (a host/external import read is a
+         * non-identifier member-read source → REEVALUATE_THUNK, B7; the
+         * mode decision is the shape-map child's). Loads, reads,
+         * argument passing, and returns preserve the allocation
+         * identity, so the identity lookup resolves the producing
+         * site's classification.
+         */
+        private Optional<FunctionBindingRegistry.FunctionValueMaterialization>
+                sourceProducerFactsOf(ValueId value) {
+            return registry.materializationOf(new FunctionAllocationIdentity(value.id()));
         }
 
         /**
@@ -4541,6 +4936,9 @@ public final class SemanticLowerer {
                 new KindPayload.AssignPayload(AssignTargetKind.VARIABLE,
                     List.of(valueOp, boundaryOp, commitOp)),
                 value, targetDescriptor, FailurePolicyId.NO_DEAL_FAILURE, origin));
+            if (creationRuleAnalysis) {
+                classifyVariableAssignPosition(assignment, target, value, boundaryOp);
+            }
             return value;
         }
 
@@ -4724,6 +5122,17 @@ public final class SemanticLowerer {
                     List.of(containerOp, keyOp, valueOp, lengthOp, normalizeOp, boundaryOp,
                         commitOp)),
                 value, elementDescriptor, FailurePolicyId.NO_DEAL_FAILURE, origin));
+            if (creationRuleAnalysis && elementDescriptor instanceof RuntimeDescriptor.Func) {
+                // A function-typed array element position: a typed
+                // boundary position never adapts (B6) — the walk's
+                // direct value flow into the ARRAY_ELEMENT_ASSIGNMENT
+                // boundary slot is the wiring E4's boundary producer
+                // consumes; the classifier records the closed
+                // classification (and the E8010 expectation for a
+                // mismatched pair — the executed check is E4's).
+                recordBoundaryClassification(BoundaryKind.ARRAY_ELEMENT_ASSIGNMENT,
+                    checkedType(assignment.value()), arrayType.element());
+            }
             return value;
         }
 
@@ -5734,6 +6143,18 @@ public final class SemanticLowerer {
             for (SemanticOp child : children) {
                 emit(child);
             }
+            if (creationRuleAnalysis && elementDescriptor instanceof RuntimeDescriptor.Func) {
+                // Function-typed array literal element positions: typed
+                // boundary positions never adapt (B6) — the direct
+                // value flow into each ARRAY_LITERAL_ELEMENT boundary
+                // slot is the wiring E4's boundary producer consumes;
+                // the classifier records the closed classifications in
+                // element order.
+                for (int i = 0; i < literal.elements().size(); i++) {
+                    recordBoundaryClassification(BoundaryKind.ARRAY_LITERAL_ELEMENT,
+                        checkedType(literal.elements().get(i)), arrayType.element());
+                }
+            }
             return result;
         }
 
@@ -5843,6 +6264,17 @@ public final class SemanticLowerer {
                     new BoundaryRealization.RuntimeValidation(
                         CANONICAL_RUNTIME_VALIDATION_ID)),
                 access.span(), childPolicy, SourceOriginKind.SYNTHETIC, opId);
+            if (creationRuleAnalysis && resultType instanceof RuntimeDescriptor.Func) {
+                // A function-typed contextual table read: a typed
+                // boundary position never adapts (B6) — the read's
+                // direct result flow into the CONTEXTUAL_TABLE_READ
+                // boundary slot is the wiring E4's boundary producer
+                // consumes (the read publishes the contextual
+                // descriptor itself, so the classifier records the
+                // exact-direct classification).
+                recordBoundaryClassification(BoundaryKind.CONTEXTUAL_TABLE_READ,
+                    contextualType, contextualType);
+            }
             return result;
         }
 
