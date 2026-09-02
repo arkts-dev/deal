@@ -15,16 +15,17 @@ import java.util.Objects;
  *
  * <ol>
  *   <li><b>Backend selection</b> (owned here): validated CLI alias
- *       {@code lua|luajit|jvm} &gt; validated manifest value
- *       {@code luajit|jvm} &gt; default {@code luajit}. The D1 step-3 CLI
- *       validity predicate (trim + lowercase + membership in the three
- *       aliases) runs in ProjectLocator; this resolver canonicalizes the
- *       validated alias ({@code lua} → {@code luajit}) as part of the
+ *       {@code lua|luajit|jvm|js} &gt; validated manifest value
+ *       {@code luajit|jvm|js} &gt; default {@code luajit}. The D1 step-3
+ *       CLI validity predicate (trim + lowercase + membership in the
+ *       four aliases) runs in ProjectLocator; this resolver canonicalizes
+ *       the validated alias ({@code lua} → {@code luajit}) as part of the
  *       selection rule.</li>
  *   <li><b>Output precedence and classification</b> (owned here):
  *       validated CLI output &gt; validated manifest output &gt; default
- *       {@code <manifestDirectory>/build/lua} or
- *       {@code <manifestDirectory>/build/jvm} according to the effective
+ *       {@code <manifestDirectory>/build/lua},
+ *       {@code <manifestDirectory>/build/jvm}, or
+ *       {@code <manifestDirectory>/build/js} according to the effective
  *       backend. A leading {@code /} is {@link Kind#ABSOLUTE_PATH} under
  *       both sources; otherwise a MANIFEST-source value resolves from the
  *       manifest directory and a CLI-source value resolves from the
@@ -62,14 +63,14 @@ import java.util.Objects;
  *
  * <p>Input contract (validated values only):
  * <ul>
- *   <li>{@code manifestBackend}: {@code "luajit"} or {@code "jvm"} as
- *       validated by D2 (absence is already defaulted to
+ *   <li>{@code manifestBackend}: {@code "luajit"}, {@code "jvm"}, or
+ *       {@code "js"} as validated by D2 (absence is already defaulted to
  *       {@code "luajit"} by the parser);</li>
  *   <li>{@code manifestOutput}: the D2-validated output value, or null
  *       when the member is absent;</li>
  *   <li>{@code cliBackendAlias}: the D1 step-3-validated alias
- *       {@code "lua"}, {@code "luajit"}, or {@code "jvm"} (post-trim,
- *       post-lowercase), or null when absent;</li>
+ *       {@code "lua"}, {@code "luajit"}, {@code "jvm"}, or {@code "js"}
+ *       (post-trim, post-lowercase), or null when absent;</li>
  *   <li>{@code cliOutput}: the D1 step-3-validated, trimmed CLI output
  *       string, or null when absent (an empty/whitespace-only override is
  *       already a CliDiagnostic in ProjectLocator);</li>
@@ -92,11 +93,17 @@ public final class OutputConfigResolver {
     /** The canonical JVM backend name. */
     private static final String BACKEND_JVM = "jvm";
 
+    /** The canonical JS backend name. */
+    private static final String BACKEND_JS = "js";
+
     /** The pinned default output text for the LuaJIT backend. */
     private static final String DEFAULT_OUTPUT_LUAJIT = "build/lua";
 
     /** The pinned default output text for the JVM backend. */
     private static final String DEFAULT_OUTPUT_JVM = "build/jvm";
+
+    /** The pinned default output text for the JS backend. */
+    private static final String DEFAULT_OUTPUT_JS = "build/js";
 
     // =========================================================================
     // Pinned shapes (D3 / parent D11)
@@ -134,7 +141,8 @@ public final class OutputConfigResolver {
      * @param decodedText            the winning decoded text: the manifest
      *                               spelling, the trimmed CLI override, or
      *                               the backend-dependent default
-     *                               {@code build/lua}/{@code build/jvm}
+     *                               {@code build/lua}/{@code build/jvm}/
+     *                               {@code build/js}
      * @param absoluteNormalizedPath the protected prefix-resolved
      *                               absolute path (D4 output row:
      *                               longest-existing-directory-prefix
@@ -204,14 +212,15 @@ public final class OutputConfigResolver {
      * effective output from validated values.
      *
      * @param manifestBackend   the D2-validated manifest backend
-     *                          {@code "luajit"} | {@code "jvm"} (null is
-     *                          treated as the absent-field default
-     *                          {@code "luajit"})
+     *                          {@code "luajit"} | {@code "jvm"} |
+     *                          {@code "js"} (null is treated as the
+     *                          absent-field default {@code "luajit"})
      * @param manifestOutput    the D2-validated manifest output value, or
      *                          null when absent
      * @param cliBackendAlias   the D1 step-3-validated CLI backend alias
      *                          {@code "lua"} | {@code "luajit"} |
-     *                          {@code "jvm"}, or null when absent
+     *                          {@code "jvm"} | {@code "js"}, or null when
+     *                          absent
      * @param cliOutput         the D1 step-3-validated, trimmed CLI
      *                          output string, or null when absent
      * @param manifestDirectory the manifest's directory (non-null;
@@ -253,9 +262,13 @@ public final class OutputConfigResolver {
             base = manifestDirectory;
         } else {
             source = Source.MANIFEST;
-            decodedText = BACKEND_JVM.equals(effectiveBackend)
-                ? DEFAULT_OUTPUT_JVM
-                : DEFAULT_OUTPUT_LUAJIT;
+            if (BACKEND_JVM.equals(effectiveBackend)) {
+                decodedText = DEFAULT_OUTPUT_JVM;
+            } else if (BACKEND_JS.equals(effectiveBackend)) {
+                decodedText = DEFAULT_OUTPUT_JS;
+            } else {
+                decodedText = DEFAULT_OUTPUT_LUAJIT;
+            }
             sourceRange = null;
             base = manifestDirectory;
         }
@@ -301,6 +314,7 @@ public final class OutputConfigResolver {
             return switch (cliBackendAlias) {
                 case "lua", "luajit" -> BACKEND_LUAJIT;
                 case "jvm" -> BACKEND_JVM;
+                case "js" -> BACKEND_JS;
                 default -> throw new IllegalArgumentException(
                     "CLI backend alias did not pass the D1 step-3 validity predicate: '"
                         + cliBackendAlias + "'");
@@ -310,7 +324,7 @@ public final class OutputConfigResolver {
             return BACKEND_LUAJIT;
         }
         return switch (manifestBackend) {
-            case "luajit", "jvm" -> manifestBackend;
+            case "luajit", "jvm", "js" -> manifestBackend;
             default -> throw new IllegalArgumentException(
                 "manifest backend did not pass the D2 schema validation: '"
                     + manifestBackend + "'");

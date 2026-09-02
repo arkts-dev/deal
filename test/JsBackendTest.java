@@ -25,6 +25,7 @@ import deal.module.CompilationOrchestrator;
 import deal.module.ExportExtractor;
 import deal.module.ModuleIdentityResolver;
 import deal.module.ModuleShapeValidator;
+import deal.project.ProjectContext;
 import deal.project.ProjectLocator;
 import deal.project.StrictManifestParser;
 import deal.parser.ParseResult;
@@ -32,6 +33,7 @@ import deal.parser.Parser;
 import deal.semantic.CapabilityRegistry;
 import deal.semantic.CompilerInvocation;
 import deal.semantic.CompilerProfileProvider;
+import deal.semantic.ReleaseConfiguration;
 import deal.semantic.ir.ReleaseState;
 import deal.semantic.ir.SemanticProfile;
 import deal.types.Type;
@@ -693,19 +695,27 @@ public class JsBackendTest {
     }
 
     /**
-     * Strict backend-field pins for the retired tolerant JS reader
-     * (ISSUE-0269): {@code "js"} is not part of the strict v1.2 backend
-     * set ({@code "luajit"} | {@code "jvm"}) — a manifest value of
-     * {@code js} (or any case/whitespace variant, or an unknown value)
-     * is exactly one E2010 at the backend value range; the JS backend
-     * remains reachable only through the test-only isolated-phase
-     * orchestrator path until the skeleton epic extends the schema.
+     * Strict backend-field pins (ISSUE-0169 remediation, ISSUE-0471):
+     * {@code "js"} is part of the strict v1.2 backend set
+     * ({@code "luajit"} | {@code "jvm"} | {@code "js"}) — a manifest
+     * value of {@code "js"} parses cleanly and publishes the backend,
+     * while case/whitespace variants and unknown values stay exactly
+     * one E2010 at the backend value range naming the supported set.
      */
     private static void testDealConfigBackendJs() {
-        System.out.println("-- Strict manifest backend field: js is E2010 --");
+        System.out.println("-- Strict manifest backend field: js accepted --");
+
+        StrictManifestParser.StrictManifestParseResult ok =
+            StrictManifestParser.parse("deal.json",
+                "{\"languageVersion\": \"1.2\", \"backend\": \"js\"}");
+        check(ok.manifest() != null && ok.failure() == null,
+            "deal.json backend js parses strictly: " + ok.failure());
+        if (ok.manifest() != null) {
+            check("js".equals(ok.manifest().backend()),
+                "the strict manifest publishes backend 'js'");
+        }
 
         for (String bad : new String[] {
-                "{\"languageVersion\": \"1.2\", \"backend\": \"js\"}",
                 "{\"languageVersion\": \"1.2\", \"backend\": \"  Js \"}",
                 "{\"languageVersion\": \"1.2\", \"backend\": \"wasm\"}"}) {
             StrictManifestParser.StrictManifestParseResult r =
@@ -716,61 +726,61 @@ public class JsBackendTest {
                 CompilerDiagnostic d = r.failure();
                 check("E2010".equals(d.code()) && "error".equals(d.severity()),
                     "unsupported backend is an E2010 error: " + d);
-                check(d.message().contains("luajit") && d.message().contains("jvm"),
-                    "error message names supported backends: " + d.message());
+                check(d.message().contains("luajit") && d.message().contains("jvm")
+                        && d.message().contains("js"),
+                    "error message names supported backends incl. js: "
+                        + d.message());
             }
         }
     }
 
     /**
-     * The CLI {@code --backend js} path with the DEFAULT output
-     * {@code build/js}: a real {@code java -cp build deal.Main compile
-     * <entry> --backend js} subprocess with the working directory set to
-     * a temp project root, so the CLI's relative default output lands at
-     * {@code <cwd>/build/js} (the in-process {@code user.dir} cannot be
-     * changed after the default filesystem caches its default directory).
-     */
-    /**
-     * ISSUE-0269 re-pin: {@code --backend js} is not a valid CLI backend
-     * alias under the strict backend set ({@code lua|luajit|jvm}) — the
-     * CLI rejects it with a deterministic CliDiagnostic (exit 1, naming
-     * the supported aliases), never E2010 and never a compilation. The
-     * JS backend stays reachable through the test-only isolated-phase
-     * orchestrator path until the skeleton epic extends the schema.
+     * The production CLI {@code --backend js} path with the DEFAULT
+     * output {@code build/js} (ISSUE-0169 remediation, ISSUE-0471): a
+     * real {@code java -cp build deal.Main compile <entry> --backend
+     * js} subprocess over a temp project whose manifest carries no
+     * backend — the CLI alias selects {@link Backend#JS} through the
+     * production locator, the default output is the manifest-relative
+     * {@code build/js}, and the compilation deploys the runtime and
+     * stdlib copies. The subprocess working directory is the repository
+     * root (the deployment copies fall back to the repo-root
+     * {@code deal/runtime.js} and {@code std/*.js} sources) while the
+     * entry path is absolute, so the backend-dependent default output
+     * still lands at {@code <manifestDirectory>/build/js}.
      */
     private static void testCliBackendFlagJsDefaultOutput() throws Exception {
-        System.out.println("-- CLI --backend js: CliDiagnostic (strict alias set) --");
+        System.out.println("-- CLI --backend js: production alias, default build/js --");
 
         Path proj = Files.createTempDirectory("jstest_cli_");
         Files.createDirectories(proj.resolve("src"));
-        // A valid strict manifest so the override — not the manifest —
-        // is the failing input (an override is consulted only after the
-        // manifest parsed).
+        // A valid strict manifest without a backend field: the CLI
+        // alias is the backend-selection authority.
         Files.writeString(proj.resolve("deal.json"),
             "{\"languageVersion\": \"1.2\", \"moduleRoots\": [\"src\"]}\n",
             StandardCharsets.UTF_8);
-        Files.writeString(proj.resolve("src/cli_js_main.deal"), """
+        Path entry = proj.resolve("src/cli_js_main.deal");
+        Files.writeString(entry, """
             export function main(): null { return null; }
             export function run(): int { return 1; }
             """);
 
         String buildCp = Path.of("build").toAbsolutePath().toString();
         ProcessBuilder pb = new ProcessBuilder("java", "-cp", buildCp,
-            "deal.Main", "compile", "src/cli_js_main.deal", "--backend", "js");
-        pb.directory(proj.toFile());
+            "deal.Main", "compile", entry.toString(), "--backend", "js");
+        pb.directory(Path.of("").toAbsolutePath().normalize().toFile());
         pb.redirectErrorStream(true);
         Process p = pb.start();
         String out = new String(p.getInputStream().readAllBytes(),
             StandardCharsets.UTF_8);
         int rc = p.waitFor();
-        check(rc == 1, "CLI --backend js exits 1: " + out);
-        check(out.contains("unknown backend alias 'js'")
-                && out.contains("lua, luajit, jvm"),
-            "the js alias is a CliDiagnostic naming the supported aliases: " + out);
+        check(rc == 0, "CLI --backend js compiles through the production"
+            + " path (exit 0): " + out);
+        check(Files.isRegularFile(proj.resolve("build/js/cli_js_main.js")),
+            "the default build/js output holds the emitted entry artifact");
+        check(Files.isRegularFile(proj.resolve("build/js/deal/runtime.js")),
+            "the default build/js output deploys deal/runtime.js");
         check(!out.contains("E2010"),
-            "the invalid CLI alias is not an E2010: " + out);
-        check(!Files.exists(proj.resolve("build/js")),
-            "no output directory or artifact exists for the rejected alias");
+            "no E2010 for the production js alias: " + out);
 
         deleteDir(proj);
     }
@@ -1203,11 +1213,11 @@ public class JsBackendTest {
         Path outputDir = tmpDir.resolve("xjson_proj/build/js");
         List<Path> roots = List.of(tmpDir.resolve("xjson_proj/src").toAbsolutePath());
 
-        // ISSUE-0269: the strict v1.2 schema rejects backend "js"
-        // (E2010), so the JS arm runs through the test-only
-        // isolated-phase orchestrator path with the legacy roots inputs
-        // (the injected deal.json is not consulted; the retired
-        // DealConfig reader is gone).
+        // Test-only isolated-phase orchestrator path with the legacy
+        // roots inputs (the injected deal.json is not consulted; the
+        // production manifest/CLI path is pinned separately by
+        // testCliBackendFlagJsDefaultOutput / testCliDefaultOutputBuildJs
+        // / testDealJsonBackendAcceptance).
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entryFile, outputDir, false, false, false, Backend.JS,
             (Map<String, String>) null, roots,
@@ -2436,18 +2446,19 @@ public class JsBackendTest {
         List<Path> roots = List.of(tmpDir.resolve("js_int32_proj/src")
             .toAbsolutePath());
 
-        // ISSUE-0269: the strict v1.2 schema rejects backend "js"
-        // (E2010 — the retired tolerant DealConfig reader accepted it),
-        // and the JS arm runs through the test-only isolated-phase
-        // orchestrator path with the legacy roots inputs.
+        // The strict v1.2 schema accepts backend "js" (ISSUE-0169
+        // remediation, ISSUE-0471); this plumb still drives the
+        // isolated-phase orchestrator path because the profile-selected
+        // invocation (V1_2_ACTIVE → DEAL_V1_2_INT32) is test-only.
         StrictManifestParser.StrictManifestParseResult strictJs =
             StrictManifestParser.parse("deal.json",
                 "{\"languageVersion\": \"1.2\", \"backend\": \"js\"}");
-        check(strictJs.manifest() == null && strictJs.failure() != null,
-            "int32 plumb deal.json backend js is strict E2010");
-        if (strictJs.failure() != null) {
-            check("E2010".equals(strictJs.failure().code()),
-                "strict E2010 code: " + strictJs.failure().code());
+        check(strictJs.manifest() != null && strictJs.failure() == null,
+            "int32 plumb deal.json backend js parses strictly: "
+                + strictJs.failure());
+        if (strictJs.manifest() != null) {
+            check("js".equals(strictJs.manifest().backend()),
+                "int32 plumb strict manifest publishes backend js");
         }
 
         // The release-owned invocation the plumb must carry: PUBLIC_BUILD
@@ -3482,9 +3493,9 @@ public class JsBackendTest {
         Path outputDir = tmpDir.resolve("bytesx_proj/build/js");
         List<Path> roots = List.of(tmpDir.resolve("bytesx_proj/src").toAbsolutePath());
 
-        // ISSUE-0269: the JS arm runs through the test-only
-        // isolated-phase orchestrator path (backend "js" is outside the
-        // strict v1.2 schema; the retired DealConfig reader is gone).
+        // Test-only isolated-phase orchestrator path (the production
+        // manifest/CLI path is pinned separately by the
+        // testCli*/testDealJson acceptance tests).
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entryFile, outputDir, false, false, false, Backend.JS,
             (Map<String, String>) null, roots,
@@ -4751,10 +4762,11 @@ public class JsBackendTest {
         Path outputDir = tmpDir.resolve("js_proj/build/js");
         List<Path> roots = List.of(tmpDir.resolve("js_proj/src").toAbsolutePath());
 
-        // ISSUE-0269: the JS backend stays outside the strict manifest
-        // backend set ({@code "js"} is E2010), so the isolated-phase
-        // orchestrator path drives Backend.JS directly with the legacy
-        // roots/stdlib inputs.
+        // Test-only isolated-phase orchestrator path drives Backend.JS
+        // directly with the legacy roots/stdlib inputs (the production
+        // manifest/CLI path is pinned separately by
+        // testCliBackendFlagJsDefaultOutput / testCliDefaultOutputBuildJs
+        // / testDealJsonBackendAcceptance).
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entryFile, outputDir, false, false, false, Backend.JS,
             (Map<String, String>) null, roots,
@@ -4829,8 +4841,8 @@ public class JsBackendTest {
         Path entryFile = tmpDir.resolve("nest_proj/src/app/main.deal").toAbsolutePath();
         Path outputDir = tmpDir.resolve("nest_proj/build/js");
         List<Path> roots = List.of(tmpDir.resolve("nest_proj/src").toAbsolutePath());
-        // ISSUE-0269: isolated-phase Backend.JS path (js stays outside
-        // the strict backend set).
+        // Test-only isolated-phase Backend.JS path (the production
+        // manifest/CLI path is pinned separately).
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entryFile, outputDir, false, false, false, Backend.JS,
             (Map<String, String>) null, roots,
@@ -4910,8 +4922,8 @@ public class JsBackendTest {
         Path entryFile = tmpDir.resolve("rej_proj/src/rej_main.deal").toAbsolutePath();
         Path outputDir = tmpDir.resolve("rej_proj/build/js");
         List<Path> roots = List.of(tmpDir.resolve("rej_proj/src").toAbsolutePath());
-        // ISSUE-0269: isolated-phase Backend.JS path (js stays outside
-        // the strict backend set).
+        // Test-only isolated-phase Backend.JS path (the production
+        // manifest/CLI path is pinned separately).
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entryFile, outputDir, false, false, false, Backend.JS,
             (Map<String, String>) null, roots,
@@ -4949,10 +4961,15 @@ public class JsBackendTest {
             "unknown backend names are rejected");
     }
 
-    /** deal.json "backend": "js" is E2010 under the strict schema
-     * (the JS skeleton backend stays outside the strict backend set
-     * until its epic extends the schema; the isolated-phase Backend.JS
-     * orchestrator path remains the test-only driver). */
+    /**
+     * deal.json {@code "backend": "js"} selects the JS backend through
+     * the production locator (ISSUE-0169 remediation, ISSUE-0471): the
+     * strict manifest parses, the published context carries the
+     * effective backend {@code "js"} and the backend-dependent default
+     * output {@code build/js} (manifest-relative), and no diagnostic is
+     * produced. An unknown backend stays one E2010 naming the supported
+     * set.
+     */
     private static void testDealJsonBackendAcceptance() throws Exception {
         Path projectDir = null;
         try {
@@ -4965,14 +4982,25 @@ public class JsBackendTest {
                 StandardCharsets.UTF_8);
             ProjectLocator.LocateResult result = ProjectLocator.locate(
                 projectDir.resolve("main.deal").toString(), null);
-            check(result.context() == null && result.e2010() != null,
-                "deal.json with \"backend\": \"js\" fails the strict"
-                    + " locator with E2010");
-            if (result.e2010() != null) {
-                check("E2010".equals(result.e2010().code())
-                        && result.e2010().message().contains("js"),
-                    "the js backend rejection is E2010 naming the value: "
-                        + result.e2010().message());
+            check(result.context() != null && result.e2010() == null
+                    && result.cliDiagnostic() == null,
+                "deal.json with \"backend\": \"js\" locates a context: "
+                    + (result.e2010() != null
+                        ? result.e2010() : result.cliDiagnostic()));
+            if (result.context() != null) {
+                check("js".equals(result.context().backend()),
+                    "the published context's effective backend is \"js\"");
+                check("build/js".equals(
+                        result.context().outputPath().decodedText()),
+                    "the js default output text is build/js");
+                check(result.context().outputPath()
+                            .absoluteNormalizedPath()
+                            .equals(projectDir.toRealPath().toString()
+                                + "/build/js"),
+                    "the js default output resolves from the manifest"
+                        + " directory");
+                check(!Files.exists(projectDir.resolve("build")),
+                    "locate created no output directory");
             }
 
             // An unknown backend stays a configuration error (E2010).
@@ -4992,28 +5020,34 @@ public class JsBackendTest {
     }
 
     /**
-     * ISSUE-0269 re-pin: a manifest {@code "backend": "js"} is E2010
-     * under the strict schema (the JS backend is outside the strict
-     * backend set until the skeleton epic extends it) — the CLI prints
-     * exactly one E2010 through the canonical formatter, exits 1, and
-     * creates no output directory.
+     * Production CLI over a manifest-selected {@code "backend": "js"}
+     * (ISSUE-0169 remediation, ISSUE-0471): {@code deal.Main compile}
+     * with no {@code --backend} flag selects {@link Backend#JS} from
+     * the strict manifest through the production locator, exits 0, and
+     * writes the emitted entry artifact plus the deployed runtime under
+     * the manifest-relative default {@code build/js}. The subprocess
+     * working directory is the repository root (the deployment copies
+     * fall back to the repo-root {@code deal/runtime.js} source) while
+     * the entry path is absolute.
      */
     private static void testCliDefaultOutputBuildJs() throws Exception {
         Path projectDir = null;
         try {
             projectDir = Files.createTempDirectory("deal_js_cli_test_");
             Files.writeString(projectDir.resolve("deal.json"),
-                "{\n  \"languageVersion\": \"1.2\",\n  \"backend\": \"js\"\n}\n",
+                "{\n  \"languageVersion\": \"1.2\",\n  \"backend\": \"js\",\n"
+                    + "  \"moduleRoots\": [\".\"]\n}\n",
                 StandardCharsets.UTF_8);
-            Files.writeString(projectDir.resolve("main.deal"),
+            Path entry = projectDir.resolve("main.deal");
+            Files.writeString(entry,
                 "export function main(): null { return null; }\n",
                 StandardCharsets.UTF_8);
 
             Path buildDir = Path.of("build").toAbsolutePath().normalize();
             Process process = new ProcessBuilder(
                 "java", "-ea", "-cp", buildDir.toString(), "deal.Main",
-                "compile", "main.deal")
-                .directory(projectDir.toFile())
+                "compile", entry.toString())
+                .directory(Path.of("").toAbsolutePath().normalize().toFile())
                 .redirectErrorStream(true)
                 .start();
             String output;
@@ -5026,15 +5060,19 @@ public class JsBackendTest {
                 check(false, "CLI subprocess timed out");
                 return;
             }
-            check(process.exitValue() == 1,
-                "CLI compile with the manifest-selected js backend exits 1: "
+            check(process.exitValue() == 0,
+                "CLI compile with the manifest-selected js backend exits 0: "
                     + output);
-            check(output.contains("E2010") && output.contains("deal.json"),
-                "the js manifest backend is E2010 through the canonical"
-                    + " formatter: " + output);
-            check(!Files.exists(projectDir.resolve("build/js")),
-                "no output directory or artifact exists for the rejected"
-                    + " js manifest backend");
+            check(Files.isRegularFile(projectDir.resolve("build/js/main.js")),
+                "the manifest-selected build/js default holds the emitted"
+                    + " entry artifact");
+            check(Files.isRegularFile(
+                    projectDir.resolve("build/js/deal/runtime.js")),
+                "the manifest-selected build/js default deploys"
+                    + " deal/runtime.js");
+            check(!output.contains("E2010") && !output.contains("E6000"),
+                "no E2010/E6000 for the production js manifest backend: "
+                    + output);
         } finally {
             deleteDir(projectDir);
         }
@@ -5050,26 +5088,46 @@ public class JsBackendTest {
         try {
             projectDir = Files.createTempDirectory("deal_js_deploy_test_");
             Files.writeString(projectDir.resolve("deal.json"),
-                "{\n  \"languageVersion\": \"1.2\",\n  \"backend\": \"js\"\n}\n",
+                "{\n  \"languageVersion\": \"1.2\",\n  \"backend\": \"js\",\n"
+                    + "  \"moduleRoots\": [\".\"]\n}\n",
                 StandardCharsets.UTF_8);
-            Files.writeString(projectDir.resolve("main.deal"),
+            Path entry = projectDir.resolve("main.deal");
+            Files.writeString(entry,
                 "import * as c from \"std/console\";\n\n"
                     + "export function main(): null {\n"
                     + "  c.log(\"deploy\");\n"
                     + "  return null;\n"
                     + "}\n",
                 StandardCharsets.UTF_8);
-            // ISSUE-0269: isolated-phase Backend.JS path (js stays
-            // outside the strict backend set).
-            Path outputRoot = projectDir.resolve("out");
+            // The production locator path (ISSUE-0169 remediation,
+            // ISSUE-0471): the manifest selects Backend.JS, the
+            // context-based orchestrator constructor runs the compile,
+            // and the default output build/js receives the runtime and
+            // stdlib deployment copies.
+            ProjectLocator.LocateResult located = ProjectLocator.locate(
+                entry.toString(), null);
+            check(located.context() != null && located.e2010() == null
+                    && located.cliDiagnostic() == null,
+                "deployment-copies manifest locates a context: "
+                    + (located.e2010() != null
+                        ? located.e2010() : located.cliDiagnostic()));
+            if (located.context() == null) {
+                return;
+            }
+            CompilerInvocation invocation = CompilerProfileProvider.resolve(
+                ReleaseConfiguration.CURRENT_RELEASE_STATE,
+                ReleaseConfiguration.releaseCapabilityRegistry());
             CompilationOrchestrator orchestrator =
-                new CompilationOrchestrator(projectDir.resolve("main.deal"),
-                    outputRoot, false, false, false, Backend.JS,
-                    (Map<String, String>) null, List.of(projectDir),
-                    Path.of("").toAbsolutePath().normalize());
+                new CompilationOrchestrator(located.context(), entry,
+                    false, false, false, false, null, invocation);
             boolean ok = orchestrator.compile();
             check(ok, "JS orchestrator compile succeeds: "
                 + orchestrator.diagnostics());
+            Path outputRoot = Path.of(located.context().outputPath()
+                .absoluteNormalizedPath());
+            check(outputRoot.toString().endsWith("build/js"),
+                "the production default output root is build/js: "
+                    + outputRoot);
             check(Files.isRegularFile(outputRoot.resolve("main.js")),
                 "the entry artifact is emitted");
             check(Files.isRegularFile(
@@ -5098,7 +5156,8 @@ public class JsBackendTest {
         try {
             projectDir = Files.createTempDirectory("deal_js_reject_test_");
             Files.writeString(projectDir.resolve("deal.json"),
-                "{\n  \"languageVersion\": \"1.2\",\n  \"backend\": \"js\"\n}\n",
+                "{\n  \"languageVersion\": \"1.2\",\n  \"backend\": \"js\",\n"
+                    + "  \"moduleRoots\": [\".\"]\n}\n",
                 StandardCharsets.UTF_8);
             // ISSUE-0273 D9 re-key: the E6003 trigger is an import of an
             // extern-C declaration module — the @extern-c file directive
@@ -5107,21 +5166,36 @@ public class JsBackendTest {
             Files.writeString(projectDir.resolve("ffi.d.deal"),
                 "// @extern-c\nexport function cFn(x: int): int;\n",
                 StandardCharsets.UTF_8);
-            Files.writeString(projectDir.resolve("main.deal"),
+            Path entry = projectDir.resolve("main.deal");
+            Files.writeString(entry,
                 "import * as ffi from \"./ffi\";\n\n"
                     + "export function main(): null {\n"
                     + "  let v: int = ffi.cFn(1);\n"
                     + "  return null;\n"
                     + "}\n",
                 StandardCharsets.UTF_8);
-            // ISSUE-0269: isolated-phase Backend.JS path (js stays
-            // outside the strict backend set).
-            Path outputRoot = projectDir.resolve("out");
+            // The production locator path (ISSUE-0169 remediation,
+            // ISSUE-0471): the manifest-selected Backend.JS compile
+            // rejects the @extern-c import with E6003 and writes no
+            // artifact for the rejected module.
+            ProjectLocator.LocateResult located = ProjectLocator.locate(
+                entry.toString(), null);
+            check(located.context() != null && located.e2010() == null
+                    && located.cliDiagnostic() == null,
+                "rejection manifest locates a context: "
+                    + (located.e2010() != null
+                        ? located.e2010() : located.cliDiagnostic()));
+            if (located.context() == null) {
+                return;
+            }
+            CompilerInvocation invocation = CompilerProfileProvider.resolve(
+                ReleaseConfiguration.CURRENT_RELEASE_STATE,
+                ReleaseConfiguration.releaseCapabilityRegistry());
             CompilationOrchestrator orchestrator =
-                new CompilationOrchestrator(projectDir.resolve("main.deal"),
-                    outputRoot, false, false, false, Backend.JS,
-                    (Map<String, String>) null, List.of(projectDir),
-                    Path.of("").toAbsolutePath().normalize());
+                new CompilationOrchestrator(located.context(), entry,
+                    false, false, false, false, null, invocation);
+            Path outputRoot = Path.of(located.context().outputPath()
+                .absoluteNormalizedPath());
             boolean ok = orchestrator.compile();
             check(!ok, "an @extern-c import fails the JS compilation");
             check(orchestrator.diagnostics().stream()

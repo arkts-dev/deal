@@ -407,7 +407,6 @@ public class ModuleSystemTest {
                 "{\"languageVersion\": \"1.2\", \"permissions\": []}",
                 "{\"languageVersion\": \"1.2\", \"backend\": \"wasm\"}",
                 "{\"languageVersion\": \"1.2\", \"backend\": \"lua\"}",
-                "{\"languageVersion\": \"1.2\", \"backend\": \"js\"}",
                 "{\"languageVersion\": \"1.2\", \"externals\": []}",
                 "{\"languageVersion\": \"1.2\", \"moduleRoots\": [\"/absolute\"]}"}) {
             String name = "bad_proj_" + Math.abs(bad.hashCode());
@@ -439,10 +438,12 @@ public class ModuleSystemTest {
         // (6) An invalid CLI backend alias is a CliDiagnostic (exit 1),
         // never E2010.
         String[] badAlias = runCliCapturingErr(new String[] {
-            "compile", minEntry.toString(), "--backend", "js"});
+            "compile", minEntry.toString(), "--backend", "wasm"});
         check("1".equals(badAlias[0]), "invalid CLI backend alias exits 1");
-        check(badAlias[1].contains("unknown backend alias 'js'"),
-            "invalid alias is a CliDiagnostic naming the supported aliases: " + badAlias[1]);
+        check(badAlias[1].contains("unknown backend alias 'wasm'")
+                && badAlias[1].contains("lua, luajit, jvm, js"),
+            "invalid alias is a CliDiagnostic naming the supported aliases: "
+                + badAlias[1]);
         check(!badAlias[1].contains("E2010"),
             "invalid alias is not an E2010: " + badAlias[1]);
 

@@ -34,7 +34,7 @@ import java.util.regex.Pattern;
  * surrogate encoding → one E2010 at the first offending byte range,
  * span length 1, before any schema check; valid multi-byte scalars; a
  * literal {@code \uFFFD} escape; a leading BOM fails the strict pass);
- * override rules (valid alias lua|luajit|jvm after trim+lowercase;
+ * override rules (valid alias lua|luajit|jvm|js after trim+lowercase;
  * invalid backend and empty/whitespace-only/NUL/unrepresentable output
  * overrides are CliDiagnostics; a malformed manifest fails before any
  * override is consulted); step-4 roots (conversion, non-existent roots,
@@ -694,7 +694,23 @@ public final class ProjectLocatorTest {
         check(jvm.context() != null && jvm.context().backend().equals("jvm"),
             "CLI alias 'jvm' matches the manifest backend");
 
-        for (String invalidAlias : new String[]{"js", "unknown", "  ", "luaa"}) {
+        ProjectLocator.LocateResult jsAlias = ProjectLocator.locate(entry.toString(),
+            new CliOverrides("js", null));
+        check(jsAlias.context() != null && jsAlias.context().backend().equals("js"),
+            "CLI alias 'js' overrides the manifest backend to js"
+                + " (ISSUE-0169 remediation, ISSUE-0471)");
+        check(jsAlias.context() != null
+                && jsAlias.context().outputPath().decodedText()
+                    .equals("manifest-out"),
+            "manifest output still wins when only the js alias overrides"
+                + " the backend");
+        ProjectLocator.LocateResult mixedCaseJs = ProjectLocator.locate(entry.toString(),
+            new CliOverrides(" Js ", null));
+        check(mixedCaseJs.context() != null
+                && mixedCaseJs.context().backend().equals("js"),
+            "CLI alias ' Js ' is trim + lowercase to js");
+
+        for (String invalidAlias : new String[]{"unknown", "  ", "luaa"}) {
             ProjectLocator.LocateResult invalid = ProjectLocator.locate(entry.toString(),
                 new CliOverrides(invalidAlias, null));
             check(invalid.cliDiagnostic() != null && invalid.context() == null
@@ -761,7 +777,7 @@ public final class ProjectLocatorTest {
             "a malformed manifest fails E2010 even with valid overrides");
         ProjectLocator.LocateResult malformedInvalidOverride =
             ProjectLocator.locate(malformedEntry.toString(),
-                new CliOverrides("js", ""));
+                new CliOverrides("wasm", ""));
         check(malformedInvalidOverride.e2010() != null
                 && malformedInvalidOverride.cliDiagnostic() == null,
             "a malformed manifest fails E2010 before any override is consulted");
@@ -1253,6 +1269,26 @@ public final class ProjectLocatorTest {
         check(cliJvm.context() != null && cliJvm.context().backend().equals("jvm")
                 && cliJvm.context().outputPath().decodedText().equals("build/jvm"),
             "CLI backend override selects the jvm default output");
+
+        Path jsEntry = entryWithManifest("output-default-js-proj",
+            "{\n  \"languageVersion\": \"1.2\",\n  \"backend\": \"js\"\n}\n");
+        ProjectContext jsContext = locateOk(jsEntry);
+        if (jsContext != null) {
+            check(jsContext.backend().equals("js")
+                    && jsContext.outputPath().decodedText().equals("build/js"),
+                "JS default output text per effective backend"
+                    + " (ISSUE-0169 remediation, ISSUE-0471)");
+            check(jsContext.outputPath().absoluteNormalizedPath().equals(
+                    jsContext.manifestDirectory() + "/build/js"),
+                "JS default output resolves from the manifest directory");
+        }
+
+        Path cliJsEntry = entryWithManifest("output-default-cli-js-proj", VALID_MANIFEST);
+        ProjectLocator.LocateResult cliJs = ProjectLocator.locate(cliJsEntry.toString(),
+            new CliOverrides("js", null));
+        check(cliJs.context() != null && cliJs.context().backend().equals("js")
+                && cliJs.context().outputPath().decodedText().equals("build/js"),
+            "CLI backend override selects the js default output");
 
         // Manifest output: relative, dot, parent, and absolute forms.
         Path outDir = fixture("output-forms");

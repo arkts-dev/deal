@@ -8,8 +8,8 @@ package deal.project;
  * <p>Both fields are the CLI strings exactly as supplied — untrimmed and
  * case-preserved — and both are optional (null = absent). Validation is
  * {@link ProjectLocator}'s D1 step-3 duty, not this carrier's: a valid
- * backend alias {@code lua|luajit|jvm} (trim + lowercase) overrides the
- * manifest backend; a valid output string (after trimming: non-empty,
+ * backend alias {@code lua|luajit|jvm|js} (trim + lowercase) overrides
+ * the manifest backend; a valid output string (after trimming: non-empty,
  * scalar-valid, NUL-free, host-representable) overrides the manifest
  * output, with the trimmed value as the winning value. An invalid or
  * empty/whitespace-only override is a {@link CliDiagnostic} and publishes

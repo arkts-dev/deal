@@ -14,9 +14,9 @@ import java.util.List;
  * The test battery for {@link OutputConfigResolver} (ISSUE-0264 T3,
  * design source {@code strict-project-context-resolution-identity} D3,
  * verification item 4): backend precedence for every combination (CLI
- * alias {@code lua|luajit|jvm} over a valid manifest; manifest
- * {@code luajit}/{@code jvm}; absence → {@code luajit}); output
- * precedence (CLI &gt; manifest &gt; backend-dependent default);
+ * alias {@code lua|luajit|jvm|js} over a valid manifest; manifest
+ * {@code luajit}/{@code jvm}/{@code js}; absence → {@code luajit});
+ * output precedence (CLI &gt; manifest &gt; backend-dependent default);
  * classification of absolute, relative, bare, {@code ./}, {@code ../},
  * and NUL-containing values under both sources; default paths resolving
  * from the manifest directory; filesystem behavior with real temp
@@ -199,10 +199,14 @@ public final class OutputConfigResolverTest {
             "CLI alias 'luajit' alone -> 'luajit'");
         check(resolveBackend(null, "jvm").effectiveBackend().equals("jvm"),
             "CLI alias 'jvm' alone -> 'jvm'");
+        check(resolveBackend(null, "js").effectiveBackend().equals("js"),
+            "CLI alias 'js' alone -> 'js' (ISSUE-0169 remediation, ISSUE-0471)");
         check(resolveBackend("luajit", null).effectiveBackend().equals("luajit"),
             "manifest 'luajit' alone -> 'luajit'");
         check(resolveBackend("jvm", null).effectiveBackend().equals("jvm"),
             "manifest 'jvm' alone -> 'jvm'");
+        check(resolveBackend("js", null).effectiveBackend().equals("js"),
+            "manifest 'js' alone -> 'js'");
         check(resolveBackend(null, null).failure() == null,
             "backend-only resolution always converts the default output (never fails)");
 
@@ -219,6 +223,10 @@ public final class OutputConfigResolverTest {
             "CLI 'luajit' over manifest 'luajit' -> 'luajit'");
         check(resolveBackend("luajit", "jvm").effectiveBackend().equals("jvm"),
             "CLI 'jvm' over manifest 'luajit' -> 'jvm'");
+        check(resolveBackend("luajit", "js").effectiveBackend().equals("js"),
+            "CLI 'js' over manifest 'luajit' -> 'js'");
+        check(resolveBackend("js", "lua").effectiveBackend().equals("luajit"),
+            "CLI 'lua' over manifest 'js' -> 'luajit'");
     }
 
     // =========================================================================
@@ -259,6 +267,12 @@ public final class OutputConfigResolverTest {
             "jvm", null, null, null, projectDir, cwdDir);
         check(defaultJvm.output().decodedText().equals("build/jvm"),
             "no output anywhere -> default 'build/jvm' for the jvm backend");
+
+        OutputConfigResolver.Resolution defaultJs = OutputConfigResolver.resolve(
+            "js", null, null, null, projectDir, cwdDir);
+        check(defaultJs.effectiveBackend().equals("js")
+                && defaultJs.output().decodedText().equals("build/js"),
+            "no output anywhere -> default 'build/js' for the js backend");
 
         OutputConfigResolver.Resolution aliasDrivesDefault = OutputConfigResolver.resolve(
             "jvm", null, "lua", null, projectDir, cwdDir);
@@ -639,13 +653,13 @@ public final class OutputConfigResolverTest {
             + " programming errors) --");
 
         try {
-            OutputConfigResolver.resolve("jvm", null, "js", null, projectDir, cwdDir);
+            OutputConfigResolver.resolve("jvm", null, "wasm", null, projectDir, cwdDir);
             fail("invalid CLI backend alias should throw");
         } catch (IllegalArgumentException expected) {
             passed++;
         }
         try {
-            OutputConfigResolver.resolve("js", null, null, null, projectDir, cwdDir);
+            OutputConfigResolver.resolve("wasm", null, null, null, projectDir, cwdDir);
             fail("invalid manifest backend should throw");
         } catch (IllegalArgumentException expected) {
             passed++;

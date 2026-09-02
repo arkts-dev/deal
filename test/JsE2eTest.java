@@ -1,7 +1,11 @@
 package deal.test;
 
-import deal.codegen.Backend;
 import deal.module.CompilationOrchestrator;
+import deal.project.ProjectContext;
+import deal.project.ProjectLocator;
+import deal.semantic.CompilerInvocation;
+import deal.semantic.CompilerProfileProvider;
+import deal.semantic.ReleaseConfiguration;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -13,7 +17,6 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
@@ -22,24 +25,24 @@ import java.util.stream.Stream;
  *
  * <p>Runs the 15-sample roster under {@code test/e2e/js/*} through the
  * real production pipeline: each sample is a plain v1.2 project
- * ({@code main.deal} exporting non-async {@code main(): null}, optional
- * imported modules, a {@code deal.json} declaring {@code languageVersion}
- * {@code "1.2"} and {@code backend} {@code "js"}; no metadata comments —
- * the E1044 rule). For every sample the runner:
+ * ({@code src/main.deal} exporting non-async {@code main(): null},
+ * optional imported modules, a {@code deal.json} declaring
+ * {@code languageVersion} {@code "1.2"}, {@code backend} {@code "js"},
+ * and the {@code moduleRoots ["src"]} project layout; no metadata
+ * comments — the E1044 rule). For every sample the runner:
  *
  * <ol>
  *   <li>copies the sample into a fresh temp project directory (sample
  *       sources are read-only);</li>
- *   <li>loads the production {@code deal.json} manifest and resolves the
- *       selected backend from it — the manifest backend must be
- *       {@code "js"} ({@link Backend#JS});</li>
- *   <li>runs the production pipeline —
- *       {@link CompilationOrchestrator} with {@link Backend#JS}, the
- *       loaded config, the project root as the single module root, and
- *       the repository root as the stdlib directory — asserting compile
- *       success, zero diagnostics, and the emitted {@code .js} artifacts
- *       plus {@code deal/runtime.js} (and the deployed {@code std/*.js}
- *       for the stdlib sample);</li>
+ *   <li>locates the production project through {@link ProjectLocator}
+ *       — the strict manifest must parse with {@code "backend": "js"}
+ *       and publish the effective backend {@code "js"};</li>
+ *   <li>runs the production pipeline — the context-based
+ *       {@link CompilationOrchestrator} constructor the CLI uses, with
+ *       the located {@link ProjectContext} — asserting compile success,
+ *       zero diagnostics, and the emitted {@code .js} artifacts plus
+ *       {@code deal/runtime.js} (and the deployed {@code std/*.js} for
+ *       the stdlib sample);</li>
  *   <li>executes {@code node <output>/main.js} as a subprocess and
  *       asserts the registered stdout substring(s) and exit code (the
  *       runtime-error sample asserts {@code DEAL_ERROR_CODE: E8001} on
@@ -147,9 +150,8 @@ public final class JsE2eTest {
             + " samples through the production pipeline ===");
         checkNodeAvailable();
         checkRosterShape();
-        Path repoRoot = Path.of("").toAbsolutePath().normalize();
         for (Sample sample : SAMPLES) {
-            runSample(sample, repoRoot);
+            runSample(sample);
         }
         System.out.println();
         System.out.println("=== JS E2E Summary ===");
@@ -203,7 +205,7 @@ public final class JsE2eTest {
     }
 
     /** Runs one sample end to end and records the outcome. */
-    private static void runSample(Sample sample, Path repoRoot) throws Exception {
+    private static void runSample(Sample sample) throws Exception {
         Path sampleDir = Path.of("test", "e2e", "js", sample.name())
             .toAbsolutePath().normalize();
         Path projectDir = null;
@@ -218,34 +220,41 @@ public final class JsE2eTest {
             projectDir = Files.createTempDirectory("deal_js_e2e_");
             copySampleInto(sampleDir, projectDir);
 
-            // Step 2: the sample manifest drives the backend. The JS
-            // backend stays outside the strict v1.2 backend set
-            // ({@code "js"} is E2010 under the strict schema until the
-            // skeleton epic extends it — pinned by JsBackendTest), so
-            // the e2e gate validates the committed manifest shape
-            // directly and drives Backend.JS through the test-only
-            // isolated-phase orchestrator path.
-            String manifest = Files.readString(
-                projectDir.resolve("deal.json"));
-            if (!manifest.contains("\"languageVersion\": \"1.2\"")) {
-                fail(sample, "deal.json languageVersion must be \"1.2\"");
+            // Step 2: the production locator validates the strict
+            // sample manifest — languageVersion "1.2" and backend "js"
+            // both enforced by ProjectLocator, never by a test-side
+            // string check (ISSUE-0169 remediation, ISSUE-0471) — and
+            // publishes the ProjectContext the production orchestrator
+            // consumes.
+            Path entryFile = projectDir.resolve("src/main.deal");
+            ProjectLocator.LocateResult located = ProjectLocator.locate(
+                entryFile.toString(), null);
+            if (located.e2010() != null || located.cliDiagnostic() != null) {
+                fail(sample, "production locator rejected the sample"
+                    + " manifest: "
+                    + (located.e2010() != null
+                        ? located.e2010() : located.cliDiagnostic()));
                 return;
             }
-            if (!manifest.contains("\"backend\": \"js\"")) {
-                fail(sample, "deal.json backend must be \"js\"");
+            ProjectContext context = located.context();
+            if (!"js".equals(context.backend())) {
+                fail(sample, "deal.json backend must be \"js\", got: "
+                    + context.backend());
                 return;
             }
-            Backend backend = Backend.JS;
 
-            // Step 3: the production pipeline (selected-entry gate,
-            // module discovery, phase-4 JS codegen and the
+            // Step 3: the production pipeline (the context-based
+            // orchestrator constructor Main.java uses — selected-entry
+            // gate, module discovery, phase-4 JS codegen and the
             // runtime/stdlib deployment copies all run).
-            Path entryFile = projectDir.resolve("main.deal");
-            Path outputRoot = projectDir.resolve("build/js");
+            Path outputRoot = Path.of(context.outputPath()
+                .absoluteNormalizedPath());
+            CompilerInvocation invocation = CompilerProfileProvider.resolve(
+                ReleaseConfiguration.CURRENT_RELEASE_STATE,
+                ReleaseConfiguration.releaseCapabilityRegistry());
             CompilationOrchestrator orchestrator =
-                new CompilationOrchestrator(entryFile, outputRoot, false,
-                    false, false, backend, (Map<String, String>) null,
-                    List.of(projectDir), repoRoot);
+                new CompilationOrchestrator(context, entryFile, false,
+                    false, false, false, null, invocation);
             boolean compileOk;
             try {
                 compileOk = orchestrator.compile();
