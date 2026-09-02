@@ -52,7 +52,11 @@ import java.util.List;
  * — plus the two pre-existing host-prewrapped skip-probe exception
  * lines and nothing else. The LuaJIT lane (consequence, pinned): exit
  * code 1 with the same stale known-fail and its single tracked staged
- * time entry (ISSUE-0237) intact.
+ * time entry (ISSUE-0237) intact; its summary additionally records the
+ * frontend known-fail fixture
+ * {@code frontend/modules/ffi-manifest-missing-native-library-rejected.deal}
+ * (compile-error E2010 tracked by ISSUE-0111), so the lane's summary
+ * totals are 429 with exactly one tracked known-fail.
  *
  * <p>The test runs from the repository root (the {@code run_tests.sh}
  * contract, like {@code ConformanceTest}); {@code run_tests.sh}
@@ -132,8 +136,8 @@ public class JvmLaneStatePinTest {
             + "disposition pair)";
 
     private static final String LUA_SUMMARY =
-        "Total: 424, Passed: 423, Failed: 1, Skipped: 0, "
-            + "KnownFailures (tracked): 0, StagedFailures (tracked): 1";
+        "Total: 429, Passed: 428, Failed: 1, Skipped: 0, "
+            + "KnownFailures (tracked): 1, StagedFailures (tracked): 1";
 
     // =========================================================================
     // Assertion helpers
