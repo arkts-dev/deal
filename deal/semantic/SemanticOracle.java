@@ -8,6 +8,7 @@ import deal.semantic.ir.BoundaryExecutor;
 import deal.semantic.ir.BoundaryFailure;
 import deal.semantic.ir.BoundaryOutcome;
 import deal.semantic.ir.BoundaryValueView;
+import deal.semantic.ir.ChainOperandCompletion;
 import deal.semantic.ir.ComparisonExecutor;
 import deal.semantic.ir.ComparisonOperandView;
 import deal.semantic.ir.FailureContractRegistry;
@@ -281,6 +282,8 @@ public final class SemanticOracle {
          * effects and fail the trace pairing.
          */
         final java.util.Set<OpId> ownedChildren = new java.util.HashSet<>();
+        /** The payload-owned children only (closure computation excludes them). */
+        final java.util.Set<OpId> structuralOwned;
         final Map<ValueId, Value> values = new HashMap<>();
         final Map<String, Cell> cells = new HashMap<>();
         final List<SemanticRuntimeModel.TraceEvent> trace = new ArrayList<>();
@@ -304,49 +307,16 @@ public final class SemanticOracle {
             // Payload-referenced children (executed exactly once by their
             // owner arm in payload order) plus boundary children of
             // MEMBER_READ/STDLIB_CALL (their owner arms' single-child
-            // execution): the block walk skips these.
-            for (SemanticOp op : unit.ops()) {
-                switch (op.payload()) {
-                    case KindPayload.AssignPayload assign ->
-                        ownedChildren.addAll(assign.childOps());
-                    case KindPayload.DeletePayload delete ->
-                        ownedChildren.addAll(delete.childOps());
-                    case KindPayload.ArrayNewPayload array ->
-                        ownedChildren.addAll(array.elementBoundaryOpIds());
-                    case KindPayload.CallPayload call -> {
-                        ownedChildren.addAll(call.parameterBoundaryOpIds());
-                        if (call.returnBoundaryOpId() != null) {
-                            ownedChildren.add(call.returnBoundaryOpId());
-                        }
-                    }
-                    case KindPayload.IndexReadPayload read ->
-                        ownedChildren.add(read.elementBoundaryOpId());
-                    case KindPayload.ReturnPayload ret ->
-                        ownedChildren.add(ret.returnBoundaryOpId());
-                    case KindPayload.StdlibCallPayload ignored -> {
-                        List<SemanticOp> children = childrenByParent.get(op.opId());
-                        if (children != null) {
-                            for (SemanticOp child : children) {
-                                if (child.kind() == SemanticOpKind.BOUNDARY) {
-                                    ownedChildren.add(child.opId());
-                                }
-                            }
-                        }
-                    }
-                    case KindPayload.MemberReadPayload ignored -> {
-                        List<SemanticOp> children = childrenByParent.get(op.opId());
-                        if (children != null) {
-                            for (SemanticOp child : children) {
-                                if (child.kind() == SemanticOpKind.BOUNDARY) {
-                                    ownedChildren.add(child.opId());
-                                }
-                            }
-                        }
-                    }
-                    default -> {
-                    }
-                }
-            }
+            // execution): the block walk skips these. The chain operand
+            // closures (A-D2) are added on top: each ASSIGN/DELETE
+            // child's operand-producing ops execute at the child's
+            // position inside the chain, never at their flat block-list
+            // position (the hoisted-operand interleaving the parity
+            // fixtures pin).
+            structuralOwned = ChainOperandCompletion.structuralOwners(unit);
+            ownedChildren.addAll(structuralOwned);
+            ChainOperandCompletion.registerChainOperandOwners(unit, structuralOwned,
+                ownedChildren);
         }
 
         SemanticRuntimeModel.ConsumerRun report(SemanticRuntimeModel.Terminal terminal) {
@@ -1114,6 +1084,7 @@ public final class SemanticOracle {
             KindPayload.AssignPayload payload = (KindPayload.AssignPayload) op.payload();
             for (OpId childId : payload.childOps()) {
                 SemanticOp child = opsById.get(childId);
+                completeChainOperands(child);
                 if (child.kind() == SemanticOpKind.BOUNDARY) {
                     KindPayload.BoundaryPayload boundaryPayload =
                         (KindPayload.BoundaryPayload) child.payload();
@@ -1197,6 +1168,7 @@ public final class SemanticOracle {
             KindPayload.DeletePayload payload = (KindPayload.DeletePayload) op.payload();
             for (OpId childId : payload.childOps()) {
                 SemanticOp child = opsById.get(childId);
+                completeChainOperands(child);
                 if (child.kind() == SemanticOpKind.BOUNDARY) {
                     KindPayload.BoundaryPayload boundaryPayload =
                         (KindPayload.BoundaryPayload) child.payload();
@@ -1207,6 +1179,23 @@ public final class SemanticOracle {
                 }
             }
             return null;
+        }
+
+        /**
+         * A-D2 ("each child's operands complete before that child's
+         * START"): the child's transitive operand-producing closure
+         * executes at the child's position inside the chain — the
+         * receiver/key/RHS operand effects interleave with the children
+         * exactly as the hoisted-operand parity fixtures pin (an
+         * operand's nested side-effecting argument completes before the
+         * operand call's own effect, and the RHS operand effects run
+         * only after the key child completed).
+         */
+        private void completeChainOperands(SemanticOp child) {
+            for (SemanticOp producer : ChainOperandCompletion.operandProducersOf(
+                    child, unit, structuralOwned)) {
+                execute(producer);
+            }
         }
 
         /**

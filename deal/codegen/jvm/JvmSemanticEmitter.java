@@ -4,6 +4,7 @@ import deal.semantic.ir.BindingCellKind;
 import deal.semantic.ir.BindingId;
 import deal.semantic.ir.BlockId;
 import deal.semantic.ir.BoundaryKind;
+import deal.semantic.ir.ChainOperandCompletion;
 import deal.semantic.ir.FunctionId;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredFunction;
@@ -88,6 +89,8 @@ public final class JvmSemanticEmitter {
         final Map<OpId, SemanticOp> opsById = new HashMap<>();
         final Map<BindingId, BindingCellKind> cellKinds = new HashMap<>();
         final java.util.Set<OpId> ownedChildren = new java.util.HashSet<>();
+        /** The payload-owned children only (closure computation excludes them). */
+        final java.util.Set<OpId> structuralOwned;
         final StringBuilder out = new StringBuilder();
         /** The enclosing TRY_CATCH depth: transfers inside a try body
          *  signal via JvmRuntime.Transfer and re-apply in the dispatch. */
@@ -113,44 +116,10 @@ public final class JvmSemanticEmitter {
                     cellKinds.putIfAbsent(payload.binding(), payload.cellKind());
                 }
             }
-            for (SemanticOp op : unit.ops()) {
-                switch (op.payload()) {
-                    case KindPayload.AssignPayload assign ->
-                        ownedChildren.addAll(assign.childOps());
-                    case KindPayload.DeletePayload delete ->
-                        ownedChildren.addAll(delete.childOps());
-                    case KindPayload.ArrayNewPayload array ->
-                        ownedChildren.addAll(array.elementBoundaryOpIds());
-                    case KindPayload.CallPayload call -> {
-                        ownedChildren.addAll(call.parameterBoundaryOpIds());
-                        if (call.returnBoundaryOpId() != null) {
-                            ownedChildren.add(call.returnBoundaryOpId());
-                        }
-                    }
-                    case KindPayload.IndexReadPayload read ->
-                        ownedChildren.add(read.elementBoundaryOpId());
-                    case KindPayload.ReturnPayload ret ->
-                        ownedChildren.add(ret.returnBoundaryOpId());
-                    case KindPayload.StdlibCallPayload ignored -> {
-                        for (SemanticOp candidate : opsById.values()) {
-                            if (candidate.kind() == SemanticOpKind.BOUNDARY
-                                    && op.opId().equals(candidate.origin().parentOpId())) {
-                                ownedChildren.add(candidate.opId());
-                            }
-                        }
-                    }
-                    case KindPayload.MemberReadPayload ignored -> {
-                        for (SemanticOp candidate : opsById.values()) {
-                            if (candidate.kind() == SemanticOpKind.BOUNDARY
-                                    && op.opId().equals(candidate.origin().parentOpId())) {
-                                ownedChildren.add(candidate.opId());
-                            }
-                        }
-                    }
-                    default -> {
-                    }
-                }
-            }
+            structuralOwned = ChainOperandCompletion.structuralOwners(unit);
+            ownedChildren.addAll(structuralOwned);
+            ChainOperandCompletion.registerChainOperandOwners(unit, structuralOwned,
+                ownedChildren);
         }
 
         // -- naming ---------------------------------------------------------------
@@ -1074,6 +1043,7 @@ public final class JvmSemanticEmitter {
             out.append(indent(indent)).append("try {\n");
             for (OpId childId : payload.childOps()) {
                 SemanticOp child = opsById.get(childId);
+                emitChainOperandProducers(child, indent + 1);
                 if (child.kind() == SemanticOpKind.BOUNDARY) {
                     emitChainBoundary(child,
                         (KindPayload.BoundaryPayload) child.payload(), op, indent + 1);
@@ -1111,6 +1081,7 @@ public final class JvmSemanticEmitter {
             out.append(indent(indent)).append("try {\n");
             for (OpId childId : payload.childOps()) {
                 SemanticOp child = opsById.get(childId);
+                emitChainOperandProducers(child, indent + 1);
                 if (child.kind() == SemanticOpKind.BOUNDARY) {
                     emitChainBoundary(child,
                         (KindPayload.BoundaryPayload) child.payload(), op, indent + 1);
@@ -1124,6 +1095,25 @@ public final class JvmSemanticEmitter {
             out.append(indent(indent)).append("  throw __e;\n");
             out.append(indent(indent)).append("}\n");
             emitPlainSuccess(op, indent);
+        }
+
+        /**
+         * A-D2 ("each child's operands complete before that child's
+         * START"): the child's transitive operand-producing closure is
+         * emitted at the child's position inside the chain — the
+         * receiver/key/RHS operand effects interleave with the children
+         * exactly as the hoisted-operand parity fixtures pin (an
+         * operand's nested side-effecting argument completes before the
+         * operand call's own effect, and the RHS operand effects run
+         * only after the key child completed). The block walk skips
+         * these ops (they are registered in the chain-owned set), so
+         * each is emitted exactly once, here.
+         */
+        private void emitChainOperandProducers(SemanticOp child, int indent) {
+            for (SemanticOp producer : ChainOperandCompletion.operandProducersOf(
+                    child, unit, structuralOwned)) {
+                emitOp(producer, indent);
+            }
         }
 
         /**
@@ -1499,7 +1489,6 @@ public final class JvmSemanticEmitter {
                     out.append(indent(indent)).append("    Object __elem = JvmRuntime.MISSING;\n");
                     out.append(indent(indent)).append("    if (__i < __it.length && __i < __it.elements.size()) {\n");
                     out.append(indent(indent)).append("      __elem = __it.elements.get(__i);\n");
-                    out.append(indent(indent)).append("      if (__elem == null) __elem = JvmRuntime.MISSING;\n");
                     out.append(indent(indent)).append("    }\n");
                     out.append(indent(indent)).append("    JvmRuntime.foreachCheck(")
                         .append(javaString(opKey(op.opId()))).append(", ")

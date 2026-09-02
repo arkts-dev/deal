@@ -732,11 +732,17 @@ public final class JvmRuntime {
         }
         if (index < container.length && index < container.elements.size()) {
             elem = container.elements.get((int) index);
-            if (elem == null) {
-                elem = MISSING;
-            }
         }
-        String elemKind = elem == MISSING ? "missing" : inner;
+        // A present null element stays null (the slot was stored with a
+        // language null); only an absent/deleted slot reads as missing.
+        String elemKind;
+        if (elem == MISSING) {
+            elemKind = "missing";
+        } else if (elem == null) {
+            elemKind = "null";
+        } else {
+            elemKind = inner;
+        }
         ev(currentModule(), bKey, "START", "BOUNDARY", bDigest, bParent,
             List.of(atom(elem, elemKind)), null, null);
         ev(currentModule(), bKey, "SUCCESS", "BOUNDARY", bDigest, bParent, List.of(),

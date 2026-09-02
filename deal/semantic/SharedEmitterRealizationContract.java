@@ -31,7 +31,14 @@ import java.util.Objects;
  * has already closed the shapes): each chain child's result must be
  * materialized into a fresh local in payload order before the next
  * child executes (receiver → key → RHS → normalize → boundary →
- * commit); the bounds check is emitted only from the boundary child's
+ * commit), and each child's operand-producing ops complete at that
+ * child's position inside the chain — the receiver's operand effects
+ * before the receiver child, the key's operand effects only after the
+ * receiver child completed, the RHS's operand effects only after the
+ * key child completed (A-D2 "each child's operands complete before that
+ * child's START"; {@link deal.semantic.ir.ChainOperandCompletion} is the
+ * shared rule the oracle and both emitters consume). The bounds check
+ * is emitted only from the boundary child's
  * projection (never a target-side re-check that can raise a second
  * time); a receiver/key/RHS expression is never re-emitted; and the
  * retained Lua {@code emitAssignment} shape
@@ -187,16 +194,33 @@ public final class SharedEmitterRealizationContract {
                 "Every address-chain child's result is materialized into a fresh local in "
                     + "payload order before the next child executes — receiver → key → RHS → "
                     + "normalize → boundary → commit (VARIABLE: value → adapter child if any → "
-                    + "VARIABLE_ASSIGNMENT boundary → commit).",
+                    + "VARIABLE_ASSIGNMENT boundary → commit). Each child's operand-producing "
+                    + "ops complete at that child's position inside the chain (A-D2: 'each "
+                    + "child's operands complete before that child's START'): the receiver's "
+                    + "operand effects before the receiver child, the key's operand effects "
+                    + "only after the receiver child completed, the RHS's operand effects "
+                    + "only after the key child completed — never flattened to the enclosing "
+                    + "block's head.",
                 List.of(
                     "never reorder chain children",
                     "never let a later child's evaluation observe an unmaterialized earlier "
                         + "child result",
-                    "never reuse one local for two distinct chain children"),
+                    "never reuse one local for two distinct chain children",
+                    "never execute a chain child's operand-producing ops before an earlier "
+                        + "child completed",
+                    "never hoist the RHS's operand effects ahead of the key child",
+                    "never flatten a chain child's operand ops to the enclosing block's head"),
                 "Effect/trace sequence comparison: the ADDRESS_RECEIVER/ADDRESS_KEY/"
                     + "ADDRESS_VALUE/ADDRESS_NORMALIZE/ADDRESS_BOUNDARY/ADDRESS_COMMIT "
                     + "events must appear exactly in payload order with each child's "
-                    + "producing events completing before the next child's START."),
+                    + "producing events completing before the next child's START. The "
+                    + "hoisted-operand parity seeds pin the interleaving: "
+                    + "jvm-arr-eval-order-hoisted prints index-side, index, value-side, "
+                    + "value (the index operand's nested side-effecting argument completes "
+                    + "before the operand call's own effect) and "
+                    + "jvm-arr-eval-order-write-hoisted-parity prints a, b, i, c, v, "
+                    + "write-ok — a hoisted/relocated operand effect fails the exact "
+                    + "effect projection."),
             new Obligation(
                 CHAIN_BOUNDARY_SINGLE_PROJECTION,
                 Domain.ADDRESS_CHAINS,

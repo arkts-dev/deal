@@ -4,6 +4,7 @@ import deal.semantic.ir.BindingCellKind;
 import deal.semantic.ir.BindingId;
 import deal.semantic.ir.BlockId;
 import deal.semantic.ir.BoundaryKind;
+import deal.semantic.ir.ChainOperandCompletion;
 import deal.semantic.ir.FailurePolicyId;
 import deal.semantic.ir.FunctionId;
 import deal.semantic.ir.IntrinsicKind;
@@ -92,6 +93,8 @@ public final class LuaSemanticEmitter {
         final Map<OpId, SemanticOp> opsById = new HashMap<>();
         final Map<BindingId, BindingCellKind> cellKinds = new HashMap<>();
         final java.util.Set<OpId> ownedChildren = new java.util.HashSet<>();
+        /** The payload-owned children only (closure computation excludes them). */
+        final java.util.Set<OpId> structuralOwned;
         final StringBuilder out = new StringBuilder();
         /** The enclosing TRY_CATCH depth: transfers inside a pcall body
          *  must signal instead of goto/return (Lua closures cannot jump
@@ -114,44 +117,10 @@ public final class LuaSemanticEmitter {
             // Payload-owned children are emitted exactly once by their owner
             // arms; the block walk skips them (a double emission would
             // duplicate effects and events).
-            for (SemanticOp op : unit.ops()) {
-                switch (op.payload()) {
-                    case KindPayload.AssignPayload assign ->
-                        ownedChildren.addAll(assign.childOps());
-                    case KindPayload.DeletePayload delete ->
-                        ownedChildren.addAll(delete.childOps());
-                    case KindPayload.ArrayNewPayload array ->
-                        ownedChildren.addAll(array.elementBoundaryOpIds());
-                    case KindPayload.CallPayload call -> {
-                        ownedChildren.addAll(call.parameterBoundaryOpIds());
-                        if (call.returnBoundaryOpId() != null) {
-                            ownedChildren.add(call.returnBoundaryOpId());
-                        }
-                    }
-                    case KindPayload.IndexReadPayload read ->
-                        ownedChildren.add(read.elementBoundaryOpId());
-                    case KindPayload.ReturnPayload ret ->
-                        ownedChildren.add(ret.returnBoundaryOpId());
-                    case KindPayload.StdlibCallPayload ignored -> {
-                        for (SemanticOp candidate : opsById.values()) {
-                            if (candidate.kind() == SemanticOpKind.BOUNDARY
-                                    && op.opId().equals(candidate.origin().parentOpId())) {
-                                ownedChildren.add(candidate.opId());
-                            }
-                        }
-                    }
-                    case KindPayload.MemberReadPayload ignored -> {
-                        for (SemanticOp candidate : opsById.values()) {
-                            if (candidate.kind() == SemanticOpKind.BOUNDARY
-                                    && op.opId().equals(candidate.origin().parentOpId())) {
-                                ownedChildren.add(candidate.opId());
-                            }
-                        }
-                    }
-                    default -> {
-                    }
-                }
-            }
+            structuralOwned = ChainOperandCompletion.structuralOwners(unit);
+            ownedChildren.addAll(structuralOwned);
+            ChainOperandCompletion.registerChainOperandOwners(unit, structuralOwned,
+                ownedChildren);
         }
 
         // -- naming ---------------------------------------------------------------
@@ -740,7 +709,8 @@ public final class LuaSemanticEmitter {
                     .append(luaString(descriptorText(payload.elementDescriptor())))
                     .append(", ").append(luaString(staticKind(payload.elementDescriptor())))
                     .append(", ").append(slot(input)).append(")\n");
-                out.append(target).append("[").append(i + 1).append("] = __chk\n");
+                out.append(target).append("[").append(i + 1)
+                    .append("] = __chk == nil and __NULL or __chk\n");
                 emitBoundarySuccess(boundary, "__chk", payload.elementDescriptor());
             }
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
@@ -878,7 +848,8 @@ public final class LuaSemanticEmitter {
                 .append(".__n + 1\n");
             out.append("  end\n");
             out.append("  ").append(container).append("[").append(slotName)
-                .append(".i + 1] = ").append(value).append("\n");
+                .append(".i + 1] = ").append(value)
+                .append(" == nil and __NULL or ").append(value).append("\n");
             out.append("else\n");
             out.append("  ").append(container).append("[").append(slotName)
                 .append(".k] = ").append(value).append("\n");
@@ -1016,6 +987,7 @@ public final class LuaSemanticEmitter {
             out.append("__okT, __resT = pcall(function()\n");
             for (OpId childId : payload.childOps()) {
                 SemanticOp child = opsById.get(childId);
+                emitChainOperandProducers(child);
                 if (child.kind() == SemanticOpKind.BOUNDARY) {
                     emitChainBoundary(child, (KindPayload.BoundaryPayload) child.payload(),
                         op);
@@ -1053,6 +1025,7 @@ public final class LuaSemanticEmitter {
             out.append("__okT, __resT = pcall(function()\n");
             for (OpId childId : payload.childOps()) {
                 SemanticOp child = opsById.get(childId);
+                emitChainOperandProducers(child);
                 if (child.kind() == SemanticOpKind.BOUNDARY) {
                     emitChainBoundary(child, (KindPayload.BoundaryPayload) child.payload(),
                         op);
@@ -1066,6 +1039,25 @@ public final class LuaSemanticEmitter {
             out.append("  error(__resT, 0)\n");
             out.append("end\n");
             emitPlainSuccess(op);
+        }
+
+        /**
+         * A-D2 ("each child's operands complete before that child's
+         * START"): the child's transitive operand-producing closure is
+         * emitted at the child's position inside the chain — the
+         * receiver/key/RHS operand effects interleave with the children
+         * exactly as the hoisted-operand parity fixtures pin (an
+         * operand's nested side-effecting argument completes before the
+         * operand call's own effect, and the RHS operand effects run
+         * only after the key child completed). The block walk skips
+         * these ops (they are registered in the chain-owned set), so
+         * each is emitted exactly once, here.
+         */
+        private void emitChainOperandProducers(SemanticOp child) {
+            for (SemanticOp producer : ChainOperandCompletion.operandProducersOf(
+                    child, unit, structuralOwned)) {
+                emitOp(producer);
+            }
         }
 
         /** A chain boundary child (bounds check only from its projection, A-D8). */
@@ -1424,7 +1416,8 @@ public final class LuaSemanticEmitter {
                     out.append("    __elemT = __MISSING\n");
                     out.append("    if __i < __itT.__n then\n");
                     out.append("      __elemT = __itT[__i + 1]\n");
-                    out.append("      if __elemT == nil then __elemT = __MISSING end\n");
+                    out.append("      if __elemT == __NULL then __elemT = nil\n");
+                    out.append("      elseif __elemT == nil then __elemT = __MISSING end\n");
                     out.append("    end\n");
                     out.append("    __foreachCheck(")
                         .append(luaString(opKey(op.opId()))).append(", ")
@@ -1693,6 +1686,7 @@ public final class LuaSemanticEmitter {
     private static final String PRELUDE = """
 -- ==== shared runtime prelude ====
 local __MISSING = setmetatable({}, {__tostring = function() return "missing" end})
+local __NULL = setmetatable({}, {__tostring = function() return "null" end})
 local function __esc(s)
   if s == nil then return "" end
   local out = {}
@@ -1834,7 +1828,8 @@ local function __bcheck(desc, staticKind, v)
       local inner = string.sub(desc, 7, -2)
       for i = 1, v.__n do
         local elem = v[i]
-        if elem == nil then elem = __MISSING end
+        if elem == __NULL then elem = nil
+        elseif elem == nil then elem = __MISSING end
         local ok, checked = pcall(__bcheck, inner,
           (elem == __MISSING) and "missing" or inner, elem)
         if not ok then
@@ -2032,12 +2027,17 @@ local function __arrayRead(opKey, digest, parent, bKey, bDigest, bParent, desc, 
   end
   if index < container.__n then
     elem = container[index + 1]
-    if elem == nil then elem = __MISSING end
+    if elem == __NULL then elem = nil
+    elseif elem == nil then elem = __MISSING end
   end
-  __ev(bKey, "START", "BOUNDARY", bDigest, bParent,
-    {__atom((elem == __MISSING) and "missing" or inner, elem)}, nil, nil)
-  __ev(bKey, "SUCCESS", "BOUNDARY", bDigest, bParent, {},
-    __atom((elem == __MISSING) and "missing" or inner, elem), nil)
+  local elemKind
+  if elem == __MISSING then elemKind = "missing"
+  elseif elem == nil then elemKind = "null"
+  else elemKind = inner end
+  __ev(bKey, "START", "BOUNDARY", bDigest, bParent, {__atom(elemKind, elem)},
+    nil, nil)
+  __ev(bKey, "SUCCESS", "BOUNDARY", bDigest, bParent, {}, __atom(elemKind, elem),
+    nil)
   if elem == __MISSING then
     if nullable then
       return nil

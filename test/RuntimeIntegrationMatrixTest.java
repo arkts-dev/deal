@@ -289,6 +289,43 @@ public class RuntimeIntegrationMatrixTest {
             }
         }
 
+        // (a2)/(a3) Hoisted-operand parity seeds reproducing the pinned
+        // jvm-arr-eval-order-hoisted (index-side, index, value-side, value)
+        // and jvm-arr-eval-order-write-hoisted-parity (a, b, i, c, v,
+        // write-ok) outputs: an operand's nested side-effecting argument
+        // completes before the operand call's own effect, with hoisted
+        // operands — on the oracle AND both shared emitters.
+        {
+            String source = CONSOLE
+                + "function pick(s: string, z: null): int { console.log(s); return 0; }\n"
+                + "function main(): null {\n"
+                + "  let xs: int[] = [5, 6];\n"
+                + "  xs[pick(\"index\", console.log(\"index-side\"))] = "
+                + "pick(\"value\", console.log(\"value-side\"));\n"
+                + "  if (xs[0] === 0) { console.log(\"written\") } "
+                + "else { console.log(\"bad\") }\n"
+                + "}\n";
+            runMatrix(source, "hoisted-operand parity "
+                + "jvm-arr-eval-order-hoisted (index-side, index, value-side, value)",
+                List.of("index-side", "index", "value-side", "value", "written"),
+                SUCCESS);
+        }
+        {
+            String source = CONSOLE
+                + "function pick(s: string, z: null): int { console.log(s); return 0; }\n"
+                + "function getArr(s: string, xs: int[]): int[] "
+                + "{ console.log(s); return xs; }\n"
+                + "function main(): null {\n"
+                + "  let xs: int[] = [5, 6];\n"
+                + "  getArr(\"a\", xs)[pick(\"i\", console.log(\"b\"))] = "
+                + "pick(\"v\", console.log(\"c\"));\n"
+                + "  if (xs[0] === 0) { console.log(\"write-ok\"); }\n"
+                + "}\n";
+            runMatrix(source, "hoisted-operand parity "
+                + "jvm-arr-eval-order-write-hoisted-parity (a, b, i, c, v, write-ok)",
+                List.of("a", "b", "i", "c", "v", "write-ok"), SUCCESS);
+        }
+
         // (b) TABLE_SLOT member and index targets.
         {
             String source = P_MARK
@@ -472,15 +509,21 @@ public class RuntimeIntegrationMatrixTest {
         {
             String source = CONSOLE
                 + "function main(): null {\n"
-                + "  let s1: string = \"\uE000\";\n"
+                + "  let s1: string = \"\uFFFF\";\n"
                 + "  let s2: string = \"\uD800\uDC00\";\n"
                 + "  if (s1 < s2) { console.log(\"codepoint-order\") } "
                 + "else { console.log(\"bad\") }\n"
                 + "  if (\"a\" === \"a\" && \"a\" !== \"b\") { console.log(\"str-eq\") } "
                 + "else { console.log(\"bad2\") }\n"
                 + "}\n";
+            // U+FFFF vs U+10000 discriminates: code point order says
+            // FFFF < 10000 (true -> codepoint-order), while the UTF-16
+            // code-unit order used by String.compareTo says FFFF > D800
+            // (false) — a shared-JVM realization using String.compareTo
+            // fails this seed.
             runMatrix(source, "STRING_* scalar-lexicographic order (code point, "
-                + "not UTF-16)", List.of("codepoint-order", "str-eq"), SUCCESS);
+                + "not UTF-16; the supplementary pair discriminates "
+                + "String.compareTo)", List.of("codepoint-order", "str-eq"), SUCCESS);
         }
 
         {
@@ -670,6 +713,26 @@ public class RuntimeIntegrationMatrixTest {
                 SUCCESS);
         }
 
+        {
+            String source = CONSOLE
+                + "function main(): null {\n"
+                + "  let xs: (int|null)[] = [];\n"
+                + "  xs[0] = null;\n"
+                + "  xs[1] = 1;\n"
+                + "  for (let e: int|null of xs) {\n"
+                + "    if (e === null) { console.log(\"nil\") } "
+                + "else { console.log(\"int\") }\n"
+                + "  }\n"
+                + "  console.log(\"done\");\n"
+                + "}\n";
+            // A present null element passes the nullable element descriptor
+            // (effects nil, int, done); conflating it with missing raises
+            // E8001 "expected nullable(int), got missing" — the parity
+            // break the emitters must never reproduce.
+            runMatrix(source, "FOR_EACH(ARRAY_VALUES) preserves a present null "
+                + "element (null never conflated with missing)",
+                List.of("nil", "int", "done"), SUCCESS);
+        }
         {
             String source = CONSOLE
                 + "function main(): null {\n"
