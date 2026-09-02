@@ -27,6 +27,43 @@ TEST_MAINS+=(
 )
 
 # =========================================================================
+# ISSUE-0353 (differential gate core): the gate components and their unit
+# suites join the compile list and the run phase here. The gate's own
+# deal.test entry point (deal.test.conformance.DifferentialGate) is NOT
+# added to TEST_MAINS — it is exercised directly and is not wired into
+# run_tests.sh until the flip (G5's temporary-coexistence window: the
+# legacy runners keep executing the runtime corpus until the lanes land).
+# =========================================================================
+TEST_SOURCES+=(
+  'deal/test/conformance/MismatchClass.java'
+  'deal/test/conformance/GateMismatch.java'
+  'deal/test/conformance/CorpusDiscovery.java'
+  'deal/test/conformance/SidecarExpectations.java'
+  'deal/test/conformance/ErrorSnapshot.java'
+  'deal/test/conformance/StructuredExpectationComparator.java'
+  'deal/test/conformance/FrontendCompiler.java'
+  'deal/test/conformance/CompileDiagnosticComparator.java'
+  'deal/test/conformance/Lane.java'
+  'deal/test/conformance/LaneCase.java'
+  'deal/test/conformance/LaneExecution.java'
+  'deal/test/conformance/GateDispatcher.java'
+  'deal/test/conformance/SidecarGateLoader.java'
+  'deal/test/conformance/DifferentialGate.java'
+  'deal/test/conformance/StructuredExpectationComparatorTest.java'
+  'deal/test/conformance/CompileDiagnosticComparatorTest.java'
+  'deal/test/conformance/GateDispatcherTest.java'
+  'deal/test/conformance/GateClassificationTest.java'
+  'deal/test/conformance/DifferentialGateCorpusTest.java'
+)
+TEST_MAINS+=(
+  'fg|=== Running Differential Gate Comparator Tests (ISSUE-0353) ===|java -ea -cp build deal.test.conformance.StructuredExpectationComparatorTest'
+  'fg|=== Running Compile Diagnostic Comparator Tests (ISSUE-0353) ===|java -ea -cp build deal.test.conformance.CompileDiagnosticComparatorTest'
+  'fg|=== Running Gate Dispatcher Tests (ISSUE-0353) ===|java -ea -cp build deal.test.conformance.GateDispatcherTest'
+  'fg|=== Running Gate Classification Tests (ISSUE-0353) ===|java -ea -cp build deal.test.conformance.GateClassificationTest'
+  'fg|=== Running Differential Gate Corpus Tests (ISSUE-0353) ===|java -ea -cp build deal.test.conformance.DifferentialGateCorpusTest'
+)
+
+# =========================================================================
 # Single compilation step: compile all source and test files at once.
 # Incremental: when every .java source under deal/ and test/ is older
 # than the recorded build stamp (and this script itself has not changed
