@@ -1,0 +1,6 @@
+// @expected: companion
+// @description: Classified support module — an @extern-c C FFI declaration companion imported by ffi-manifest-missing-native-library-rejected.deal; must keep compiling standalone through the declaration-file pipeline.
+
+// @extern-c
+
+export function add(a: int, b: int): int;

@@ -1,0 +1,271 @@
+{
+  "version": 1,
+  "requirements": {
+    "conformance-lexer": {
+      "title": "Lexer: comments, string escapes, integer/number literals",
+      "kind": "compile",
+      "fixtures": [
+        "frontend/lexer/comments-line.deal",
+        "frontend/lexer/comments-block.deal",
+        "frontend/lexer/string-escapes.deal",
+        "frontend/lexer/integer-literals.deal",
+        "frontend/lexer/number-literals.deal",
+        "frontend/lexer/deal-version-no-argument.deal"
+      ]
+    },
+    "conformance-parser": {
+      "title": "Parser: precedence, blocks, assignment targets, classes, functions, imports/exports",
+      "kind": "compile",
+      "fixtures": [
+        "frontend/parser/for-of-missing-type.deal",
+        "frontend/parser/import-after-declaration-rejected.deal",
+        "frontend/parser/block-statements.deal",
+        "frontend/parser/assignment-targets.deal"
+      ]
+    },
+    "conformance-type-checker": {
+      "title": "Type checker: invariance, nullable assignment, arrays, bytes, class nominal typing, table dynamic reads",
+      "kind": "compile",
+      "fixtures": [
+        "frontend/type-system/function-parameter-variance-mismatch.deal",
+        "frontend/types/invariance-int-number.deal",
+        "frontend/types/nullable-assignment.deal"
+      ]
+    },
+    "conformance-diagnostics": {
+      "title": "Diagnostics: stable code, location span, expected/actual type",
+      "kind": "compile",
+      "fixtures": [
+        "frontend/diagnostics/assignment-mismatch.deal",
+        "frontend/diagnostics/return-mismatch.deal"
+      ]
+    },
+    "conformance-host-abi-declarations": {
+      "title": "Host ABI: declared external imports and missing external rejection",
+      "kind": "compile",
+      "fixtures": [
+        "backend-runtime/modules/declaration-only-import-compile.deal",
+        "frontend/modules/host-undeclared-import-rejected.deal",
+        "frontend/modules/import-not-found.deal",
+        "frontend/modules/missing-export.deal"
+      ]
+    },
+    "conformance-ffi-declaration-rules": {
+      "title": "C FFI: declaration rules for @extern-c, @c-struct, @c-pointer",
+      "kind": "compile",
+      "fixtures": [
+        "frontend/modules/ffi-class-missing-marker-rejected.d.deal",
+        "frontend/modules/ffi-class-duplicate-marker-rejected.d.deal",
+        "frontend/modules/ffi-marker-on-function-rejected.d.deal",
+        "frontend/modules/ffi-unattached-marker-rejected.d.deal"
+      ]
+    },
+    "conformance-ffi-invalid-manifest-policy": {
+      "title": "C FFI: invalid manifest policy rejection",
+      "kind": "compile",
+      "fixtures": [
+        "frontend/modules/ffi-manifest-missing-native-library-rejected.deal"
+      ]
+    },
+    "conformance-runtime-sentinels": {
+      "title": "Runtime: null sentinel, missing optional fields, class defaults, array indexing, bytes indexing and byte-value checks, function wrappers",
+      "kind": "runtime",
+      "fixtures": [
+        "backend-runtime/defaults/plan-fresh-literals.deal",
+        "backend-runtime/runtime/int-convert.deal"
+      ]
+    },
+    "conformance-runtime-int32": {
+      "title": "Runtime: signed int32 range acceptance/rejection and arithmetic overflow",
+      "kind": "runtime",
+      "fixtures": [
+        "backend-runtime/arithmetic/int32-pow-overflow.deal",
+        "backend-runtime/arithmetic/int32-mod-min-neg-one.deal"
+      ]
+    },
+    "conformance-abi": {
+      "title": "ABI: import/export, host function wrapping, standard library module",
+      "kind": "runtime",
+      "fixtures": [
+        "backend-runtime/modules/cross-module-class-factory.deal",
+        "backend-runtime/modules/imported-class-array.deal"
+      ]
+    },
+    "conformance-host-abi-boundary": {
+      "title": "Host ABI: runtime boundary checks",
+      "kind": "runtime",
+      "fixtures": [
+        "backend-runtime/host-abi/host-boundary-apply-function.deal",
+        "backend-runtime/host-abi/host-bad-return.deal",
+        "backend-runtime/host-abi/host-invalid-utf8-e8010.deal",
+        "backend-runtime/host-abi/host-missing-export.deal"
+      ]
+    },
+    "conformance-stdlib-console": {
+      "title": "Stdlib: console",
+      "kind": "runtime",
+      "fixtures": [
+        "backend-runtime/stdlib/console/import-log.deal"
+      ]
+    },
+    "conformance-stdlib-string": {
+      "title": "Stdlib: string",
+      "kind": "runtime",
+      "fixtures": [
+        "backend-runtime/stdlib/string/length-unicode.deal",
+        "backend-runtime/stdlib/string/search-helpers.deal"
+      ]
+    },
+    "conformance-stdlib-table": {
+      "title": "Stdlib: table",
+      "kind": "runtime",
+      "fixtures": [
+        "backend-runtime/stdlib/table/keys-order-pin.deal",
+        "backend-runtime/stdlib/table/keys-string-inclusion.deal",
+        "backend-runtime/stdlib/table/keys-nonstring-exclusion.deal"
+      ]
+    },
+    "conformance-stdlib-json": {
+      "title": "Stdlib: JSON",
+      "kind": "runtime",
+      "fixtures": [
+        "backend-runtime/stdlib/json/json-stringify-roundtrip.deal",
+        "backend-runtime/stdlib/json/int32-boundary-parse.deal"
+      ]
+    },
+    "conformance-stdlib-math": {
+      "title": "Stdlib: math",
+      "kind": "runtime",
+      "fixtures": [
+        "backend-runtime/stdlib/math/int-helpers.deal",
+        "backend-runtime/stdlib/math/number-helpers.deal"
+      ]
+    },
+    "conformance-stdlib-time": {
+      "title": "Stdlib: time",
+      "kind": "runtime",
+      "fixtures": [
+        "backend-runtime/stdlib-edge/time-now-millis-positive.deal"
+      ]
+    },
+    "conformance-ai-codegen-benchmark": {
+      "title": "AI-codegen benchmark: feature subset and generated-solution validation artifact",
+      "kind": "benchmark",
+      "fixtures": [
+        "docs/deal-v1.2-capabilities.deal"
+      ]
+    }
+  },
+  "observables": {
+    "observable-compile-time-diagnostics": {
+      "title": "Compile-time diagnostics",
+      "kind": "compile",
+      "fixtures": [
+        "frontend/diagnostics/assignment-mismatch.deal",
+        "frontend/diagnostics/return-mismatch.deal"
+      ]
+    },
+    "observable-successful-runtime-values": {
+      "title": "Successful runtime values",
+      "kind": "runtime",
+      "fixtures": [
+        "backend-runtime/runtime/int-convert.deal",
+        "backend-runtime/runtime/number-convert.deal"
+      ]
+    },
+    "observable-runtime-error-codes-source-locations": {
+      "title": "Runtime error codes and source locations",
+      "kind": "runtime",
+      "fixtures": [
+        "backend-runtime/runtime-errors/int-div-zero-e8005.deal",
+        "backend-runtime/source-location/int32-overflow-source.deal"
+      ]
+    },
+    "observable-module-import-export": {
+      "title": "Module import/export behavior",
+      "kind": "runtime",
+      "fixtures": [
+        "backend-runtime/modules/cross-module-class-factory.deal",
+        "backend-runtime/modules/imported-class-array.deal"
+      ]
+    },
+    "observable-host-boundary": {
+      "title": "Host boundary behavior",
+      "kind": "runtime",
+      "fixtures": [
+        "backend-runtime/host-abi/host-boundary-apply-function.deal",
+        "backend-runtime/host-abi/host-bad-return.deal"
+      ]
+    },
+    "observable-null-missing-field": {
+      "title": "null and missing-field semantics",
+      "kind": "runtime",
+      "fixtures": [
+        "backend-runtime/classes/optional-nullable-three-states.deal",
+        "backend-runtime/classes/has-delete-optional-nullable.deal"
+      ]
+    },
+    "observable-class-nominal-identity": {
+      "title": "Class nominal identity",
+      "kind": "runtime",
+      "fixtures": [
+        "backend-runtime/modules/modid-class-identity.deal",
+        "backend-runtime/modules/modid-class-identity-control.deal"
+      ]
+    },
+    "observable-function-type-identity-async-marker": {
+      "title": "Function type identity, including the async marker",
+      "kind": "runtime",
+      "fixtures": [
+        "backend-runtime/descriptors/canonical-async-marker-boundary.deal"
+      ]
+    },
+    "observable-evaluation-order": {
+      "title": "Evaluation order",
+      "kind": "runtime",
+      "fixtures": [
+        "backend-runtime/bytes/bytes-write-single-evaluation.deal",
+        "backend-runtime/bytes/bytes-write-validation-order.deal"
+      ]
+    },
+    "observable-integer-overflow-division": {
+      "title": "Integer overflow and division semantics",
+      "kind": "runtime",
+      "fixtures": [
+        "backend-runtime/arithmetic/int32-pow-overflow.deal",
+        "backend-runtime/runtime-errors/int-div-zero-e8005.deal"
+      ]
+    },
+    "observable-jsonable-serialization": {
+      "title": "@jsonable serialization behavior",
+      "kind": "runtime",
+      "fixtures": [
+        "backend-runtime/jsonable/jsonable-complex-roundtrip.deal",
+        "backend-runtime/jsonable/fromjson-extra-key-runtime.deal"
+      ]
+    }
+  },
+  "specSections": [
+    "Arrays",
+    "Async/Await",
+    "Bytes",
+    "C FFI declaration files",
+    "Classes",
+    "Control flow",
+    "Diagnostics",
+    "Error handling",
+    "Functions",
+    "Lexical elements",
+    "Modules, declarations, standard library, and host ABI",
+    "Runtime execution model",
+    "Standard library declarations",
+    "Syntactic grammar",
+    "Tables",
+    "Type system",
+    "Variables"
+  ],
+  "deferred": {
+    "conformance-ffi-abi-mapping": "Deferred to the zero-skip flip (T14): the C FFI ABI-mapping runtime row lands in one change together with its divergent E6006 sidecar fixture, after the backend epics register E6006 in deal/diagnostics/DiagnosticCode.java; no coverage entry exists until that change.",
+    "conformance-ffi-runtime-errors": "Deferred to the zero-skip flip (T14): the C FFI runtime-errors and unsupported-backend rejection row lands in one change together with its divergent E6006 sidecar fixture, after the backend epics register E6006 in deal/diagnostics/DiagnosticCode.java; no coverage entry exists until that change."
+  }
+}
