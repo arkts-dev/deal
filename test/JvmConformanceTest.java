@@ -129,7 +129,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  *   <li>frontend-classified files: 100% pass (zero failed);</li>
  *   <li>backend-runtime: zero applicable failures AND at least 80% of
  *       the on-disk backend-runtime tests (the per-run
- *       {@code runtimeDenominator()} count — currently 293) pass through the
+ *       {@code runtimeDenominator()} count — currently 300) pass through the
  *       frontend → CompilationOrchestrator → JVM codegen → javac → JVM
  *       pipeline;</li>
  *   <li>zero unclassified skips (by construction — the classifier has
