@@ -45,16 +45,19 @@ import deal.checker.CheckResult;
 import deal.checker.Symbol;
 import deal.checker.SymbolTable;
 import deal.diagnostics.CompilerDiagnostic;
+import deal.semantic.ir.AdaptSourceRef;
 import deal.semantic.ir.AddressChainProtocol;
 import deal.semantic.ir.AnchorId;
 import deal.semantic.ir.AssignTargetKind;
 import deal.semantic.ir.BinarySelector;
 import deal.semantic.ir.BindingCellKind;
+import deal.semantic.ir.BindingGeneration;
 import deal.semantic.ir.BindingId;
 import deal.semantic.ir.BindingImmutabilityProof;
 import deal.semantic.ir.BlockId;
 import deal.semantic.ir.BoundaryKind;
 import deal.semantic.ir.BoundaryRealization;
+import deal.semantic.ir.CaptureMode;
 import deal.semantic.ir.ClassId;
 import deal.semantic.ir.ConstructKind;
 import deal.semantic.ir.ControlSelector;
@@ -980,6 +983,96 @@ public final class SemanticLowerer {
             Objects.requireNonNull(groups, "groups must not be null");
             Objects.requireNonNull(proofFacts, "proofFacts must not be null");
             Objects.requireNonNull(creationFacts, "creationFacts must not be null");
+            closures = List.copyOf(closures);
+            groups = List.copyOf(groups);
+        }
+    }
+
+    /**
+     * One emitted adapter of the shape-map child (ISSUE-0450 sequencing
+     * item 7): the producing {@code FUNCTION_ADAPT} op, its fresh
+     * adapter allocation identity (fresh per creation, stable for the
+     * run — B8), the closed-map capture mode and the closed source
+     * reference the op carries from birth (the map's mode plus its
+     * per-mode payload — B7/B8; no provisional or non-map mode ever
+     * exists), the derived source/target signature pair, the recorded
+     * immutability proof (present exactly for VALUE over a binding
+     * load — B8), and the consumed wiring point (the adapted position's
+     * own {@code VARIABLE_DECLARATION}/{@code VARIABLE_ASSIGNMENT}
+     * boundary op or the inferred declaration's {@code BINDING_INIT} —
+     * B9's creation-wiring target). At creation the adapter result is
+     * the direct input of exactly that boundary chain; after the
+     * commit it flows as an ordinary identity-preserving function
+     * value whose later typed-boundary crossings are ordinary
+     * {@code FUNCTION_SIGNATURE} checks (a later crossing's input
+     * carries the same identity through a load, never through the
+     * adapter's own direct wiring).
+     */
+    public record AdapterEmission(
+            OpId adaptOpId, ValueId adapterIdentity, CaptureMode mode,
+            AdaptSourceRef sourceRef, RuntimeDescriptor.Func sourceSignature,
+            RuntimeDescriptor.Func targetSignature, BindingImmutabilityProof proof,
+            OpId wiringTargetOpId, BoundaryKind wiringBoundaryKind) {
+
+        public AdapterEmission {
+            Objects.requireNonNull(adaptOpId, "adaptOpId must not be null");
+            Objects.requireNonNull(adapterIdentity, "adapterIdentity must not be null");
+            Objects.requireNonNull(mode, "mode must not be null");
+            Objects.requireNonNull(sourceRef, "sourceRef must not be null");
+            Objects.requireNonNull(sourceSignature, "sourceSignature must not be null");
+            Objects.requireNonNull(targetSignature, "targetSignature must not be null");
+            Objects.requireNonNull(wiringTargetOpId, "wiringTargetOpId must not be null");
+            Objects.requireNonNull(wiringBoundaryKind, "wiringBoundaryKind must not be null");
+        }
+    }
+
+    /**
+     * The shape-map child's complete emission fact surface of one module
+     * lowering: one {@link AdapterEmission} per emitted
+     * {@code FUNCTION_ADAPT} op in emission order (partial on a failed
+     * walk, complete on success).
+     */
+    public record ShapeMapFacts(List<AdapterEmission> emissions) {
+
+        /** The empty fact set (the failure-path value). */
+        public static ShapeMapFacts empty() {
+            return new ShapeMapFacts(List.of());
+        }
+
+        public ShapeMapFacts {
+            Objects.requireNonNull(emissions, "emissions must not be null");
+            emissions = List.copyOf(emissions);
+        }
+    }
+
+    /**
+     * The result of the shape-map entry point (ISSUE-0450 shape-map
+     * child): the validated lowering result, the binding walk's binding
+     * facts, the produced closures' capture facts, the produced
+     * recursive groups' member facts, the derived proof fact surface,
+     * the creation-rule classification facts, and the shape-map
+     * emission facts (partial on failure, complete on success). Unlike
+     * the creation-rule child, the produced unit carries exactly one
+     * {@code FUNCTION_ADAPT} op per {@code ADAPT}-classified position —
+     * the closed-map mode with its per-mode payload from birth, wired
+     * as the direct input of the adapted position's own boundary chain
+     * (B6-B9).
+     */
+    public record ShapeMapCoreResult(
+            LoweringResult lowering, BindingCoreFacts bindingFacts,
+            List<ClosureFacts> closures, List<GroupFacts> groups,
+            BindingImmutabilityAnalysis.BindingImmutabilityFacts proofFacts,
+            AdapterCreationRule.CreationRuleFacts creationFacts,
+            ShapeMapFacts shapeMapFacts) {
+
+        public ShapeMapCoreResult {
+            Objects.requireNonNull(lowering, "lowering must not be null");
+            Objects.requireNonNull(bindingFacts, "bindingFacts must not be null");
+            Objects.requireNonNull(closures, "closures must not be null");
+            Objects.requireNonNull(groups, "groups must not be null");
+            Objects.requireNonNull(proofFacts, "proofFacts must not be null");
+            Objects.requireNonNull(creationFacts, "creationFacts must not be null");
+            Objects.requireNonNull(shapeMapFacts, "shapeMapFacts must not be null");
             closures = List.copyOf(closures);
             groups = List.copyOf(groups);
         }
@@ -1950,6 +2043,147 @@ public final class SemanticLowerer {
             lowerer.proofFacts(), lowerer.creationRuleFacts());
     }
 
+    /**
+     * The shape-map child's public lowering entry point (ISSUE-0450
+     * sequencing item 7): lowers one checked implementation module
+     * through the group-core walk with the creation-rule
+     * classification and the shape-map production active — every
+     * {@code ADAPT}-classified position emits exactly one
+     * {@code FUNCTION_ADAPT} op carrying its closed-map mode and
+     * per-mode payload from birth (B7/B8), produced before the
+     * position's boundary and wired as the direct input of exactly the
+     * adapted position's own
+     * {@code VARIABLE_DECLARATION}/{@code VARIABLE_ASSIGNMENT} boundary
+     * chain (an inferred declaration's result feeds its
+     * {@code BINDING_INIT} directly — B9's creation-wiring rule),
+     * with a fresh adapter allocation identity per creation registered
+     * as an {@code AdapterBinding} through the registry child's seam
+     * (B5), zero {@code BOUNDARY} ops emitted by the adapter (the
+     * adapter adds no second boundary; the N target-signature
+     * parameter-boundary checks belong to the invoking op, E7), and the
+     * B2 cell-kind derivation completed over the union of the closure
+     * child's capture references and this child's two remaining arms
+     * (every {@code REEVALUATE_THUNK} {@code capturedBindings} entry
+     * and every {@code FUNCTION_ADAPT(SHARED_CELL)} {@code SharedCell}
+     * source reference) before the walk's finalization re-derives every
+     * {@code BINDING_ALLOC} payload.
+     *
+     * <p>The walk consumes the expression-lowering seam for the source
+     * ops themselves (the values/calls epics' producers lower
+     * call-result, member-read, conditional, and conversion sources;
+     * this child's thunk builder wraps the already-lowered ops in a
+     * fresh {@link BlockId} — zero evaluation at creation). Source-level
+     * end-to-end lowering of those positions completes through the
+     * declared consumed seams; this child's own tests construct those
+     * source ops at the IR level over the pinned
+     * {@code deal.semantic-ir/1} schema. No invocation execution is
+     * built or verified here (generation-checked loads, thunk
+     * re-execution with {@code ADAPTER_THUNK_STEP} children,
+     * source-signature checks, N-argument projection with trailing
+     * drop, and the per-source-kind single return boundary are E7's).
+     * This entry point is driven by the shape-map tests; no production
+     * route change — retained/public compilation paths and
+     * {@link #lowerModule} are untouched.
+     *
+     * @param module                the checked implementation module; non-null
+     * @param profile               the invocation's semantic profile
+     *                              (I3 guard: only
+     *                              {@code DEAL_V1_2_INT32} is lowered);
+     *                              non-null
+     * @param constructCoverage     the manifest's reachable-construct rows
+     *                              recorded at lowering start (S1); non-null
+     * @param interfaceHash         the interface index digest the unit is
+     *                              checked against (R-PROFILE); non-null
+     * @param capabilityRegistryHash the invocation's capability-registry
+     *                              digest (R-PROFILE); non-null
+     * @param allocator             the project's semantic-id allocator in
+     *                              dependency order; non-null
+     * @return the validated unit with the binding, closure, group,
+     *         proof, creation-rule classification, and shape-map
+     *         emission facts, or the first E6005 with the partial facts
+     *         on failure
+     */
+    public static ShapeMapCoreResult lowerModuleShapeMapCore(
+            CheckedModuleInput module,
+            SemanticProfile profile,
+            Map<ConstructKind, List<SemanticOpKind>> constructCoverage,
+            String interfaceHash,
+            String capabilityRegistryHash,
+            SemanticIdAllocator allocator) {
+        Objects.requireNonNull(module, "module must not be null");
+        Objects.requireNonNull(profile, "profile must not be null");
+        Objects.requireNonNull(constructCoverage, "constructCoverage must not be null");
+        Objects.requireNonNull(interfaceHash, "interfaceHash must not be null");
+        Objects.requireNonNull(capabilityRegistryHash, "capabilityRegistryHash must not be null");
+        Objects.requireNonNull(allocator, "allocator must not be null");
+        // I3 profile guard: identical to lowerModuleCreationRuleCore — a
+        // non-DEAL_V1_2_INT32 lowering request produces no unit and no
+        // partial session state.
+        if (profile != SemanticProfile.DEAL_V1_2_INT32) {
+            return new ShapeMapCoreResult(new LoweringResult(null, null,
+                List.of(FailureContractRegistry.e6005(
+                    new LoweringFailureDetail(module.moduleId().path(),
+                        SemanticCapability.FOUNDATION_VALUES, LOWER_LEGACY_PROFILE_REJECTED,
+                        profile, LoweredModuleUnit.FORMAT_VERSION, "SemanticLowerer")))),
+                BindingCoreFacts.empty(), List.of(), List.of(),
+                BindingImmutabilityAnalysis.BindingImmutabilityFacts.empty(),
+                AdapterCreationRule.CreationRuleFacts.empty(), ShapeMapFacts.empty());
+        }
+        ModuleLowerer lowerer = new ModuleLowerer(module.moduleId(), module.sourceId(),
+            module.checks(), allocator, true, true, true, true, true, true,
+            module.ast().span());
+        try {
+            lowerer.lowerGroupModule(module.ast().statements());
+        } catch (ConstructUnlowered unlowered) {
+            return new ShapeMapCoreResult(new LoweringResult(null, null,
+                List.of(FailureContractRegistry.e6005(
+                    loweringFailureDetail(module.moduleId(), unlowered)))),
+                lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
+                lowerer.proofFacts(), lowerer.creationRuleFacts(), lowerer.shapeMapFacts());
+        } catch (IntLiteralOutOfRange outOfRange) {
+            return new ShapeMapCoreResult(new LoweringResult(null, null,
+                List.of(FailureContractRegistry.e6005(
+                    loweringFailureDetail(module.moduleId(), outOfRange)))),
+                lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
+                lowerer.proofFacts(), lowerer.creationRuleFacts(), lowerer.shapeMapFacts());
+        } catch (ContainerPayloadDescriptors.Defect defect) {
+            return new ShapeMapCoreResult(new LoweringResult(null, null,
+                List.of(FailureContractRegistry.e6005(
+                    loweringFailureDetail(module.moduleId(), defect)))),
+                lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
+                lowerer.proofFacts(), lowerer.creationRuleFacts(), lowerer.shapeMapFacts());
+        } catch (ComparisonSelectorLowering.Defect defect) {
+            return new ShapeMapCoreResult(new LoweringResult(null, null,
+                List.of(ComparisonSelectorLowering.e6005(module.moduleId(), defect))),
+                lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
+                lowerer.proofFacts(), lowerer.creationRuleFacts(), lowerer.shapeMapFacts());
+        }
+        LoweredModuleUnit unit = lowerer.buildUnit(constructCoverage,
+            module.imports().stream().map(ResolvedImport::resolvedModuleId).toList(),
+            interfaceHash, capabilityRegistryHash,
+            ContainerClaimingSeam.E6_GATE_ACTIVATION);
+        Optional<CompilerDiagnostic> validation = SemanticIrValidator.validate(unit,
+            new SemanticIrValidator.ComparisonFacts(interfaceHash,
+                SemanticProfile.DEAL_V1_2_INT32, capabilityRegistryHash));
+        if (validation.isPresent()) {
+            return new ShapeMapCoreResult(new LoweringResult(null, null,
+                List.of(validation.get())),
+                lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
+                lowerer.proofFacts(), lowerer.creationRuleFacts(), lowerer.shapeMapFacts());
+        }
+        Optional<CompilerDiagnostic> chainShape = AddressChainProtocol.validate(unit);
+        if (chainShape.isPresent()) {
+            return new ShapeMapCoreResult(new LoweringResult(null, null,
+                List.of(chainShape.get())),
+                lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
+                lowerer.proofFacts(), lowerer.creationRuleFacts(), lowerer.shapeMapFacts());
+        }
+        return new ShapeMapCoreResult(
+            new LoweringResult(unit, lowerer.bodyTable(), List.of()),
+            lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
+            lowerer.proofFacts(), lowerer.creationRuleFacts(), lowerer.shapeMapFacts());
+    }
+
     // =========================================================================
     // The per-module lowering session (the arms)
     // =========================================================================
@@ -2127,6 +2361,42 @@ public final class SemanticLowerer {
          */
         private final List<AdapterCreationRule.PositionClassification>
             creationClassifications = new ArrayList<>();
+        /**
+         * The shape-map-production mode flag (ISSUE-0450 shape-map
+         * child): {@code true} exactly when the session was created by
+         * {@link SemanticLowerer#lowerModuleShapeMapCore} — every
+         * {@code ADAPT}-classified position of the creation-rule walk
+         * emits exactly one {@code FUNCTION_ADAPT} op carrying its
+         * closed-map mode and per-mode payload from birth (B7/B8),
+         * produced before the position's boundary and wired as the
+         * direct input of exactly the adapted position's own
+         * {@code VARIABLE_DECLARATION}/{@code VARIABLE_ASSIGNMENT}
+         * boundary chain (an inferred declaration's result feeds its
+         * {@code BINDING_INIT} directly). The produced unit therefore
+         * carries one {@code FUNCTION_ADAPT} per adapted position and
+         * the adapter result is the direct input of no other
+         * {@code BOUNDARY} op; every other position's flow is
+         * unchanged. {@code false} (the default in every other mode)
+         * preserves the other walks' behavior byte-for-byte.
+         */
+        private final boolean shapeMapAnalysis;
+        /**
+         * The recorded adapter emissions in emission order (shape-map
+         * mode): the fact surface backing {@link #shapeMapFacts()}.
+         */
+        private final List<AdapterEmission> shapeMapEmissions = new ArrayList<>();
+        /**
+         * The seeded first-class intrinsic function-value identities by
+         * intrinsic name ({@code int}/{@code number} — the values the
+         * intrinsic bindings' INIT operands commit at module-init top):
+         * the VALUE-over-intrinsic operand of the shape-map child (B7
+         * arm (a) — an intrinsic function value is a materialized
+         * function-value operand; the adapter retains that identity, and
+         * no function-typed load of the intrinsic binding is emitted —
+         * a first-class intrinsic value has no closed
+         * {@code FunctionExecutionBinding} shape, B5).
+         */
+        private final Map<String, ValueId> intrinsicIdentities = new LinkedHashMap<>();
         /**
          * The produced recursive groups' member facts in creation order
          * (group-core mode): the fact surface backing
@@ -2469,6 +2739,65 @@ public final class SemanticLowerer {
                              boolean closureCore, boolean groupCore,
                              boolean proofAnalysis, boolean creationRuleAnalysis,
                              Span programSpan) {
+            this(module, sourceId, checks, ids, bindingCore, closureCore, groupCore,
+                proofAnalysis, creationRuleAnalysis, false, programSpan);
+        }
+
+        /**
+         * Creates one lowering session with the binding-core, closure-core,
+         * group-core, proof-analysis, creation-rule-analysis, and
+         * shape-map mode flags (ISSUE-0444 binding-core child;
+         * ISSUE-0445 closure child; ISSUE-0446 recursive-group child;
+         * ISSUE-0448 proof child; ISSUE-0449 creation-rule child;
+         * ISSUE-0450 shape-map child). Shape-map mode rides on top of the
+         * walk flags (the shape-map entry point passes all six): every
+         * {@code ADAPT}-classified position emits exactly one
+         * {@code FUNCTION_ADAPT} op carrying its closed-map mode and
+         * per-mode payload from birth (B7/B8), produced before the
+         * position's boundary and wired as the direct input of exactly
+         * the adapted position's own
+         * {@code VARIABLE_DECLARATION}/{@code VARIABLE_ASSIGNMENT}
+         * boundary chain (an inferred declaration's result feeds its
+         * {@code BINDING_INIT} directly), with a fresh adapter
+         * allocation identity registered as an {@code AdapterBinding}
+         * through the registry seam, zero {@code BOUNDARY} ops emitted
+         * by the adapter, and the B2 cell-kind derivation completed
+         * over the union of the closure captures and this child's two
+         * remaining capture arms ({@code REEVALUATE_THUNK}
+         * {@code capturedBindings} entries and
+         * {@code FUNCTION_ADAPT(SHARED_CELL)} {@code SharedCell} source
+         * references) before the finalization re-derivation.
+         *
+         * @param module              the module identity; non-null
+         * @param sourceId            the stable source identity carried on
+         *                            every op's origin; non-null
+         * @param checks              the module's checked facts (read-only);
+         *                            non-null
+         * @param ids                 the project's allocator in dependency
+         *                            order; non-null
+         * @param bindingCore         {@code true} to activate the binding
+         *                            walk's arms and environment
+         * @param closureCore         {@code true} to activate the closure
+         *                            arms on top of the binding walk
+         * @param groupCore           {@code true} to activate the group arms
+         *                            on top of the closure walk
+         * @param proofAnalysis       {@code true} to activate the
+         *                            conservative assignment analysis on
+         *                            top of the walk
+         * @param creationRuleAnalysis {@code true} to activate the closed
+         *                            creation-rule classification on top
+         *                            of the walk
+         * @param shapeMapAnalysis    {@code true} to activate the closed
+         *                            shape-map production on top of the
+         *                            walk (the ADAPT arm emits its
+         *                            FUNCTION_ADAPT op)
+         * @param programSpan         the checked program's span; non-null
+         */
+        public ModuleLowerer(ModuleId module, String sourceId, CheckResult checks,
+                             SemanticIdAllocator ids, boolean bindingCore,
+                             boolean closureCore, boolean groupCore,
+                             boolean proofAnalysis, boolean creationRuleAnalysis,
+                             boolean shapeMapAnalysis, Span programSpan) {
             this.module = Objects.requireNonNull(module, "module must not be null");
             this.sourceId = Objects.requireNonNull(sourceId, "sourceId must not be null");
             this.checks = Objects.requireNonNull(checks, "checks must not be null");
@@ -2478,6 +2807,7 @@ public final class SemanticLowerer {
             this.groupCore = groupCore && this.closureCore;
             this.proofAnalysis = proofAnalysis;
             this.creationRuleAnalysis = creationRuleAnalysis;
+            this.shapeMapAnalysis = shapeMapAnalysis && this.creationRuleAnalysis;
             this.programSpan = Objects.requireNonNull(programSpan,
                 "programSpan must not be null");
             this.moduleInitBlock = ids.nextBlockId(module, nextOrdinal++, 0);
@@ -2881,6 +3211,22 @@ public final class SemanticLowerer {
         }
 
         /**
+         * The shape-map walk's complete emission fact surface (shape-map
+         * mode): one {@link AdapterEmission} per emitted
+         * {@code FUNCTION_ADAPT} op in emission order (partial when the
+         * walk failed mid-way; the empty surface outside shape-map
+         * mode).
+         *
+         * @return the adapter emission fact surface; non-null
+         */
+        public ShapeMapFacts shapeMapFacts() {
+            if (!shapeMapAnalysis) {
+                return ShapeMapFacts.empty();
+            }
+            return new ShapeMapFacts(shapeMapEmissions);
+        }
+
+        /**
          * Seeds the {@code int}/{@code number} intrinsic bindings at
          * module-init top (B1): exactly the root
          * {@code Symbol.IntrinsicSymbol} bindings of those two names
@@ -2919,6 +3265,11 @@ public final class SemanticLowerer {
                         cellKinds.cellKindOf(incarnation), INITIAL_LOOP_GENERATION),
                     moduleInitSpan(), FailurePolicyId.NO_DEAL_FAILURE);
                 ValueId intrinsicValue = ids.nextValueId(module, nextOrdinal++, 0);
+                // The seeded intrinsic identity is the shape-map child's
+                // VALUE-over-intrinsic operand (B7 arm (a)); it is
+                // retained here so the adapted emission wires the exact
+                // identity the intrinsic binding's cell holds.
+                intrinsicIdentities.put(name, intrinsicValue);
                 // No static function-identity tracking for intrinsics: a
                 // first-class intrinsic value has no closed
                 // FunctionExecutionBinding shape, so a function-typed
@@ -3157,6 +3508,22 @@ public final class SemanticLowerer {
                 new KindPayload.BindingAllocPayload(binding, currentBlock(), true,
                     cellKinds.cellKindOf(incarnation), INITIAL_LOOP_GENERATION),
                 decl.span(), FailurePolicyId.NO_DEAL_FAILURE);
+            if (shapeMapAnalysis && declaredTypeOf(decl) instanceof Type.Func) {
+                Type sourceType = checkedType(decl.initializer());
+                if (AdapterCreationRule.variableDisposition(sourceType,
+                        declaredTypeOf(decl)) == AdapterCreationRule.Disposition.ADAPT) {
+                    // The shape-map child's adapted declaration (B6-B9):
+                    // exactly one FUNCTION_ADAPT op with its closed-map
+                    // mode and per-mode payload from birth, produced
+                    // before the position's boundary and wired as the
+                    // direct input of exactly the position's own
+                    // VARIABLE_DECLARATION boundary chain (an inferred
+                    // declaration's result feeds its BINDING_INIT
+                    // directly).
+                    lowerAdaptedVarDecl(decl, binding, incarnation);
+                    return;
+                }
+            }
             ValueId value = lowerExpression(decl.initializer());
             OpId declarationBoundary = null;
             if (decl.typeAnnotation().isPresent()) {
@@ -3183,6 +3550,317 @@ public final class SemanticLowerer {
             if (creationRuleAnalysis) {
                 classifyVarDeclPosition(decl, value, declarationBoundary, initOp);
             }
+        }
+
+        /**
+         * The shape-map child's adapted {@code let} declaration (B6-B9):
+         * the closed mode map selects exactly one mode from checker
+         * facts (B7), the per-mode payload is built from birth (B8),
+         * and exactly one {@code FUNCTION_ADAPT} op is emitted before
+         * the position's boundary — its result wired as the direct
+         * input of exactly the position's own
+         * {@code VARIABLE_DECLARATION} boundary chain (the boundary
+         * observes an exact-signature adapter value and passes), or as
+         * the {@code BINDING_INIT} operand of an inferred declaration
+         * (no boundary op exists there). The adapter emits zero
+         * {@code BOUNDARY} ops of its own; its fresh allocation
+         * identity registers exactly one {@code AdapterBinding}
+         * through the registry child's seam; the cell's tracked
+         * function identity becomes the adapter identity (loads/reads/
+         * passes/returns preserve it).
+         *
+         * <p><b>Per-mode creation (B8, exactly).</b> VALUE completes its
+         * single operand at creation — the {@code CLOSURE_NEW} result,
+         * the intrinsic function-value identity, or the single proved
+         * {@code BINDING_LOAD} at the proof's generation — and retains
+         * that identity; the payload's {@code proof} is present iff the
+         * operand is a binding load. SHARED_CELL evaluates nothing and
+         * records {@code SharedCell {binding, generation}} naming the
+         * dominant incarnation at the position; the incarnation joins
+         * the B2 cell-kind derivation's capture-reference union (the
+         * shape-map child's SHARED_CELL arm). REEVALUATE_THUNK
+         * evaluates nothing at the creation site: the source
+         * expression's already-lowered ops live only inside a fresh
+         * detached thunk block whose {@code capturedBindings} pin the
+         * thunk's free bindings, generation-pinned, ordered by first
+         * reference (the thunk builder's production; the captures join
+         * the B2 derivation through the walk's registration surface —
+         * the shape-map child's thunk arm).</p>
+         *
+         * @param decl        the adapted declaration; non-null
+         * @param binding     the declared name's {@link BindingId}; non-null
+         * @param incarnation the declared name's generation-0
+         *                    incarnation; non-null
+         */
+        private void lowerAdaptedVarDecl(VariableDeclaration decl, BindingId binding,
+                                         BindingCoreIncarnation incarnation) {
+            Type.Func sourceType = (Type.Func) checkedType(decl.initializer());
+            Type.Func targetType = (Type.Func) declaredTypeOf(decl);
+            RuntimeDescriptor.Func sourceSignature = (RuntimeDescriptor.Func)
+                ContainerPayloadDescriptors.resultDescriptorOf(sourceType);
+            RuntimeDescriptor.Func targetSignature = (RuntimeDescriptor.Func)
+                ContainerPayloadDescriptors.resultDescriptorOf(targetType);
+            Optional<BindingImmutabilityProof> proof = sourceProofOf(decl.initializer());
+            AdapterShapeMap.SourceShape shape = AdapterShapeMap.sourceShapeOf(
+                decl.initializer(), name -> checks.symbolTable().resolve(name));
+            CaptureMode mode = AdapterShapeMap.selectMode(shape, proof);
+            ThunkSource thunk = null;
+            ValueId operand = null;
+            BindingImmutabilityProof payloadProof = null;
+            AdaptSourceRef sourceRef;
+            List<ValueId> operands;
+            List<RuntimeDescriptor> operandTypes;
+            switch (mode) {
+                case VALUE -> {
+                    if (shape == AdapterShapeMap.SourceShape.INTRINSIC_FUNCTION_VALUE) {
+                        // B7 arm (a): a first-class intrinsic function
+                        // value — the seeded intrinsic identity is the
+                        // materialized operand; no function-typed load
+                        // of the intrinsic binding is emitted (a
+                        // first-class intrinsic value has no closed
+                        // FunctionExecutionBinding shape, B5).
+                        String name = ((IdentifierExpr) decl.initializer()).name();
+                        operand = intrinsicIdentities.get(name);
+                        if (operand == null) {
+                            throw new IllegalStateException("the intrinsic identity of '"
+                                + name + "' was not seeded at module-init top (producer "
+                                + "defect)");
+                        }
+                    } else {
+                        operand = lowerExpression(decl.initializer());
+                        if (shape == AdapterShapeMap.SourceShape.BINDING_REFERENCE) {
+                            // B7 arm (b): the single proved BINDING_LOAD
+                            // at the proof's generation — the payload
+                            // proof must name that binding/generation
+                            // (the load emission resolves the dominant
+                            // incarnation, the same resolution the
+                            // proof fact names).
+                            payloadProof = proof.orElseThrow(() ->
+                                new IllegalStateException("the closed shape map selects "
+                                    + "VALUE over a binding only with the recorded proof "
+                                    + "(producer defect)"));
+                        }
+                    }
+                    sourceRef = new AdaptSourceRef.Value(operand);
+                    operands = List.of(operand);
+                    operandTypes = List.of(sourceSignature);
+                }
+                case SHARED_CELL -> {
+                    IdentifierExpr identifier = (IdentifierExpr) decl.initializer();
+                    FrameResolution resolution = resolveFrame(identifier.name());
+                    if (resolution == null) {
+                        throw new ConstructUnlowered("the SHARED_CELL source '"
+                            + identifier.name() + "' is not a declared binding of the "
+                            + "walk's environment (B7: a binding source resolves its "
+                            + "dominant incarnation at the adaptation position)");
+                    }
+                    // The B2 capture arm: the SharedCell source reference
+                    // makes the incarnation a shared cell (its cell is
+                    // read per invocation, so later writes are observed);
+                    // inside a detached body the enclosing closure must
+                    // also capture the binding (the detaching chain).
+                    maybeRegisterCapture(identifier.name(), resolution);
+                    cellKinds.registerCaptureReference(resolution.entry().incarnation());
+                    sourceRef = new AdaptSourceRef.SharedCell(
+                        resolution.entry().cell().id,
+                        resolution.entry().incarnation().generation());
+                    operands = List.of();
+                    operandTypes = List.of();
+                }
+                case REEVALUATE_THUNK -> {
+                    thunk = lowerThunkSource(decl.initializer());
+                    sourceRef = thunkSourceRef(thunk);
+                    operands = List.of();
+                    operandTypes = List.of();
+                }
+                default -> throw new IllegalStateException("unreachable mode " + mode);
+            }
+            EmittedAdapter adapter = emitFunctionAdapt(mode, sourceRef, sourceSignature,
+                targetSignature, payloadProof, operands, operandTypes, decl.span());
+            ValueId adapterIdentity = adapter.identity();
+            OpId declarationBoundary = null;
+            if (decl.typeAnnotation().isPresent()) {
+                declarationBoundary = emitNullOp(SemanticOpKind.BOUNDARY,
+                    new KindPayload.BoundaryPayload(BoundaryKind.VARIABLE_DECLARATION,
+                        targetSignature, adapterIdentity,
+                        new BoundaryRealization.RuntimeValidation(
+                            CANONICAL_RUNTIME_VALIDATION_ID)),
+                    decl.span(), FailurePolicyId.FUNCTION_SIGNATURE,
+                    SourceOriginKind.SYNTHETIC, null);
+            }
+            // The cell's tracked function identity becomes the adapter
+            // identity — loads, reads, argument passing, and returns
+            // preserve it (the adapter is an ordinary function value
+            // after the commit).
+            functionIdentity.put(incarnation, adapterIdentity);
+            OpId initOp = emitUserNullOp(SemanticOpKind.BINDING_INIT,
+                new KindPayload.BindingInitPayload(binding, INITIAL_LOOP_GENERATION,
+                    adapterIdentity),
+                decl.span(), FailurePolicyId.NO_DEAL_FAILURE);
+            OpId wiringTarget = declarationBoundary != null ? declarationBoundary : initOp;
+            recordAdapterEmission(adapter.opId(), adapterIdentity, mode, sourceRef,
+                sourceSignature, targetSignature, payloadProof, wiringTarget,
+                BoundaryKind.VARIABLE_DECLARATION);
+            if (thunk != null) {
+                emitTarget().addAll(thunk.ops());
+            }
+            if (creationRuleAnalysis) {
+                classifyVarDeclPosition(decl, adapterIdentity, declarationBoundary, initOp);
+            }
+        }
+
+        /**
+         * One detached thunk-block source of the shape-map child
+         * (B8): the fresh block wrapping the source expression's
+         * already-lowered ops in source order plus the collected
+         * captures (the thunk's free bindings in first-reference
+         * order).
+         */
+        private record ThunkSource(BlockId blockId, List<SemanticOp> ops,
+                                   List<CapturedCell> captures) {
+        }
+
+        /**
+         * Walks the source expression into a fresh detached thunk block
+         * (B8): the expression's already-lowered ops emit into a buffer
+         * whose members are the thunk block (the single emission path of
+         * the walk's thunk production), the open-walk capture collector
+         * records the thunk's free bindings in first-reference order
+         * (the same registration surface the closure child uses — the
+         * shape-map child's thunk capture arm joins the B2 cell-kind
+         * derivation through it), and zero evaluation happens at the
+         * creation site (the ops execute only when E7's protocol
+         * re-executes the thunk).
+         *
+         * @param source the function-typed source expression; non-null
+         * @return the detached thunk source (block, ordered ops, captures)
+         */
+        private ThunkSource lowerThunkSource(ExpressionNode source) {
+            BlockId thunkBlock = allocateBlock();
+            List<SemanticOp> thunkOps = new ArrayList<>();
+            List<CapturedCell> captured = new ArrayList<>();
+            emitTargets.push(thunkOps);
+            // The thunk block is detached and declares no bindings of its
+            // own: an empty binding frame is pushed so every reference
+            // inside the walk resolves outside the thunk's own scope
+            // chain and registers as a thunk capture (B9 R3 — the
+            // capturedBindings pin the thunk's free bindings with their
+            // generations). Enclosing detached-body walks keep receiving
+            // the same references through the detaching chain (B9 R2).
+            pushBindingFrame();
+            captureBorders.push(bindingScopes.size());
+            captureCollectors.push(captured);
+            blockStack.push(thunkBlock);
+            try {
+                lowerExpression(source);
+            } finally {
+                blockStack.pop();
+                captureCollectors.pop();
+                captureBorders.pop();
+                popBindingFrame();
+                emitTargets.pop();
+            }
+            if (thunkOps.isEmpty()) {
+                throw new IllegalStateException("the thunk source expression produced no "
+                    + "op (producer defect)");
+            }
+            return new ThunkSource(thunkBlock, thunkOps, captured);
+        }
+
+        /**
+         * Builds the closed {@link AdaptSourceRef.Thunk} of one thunk
+         * source (B8): the generation-pinned {@code capturedBindings}
+         * derive from the collected captures in first-reference order,
+         * and the thunk builder is the single production path of
+         * {@link AdaptSourceRef.Thunk} records (fail closed on a
+         * malformed source op list).
+         *
+         * @param thunk the detached thunk source; non-null
+         * @return the closed {@code Thunk {BlockId, capturedBindings}}
+         *         source reference
+         */
+        private AdaptSourceRef.Thunk thunkSourceRef(ThunkSource thunk) {
+            List<BindingGeneration> pinned = new ArrayList<>();
+            for (CapturedCell capture : thunk.captures()) {
+                pinned.add(new BindingGeneration(capture.cell().id,
+                    capture.incarnation().generation()));
+            }
+            return AdapterThunkConstruction.buildThunk(thunk.blockId(), thunk.ops(), pinned);
+        }
+
+        /**
+         * Emits exactly one {@code FUNCTION_ADAPT} op carrying its
+         * closed-map mode and per-mode payload from birth (B7/B8): a
+         * fresh adapter allocation identity per creation (stable for the
+         * run), the source/target signature pair of the adaptation
+         * candidate, exactly the operand set of the mode (one operand
+         * for VALUE; zero for SHARED_CELL and REEVALUATE_THUNK — zero
+         * evaluation at creation), policy {@code NO_DEAL_FAILURE}
+         * (creation is infallible), zero {@code BOUNDARY} children (the
+         * adapter adds no second boundary), and the single
+         * {@code AdapterBinding} registration through the registry
+         * child's seam keyed by the adapter identity.
+         *
+         * @param mode            the closed-map capture mode; non-null
+         * @param sourceRef       the closed source reference; non-null
+         * @param sourceSignature the derived source signature; non-null
+         * @param targetSignature the derived target signature; non-null
+         * @param proof           the recorded proof (present iff VALUE's
+         *                        operand is a binding load); nullable
+         * @param operands        the mode's operand set (VALUE: exactly
+         *                        one; SHARED_CELL/REEVALUATE_THUNK:
+         *                        zero); non-null
+         * @param operandTypes    the operand descriptors in operand order
+         *                        (the source signature for VALUE);
+         *                        non-null
+         * @param span            the position's origin span; non-null
+         * @return the emitted op's identity plus its fresh adapter
+         *         allocation identity
+         */
+        private EmittedAdapter emitFunctionAdapt(CaptureMode mode, AdaptSourceRef sourceRef,
+                                                 RuntimeDescriptor.Func sourceSignature,
+                                                 RuntimeDescriptor.Func targetSignature,
+                                                 BindingImmutabilityProof proof,
+                                                 List<ValueId> operands,
+                                                 List<RuntimeDescriptor> operandTypes,
+                                                 Span span) {
+            ValueId adapterIdentity = ids.nextValueId(module, nextOrdinal++, 0);
+            AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+            OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
+            SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(span),
+                SourceOriginKind.USER, anchor, currentParent());
+            KindPayload.FunctionAdaptPayload payload = new KindPayload.FunctionAdaptPayload(
+                sourceSignature, targetSignature, mode, sourceRef, proof);
+            emit(buildOp(opId, SemanticOpKind.FUNCTION_ADAPT, payload, adapterIdentity,
+                targetSignature, operands, operandTypes, FailurePolicyId.NO_DEAL_FAILURE,
+                origin));
+            registry.registerAdapter(new FunctionAllocationIdentity(adapterIdentity.id()),
+                opId, mode, sourceRef, sourceSignature, targetSignature);
+            return new EmittedAdapter(opId, adapterIdentity);
+        }
+
+        /** One emitted {@code FUNCTION_ADAPT} op (its op id plus its fresh identity). */
+        private record EmittedAdapter(OpId opId, ValueId identity) {
+        }
+
+        /**
+         * Records one adapter emission fact (the shape-map child's fact
+         * surface): the emitted op's identity, the fresh adapter
+         * allocation identity, the closed-map mode and source reference
+         * (the payload from birth), the signatures, the proof, and the
+         * consumed wiring point (the adapted position's own boundary
+         * op or the inferred declaration's {@code BINDING_INIT}).
+         */
+        private void recordAdapterEmission(OpId adaptOpId, ValueId adapterIdentity,
+                                           CaptureMode mode, AdaptSourceRef sourceRef,
+                                           RuntimeDescriptor.Func sourceSignature,
+                                           RuntimeDescriptor.Func targetSignature,
+                                           BindingImmutabilityProof proof,
+                                           OpId wiringTargetOpId,
+                                           BoundaryKind wiringBoundaryKind) {
+            shapeMapEmissions.add(new AdapterEmission(adaptOpId, adapterIdentity, mode,
+                sourceRef, sourceSignature, targetSignature, proof, wiringTargetOpId,
+                wiringBoundaryKind));
         }
 
         /**
@@ -4903,6 +5581,21 @@ public final class SemanticLowerer {
                 assignmentAnalysis.recordAssignment(target.name(), binding, generation);
             }
             Type targetType = checkedType(target);
+            if (shapeMapAnalysis && targetType instanceof Type.Func) {
+                Type sourceType = checkedType(assignment.value());
+                if (AdapterCreationRule.variableDisposition(sourceType, targetType)
+                        == AdapterCreationRule.Disposition.ADAPT) {
+                    // The shape-map child's adapted assignment (B6-B9):
+                    // exactly one FUNCTION_ADAPT op with its closed-map
+                    // mode and per-mode payload from birth, produced
+                    // inside the position's own chain before its
+                    // VARIABLE_ASSIGNMENT boundary and wired as the
+                    // boundary's direct input (the chain's committed
+                    // value).
+                    return emitAdaptedVariableAssignChain(assignment, target, binding,
+                        generation, (Type.Func) sourceType, (Type.Func) targetType);
+                }
+            }
             RuntimeDescriptor targetDescriptor =
                 ContainerPayloadDescriptors.resultDescriptorOf(targetType);
             OpId chainOpId = ids.nextOpId(module, nextOrdinal++, 0);
@@ -4936,6 +5629,157 @@ public final class SemanticLowerer {
                 new KindPayload.AssignPayload(AssignTargetKind.VARIABLE,
                     List.of(valueOp, boundaryOp, commitOp)),
                 value, targetDescriptor, FailurePolicyId.NO_DEAL_FAILURE, origin));
+            if (creationRuleAnalysis) {
+                classifyVariableAssignPosition(assignment, target, value, boundaryOp);
+            }
+            return value;
+        }
+
+        /**
+         * The shape-map child's adapted variable-assignment chain (B6-B9):
+         * the closed mode map selects exactly one mode from checker
+         * facts (B7) and the per-mode payload is built from birth (B8).
+         * The chain's committed value is the adapter result: the closed
+         * chain shapes are {@code [sourceOp, FUNCTION_ADAPT,
+         * VARIABLE_ASSIGNMENT boundaryOp, BINDING_STORE commitOp]}
+         * (VALUE — the single operand completes at creation as the
+         * chain's RHS child, exactly once) and {@code [FUNCTION_ADAPT,
+         * VARIABLE_ASSIGNMENT boundaryOp, BINDING_STORE commitOp]}
+         * (SHARED_CELL/REEVALUATE_THUNK — zero evaluation at the
+         * creation site; the thunk ops live only inside the detached
+         * thunk block, whose captures are generation-pinned in
+         * first-reference order). The adapter op emits zero
+         * {@code BOUNDARY} children; the position's own
+         * {@code VARIABLE_ASSIGNMENT} boundary takes the adapter result
+         * as its direct input (exact-signature pass-through), the
+         * commit stores it, the {@code ASSIGN} result is the committed
+         * adapter identity, and the cell's tracked function identity
+         * becomes the adapter identity (loads/reads/passes/returns
+         * preserve it — the adapter is an ordinary function value after
+         * the commit).
+         *
+         * @param assignment the adapted assignment; non-null
+         * @param target     the target identifier; non-null
+         * @param binding    the target binding's identity; non-null
+         * @param generation the target's dominant generation; non-null
+         * @param sourceType the RHS's checked function type; non-null
+         * @param targetType the target's checked function type; non-null
+         * @return the committed adapter identity (A-D6)
+         */
+        private ValueId emitAdaptedVariableAssignChain(AssignmentExpr assignment,
+                                                       IdentifierExpr target,
+                                                       BindingId binding, long generation,
+                                                       Type.Func sourceType,
+                                                       Type.Func targetType) {
+            RuntimeDescriptor.Func sourceSignature = (RuntimeDescriptor.Func)
+                ContainerPayloadDescriptors.resultDescriptorOf(sourceType);
+            RuntimeDescriptor.Func targetSignature = (RuntimeDescriptor.Func)
+                ContainerPayloadDescriptors.resultDescriptorOf(targetType);
+            Optional<BindingImmutabilityProof> proof = sourceProofOf(assignment.value());
+            AdapterShapeMap.SourceShape shape = AdapterShapeMap.sourceShapeOf(
+                assignment.value(), name -> checks.symbolTable().resolve(name));
+            CaptureMode mode = AdapterShapeMap.selectMode(shape, proof);
+            // REEVALUATE_THUNK: the detached thunk walks before the
+            // chain opens — the thunk ops execute only at invocation
+            // (E7) and must not be chain children.
+            ThunkSource thunk = mode == CaptureMode.REEVALUATE_THUNK
+                ? lowerThunkSource(assignment.value()) : null;
+            OpId chainOpId = ids.nextOpId(module, nextOrdinal++, 0);
+            chainParents.push(chainOpId);
+            ValueId value;
+            OpId valueOp = null;
+            OpId boundaryOp;
+            OpId commitOp;
+            EmittedAdapter adapter;
+            AdaptSourceRef sourceRef = null;
+            BindingImmutabilityProof payloadProof = null;
+            try {
+                ValueId operand = null;
+                List<ValueId> operands;
+                List<RuntimeDescriptor> operandTypes;
+                switch (mode) {
+                    case VALUE -> {
+                        if (shape == AdapterShapeMap.SourceShape.INTRINSIC_FUNCTION_VALUE) {
+                            String name = ((IdentifierExpr) assignment.value()).name();
+                            operand = intrinsicIdentities.get(name);
+                            if (operand == null) {
+                                throw new IllegalStateException("the intrinsic identity "
+                                    + "of '" + name + "' was not seeded at module-init "
+                                    + "top (producer defect)");
+                            }
+                        } else {
+                            operand = lowerExpression(assignment.value());
+                            valueOp = producerOpId(operand);
+                            if (shape == AdapterShapeMap.SourceShape.BINDING_REFERENCE) {
+                                payloadProof = proof.orElseThrow(() ->
+                                    new IllegalStateException("the closed shape map "
+                                        + "selects VALUE over a binding only with the "
+                                        + "recorded proof (producer defect)"));
+                            }
+                        }
+                        sourceRef = new AdaptSourceRef.Value(operand);
+                        operands = List.of(operand);
+                        operandTypes = List.of(sourceSignature);
+                    }
+                    case SHARED_CELL -> {
+                        IdentifierExpr identifier = (IdentifierExpr) assignment.value();
+                        FrameResolution resolution = resolveFrame(identifier.name());
+                        if (resolution == null) {
+                            throw new ConstructUnlowered("the SHARED_CELL source '"
+                                + identifier.name() + "' is not a declared binding of the "
+                                + "walk's environment (B7: a binding source resolves its "
+                                + "dominant incarnation at the adaptation position)");
+                        }
+                        maybeRegisterCapture(identifier.name(), resolution);
+                        cellKinds.registerCaptureReference(
+                            resolution.entry().incarnation());
+                        sourceRef = new AdaptSourceRef.SharedCell(
+                            resolution.entry().cell().id,
+                            resolution.entry().incarnation().generation());
+                        operands = List.of();
+                        operandTypes = List.of();
+                    }
+                    case REEVALUATE_THUNK -> {
+                        sourceRef = thunkSourceRef(thunk);
+                        operands = List.of();
+                        operandTypes = List.of();
+                    }
+                    default -> throw new IllegalStateException("unreachable mode " + mode);
+                }
+                adapter = emitFunctionAdapt(mode, sourceRef, sourceSignature,
+                    targetSignature, payloadProof, operands, operandTypes,
+                    assignment.value().span());
+                value = adapter.identity();
+                boundaryOp = emitNullOp(SemanticOpKind.BOUNDARY,
+                    new KindPayload.BoundaryPayload(BoundaryKind.VARIABLE_ASSIGNMENT,
+                        targetSignature, value,
+                        new BoundaryRealization.RuntimeValidation(
+                            CANONICAL_RUNTIME_VALIDATION_ID)),
+                    target.span(), FailurePolicyId.FUNCTION_SIGNATURE,
+                    SourceOriginKind.SYNTHETIC, chainOpId);
+                commitOp = emitNullOp(SemanticOpKind.BINDING_STORE,
+                    new KindPayload.BindingStorePayload(binding, generation, value),
+                    target.span(), FailurePolicyId.NO_DEAL_FAILURE,
+                    SourceOriginKind.SYNTHETIC, chainOpId);
+            } finally {
+                chainParents.pop();
+            }
+            List<OpId> children = valueOp != null
+                ? List.of(valueOp, adapter.opId(), boundaryOp, commitOp)
+                : List.of(adapter.opId(), boundaryOp, commitOp);
+            AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+            SourceOrigin origin = new SourceOrigin(sourceId,
+                toSourceSpan(assignment.span()), SourceOriginKind.USER, anchor,
+                currentParent());
+            emit(buildOp(chainOpId, SemanticOpKind.ASSIGN,
+                new KindPayload.AssignPayload(AssignTargetKind.VARIABLE, children),
+                value, targetSignature, FailurePolicyId.NO_DEAL_FAILURE, origin));
+            recordAdapterEmission(adapter.opId(), adapter.identity(), mode, sourceRef,
+                sourceSignature, targetSignature, payloadProof, boundaryOp,
+                BoundaryKind.VARIABLE_ASSIGNMENT);
+            if (thunk != null) {
+                emitTarget().addAll(thunk.ops());
+            }
             if (creationRuleAnalysis) {
                 classifyVariableAssignPosition(assignment, target, value, boundaryOp);
             }
