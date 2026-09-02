@@ -12,7 +12,9 @@
 #
 # Recipe, in order (P3):
 #   1. asset preflight — deal/runtime.lua, deal/runtime.js, the 18
-#      committed std/*.{d.deal,lua,js} files, tools/deal-launcher.sh,
+#      committed std assets (console, string, table, json, math, time ×
+#      .d.deal/.lua/.js — each checked by name, so a substituted file
+#      can never keep the count green), tools/deal-launcher.sh,
 #      tools/gate-manifest.sh, and deal/project/ProjectLocator.java must
 #      exist, else RELEASE_PACKAGING_FAILED (stderr, nonzero exit);
 #   2. version extraction — the pinned /usr/bin/python3 extracts exactly
@@ -87,6 +89,25 @@ for asset in deal/runtime.lua deal/runtime.js tools/deal-launcher.sh \
         fail
     fi
 done
+# The 18 committed std assets, checked by name: each of the six
+# spec-listed modules (deal/project/ProjectLocator.java
+# SPEC_STDLIB_MODULES: console, string, table, json, math, time) × its
+# .d.deal/.lua/.js copy. A count-only check could pass with a
+# substituted file and ship a distribution missing a spec-listed stdlib
+# module, so every named asset is verified individually.
+for std_module in console string table json math time; do
+    for std_ext in d.deal lua js; do
+        std_asset="std/${std_module}.${std_ext}"
+        if [ ! -f "$std_asset" ]; then
+            printf 'build-release: missing committed asset: %s\n' \
+                "$std_asset" >&2
+            fail
+        fi
+    done
+done
+# Extra non-spec std files would deviate from the pinned six-module
+# layout; the count gate keeps preflight fail-closed on that direction
+# (exactly 18 files match the three std kinds).
 STD_COUNT=$(find std -maxdepth 1 -type f \
     \( -name '*.d.deal' -o -name '*.lua' -o -name '*.js' \) -print | wc -l)
 if [ "$STD_COUNT" -ne 18 ]; then
