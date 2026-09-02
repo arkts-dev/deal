@@ -83,9 +83,13 @@
  *       guaranteed-delivery retry loop delivers after the congestion
  *       clears / a wedged stub is escalated by T1 with no deadlock);
  *       channel congestion (CTRL_WRITE_STALL -> deadlines still fire
- *       on time and the record terminates by its own deadline with the
- *       queue bounded; CTRL_READ_STALL -> a deterministic missing-ACK
- *       STARTUP_TIMEOUT); STREAM_NO_EOF -> the proof loop's drain
+ *       on time, the queue stays bounded, the pinned TERMINAL drain
+ *       never drops the queued records by close ordering — past T5
+ *       the stalled supervisor stays alive until the outer's forced
+ *       termination (the channel close), then exits with the
+ *       classified status; CTRL_READ_STALL -> a deterministic
+ *       missing-ACK STARTUP_TIMEOUT); STREAM_NO_EOF -> the proof
+ *       loop's drain
  *       check never passes -> exactly one REPORT with drainEof == 0
  *       and failureToken == DRAIN_FAILED + exactly one terminal FAILED
  *       record, no OUT_END for the never-EOF'd streams, no OUT_END
@@ -2101,9 +2105,16 @@ static void t4_ctrl_congestion(void)
     }
 
     /* CTRL_WRITE_STALL (always-on): POLLOUT never ready — every
-     * deadline still fires on the supervisor's own clock and the
-     * record terminates by its own deadline (T5 = 15000); the bounded
-     * queue never suspends a deadline and nothing is delivered. */
+     * deadline still fires on the supervisor's own clock (the proof
+     * completes and the invocation classifies well before T5 = 15000)
+     * and the bounded queue never suspends a deadline: nothing is
+     * delivered and the supervisor never blocks on a write. The
+     * pinned TERMINAL drain (D5) never drops the queued terminal
+     * records by close ordering — past T5 the supervisor stays alive
+     * with the undelivered queue until the outer's per-record forced
+     * termination (the control-channel close, the pinned write-stall/
+     * loss drop), then exits with the classified status and zero
+     * survivors. */
     g_ctx = "T4 CTRL_WRITE_STALL always-on";
     script_reset();
     script_congest(FI_CONGEST_CTRL, CTRL_WRITE_STALL, 0);
@@ -2114,9 +2125,20 @@ static void t4_ctrl_congestion(void)
 
         msleep(100);
         CHECK(send_ack(s.sock, g_nonce) == 0);
-        CHECK(wait_child(s.pid, &status, 25000) == 0);
-        CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+        /* Still alive past the overall deadline: the stall never
+         * suspends a deadline (the classification ran on the clock)
+         * and no self-exit drops the queued records by close ordering
+         * — the record ends on the outer's forced termination. */
+        CHECK(wait_child(s.pid, &status, 15500) == -1);
         CHECK(now_ms() - s.t0 >= 14000); /* the own deadline fired */
+        /* The outer's per-record forced termination: half-close the
+         * harness write side — the supervisor's read side EOFs (the
+         * pinned write-stall/loss drop), it exits with the classified
+         * success status, and the harness read side observes the
+         * channel close as EOF. */
+        CHECK(shutdown(s.sock, SHUT_WR) == 0);
+        CHECK(wait_child(s.pid, &status, 8000) == 0);
+        CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
         CHECK(rr_line(&s.reader, 1000, &line, &len) == 0);
         close(s.sock);
         assert_no_survivors(3000);

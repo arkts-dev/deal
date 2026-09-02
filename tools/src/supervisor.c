@@ -105,6 +105,22 @@
  * misfires on the killable catch-up path. */
 #define DEALPG4_SUP_T5_PROOF_BOUND_MS 1000
 
+/* The TERMINAL close-linger window (dealpg4-supervisor-engine D5,
+ * TERMINAL row): after the per-record queue drains, the serve-mode
+ * channel stays open this bounded window so a well-formed CANCEL
+ * observed while the channel is TERMINAL is read and its REJECT
+ * <invocationId> - CANCEL_AUTH_FAILED is queued behind the already-
+ * queued terminal record and flushed before the channel close — the
+ * terminal record and the REJECT are dropped only under the pinned
+ * write-stall/EPIPE rule, never by close ordering. The same bound is
+ * the post-T5 terminal-drain retry cadence (loop timeout): with every
+ * recipe deadline past and the per-record queue still non-empty, a
+ * full channel whose POLLOUT never becomes ready would otherwise
+ * busy-spin the loop on a 0 ms timeout; the retry sleeps this bound
+ * instead — POLLOUT/POLLIN readiness still wakes ppoll immediately,
+ * so a reading outer or an arriving terminal CANCEL is never delayed. */
+#define DEALPG4_SUP_TERMINAL_CLOSE_LINGER_MS 10
+
 /* === Fault-injection seam catalog (dealpg4-supervisor-engine D6) =======
  * The named catalog the selftest battery (ISSUE-0184) passes to
  * dealpg4_fi_install_overrides: the eleven delay site tags (one
@@ -2174,10 +2190,18 @@ static void dealpg4_supervisor_advance_deadlines(
     }
     if (now >= state->dl.t5) {
         if (state->terminal_queued) {
-            /* The terminal record was already queued (the cleanup ran
-             * to its terminal classification) or the record terminates
-             * by its own deadline. */
-            state->done = 1;
+            /* The terminal classification already ran. The exit is
+             * never decided here: the TERMINAL drain/linger logic in
+             * the loop owns it — the per-record queue drains on
+             * POLLOUT (records drop only under the write-stall/EPIPE
+             * rule, never by close ordering), the bounded close-
+             * linger window reads and answers a terminal CANCEL (its
+             * REJECT flushed before the channel close), and only then
+             * the supervisor exits. Run mode keeps the own-deadline
+             * cut: the record terminates by its own deadline even
+             * when the invoker never reads the passthrough (D4). */
+            if (!state->serve_mode)
+                state->done = 1;
             return;
         }
         /* Live-unclassified at the overall deadline: the escalation
@@ -3402,7 +3426,12 @@ static int64_t dealpg4_supervisor_loop_timeout_ms(
 
         if (linger <= now) {
             remaining = 0;
-        } else if (remaining < 0 || linger - now < remaining) {
+        } else if (remaining <= 0 || linger - now < remaining) {
+            /* The linger deadline is the wakeup even with every
+             * recipe deadline past (the post-T5 terminal, D5
+             * TERMINAL row): the bounded window must sleep while it
+             * reads a terminal CANCEL — never busy-spin on a 0-ms
+             * remaining. */
             remaining = linger - now;
         }
     }
@@ -3444,6 +3473,21 @@ static int64_t dealpg4_supervisor_loop_timeout_ms(
                 remaining = confirm - now;
             }
         }
+    }
+    if (remaining == 0 && state->serve_mode && state->terminal_queued
+        && !state->channel_lost && !state->protocol_aborted
+        && !dealpg4_supervisor_queue_empty(&state->queue)) {
+        /* The post-T5 TERMINAL drain (D5): every recipe deadline is
+         * past and the per-record queue still holds records. The
+         * write-side policy forbids blocking on a write and the
+         * TERMINAL row forbids dropping the records by close ordering,
+         * so the loop retries POLLOUT on the close-linger cadence —
+         * POLLOUT/POLLIN readiness wakes ppoll immediately (a reading
+         * outer or a terminal CANCEL is never delayed) and a stalled
+         * outer cannot busy-spin the loop on a 0 ms timeout until the
+         * queue drains or the channel closes (the outer's forced
+         * termination). */
+        remaining = DEALPG4_SUP_TERMINAL_CLOSE_LINGER_MS;
     }
     return remaining;
 }
@@ -3512,25 +3556,27 @@ static void dealpg4_supervisor_loop(dealpg4_supervisor_state *state)
         if (state->terminal_queued) {
             if (state->serve_mode) {
                 if (state->channel_lost || state->protocol_aborted) {
-                    /* The per-state invocation termination completes
-                     * before the supervisor exits (D5): after channel
-                     * loss / protocol abort the proof loop runs to its
-                     * terminal classification (proof pass or the T4
-                     * deadline), bounded by the T5 recipe state. Until
-                     * then the loop blocks in ppoll exactly like the
-                     * non-aborted proof paths (the timeout computation
-                     * covers the proof throttle), never busy-spinning. */
-                    if (state->proof_done
-                        || state->proof_failed_class) {
-                        state->done = 1;
-                        return;
-                    }
+                    /* The per-state invocation termination completed
+                     * to its terminal classification before the exit
+                     * (D5): after channel loss / protocol abort the
+                     * proof loop ran until the terminal classification
+                     * (the proof pass, the T4 deadline, or the
+                     * post-T5 proof-bound expiry) set terminal_queued
+                     * via finalize — the channel is closed and its
+                     * undelivered queued records dropped with the
+                     * close (the pinned loss/abort drop rule, never
+                     * close ordering). terminal_queued is set only by
+                     * finalize, so the terminal classification is
+                     * complete here — exit. */
+                    state->done = 1;
+                    return;
                 } else if (dealpg4_supervisor_queue_empty(
                                &state->queue)) {
                     if (!state->close_lingering) {
                         state->close_lingering = 1;
                         state->close_linger_deadline_ms =
-                            (int64_t)dealpg4_now_ms() + 10;
+                            (int64_t)dealpg4_now_ms()
+                            + DEALPG4_SUP_TERMINAL_CLOSE_LINGER_MS;
                     } else if ((int64_t)dealpg4_now_ms()
                                >= state->close_linger_deadline_ms) {
                         state->done = 1;
