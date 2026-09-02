@@ -8,19 +8,22 @@ mkdir -p build
 # TEST_MAINS (today's run phase, verbatim). See gate-manifest-authority.
 source tools/gate-manifest.sh
 # =========================================================================
-# ISSUE-0474 (Coverage Manifest Validator): the reusable C7 validation
-# component and its synthetic 26/0 unit matrix join the compile list and
-# the unconditional run phase here, at the gate-script level. The change
-# boundary is deal/test/conformance/ plus run_tests.sh, so the single
-# compile/test-list authority file (tools/gate-manifest.sh) stays
-# untouched by this issue.
+# ISSUE-0474 + ISSUE-0475 (Coverage Manifest Validator and Corpus
+# Check): the reusable C7 validation component, its synthetic 26/0 unit
+# matrix, and the real-manifest 82/0 mechanical check join the compile
+# list and the unconditional run phase here, at the gate-script level
+# (the authoring-time gate authority). The change boundary is
+# deal/test/conformance/ plus run_tests.sh, so the single compile/
+# test-list authority file (tools/gate-manifest.sh) stays untouched.
 # =========================================================================
 TEST_SOURCES+=(
   'deal/test/conformance/CoverageManifestValidator.java'
   'deal/test/conformance/CoverageManifestValidatorTest.java'
+  'deal/test/conformance/CoverageManifestCorpusTest.java'
 )
 TEST_MAINS+=(
   'fg|=== Running Coverage Manifest Validator Tests (ISSUE-0474) ===|java -ea -cp build deal.test.conformance.CoverageManifestValidatorTest'
+  'fg|=== Running Coverage Manifest Corpus Tests (ISSUE-0475) ===|java -ea -cp build deal.test.conformance.CoverageManifestCorpusTest'
 )
 
 # =========================================================================
