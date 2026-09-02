@@ -1747,13 +1747,15 @@ public final class SemanticLowerer {
          */
         private final Map<FunctionId, LoweredFunction> functions = new LinkedHashMap<>();
         /**
-         * The produced function-execution-bindings registry keyed by
-         * {@link FunctionAllocationIdentity} (the unit's
-         * {@code functionBindings} map; the registry child's registration
-         * seam, B5 — closure-core mode).
+         * The produced function-execution-bindings registry (the unit's
+         * {@code functionBindings} map; the registry child's production
+         * class, B5 — closure-core mode): exactly one registration per
+         * producing allocation keyed by
+         * {@link FunctionAllocationIdentity}, duplicate-key rejection at
+         * registration time, and the insertion-ordered immutable
+         * snapshot consumed by the unit producer.
          */
-        private final Map<FunctionAllocationIdentity, FunctionExecutionBinding>
-            functionBindings = new LinkedHashMap<>();
+        private final FunctionBindingRegistry registry = new FunctionBindingRegistry();
         /**
          * The produced closures' capture facts in creation order
          * (closure-core mode): the fact surface backing
@@ -2969,8 +2971,8 @@ public final class SemanticLowerer {
                 ValueId identity = memberIdentities.get(i);
                 functions.put(functionId, new LoweredFunction(functionId, signature,
                     captureIds, bodyBlock));
-                registerFunctionBinding(new FunctionAllocationIdentity(identity.id()),
-                    new FunctionExecutionBinding.LoweredBody(functionId, bodyBlock));
+                registry.registerGroupMember(new FunctionAllocationIdentity(identity.id()),
+                    functionId, bodyBlock);
                 List<ClosureCapture> captureFacts = new ArrayList<>();
                 for (CapturedCell capture : capturedLists.get(i)) {
                     captureFacts.add(new ClosureCapture(capture.cell().name,
@@ -3746,23 +3748,6 @@ public final class SemanticLowerer {
         }
 
         /**
-         * The registry child's registration seam (B5, closure-core mode):
-         * exactly one {@link FunctionExecutionBinding} per function
-         * allocation identity, recorded in the unit's
-         * {@code functionBindings}. A duplicate registration is a
-         * producer defect (fail closed, never overwritten).
-         */
-        private void registerFunctionBinding(FunctionAllocationIdentity identity,
-                                             FunctionExecutionBinding binding) {
-            FunctionExecutionBinding previous = functionBindings.putIfAbsent(identity,
-                binding);
-            if (previous != null) {
-                throw new IllegalStateException("duplicate function-binding registration "
-                    + "for " + identity + " (producer defect)");
-            }
-        }
-
-        /**
          * Emits one {@code CLOSURE_NEW} op publishing the given
          * function-allocation identity, registers the {@code LoweredBody}
          * execution binding through the registry seam and the
@@ -3786,7 +3771,8 @@ public final class SemanticLowerer {
                 result, signature, FailurePolicyId.NO_DEAL_FAILURE, origin));
             functions.put(functionId, new LoweredFunction(functionId, signature, captures,
                 bodyBlock));
-            registerFunctionBinding(new FunctionAllocationIdentity(result.id()), binding);
+            registry.registerClosure(new FunctionAllocationIdentity(result.id()),
+                functionId, bodyBlock);
             List<ClosureCapture> captureFacts = new ArrayList<>();
             for (CapturedCell capture : captured) {
                 captureFacts.add(new ClosureCapture(capture.cell().name, capture.cell().id,
@@ -4833,7 +4819,7 @@ public final class SemanticLowerer {
                 Map.copyOf(functions),
                 new ModuleInitPlan(List.copyOf(imports), moduleInitBlock),
                 ExportPlan.empty(),
-                Map.copyOf(functionBindings),
+                registry.bindings(),
                 ops());
         }
 
