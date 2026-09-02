@@ -25,25 +25,20 @@ import java.util.Objects;
  * <p>Exactly two axes exist: capability × target. Per-consumer promotion
  * evidence — the conformance harness's {@code capabilityEvidence} map —
  * belongs to the conformance harness, never the production registry, and
- * no consumer axis or consumer-typed member exists here. The release
- * default ({@link #releaseRegistry()}) carries every entry
- * {@link State#SHADOW}: nothing is {@code PROMOTED} in the release
- * registry, and the promotion/demotion transitions are ISSUE-0241's
- * single closed transition surface — {@link #withState}, a pure state
- * derivation that carries no gate policy. The registry is release-owned,
- * closed, and immutable: {@link #releaseRegistry()} is the only
- * release-owned default, no mutator exists, and every transition is a
- * pure derivation returning a new validated instance that leaves the
- * source byte-unchanged.</p>
+ * no consumer axis or consumer-typed member exists here. Every entry is
+ * {@link State#SHADOW} in this epic: nothing can be {@code PROMOTED}
+ * before the construct epics' conformance gates, and promotion
+ * transitions are ISSUE-0241's — the registry carries no promotion
+ * transition logic. The registry is release-owned, closed, and
+ * immutable: the only instance is {@link #releaseRegistry()}, and no
+ * mutator exists.</p>
  */
 public final class CapabilityRegistry {
 
     /**
      * The capability state axis: exactly {@code SHADOW | PROMOTED}
      * (foundation F7). {@code SHADOW} permits testing but never changes
-     * a production route; {@code PROMOTED} is unreachable in the release
-     * registry and becomes reachable only through the ISSUE-0241
-     * transition surface ({@link #withState}).
+     * a production route; {@code PROMOTED} is unreachable in this epic.
      */
     public enum State {
 
@@ -168,9 +163,7 @@ public final class CapabilityRegistry {
      *
      * @param capability the closed capability; non-null
      * @param target     the closed target; non-null
-     * @return the entry's state ({@link State#SHADOW} for the release
-     *         default; {@link State#PROMOTED} only on instances derived
-     *         through {@link #withState})
+     * @return the entry's state (always {@link State#SHADOW} in this epic)
      */
     public State state(SemanticCapability capability, Target target) {
         Objects.requireNonNull(capability, "capability must not be null");
@@ -183,60 +176,6 @@ public final class CapabilityRegistry {
         // Unreachable: the constructor enforces the closed cross product.
         throw new IllegalArgumentException("no registry entry for " + capability
             + " × " + target + " (the closed cross product is complete)");
-    }
-
-    /**
-     * The single closed promotion/demotion transition surface (ISSUE-0241
-     * D3; promotion and demotion are one surface): derives a new
-     * immutable registry whose entries equal the source's except the
-     * single {@code (capability × target)} entry, which carries the
-     * requested {@code state}.
-     *
-     * <p>Contract (D3, pinned):</p>
-     * <ol>
-     *   <li>pure and total over the closed axes — any
-     *       {@code (capability × target × state)} combination is
-     *       accepted; null components are rejected with the registry's
-     *       existing null policy ({@code Objects.requireNonNull},
-     *       matching {@link Entry}'s compact constructor);</li>
-     *   <li>immutable-producing — the source instance (including
-     *       {@link #releaseRegistry()}/{@code RELEASE_DEFAULT}) is never
-     *       mutated; the result is a fresh instance whose entries equal
-     *       the source's except the single entry carrying the requested
-     *       state;</li>
-     *   <li>closed-shape-preserving — the result passes the existing
-     *       closed cross-product validation and pinned ordering (24
-     *       entries, S4 capability order, {@code LUAJIT} before
-     *       {@code JVM}) through the existing private
-     *       constructor/validation path;</li>
-     *   <li>digest-recomputing — {@code capabilityRegistryHash()} is the
-     *       SHA-256 canonical JSON digest over the result's own entries,
-     *       the existing derivation, never hand-rolled;</li>
-     *   <li>no-op idempotent — {@code r.withState(c, t, r.state(c, t))}
-     *       yields byte-identical entries and an equal digest;</li>
-     *   <li>free of gate policy — this is a pure state derivation;
-     *       promotion-gate enforcement lives in ISSUE-0241's
-     *       release-action/flip unit, which composes this surface.</li>
-     * </ol>
-     *
-     * @param capability the closed capability; non-null
-     * @param target     the closed target; non-null
-     * @param state      the requested entry state; non-null
-     * @return a new immutable registry carrying {@code state} on the
-     *         single {@code (capability × target)} entry
-     */
-    public CapabilityRegistry withState(SemanticCapability capability,
-                                        Target target, State state) {
-        Objects.requireNonNull(capability, "capability must not be null");
-        Objects.requireNonNull(target, "target must not be null");
-        Objects.requireNonNull(state, "state must not be null");
-        List<Entry> updated = new ArrayList<>(ENTRY_COUNT);
-        for (Entry entry : entries) {
-            updated.add(entry.capability() == capability && entry.target() == target
-                ? new Entry(capability, target, state)
-                : entry);
-        }
-        return new CapabilityRegistry(updated);
     }
 
     /**
@@ -254,7 +193,7 @@ public final class CapabilityRegistry {
      * The exact canonical JSON digest: {@code SHA-256(canonical JSON
      * {version: 1, entries: [{capability, target, state}]})} — the
      * invocation's {@code capabilityRegistryHash} (F1/F7), byte-identical
-     * across builds and recomputed over the instance's own entries.
+     * across builds.
      *
      * @return the lowercase 64-character hex digest
      */
