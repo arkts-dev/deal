@@ -1433,9 +1433,12 @@ public class ContainerLoweringArmsTest {
     static void testConstructUnloweredNegatives() {
         System.out.println("-- Fail-closed arms: CONSTRUCT_UNLOWERED --");
 
-        // (a) Index read — a hard compile failure in this stage's window
-        // (INDEX_NORMALIZE/INDEX_READ are the address-chain epic's read
-        // arm, not yet landed).
+        // (a) Index read — the array index read arm is the
+        // EVALUATION_ORDER carrier's (ISSUE-0410, INDEX_NORMALIZE/
+        // INDEX_READ); this stage's window still fails hard on the seed's
+        // parameter identifier (the E5 window resolves only enclosing
+        // for-of/catch bindings), with no ops produced — never a partial
+        // unit.
         CheckedSlice indexRead = checkSlice("""
             function f(xs: int[]): null {
               let n: int = xs[0]
@@ -1453,7 +1456,10 @@ public class ContainerLoweringArmsTest {
                     defect = unlowered;
                 }
                 check(defect != null, "the index-read arm raises ConstructUnlowered");
-                checkConstructDetail("index read", defect, "INDEX_READ");
+                check(defect.getMessage() != null
+                        && defect.getMessage().contains("identifier 'xs'"),
+                    "the index-read failure names the unresolvable parameter identifier: "
+                        + defect.getMessage());
                 check(lowerer.ops().isEmpty(),
                     "the index-read arm produced no ops (hard failure, never a partial unit)");
             }

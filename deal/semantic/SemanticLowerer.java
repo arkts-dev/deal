@@ -28,6 +28,7 @@ import deal.ast.IndexExpr;
 import deal.ast.LiteralExpr;
 import deal.ast.LiteralValue;
 import deal.ast.MemberAccessExpr;
+import deal.ast.ReturnStatement;
 import deal.ast.ObjectLiteralExpr;
 import deal.ast.Parameter;
 import deal.ast.Property;
@@ -56,6 +57,7 @@ import deal.semantic.ir.BindingId;
 import deal.semantic.ir.BindingImmutabilityProof;
 import deal.semantic.ir.BlockId;
 import deal.semantic.ir.BoundaryKind;
+import deal.semantic.ir.CallMode;
 import deal.semantic.ir.BoundaryRealization;
 import deal.semantic.ir.CaptureMode;
 import deal.semantic.ir.ClassId;
@@ -93,6 +95,7 @@ import deal.semantic.ir.SemanticOpKind;
 import deal.semantic.ir.SemanticProfile;
 import deal.semantic.ir.SemanticValue;
 import deal.semantic.ir.SourceOrigin;
+import deal.semantic.ir.StdlibFunctionId;
 import deal.semantic.ir.StructuredBodyTable;
 import deal.semantic.ir.SourceOriginKind;
 import deal.semantic.ir.SourceSpan;
@@ -1564,6 +1567,106 @@ public final class SemanticLowerer {
     }
 
     /**
+     * The full-program lowering entry of the decomposition-tail carrier
+     * slice (ISSUE-0410): lowers one checked implementation module
+     * through the unified walk — module-level lets/imports/functions,
+     * every E5 statement and expression arm, the carrier's
+     * {@code CALL(DIRECT)}/console-{@code STDLIB_CALL}/{@code RETURN}
+     * arms inside function bodies, the per-function return-boundary and
+     * call-site reservations, and the module-init-level entry delegation
+     * ({@code CALL(DIRECT main)} + {@code DISCARD}) — and produces the
+     * validated unit plus the block-membership table under the same
+     * validator/address-chain/control-flow gates as {@link #lowerModule}.
+     *
+     * <p>This entry point is driven by the decomposition-tail integration
+     * matrix (the semantic oracle and both shared emitters consume its
+     * output); no production route change — retained/public compilation
+     * paths and {@link #lowerModule}/{@link #lowerModuleBindingCore}/
+     * {@link #lowerModuleClosureCore} are untouched.</p>
+     *
+     * @param module                the checked implementation module; non-null
+     * @param profile               the invocation's semantic profile (I3
+     *                              guard: only {@code DEAL_V1_2_INT32}
+     *                              is lowered); non-null
+     * @param constructCoverage     the manifest's reachable-construct rows
+     *                              recorded at lowering start (S1); non-null
+     * @param interfaceHash         the interface index digest the unit is
+     *                              checked against (R-PROFILE); non-null
+     * @param capabilityRegistryHash the invocation's capability-registry
+     *                              digest (R-PROFILE); non-null
+     * @param allocator             the project's semantic-id allocator in
+     *                              dependency order; non-null
+     * @return the validated unit with its produced block-membership
+     *         table, or the first E6005
+     */
+    public static LoweringResult lowerModuleFullProgram(CheckedModuleInput module,
+                                                        SemanticProfile profile,
+                                                        Map<ConstructKind,
+                                                            List<SemanticOpKind>>
+                                                            constructCoverage,
+                                                        String interfaceHash,
+                                                        String capabilityRegistryHash,
+                                                        SemanticIdAllocator allocator) {
+        Objects.requireNonNull(module, "module must not be null");
+        Objects.requireNonNull(profile, "profile must not be null");
+        Objects.requireNonNull(constructCoverage, "constructCoverage must not be null");
+        Objects.requireNonNull(interfaceHash, "interfaceHash must not be null");
+        Objects.requireNonNull(capabilityRegistryHash, "capabilityRegistryHash must not be null");
+        Objects.requireNonNull(allocator, "allocator must not be null");
+        if (profile != SemanticProfile.DEAL_V1_2_INT32) {
+            return new LoweringResult(null, null, List.of(FailureContractRegistry.e6005(
+                new LoweringFailureDetail(module.moduleId().path(),
+                    SemanticCapability.FOUNDATION_VALUES, LOWER_LEGACY_PROFILE_REJECTED,
+                    profile, LoweredModuleUnit.FORMAT_VERSION, "SemanticLowerer"))));
+        }
+        ModuleLowerer lowerer = new ModuleLowerer(module.moduleId(), module.sourceId(),
+            module.checks(), allocator, true, true, module.ast().span(), true);
+        lowerer.setModuleImports(module.imports());
+        try {
+            lowerer.seedIntrinsicBindings();
+            lowerer.hoistModuleLevelAllocs(module.ast().statements());
+            lowerer.statementWalk.walk(module.ast().statements(), true);
+            lowerer.emitEntryMainCall();
+            lowerer.finalizeCellKinds();
+        } catch (ConstructUnlowered unlowered) {
+            return new LoweringResult(null, null,
+                List.of(FailureContractRegistry.e6005(
+                    loweringFailureDetail(module.moduleId(), unlowered))));
+        } catch (IntLiteralOutOfRange outOfRange) {
+            return new LoweringResult(null, null,
+                List.of(FailureContractRegistry.e6005(
+                    loweringFailureDetail(module.moduleId(), outOfRange))));
+        } catch (ContainerPayloadDescriptors.Defect defect) {
+            return new LoweringResult(null, null,
+                List.of(FailureContractRegistry.e6005(
+                    loweringFailureDetail(module.moduleId(), defect))));
+        } catch (ComparisonSelectorLowering.Defect defect) {
+            return new LoweringResult(null, null,
+                List.of(ComparisonSelectorLowering.e6005(module.moduleId(), defect)));
+        }
+        LoweredModuleUnit unit = lowerer.buildUnit(constructCoverage,
+            module.imports().stream().map(ResolvedImport::resolvedModuleId).toList(),
+            interfaceHash, capabilityRegistryHash,
+            ContainerClaimingSeam.E6_GATE_ACTIVATION);
+        Optional<CompilerDiagnostic> validation = SemanticIrValidator.validate(unit,
+            new SemanticIrValidator.ComparisonFacts(interfaceHash,
+                SemanticProfile.DEAL_V1_2_INT32, capabilityRegistryHash));
+        if (validation.isPresent()) {
+            return new LoweringResult(null, null, List.of(validation.get()));
+        }
+        Optional<CompilerDiagnostic> chainShape = AddressChainProtocol.validate(unit);
+        if (chainShape.isPresent()) {
+            return new LoweringResult(null, null, List.of(chainShape.get()));
+        }
+        StructuredBodyTable table = lowerer.bodyTable();
+        Optional<CompilerDiagnostic> controlFlow = ControlFlowValidator.validate(unit, table);
+        if (controlFlow.isPresent()) {
+            return new LoweringResult(null, null, List.of(controlFlow.get()));
+        }
+        return new LoweringResult(unit, table, List.of());
+    }
+
+    /**
      * The closure child's public lowering entry point (ISSUE-0445
      * sequencing item 2): lowers one checked implementation module
      * through the binding walk plus the closure arms — {@code
@@ -2624,6 +2727,36 @@ public final class SemanticLowerer {
          */
         private final LinkedHashSet<BindingId> importAliasBindings = new LinkedHashSet<>();
         /**
+         * The full-program mode flag (ISSUE-0410 decomposition-tail
+         * carrier slice): {@code true} exactly when the session was
+         * created by {@link SemanticLowerer#lowerModuleFullProgram} —
+         * the unified walk (module-level lets/imports/functions plus
+         * every E5 statement and the carrier's CALL/RETURN/stdlib arms
+         * inside function bodies), the per-function entry/return
+         * reservations, and the module-init-level entry delegation
+         * ({@code CALL(DIRECT main)} + {@code DISCARD}) are active.
+         * Full-program mode implies binding-core and closure-core modes.
+         */
+        private final boolean fullProgram;
+        /**
+         * The statement-walk strategy of the session: the nested-statement
+         * recursion every arm consults. The E5 window routes to
+         * {@link #lowerStatements}, the binding/closure windows to
+         * {@link #lowerBindingStatements}, and the full-program window to
+         * the unified walk ({@link #lowerFullStatements}) — so every arm's
+         * nested blocks follow the session's construct coverage without
+         * re-implementing the dispatch.
+         */
+        private final StatementWalk statementWalk;
+        /**
+         * One closed statement-walk strategy (the session's nested-block
+         * recursion).
+         */
+        @FunctionalInterface
+        private interface StatementWalk {
+            void walk(List<StatementNode> statements, boolean moduleLevel);
+        }
+        /**
          * The single cell-kind derivation of the session (B2): every
          * {@code BINDING_ALLOC} payload cell kind flows through
          * {@link CellKindDerivation#cellKindOf} — at emission and again
@@ -2646,6 +2779,65 @@ public final class SemanticLowerer {
          * snapshot consumed by the unit producer.
          */
         private final FunctionBindingRegistry registry = new FunctionBindingRegistry();
+        /**
+         * The full-program per-function contexts (ISSUE-0410 carrier
+         * slice): one context per module-level function declaration,
+         * reserved at hoist time — the function identity, the body block,
+         * the exact signature, and the pre-allocated return-boundary and
+         * call-site op identities (forward references across declarations
+         * and call sites resolve deterministically).
+         */
+        private final IdentityHashMap<BindingCoreIncarnation, FunctionContext>
+            functionContexts = new IdentityHashMap<>();
+        /**
+         * The module-level function contexts keyed by declared name (the
+         * entry-delegation lookup surface).
+         */
+        private final Map<String, FunctionContext> moduleFunctionContexts =
+            new LinkedHashMap<>();
+        /**
+         * The binding-id → function-context index (the call-site
+         * resolution surface of the carrier slice).
+         */
+        private final Map<BindingId, FunctionContext> contextsByBindingId =
+            new LinkedHashMap<>();
+        /**
+         * The module's resolved import facts (the console-stdlib
+         * detection surface), installed by the full-program entry.
+         */
+        private List<ResolvedImport> moduleImports = List.of();
+        /**
+         * The innermost enclosing function context of the current body
+         * walk (RETURN resolution).
+         */
+        private final ArrayDeque<FunctionContext> functionStack = new ArrayDeque<>();
+        /**
+         * One module-level function's carrier facts (ISSUE-0410): the
+         * lowered identity plus the reserved return-boundary/call-site op
+         * ids. The return boundary op is emitted exactly once (at the
+         * first RETURN, or the implicit trailing return); the call-site
+         * op id becomes the single {@code CALL(DIRECT)} that invokes the
+         * function (the entry delegation for {@code main}).
+         */
+        private static final class FunctionContext {
+            final FunctionId functionId;
+            final BlockId bodyBlock;
+            final RuntimeDescriptor.Func signature;
+            final OpId returnBoundaryOpId;
+            final OpId callSiteOpId;
+            boolean returnBoundaryEmitted;
+            boolean callSiteUsed;
+
+            FunctionContext(FunctionId functionId, BlockId bodyBlock,
+                            RuntimeDescriptor.Func signature, OpId returnBoundaryOpId,
+                            OpId callSiteOpId) {
+                this.functionId = functionId;
+                this.bodyBlock = bodyBlock;
+                this.signature = signature;
+                this.returnBoundaryOpId = returnBoundaryOpId;
+                this.callSiteOpId = callSiteOpId;
+            }
+        }
         /**
          * The produced closures' capture facts in creation order
          * (closure-core mode): the fact surface backing
@@ -3018,6 +3210,38 @@ public final class SemanticLowerer {
                              boolean closureCore, boolean groupCore,
                              boolean proofAnalysis, boolean creationRuleAnalysis,
                              boolean shapeMapAnalysis, Span programSpan) {
+            this(module, sourceId, checks, ids, bindingCore, closureCore, groupCore,
+                proofAnalysis, creationRuleAnalysis, shapeMapAnalysis, programSpan,
+                false);
+        }
+
+        /**
+         * The full-program session constructor (ISSUE-0410 carrier
+         * slice): {@code fullProgram} activates the unified walk strategy
+         * and the entry/return reservations on top of the binding and
+         * closure arms.
+         */
+        public ModuleLowerer(ModuleId module, String sourceId, CheckResult checks,
+                             SemanticIdAllocator ids, boolean bindingCore,
+                             boolean closureCore, Span programSpan, boolean fullProgram) {
+            this(module, sourceId, checks, ids, bindingCore, closureCore, false, false,
+                false, false, programSpan, fullProgram);
+        }
+
+        /**
+         * The terminal session constructor carrying every mode flag:
+         * the binding-core, closure-core, group-core, proof-analysis,
+         * creation-rule-analysis, and shape-map flags of the
+         * ISSUE-0444..ISSUE-0450 children plus the ISSUE-0410
+         * full-program flag of the decomposition-tail carrier slice.
+         */
+        public ModuleLowerer(ModuleId module, String sourceId, CheckResult checks,
+                             SemanticIdAllocator ids, boolean bindingCore,
+                             boolean closureCore, boolean groupCore,
+                             boolean proofAnalysis, boolean creationRuleAnalysis,
+                             boolean shapeMapAnalysis, Span programSpan,
+                             boolean fullProgram) {
+
             this.module = Objects.requireNonNull(module, "module must not be null");
             this.sourceId = Objects.requireNonNull(sourceId, "sourceId must not be null");
             this.checks = Objects.requireNonNull(checks, "checks must not be null");
@@ -3028,6 +3252,11 @@ public final class SemanticLowerer {
             this.proofAnalysis = proofAnalysis;
             this.creationRuleAnalysis = creationRuleAnalysis;
             this.shapeMapAnalysis = shapeMapAnalysis && this.creationRuleAnalysis;
+            this.fullProgram = fullProgram && bindingCore;
+            this.statementWalk = fullProgram
+                ? this::lowerFullStatements
+                : (bindingCore ? this::lowerBindingStatements
+                    : (statements, moduleLevel) -> lowerStatements(statements));
             this.programSpan = Objects.requireNonNull(programSpan,
                 "programSpan must not be null");
             this.moduleInitBlock = ids.nextBlockId(module, nextOrdinal++, 0);
@@ -3292,7 +3521,7 @@ public final class SemanticLowerer {
             }
             seedIntrinsicBindings();
             hoistModuleLevelAllocs(statements);
-            lowerBindingStatements(statements, true);
+            statementWalk.walk(statements, true);
             finalizeCellKinds();
         }
 
@@ -3559,6 +3788,25 @@ public final class SemanticLowerer {
                             : BindingProducer.BINDING_ALLOC,
                         grouped);
                     registerBinding(function.name(), binding, incarnation);
+                    if (fullProgram) {
+                        // The carrier's per-function reservation (forward
+                        // references resolve deterministically): the
+                        // lowered identity, the body block, the exact
+                        // signature, and the single return-boundary and
+                        // call-site op identities are pre-allocated here
+                        // and reused by the declaration arm.
+                        FunctionId functionId = ids.nextFunctionId(module, nextOrdinal++, 0);
+                        BlockId bodyBlock = allocateBlock();
+                        RuntimeDescriptor.Func signature =
+                            functionSignatureOf(function);
+                        OpId returnBoundaryOpId = ids.nextOpId(module, nextOrdinal++, 0);
+                        OpId callSiteOpId = ids.nextOpId(module, nextOrdinal++, 0);
+                        FunctionContext context = new FunctionContext(functionId,
+                            bodyBlock, signature, returnBoundaryOpId, callSiteOpId);
+                        functionContexts.put(incarnation, context);
+                        moduleFunctionContexts.put(function.name(), context);
+                        contextsByBindingId.put(binding, context);
+                    }
                     if (closureCore) {
                         // The function-allocation identity of the hoisted
                         // module-level function is pre-allocated here so a
@@ -4314,7 +4562,7 @@ public final class SemanticLowerer {
                         parameter.span(), FailurePolicyId.NO_DEAL_FAILURE);
                 }
                 checkerScopeNodes.push(function.body());
-                lowerBindingStatements(function.body().statements(), false);
+                statementWalk.walk(function.body().statements(), false);
                 checkerScopeNodes.pop();
                 blockStack.pop();
                 popBindingFrame();
@@ -4333,8 +4581,12 @@ public final class SemanticLowerer {
                 nameBinding = hoisted.cell().id;
                 nameIncarnation = hoisted.incarnation();
             }
-            BlockId bodyBlock = allocateBlock();
-            FunctionId functionId = ids.nextFunctionId(module, nextOrdinal++, 0);
+            FunctionContext reservedContext = fullProgram && moduleLevel
+                ? functionContexts.get(nameIncarnation) : null;
+            BlockId bodyBlock = reservedContext != null
+                ? reservedContext.bodyBlock : allocateBlock();
+            FunctionId functionId = reservedContext != null
+                ? reservedContext.functionId : ids.nextFunctionId(module, nextOrdinal++, 0);
             ValueId closureIdentity;
             if (functionIdentity.containsKey(nameIncarnation)) {
                 // The hoist-time pre-allocated identity (B1: captures of
@@ -4368,11 +4620,39 @@ public final class SemanticLowerer {
                         parameter.span(), FailurePolicyId.NO_DEAL_FAILURE);
                 }
                 checkerScopeNodes.push(function.body());
-                lowerBindingStatements(function.body().statements(), false);
-                checkerScopeNodes.pop();
-                blockStack.pop();
-                popBindingFrame();
-                checkerScopeNodes.pop();
+                if (reservedContext != null) {
+                    functionStack.push(reservedContext);
+                }
+                boolean bodyComplete = false;
+                try {
+                    statementWalk.walk(function.body().statements(), false);
+                    bodyComplete = true;
+                } finally {
+                    if (reservedContext != null) {
+                        if (bodyComplete) {
+                            // The implicit trailing return of an
+                            // unterminated null-returning body ("a
+                            // function with return type null returns the
+                            // null value through the boundary").
+                            if (!Boolean.TRUE.equals(blockTerminated.get(bodyBlock))) {
+                                if (!(reservedContext.signature.returnType()
+                                        instanceof RuntimeDescriptor.Null)) {
+                                    throw new ConstructUnlowered("function '"
+                                        + function.name()
+                                        + "' body is not terminated and its return type is "
+                                        + "not null (the carrier slice lowers the pinned "
+                                        + "implicit null return only)");
+                                }
+                                lowerImplicitReturn(reservedContext, function.body().span());
+                            }
+                        }
+                        functionStack.pop();
+                    }
+                    checkerScopeNodes.pop();
+                    blockStack.pop();
+                    popBindingFrame();
+                    checkerScopeNodes.pop();
+                }
             } finally {
                 captureCollectors.pop();
                 captureBorders.pop();
@@ -4633,6 +4913,26 @@ public final class SemanticLowerer {
             BlockId initBlock = allocateBlock();
             BlockId bodyBlock = allocateBlock();
             BlockId updateBlock = allocateBlock();
+            ValueId conditionSlot = null;
+            OpId forLetLoopOpId = null;
+            if (fullProgram) {
+                // The LOOP op lives in the ENCLOSING block (the validator's
+                // block tree admits no self-reference) and the condition
+                // value slot is allocated upfront: both the init-block
+                // first production and the update-block re-production
+                // publish this one slot (C-D4).
+                conditionSlot = ids.nextValueId(module, nextOrdinal++, 0);
+                AnchorId loopAnchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+                forLetLoopOpId = ids.nextOpId(module, nextOrdinal++, 0);
+                SourceOrigin loopOrigin = new SourceOrigin(sourceId,
+                    toSourceSpan(statement.span()), SourceOriginKind.USER, loopAnchor,
+                    currentParent());
+                emit(buildOp(forLetLoopOpId, SemanticOpKind.LOOP,
+                    new KindPayload.LoopPayload(ControlSelector.FOR, initBlock,
+                        conditionSlot, bodyBlock, updateBlock),
+                    null, null, FailurePolicyId.NO_DEAL_FAILURE, loopOrigin));
+                pushLoopTarget(forLetLoopOpId);
+            }
             checkerScopeNodes.push(statement);
             pushBindingFrame();
             blockStack.push(initBlock);
@@ -4652,17 +4952,16 @@ public final class SemanticLowerer {
                 new KindPayload.BindingInitPayload(counter, INITIAL_LOOP_GENERATION,
                     initializer),
                 decl.span(), FailurePolicyId.NO_DEAL_FAILURE);
-            ValueId condition = lowerExpression(statement.condition().get());
-            // The LOOP op itself sits in the enclosing block (the
-            // control-flow epic's placement contract, C-D4): the init
-            // block is the one-time init child including the first
-            // condition production — the op is not a member of its own
-            // init child block (C-D2 block-tree shape).
+            ValueId condition = fullProgram
+                ? lowerExpression(statement.condition().get(), conditionSlot)
+                : lowerExpression(statement.condition().get());
+            if (!fullProgram) {
+                emitUserNullOp(SemanticOpKind.LOOP,
+                    new KindPayload.LoopPayload(ControlSelector.FOR, initBlock, condition,
+                        bodyBlock, updateBlock),
+                    statement.span(), FailurePolicyId.NO_DEAL_FAILURE);
+            }
             blockStack.pop();
-            emitUserNullOp(SemanticOpKind.LOOP,
-                new KindPayload.LoopPayload(ControlSelector.FOR, initBlock, condition,
-                    bodyBlock, updateBlock),
-                statement.span(), FailurePolicyId.NO_DEAL_FAILURE);
             // Body block: the per-iteration incarnation (generation 1,
             // SHARED_CELL) at the body top, INIT from the generation-0
             // load, then the body statements (dominant generation 1).
@@ -4684,7 +4983,10 @@ public final class SemanticLowerer {
             emitUserNullOp(SemanticOpKind.BINDING_INIT,
                 new KindPayload.BindingInitPayload(counter, 1L, carry),
                 decl.span(), FailurePolicyId.NO_DEAL_FAILURE);
-            lowerBindingStatements(statement.body().statements(), false);
+            statementWalk.walk(statement.body().statements(), false);
+            if (forLetLoopOpId != null) {
+                popLoopTarget();
+            }
             popBindingFrame();
             checkerScopeNodes.pop();
             blockStack.pop();
@@ -4695,7 +4997,13 @@ public final class SemanticLowerer {
             if (statement.update().isPresent()) {
                 lowerExpression(statement.update().get());
             }
-            lowerExpression(statement.condition().get());
+            if (fullProgram) {
+                // The update-block condition re-production publishes the
+                // one condition slot (C-D4).
+                lowerExpression(statement.condition().get(), conditionSlot);
+            } else {
+                lowerExpression(statement.condition().get());
+            }
             blockStack.pop();
             popBindingFrame();
             checkerScopeNodes.pop();
@@ -4743,7 +5051,7 @@ public final class SemanticLowerer {
                 null, null, FailurePolicyId.TYPE_DESCRIPTOR, origin));
             checkerScopeNodes.push(statement.body());
             blockStack.push(bodyBlock);
-            lowerBindingStatements(statement.body().statements(), false);
+            statementWalk.walk(statement.body().statements(), false);
             blockStack.pop();
             checkerScopeNodes.pop();
             popBindingFrame();
@@ -4769,7 +5077,7 @@ public final class SemanticLowerer {
             checkerScopeNodes.push(statement.tryBlock());
             pushBindingFrame();
             blockStack.push(tryBlock);
-            lowerBindingStatements(statement.tryBlock().statements(), false);
+            statementWalk.walk(statement.tryBlock().statements(), false);
             blockStack.pop();
             popBindingFrame();
             checkerScopeNodes.pop();
@@ -4784,7 +5092,7 @@ public final class SemanticLowerer {
                 new KindPayload.BindingAllocPayload(catchBinding, catchBlock, true,
                     cellKinds.cellKindOf(catchIncarnation), INITIAL_LOOP_GENERATION),
                 statement.span(), FailurePolicyId.NO_DEAL_FAILURE);
-            lowerBindingStatements(statement.catchBlock().statements(), false);
+            statementWalk.walk(statement.catchBlock().statements(), false);
             blockStack.pop();
             popBindingFrame();
             checkerScopeNodes.pop();
@@ -4801,7 +5109,7 @@ public final class SemanticLowerer {
             checkerScopeNodes.push(block);
             pushBindingFrame();
             blockStack.push(blockId);
-            lowerBindingStatements(block.statements(), false);
+            statementWalk.walk(block.statements(), false);
             blockStack.pop();
             popBindingFrame();
             checkerScopeNodes.pop();
@@ -5486,7 +5794,8 @@ public final class SemanticLowerer {
                 case BinaryExpr binary -> lowerBinary(binary, slot);
                 case TemplateLiteralExpr template -> lowerTemplate(template, slot);
                 case UnaryExpr unary -> lowerUnary(unary, slot);
-                case CallExpr call -> lowerIntrinsicCall(call, slot);
+                case CallExpr call -> lowerCallSite(call, slot);
+                case IndexExpr index -> lowerIndexRead(index, slot);
                 case AssignmentExpr assignment -> lowerAssignment(assignment, slot);
                 default -> throw new ConstructUnlowered(describeExpression(expr));
             };
@@ -5531,7 +5840,7 @@ public final class SemanticLowerer {
             pushBlock(bodyBlock);
             pushLoopTarget(opId);
             try {
-                lowerStatements(stmt.body().statements());
+                statementWalk.walk(stmt.body().statements(), false);
             } finally {
                 popLoopTarget();
                 popBlock();
@@ -5576,7 +5885,7 @@ public final class SemanticLowerer {
             pushBlock(bodyBlock);
             pushLoopTarget(opId);
             try {
-                lowerStatements(stmt.body().statements());
+                statementWalk.walk(stmt.body().statements(), false);
             } finally {
                 popLoopTarget();
                 popBlock();
@@ -6614,6 +6923,483 @@ public final class SemanticLowerer {
         }
 
         // ---------------------------------------------------------------------
+        // The full-program carrier arms (ISSUE-0410 decomposition tail)
+        // ---------------------------------------------------------------------
+
+        /**
+         * Installs the module's resolved import facts (the console-stdlib
+         * detection surface of the full-program entry).
+         */
+        public void setModuleImports(List<ResolvedImport> imports) {
+            this.moduleImports = List.copyOf(imports);
+        }
+
+        /** The closed MODULE_IMPORT kind of a resolved import fact. */
+        private static deal.semantic.ir.ModuleImportKind moduleImportKindOf(
+                ResolvedImport importFact) {
+            return switch (importFact.kind()) {
+                case STDLIB -> deal.semantic.ir.ModuleImportKind.STDLIB;
+                case HOST -> deal.semantic.ir.ModuleImportKind.HOST;
+                default -> deal.semantic.ir.ModuleImportKind.COMPILED;
+            };
+        }
+
+        /** The import fact bound to the given alias, or {@code null}. */
+        private ResolvedImport importByAlias(String alias) {
+            for (ResolvedImport importFact : moduleImports) {
+                if (importFact.alias().equals(alias)) {
+                    return importFact;
+                }
+            }
+            return null;
+        }
+
+        /**
+         * The closed descriptor-kind rule of the carrier slice: function
+         * descriptors check under {@code FUNCTION_SIGNATURE}, every other
+         * descriptor under {@code TYPE_DESCRIPTOR}.
+         */
+        private static FailurePolicyId descriptorKindPolicy(RuntimeDescriptor descriptor) {
+            return descriptor instanceof RuntimeDescriptor.Func
+                ? FailurePolicyId.FUNCTION_SIGNATURE : FailurePolicyId.TYPE_DESCRIPTOR;
+        }
+
+        /**
+         * The carrier's call-site dispatch: the pinned conversion
+         * intrinsics, the console stdlib, and direct user calls — every
+         * other call shape (indirect callees, host/external calls,
+         * async) is E7's and stays rejected.
+         */
+        private ValueId lowerCallSite(CallExpr call, ValueId slot) {
+            try {
+                return lowerIntrinsicCall(call, slot);
+            } catch (ConstructUnlowered notIntrinsic) {
+                // Fall through: the classifier threw before any emission.
+            }
+            if (call.callee() instanceof MemberAccessExpr access
+                    && access.object() instanceof IdentifierExpr identifier) {
+                ResolvedImport importFact = importByAlias(identifier.name());
+                if (importFact != null
+                        && "std/console".equals(importFact.resolvedModuleId().path())
+                        && ("log".equals(access.field())
+                            || "error".equals(access.field()))) {
+                    return lowerStdlibConsoleCall(call, slot, access.field());
+                }
+            }
+            return lowerUserCall(call, slot);
+        }
+
+        /**
+         * {@code STDLIB_CALL(CONSOLE_LOG|CONSOLE_ERROR)} — the console
+         * carrier arm: arguments complete left-to-right, one
+         * {@code STDLIB_PARAMETER} boundary per argument in order
+         * (descriptor-kind rule), the algorithm appends the exact scalar
+         * text as one ordered console effect, and the single
+         * {@code STDLIB_RETURN} boundary validates the declared null
+         * result — all children parented to the {@code STDLIB_CALL} op.
+         */
+        private ValueId lowerStdlibConsoleCall(CallExpr call, ValueId slot, String field) {
+            StdlibFunctionId function = "log".equals(field)
+                ? StdlibFunctionId.CONSOLE_LOG : StdlibFunctionId.CONSOLE_ERROR;
+            // The member access's checked export read (the MEMBER_ACCESS
+            // construct's pinned form for a module member): one
+            // EXPORT_READ of the std/console export before the
+            // STDLIB_CALL.
+            RuntimeDescriptor.Func exportDescriptor =
+                (RuntimeDescriptor.Func) ContainerPayloadDescriptors
+                    .resultDescriptorOf(checkedType(call.callee()));
+            ValueId exportValue = ids.nextValueId(module, nextOrdinal++, 0);
+            AnchorId exportAnchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+            OpId exportOpId = ids.nextOpId(module, nextOrdinal++, 0);
+            SourceOrigin exportOrigin = new SourceOrigin(sourceId,
+                toSourceSpan(call.callee().span()), SourceOriginKind.USER, exportAnchor,
+                currentParent());
+            emit(buildOp(exportOpId, SemanticOpKind.EXPORT_READ,
+                new KindPayload.ExportReadPayload(new ModuleId("std/console"), field,
+                    exportDescriptor, exportValue),
+                exportValue, exportDescriptor, List.of(), List.of(),
+                FailurePolicyId.NO_DEAL_FAILURE, exportOrigin));
+            // The export value's execution binding (R-FUNCTION-BINDING):
+            // the std/console module's log/error host function identity.
+            functionBindings.put(new FunctionAllocationIdentity(exportValue.id()),
+                new FunctionExecutionBinding.HostFunction(new ModuleId("std/console"),
+                    field, exportDescriptor));
+            List<ValueId> args = new ArrayList<>();
+            List<RuntimeDescriptor> argTypes = new ArrayList<>();
+            for (ExpressionNode argument : call.args()) {
+                args.add(lowerExpression(argument));
+                argTypes.add(ContainerPayloadDescriptors.resultDescriptorOf(
+                    checkedType(argument)));
+            }
+            RuntimeDescriptor resultType =
+                ContainerPayloadDescriptors.resultDescriptorOf(Type.Null.INSTANCE);
+            ValueId result = slot != null ? slot : ids.nextValueId(module, nextOrdinal++, 0);
+            AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+            OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
+            SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(call.span()),
+                SourceOriginKind.USER, anchor, currentParent());
+            emit(buildOp(opId, SemanticOpKind.STDLIB_CALL,
+                new KindPayload.StdlibCallPayload(function, args,
+                    SemanticCapability.STDLIB_SEMANTICS),
+                result, resultType, args, argTypes,
+                FailurePolicyId.INFRASTRUCTURE_ONLY, origin));
+            for (int i = 0; i < args.size(); i++) {
+                emitChildBoundary(BoundaryKind.STDLIB_PARAMETER, argTypes.get(i), args.get(i),
+                    call.span(), opId);
+            }
+            emitChildBoundary(BoundaryKind.STDLIB_RETURN, resultType, result, call.span(),
+                opId);
+            return result;
+        }
+
+        /** Builds (without emitting) one BOUNDARY child parented to the given op. */
+        private SemanticOp buildChildBoundary(BoundaryKind kind, RuntimeDescriptor descriptor,
+                                              ValueId input, Span span, OpId parent) {
+            FailurePolicyId policy = descriptorKindPolicy(descriptor);
+            AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+            OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
+            SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(span),
+                SourceOriginKind.SYNTHETIC, anchor, parent);
+            return buildOp(opId, SemanticOpKind.BOUNDARY,
+                new KindPayload.BoundaryPayload(kind, descriptor, input,
+                    new BoundaryRealization.RuntimeValidation(
+                        CANONICAL_RUNTIME_VALIDATION_ID)),
+                null, null, policy, origin);
+        }
+
+        /** Emits one BOUNDARY child parented to the given op. */
+        private void emitChildBoundary(BoundaryKind kind, RuntimeDescriptor descriptor,
+                                       ValueId input, Span span, OpId parent) {
+            emit(buildChildBoundary(kind, descriptor, input, span, parent));
+        }
+
+        /**
+         * {@code CALL(DIRECT)} — the carrier's single-call-site direct
+         * call arm: the callee is a declared function binding (the
+         * checker's function-typed binding fact); arguments complete
+         * left-to-right before the CALL START; one
+         * {@code FUNCTION_PARAMETER} boundary per argument in one-based
+         * order (descriptor-kind rule) parented to the CALL; the CALL
+         * names the callee's reserved return boundary and its body block
+         * ({@code LoweredBody}); the callee's {@code RETURN} executes the
+         * single {@code FUNCTION_RETURN} boundary and the CALL terminal
+         * records the checked value without re-checking. Exactly one
+         * CALL site per callee in this slice — the general D13 shape
+         * (indirect/host/external/async and multiple sites) is E7's.
+         */
+        private ValueId lowerUserCall(CallExpr call, ValueId slot) {
+            if (!(call.callee() instanceof IdentifierExpr identifier)) {
+                throw new ConstructUnlowered("call callee shape "
+                    + call.callee().getClass().getSimpleName()
+                    + " (the carrier slice lowers direct calls of declared function "
+                    + "bindings; indirect/host/external/async calls are E7's)");
+            }
+            BindingSite site = bindingSiteResolver == null
+                ? null : bindingSiteResolver.resolve(identifier.name());
+            FunctionContext context = site == null
+                ? null : contextsByBindingId.get(site.binding());
+            if (context == null) {
+                throw new ConstructUnlowered("callee '" + identifier.name()
+                    + "' is not a declared function binding of the carrier slice "
+                    + "(function-typed parameters/loads and imported functions are "
+                    + "E7's registry resolution)");
+            }
+            // The audited callee evaluation: the identifier loads the
+            // declared function binding (its result identity is the
+            // closure identity — R-FUNCTION-BINDING) before the CALL.
+            lowerExpression(identifier);
+            // The first call site reuses the function's reserved
+            // canonical call-site identity (the RETURN ops' enclosing
+            // invocation); later call sites allocate fresh op identities
+            // while naming the same single return boundary — the closed
+            // validator admits one return boundary per callee (D13's
+            // single-return-boundary shape).
+            OpId callOpId = context.callSiteUsed
+                ? ids.nextOpId(module, nextOrdinal++, 0)
+                : context.callSiteOpId;
+            context.callSiteUsed = true;
+            List<ValueId> args = new ArrayList<>();
+            List<RuntimeDescriptor> argTypes = new ArrayList<>();
+            for (ExpressionNode argument : call.args()) {
+                args.add(lowerExpression(argument));
+                argTypes.add(ContainerPayloadDescriptors.resultDescriptorOf(
+                    checkedType(argument)));
+            }
+            if (args.size() != context.signature.paramTypes().size()) {
+                throw new ConstructUnlowered("call of '" + identifier.name()
+                    + "' with " + args.size() + " arguments for "
+                    + context.signature.paramTypes().size()
+                    + " parameters (the checker admits exact arity only)");
+            }
+            RuntimeDescriptor resultType = context.signature.returnType();
+            ValueId result = slot != null ? slot : ids.nextValueId(module, nextOrdinal++, 0);
+            AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+            SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(call.span()),
+                SourceOriginKind.USER, anchor, currentParent());
+            // Parameter boundary children (built first so the CALL payload
+            // names their op ids, then emitted as its children).
+            List<SemanticOp> parameterBoundaryOps = new ArrayList<>();
+            List<OpId> parameterBoundaryIds = new ArrayList<>();
+            for (int i = 0; i < args.size(); i++) {
+                SemanticOp boundary = buildChildBoundary(BoundaryKind.FUNCTION_PARAMETER,
+                    context.signature.paramTypes().get(i), args.get(i), call.span(),
+                    callOpId);
+                parameterBoundaryOps.add(boundary);
+                parameterBoundaryIds.add(boundary.opId());
+            }
+            emit(buildOp(callOpId, SemanticOpKind.CALL,
+                new KindPayload.CallPayload(CallMode.DIRECT,
+                    new KindPayload.CallCallee.Static(new FunctionExecutionBinding.LoweredBody(
+                        context.functionId, context.bodyBlock)),
+                    context.signature, parameterBoundaryIds, context.returnBoundaryOpId,
+                    context.bodyBlock, null),
+                result, resultType, args, argTypes,
+                FailurePolicyId.NO_DEAL_FAILURE, origin));
+            for (SemanticOp boundary : parameterBoundaryOps) {
+                emit(boundary);
+            }
+            return result;
+        }
+
+        /**
+         * {@code RETURN} — the carrier arm (C-D6/D13): the optional value
+         * operand completes before START; the function's single
+         * {@code FUNCTION_RETURN} boundary (emitted once, parented to
+         * this RETURN op, checking the declared return descriptor under
+         * the descriptor-kind rule) executes as the RETURN's child and
+         * publishes the checked value as the enclosing call's return
+         * value; the RETURN transfers and terminates its block.
+         */
+        private void lowerReturn(ReturnStatement statement) {
+            FunctionContext context = functionStack.peek();
+            if (context == null) {
+                throw new ConstructUnlowered("return statement outside a function body");
+            }
+            ValueId value;
+            if (statement.expr().isPresent()) {
+                value = lowerExpression(statement.expr().get());
+            } else {
+                if (!(context.signature.returnType() instanceof RuntimeDescriptor.Null)) {
+                    throw new ConstructUnlowered("bare return in a function whose return "
+                        + "type is not null (the checker requires the value)");
+                }
+                value = emitValueOp(SemanticOpKind.CONST,
+                    new KindPayload.ConstPayload(ScalarValue.Null.INSTANCE),
+                    statement.span(),
+                    ContainerPayloadDescriptors.resultDescriptorOf(Type.Null.INSTANCE),
+                    FailurePolicyId.NO_DEAL_FAILURE);
+            }
+            AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+            OpId returnOpId = ids.nextOpId(module, nextOrdinal++, 0);
+            SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(statement.span()),
+                SourceOriginKind.USER, anchor, currentParent());
+            ensureReturnBoundary(context, value, statement.span(), returnOpId);
+            emit(buildOp(returnOpId, SemanticOpKind.RETURN,
+                new KindPayload.ReturnPayload(value, context.functionId,
+                    context.callSiteOpId, context.returnBoundaryOpId),
+                null, null, FailurePolicyId.NO_DEAL_FAILURE, origin));
+            terminateBlock();
+        }
+
+        /**
+         * Emits the function's single {@code FUNCTION_RETURN} boundary op
+         * exactly once (parented to the given RETURN op; the declared
+         * return descriptor under the descriptor-kind rule).
+         */
+        private void ensureReturnBoundary(FunctionContext context, ValueId value, Span span,
+                                          OpId returnOpId) {
+            if (context.returnBoundaryEmitted) {
+                return;
+            }
+            context.returnBoundaryEmitted = true;
+            RuntimeDescriptor returnType = context.signature.returnType();
+            FailurePolicyId policy = descriptorKindPolicy(returnType);
+            AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+            SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(span),
+                SourceOriginKind.SYNTHETIC, anchor, returnOpId);
+            emit(buildOp(context.returnBoundaryOpId, SemanticOpKind.BOUNDARY,
+                new KindPayload.BoundaryPayload(BoundaryKind.FUNCTION_RETURN, returnType,
+                    value, new BoundaryRealization.RuntimeValidation(
+                        CANONICAL_RUNTIME_VALIDATION_ID)),
+                null, null, policy, origin));
+        }
+
+        /**
+         * The implicit trailing return of an unterminated null-returning
+         * function body: one {@code CONST null} production, the single
+         * {@code FUNCTION_RETURN} boundary, and the {@code RETURN}
+         * transfer ("a function with return type null returns the null
+         * value through the boundary").
+         */
+        private void lowerImplicitReturn(FunctionContext context, Span span) {
+            ValueId value = emitValueOp(SemanticOpKind.CONST,
+                new KindPayload.ConstPayload(ScalarValue.Null.INSTANCE), span,
+                ContainerPayloadDescriptors.resultDescriptorOf(Type.Null.INSTANCE),
+                FailurePolicyId.NO_DEAL_FAILURE);
+            AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+            OpId returnOpId = ids.nextOpId(module, nextOrdinal++, 0);
+            SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(span),
+                SourceOriginKind.SYNTHETIC, anchor, currentParent());
+            ensureReturnBoundary(context, value, span, returnOpId);
+            emit(buildOp(returnOpId, SemanticOpKind.RETURN,
+                new KindPayload.ReturnPayload(value, context.functionId,
+                    context.callSiteOpId, context.returnBoundaryOpId),
+                null, null, FailurePolicyId.NO_DEAL_FAILURE, origin));
+            terminateBlock();
+        }
+
+        /**
+         * The unified full-program statement walk (ISSUE-0410 carrier
+         * slice): module-level lets/imports/functions plus every E5
+         * statement and the RETURN arm — function bodies recurse through
+         * this same walk, so chains, comparisons, control flow, calls,
+         * and returns lower together in one session.
+         */
+        private void lowerFullStatements(List<StatementNode> statements,
+                                         boolean moduleLevel) {
+            for (StatementNode statement : statements) {
+                ensureBlockOpen();
+                if (statement instanceof VariableDeclaration decl) {
+                    lowerBindingVarDecl(decl);
+                    continue;
+                }
+                if (statement instanceof FunctionDeclaration function) {
+                    lowerBindingFunctionDecl(function, moduleLevel);
+                    continue;
+                }
+                if (statement instanceof ImportDeclaration importDeclaration) {
+                    // The alias ALLOC was hoisted to module-init top (B1);
+                    // the carrier slice produces the pinned MODULE_IMPORT
+                    // op (the load-once initialization record) for the
+                    // resolved import target — the stdlib console module
+                    // needs no further initialization for the tail.
+                    ResolvedImport importFact = importByAlias(importDeclaration.alias());
+                    if (importFact == null) {
+                        throw new ConstructUnlowered("import '" + importDeclaration.alias()
+                            + "' without a resolved import fact (a missing checker fact "
+                            + "is a producer defect)");
+                    }
+                    emitNullOp(SemanticOpKind.MODULE_IMPORT,
+                        new KindPayload.ModuleImportPayload(importFact.modulePath(),
+                            importFact.resolvedModuleId(), moduleImportKindOf(importFact)),
+                        importDeclaration.span(), FailurePolicyId.NO_DEAL_FAILURE,
+                        SourceOriginKind.USER, currentParent());
+                    continue;
+                }
+                if (statement instanceof ReturnStatement returnStatement) {
+                    lowerReturn(returnStatement);
+                    continue;
+                }
+                if (statement instanceof ForOfStatement forOf) {
+                    lowerForOfStatement(forOf);
+                    continue;
+                }
+                if (statement instanceof DeleteStatement delete) {
+                    lowerDelete(delete);
+                    continue;
+                }
+                if (statement instanceof Block block) {
+                    statementWalk.walk(block.statements(), false);
+                    continue;
+                }
+                if (statement instanceof IfStatement ifStatement) {
+                    lowerIfStatement(ifStatement);
+                    continue;
+                }
+                if (statement instanceof WhileStatement whileStatement) {
+                    lowerWhileStatement(whileStatement);
+                    continue;
+                }
+                if (statement instanceof ForStatement forStatement) {
+                    if (forStatement.init().isPresent()
+                            && forStatement.init().get() instanceof ForInit.VarDecl) {
+                        lowerBindingForLet(forStatement);
+                    } else {
+                        lowerForStatement(forStatement);
+                    }
+                    continue;
+                }
+                if (statement instanceof TryStatement tryStatement) {
+                    lowerTryCatch(tryStatement);
+                    continue;
+                }
+                if (statement instanceof ThrowStatement throwStatement) {
+                    lowerThrow(throwStatement);
+                    continue;
+                }
+                if (statement instanceof BreakStatement breakStatement) {
+                    lowerBreak(breakStatement);
+                    continue;
+                }
+                if (statement instanceof ContinueStatement continueStatement) {
+                    lowerContinue(continueStatement);
+                    continue;
+                }
+                if (statement instanceof ExpressionStatement expressionStatement) {
+                    lowerDiscard(expressionStatement);
+                    continue;
+                }
+                throw new ConstructUnlowered(describeStatement(statement));
+            }
+        }
+
+        /**
+         * The entry delegation of the carrier slice: when the module
+         * declares {@code main} with the pinned non-async signature
+         * {@code (): null}, the module-init block's trailing ops are one
+         * {@code CALL(DIRECT main)} (the entry call, using main's
+         * reserved call-site identity) and one {@code DISCARD} of its
+         * result — the decomposition-tail realization of
+         * {@code ENTRY_INVOKE → CALL(DIRECT) to main(): null} (the
+         * ENTRY_INVOKE op itself is the modules epic's production).
+         */
+        private void emitEntryMainCall() {
+            FunctionContext main = moduleFunctionContexts.get("main");
+            if (main == null) {
+                return;
+            }
+            if (!main.signature.paramTypes().isEmpty()
+                    || !(main.signature.returnType() instanceof RuntimeDescriptor.Null)
+                    || main.signature.isAsync()) {
+                throw new ConstructUnlowered("entry main must have the pinned non-async "
+                    + "signature '(): null' (the orchestrator's E2011 pins this)");
+            }
+            if (main.callSiteUsed) {
+                throw new ConstructUnlowered("entry main is called from source and "
+                    + "delegated from module init (the carrier slice admits exactly one "
+                    + "CALL site per callee — the entry delegation is main's call site)");
+            }
+            main.callSiteUsed = true;
+            for (Map.Entry<String, FunctionContext> entry
+                    : moduleFunctionContexts.entrySet()) {
+                if (!entry.getValue().callSiteUsed) {
+                    throw new ConstructUnlowered("declared function '" + entry.getKey()
+                        + "' is never called (the decomposition-tail carrier slice "
+                        + "admits exactly the called functions of a seed program — "
+                        + "every declared function's single return boundary names an "
+                        + "existing CALL; uncalled declarations are outside the "
+                        + "slice)");
+                }
+            }
+            ValueId result = ids.nextValueId(module, nextOrdinal++, 0);
+            AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+            SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(programSpan),
+                SourceOriginKind.SYNTHETIC, anchor, currentParent());
+            emit(buildOp(main.callSiteOpId, SemanticOpKind.CALL,
+                new KindPayload.CallPayload(CallMode.DIRECT,
+                    new KindPayload.CallCallee.Static(new FunctionExecutionBinding.LoweredBody(
+                        main.functionId, main.bodyBlock)),
+                    main.signature, List.of(), main.returnBoundaryOpId,
+                    main.bodyBlock, null),
+                result, ContainerPayloadDescriptors.resultDescriptorOf(
+                    Type.Null.INSTANCE), List.of(), List.of(),
+                FailurePolicyId.NO_DEAL_FAILURE, origin));
+            emitNullOp(SemanticOpKind.DISCARD, new KindPayload.DiscardPayload(result),
+                programSpan, FailurePolicyId.NO_DEAL_FAILURE, SourceOriginKind.SYNTHETIC,
+                null);
+        }
+
+        // ---------------------------------------------------------------------
         // Statement arms (the E5 positionable window)
         // ---------------------------------------------------------------------
 
@@ -6629,7 +7415,7 @@ public final class SemanticLowerer {
                     continue;
                 }
                 if (statement instanceof Block block) {
-                    lowerStatements(block.statements());
+                    statementWalk.walk(block.statements(), false);
                     continue;
                 }
                 if (statement instanceof IfStatement ifStatement) {
@@ -6699,7 +7485,7 @@ public final class SemanticLowerer {
             pushBlockParent(opId);
             pushBlock(selectedBlock);
             try {
-                lowerStatements(statement.thenBlock().statements());
+                statementWalk.walk(statement.thenBlock().statements(), false);
             } finally {
                 popBlock();
             }
@@ -6710,7 +7496,7 @@ public final class SemanticLowerer {
                         case Either.Left<IfStatement, Block> left ->
                             lowerIfStatement(left.value());
                         case Either.Right<IfStatement, Block> right ->
-                            lowerStatements(right.value().statements());
+                            statementWalk.walk(right.value().statements(), false);
                     }
                 } finally {
                     popBlock();
@@ -6749,7 +7535,7 @@ public final class SemanticLowerer {
             pushBlock(bodyBlock);
             pushLoopTarget(opId);
             try {
-                lowerStatements(statement.body().statements());
+                statementWalk.walk(statement.body().statements(), false);
             } finally {
                 popLoopTarget();
                 popBlock();
@@ -6825,7 +7611,7 @@ public final class SemanticLowerer {
             pushBlock(bodyBlock);
             pushLoopTarget(opId);
             try {
-                lowerStatements(statement.body().statements());
+                statementWalk.walk(statement.body().statements(), false);
             } finally {
                 popLoopTarget();
                 popBlock();
@@ -6879,14 +7665,14 @@ public final class SemanticLowerer {
             pushBlockParent(opId);
             pushBlock(tryBlock);
             try {
-                lowerStatements(statement.tryBlock().statements());
+                statementWalk.walk(statement.tryBlock().statements(), false);
             } finally {
                 popBlock();
             }
             catchFrames.add(0, new CatchFrame(statement.catchVar(), catchBinding));
             pushBlock(catchBlock);
             try {
-                lowerStatements(statement.catchBlock().statements());
+                statementWalk.walk(statement.catchBlock().statements(), false);
             } finally {
                 popBlock();
                 catchFrames.remove(0);
@@ -7170,7 +7956,7 @@ public final class SemanticLowerer {
                             cellKinds.cellKindOf(incarnation), INITIAL_LOOP_GENERATION),
                         parameter.span(), FailurePolicyId.NO_DEAL_FAILURE);
                 }
-                lowerBindingStatements(functionExpr.body().statements(), false);
+                statementWalk.walk(functionExpr.body().statements(), false);
                 blockStack.pop();
                 popBindingFrame();
                 checkerScopeNodes.pop();
@@ -7277,6 +8063,71 @@ public final class SemanticLowerer {
         }
 
         /** {@code ARRAY_LENGTH}/{@code MEMBER_READ} — the member-access dispatch. */
+        /**
+         * {@code INDEX_READ} (array targets) — the carrier's read arm:
+         * the container and the key complete as prior steps;
+         * {@code INDEX_NORMALIZE(ARRAY_READ)} computes the slot from the
+         * normalize-time {@code ARRAY_LENGTH} read; the
+         * {@code ARRAY_ELEMENT_READ} boundary child (policy
+         * {@code ARRAY_READ_INDEX_THEN_DESCRIPTOR}) enforces the
+         * negative-index E8002 before any storage access and passes a
+         * missing (past-end) read through to the consuming contextual
+         * boundary/operand — the comparison operands' missing≡null rule
+         * and the declaration boundary's E8001 projection decide.
+         * Table index reads stay E2's (the carrier slice lowers array
+         * index reads only).
+         */
+        private ValueId lowerIndexRead(IndexExpr index, ValueId slot) {
+            Type objectType = checkedType(index.array());
+            if (!(objectType instanceof Type.Array)) {
+                throw new ConstructUnlowered("index read on " + typeName(objectType)
+                    + " (the carrier slice lowers array index reads; table index reads "
+                    + "are E2's)");
+            }
+            RuntimeDescriptor resultType =
+                ContainerPayloadDescriptors.resultDescriptorOf(checkedType(index));
+            ValueId container = lowerExpression(index.array());
+            ValueId key = lowerExpression(index.index());
+            ValueId length = emitValueOp(SemanticOpKind.ARRAY_LENGTH,
+                new KindPayload.ArrayLengthPayload(container), index.span(),
+                ContainerPayloadDescriptors.resultDescriptorOf(Type.Int.INSTANCE),
+                FailurePolicyId.INT32_RESULT);
+            RuntimeDescriptor intDescriptor =
+                ContainerPayloadDescriptors.resultDescriptorOf(Type.Int.INSTANCE);
+            ValueId normalize = emitOperandOp(SemanticOpKind.INDEX_NORMALIZE,
+                new KindPayload.IndexNormalizePayload(IndexMode.ARRAY_READ, key, length),
+                List.of(key, length), List.of(
+                    ContainerPayloadDescriptors.resultDescriptorOf(
+                        checkedType(index.index())),
+                    intDescriptor),
+                index.span(), intDescriptor,
+                FailurePolicyId.NO_DEAL_FAILURE);
+            ValueId result = slot != null ? slot : ids.nextValueId(module, nextOrdinal++, 0);
+            AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+            OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
+            AnchorId boundaryAnchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+            OpId boundaryOpId = ids.nextOpId(module, nextOrdinal++, 0);
+            SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(index.span()),
+                SourceOriginKind.USER, anchor, currentParent());
+            emit(buildOp(opId, SemanticOpKind.INDEX_READ,
+                new KindPayload.IndexReadPayload(container, normalize, boundaryOpId),
+                result, resultType, List.of(container, normalize), List.of(
+                    ContainerPayloadDescriptors.resultDescriptorOf(objectType),
+                    intDescriptor),
+                FailurePolicyId.NO_DEAL_FAILURE, origin));
+            SourceOrigin boundaryOrigin = new SourceOrigin(sourceId,
+                toSourceSpan(index.span()), SourceOriginKind.SYNTHETIC, boundaryAnchor,
+                opId);
+            emit(buildOp(boundaryOpId, SemanticOpKind.BOUNDARY,
+                new KindPayload.BoundaryPayload(BoundaryKind.ARRAY_ELEMENT_READ,
+                    resultType, result,
+                    new BoundaryRealization.RuntimeValidation(
+                        CANONICAL_RUNTIME_VALIDATION_ID)),
+                null, null, FailurePolicyId.ARRAY_READ_INDEX_THEN_DESCRIPTOR,
+                boundaryOrigin));
+            return result;
+        }
+
         private ValueId lowerMemberAccess(MemberAccessExpr access) {
             return lowerMemberAccess(access, null);
         }
@@ -7387,8 +8238,11 @@ public final class SemanticLowerer {
                 // The binding walk consumes the single comparison producer
                 // (the values epic's producer) for condition/initializer
                 // comparison operands — this child never implements
-                // comparison-selector lowering itself.
-                return lowerComparisonBinary(binary);
+                // comparison-selector lowering itself. The carrier slice
+                // threads the result slot (the LOOP(FOR) condition
+                // re-production publishes one condition value identity,
+                // C-D4).
+                return lowerComparisonBinary(binary, slot);
             }
             throw new ConstructUnlowered("binary selector " + binary.op()
                 + " of checked type " + typeName(type)
@@ -7415,7 +8269,7 @@ public final class SemanticLowerer {
          * session's next source ordinal — the produced op appends to the
          * session in source order.
          */
-        private ValueId lowerComparisonBinary(BinaryExpr binary) {
+        private ValueId lowerComparisonBinary(BinaryExpr binary, ValueId slot) {
             ValueId left = lowerExpression(binary.left());
             ValueId right = lowerExpression(binary.right());
             AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
@@ -7426,6 +8280,17 @@ public final class SemanticLowerer {
                 left, right, origin, ids, nextOrdinal, 0);
             // The producer consumed exactly one source ordinal (VALUE, OP).
             nextOrdinal++;
+            if (slot != null && !slot.equals(comparison.result())) {
+                // The carrier's slot threading: the condition re-production
+                // publishes the pinned condition slot; the result identity
+                // is outside the operation-contract digest, so the digest
+                // is unchanged.
+                comparison = new SemanticOp(comparison.opId(), comparison.kind(),
+                    comparison.origin(), slot, comparison.resultType(),
+                    comparison.operands(), comparison.operandTypes(),
+                    comparison.payload(), comparison.failurePolicy(),
+                    comparison.contract());
+            }
             emit(comparison);
             return (ValueId) comparison.result();
         }

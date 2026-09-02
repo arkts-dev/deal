@@ -106,22 +106,27 @@ import java.util.Optional;
  * <p>Verification scope of this tail (in-tree): the production chain and
  * the op-level executors ({@link BoundaryExecutor},
  * {@link ComparisonExecutor}, the {@link NormalizedSlot} computation)
- * exist in this revision; the semantic oracle and the shared-emitter
- * carriers (ISSUE-0240/ISSUE-0239) are the conformance epics' outputs.
- * This suite therefore executes every matrix seed at the deepest level
- * realizable here — the validated op stream is the pre-runtime trace:
- * op order and parentage prove evaluation order and single evaluation,
- * block membership proves short-circuit/loop shapes, the lowered
- * boundary payloads executed through {@code BoundaryExecutor} prove the
- * exact E8001/E8002/E8010 projections, and {@code ComparisonExecutor}
- * proves the closed B-D2 selector rows. The pinned emitter obligations
- * name the exact prohibitions the oracle/shared-emitter runtime tail
- * verifies by trace/effect comparison; this suite asserts the contract
- * pins and every negative control, so a duplicated evaluation, a wrong
- * selector, a missing boundary, or a broken constituent module fails
- * the tail. No stub substitutes for the oracle/shared-emitter run: the
- * runtime comparison segment is pinned as obligation verification and
- * executes when the ISSUE-0240/ISSUE-0239 carriers land.</p>
+ * over the validated op stream — op order and parentage prove
+ * evaluation order and single evaluation, block membership proves
+ * short-circuit/loop shapes, the lowered boundary payloads executed
+ * through {@code BoundaryExecutor} prove the exact E8001/E8002/E8010
+ * projections, and {@code ComparisonExecutor} proves the closed B-D2
+ * selector rows — plus the pinned emitter obligations
+ * ({@link SharedEmitterRealizationContract}). The pinned emitter
+ * obligations name the exact prohibitions the oracle/shared-emitter
+ * runtime tail verifies by trace/effect comparison; this suite asserts
+ * the contract pins and every negative control, so a duplicated
+ * evaluation, a wrong selector, a missing boundary, or a broken
+ * constituent module fails the tail. The runtime comparison segment
+ * itself — the identical validated unit executed on the semantic
+ * oracle and BOTH shared emitters' real artifacts with per-consumer
+ * event validation and three-way trace/effect/terminal comparison —
+ * executes in {@code deal.test.RuntimeIntegrationMatrixTest}
+ * ({@code deal.semantic.SemanticOracle},
+ * {@code deal.codegen.lua.LuaSemanticEmitter},
+ * {@code deal.codegen.jvm.JvmSemanticEmitter},
+ * {@code deal.codegen.SemanticDifferentialHarness}); no stub
+ * substitutes for the three-consumer run.</p>
  */
 public class EvaluationOrderIntegrationTest {
 
