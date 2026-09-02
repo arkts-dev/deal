@@ -606,8 +606,6 @@ public final class StrictManifestParserTest {
     private static void testBackend() {
         checkFailure("{\"languageVersion\":\"1.2\",\"backend\":\"lua\"}",
             "unsupported backend 'lua'", "\"lua\"", 0);
-        checkFailure("{\"languageVersion\":\"1.2\",\"backend\":\"js\"}",
-            "unsupported backend 'js'", "\"js\"", 0);
         checkFailure("{\"languageVersion\":\"1.2\",\"backend\":\"LuaJIT\"}",
             "unsupported backend 'LuaJIT'", "\"LuaJIT\"", 0);
         checkFailure("{\"languageVersion\":\"1.2\",\"backend\":\" luajit\"}",
@@ -624,6 +622,9 @@ public final class StrictManifestParserTest {
         manifest = checkSuccess("{\"languageVersion\":\"1.2\",\"backend\":\"luajit\"}");
         check(manifest != null && manifest.backend().equals("luajit"),
             "backend 'luajit' valid");
+        manifest = checkSuccess("{\"languageVersion\":\"1.2\",\"backend\":\"js\"}");
+        check(manifest != null && manifest.backend().equals("js"),
+            "backend 'js' valid (ISSUE-0169 remediation, ISSUE-0471)");
     }
 
     private static void testModuleRoots() {
@@ -799,8 +800,8 @@ public final class StrictManifestParserTest {
             "'languageVersion' must be the JSON string", "1", 0);
         checkFailure("{\"output\":5,\"languageVersion\":1}",
             "'languageVersion' must be the JSON string", "1", 0);
-        checkFailure("{\"languageVersion\":\"1.2\",\"backend\":\"js\",\"moduleRoots\":\"x\"}",
-            "unsupported backend 'js'", "\"js\"", 0);
+        checkFailure("{\"languageVersion\":\"1.2\",\"backend\":\"clang\",\"moduleRoots\":\"x\"}",
+            "unsupported backend 'clang'", "\"clang\"", 0);
         checkFailure("{\"languageVersion\":\"1.2\",\"moduleRoots\":[\"/abs\"],\"output\":5}",
             "'moduleRoots' entries must be relative", "\"/abs\"", 0);
         checkFailure("{\"languageVersion\":\"1.2\",\"output\":5,\"stdlib\":9}",
@@ -987,7 +988,7 @@ public final class StrictManifestParserTest {
         // Every failure carries a complete SOURCE range with the scalar
         // length invariant; no failure is SYNTHETIC.
         String[] failures = {
-            "{\"languageVersion\":1.2}", "{\"languageVersion\":\"1.2\",\"backend\":\"js\"}",
+            "{\"languageVersion\":1.2}", "{\"languageVersion\":\"1.2\",\"backend\":\"clang\"}",
             "{\"languageVersion\":\"1.2\",\"moduleRoots\":[\"/abs\"]}",
             "{\"languageVersion\":\"1.2\",\"externals\":{\"m\":{\"declaration\":\"x.deal\"}}}",
             "{\"languageVersion\":\"1.2\",\"dependencies\":{\"a\":01}}",

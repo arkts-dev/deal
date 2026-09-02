@@ -69,8 +69,9 @@ import java.util.Set;
  *       parser input ({@link StrictManifestParser} performs no byte
  *       decoding). A malformed manifest fails E2010 before any override
  *       is consulted. On a valid manifest the overrides are validated: a
- *       valid CLI backend alias {@code lua|luajit|jvm} (trim + lowercase)
- *       overrides the manifest backend; a valid CLI output string
+ *       valid CLI backend alias {@code lua|luajit|jvm|js} (trim +
+ *       lowercase) overrides the manifest backend; a valid CLI output
+ *       string
  *       (trimmed, non-empty, scalar-valid, NUL-free, host-representable)
  *       overrides the manifest output, with the trimmed value winning. An
  *       empty/whitespace-only or otherwise invalid override is a
@@ -158,9 +159,10 @@ public final class ProjectLocator {
     public static final List<String> SPEC_STDLIB_MODULES = List.of(
         "console", "string", "table", "json", "math", "time");
 
-    /** The valid CLI backend aliases of D1 step 3 (trim + lowercase). */
+    /** The valid CLI backend aliases of D1 step 3 (trim + lowercase):
+     * {@code lua}/{@code luajit} (LuaJIT), {@code jvm}, and {@code js}. */
     public static final Set<String> CLI_BACKEND_ALIASES = Set.of(
-        "lua", "luajit", "jvm");
+        "lua", "luajit", "jvm", "js");
 
     // =========================================================================
     // The result channel
@@ -286,7 +288,7 @@ public final class ProjectLocator {
             if (!CLI_BACKEND_ALIASES.contains(alias)) {
                 return cliFailure("deal: unknown backend alias '"
                     + overrides.backend()
-                    + "'; supported aliases: lua, luajit, jvm", entryFile);
+                    + "'; supported aliases: lua, luajit, jvm, js", entryFile);
             }
             cliBackendAlias = alias;
         }

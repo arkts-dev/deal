@@ -478,10 +478,10 @@ public class ProjectMigrationIntegrationTest {
 
             // Invalid backend alias: CliDiagnostic naming the aliases.
             String[] badAlias = runCliCapturingErr(new String[]{
-                "compile", entry.toString(), "--backend", "js"});
+                "compile", entry.toString(), "--backend", "wasm"});
             check("1".equals(badAlias[0]), "an invalid backend alias exits 1");
-            check(badAlias[1].contains("unknown backend alias 'js'")
-                    && badAlias[1].contains("lua, luajit, jvm"),
+            check(badAlias[1].contains("unknown backend alias 'wasm'")
+                    && badAlias[1].contains("lua, luajit, jvm, js"),
                 "the invalid alias is a CliDiagnostic naming the supported"
                     + " aliases: " + badAlias[1]);
 

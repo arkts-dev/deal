@@ -23,10 +23,10 @@ import java.util.Map;
  *       range; empty input → the pinned document-start zero-length SOURCE
  *       range {@code (1,1,1,1,0,0)}; wrong value/type → the member value
  *       range;</li>
- *   <li>{@code backend} — when present exactly {@code "luajit"} or
- *       {@code "jvm"} (case/whitespace variants, {@code lua}, {@code js},
- *       empty, and unknown values fail); absence defaults to
- *       {@code "luajit"};</li>
+ *   <li>{@code backend} — when present exactly {@code "luajit"},
+ *       {@code "jvm"}, or {@code "js"} (case/whitespace variants,
+ *       {@code lua}, empty, and unknown values fail); absence defaults
+ *       to {@code "luajit"};</li>
  *   <li>{@code moduleRoots} — value-level only: an array of non-empty,
  *       scalar-valid, NUL-free, host-representable <b>relative</b> strings
  *       (leading {@code /} fails); wrong field/member types and defective
@@ -117,7 +117,8 @@ public final class ProjectConfigValidator {
                 rangeOf(document, languageVersionValue));
         }
 
-        // 2. backend — exactly "luajit" | "jvm"; absence defaults to luajit.
+        // 2. backend — exactly "luajit" | "jvm" | "js"; absence defaults
+        // to luajit.
         String backend = "luajit";
         StrictJsonValue backendValue = rootMembers.get("backend");
         if (backendValue != null) {
@@ -126,9 +127,10 @@ public final class ProjectConfigValidator {
                     rangeOf(document, backendValue));
             }
             if (!backendString.value().equals("luajit")
-                    && !backendString.value().equals("jvm")) {
+                    && !backendString.value().equals("jvm")
+                    && !backendString.value().equals("js")) {
                 return failure("deal.json: unsupported backend '" + backendString.value()
-                        + "'. Supported backends: 'luajit', 'jvm'",
+                        + "'. Supported backends: 'luajit', 'jvm', 'js'",
                     rangeOf(document, backendValue));
             }
             backend = backendString.value();

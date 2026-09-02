@@ -1,4 +1,5 @@
 {
   "languageVersion": "1.2",
-  "backend": "js"
+  "backend": "js",
+  "moduleRoots": ["src"]
 }

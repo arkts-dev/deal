@@ -12255,11 +12255,12 @@ public class JvmBackendTest {
     }
 
     /**
-     * Strict backend-field pins (ISSUE-0269): the manifest backend is
-     * exactly {@code "luajit"} | {@code "jvm"} — the tolerant
-     * {@code lua}/{@code js}/case/whitespace variants are E2010 at the
-     * backend value range, and a valid CLI alias {@code lua|luajit|jvm}
-     * overrides a valid manifest (the retired DealConfig surface).
+     * Strict backend-field pins (ISSUE-0269; ISSUE-0169 remediation,
+     * ISSUE-0471): the manifest backend is exactly {@code "luajit"} |
+     * {@code "jvm"} | {@code "js"} — the tolerant {@code lua}/
+     * case/whitespace variants are E2010 at the backend value range,
+     * and a valid CLI alias {@code lua|luajit|jvm|js} overrides a valid
+     * manifest (the retired DealConfig surface).
      */
     private static void testStrictBackendField() {
         System.out.println("-- Strict manifest backend field --");
@@ -12268,7 +12269,8 @@ public class JvmBackendTest {
             // Valid strict values parse cleanly through the strict parser.
             for (String ok : new String[] {
                     "{\"languageVersion\": \"1.2\", \"backend\": \"jvm\"}",
-                    "{\"languageVersion\": \"1.2\", \"backend\": \"luajit\"}"}) {
+                    "{\"languageVersion\": \"1.2\", \"backend\": \"luajit\"}",
+                    "{\"languageVersion\": \"1.2\", \"backend\": \"js\"}"}) {
                 StrictManifestParser.StrictManifestParseResult r =
                     StrictManifestParser.parse("deal.json", ok);
                 check(r.failure() == null && r.manifest() != null,
@@ -12281,7 +12283,6 @@ public class JvmBackendTest {
                     "{\"languageVersion\": \"1.2\", \"backend\": \"lua\"}",
                     "{\"languageVersion\": \"1.2\", \"backend\": \"JVM\"}",
                     "{\"languageVersion\": \"1.2\", \"backend\": \"  Lua \"}",
-                    "{\"languageVersion\": \"1.2\", \"backend\": \"js\"}",
                     "{\"languageVersion\": \"1.2\", \"backend\": \"wasm\"}"}) {
                 StrictManifestParser.StrictManifestParseResult r =
                     StrictManifestParser.parse("deal.json", bad);
@@ -12292,7 +12293,8 @@ public class JvmBackendTest {
                     check("E2010".equals(d.code()) && "error".equals(d.severity()),
                         "unsupported backend is an E2010 error: " + d);
                     check(d.message().contains("luajit")
-                            && d.message().contains("jvm"),
+                            && d.message().contains("jvm")
+                            && d.message().contains("js"),
                         "error message names supported backends: " + d.message());
                     check(d.range().origin() == RangeOrigin.SOURCE
                             && "deal.json".equals(d.range().file()),

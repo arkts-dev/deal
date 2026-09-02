@@ -23,7 +23,7 @@ import java.util.List;
  *
  * <p>Usage:
  * <pre>{@code
- * deal compile <entry.deal> [--output <dir>] [--backend <lua|luajit|jvm>] [--verbose] [--dump-ir] [--source-map] [--diagnostics-json <path>]
+ * deal compile <entry.deal> [--output <dir>] [--backend <lua|luajit|jvm|js>] [--verbose] [--dump-ir] [--source-map] [--diagnostics-json <path>]
  * }</pre>
  *
  * <p>Options:
@@ -31,13 +31,13 @@ import java.util.List;
  *   <li>{@code compile <entry.deal>} — compile a DEAL project (required)</li>
  *   <li>{@code --output <dir>} / {@code -o <dir>} — output directory
  *       (CWD-relative; overrides the manifest {@code output}; the default
- *       is {@code <manifestDirectory>/build/lua} or {@code build/jvm}
- *       per the effective backend)</li>
+ *       is {@code <manifestDirectory>/build/lua}, {@code build/jvm}, or
+ *       {@code build/js} per the effective backend)</li>
  *   <li>{@code --backend <name>} — code-generation backend: the CLI
- *       aliases {@code lua}/{@code luajit} (default) or {@code jvm}.
- *       A {@code deal.json} {@code "backend"} field
- *       ({@code "luajit"} | {@code "jvm"}) is used when the flag is
- *       absent.</li>
+ *       aliases {@code lua}/{@code luajit} (default), {@code jvm}, or
+ *       {@code js}. A {@code deal.json} {@code "backend"} field
+ *       ({@code "luajit"} | {@code "jvm"} | {@code "js"}) is used when
+ *       the flag is absent.</li>
  *   <li>{@code --verbose} / {@code -v} — verbose output with per-module timing</li>
  *   <li>{@code --dump-ir} — produce IR dump files at {@code <outputDir>/<module-path>.ir.txt}</li>
  *   <li>{@code --source-map} — produce source map sidecar files ({@code .deal.map.json})</li>
@@ -116,7 +116,7 @@ public final class Main {
                 }
                 case "--backend" -> {
                     if (i + 1 >= remaining.length) {
-                        System.err.println("deal: --backend requires a backend name (lua|luajit|jvm)");
+                        System.err.println("deal: --backend requires a backend name (lua|luajit|jvm|js)");
                         return 1;
                     }
                     backendName = remaining[++i];
@@ -157,8 +157,9 @@ public final class Main {
         // validation, root/externals conversion, effective backend and
         // output, the pinned stdlib surface, and the deployment identity.
         // The CLI overrides are the raw strings — the locator owns their
-        // validation (a valid alias lua|luajit|jvm overrides the manifest
-        // backend; the trimmed CLI output overrides the manifest output;
+        // validation (a valid alias lua|luajit|jvm|js overrides the
+        // manifest backend; the trimmed CLI output overrides the manifest
+        // output;
         // an invalid override is a CliDiagnostic and publishes no
         // context; an override can never bypass a malformed manifest).
         ProjectLocator.LocateResult located = ProjectLocator.locate(entryPath,
@@ -263,11 +264,11 @@ public final class Main {
     }
 
     private static void printUsage() {
-        System.err.println("Usage: deal compile <entry.deal> [--output <dir>] [--backend <lua|luajit|jvm>] [--verbose] [--dump-ir] [--source-map] [--diagnostics-json <path>]");
+        System.err.println("Usage: deal compile <entry.deal> [--output <dir>] [--backend <lua|luajit|jvm|js>] [--verbose] [--dump-ir] [--source-map] [--diagnostics-json <path>]");
         System.err.println();
         System.err.println("Options:");
-        System.err.println("  --output, -o <dir>   Output directory (CWD-relative; default: build/lua or build/jvm per the effective backend)");
-        System.err.println("  --backend <name>     Code-generation backend: lua/luajit (default) or jvm");
+        System.err.println("  --output, -o <dir>   Output directory (CWD-relative; default: build/lua, build/jvm, or build/js per the effective backend)");
+        System.err.println("  --backend <name>     Code-generation backend: lua/luajit (default), jvm, or js");
         System.err.println("  --verbose, -v        Verbose output with per-module timing");
         System.err.println("  --dump-ir            Produce IR dump files at <outputDir>/<module-path>.ir.txt");
         System.err.println("  --source-map         Produce source map sidecar files (.deal.map.json)");

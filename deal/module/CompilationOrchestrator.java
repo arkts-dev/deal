@@ -239,7 +239,8 @@ public final class CompilationOrchestrator {
      * operations): the orchestrator consumes the immutable validated
      * {@link ProjectContext} published by {@link ProjectLocator} plus the
      * compilation options. The backend is the context's effective backend
-     * ({@code "luajit"} | {@code "jvm"} — the strict backend set), the
+     * ({@code "luajit"} | {@code "jvm"} | {@code "js"} — the strict
+     * backend set), the
      * output root is the context's classified
      * {@link OutputConfigResolver.OutputRef} (created only in the write
      * phase), and module roots, externals declarations, the stdlib
@@ -325,10 +326,10 @@ public final class CompilationOrchestrator {
 
     /**
      * Test-only isolated-phase overload with an explicit backend (the
-     * JS-backend harnesses pass {@link Backend#JS}, which the strict
-     * v1.2 schema cannot select until the skeleton epic extends it);
-     * see the 6-argument form. LuaJIT remains the default: the
-     * overloads above delegate with {@link Backend#LUAJIT}.
+     * JS-backend harnesses pass {@link Backend#JS} for test-local
+     * compilations without a manifest); see the 6-argument form. LuaJIT
+     * remains the default: the overloads above delegate with
+     * {@link Backend#LUAJIT}.
      */
     public CompilationOrchestrator(Path entryFile, Path outputRoot, boolean verbose,
                                     boolean dumpIr, boolean sourceMap, Backend backend,
@@ -391,14 +392,16 @@ public final class CompilationOrchestrator {
     /**
      * The strict effective backend of a published context
      * ({@code "luajit"} → {@link Backend#LUAJIT}, {@code "jvm"} →
-     * {@link Backend#JVM}); any other text is a defensive programming
-     * error for a validated context (the strict backend set is closed)
-     * and fails with {@link IllegalArgumentException}.
+     * {@link Backend#JVM}, {@code "js"} → {@link Backend#JS}); any
+     * other text is a defensive programming error for a validated
+     * context (the strict backend set is closed) and fails with
+     * {@link IllegalArgumentException}.
      */
     private static Backend backendOf(String backendText) {
         return switch (backendText) {
             case "luajit" -> Backend.LUAJIT;
             case "jvm" -> Backend.JVM;
+            case "js" -> Backend.JS;
             default -> throw new IllegalArgumentException(
                 "unsupported effective backend: " + backendText);
         };
