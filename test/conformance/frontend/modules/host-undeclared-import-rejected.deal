@@ -1,0 +1,8 @@
+// @spec: Modules, declarations, standard library, and host ABI — Declared external imports
+// @description: importing a host external that has no declaration anywhere (no host-fixture declaration file and no externals entry) is rejected with E2003 at the import
+// @expected: compile-error E2003
+// @features: modules, host-abi, diagnostics
+
+import * as undeclared from "host/undeclared_external";
+
+export function main(): null { return null; }

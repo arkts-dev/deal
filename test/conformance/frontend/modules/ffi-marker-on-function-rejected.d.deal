@@ -1,0 +1,9 @@
+// @spec: C FFI declaration files — C marker placement
+// @description: under effective @extern-c a C marker anchored to an exported function declaration is rejected with E7002 at the function declaration
+// @expected: compile-error E7002
+// @features: c-ffi, functions, v1.2
+
+// @extern-c
+
+// @c-struct
+export function add(a: int, b: int): int;

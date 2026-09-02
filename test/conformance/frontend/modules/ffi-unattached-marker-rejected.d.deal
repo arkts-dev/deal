@@ -1,0 +1,8 @@
+// @spec: C FFI declaration files — C marker placement
+// @description: under effective @extern-c a C marker with no following declaration to anchor to is rejected with E7002 at the directive
+// @expected: compile-error E7002
+// @features: c-ffi, v1.2
+
+// @extern-c
+
+// @c-struct

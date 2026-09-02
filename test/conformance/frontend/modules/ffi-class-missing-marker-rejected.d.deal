@@ -1,0 +1,10 @@
+// @spec: C FFI declaration files — C marker cardinality
+// @description: under effective @extern-c an exported class with zero C markers is rejected with E7002 at the class declaration
+// @expected: compile-error E7002
+// @features: c-ffi, classes, v1.2
+
+// @extern-c
+
+export class MissingMarker {
+  x: number = 0.0;
+}

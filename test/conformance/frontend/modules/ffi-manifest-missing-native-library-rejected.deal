@@ -1,0 +1,13 @@
+// @spec: C FFI declaration files — C FFI externals entries
+// @description: a C FFI externals entry without nativeLibrary must be rejected with E2010; the rejection has no production emission site yet, so this tracked pin claims exactly the code's absence and self-promotes the moment the owning FFI frontend validation lands
+// @expected: known-fail compile-error E2010
+// @issue: ISSUE-0111
+// @features: c-ffi, modules, v1.2
+
+import * as ffi from "./ffi_math";
+
+export function test_ffi_add(): int {
+  return ffi.add(1, 2);
+}
+
+export function main(): null { return null; }
