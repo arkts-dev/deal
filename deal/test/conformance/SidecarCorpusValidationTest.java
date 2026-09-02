@@ -75,19 +75,23 @@ import java.util.stream.Stream;
  *       {@code code, message, sourceFile, line, column, expected,
  *       actual, frames, cause}, minimal RFC 8259 §7 escaping, raw UTF-8,
  *       canonical decimal integers, no whitespace between tokens.</li>
- *   <li>The backend-runtime known-fail population is empty since
- *       ISSUE-0339 promoted the last tracked fixture
+ *   <li>The backend-runtime known-fail population is exactly the one
+ *       restored known-fail fixture
+ *       ({@code arithmetic/int-add-overflow.deal}, ISSUE-0378 D3:
+ *       restored byte-exactly with its canonical known-fail header and
+ *       no sidecar, so its stale-known-fail gate fires on the activated
+ *       lanes; a known-fail-classified fixture counts in neither the
+ *       runtime-ok nor the runtime-error population). The A5
+ *       profile-selection merge had removed the fixture with its
+ *       runtime-error sidecar — the JS lane's legacy range gate
+ *       makes a uniform three-backend E8004 sidecar impossible until JS
+ *       v1.2 int32 lands — and re-homed the coverage to the
+ *       two-backend slice surface
+ *       ({@code jvm-int32-slice.json#int32-add-overflow}), which stays.
+ *       ISSUE-0339 promoted the last previously tracked fixture
  *       ({@code bytes-buffer-ops.deal}, which received its runtime-ok
- *       sidecar in the same change that dropped its known-fail marker).
- *       The promoted {@code int-add-overflow.deal} received its
- *       runtime-error sidecar in the same change that dropped its
- *       known-fail marker (ISSUE-0332); the A5 profile-selection merge
- *       then removed the backend-runtime home with its sidecar — the
- *       JS lane's legacy range gate makes a uniform three-backend E8004
- *       sidecar impossible until JS v1.2 int32 lands, so its coverage
- *       re-homed to the two-backend slice surface
- *       ({@code jvm-int32-slice.json#int32-add-overflow}), and this
- *       population excludes it.</li>
+ *       sidecar in the same change that dropped its known-fail
+ *       marker).</li>
  *   <li>All other fixtures ({@code compile-ok}, {@code compile-error},
  *       {@code companion}, frontend fixtures) carry no sidecar except
  *       the Diagnostics-bullet fixtures.</li>
@@ -159,10 +163,13 @@ public class SidecarCorpusValidationTest {
     /**
      * The exact runtime-error population (ISSUE-0350 completeness, plus
      * the int32 E8004 fixtures ISSUE-0332 promoted/added: the
-     * promoted int-add-overflow — later re-homed to the two-backend
-     * slice surface by the A5 profile-selection merge, which removed the
-     * backend-runtime fixture with its sidecar, so this population
-     * excludes it — and the new int-sub-overflow, int-mul-overflow,
+     * promoted int-add-overflow — ISSUE-0378 restored the
+     * backend-runtime fixture with its canonical known-fail header
+     * and no sidecar, so this population excludes it (a
+     * known-fail-classified fixture counts in neither population;
+     * the activated-route E8004 coverage stays on the two-backend
+     * slice surface) — and the new int-sub-overflow,
+     * int-mul-overflow,
      * int-conversion-out-of-range, and source-location/int32-overflow-source
      * fixtures each land their sidecar in the same change as their
      * expectation; plus the stdlib/math int-abs-min-overflow E8004
@@ -910,13 +917,15 @@ public class SidecarCorpusValidationTest {
             + "exactly " + RUNTIME_ERROR_COUNT + " runtime-error fixtures "
             + "with sidecars, found " + runtimeError);
 
-        // The tracked known-fail population is empty: the last tracked
-        // backend-runtime known-fail (bytes-buffer-ops; int-add-overflow
-        // was promoted by ISSUE-0332 and its backend-runtime home was
-        // removed by the A5 profile-selection merge, whose coverage
-        // re-homes to the two-backend slice surface) was promoted by
-        // ISSUE-0339, so no backend-runtime fixture carries a known-fail
-        // marker — and no pin may name the removed fixture.
+        // The tracked known-fail population is exactly the one restored
+        // known-fail fixture (ISSUE-0378 D3): the corpus
+        // arithmetic/int-add-overflow.deal restored byte-exactly with
+        // its canonical known-fail header and no sidecar — its
+        // runtime-error E8004 probe passes on the activated lanes and
+        // fires the stale-known-fail gate with the promotion
+        // instruction. A known-fail-classified fixture counts in neither
+        // the runtime-ok nor the runtime-error population; its sidecar
+        // lands only at the zero-skip flip.
         Set<String> knownFail = new TreeSet<>();
         for (Fixture fixture : fixtures) {
             if (fixture.corpusPath().startsWith("backend-runtime/")
@@ -925,6 +934,8 @@ public class SidecarCorpusValidationTest {
             }
         }
         Set<String> expectedKnownFail = new TreeSet<>();
+        expectedKnownFail.add(
+            "backend-runtime/arithmetic/int-add-overflow.deal");
         check(knownFail.equals(expectedKnownFail),
             "the tracked known-fail population must be exactly "
                 + expectedKnownFail + ", got " + knownFail);

@@ -1,0 +1,13 @@
+// @spec: Runtime execution model — Integer arithmetic overflow
+// @description: int addition outside the signed 32-bit range raises E8004 (v1.2: int is [-2147483648, 2147483647])
+// @expected: known-fail runtime-error E8004
+// @issue: ISSUE-0111
+// @features: runtime, int, overflow, v1.2
+
+export function test_int_add_overflow(): int {
+  return 2147483647 + 1;
+}
+
+export function main(): null {
+  return null;
+}

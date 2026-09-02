@@ -83,6 +83,32 @@ TEST_MAINS+=(
   'fg|=== Running Differential Gate Corpus Tests (ISSUE-0353) ===|java -ea -cp build deal.test.conformance.DifferentialGateCorpusTest'
 )
 
+# ISSUE-0378 D5 (JvmLaneStatePinTest substitution): the pin test owns
+# both raw lane runs. It launches the real LuaJIT lane and the real JVM
+# lane as subprocesses and asserts their captured failure sets
+# field-exactly, so the gate stays green on the sanctioned pinned
+# staged state while both raw lanes still run - inside the pin test -
+# on every gate run. The two raw lane launches are substituted by the
+# single pin-test launch; the fail-closed background wait and every
+# other suite stay.
+TEST_SOURCES+=( 'test/JvmLaneStatePinTest.java' )
+
+REBUILT_MAINS=()
+for record in "${TEST_MAINS[@]}"; do
+  case "$record" in
+    'bg|=== Launching Conformance Tests (background) ===|java -ea -cp build deal.test.ConformanceTest test/conformance/')
+      # Removed: the LuaJIT lane runs inside the pin test instead.
+      ;;
+    'bg|=== Launching JVM Conformance Tests (background; ISSUE-0102 origin — ISSUE-0168 capability accounting) ===|java -ea -cp build deal.test.JvmConformanceTest test/conformance/')
+      REBUILT_MAINS+=( 'bg|=== Launching JVM Lane State Pin Tests (ISSUE-0378: both real lanes run inside the pin test with field-exact failure-set assertions) ===|java -ea -cp build deal.test.JvmLaneStatePinTest' )
+      ;;
+    *)
+      REBUILT_MAINS+=( "$record" )
+      ;;
+  esac
+done
+TEST_MAINS=( "${REBUILT_MAINS[@]}" )
+
 # =========================================================================
 # Single compilation step: compile all source and test files at once.
 # Incremental: when every .java source under deal/ and test/ is older

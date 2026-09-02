@@ -8,7 +8,10 @@ import deal.codegen.jvm.JvmBackend;
 import deal.lexer.*;
 import deal.module.CompilationOrchestrator;
 import deal.module.ExportExtractor;
+import deal.semantic.CapabilityRegistry;
 import deal.semantic.CompilerInvocation;
+import deal.semantic.CompilerProfileProvider;
+import deal.semantic.ir.ReleaseState;
 import deal.semantic.ir.SemanticProfile;
 import deal.project.ProjectContext;
 import deal.project.ProjectLocator;
@@ -26,7 +29,8 @@ import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * JVM conformance promotion gate (ISSUE-0102).
+ * JVM conformance promotion gate (ISSUE-0102), running the activated
+ * DEAL v1.2 signed-int32 route (ISSUE-0378 D1).
  *
  * <p>Runs every existing backend-runtime conformance test
  * ({@code test/conformance/backend-runtime/}) against the JVM backend
@@ -40,6 +44,48 @@ import java.util.concurrent.atomic.AtomicInteger;
  * bypassed codegen leaves no {@code .java} artifact (asserted before
  * javac); a bypassed JVM execution produces no output and no exit code
  * (asserted against the captured subprocess output).
+ *
+ * <h2>The lane-wide activated invocation (ISSUE-0378 D1)</h2>
+ *
+ * <p>Every on-disk backend-runtime fixture compiles through the single
+ * lane-wide activated invocation {@link #LANE_INVOCATION} — the
+ * explicit
+ * {@code CompilerProfileProvider.resolve(ReleaseState.V1_2_ACTIVE,
+ * CapabilityRegistry.releaseRegistry())} invocation (PUBLIC_BUILD +
+ * {@code DEAL_V1_2_INT32}, release state {@code V1_2_ACTIVE}) —
+ * passed through the full {@link CompilationOrchestrator} constructor.
+ * The lane carries zero per-fixture catalog-seam call sites and
+ * zero legacy-authority labeling: the profile-authority accounting is
+ * pinned at 0 legacy-authority fixtures, and the per-fixture catalog
+ * seam stays where it belongs — the untouched legacy harness
+ * {@code deal.test.BackendConformanceTest} (this lane only validates
+ * the catalog at startup; it never routes a fixture through it).
+ *
+ * <h2>Sanctioned pinned staged state (ISSUE-0378 D2/D3)</h2>
+ *
+ * <p>On the unmerged tree the lane fails in exactly the pinned ways and
+ * nothing else — the activation-liveness proof, never papered:
+ * <ul>
+ *   <li>the unflipped stdlib-edge epoch-millisecond fixture raises
+ *       E8004 at the declared {@code int} boundary against its
+ *       {@code runtime-ok} expectation — one applicable failure;
+ *       the expectation flip is ISSUE-0372's single edit, and this
+ *       lane never names or skips the fixture;</li>
+ *   <li>the restored corpus known-fail fixture
+ *       {@code backend-runtime/arithmetic/int-add-overflow.deal} passes
+ *       its {@code runtime-error E8004} probe under the activated
+ *       {@code intAdd} and fires the stale-known-fail gate with the
+ *       promotion instruction (set {@code @expected: runtime-error
+ *       E8004}, drop the {@code @issue} tag) — that promotion is
+ *       jvm-v12-int32-bytes D6's later sanctioned edit
+ *       (ISSUE-0381).</li>
+ * </ul>
+ * No skip entry, legacy fallback, or lane-side papering hides either
+ * failure; both are real gate failures and the runner exits 1. The
+ * anti-hollow evidence owner is {@code test/JvmLaneStatePinTest.java}:
+ * it runs this lane and the real LuaJIT lane as subprocesses and
+ * asserts the captured failure sets field-exactly on every gate run
+ * ({@code run_tests.sh} substitutes it for the raw lane launches).</p>
  *
  * <h2>Classification policy (deterministic, documented)</h2>
  *
@@ -61,7 +107,12 @@ import java.util.concurrent.atomic.AtomicInteger;
  *       executes the underlying mode through the real JVM pipeline and
  *       records a non-fatal tracked KNOWN-FAIL while the case still
  *       fails; when it starts passing, the gate FAILS with a promotion
- *       instruction (drop the marker) — promotion is forced.</li>
+ *       instruction (drop the marker) — promotion is forced. The
+ *       restored {@code arithmetic/int-add-overflow.deal} now passes
+ *       its probe under the activated invocation, so its
+ *       stale-known-fail gate fires with the pinned promotion
+ *       instruction — the sanctioned staged failure; the promotion
+ *       itself is ISSUE-0381's later sanctioned edit.</li>
  *   <li><b>Backend-runtime tests</b> ({@code runtime-ok} /
  *       {@code runtime-error CODE}): JVM-applicable and must pass
  *       through the whole pipeline UNLESS the explicit skip registry
@@ -129,9 +180,14 @@ import java.util.concurrent.atomic.AtomicInteger;
  *   <li>frontend-classified files: 100% pass (zero failed);</li>
  *   <li>backend-runtime: zero applicable failures AND at least 80% of
  *       the on-disk backend-runtime tests (the per-run
- *       {@code runtimeDenominator()} count — currently 300) pass through the
- *       frontend → CompilationOrchestrator → JVM codegen → javac → JVM
- *       pipeline;</li>
+ *       {@code runtimeDenominator()} count — 301 with the restored
+ *       known-fail fixture) pass through the frontend →
+ *       CompilationOrchestrator → JVM codegen → javac → JVM
+ *       pipeline — on the unmerged tree the sanctioned pinned staged
+ *       state (one applicable failure plus one stale known-fail
+ *       marker) fails exactly these two gates and nothing else, and
+ *       {@code test/JvmLaneStatePinTest.java} asserts that captured
+ *       set field-exactly on every gate run;</li>
  *   <li>zero unclassified skips (by construction — the classifier has
  *       no fallback skip branch, and the registry is validated);</li>
  *   <li>zero stale skips and zero stale known-fail markers (promotion
@@ -144,6 +200,31 @@ import java.util.concurrent.atomic.AtomicInteger;
  * </ul>
  */
 public class JvmConformanceTest {
+
+    // =========================================================================
+    // The lane-wide activated invocation (ISSUE-0378 D1)
+    // =========================================================================
+
+    /**
+     * The single lane-wide activated invocation: every on-disk
+     * backend-runtime fixture compiles through this exact invocation
+     * via the full {@link CompilationOrchestrator} constructor. The
+     * public release-state derivation (PUBLIC_BUILD +
+     * {@code DEAL_V1_2_INT32}, release state {@code V1_2_ACTIVE}) is
+     * the activated backend's sanctioned harness surface until the
+     * release-owned public cutover; no per-fixture catalog seam and no
+     * legacy-authority routing exist in this lane (the untouched
+     * {@code deal.test.BackendConformanceTest} owns that seam).
+     */
+    private static final CompilerInvocation LANE_INVOCATION =
+        CompilerProfileProvider.resolve(ReleaseState.V1_2_ACTIVE,
+            CapabilityRegistry.releaseRegistry());
+
+    /** The lane-wide activated invocation, exposed for the ISSUE-0378
+     * pin test ({@code JvmLaneStatePinTest}) to assert field-exactly. */
+    static CompilerInvocation laneInvocation() {
+        return LANE_INVOCATION;
+    }
 
     // =========================================================================
     // Applicability policy: the explicit skip registry
@@ -208,17 +289,22 @@ public class JvmConformanceTest {
         // The v1.2 corpus pins int as [-2147483648, 2147483647] with E8004
         // on every out-of-range arithmetic result and conversion. The
         // profile-selected JVM int32 helper bodies landed (ISSUE-0394),
-        // so the retained v1.2 invocation raises E8004 for the
+        // so the activated lane-wide invocation raises E8004 for the
         // arithmetic/conversion/negation cases — those entries became
-        // stale under the A5 seam and were removed with the promotions
-        // (the backend-runtime int-add-overflow case re-homed to the
-        // two-backend slice surface). The final entry — the
-        // std/math.absInt(-2147483648) residual — was resolved by
-        // ISSUE-0397 I6: the emitted int32 absInt arm now promotes the
-        // int-carrier operand to long before java.lang.Math.abs, so the
-        // MIN_VALUE magnitude (2147483648) reaches the int32 checkInt
-        // gate and raises E8004 (int32-math-abs-min pins the promoted
-        // case on both retained routes), and the stale skip was removed.
+        // stale under the A5 seam and were removed with the promotions.
+        // The corpus known-fail fixture arithmetic/int-add-overflow.deal
+        // is restored (ISSUE-0378 D3): its runtime-error E8004 probe now
+        // passes under the activated intAdd, so the stale-known-fail
+        // gate fires with the promotion instruction (set '@expected:
+        // runtime-error E8004', drop the '@issue' tag) — the
+        // sanctioned pinned staged failure, never a skip entry. The
+        // final entry — the std/math.absInt(-2147483648) residual —
+        // was resolved by ISSUE-0397 I6: the emitted int32 absInt arm
+        // now promotes the int-carrier operand to long before
+        // java.lang.Math.abs, so the MIN_VALUE magnitude (2147483648)
+        // reaches the int32 checkInt gate and raises E8004
+        // (int32-math-abs-min pins the promoted case on both retained
+        // routes), and the stale skip was removed.
         // ---- JVM-GAP-BYTES: the bytes runtime lane (ISSUE-0277) ----
         // The v1.2 corpus pins the FFI-backed bytes carrier with
         // zero-fill allocation, E8012 index bounds, E8013 value range,
@@ -579,8 +665,11 @@ public class JvmConformanceTest {
     private static final AtomicInteger applicableTotal = new AtomicInteger();
     private static final AtomicInteger applicablePassed = new AtomicInteger();
 
-    /** Profile-authority accounting (A4/A5): legacy-authority results
-     * keep their own denominator and earn zero v1.2 credit. */
+    /** Profile-authority accounting (A4/A5), pinned at zero by
+     * ISSUE-0378 D1: this lane applies the single activated invocation
+     * to every fixture, so no fixture earns a legacy-authority label
+     * (the untouched {@code deal.test.BackendConformanceTest} owns the
+     * catalog seam and keeps its own accounting). */
     private static final AtomicInteger legacyAuthorityResults =
         new AtomicInteger();
     private static final AtomicInteger legacyAuthorityPassed =
@@ -1357,22 +1446,11 @@ public class JvmConformanceTest {
 
     private static Outcome runApplicable(Classified classified,
             boolean knownFailProbe) {
-        boolean legacyAuthority = LegacyProfileRegressionCatalog
-            .isCatalogued(classified.test().relativePath());
-        if (!knownFailProbe && legacyAuthority) {
-            log("  [" + classified.test().relativePath()
-                + "] LEGACY-AUTHORITY (legacy-regression; zero v1.2 credit)");
-        }
-        Outcome outcome = runApplicableImpl(classified, knownFailProbe);
-        if (!knownFailProbe && legacyAuthority) {
-            legacyAuthorityResults.incrementAndGet();
-            if (outcome.pass()) {
-                legacyAuthorityPassed.incrementAndGet();
-            } else {
-                legacyAuthorityFailed.incrementAndGet();
-            }
-        }
-        return outcome;
+        // ISSUE-0378 D1: every fixture — applicable, known-fail probe,
+        // or skip probe — compiles through the single lane-wide
+        // activated invocation; no legacy-authority labeling exists in
+        // this lane, so the profile-authority accounting stays at zero.
+        return runApplicableImpl(classified, knownFailProbe);
     }
 
     private static Outcome runApplicableImpl(Classified classified,
@@ -1452,12 +1530,14 @@ public class JvmConformanceTest {
             // 3. The real whole-project pipeline: module discovery,
             // signature extraction, dependency ordering, name resolution,
             // type checking, per-module JvmBackend codegen — driven by
-            // the published immutable ProjectContext. The A5 seam
-            // selects the per-case invocation from the catalog decision
-            // (catalogued -> LEGACY_REGRESSION + LEGACY_SAFE_INT; else
-            // COMMON_SHADOW + DEAL_V1_2_INT32, zero shadow requests).
-            CompilerInvocation invocation = LegacyProfileRegressionCatalog
-                .invocationFor(test.relativePath());
+            // the published immutable ProjectContext. Every on-disk
+            // backend-runtime fixture compiles through the single
+            // lane-wide activated invocation (ISSUE-0378 D1): the
+            // explicit CompilerProfileProvider.resolve(V1_2_ACTIVE,
+            // releaseRegistry()) PUBLIC_BUILD + DEAL_V1_2_INT32 record;
+            // no per-fixture catalog seam and no legacy-authority
+            // routing exist in this lane.
+            CompilerInvocation invocation = LANE_INVOCATION;
             OrchestratorRun run = runOrchestrator(entryFile,
                 located.context(), invocation);
             if (!run.success()) {

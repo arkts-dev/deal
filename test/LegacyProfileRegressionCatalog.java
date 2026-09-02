@@ -163,6 +163,18 @@ public final class LegacyProfileRegressionCatalog {
             "jvm-int32-slice.json#int32-table-read-boundary"),
         row("jvm-host-abi-slice.json#jvm-host-int-out-of-range-return",
             "jvm-int32-slice.json#int32-host-int-return"),
+        // jvm-v1.2-known-fail.json mirrors — re-pinned tracked known-fails
+        // (ISSUE-0378 D4): the untouched legacy harness routes both cases
+        // LEGACY_REGRESSION + LEGACY_SAFE_INT, where the ±(2^53−1)
+        // long carriers keep 2147483648 in range (E8004 never fires) and
+        // the legacy parse contract admits the out-of-range literal
+        // (E1036 never fires) — both cases keep failing and stay
+        // tracked with no stale gate. Dropping the markers is
+        // jvm-v12-int32-bytes D6's later sanctioned edit (ISSUE-0381);
+        // the two-backend slice re-home (jvm-int32-slice.json) carries
+        // the activated-route coverage.
+        row("jvm-v1.2-known-fail.json#jvm-int32-add-overflow", null),
+        row("jvm-v1.2-known-fail.json#jvm-int32-literal-out-of-range", null),
         // JS retained lane (profile-agnostic; JS v1.2 excluded)
         row("js-skeleton.json#js-int-safe-range-e8004", null),
         row("js-skeleton.json#js-bytes-length-above-int32-e8012", null),
