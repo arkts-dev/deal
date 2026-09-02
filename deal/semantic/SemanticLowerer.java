@@ -539,6 +539,16 @@ import java.util.Set;
  * narrowing flow state (B3). Mode selection, payload construction, and
  * invocation stay out of this child's window.</p>
  *
+ * <p><b>The validation child (ISSUE-0451).</b> {@link
+ * #lowerModuleValidationCore} drives the complete shape-map walk and
+ * additionally runs the production-time validation stack — the closed
+ * schema validator, the address-chain protocol, the control-flow
+ * validator (C-D2), and the B9 rule set of {@link
+ * BindingsProductionValidator} over the one uniform resolution context
+ * (R1-R4); the produced {@code LOOP(FOR)} op sits in the enclosing block
+ * with its init/body/update blocks as children (C-D4 placement, the
+ * intra-{@code LOOP} sequencing input B9's Basis consumes).</p>
+ *
  * <p><b>IDs and determinism (D4/D8/D10).</b> Every id is allocated
  * through the project's {@link SemanticIdAllocator} in the pinned order —
  * dependency order, source order, semantic role, then synthetic ordinal —
@@ -1066,6 +1076,38 @@ public final class SemanticLowerer {
             ShapeMapFacts shapeMapFacts) {
 
         public ShapeMapCoreResult {
+            Objects.requireNonNull(lowering, "lowering must not be null");
+            Objects.requireNonNull(bindingFacts, "bindingFacts must not be null");
+            Objects.requireNonNull(closures, "closures must not be null");
+            Objects.requireNonNull(groups, "groups must not be null");
+            Objects.requireNonNull(proofFacts, "proofFacts must not be null");
+            Objects.requireNonNull(creationFacts, "creationFacts must not be null");
+            Objects.requireNonNull(shapeMapFacts, "shapeMapFacts must not be null");
+            closures = List.copyOf(closures);
+            groups = List.copyOf(groups);
+        }
+    }
+
+    /**
+     * The result of the validation entry point (ISSUE-0451 validation
+     * child, sequencing item 8): the B9-validated lowering result plus
+     * the complete fact surfaces of the six production children
+     * (partial on failure, complete on success). The unit is produced
+     * by the same shape-map walk as {@link ShapeMapCoreResult} and is
+     * additionally validated by the closed schema validator, the
+     * address-chain protocol (A-D1), the control-flow validator
+     * (C-D2 — the block-tree/dominance/exits Basis the B9 rules run
+     * over), and the B9 production-time rule set of
+     * {@link BindingsProductionValidator}.
+     */
+    public record ValidationCoreResult(
+            LoweringResult lowering, BindingCoreFacts bindingFacts,
+            List<ClosureFacts> closures, List<GroupFacts> groups,
+            BindingImmutabilityAnalysis.BindingImmutabilityFacts proofFacts,
+            AdapterCreationRule.CreationRuleFacts creationFacts,
+            ShapeMapFacts shapeMapFacts) {
+
+        public ValidationCoreResult {
             Objects.requireNonNull(lowering, "lowering must not be null");
             Objects.requireNonNull(bindingFacts, "bindingFacts must not be null");
             Objects.requireNonNull(closures, "closures must not be null");
@@ -2179,6 +2221,164 @@ public final class SemanticLowerer {
                 lowerer.proofFacts(), lowerer.creationRuleFacts(), lowerer.shapeMapFacts());
         }
         return new ShapeMapCoreResult(
+            new LoweringResult(unit, lowerer.bodyTable(), List.of()),
+            lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
+            lowerer.proofFacts(), lowerer.creationRuleFacts(), lowerer.shapeMapFacts());
+    }
+
+    /**
+     * The validation child's public lowering entry point (ISSUE-0451
+     * sequencing item 8): lowers one checked implementation module
+     * through the complete shape-map walk (binding-core, closure,
+     * group, proof, creation-rule, and shape-map production active —
+     * the same walk {@link #lowerModuleShapeMapCore} drives) and
+     * additionally runs the production-time validation stack over the
+     * produced unit plus its block-membership table: the closed
+     * 14-condition schema validator (unchanged, both surfaces), the
+     * address-chain protocol (A-D1), the control-flow validator
+     * (C-D2 — the block-tree/dominance/exits Basis whose structured
+     * edges and intra-{@code LOOP} sequencing the B9 rules consume),
+     * and the B9 rule set of {@link BindingsProductionValidator}
+     * ({@code GROUP_SHAPE}, {@code CAPTURE_RESOLUTION},
+     * {@code BINDING_GENERATION_RESOLUTION}, {@code BINDING_INIT_ONCE},
+     * {@code INIT_DOMINATES_LOAD}, {@code ADAPTER_PAIR},
+     * {@code ADAPTER_SOURCE_SHAPE}, {@code REGISTRY_ONE_TO_ONE},
+     * {@code NO_ADAPTER_AT_BOUNDARY}) over the one uniform resolution
+     * context (R1-R4). The first E6005 of any production-time check is
+     * the returned diagnostic; a passing unit is byte-identical across
+     * repeated lowering of the same checked module (D10).
+     *
+     * <p>The pinned positive shapes validate (size-1 self-recursion,
+     * forward module-function body references, group-member body
+     * loads, parameter/catch/{@code FOR_EACH} entry-transfer captures,
+     * nested size-1 self-recursion, the doubly-nested capture of
+     * {@code nested-closure-mutation.deal}, structured child-block
+     * loads of ancestor bindings, thunk-block captures of closures
+     * created inside thunks, the for-let counter's generation-0
+     * condition/update/body-top references under the intra-{@code
+     * LOOP} sequencing, default-block module-level references,
+     * VALUE-over-proof loads, and the store-to-pre-init shape
+     * {@code let x: int = (x = 1);}); the pinned negatives reject with
+     * E6005 naming the rule ({@code let x: int = x;},
+     * {@code let x: int = g(() => x);}, stale generations, zero or
+     * multiple producing allocations, free references outside
+     * captures, group-shape violations, adapter-pair violations,
+     * adapter-source-shape violations, registry one-to-one
+     * violations, and adapter results wired into non-position
+     * boundaries). This entry point is driven by the validation tests;
+     * no production route change — retained/public compilation paths
+     * and {@link #lowerModule} are untouched, and the binding/closure/
+     * group/proof/creation-rule/shape-map entry points keep their
+     * exact shapes.
+     *
+     * @param module                the checked implementation module; non-null
+     * @param profile               the invocation's semantic profile
+     *                              (I3 guard: only
+     *                              {@code DEAL_V1_2_INT32} is lowered);
+     *                              non-null
+     * @param constructCoverage     the manifest's reachable-construct rows
+     *                              recorded at lowering start (S1); non-null
+     * @param interfaceHash         the interface index digest the unit is
+     *                              checked against (R-PROFILE); non-null
+     * @param capabilityRegistryHash the invocation's capability-registry
+     *                              digest (R-PROFILE); non-null
+     * @param allocator             the project's semantic-id allocator in
+     *                              dependency order; non-null
+     * @return the B9-validated unit with the complete fact surfaces,
+     *         or the first E6005 with the partial facts on failure
+     */
+    public static ValidationCoreResult lowerModuleValidationCore(
+            CheckedModuleInput module,
+            SemanticProfile profile,
+            Map<ConstructKind, List<SemanticOpKind>> constructCoverage,
+            String interfaceHash,
+            String capabilityRegistryHash,
+            SemanticIdAllocator allocator) {
+        Objects.requireNonNull(module, "module must not be null");
+        Objects.requireNonNull(profile, "profile must not be null");
+        Objects.requireNonNull(constructCoverage, "constructCoverage must not be null");
+        Objects.requireNonNull(interfaceHash, "interfaceHash must not be null");
+        Objects.requireNonNull(capabilityRegistryHash, "capabilityRegistryHash must not be null");
+        Objects.requireNonNull(allocator, "allocator must not be null");
+        // I3 profile guard: identical to lowerModuleShapeMapCore — a
+        // non-DEAL_V1_2_INT32 lowering request produces no unit and no
+        // partial session state.
+        if (profile != SemanticProfile.DEAL_V1_2_INT32) {
+            return new ValidationCoreResult(new LoweringResult(null, null,
+                List.of(FailureContractRegistry.e6005(
+                    new LoweringFailureDetail(module.moduleId().path(),
+                        SemanticCapability.FOUNDATION_VALUES, LOWER_LEGACY_PROFILE_REJECTED,
+                        profile, LoweredModuleUnit.FORMAT_VERSION, "SemanticLowerer")))),
+                BindingCoreFacts.empty(), List.of(), List.of(),
+                BindingImmutabilityAnalysis.BindingImmutabilityFacts.empty(),
+                AdapterCreationRule.CreationRuleFacts.empty(), ShapeMapFacts.empty());
+        }
+        ModuleLowerer lowerer = new ModuleLowerer(module.moduleId(), module.sourceId(),
+            module.checks(), allocator, true, true, true, true, true, true,
+            module.ast().span());
+        try {
+            lowerer.lowerGroupModule(module.ast().statements());
+        } catch (ConstructUnlowered unlowered) {
+            return new ValidationCoreResult(new LoweringResult(null, null,
+                List.of(FailureContractRegistry.e6005(
+                    loweringFailureDetail(module.moduleId(), unlowered)))),
+                lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
+                lowerer.proofFacts(), lowerer.creationRuleFacts(), lowerer.shapeMapFacts());
+        } catch (IntLiteralOutOfRange outOfRange) {
+            return new ValidationCoreResult(new LoweringResult(null, null,
+                List.of(FailureContractRegistry.e6005(
+                    loweringFailureDetail(module.moduleId(), outOfRange)))),
+                lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
+                lowerer.proofFacts(), lowerer.creationRuleFacts(), lowerer.shapeMapFacts());
+        } catch (ContainerPayloadDescriptors.Defect defect) {
+            return new ValidationCoreResult(new LoweringResult(null, null,
+                List.of(FailureContractRegistry.e6005(
+                    loweringFailureDetail(module.moduleId(), defect)))),
+                lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
+                lowerer.proofFacts(), lowerer.creationRuleFacts(), lowerer.shapeMapFacts());
+        } catch (ComparisonSelectorLowering.Defect defect) {
+            return new ValidationCoreResult(new LoweringResult(null, null,
+                List.of(ComparisonSelectorLowering.e6005(module.moduleId(), defect))),
+                lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
+                lowerer.proofFacts(), lowerer.creationRuleFacts(), lowerer.shapeMapFacts());
+        }
+        LoweredModuleUnit unit = lowerer.buildUnit(constructCoverage,
+            module.imports().stream().map(ResolvedImport::resolvedModuleId).toList(),
+            interfaceHash, capabilityRegistryHash,
+            ContainerClaimingSeam.E6_GATE_ACTIVATION);
+        Optional<CompilerDiagnostic> validation = SemanticIrValidator.validate(unit,
+            new SemanticIrValidator.ComparisonFacts(interfaceHash,
+                SemanticProfile.DEAL_V1_2_INT32, capabilityRegistryHash));
+        if (validation.isPresent()) {
+            return new ValidationCoreResult(new LoweringResult(null, null,
+                List.of(validation.get())),
+                lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
+                lowerer.proofFacts(), lowerer.creationRuleFacts(), lowerer.shapeMapFacts());
+        }
+        Optional<CompilerDiagnostic> chainShape = AddressChainProtocol.validate(unit);
+        if (chainShape.isPresent()) {
+            return new ValidationCoreResult(new LoweringResult(null, null,
+                List.of(chainShape.get())),
+                lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
+                lowerer.proofFacts(), lowerer.creationRuleFacts(), lowerer.shapeMapFacts());
+        }
+        Optional<CompilerDiagnostic> controlFlow =
+            ControlFlowValidator.validate(unit, lowerer.bodyTable());
+        if (controlFlow.isPresent()) {
+            return new ValidationCoreResult(new LoweringResult(null, null,
+                List.of(controlFlow.get())),
+                lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
+                lowerer.proofFacts(), lowerer.creationRuleFacts(), lowerer.shapeMapFacts());
+        }
+        Optional<CompilerDiagnostic> bindings =
+            BindingsProductionValidator.validate(unit, lowerer.bodyTable());
+        if (bindings.isPresent()) {
+            return new ValidationCoreResult(new LoweringResult(null, null,
+                List.of(bindings.get())),
+                lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
+                lowerer.proofFacts(), lowerer.creationRuleFacts(), lowerer.shapeMapFacts());
+        }
+        return new ValidationCoreResult(
             new LoweringResult(unit, lowerer.bodyTable(), List.of()),
             lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
             lowerer.proofFacts(), lowerer.creationRuleFacts(), lowerer.shapeMapFacts());
@@ -4414,11 +4614,16 @@ public final class SemanticLowerer {
                     initializer),
                 decl.span(), FailurePolicyId.NO_DEAL_FAILURE);
             ValueId condition = lowerExpression(statement.condition().get());
+            // The LOOP op itself sits in the enclosing block (the
+            // control-flow epic's placement contract, C-D4): the init
+            // block is the one-time init child including the first
+            // condition production — the op is not a member of its own
+            // init child block (C-D2 block-tree shape).
+            blockStack.pop();
             emitUserNullOp(SemanticOpKind.LOOP,
                 new KindPayload.LoopPayload(ControlSelector.FOR, initBlock, condition,
                     bodyBlock, updateBlock),
                 statement.span(), FailurePolicyId.NO_DEAL_FAILURE);
-            blockStack.pop();
             // Body block: the per-iteration incarnation (generation 1,
             // SHARED_CELL) at the body top, INIT from the generation-0
             // load, then the body statements (dominant generation 1).
