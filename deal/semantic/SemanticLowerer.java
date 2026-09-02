@@ -516,6 +516,25 @@ import java.util.Set;
  * and the payload; {@code GROUP_SHAPE} validation and member invocation
  * stay out of this child's window.</p>
  *
+ * <p><b>The immutability-proof child (ISSUE-0448).</b> {@link
+ * #lowerModuleImmutabilityCore} drives the same session in proof-analysis
+ * mode (the group walk plus the conservative assignment analysis, B7):
+ * every variable assignment the walk resolves defeats exactly the
+ * dominant incarnation it names — the for-let update defeats the counter
+ * generation 0 while the per-iteration generation 1 keeps its proof,
+ * parameters are defeated by any body assignment, function names by any
+ * assignment in the module, and the {@code int}/{@code number} intrinsic
+ * bindings always carry the proof. Proofs derive over the binding-core
+ * incarnation map as the closed {@link
+ * deal.semantic.ir.BindingImmutabilityProof} records per
+ * {@code {binding, generation}} — the facts the shape-map child's VALUE
+ * arm consumes; the {@link BindingImmutabilityAnalysis} production class
+ * owns the closed rule, records nothing but checker facts (resolved
+ * assignments, declaration/parameter facts, intrinsic-binding facts —
+ * never target, route, or emitter knowledge), and never consults
+ * narrowing flow state (B3). Mode selection, payload construction, and
+ * invocation stay out of this child's window.</p>
+ *
  * <p><b>IDs and determinism (D4/D8/D10).</b> Every id is allocated
  * through the project's {@link SemanticIdAllocator} in the pinned order —
  * dependency order, source order, semantic role, then synthetic ordinal —
@@ -899,6 +918,35 @@ public final class SemanticLowerer {
             Objects.requireNonNull(bindingFacts, "bindingFacts must not be null");
             Objects.requireNonNull(closures, "closures must not be null");
             Objects.requireNonNull(groups, "groups must not be null");
+            closures = List.copyOf(closures);
+            groups = List.copyOf(groups);
+        }
+    }
+
+    /**
+     * The result of the immutability-proof entry point (ISSUE-0448 proof
+     * child): the validated lowering result, the binding walk's binding
+     * facts (the incarnation map the proofs derive over), the produced
+     * closures' capture facts, the produced recursive groups' member
+     * facts, and the derived {@code BindingImmutabilityProof} fact
+     * surface — proof records per {@code {binding, generation}} of the
+     * dominant incarnation plus the resolved assignment facts (partial
+     * on failure, complete on success). The unit's
+     * {@code functionBindings} map is populated by the same walk through
+     * the registry child's seam (B5 — the registry-combined proof
+     * surface).
+     */
+    public record ImmutabilityCoreResult(
+            LoweringResult lowering, BindingCoreFacts bindingFacts,
+            List<ClosureFacts> closures, List<GroupFacts> groups,
+            BindingImmutabilityAnalysis.BindingImmutabilityFacts proofFacts) {
+
+        public ImmutabilityCoreResult {
+            Objects.requireNonNull(lowering, "lowering must not be null");
+            Objects.requireNonNull(bindingFacts, "bindingFacts must not be null");
+            Objects.requireNonNull(closures, "closures must not be null");
+            Objects.requireNonNull(groups, "groups must not be null");
+            Objects.requireNonNull(proofFacts, "proofFacts must not be null");
             closures = List.copyOf(closures);
             groups = List.copyOf(groups);
         }
@@ -1596,6 +1644,137 @@ public final class SemanticLowerer {
             lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts());
     }
 
+    /**
+     * The immutability-proof child's public lowering entry point
+     * (ISSUE-0448 sequencing item 5): lowers one checked implementation
+     * module through the group-core walk — the binding walk plus the
+     * closure arms plus the group arms, the same walk the registry
+     * child's {@code functionBindings} registrations populate (B5) —
+     * with the conservative assignment analysis active on top of it, and
+     * produces the validated unit plus the binding facts, the closure
+     * capture facts, the group member facts, and the derived
+     * {@code BindingImmutabilityProof} fact surface (B7).
+     *
+     * <p><b>Recording.</b> Every variable assignment the walk lowers
+     * resolves to its dominant incarnation through the walk's own
+     * environment and defeats exactly that incarnation's proof
+     * (conservative: any assignment in the enclosing scope after the
+     * declaration, regardless of its position relative to an adaptation
+     * site — the for-let update defeats the counter generation 0, the
+     * per-iteration generation 1 keeps its proof; parameters are
+     * defeated by any body assignment; function names by any assignment
+     * in the module; the {@code int}/{@code number} intrinsic bindings
+     * are always proven, B7). Proofs derive over the binding-core
+     * incarnation map after the walk — one
+     * {@link BindingImmutabilityProof} per {@code {binding,
+     * generation}} of the dominant incarnation at the site; the records
+     * are the closed shape the shape-map child copies into
+     * {@code FUNCTION_ADAPT} payloads. The analysis consumes checker
+     * facts only — resolved assignments, declaration/parameter facts,
+     * intrinsic-binding facts — never target, route, or emitter
+     * knowledge; narrowing (NullNarrowing) never enters (B3).</p>
+     *
+     * <p>This entry point is driven by the proof tests; no production
+     * route change — retained/public compilation paths and
+     * {@link #lowerModule} are untouched, and the binding/closure/group
+     * entry points keep their exact shapes.</p>
+     *
+     * @param module                the checked implementation module; non-null
+     * @param profile               the invocation's semantic profile
+     *                              (I3 guard: only
+     *                              {@code DEAL_V1_2_INT32} is lowered);
+     *                              non-null
+     * @param constructCoverage     the manifest's reachable-construct rows
+     *                              recorded at lowering start (S1); non-null
+     * @param interfaceHash         the interface index digest the unit is
+     *                              checked against (R-PROFILE); non-null
+     * @param capabilityRegistryHash the invocation's capability-registry
+     *                              digest (R-PROFILE); non-null
+     * @param allocator             the project's semantic-id allocator in
+     *                              dependency order; non-null
+     * @return the validated unit with the binding, closure, group, and
+     *         immutability-proof facts, or the first E6005 with the
+     *         partial facts on failure
+     */
+    public static ImmutabilityCoreResult lowerModuleImmutabilityCore(
+            CheckedModuleInput module,
+            SemanticProfile profile,
+            Map<ConstructKind, List<SemanticOpKind>> constructCoverage,
+            String interfaceHash,
+            String capabilityRegistryHash,
+            SemanticIdAllocator allocator) {
+        Objects.requireNonNull(module, "module must not be null");
+        Objects.requireNonNull(profile, "profile must not be null");
+        Objects.requireNonNull(constructCoverage, "constructCoverage must not be null");
+        Objects.requireNonNull(interfaceHash, "interfaceHash must not be null");
+        Objects.requireNonNull(capabilityRegistryHash, "capabilityRegistryHash must not be null");
+        Objects.requireNonNull(allocator, "allocator must not be null");
+        // I3 profile guard: identical to lowerModuleGroupCore — a
+        // non-DEAL_V1_2_INT32 lowering request produces no unit and no
+        // partial session state.
+        if (profile != SemanticProfile.DEAL_V1_2_INT32) {
+            return new ImmutabilityCoreResult(new LoweringResult(null, null,
+                List.of(FailureContractRegistry.e6005(
+                    new LoweringFailureDetail(module.moduleId().path(),
+                        SemanticCapability.FOUNDATION_VALUES, LOWER_LEGACY_PROFILE_REJECTED,
+                        profile, LoweredModuleUnit.FORMAT_VERSION, "SemanticLowerer")))),
+                BindingCoreFacts.empty(), List.of(), List.of(),
+                BindingImmutabilityAnalysis.BindingImmutabilityFacts.empty());
+        }
+        ModuleLowerer lowerer = new ModuleLowerer(module.moduleId(), module.sourceId(),
+            module.checks(), allocator, true, true, true, true, module.ast().span());
+        try {
+            lowerer.lowerGroupModule(module.ast().statements());
+        } catch (ConstructUnlowered unlowered) {
+            return new ImmutabilityCoreResult(new LoweringResult(null, null,
+                List.of(FailureContractRegistry.e6005(
+                    loweringFailureDetail(module.moduleId(), unlowered)))),
+                lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
+                lowerer.proofFacts());
+        } catch (IntLiteralOutOfRange outOfRange) {
+            return new ImmutabilityCoreResult(new LoweringResult(null, null,
+                List.of(FailureContractRegistry.e6005(
+                    loweringFailureDetail(module.moduleId(), outOfRange)))),
+                lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
+                lowerer.proofFacts());
+        } catch (ContainerPayloadDescriptors.Defect defect) {
+            return new ImmutabilityCoreResult(new LoweringResult(null, null,
+                List.of(FailureContractRegistry.e6005(
+                    loweringFailureDetail(module.moduleId(), defect)))),
+                lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
+                lowerer.proofFacts());
+        } catch (ComparisonSelectorLowering.Defect defect) {
+            return new ImmutabilityCoreResult(new LoweringResult(null, null,
+                List.of(ComparisonSelectorLowering.e6005(module.moduleId(), defect))),
+                lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
+                lowerer.proofFacts());
+        }
+        LoweredModuleUnit unit = lowerer.buildUnit(constructCoverage,
+            module.imports().stream().map(ResolvedImport::resolvedModuleId).toList(),
+            interfaceHash, capabilityRegistryHash,
+            ContainerClaimingSeam.E6_GATE_ACTIVATION);
+        Optional<CompilerDiagnostic> validation = SemanticIrValidator.validate(unit,
+            new SemanticIrValidator.ComparisonFacts(interfaceHash,
+                SemanticProfile.DEAL_V1_2_INT32, capabilityRegistryHash));
+        if (validation.isPresent()) {
+            return new ImmutabilityCoreResult(new LoweringResult(null, null,
+                List.of(validation.get())),
+                lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
+                lowerer.proofFacts());
+        }
+        Optional<CompilerDiagnostic> chainShape = AddressChainProtocol.validate(unit);
+        if (chainShape.isPresent()) {
+            return new ImmutabilityCoreResult(new LoweringResult(null, null,
+                List.of(chainShape.get())),
+                lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
+                lowerer.proofFacts());
+        }
+        return new ImmutabilityCoreResult(
+            new LoweringResult(unit, lowerer.bodyTable(), List.of()),
+            lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
+            lowerer.proofFacts());
+    }
+
     // =========================================================================
     // The per-module lowering session (the arms)
     // =========================================================================
@@ -1727,6 +1906,29 @@ public final class SemanticLowerer {
          * group walk is the closure walk plus the group arms).
          */
         private final boolean groupCore;
+
+        /**
+         * The proof-analysis mode flag (ISSUE-0448 proof child):
+         * {@code true} exactly when the session was created by
+         * {@link SemanticLowerer#lowerModuleImmutabilityCore} — the
+         * conservative assignment analysis records every resolved
+         * variable assignment during the walk (the same walk the
+         * registry child populates) and the derived
+         * {@code BindingImmutabilityProof} fact surface is available
+         * through {@link #proofFacts()}. {@code false} (the default in
+         * every other mode) preserves the other walks' behavior
+         * byte-for-byte.
+         */
+        private final boolean proofAnalysis;
+        /**
+         * The conservative binding-immutability analysis of the session
+         * (the proof child's production class, B7 — active only in
+         * proof-analysis mode): the resolved assignment facts and the
+         * intrinsic markers feeding the proof derivation over the
+         * binding-core incarnation map.
+         */
+        private final BindingImmutabilityAnalysis assignmentAnalysis =
+            new BindingImmutabilityAnalysis();
         /**
          * The produced recursive groups' member facts in creation order
          * (group-core mode): the fact surface backing
@@ -1994,6 +2196,39 @@ public final class SemanticLowerer {
         public ModuleLowerer(ModuleId module, String sourceId, CheckResult checks,
                              SemanticIdAllocator ids, boolean bindingCore,
                              boolean closureCore, boolean groupCore, Span programSpan) {
+            this(module, sourceId, checks, ids, bindingCore, closureCore, groupCore,
+                false, programSpan);
+        }
+
+        /**
+         * Creates one lowering session with the binding-core, closure-core,
+         * group-core, and proof-analysis mode flags (ISSUE-0444 binding-core
+         * child; ISSUE-0445 closure child; ISSUE-0446 recursive-group child;
+         * ISSUE-0448 proof child). Proof-analysis mode rides on top of the
+         * walk flags (the proof entry point passes all four): it records the
+         * walk's resolved variable assignments and exposes the derived proof
+         * fact surface; it changes no emitted op.
+         *
+         * @param module        the module identity; non-null
+         * @param sourceId      the stable source identity carried on every
+         *                      op's origin; non-null
+         * @param checks        the module's checked facts (read-only); non-null
+         * @param ids           the project's allocator in dependency order;
+         *                      non-null
+         * @param bindingCore   {@code true} to activate the binding walk's
+         *                      arms and environment
+         * @param closureCore   {@code true} to activate the closure arms on
+         *                      top of the binding walk
+         * @param groupCore     {@code true} to activate the group arms on
+         *                      top of the closure walk
+         * @param proofAnalysis {@code true} to activate the conservative
+         *                      assignment analysis on top of the walk
+         * @param programSpan   the checked program's span; non-null
+         */
+        public ModuleLowerer(ModuleId module, String sourceId, CheckResult checks,
+                             SemanticIdAllocator ids, boolean bindingCore,
+                             boolean closureCore, boolean groupCore,
+                             boolean proofAnalysis, Span programSpan) {
             this.module = Objects.requireNonNull(module, "module must not be null");
             this.sourceId = Objects.requireNonNull(sourceId, "sourceId must not be null");
             this.checks = Objects.requireNonNull(checks, "checks must not be null");
@@ -2001,6 +2236,7 @@ public final class SemanticLowerer {
             this.bindingCore = bindingCore;
             this.closureCore = closureCore && bindingCore;
             this.groupCore = groupCore && this.closureCore;
+            this.proofAnalysis = proofAnalysis;
             this.programSpan = Objects.requireNonNull(programSpan,
                 "programSpan must not be null");
             this.moduleInitBlock = ids.nextBlockId(module, nextOrdinal++, 0);
@@ -2369,6 +2605,24 @@ public final class SemanticLowerer {
         }
 
         /**
+         * The proof walk's complete immutability fact surface
+         * (proof-analysis mode): the derived {@link
+         * deal.semantic.ir.BindingImmutabilityProof} records per
+         * {@code {binding, generation}} over the binding-core incarnation
+         * map in registration order, plus the resolved assignment facts in
+         * walk order (partial when the walk failed mid-way; the empty
+         * surface outside proof-analysis mode).
+         *
+         * @return the proof fact surface; non-null
+         */
+        public BindingImmutabilityAnalysis.BindingImmutabilityFacts proofFacts() {
+            if (!proofAnalysis) {
+                return BindingImmutabilityAnalysis.BindingImmutabilityFacts.empty();
+            }
+            return assignmentAnalysis.facts(bindingFacts().bindings());
+        }
+
+        /**
          * Seeds the {@code int}/{@code number} intrinsic bindings at
          * module-init top (B1): exactly the root
          * {@code Symbol.IntrinsicSymbol} bindings of those two names
@@ -2396,6 +2650,12 @@ public final class SemanticLowerer {
                     INITIAL_LOOP_GENERATION, moduleInitBlock, BindingCellKind.DIRECT,
                     false, BindingProducer.BINDING_ALLOC, false);
                 registerBinding(name, binding, incarnation);
+                if (proofAnalysis) {
+                    // B7: intrinsic bindings (int/number) always carry
+                    // the proof — builtin, unassignable — regardless of
+                    // any assignment fact.
+                    assignmentAnalysis.markIntrinsic(binding);
+                }
                 emitUserNullOp(SemanticOpKind.BINDING_ALLOC,
                     new KindPayload.BindingAllocPayload(binding, moduleInitBlock, false,
                         cellKinds.cellKindOf(incarnation), INITIAL_LOOP_GENERATION),
@@ -4239,6 +4499,14 @@ public final class SemanticLowerer {
         private ValueId emitVariableAssignChain(AssignmentExpr assignment,
                                                 IdentifierExpr target, BindingId binding,
                                                 long generation, ValueId slot) {
+            if (proofAnalysis) {
+                // B7: any resolved variable assignment defeats exactly the
+                // incarnation it names — the dominant incarnation at the
+                // assignment site (conservative: any assignment in the
+                // enclosing scope after the declaration, regardless of its
+                // position relative to an adaptation site).
+                assignmentAnalysis.recordAssignment(target.name(), binding, generation);
+            }
             Type targetType = checkedType(target);
             RuntimeDescriptor targetDescriptor =
                 ContainerPayloadDescriptors.resultDescriptorOf(targetType);
