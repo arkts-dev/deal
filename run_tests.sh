@@ -7,6 +7,21 @@ mkdir -p build
 # PROD_SOURCES + TEST_SOURCES (today's javac source list, verbatim) and
 # TEST_MAINS (today's run phase, verbatim). See gate-manifest-authority.
 source tools/gate-manifest.sh
+# =========================================================================
+# ISSUE-0474 (Coverage Manifest Validator): the reusable C7 validation
+# component and its synthetic 26/0 unit matrix join the compile list and
+# the unconditional run phase here, at the gate-script level. The change
+# boundary is deal/test/conformance/ plus run_tests.sh, so the single
+# compile/test-list authority file (tools/gate-manifest.sh) stays
+# untouched by this issue.
+# =========================================================================
+TEST_SOURCES+=(
+  'deal/test/conformance/CoverageManifestValidator.java'
+  'deal/test/conformance/CoverageManifestValidatorTest.java'
+)
+TEST_MAINS+=(
+  'fg|=== Running Coverage Manifest Validator Tests (ISSUE-0474) ===|java -ea -cp build deal.test.conformance.CoverageManifestValidatorTest'
+)
 
 # =========================================================================
 # Single compilation step: compile all source and test files at once.
