@@ -115,20 +115,6 @@ public final class LuaBackend implements Visitor<Void> {
     // importResolutions value for that key.
     private Map<String, Map<String, Type>> hostModules = Map.of();
 
-    // Extern-C FFI binding inputs (emitter page D6): raw import path →
-    // the orchestrator-assembled FFI module binding content. When an
-    // import path has an entry here, the import emits the load_ffi
-    // loader call (the entry wins over hostModules and importResolutions
-    // for that key). LuaFfiBindingGenerator owns the bundle/plan/binding
-    // serialization the import site emits.
-    private Map<String, LuaFfiBindingGenerator.FfiModuleInput> ffiModules = Map.of();
-
-    // FFI import alias → the exported FFI function names reachable
-    // through that alias. Direct call sites on these members append the
-    // call-site span triplet to the wrapper's .f invocation (the pinned
-    // FFI wrapper call shape f(v1, ..., vN, file, line, column)).
-    private final Map<String, Set<String>> ffiAliasFunctions = new HashMap<>();
-
     // ISSUE-0009: for-loop shadow-local lowering.
     // When non-null, all IdentifierExpr nodes with this name in condition
     // and update expressions are remapped to "_name" (the outer counter).
@@ -367,8 +353,8 @@ public final class LuaBackend implements Visitor<Void> {
                                               boolean entryModule,
                                               ModuleIdentityResolver.IdentityIndex identityIndex) {
         return generateResult(program, result, sourcePath, modulePath,
-            importResolutions, hostModules, Map.of(), entryModule, null,
-            identityIndex, SemanticProfile.LEGACY_SAFE_INT).lua();
+            importResolutions, hostModules, entryModule, null, identityIndex,
+            SemanticProfile.LEGACY_SAFE_INT).lua();
     }
 
     /**
@@ -384,7 +370,7 @@ public final class LuaBackend implements Visitor<Void> {
                                               boolean entryModule,
                                               SemanticProfile semanticProfile) {
         return generateResult(program, result, sourcePath, modulePath,
-            importResolutions, hostModules, Map.of(), entryModule, null,
+            importResolutions, hostModules, entryModule, null,
             standaloneIdentityIndex(modulePath, hostModules), semanticProfile)
             .lua();
     }
@@ -441,9 +427,7 @@ public final class LuaBackend implements Visitor<Void> {
     private static GenerationResult generateResult(ProgramNode program,
             CheckResult result, String sourcePath, String modulePath,
             Map<String, String> importResolutions,
-            Map<String, Map<String, Type>> hostModules,
-            Map<String, LuaFfiBindingGenerator.FfiModuleInput> ffiModules,
-            boolean entryModule,
+            Map<String, Map<String, Type>> hostModules, boolean entryModule,
             SourceMapGenerator smg,
             ModuleIdentityResolver.IdentityIndex identityIndex,
             SemanticProfile semanticProfile) {
@@ -456,7 +440,6 @@ public final class LuaBackend implements Visitor<Void> {
         backend.modulePath = modulePath;
         backend.importResolutions = Map.copyOf(importResolutions);
         backend.hostModules = Map.copyOf(hostModules);
-        backend.ffiModules = Map.copyOf(ffiModules);
         backend.entryModule = entryModule;
         backend.sourceMapGenerator = smg;
         backend.emitHeader();
@@ -532,7 +515,7 @@ public final class LuaBackend implements Visitor<Void> {
                                                 SourceMapGenerator smg,
                                                 boolean entryModule) {
         return generateResult(program, result, sourcePath, modulePath,
-            importResolutions, hostModules, Map.of(), entryModule, smg,
+            importResolutions, hostModules, entryModule, smg,
             standaloneIdentityIndex(modulePath, hostModules),
             SemanticProfile.LEGACY_SAFE_INT).lua();
     }
@@ -740,36 +723,10 @@ public final class LuaBackend implements Visitor<Void> {
                                        ModuleIdentityResolver.IdentityIndex identityIndex,
                                        SemanticProfile semanticProfile)
                                        throws IOException {
-        return generateToFile(program, result, sourcePath, modulePath,
-            outputRoot, outputPath, emitSourceMap, importResolutions,
-            hostModules, Map.of(), entryModule, identityIndex, semanticProfile);
-    }
-
-    /**
-     * FFI-carrying production seam (emitter page D6): the orchestrator
-     * classifies {@code // @extern-c} imports and passes their assembled
-     * binding inputs here; the import emission then routes through
-     * {@code __rt.load_ffi} with {@code LuaFfiBindingGenerator}-owned
-     * content instead of the host-module or raw-require paths. The
-     * overload above keeps the empty-FFI default so existing call sites
-     * are untouched.
-     */
-    public static GenerationResult generateToFile(ProgramNode program,
-                                       CheckResult result,
-                                       String sourcePath, String modulePath,
-                                       Path outputRoot, Path outputPath,
-                                       boolean emitSourceMap,
-                                       Map<String, String> importResolutions,
-                                       Map<String, Map<String, Type>> hostModules,
-                                       Map<String, LuaFfiBindingGenerator.FfiModuleInput> ffiModules,
-                                       boolean entryModule,
-                                       ModuleIdentityResolver.IdentityIndex identityIndex,
-                                       SemanticProfile semanticProfile)
-                                       throws IOException {
         SourceMapGenerator smg = emitSourceMap ? new SourceMapGenerator() : null;
         GenerationResult gen = generateResult(program, result, sourcePath,
-            modulePath, importResolutions, hostModules, ffiModules,
-            entryModule, smg, identityIndex, semanticProfile);
+            modulePath, importResolutions, hostModules, entryModule, smg,
+            identityIndex, semanticProfile);
         String luaSource = gen.lua();
         boolean hasErrors = gen.diagnostics().stream()
             .anyMatch(d -> "error".equals(d.severity()));
@@ -916,24 +873,8 @@ public final class LuaBackend implements Visitor<Void> {
     public String generateFromInstance(ProgramNode program, boolean entryModule,
             Map<String, String> importResolutions,
             Map<String, Map<String, Type>> hostModules) {
-        return generateFromInstance(program, entryModule, importResolutions,
-            hostModules, Map.of());
-    }
-
-    /**
-     * Instance generation with FFI binding inputs (emitter page D6): the
-     * per-import FFI module facts assembled by the caller
-     * (orchestrator/harness) route {@code // @extern-c} imports through
-     * {@code __rt.load_ffi}. The overload above keeps the empty-FFI
-     * default.
-     */
-    public String generateFromInstance(ProgramNode program, boolean entryModule,
-            Map<String, String> importResolutions,
-            Map<String, Map<String, Type>> hostModules,
-            Map<String, LuaFfiBindingGenerator.FfiModuleInput> ffiModules) {
         this.importResolutions = Map.copyOf(importResolutions);
         this.hostModules = Map.copyOf(hostModules);
-        this.ffiModules = Map.copyOf(ffiModules);
         return generateFromInstance(program, entryModule);
     }
 
@@ -943,7 +884,6 @@ public final class LuaBackend implements Visitor<Void> {
         nestedClassDeclFrames.clear();
         lastChunkVisibleClassDecl.clear();
         classExportKeyOwners.clear();
-        ffiAliasFunctions.clear();
         mainDeclSpan = null;
         this.entryModule = entryModule;
         emitHeader();
@@ -1960,44 +1900,6 @@ public final class LuaBackend implements Visitor<Void> {
 
     @Override
     public Void visit(ImportDeclaration node) {
-        // Extern-C branch (emitter page D6): the orchestrator-assembled FFI
-        // binding input drives the load_ffi loader call —
-        // local <alias> = __rt.load_ffi(<moduleKey>, <cdefBundle>,
-        // <plans>, <bindings>, <import span triplet>). LuaFfiBindingGenerator
-        // owns every argument literal (private ordinals, private casts,
-        // C-struct plans, binding cells); the emitter never emits ffi.C
-        // access and never raises FFI_UNSUPPORTED_BACKEND (LuaJIT is the
-        // capable backend). The loader call carries the source span of the
-        // import node (D8).
-        LuaFfiBindingGenerator.FfiModuleInput ffi = ffiModules.get(node.modulePath());
-        if (ffi != null) {
-            LuaFfiBindingGenerator.Generation gen =
-                LuaFfiBindingGenerator.generate(ffi, descriptors);
-            if (gen.failure() != null) {
-                // Defensive config failure: an FFI shape the frontend FFI
-                // declaration validation (the owning gate) would reject.
-                // The chunk keeps a structurally valid alias so the
-                // artifact stays loadable in diagnostic-only runs.
-                addDiagnostic(DiagnosticCode.E6000,
-                    "unsupported extern-c import \"" + node.modulePath()
-                        + "\": " + gen.failure().message(), node.span());
-                emitLine("local " + node.alias() + " = nil");
-                return null;
-            }
-            Set<String> functionNames = new LinkedHashSet<>();
-            for (LuaFfiBindingGenerator.FfiFunctionInput fn : ffi.functions()) {
-                functionNames.add(fn.dealName());
-            }
-            ffiAliasFunctions.put(node.alias(), functionNames);
-            emitLine("local " + node.alias() + " = __rt.load_ffi("
-                + gen.parts().moduleKeyLiteral() + ", "
-                + gen.parts().bundleLiteral() + ", "
-                + gen.parts().plansLiteral() + ", "
-                + gen.parts().bindingsLiteral() + ", "
-                + spanArgs(node.span()) + ")");
-            return null;
-        }
-
         // Host-module branch (ISSUE-0082, host-module-abi D4): the declared
         // exports drive the runtime loader.  The first argument is the raw
         // import specifier byte-for-byte — never the dotted importResolutions
@@ -2535,24 +2437,6 @@ public final class LuaBackend implements Visitor<Void> {
             if (sym instanceof Symbol.IntrinsicSymbol) {
                 return emitExpression(call.callee()) + ".f(" + args.toString()
                     + ", " + spanArgs(call.span()) + ")";
-            }
-        }
-        // FFI wrapper calls (emitter page D6, seam joint-consumption
-        // contract): a direct call on an extern-c import's exported
-        // function routes through the wrapper's .f entry with the
-        // call-site span triplet appended — the pinned FFI wrapper call
-        // shape f(v1, ..., vN, file, line, column). The alias wins over
-        // the generic Type.Func branch below (which emits no span).
-        if (call.callee() instanceof MemberAccessExpr mae
-                && mae.object() instanceof IdentifierExpr id) {
-            Set<String> ffiFunctions = ffiAliasFunctions.get(id.name());
-            if (ffiFunctions != null && ffiFunctions.contains(mae.field())) {
-                // The wrapper closure takes f(v1, ..., vN, file, line,
-                // column): a zero-argument call emits the span triplet
-                // without a leading comma.
-                return emitExpression(call.callee()) + ".f(" + args.toString()
-                    + (args.length() == 0 ? "" : ", ")
-                    + spanArgs(call.span()) + ")";
             }
         }
         if (calleeType instanceof Type.Func) {

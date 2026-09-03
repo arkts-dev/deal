@@ -7,12 +7,9 @@ import java.security.NoSuchAlgorithmException;
  * The shared digest helper of the identity carriers in {@code deal.module}
  * (deterministic, no address/timestamp/ordinal/process-state inputs):
  * SHA-256 over the pinned length-prefixed UTF-8 serialization of identity
- * inputs. The FFI binding generator (emitter page D6) consumes the same
- * facility for its opaque bundle/entry/plan index digests — the adopted
- * D1 rule makes those digests indexes only, and the compiler-wide
- * SHA-256 registry keeps this class the single implementation site.
+ * inputs.
  */
-public final class IdentityDigests {
+final class IdentityDigests {
 
     private IdentityDigests() {
     }
@@ -25,7 +22,7 @@ public final class IdentityDigests {
      * @param input the exact bytes to hash
      * @return the 64-lowercase-hex-char digest
      */
-    public static String sha256Hex(byte[] input) {
+    static String sha256Hex(byte[] input) {
         MessageDigest digest;
         try {
             digest = MessageDigest.getInstance("SHA-256");

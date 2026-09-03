@@ -376,48 +376,27 @@ public class ProjectIntegrationGatesTest {
     }
 
     // =========================================================================
-    // FFI gate (ISSUE-0345): an extern-c import compiles through the
-    // production CLI with a manifest externals entry carrying a real
-    // nativeLibrary, emits the load_ffi binding (no ffi.C access), and
-    // executes under real LuaJIT against the compiled fixture library.
+    // Extern-c hold gate (ISSUE-0345 review cycle 1 remediation): until
+    // ISSUE-0157 lands the frontend's FfiModuleDescriptor, the LuaJIT arm
+    // must not activate emitter D6 (epic open blocker: "nothing on the
+    // LuaJIT side can activate before they land"). An // @extern-c
+    // declaration import therefore keeps the pre-D6 route — the
+    // load_host declared-map emission — and the generated chunk carries
+    // no __rt.load_ffi loader call and no ffi.C access. This gate pins
+    // the held state so a premature D6 activation fails it; the
+    // ISSUE-0345 D6 landing (consuming FfiModuleDescriptor) replaces this
+    // gate with the load_ffi generated-content gates.
     // =========================================================================
 
-    private static void testExternCFfiBindingPipeline() throws Exception {
-        System.out.println("-- FFI gate: extern-c binding pipeline through"
-            + " the production CLI --");
-        Path base = Files.createTempDirectory("deal_gate_ffi_");
+    private static void testExternCImportPreD6Hold() throws Exception {
+        System.out.println("-- Extern-c hold gate: the pre-D6 route stays"
+            + " until ISSUE-0157 lands --");
+        Path base = Files.createTempDirectory("deal_gate_ffi_hold_");
         try {
-            // 1. Compile the committed native fixture with GCC
-            // (fail-closed bootstrap, mirroring the runtime battery).
-            Path so = base.resolve("ffi-runtime-fixture.so");
-            Path events = base.resolve("ffi-runtime-fixture-events.log");
-            Path fixtureC = Path.of(
-                "test/fixtures/ffi-runtime-fixture.c").toAbsolutePath();
-            String cc = "gcc -shared -fPIC -O2 -DFIXTURE_EVENTS_PATH='\""
-                + events + "\"' -o " + so + " " + fixtureC;
-            ProcessOutcome ccRun = runProcess(base, List.of("/bin/sh", "-c", cc));
-            check(ccRun.exitCode() == 0,
-                "the FFI fixture GCC compile succeeds: " + ccRun.output());
-            check(Files.exists(so), "the FFI fixture .so exists after the compile");
-
-            // 2. A project whose manifest externals entry carries the
-            // classified nativeLibrary and whose entry module exercises
-            // FFI functions, C-struct classes, and pointer tokens.
             Path proj = base.resolve("proj");
             write(proj, "ffi_math.d.deal",
                 "// @extern-c\n"
-                    + "// @c-struct\n"
-                    + "export class Pair {\n  x: int = 0;\n  y: number = 0.0;\n}\n"
-                    + "// @c-struct\n"
-                    + "export class PtrBox {\n  ptr: Pointer;\n}\n"
-                    + "// @c-pointer\n"
-                    + "export class Pointer {}\n"
-                    + "export function fixture_add_int(a: int, b: int): int;\n"
-                    + "export function fixture_echo_string(s: string): string;\n"
-                    + "export function fixture_bytes_sum(b: bytes): int;\n"
-                    + "export function fixture_make_pair(x: int, y: number): Pair;\n"
-                    + "export function fixture_make_ptr_box(p: Pointer): PtrBox;\n"
-                    + "export function fixture_static_pointer(): Pointer;\n");
+                    + "export function add(a: int, b: int): int;\n");
             write(proj, "deal.json",
                 "{\n  \"languageVersion\": \"1.2\",\n"
                     + "  \"moduleRoots\": [\"src\"],\n"
@@ -426,77 +405,37 @@ public class ProjectIntegrationGatesTest {
                     + "  \"externals\": {\n"
                     + "    \"ffi_math\": {\n"
                     + "      \"declaration\": \"ffi_math.d.deal\",\n"
-                    + "      \"nativeLibrary\": \"" + so.toString().replace("\\", "/")
-                    + "\"\n"
+                    + "      \"nativeLibrary\": \"libffi_math.so\"\n"
                     + "    }\n  }\n}\n");
             write(proj, "src/main.deal",
                 "import * as ffi from \"ffi_math\"\n"
                     + "export function main(): null {\n"
-                    + "  let a: int = ffi.fixture_add_int(20, 22);\n"
-                    + "  if (a !== 42) { throw { code: \"TEST_FAIL\", message: \"add_int\" }; }\n"
-                    + "  let s: string = ffi.fixture_echo_string(\"hello\");\n"
-                    + "  if (s !== \"hello\") { throw { code: \"TEST_FAIL\", message: \"echo\" }; }\n"
-                    + "  let b: bytes = bytes(2);\n"
-                    + "  b[0] = 3;\n"
-                    + "  b[1] = 4;\n"
-                    + "  let sum: int = ffi.fixture_bytes_sum(b);\n"
-                    + "  if (sum !== 7) { throw { code: \"TEST_FAIL\", message: \"bytes_sum\" }; }\n"
-                    + "  let p: ffi.Pair = ffi.fixture_make_pair(7, 2.5);\n"
-                    + "  if (p.x !== 7) { throw { code: \"TEST_FAIL\", message: \"pair.x\" }; }\n"
-                    + "  if (p.y !== 2.5) { throw { code: \"TEST_FAIL\", message: \"pair.y\" }; }\n"
-                    + "  let ptr: ffi.Pointer = ffi.fixture_static_pointer();\n"
-                    + "  let box: ffi.PtrBox = ffi.fixture_make_ptr_box(ptr);\n"
-                    + "  let ptr2: ffi.Pointer = box.ptr;\n"
-                    + "  let box2: ffi.PtrBox = ffi.fixture_make_ptr_box(ptr2);\n"
                     + "  return null;\n"
                     + "}\n");
             Path entry = proj.resolve("src/main.deal").toAbsolutePath();
 
-            // 3. Compile through the production CLI.
             String[] lua = runCliCapturingErr(new String[]{
                 "compile", entry.toString()});
             check("0".equals(lua[0]),
-                "the extern-c project compiles on LuaJIT: " + lua[1]);
+                "the extern-c import compiles on the held LuaJIT arm: "
+                    + lua[1]);
             check(!lua[1].contains("ERROR"),
                 "the extern-c compile emits no diagnostics: " + lua[1]);
             Path luaDir = proj.resolve("build/lua");
             check(Files.exists(luaDir.resolve("main.lua")),
                 "the LuaJIT entry artifact exists");
 
-            // 4. Generated-code inspection: the load_ffi binding with
-            // private ordinals, the import span, and no ffi.C access.
             String mainLua = Files.readString(luaDir.resolve("main.lua"));
-            check(mainLua.contains("local ffi = __rt.load_ffi(\"ffi:ffi_math\", {"),
-                "the entry artifact emits the load_ffi loader with the module key");
-            check(mainLua.contains("deal_f0;") && mainLua.contains("deal_f1;"),
-                "the bundle carries the ordinal struct members");
-            check(mainLua.contains("_fn_0001") && mainLua.contains("_st_0001"),
-                "the bundle carries private typedef names with ordinals");
-            check(mainLua.contains("typedef int32_t (*deal_"),
-                "the bundle carries the private function-pointer cast");
-            check(mainLua.contains("canonicalDescriptor = \"int\""),
-                "the FFI metadata descriptors are canonical");
-            check(mainLua.contains("canonicalClassIdentity = \"@$external/ffi_math/Pair\""),
-                "the C_STRUCT metadata carries the canonical class atom");
-            check(mainLua.contains(", 1, 1)"),
-                "the loader call carries the import span triplet");
-            check(mainLua.contains("ffi.fixture_add_int.f(20, 22, "),
-                "FFI call sites append the call span triplet");
-            check(mainLua.contains("ffi.fixture_static_pointer.f("),
-                "zero-argument FFI call sites stay syntactically valid");
-            check(mainLua.contains("ffi.fixture_make_ptr_box.f(ptr2, "),
-                "C_STRUCT FFI call sites append the call span triplet");
+            check(mainLua.contains(
+                    "local ffi = __rt.load_host(\"ffi_math\", {"),
+                "the extern-c import keeps the pre-D6 host route pending"
+                    + " ISSUE-0157");
+            check(!mainLua.contains("__rt.load_ffi"),
+                "the held arm emits no load_ffi loader call");
             check(!mainLua.contains("ffi.C"),
-                "the artifact never emits ffi.C access");
+                "the held arm emits no ffi.C access");
             check(!mainLua.contains("FFI_UNSUPPORTED_BACKEND"),
-                "the artifact never raises FFI_UNSUPPORTED_BACKEND");
-
-            // 5. Execute under real LuaJIT against the real library.
-            ProcessOutcome luaRun = runProcess(luaDir, List.of("luajit",
-                "main.lua"));
-            check(luaRun.exitCode() == 0,
-                "the extern-c entry runs under real LuaJIT through"
-                    + " production load_ffi: " + luaRun.output());
+                "the held arm raises no FFI_UNSUPPORTED_BACKEND");
         } finally {
             deleteRecursively(base);
         }
@@ -1292,7 +1231,7 @@ public class ProjectIntegrationGatesTest {
         System.out.println("=== Project Integration Gates Test (ISSUE-0270) ===\n");
 
         testClassFreeOutOfRootBothBackends();
-        testExternCFfiBindingPipeline();
+        testExternCImportPreD6Hold();
         testOutOfRootClassBothBackends();
         testDeclarationClassGates();
         testImportResolutionErrorGates();
