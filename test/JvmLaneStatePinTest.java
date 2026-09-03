@@ -50,10 +50,16 @@ import java.util.List;
  * stale-known-fail gate with the promotion instruction (set
  * {@code @expected: runtime-error E8004}, drop the {@code @issue} tag)
  * — plus the two pre-existing host-prewrapped skip-probe exception
- * lines and nothing else. The LuaJIT lane (consequence, pinned): exit
- * code 1 with the same stale known-fail and its single tracked staged
- * time entry (ISSUE-0237) intact; its summary additionally records the
- * frontend known-fail fixture
+ * lines and nothing else. ISSUE-0304 retired
+ * {@code JVM-GAP-ASYNC-FNEXPR}: its two skip entries
+ * ({@code async-fn-expr.deal}, {@code async-await-statement.deal})
+ * now pass the real pipeline, so the summary moved from
+ * {@code passed 252, skipped 47} to {@code passed 254, skipped 45}
+ * with the pass rate 83.7% → 84.4% (re-pinned here, the same summary
+ * re-pin precedent as ISSUE-0476). The LuaJIT lane (consequence,
+ * pinned): exit code 1 with the same stale known-fail and its single
+ * tracked staged time entry (ISSUE-0237) intact; its summary
+ * additionally records the frontend known-fail fixture
  * {@code frontend/modules/ffi-manifest-missing-native-library-rejected.deal}
  * (compile-error E2010 tracked by ISSUE-0111), so the lane's summary
  * totals are 429 with exactly one tracked known-fail.
@@ -103,10 +109,14 @@ public class JvmLaneStatePinTest {
         "GATE FAILURE: 1 applicable backend-runtime test(s) failed \u2014 "
             + "zero applicable failures required";
 
+    // ISSUE-0304 retired JVM-GAP-ASYNC-FNEXPR (the two async-expression
+    // skip entries became passing fixtures), so the summary moved from
+    // "passed 252, skipped 47 ... pass rate 83.7%" to the re-pinned
+    // numbers below.
     private static final String JVM_SUMMARY =
         "Backend-runtime on JVM: denominator 301 (every on-disk runtime "
-            + "test, unchanged), passed 252, failed 1, skipped 47 "
-            + "(classified), known-fail 0 (tracked) \u2014 pass rate 83.7%";
+            + "test, unchanged), passed 254, failed 1, skipped 45 "
+            + "(classified), known-fail 0 (tracked) \u2014 pass rate 84.4%";
 
     private static final String JVM_PROFILE_AUTHORITY =
         "Profile-authority accounting: 0 legacy-authority fixture(s) "

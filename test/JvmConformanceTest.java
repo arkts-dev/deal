@@ -149,8 +149,12 @@ import java.util.concurrent.atomic.AtomicInteger;
  *       value surface (ISSUE-0301): await-returning-array-indexed
  *       passes the real pipeline on the shared $DealRt array carriers,
  *       and the stale-skip gate forced the registry entry out.</li>
- *   <li><b>JVM-GAP-ASYNC-FNEXPR</b> (2 entries) — async function
- *       expressions and block-level async functions (E6000).</li>
+ *   <li><b>JVM-GAP-ASYNC-FNEXPR</b> — RETIRED (ISSUE-0304): async
+ *       function expressions and block-level async function
+ *       declarations emit through the sync closure machinery with
+ *       async descriptors, so async-fn-expr.deal and
+ *       async-await-statement.deal pass the real pipeline and the
+ *       stale-skip gate forced the registry entries out.</li>
  *   <li><b>JVM-GAP-DESCRIPTORS</b> — RETIRED with the canonical matcher
  *       realization (ISSUE-0301): the emitted $check function row raises
  *       E8010 on a carried-descriptor delta, so
@@ -487,13 +491,15 @@ public class JvmConformanceTest {
         // shared $DealRt array carriers and was removed with its
         // promotion; the stale-skip gate forced the removal.
 
-        // ---- JVM-GAP-ASYNC-FNEXPR: async function expressions ----
-        skip("backend-runtime/async-await/async-fn-expr.deal",
-            "E6000: async function expressions.", "JVM-GAP-ASYNC-FNEXPR");
-        skip("backend-runtime/async-await/async-await-statement.deal",
-            "E6000: block-level async functions and async function "
-                + "expressions (plus the forward-reference guard).",
-            "JVM-GAP-ASYNC-FNEXPR");
+        // ---- JVM-GAP-ASYNC-FNEXPR: RETIRED (ISSUE-0304) ----
+        // async-fn-expr.deal and async-await-statement.deal pass the
+        // real pipeline — async function expressions emit through the
+        // sync closure machinery with the async descriptor marker and
+        // blocking bodies, block-level async functions declare through
+        // the cell + anonymous-wrapper path, and the discard-position
+        // await statement evaluates exactly once with the completion
+        // check — so the registry entries were removed and the
+        // stale-skip gate forced the removal.
     }
 
     private static void skip(String path, String reason, String gapId) {
@@ -514,8 +520,6 @@ public class JvmConformanceTest {
             + "shapes — host class exports, array/function-typed "
             + "parameters and returns (E6000), the Lua pre-wrapped "
             + "export form",
-        "JVM-GAP-ASYNC-FNEXPR", "async function expressions and "
-            + "block-level async functions (E6000)",
         "JVM-GAP-BYTES", "bytes runtime lane — JvmBackend raises E6000 on "
             + "every bytes site (the bytes carrier/lowering slice is "
             + "ISSUE-0277's); the LuaJIT bytes expectations "
