@@ -509,10 +509,13 @@ import java.util.function.Function;
  * unchanged (see the ISSUE-0099 paragraph above), with the
  * await-site completion check applied at every await. Function
  * expressions and nested functions emit (ISSUE-0102); function-type
- * ANNOTATIONS whose signatures contain arrays/classes/nullables/bytes
- * stay resolveTypeNode-gated with E6000 (the shape-encoding itself
- * covers the complete canonical grammar), and async function
- * expressions stay E6000 (the async-expressions lane).
+ * ANNOTATIONS carry the complete canonical signature grammar
+ * (primitives/string/null, arrays, classes, nullables, and nested
+ * sync/async function types — the shared wrapper machinery,
+ * ISSUE-0301 D2), with only bytes/table carriers inside the signature
+ * staying resolveTypeNode-gated with E6000 (the int32-bytes lane),
+ * and async function expressions stay E6000 (the async-expressions
+ * lane).
  *
  * <p>JVM value mapping follows the spec's JVM backend contract
  * ({@code docs/spec-v1.2.md} §JVM value mapping / §JVM backend contract —
@@ -4950,6 +4953,16 @@ public final class JvmBackend {
      * right after the fixed carrier classes.
      */
     private String registerWrapperShape(Type.Func f) {
+        // Every wrapper registers on the BACKEND-held class identities:
+        // declaration/expression sites register from checker-held
+        // function types (fs.funcType()/typeOf), whose local class
+        // identity records differ from the backend-held ones in the
+        // single-module harness adapters (the checker types with the
+        // source filename, codegen runs with the module path) — the
+        // wrapper descriptor must carry the backend identity text the
+        // emitted runtime class carries, and every registration of the
+        // same signature must produce the same shape id.
+        f = normalizeLocalClassIdentities(f);
         String id = fnShapeId(f);
         // The invoke signature is built through the DIAGNOSTIC-FREE
         // mapper: pre-registration of the orchestrator's collected
@@ -11061,6 +11074,18 @@ public final class JvmBackend {
      */
     private String emitFunctionValue(Type.Func target, Type.Func actual,
             ExpressionNode value, boolean checkPosition) {
+        // Align checker-held class identities with the backend-held
+        // local-class identities before comparing: the single-module
+        // harness adapters type with the source filename while codegen
+        // runs with the module path, so the checker's local class
+        // identity and the backend's are different records for the
+        // SAME class — and the emitted runtime class carries the
+        // backend identity text, so the compared signatures (and the
+        // wrapper descriptors they produce) must use the backend
+        // spellings. Foreign and builtin identities pass through
+        // unchanged.
+        target = normalizeLocalClassIdentities(target);
+        actual = normalizeLocalClassIdentities(actual);
         if (Types.equals(target, actual)) {
             return emitExpression(value);
         }
@@ -11074,6 +11099,56 @@ public final class JvmBackend {
             + "target signature (checker should have rejected it)",
             value.span());
         return "null";
+    }
+
+    /** Re-keys the checker-held class identities inside a function
+     * signature onto the backend-held local-class identities
+     * ({@link #localClassIdentity}): the single-module harness
+     * adapters type with the source filename while codegen runs with
+     * the module path (the locality predicate accepts both), so a
+     * checker-built and an annotation-built signature can name the
+     * same local class with two different identity records — the
+     * comparison and the produced wrapper descriptors must use the
+     * backend spellings (the emitted runtime class carries the backend
+     * identity text). Foreign-module classes and the builtin Error
+     * identity pass through unchanged. */
+    private Type.Func normalizeLocalClassIdentities(Type.Func f) {
+        List<Type> params = new ArrayList<>();
+        boolean changed = false;
+        for (Type p : f.paramTypes()) {
+            Type n = normalizeLocalClassType(p);
+            params.add(n);
+            if (n != p) changed = true;
+        }
+        Type rt = normalizeLocalClassType(f.returnType());
+        if (rt != f.returnType()) changed = true;
+        return changed ? new Type.Func(params, rt, f.isAsync()) : f;
+    }
+
+    /** One type of {@link #normalizeLocalClassIdentities}. */
+    private Type normalizeLocalClassType(Type t) {
+        return switch (t) {
+            case Type.Class c -> {
+                if (!isLocalClassType(c)
+                        || c.identity().moduleIdentity()
+                            instanceof CanonicalModuleIdentity.BuiltinModule) {
+                    yield c;
+                }
+                CanonicalClassIdentity mine = localClassIdentity(c.name());
+                yield mine.equals(c.identity())
+                    ? c : Types.classType(c.name(), mine);
+            }
+            case Type.Array a -> {
+                Type n = normalizeLocalClassType(a.element());
+                yield n == a.element() ? a : new Type.Array(n);
+            }
+            case Type.Nullable n -> {
+                Type inner = normalizeLocalClassType(n.inner());
+                yield inner == n.inner() ? n : new Type.Nullable(inner);
+            }
+            case Type.Func f2 -> normalizeLocalClassIdentities(f2);
+            default -> t;
+        };
     }
 
     /**
@@ -13601,15 +13676,17 @@ public final class JvmBackend {
             case FunctionType ft -> {
                 // Function-type annotations (ISSUE-0098 slice), with the
                 // async marker lifted by ISSUE-0099: build the internal
-                // Type.Func from the primitive/string/null signature
-                // surface, preserving the marker so the ISSUE-0098
-                // wrapper machinery (per-signature shape classes,
-                // per-declaration wrapper fields, indirect calls through
-                // invoke) carries async function values unchanged.
-                // Arrays, classes, nullables, and nested function types
-                // are deferred to ISSUE-0110 and rejected here — never
-                // silently miscompiled (DEAL v1.2 function types carry
-                // no rest arm).
+                // Type.Func from the complete canonical signature
+                // surface — primitives/string/null, arrays, classes,
+                // nullables, and nested sync/async function types
+                // (ISSUE-0301 D2: the shared per-signature wrapper
+                // machinery carries every shape the injective encoding
+                // covers), preserving the marker so the wrapper
+                // machinery carries async function values unchanged.
+                // Bytes/table carriers inside the signature stay
+                // rejected here (the int32-bytes lane's carriers) —
+                // E6000, never a silent miscompile (DEAL v1.2 function
+                // types carry no rest arm).
                 List<Type> paramTypes = new ArrayList<>();
                 boolean ok = true;
                 for (FunctionTypeParam p : ft.params()) {
@@ -13618,11 +13695,10 @@ public final class JvmBackend {
                         ok = false;
                         break;
                     }
-                    if (!isFunctionSignatureType(pt)) {
-                        unsupported("function parameter types other than "
-                            + "int/number/boolean/string/null (arrays, "
-                            + "classes, nullables, and nested function types "
-                            + "are deferred to ISSUE-0110)", p.type().span());
+                    if (hasBytesOrTableCarrier(pt)) {
+                        unsupported("function values whose signature "
+                            + "contains bytes/table carriers (deferred to "
+                            + "the int32-bytes lane)", p.type().span());
                         ok = false;
                         break;
                     }
@@ -13631,11 +13707,10 @@ public final class JvmBackend {
                 Type rt = resolveTypeNode(ft.returnType());
                 if (rt == Type.Error.INSTANCE) {
                     ok = false;
-                } else if (!isFunctionSignatureType(rt)) {
-                    unsupported("function return types other than "
-                        + "int/number/boolean/string/null (arrays, classes, "
-                        + "nullables, and nested function types are deferred "
-                        + "to ISSUE-0110)", ft.returnType().span());
+                } else if (hasBytesOrTableCarrier(rt)) {
+                    unsupported("function values whose signature contains "
+                        + "bytes/table carriers (deferred to the int32-bytes "
+                        + "lane)", ft.returnType().span());
                     ok = false;
                 }
                 yield ok ? new Type.Func(paramTypes, rt, ft.isAsync())
@@ -13644,21 +13719,28 @@ public final class JvmBackend {
         };
     }
 
-    /** True for the types a function signature may contain in this
-     * slice (primitives/string/null and — ISSUE-0102 — nested function
-     * types recursively; arrays, classes, and nullables stay deferred
-     * to ISSUE-0110). */
-    private static boolean isFunctionSignatureType(Type t) {
-        if (t instanceof Type.Int || t instanceof Type.Number
-                || t instanceof Type.Boolean || t instanceof Type.String
-                || t instanceof Type.Null) {
+    /** True when the type tree carries a {@code bytes} or {@code table}
+     * carrier anywhere inside it (arrays, nullables, and nested
+     * function signatures recurse): those carriers stay rejected at
+     * function-type annotations for the int32-bytes lane (E6000).
+     * Every other shape — primitives/string/null, arrays, classes,
+     * nullables, and nested sync/async function types — is carried by
+     * the shared per-signature wrapper machinery (ISSUE-0301 D2). */
+    private static boolean hasBytesOrTableCarrier(Type t) {
+        if (t instanceof Type.Bytes || t instanceof Type.Table) {
             return true;
+        }
+        if (t instanceof Type.Array a) {
+            return hasBytesOrTableCarrier(a.element());
+        }
+        if (t instanceof Type.Nullable n) {
+            return hasBytesOrTableCarrier(n.inner());
         }
         if (t instanceof Type.Func f) {
             for (Type p : f.paramTypes()) {
-                if (!isFunctionSignatureType(p)) return false;
+                if (hasBytesOrTableCarrier(p)) return true;
             }
-            return isFunctionSignatureType(f.returnType());
+            return hasBytesOrTableCarrier(f.returnType());
         }
         return false;
     }

@@ -3304,30 +3304,29 @@ public class JvmBackendTest {
             }
         }
 
-        // Rejection: a function-type ANNOTATION whose signature has an
-        // array parameter stays resolveTypeNode-gated (E6000) — the
-        // shared carriers cover the inferred shapes; the annotation
-        // surface with array/class/nullable signatures keeps its pinned
-        // rejection.
-        Frontend badSig = compileFrontend("""
+        // ISSUE-0301 shared carrier: a function-type ANNOTATION whose
+        // signature has an array parameter is representable now — the
+        // annotation resolves to the same shared per-signature wrapper
+        // the inferred shapes carry (no E6000 remains for shapes this
+        // surface covers), so the array-of-function for-of compiles
+        // clean.
+        Frontend arraySig = compileFrontend("""
             function bad(xs: int[]): int { return 1; }
             export function test(): int {
               let fs: ((xs: int[]) => int)[] = [];
               for (let f: (xs: int[]) => int of fs) { }
               return 0;
             }
-            """, "jvmtest-forof-badsig.deal");
-        check(badSig.errors().isEmpty(),
-            "unsupported-signature for-of probe frontend clean: "
-                + badSig.errors());
-        if (badSig.errors().isEmpty()) {
+            """, "jvmtest-forof-arraysig.deal");
+        check(arraySig.errors().isEmpty(),
+            "array-param annotation for-of probe frontend clean: "
+                + arraySig.errors());
+        if (arraySig.errors().isEmpty()) {
             JvmBackend.JvmCodegenResult er = JvmBackend.generate(
-                badSig.program(), badSig.checkResult(),
-                "jvmtest-forof-badsig.deal", "main");
-            check(er.hasErrors(), "unsupported-signature for-of rejected");
-            check(er.diagnostics().stream()
-                    .anyMatch(d -> "E6000".equals(d.code())),
-                "E6000 for the unsupported-signature for-of: "
+                arraySig.program(), arraySig.checkResult(),
+                "jvmtest-forof-arraysig.deal", "main");
+            check(!er.hasErrors(),
+                "array-param annotation for-of codegen clean: "
                     + er.diagnostics());
         }
         Frontend badNested = compileFrontend("""
@@ -10227,8 +10226,8 @@ public class JvmBackendTest {
                     + hiddenRes.diagnostics());
         }
 
-        // Deferred shapes stay E6000: async function expressions and
-        // non-representable async signatures (array parameters).
+        // Deferred shapes stay E6000: async function expressions
+        // (the async-expressions lane's gate).
         Frontend expr = compileFrontend("""
             export async function test(): int {
               let f: async () => int = async function(): int { return 42; };
@@ -10246,23 +10245,57 @@ public class JvmBackendTest {
             "async function expressions stay E6000 (deferred): "
                 + exprRes.diagnostics());
 
-        Frontend shape = compileFrontend("""
+        // ISSUE-0301 shared carrier: array/nullable/class signature
+        // shapes are representable in async ANNOTATIONS too — the
+        // shared per-signature wrapper machinery carries every shape
+        // the injective encoding covers (no E6000 remains for shapes
+        // this surface covers), and the awaited call executes through
+        // the real javac + java pipeline.
+        ExecResult shape = compileAndRunJvm("""
+            class C { v: int = 3; }
             async function total(xs: int[]): int { return xs[0]; }
+            async function nul(x: int | null): int { return 1; }
+            async function cls(c: C): int { return c.v; }
             export async function test(): int {
               let f: async (xs: int[]) => int = total;
+              let g: async (x: int | null) => int = nul;
+              let h: async (c: C) => int = cls;
               return await f([1]);
             }
-            """, "jvmtest-async-shape.deal");
-        check(shape.errors().isEmpty(),
-            "frontend accepts the non-representable async signature: "
-                + shape.errors());
-        if (!shape.errors().isEmpty()) return;
-        JvmBackend.JvmCodegenResult shapeRes = JvmBackend.generate(
-            shape.program(), shape.checkResult(), "jvmtest-async-shape.deal", "main");
-        check(shapeRes.hasErrors() && shapeRes.diagnostics().stream()
-                .anyMatch(d -> "E6000".equals(d.code())),
-            "async signatures with array parameters stay E6000 "
-                + "(deferred to ISSUE-0110): " + shapeRes.diagnostics());
+            """, "asyncshape");
+        check(shape.exitCode() == 0,
+            "async array/nullable/class annotation signatures exit 0: "
+                + shape.output());
+        check(shape.output().contains("1"),
+            "awaited call through the array-param wrapper computes 1: "
+                + shape.output());
+
+        // The bytes/table carrier gate stays: a function-type
+        // ANNOTATION whose signature contains a table carrier raises
+        // E6000 with the int32-bytes lane's message (bytes carriers
+        // keep their own pinned E6000 — bytes is unsupported until the
+        // int32-bytes lane lands).
+        Frontend tableSig = compileFrontend("""
+            async function pick(t: table): int { return 1; }
+            export async function test(): int {
+              let f: async (t: table) => int = pick;
+              return 0;
+            }
+            """, "jvmtest-async-tablesig.deal");
+        check(tableSig.errors().isEmpty(),
+            "frontend accepts the table-param annotation signature: "
+                + tableSig.errors());
+        if (tableSig.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult tableRes = JvmBackend.generate(
+                tableSig.program(), tableSig.checkResult(),
+                "jvmtest-async-tablesig.deal", "main");
+            check(tableRes.hasErrors() && tableRes.diagnostics().stream()
+                    .anyMatch(d -> "E6000".equals(d.code())
+                        && d.message().contains("bytes/table carriers")),
+                "table carriers inside an annotation signature stay E6000 "
+                    + "(int32-bytes lane message): "
+                    + tableRes.diagnostics());
+        }
 
         // v1.2 grammar gate: the pre-rebase module-level function-value
         // read shapes (`let g: async () => int = value;` at top level,
