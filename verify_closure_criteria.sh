@@ -24,13 +24,28 @@
 #      0 staged-fail (tracked)` (M recorded from the executed run);
 #   3. Follow-up line `Tracked v1.2 follow-up issues: none — full v1.2
 #      conformance`; no tracked known-fail or staged-failures block;
-#   4. Time-fixture PASS matching the landed branch (branch 1
-#      `OK (found DEAL_ERROR_CODE: E8004)`, branch 2 `OK`),
-#      cross-checked against the fixture's on-disk @expected, and no
-#      FAIL line for the fixture — checked inside the
-#      `=== DEAL v1.2 Conformance Test Suite ===` …
-#      `=== Conformance Summary ===` window only, so other lanes'
-#      per-fixture lines cannot satisfy this criterion;
+#   4. Time-fixture PASS matching the landed branch, keyed to the
+#      ConformanceTest lane's own executed line shape — the
+#      `LEGACY-AUTHORITY (legacy-regression; zero v1.2 credit)` infix
+#      ConformanceTest.java:493-495 prints for this catalogued fixture
+#      (LegacyProfileRegressionCatalog.java:173; self-probe :527-533)
+#      and the JVM lane never prints (JvmConformanceTest.java:1572,
+#      1580). Branch 1 `[...] LEGACY-AUTHORITY (...) OK (found
+#      DEAL_ERROR_CODE: E8004)`, branch 2 `[...] LEGACY-AUTHORITY (...)
+#      OK`, cross-checked against the fixture's on-disk @expected, and
+#      no `[...] LEGACY-AUTHORITY (...) FAIL`/`ERROR` line for the
+#      fixture — checked inside the `=== DEAL v1.2 Conformance Test Suite ===` …
+#      `=== Conformance Summary ===` window. The infix is the lane
+#      attribution: the JVM lane's byte-identical `[...] OK` /
+#      `[...] OK (found ...)` suffixes without the infix interleave
+#      into the shared log inside the window and cannot match.
+#      ConformanceTest prints the prefix and the result as two separate
+#      writes, and concurrent background-suite output can splice
+#      between them (observed in the captured real run at this HEAD),
+#      so when the unsplit line is absent the first pathless CT-result
+#      line after the fixture's prefix line is attributed as the
+#      fixture's own displaced result (the CT is single-threaded — no
+#      other CT output can appear between its two prints);
 #   5. No `GATE FAILURE` line in the ConformanceTest section;
 #   6. Pin-test section `=== std/time.nowMillis Pre-Activation Pin
 #      (ISSUE-0369) ===` with a `Passed: <K>, Failed: 0` verdict
@@ -74,9 +89,12 @@ pass() {
 
 # The deal.test.ConformanceTest window: from its launch header to its
 # summary header (inclusive). The fixture and counter lines are
-# asserted inside this window only — other lanes' per-fixture lines
-# (BackendConformanceTest/JvmConformanceTest) sit outside it and must
-# not satisfy the closure criteria.
+# asserted inside this window only. The JVM lane launches in background
+# into the same shared log (tools/gate-manifest.sh:154) and its
+# per-fixture lines can interleave inside this line range (verified at
+# this HEAD), so criterion 4 keys its fixture evidence to the
+# ConformanceTest-only `LEGACY-AUTHORITY …` infix — lane attribution,
+# not the window alone.
 CT_SECTION="$(awk '/^=== DEAL v1.2 Conformance Test Suite ===$/ {f=1} f{print} f && /^=== Conformance Summary ===$/{exit}' "$LOG")"
 
 # 1. Summary four zeros; N recorded at execution time.
@@ -132,11 +150,56 @@ if grep -q 'Tracked v1.2 staged failures (design-sanctioned interim states' "$LO
   fail "follow-up line — tracked staged-failures block prints (closure requires zero staged entries)"
 fi
 
-# 4. Time-fixture PASS matching the landed branch (ConformanceTest
-#    window only).
-LINE_A="$(printf '%s\n' "$CT_SECTION" | grep -c "\[$FIXTURE_REL\] OK (found DEAL_ERROR_CODE: E8004)")"
-LINE_B="$(printf '%s\n' "$CT_SECTION" | grep -c "\[$FIXTURE_REL\] OK")"
-LINE_FAIL="$(printf '%s\n' "$CT_SECTION" | grep -c "\[$FIXTURE_REL\] FAIL")"
+# 4. Time-fixture PASS matching the landed branch, keyed to the
+#    ConformanceTest lane's own executed line shape. ConformanceTest
+#    prints `  [<path>] LEGACY-AUTHORITY (legacy-regression; zero
+#    v1.2 credit) ` before the result for catalogued fixtures
+#    (ConformanceTest.java:493-495); this fixture is catalogued
+#    (LegacyProfileRegressionCatalog.java:173, self-probe :527-533).
+#    The JVM lane prints byte-identical result suffixes without the
+#    infix (JvmConformanceTest.java:1572,1580) and its lines interleave
+#    into the shared log inside the CT window, so the infix is the lane
+#    attribution: only ConformanceTest's own lines match, and the exact
+#    count of 1 cannot be inflated by a concurrent lane. The prefix and
+#    the result are two separate writes, and concurrent suite output
+#    can splice between them, so when the unsplit line is absent the
+#    first pathless CT-result line after the fixture's prefix line is
+#    attributed as the fixture's own displaced result (the CT is
+#    single-threaded — no other CT output can appear between the two
+#    prints; foreign suites never print these pathless shapes: the JVM
+#    lane always prefixes its lines with the path).
+AUTH="LEGACY-AUTHORITY (legacy-regression; zero v1.2 credit)"
+PFX_RE="\[$FIXTURE_REL\] $AUTH"
+PFX_RAW="[$FIXTURE_REL] $AUTH"
+LINE_A="$(printf '%s\n' "$CT_SECTION" | grep -c "$PFX_RE OK (found DEAL_ERROR_CODE: E8004)")"
+LINE_B="$(printf '%s\n' "$CT_SECTION" | grep -c "$PFX_RE OK$")"
+LINE_FAIL="$(printf '%s\n' "$CT_SECTION" | grep -cE "$PFX_RE (FAIL|ERROR)")"
+if [ "$LINE_A" = "0" ] && [ "$LINE_B" = "0" ] && [ "$LINE_FAIL" = "0" ]; then
+  DISPLACED="$(printf '%s\n' "$CT_SECTION" | awk -v pf="$PFX_RAW" '
+    index($0, pf) { seen = 1; next }
+    seen && /^(OK \(|OK$|FAIL \(|STAGED-FAIL \(|SKIP \(|ERROR:)/ { print; exit }
+  ')"
+  case "$DISPLACED" in
+    "OK (found DEAL_ERROR_CODE: E8004"*)
+      LINE_A=$((LINE_A + 1))
+      ;;
+    "OK (found DEAL_ERROR_CODE: "*)
+      # Another error code — not this fixture's pinned branch result;
+      # treated as neither (the branch checks below name the absence).
+      ;;
+    "OK"*)
+      LINE_B=$((LINE_B + 1))
+      ;;
+    "FAIL ("*|"ERROR:"*)
+      LINE_FAIL=$((LINE_FAIL + 1))
+      ;;
+    *)
+      # Empty, STAGED-FAIL, or SKIP — neither a PASS nor a FAIL line;
+      # the branch checks below then fail with "found 0" (closure
+      # pending or environmentally skipped).
+      ;;
+  esac
+fi
 if [ "$LINE_FAIL" != "0" ]; then
   fail "time-fixture PASS — fixture FAIL line found (expectation != landed nowMillis behavior)"
 fi
@@ -146,15 +209,15 @@ if [ -f "$FIXTURE" ]; then
 fi
 if [ "$EXPECTED" = "runtime-error E8004" ]; then
   if [ "$LINE_A" = "1" ]; then
-    pass "time-fixture PASS — branch 1: OK (found DEAL_ERROR_CODE: E8004), fixture @expected runtime-error E8004"
+    pass "time-fixture PASS — branch 1: [...deals] $AUTH OK (found DEAL_ERROR_CODE: E8004), fixture @expected runtime-error E8004"
   else
-    fail "time-fixture PASS — branch 1: expected the OK (found DEAL_ERROR_CODE: E8004) line for the runtime-error E8004 fixture (found $LINE_A such line(s))"
+    fail "time-fixture PASS — branch 1: expected the '[backend-runtime/stdlib-edge/time-now-millis-positive.deal] $AUTH OK (found DEAL_ERROR_CODE: E8004)' line for the runtime-error E8004 fixture (found $LINE_A such line(s))"
   fi
 elif [ "$EXPECTED" = "runtime-ok" ]; then
   if [ "$LINE_B" = "1" ]; then
-    pass "time-fixture PASS — branch 2: OK, fixture @expected runtime-ok"
+    pass "time-fixture PASS — branch 2: [...deals] $AUTH OK, fixture @expected runtime-ok"
   else
-    fail "time-fixture PASS — branch 2: expected the bare OK line for the runtime-ok fixture (found $LINE_B such line(s))"
+    fail "time-fixture PASS — branch 2: expected the '[backend-runtime/stdlib-edge/time-now-millis-positive.deal] $AUTH OK' line for the runtime-ok fixture (found $LINE_B such line(s))"
   fi
 else
   if [ "$LINE_A" = "1" ] || [ "$LINE_B" = "1" ]; then
