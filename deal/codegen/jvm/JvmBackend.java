@@ -1529,7 +1529,14 @@ public final class JvmBackend {
                 case "int" -> Type.Int.INSTANCE;
                 case "number" -> Type.Number.INSTANCE;
                 case "string" -> Type.String.INSTANCE;
-                case "bytes" -> Type.Bytes.INSTANCE;
+                case "bytes" -> {
+                    Symbol sym = symbols.resolve(nt.name());
+                    if (sym instanceof Symbol.ClassSymbol
+                            && moduleClasses.containsKey(nt.name())) {
+                        yield silentClassType(nt.name(), modulePath);
+                    }
+                    yield Type.Bytes.INSTANCE;
+                }
                 case "table" -> Type.Table.INSTANCE;
                 default -> {
                     Symbol sym = symbols.resolve(nt.name());
@@ -2169,7 +2176,11 @@ public final class JvmBackend {
         Map.entry("booleanNotNull", List.of("java.lang.Boolean")),
         Map.entry("intFromNullable", List.of("java.lang.Long")),
         Map.entry("numberFromNullable", List.of("java.lang.Double")),
-        Map.entry("checkSig", List.of("java.lang.String", "java.lang.String")));
+        Map.entry("checkSig", List.of("java.lang.String", "java.lang.String")),
+        Map.entry("bytesNew", List.of("long")),
+        Map.entry("bytesLength", List.of("$DealRt.Bytes")),
+        Map.entry("bytesGet", List.of("$DealRt.Bytes", "int")),
+        Map.entry("bytesSet", List.of("$DealRt.Bytes", "int", "int")));
 
     /**
      * Emitted runtime-helper signatures under {@code DEAL_V1_2_INT32}
@@ -2198,7 +2209,11 @@ public final class JvmBackend {
         Map.entry("booleanNotNull", List.of("java.lang.Boolean")),
         Map.entry("intFromNullable", List.of("java.lang.Integer")),
         Map.entry("numberFromNullable", List.of("java.lang.Double")),
-        Map.entry("checkSig", List.of("java.lang.String", "java.lang.String")));
+        Map.entry("checkSig", List.of("java.lang.String", "java.lang.String")),
+        Map.entry("bytesNew", List.of("long")),
+        Map.entry("bytesLength", List.of("$DealRt.Bytes")),
+        Map.entry("bytesGet", List.of("$DealRt.Bytes", "int")),
+        Map.entry("bytesSet", List.of("$DealRt.Bytes", "int", "int")));
 
     /**
      * The emitted runtime-helper signature table for the backend's
@@ -4289,6 +4304,28 @@ public final class JvmBackend {
             emitLine("static long intFromNumber(double v) { if (java.lang.Double.isNaN(v)) throw new DealError(\"E8001\", \"expected int, got NaN\"); if (java.lang.Double.isInfinite(v)) throw new DealError(\"E8001\", \"expected int, got infinity\"); if (v != java.lang.Math.floor(v)) throw new DealError(\"E8001\", \"expected int, got non-integer number\"); if (v > 9007199254740991.0 || v < -9007199254740991.0) throw new DealError(\"E8004\", \"int out of safe range\"); return (long) v; }");
             emitLine("static double numberFromInt(long v) { return (double) v; }");
         }
+        emitLine("// ---- DEAL v1.2 bytes runtime (ISSUE-0158 int32-bytes lane) ----");
+        emitLine("// The shared $DealRt.Bytes carrier wraps a Java byte[] (zero-filled");
+        emitLine("// by construction); the logical length is immutable signed-int32,");
+        emitLine("// reads yield unsigned 0..255, and a write changes exactly one byte");
+        emitLine("// (never appends). bytesNew gates the length through checkInt");
+        emitLine("// (E8004 out of range), a negative length is E8012, and allocation");
+        emitLine("// exhaustion is E8001 with no published object — the runtime.lua");
+        emitLine("// bytes_new error set (deal-v1.2-int32-and-bytes-architecture D4).");
+        emitLine("static $DealRt.Bytes bytesNew(long length) {");
+        emitLine("    long n = checkInt(length);");
+        emitLine("    if (n < 0L) throw new DealError(\"E8012\", \"bytes length must be non-negative\");");
+        emitLine("    if (n > 2147483647L) throw new DealError(\"E8004\", " + (int32Mode ? "\"int out of safe range\"" : "\"int out of range\"") + ");");
+        emitLine("    try { return new $DealRt.Bytes(new byte[(int) n]); }");
+        emitLine("    catch (java.lang.OutOfMemoryError e) { throw new DealError(\"E8001\", \"bytes allocation failed\"); }");
+        emitLine("}");
+        emitLine("// The immutable signed-int32 logical allocation length of a bytes buffer.");
+        emitLine("static int bytesLength($DealRt.Bytes b) { if (b == null) throw new DealError(\"E8001\", \"expected bytes, got null\"); return b.data.length; }");
+        emitLine("// The unsigned byte (0..255) at index i, 0 <= i < b.length (E8012 otherwise).");
+        emitLine("static int bytesGet($DealRt.Bytes b, int i) { if (b == null) throw new DealError(\"E8001\", \"expected bytes, got null\"); if (i < 0 || i >= b.data.length) throw new DealError(\"E8012\", \"bytes index out of bounds\"); return b.data[i] & 0xFF; }");
+        emitLine("// Write byte value v (0..255) at index i and return the written value.");
+        emitLine("// A failed write (E8012 index, E8013 value range) changes no storage.");
+        emitLine("static int bytesSet($DealRt.Bytes b, int i, int v) { if (b == null) throw new DealError(\"E8001\", \"expected bytes, got null\"); if (i < 0 || i >= b.data.length) throw new DealError(\"E8012\", \"bytes index out of bounds\"); if (v < 0 || v > 255) throw new DealError(\"E8013\", \"bytes value out of range\"); b.data[i] = (byte) v; return v; }");
         emitLine("// string ordering: Unicode scalar-value order. LuaJIT orders bytewise in");
         emitLine("// UTF-8, which is scalar-value order — including supplementary characters");
         emitLine("// (String.compareTo's UTF-16 code-unit order diverges there).");
@@ -4691,8 +4728,9 @@ public final class JvmBackend {
      * table (unchanged, ISSUE-0102), the {@code FnValue} interface and
      * the per-signature function wrapper classes (D2), the
      * per-element-shape array wrapper classes (D3), the final
-     * {@code Bytes} wrapper over {@code byte[]} (D6 — carrier only; the
-     * operations live on the int32-bytes lane), and the synthesized
+     * {@code Bytes} wrapper over {@code byte[]} (D6 carrier; the
+     * ISSUE-0158 operations lower to the emitted bytes helpers), and
+     * the synthesized
      * host-class records (the host-abi lane). Every module references
      * the SAME class, so carrier values cross module boundaries with
      * shared identity — exactly like LuaJIT's single value types. The
@@ -4727,9 +4765,10 @@ public final class JvmBackend {
         emitLine("        java.util.LinkedHashMap<java.lang.String, java.lang.Object> $entries() { return entries; }");
         emitLine("    }");
         emitLine("    // The final runtime-owned bytes wrapper over byte[] (ISSUE-0301");
-        emitLine("    // D6 — carrier only: reference identity for equality/assignment/");
-        emitLine("    // aliasing, canonical descriptor 'bytes' in $check, non-jsonable.");
-        emitLine("    // Allocation/indexing/mutation live on the int32-bytes lane.");
+        emitLine("    // D6 carrier; ISSUE-0158 int32-bytes lane): reference identity for");
+        emitLine("    // equality/assignment/aliasing, canonical descriptor 'bytes' in");
+        emitLine("    // $check, non-jsonable. Allocation/indexing/mutation lower to the");
+        emitLine("    // emitted bytesNew/bytesLength/bytesGet/bytesSet helpers.");
         emitLine("    static final class Bytes {");
         emitLine("        final byte[] data;");
         emitLine("        Bytes(byte[] data) { this.data = data; }");
@@ -4872,7 +4911,8 @@ public final class JvmBackend {
         emitLine("// bytes row (the canonical matcher table): the shared $DealRt.Bytes");
         emitLine("// carrier is the JVM bytes representation (ISSUE-0301 D6 — the");
         emitLine("// final runtime-owned wrapper over byte[]); anything else raises");
-        emitLine("// E8001. Allocation/indexing/mutation live on the int32-bytes lane.");
+        emitLine("// E8001. Allocation/indexing/mutation lower to the emitted");
+        emitLine("// bytesNew/bytesLength/bytesGet/bytesSet helpers (ISSUE-0158).");
         emitLine("if (descriptor.equals(\"bytes\")) { if (v instanceof $DealRt.Bytes b) return b; throw new DealError(\"E8001\", \"expected bytes, got \" + $describe(v)); }");
         // Class branches (plain class descriptors and per-class array
         // descriptors) are appended by emitClass before the generic [D]
@@ -5046,7 +5086,7 @@ public final class JvmBackend {
             case Type.Class c -> silentClassJavaType(c);
             case Type.Nullable n -> silentNullableJavaType(n.inner());
             case Type.Func f -> registerWrapperShape(f);
-            case Type.Bytes ignored -> null;
+            case Type.Bytes ignored -> "$DealRt.Bytes";
             default -> null;
         };
     }
@@ -5163,7 +5203,7 @@ public final class JvmBackend {
             case Type.Class c -> silentClassJavaType(c);
             case Type.Array a -> silentArrayWrapperName(a.element());
             case Type.Func f -> registerWrapperShape(f);
-            case Type.Bytes ignored -> null;
+            case Type.Bytes ignored -> "$DealRt.Bytes";
             default -> null;
         };
     }
@@ -6340,18 +6380,20 @@ public final class JvmBackend {
                     || nn.inner() instanceof Type.Number
                     || nn.inner() instanceof Type.Boolean
                     || nn.inner() instanceof Type.String
+                    || nn.inner() instanceof Type.Bytes
                     || (nn.inner() instanceof Type.Class cls
                         && isLocalClassType(cls));
                 if (!innerOk) {
                     unsupported("class fields of type " + typeName(fieldType)
-                        + " (only primitive and local class nullable"
-                        + " fields are supported)", cf.span());
+                        + " (only primitive, bytes, and local class "
+                        + "nullable fields are supported)", cf.span());
                     return;
                 }
             } else if (!(fieldType instanceof Type.Int)
                     && !(fieldType instanceof Type.Number)
                     && !(fieldType instanceof Type.Boolean)
                     && !(fieldType instanceof Type.String)
+                    && !(fieldType instanceof Type.Bytes)
                     && !(fieldType instanceof Type.Table)
                     && !(fieldType instanceof Type.Array)
                     && !(fieldType instanceof Type.Class cls
@@ -6359,8 +6401,8 @@ public final class JvmBackend {
                         && !isBuiltinErrorType(cls))) {
                 unsupported("class fields of type " + typeName(fieldType)
                     + " (only primitive fields, nullable primitive/"
-                    + "class fields, and local array/table/class fields"
-                    + " are supported)", cf.span());
+                    + "class fields, and local bytes/array/table/class "
+                    + "fields are supported)", cf.span());
                 return;
             }
             String javaType = javaLocalType(fieldType, cf.span());
@@ -12276,6 +12318,15 @@ public final class JvmBackend {
                 return "null";
             }
         }
+        if (objType instanceof Type.Bytes
+                && "length".equals(mae.field())) {
+            // v1.2 bytes .length (ISSUE-0158): the compiler-resolved
+            // immutable logical allocation length as DEAL int — not a
+            // class/table lookup. The receiver evaluates exactly once
+            // in Java, mirroring the Lua bytes_length lowering.
+            String obj = emitExpression(mae.object());
+            return "bytesLength(" + obj + ")";
+        }
         if (objType instanceof Type.Array && "length".equals(mae.field())) {
             String obj = emitExpression(mae.object());
             // ISSUE-0375 carrier switch: array length is DEAL int —
@@ -12403,6 +12454,19 @@ public final class JvmBackend {
      */
     private String emitIndexRead(IndexExpr idx, Type target) {
         Type arrayType = typeOf(idx.array());
+        if (arrayType instanceof Type.Bytes) {
+            // v1.2 bytes read (ISSUE-0158): b[i] lowers to
+            // bytesGet(b, i) — the receiver and index evaluate left to
+            // right (emitOperandsInOrder), the index is a declared int
+            // boundary, and the helper raises E8001 for a null carrier,
+            // E8012 outside [0, b.length), and returns the unsigned
+            // 0..255 byte value.
+            List<String> codes = emitOperandsInOrder(
+                List.of(idx.array(), idx.index()));
+            String indexCode = adaptIntBoundary(idx.index(),
+                codes.get(1), Type.Int.INSTANCE);
+            return "bytesGet(" + codes.get(0) + ", " + indexCode + ")";
+        }
         if (!(arrayType instanceof Type.Array arr)) {
             unsupported("indexing of " + typeName(arrayType), idx.span());
             return "null";
@@ -13134,6 +13198,21 @@ public final class JvmBackend {
                 unsupported("number() on " + typeName(argType), call.span());
                 yield "0.0";
             }
+            case "bytes" -> {
+                // v1.2 bytes allocation (ISSUE-0158): the checker pins
+                // exactly one int argument; the emitted length is a
+                // declared int boundary — a wider (time) value crosses
+                // through the signed32 checkInt inside adaptIntBoundary
+                // before bytesNew, whose own checkInt/negative/E8012
+                // gates then allocate the zero-filled byte[].
+                if (argType instanceof Type.Int) {
+                    yield "bytesNew("
+                        + adaptIntBoundary(arg, emitted,
+                            Type.Int.INSTANCE) + ")";
+                }
+                unsupported("bytes() on " + typeName(argType), call.span());
+                yield "null";
+            }
             default -> {
                 unsupported("intrinsic '" + name + "'", call.span());
                 yield "null";
@@ -13202,6 +13281,29 @@ public final class JvmBackend {
             return target + " = " + value;
         }
         if (ae.target() instanceof IndexExpr idx) {
+            if (typeOf(idx.array()) instanceof Type.Bytes) {
+                // v1.2 bytes write (ISSUE-0158): b[i] = v lowers to
+                // bytesSet(b, i, v). The receiver, the index, and the
+                // assignment RHS all evaluate (left to right) BEFORE the
+                // write validation — emitOperandsInOrder keeps that
+                // order when any operand hoists side-effecting
+                // pre-statements, and the emitted helper call's Java
+                // arguments evaluate left to right before bytesSet
+                // performs the E8012 index check, the E8013 value check,
+                // and the store. A failed write changes no storage; the
+                // helper returns the stored unsigned value, so the
+                // assignment expression keeps its DEAL value in value
+                // positions.
+                List<String> codes = emitOperandsInOrder(
+                    List.of(idx.array(), idx.index(), ae.value()),
+                    Arrays.asList(null, null, Type.Int.INSTANCE));
+                String rhs = adaptIntBoundary(ae.value(), codes.get(2),
+                    Type.Int.INSTANCE);
+                String indexCode = adaptIntBoundary(idx.index(),
+                    codes.get(1), Type.Int.INSTANCE);
+                return "bytesSet(" + codes.get(0) + ", " + indexCode
+                    + ", " + rhs + ")";
+            }
             // Array element write `xs[i] = v` (ISSUE-0094). The checker
             // enforces int indexes and element-type assignability
             // (E3007/E3001), so only the four primitive element arrays
@@ -13631,6 +13733,21 @@ public final class JvmBackend {
                 case "number" -> Type.Number.INSTANCE;
                 case "string" -> Type.String.INSTANCE;
                 case "table" -> Type.Table.INSTANCE;
+                case "bytes" -> {
+                    // v1.2 bytes annotation (ISSUE-0158 int32-bytes
+                    // lane): a bytes-spelled named type resolves to the
+                    // canonical Type.Bytes primitive. bytes is not a
+                    // DEAL keyword, so a checker-accepted user class
+                    // named bytes resolves to its ClassSymbol and wins
+                    // over the primitive (the same class-symbol-first
+                    // guard the Lua sibling uses).
+                    Symbol sym = symbols.resolve(nt.name());
+                    if (sym instanceof Symbol.ClassSymbol
+                            && moduleClasses.containsKey(nt.name())) {
+                        yield classTypeFor(nt.name(), modulePath);
+                    }
+                    yield Type.Bytes.INSTANCE;
+                }
                 default -> {
                     // A local module-level class (the checker's hoisted
                     // ClassSymbol). The builtin Error stays out of slice
@@ -13839,9 +13956,13 @@ public final class JvmBackend {
                 yield nullableJavaType(n.inner(), span);
             }
             case Type.Bytes ignored -> {
-                unsupported("values of type " + typeName(t)
-                    + " (bytes is unsupported — ISSUE-0158 boundary)", span);
-                yield null;
+                // v1.2 bytes value (ISSUE-0158 int32-bytes lane): the
+                // shared $DealRt.Bytes carrier — reference identity for
+                // assignment/aliasing/equality, canonical descriptor
+                // "bytes", non-jsonable. Allocation/indexing/mutation
+                // lower to the emitted bytesNew/bytesLength/bytesGet/
+                // bytesSet helpers.
+                yield "$DealRt.Bytes";
             }
             case Type.Error ignored -> null;
             case Type.Func f -> {
@@ -13949,9 +14070,9 @@ public final class JvmBackend {
                 yield shape;
             }
             case Type.Bytes ignored -> {
-                unsupported("values of type " + typeName(inner) + " | null"
-                    + " (bytes is unsupported — ISSUE-0158 boundary)", span);
-                yield null;
+                // v1.2 bytes | null (ISSUE-0158): the plain reference
+                // carrier — Java null is the DEAL null.
+                yield "$DealRt.Bytes";
             }
             default -> {
                 unsupported("values of type " + typeName(inner) + " | null"

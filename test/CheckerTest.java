@@ -226,6 +226,9 @@ public class CheckerTest {
         testArrayLengthAssignmentRejected();
         testArrayLengthDeleteRejected();
         testArrayAppendIdiomCompiles();
+        // D4 (deal-v1.2-int32-and-bytes-architecture): bytes .length too
+        testBytesLengthAssignmentRejected();
+        testBytesLengthDeleteRejected();
         testTableLengthWriteUnaffected();
         testClassFieldLengthWriteUnaffected();
 
@@ -1178,6 +1181,39 @@ public class CheckerTest {
             .filter(d -> d.code().equals("E3017"))
             .anyMatch(d -> d.line() == 2 && d.column() == 8);
         check(atTarget, "E3017 must be reported at the target span");
+    }
+
+    // D4 (deal-v1.2-int32-and-bytes-architecture): bytes .length is
+    // compiler-resolved and read-only exactly like array .length —
+    // assignment and deletion are E3017 at the member target.
+    static void testBytesLengthAssignmentRejected() {
+        System.out.println("-- Bytes Length Assignment Rejected (E3017) --");
+        CheckerOutput out = checkProgram(
+            "let b: bytes = bytes(4);\n" +
+            "b.length = 9;"
+        );
+        assertError(out, "E3017", "assignment to bytes .length");
+        // E3017 is reported at the target span (line 2, column 1 — the
+        // start of `b.length`), not the value span.
+        boolean atTarget = out.result.diagnostics().stream()
+            .filter(d -> d.code().equals("E3017"))
+            .anyMatch(d -> d.line() == 2 && d.column() == 1);
+        check(atTarget, "bytes E3017 must be reported at the target span");
+    }
+
+    static void testBytesLengthDeleteRejected() {
+        System.out.println("-- Bytes Length Delete Rejected (E3017) --");
+        CheckerOutput out = checkProgram(
+            "let b: bytes = bytes(4);\n" +
+            "delete b.length;"
+        );
+        assertError(out, "E3017", "delete of bytes .length");
+        // E3017 is reported at the target span (line 2, column 8 — the
+        // start of `b.length` after `delete `).
+        boolean atTarget = out.result.diagnostics().stream()
+            .filter(d -> d.code().equals("E3017"))
+            .anyMatch(d -> d.line() == 2 && d.column() == 8);
+        check(atTarget, "bytes E3017 must be reported at the target span");
     }
 
     // The append idiom's target is an IndexExpr whose index is the
@@ -2633,6 +2669,17 @@ public class CheckerTest {
     }
 
     static void testJsonableNonJsonableType_nonJsonableClass() {
+        System.out.println("-- @jsonable: bytes field → E4007 --");
+        // v1.2 bytes is not jsonable: a bytes-typed @jsonable field is
+        // E4007 (deal-v1.2-int32-and-bytes-architecture D3).
+        CheckerOutput bytesField = checkProgram(
+            "// @jsonable\n" +
+            "export class Holder {\n" +
+            "  payload: bytes = bytes(2);\n" +
+            "}\n"
+        );
+        assertError(bytesField, "E4007", "bytes field is not jsonable");
+
         System.out.println("-- @jsonable: non-@jsonable class field → E4007 --");
         CheckerOutput out = checkProgram(
             "class Plain { x: int; }\n" +

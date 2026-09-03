@@ -451,6 +451,7 @@ public class JvmBackendTest {
             new TestCase("testInt32NumberPowBand", () -> testInt32NumberPowBand()),
             new TestCase("testInt32NumPowHelperCollision", () -> testInt32NumPowHelperCollision()),
             new TestCase("testInt32ArrayAndFieldBoundaries", () -> testInt32ArrayAndFieldBoundaries()),
+            new TestCase("testBytesRuntimeLane", () -> testBytesRuntimeLane()),
             new TestCase("testCommonShadowInvocationPipeline", () -> testCommonShadowInvocationPipeline()),
             new TestCase("testLegacyByteCompat", () -> testLegacyByteCompat()),
             new TestCase("testOrchestratorJvmBackend", () -> testOrchestratorJvmBackend()),
@@ -3396,9 +3397,10 @@ public class JvmBackendTest {
 
         // The bytes-signature function-array for-of fails the
         // orchestrator with E6000 (bytes carriers inside function
-        // signatures stay on the int32-bytes lane) and writes no entry
-        // artifact (the slice contract: E6000, never a broken
-        // artifact).
+        // signatures stay rejected — the recursive bytes-bearing
+        // wrapper closure is ISSUE-0160's; the direct bytes lane
+        // landed with ISSUE-0158) and writes no entry artifact (the
+        // slice contract: E6000, never a broken artifact).
         writeFile("src2/refof_bad.deal", """
             export function main(): null { return null; }
             function bad(xs: bytes): int { return 1; }
@@ -3430,7 +3432,9 @@ public class JvmBackendTest {
         // the backend's native List<CompilerDiagnostic> and renders at
         // its real source position — SOURCE origin with exact scalar
         // offsets, never synthetic (1,1). The bytes-signature rejection
-        // anchors at the loop variable's bytes annotation.
+        // (bytes carriers inside function signatures — the recursive
+        // bytes-bearing wrapper closure, ISSUE-0160) anchors at the
+        // loop variable's bytes annotation.
         String badSrc = Files.readString(badEntry);
         int forIdx = badSrc.indexOf("bytes", badSrc.indexOf("for (let f"));
         check(forIdx >= 0, "fixture contains the bytes annotation");
@@ -3440,8 +3444,7 @@ public class JvmBackendTest {
         int expectedOffset = ScalarSourceCursor.scalarCount(badSrc, 0, forIdx);
         CompilerDiagnostic e6000 = badOrchestrator.diagnostics().stream()
             .filter(d -> "E6000".equals(d.code())
-                && d.message().contains(
-                    "type 'bytes' (only local classes are supported)"))
+                && d.message().contains("bytes/table carriers"))
             .filter(d -> d.range() != null
                 && d.range().startLine() == expectedLine
                 && d.range().startColumn() == expectedColumn)
@@ -6139,8 +6142,9 @@ public class JvmBackendTest {
         }
 
         // The bytes row delegates to the $DealRt.Bytes carrier predicate
-        // (matcher table): emission inspection — no DEAL bytes value
-        // exists until the int32-bytes lane lands its operations.
+        // (matcher table): emission inspection — the ISSUE-0158 bytes
+        // lane constructs real $DealRt.Bytes values through the emitted
+        // helpers (testBytesRuntimeLane exercises the behavior).
         Frontend bytesProbe = compileFrontend("""
             export function test(): int { return 1; }
             """, "jvmtest-carrier-bytesrow.deal");
@@ -9819,6 +9823,217 @@ public class JvmBackendTest {
         String out = new String(p2.getInputStream().readAllBytes()).trim();
         int exit = p2.waitFor();
         return new ExecResult(out, exit);
+    }
+
+    // =========================================================================
+    // ISSUE-0158 v1.2 bytes lane (int32-bytes): helpers, emission, behavior
+    // =========================================================================
+
+    /**
+     * The v1.2 bytes lane on the JVM backend (ISSUE-0158,
+     * deal-v1.2-int32-and-bytes-architecture D3/D4): the emitted
+     * artifact carries the four bytes helpers over the shared
+     * {@code $DealRt.Bytes} byte[] carrier, and the real pipeline
+     * (orchestrator → JvmBackend → javac → java under
+     * DEAL_V1_2_INT32) executes the pinned helper contract: fresh
+     * zero-filled allocation, the immutable signed-int32 {@code length},
+     * unsigned 0..255 reads, exactly-one-byte writes with the returned
+     * value, E8012 negative length / bounds (no append), E8013 value
+     * range, reference aliasing/identity, per-instance class-field
+     * isolation, and receiver/index/RHS single-evaluation order with
+     * validation after the RHS and no storage change on a failed write.
+     */
+    private static void testBytesRuntimeLane() throws Exception {
+        System.out.println("-- v1.2 bytes runtime lane (ISSUE-0158) --");
+
+        // ---- Emitted helper surface (int32 artifact inspection) ----
+        String artifact = int32Artifact("""
+            export function main(): null { return null; }
+            export function run(): int {
+              let b: bytes = bytes(1);
+              return b.length;
+            }
+            """, "bytes_helpers_artifact");
+        check(artifact.contains("static $DealRt.Bytes bytesNew(long length)"),
+            "artifact emits bytesNew over the shared carrier");
+        check(artifact.contains(
+                "if (n < 0L) throw new DealError(\"E8012\", "
+                    + "\"bytes length must be non-negative\")"),
+            "bytesNew pins the E8012 negative-length gate");
+        check(artifact.contains("static int bytesLength($DealRt.Bytes b)"),
+            "artifact emits bytesLength");
+        check(artifact.contains("return b.data[i] & 0xFF;"),
+            "bytesGet returns the unsigned 0..255 byte");
+        check(artifact.contains(
+                "if (v < 0 || v > 255) throw new DealError(\"E8013\", "
+                    + "\"bytes value out of range\")"),
+            "bytesSet pins the E8013 value-range gate");
+        check(artifact.contains(
+                "if (i < 0 || i >= b.data.length) throw new DealError("
+                    + "\"E8012\", \"bytes index out of bounds\")"),
+            "bytesGet/bytesSet pin the E8012 bounds gate (never appends)");
+        check(artifact.contains("bytesNew(") && artifact.contains(
+                "bytesLength(") && artifact.contains("bytesGet(")
+                && artifact.contains("bytesSet("),
+            "the intrinsic call, .length, and index read/write lower to "
+                + "the emitted helpers");
+
+        // ---- Behavior battery (real pipeline under DEAL_V1_2_INT32) ----
+        // prelude: module-level declarations (classes/helper functions)
+        // spliced between main and the pinned test body — DEAL v1.2
+        // module top level holds only declarations.
+        record BytesPin(String name, String prelude, String body,
+                        String expected) {}
+        List<BytesPin> pins = List.of(
+            new BytesPin("alloc-zero-fill", "",
+                "let b: bytes = bytes(4);\n"
+                    + "      if (b.length !== 4) { throw { code: \"TEST_FAIL\", message: \"length\" }; }\n"
+                    + "      if (b[0] !== 0 || b[1] !== 0 || b[2] !== 0 || b[3] !== 0) { throw { code: \"TEST_FAIL\", message: \"zero fill\" }; }\n"
+                    + "      return 1;",
+                "1"),
+            new BytesPin("unsigned-read-write", "",
+                "let b: bytes = bytes(2);\n"
+                    + "      b[0] = 255;\n"
+                    + "      b[1] = 128;\n"
+                    + "      let hi: int = b[0];\n"
+                    + "      let lo: int = b[1];\n"
+                    + "      if (hi !== 255 || lo !== 128) { throw { code: \"TEST_FAIL\", message: \"unsigned roundtrip\" }; }\n"
+                    + "      return hi - lo;",
+                "127"),
+            new BytesPin("write-returns-value", "",
+                "let b: bytes = bytes(1);\n"
+                    + "      let v: int = (b[0] = 200);\n"
+                    + "      return v;",
+                "200"),
+            new BytesPin("empty-buffer", "",
+                "let b: bytes = bytes(0);\n"
+                    + "      if (b.length !== 0) { throw { code: \"TEST_FAIL\", message: \"empty length\" }; }\n"
+                    + "      return 0;",
+                "0"),
+            new BytesPin("empty-read-bounds", "",
+                "let b: bytes = bytes(0);\n"
+                    + "      return b[0];",
+                "E8012"),
+            new BytesPin("empty-write-bounds", "",
+                "let b: bytes = bytes(0);\n"
+                    + "      b[0] = 1;\n"
+                    + "      return 0;",
+                "E8012"),
+            new BytesPin("negative-length", "",
+                "let b: bytes = bytes(-1);\n"
+                    + "      return 0;",
+                "E8012"),
+            new BytesPin("read-bounds-high", "",
+                "let b: bytes = bytes(4);\n"
+                    + "      return b[4];",
+                "E8012"),
+            new BytesPin("read-bounds-low", "",
+                "let b: bytes = bytes(4);\n"
+                    + "      return b[-1];",
+                "E8012"),
+            new BytesPin("write-bounds-high-no-append", "",
+                "let b: bytes = bytes(2);\n"
+                    + "      b[2] = 7;\n"
+                    + "      return 0;",
+                "E8012"),
+            new BytesPin("write-bounds-low", "",
+                "let b: bytes = bytes(2);\n"
+                    + "      b[-1] = 7;\n"
+                    + "      return 0;",
+                "E8012"),
+            new BytesPin("write-value-high", "",
+                "let b: bytes = bytes(1);\n"
+                    + "      b[0] = 256;\n"
+                    + "      return 0;",
+                "E8013"),
+            new BytesPin("write-value-low", "",
+                "let b: bytes = bytes(1);\n"
+                    + "      b[0] = -1;\n"
+                    + "      return 0;",
+                "E8013"),
+            new BytesPin("alias-mutation", "",
+                "let b: bytes = bytes(4);\n"
+                    + "      let alias: bytes = b;\n"
+                    + "      alias[2] = 7;\n"
+                    + "      return b[2];",
+                "7"),
+            new BytesPin("fresh-instances", "",
+                "let a: bytes = bytes(2);\n"
+                    + "      let c: bytes = bytes(2);\n"
+                    + "      a[0] = 9;\n"
+                    + "      return c[0];",
+                "0"),
+            new BytesPin("fn-param-return", "",
+                "function first(b: bytes): int { return b[0]; }\n"
+                    + "      function fill(b: bytes, v: int): bytes { b[0] = v; return b; }\n"
+                    + "      let x: bytes = fill(bytes(3), 200);\n"
+                    + "      return first(x) + x.length;",
+                "203"),
+            new BytesPin("eval-order",
+                "class Log {\n"
+                    + "  seq: int[] = [];\n"
+                    + "  buf: bytes = bytes(4);\n"
+                    + "}\n"
+                    + "function record(l: Log, tag: int): int { l.seq[l.seq.length] = tag; return tag; }\n"
+                    + "function pick(l: Log, tag: int): bytes { record(l, tag); return l.buf; }\n",
+                "let l: Log = { seq: [], buf: bytes(4) };\n"
+                    + "      pick(l, 1)[record(l, 2)] = record(l, 3);\n"
+                    + "      if (l.seq.length !== 3 || l.seq[0] !== 1 || l.seq[1] !== 2 || l.seq[2] !== 3) { throw { code: \"TEST_FAIL\", message: \"order\" }; }\n"
+                    + "      return l.buf[2];",
+                "3"),
+            new BytesPin("failed-write-nonmutation",
+                "class Log {\n"
+                    + "  seq: int[] = [];\n"
+                    + "  buf: bytes = bytes(4);\n"
+                    + "}\n"
+                    + "function record(l: Log, tag: int): int { l.seq[l.seq.length] = tag; return tag; }\n"
+                    + "function pick(l: Log, tag: int): bytes { record(l, tag); return l.buf; }\n"
+                    + "function badValue(l: Log): int { record(l, 3); return 300; }\n",
+                "let l: Log = { seq: [], buf: bytes(4) };\n"
+                    + "      try { pick(l, 1)[record(l, 2)] = badValue(l); throw { code: \"TEST_FAIL\", message: \"no E8013\" }; }\n"
+                    + "      catch (e) { if (e.code !== \"E8013\") { throw e; } }\n"
+                    + "      if (l.seq.length !== 3 || l.seq[0] !== 1 || l.seq[1] !== 2 || l.seq[2] !== 3) { throw { code: \"TEST_FAIL\", message: \"side effects\" }; }\n"
+                    + "      if (l.buf[1] !== 0) { throw { code: \"TEST_FAIL\", message: \"storage changed\" }; }\n"
+                    + "      return 0;",
+                "0"),
+            new BytesPin("class-field-isolation",
+                "class Payload {\n"
+                    + "  data: bytes = bytes(2);\n"
+                    + "  tag: string = \"\";\n"
+                    + "}\n",
+                "let p: Payload = { data: bytes(3), tag: \"a\" };\n"
+                    + "      p.data[1] = 200;\n"
+                    + "      let q: Payload = { data: bytes(1), tag: \"b\" };\n"
+                    + "      if (q.data.length !== 1) { throw { code: \"TEST_FAIL\", message: \"second length\" }; }\n"
+                    + "      if (p.data[1] !== 200) { throw { code: \"TEST_FAIL\", message: \"shared storage\" }; }\n"
+                    + "      return p.data.length;",
+                "3"),
+            new BytesPin("length-int-arithmetic", "",
+                "let b: bytes = bytes(3);\n"
+                    + "      let l: int = b.length;\n"
+                    + "      return l * 2 + 1;",
+                "7"));
+        for (BytesPin pin : pins) {
+            String source = "export function main(): null { return null; }\n"
+                + pin.prelude()
+                + "export function test(): int {\n      " + pin.body() + "\n"
+                + "    }\n";
+            ExecResult r = runInt32Project(source, pin.name());
+            if (pin.expected().startsWith("E8")) {
+                check(r.exitCode() == 1,
+                    pin.name() + " run exits 1: " + r.output());
+                check(r.output().contains("DEAL_ERROR_CODE: "
+                        + pin.expected()),
+                    pin.name() + " raises exactly " + pin.expected()
+                        + ": " + r.output());
+            } else {
+                check(r.exitCode() == 0,
+                    pin.name() + " run exits 0: " + r.output());
+                check(r.output().contains(pin.expected()),
+                    pin.name() + " computes the pinned value "
+                        + pin.expected() + ": " + r.output());
+            }
+        }
     }
 
     /** The combined T1+T3 verification (ISSUE-0394): the profile flows
