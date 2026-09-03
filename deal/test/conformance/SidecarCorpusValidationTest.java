@@ -171,11 +171,13 @@ public class SidecarCorpusValidationTest {
      * same change; plus the jsonable-fromjson-nested-depth3 fixture
      * the ISSUE-0340 review fix added with its sidecar in the same
      * change, pinning the depth >= 3 nested compiler-class fromJson
+
          * decode). ISSUE-0380 (the disposition-application unit) flips the
      * shared time fixture
      * {@code stdlib-edge/time-now-millis-positive.deal} to its canonical
      * {@code runtime-error E8004} header, moving it out of this
      * population: 219 -> 218. */
+
     private static final int RUNTIME_OK_COUNT = 218;
 
     /**
@@ -209,6 +211,7 @@ public class SidecarCorpusValidationTest {
      * plus the host-class-extra-field E8007 fixture ISSUE-0334 added
      * with its sidecar in the same change; plus the stdlib/table
      * keys-nontable-error E8001 fixture ISSUE-0341 added with its
+
          * sidecar in the same change). ISSUE-0380 (the
      * disposition-application unit) adds two members to this population
      * with their sidecars: the flipped time fixture
@@ -218,6 +221,7 @@ public class SidecarCorpusValidationTest {
      * dropped, E8004 sidecar unchanged): 81 -> 83.
  */
     private static final int RUNTIME_ERROR_COUNT = 83;
+
 
     /**
      * ISSUE-0397 count-pin criterion record (MR-0305 review cycles 1

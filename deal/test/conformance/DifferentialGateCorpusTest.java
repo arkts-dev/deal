@@ -64,17 +64,24 @@ public class DifferentialGateCorpusTest {
      * (compile-error E7001): total 528 -> 545, frontend 193 -> 210,
      * compile-ok 58 -> 64, compile-error 128 -> 130, companions
      * 40 -> 49; the runtime populations (218/83), the known-fail
-     * population, and the compile pins (4) are unchanged. */
+     * population, and the compile pins (4) are unchanged.
+     * This tree (ISSUE-0477, the ISSUE-0402 acceptance remediation)
+     * promotes the last known-fail — the FFI manifest pin
+     * {@code frontend/modules/ffi-manifest-missing-native-library-rejected.deal}
+     * — to a real compile-error fixture (compile-error 130 -> 131,
+     * known-fail 1 -> 0) in the same change as its production E2010
+     * emission site (deal/checker/NameResolver.java at the import span),
+     * so the corpus carries zero known-fail fixtures. */
     private static final int TOTAL_FIXTURES = 545;
     private static final int FRONTEND_FIXTURES = 210;
     private static final int BACKEND_RUNTIME_FIXTURES = 335;
     private static final int COMPILE_OK = 64;
-    private static final int COMPILE_ERROR = 130;
+    private static final int COMPILE_ERROR = 131;
     private static final int RUNTIME_OK = 218;
     private static final int RUNTIME_ERROR = 83;
     private static final int RUNTIME_ERROR_SIDECARS = 83;
     private static final int COMPANIONS = 49;
-    private static final int KNOWN_FAIL = 1;
+    private static final int KNOWN_FAIL = 0;
     private static final int COMPILE_PINS = 4;
 
     public static void main(String[] args) throws Exception {
@@ -196,17 +203,31 @@ public class DifferentialGateCorpusTest {
             .map(CorpusDiscovery.Fixture::corpusPath)
             .sorted()
             .toList();
-        check(knownFailPaths.equals(List.of(
-                "frontend/modules/ffi-manifest-missing-native-library-rejected.deal")),
-            "the tracked known-fail fixtures are exactly the FFI manifest "
-                + "pin (ISSUE-0380 promoted the restored int-add-overflow "
-                + "fixture to runtime-error E8004), got " + knownFailPaths);
-        check(run.fixtures().stream()
-                .filter(f -> f.classification() != null
-                    && f.classification().kind()
-                        == CorpusDiscovery.Kind.KNOWN_FAIL)
-                .allMatch(f -> "ISSUE-0111".equals(f.issue())),
-            "every known-fail fixture tracks ISSUE-0111");
+        check(knownFailPaths.equals(List.of()),
+            "the tracked known-fail population is empty (this tree "
+                + "promoted the last known-fail — the FFI manifest pin — "
+                + "to compile-error E2010 in the same change as its "
+                + "production emission site), got " + knownFailPaths);
+        CorpusDiscovery.Fixture promoted = run.fixtures().stream()
+            .filter(f -> f.corpusPath().equals(
+                "frontend/modules/ffi-manifest-missing-native-library-rejected.deal"))
+            .findFirst().orElseThrow();
+        check(promoted.classification() != null
+                && promoted.classification().kind()
+                    == CorpusDiscovery.Kind.COMPILE_ERROR,
+            "the former FFI manifest known-fail pin now classifies as a "
+                + "real compile-error fixture, got "
+                + promoted.classification());
+        CorpusDiscovery.Fixture promotedOverflow = run.fixtures().stream()
+            .filter(f -> f.corpusPath().equals(
+                "backend-runtime/arithmetic/int-add-overflow.deal"))
+            .findFirst().orElseThrow();
+        check(promotedOverflow.classification() != null
+                && promotedOverflow.classification().kind()
+                    == CorpusDiscovery.Kind.RUNTIME_ERROR,
+            "the restored int-add-overflow known-fail fixture now "
+                + "classifies as a real runtime-error fixture, got "
+                + promotedOverflow.classification());
     }
 
     private static void dispatchDeferral(DifferentialGate.GateRun run) {

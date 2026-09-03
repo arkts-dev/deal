@@ -1,6 +1,10 @@
 {
   "version": 1,
-  "backends": ["luajit", "jvm", "js"],
+  "backends": [
+    "luajit",
+    "jvm",
+    "js"
+  ],
   "expected": {
     "mode": "runtime-error",
     "transcript": {

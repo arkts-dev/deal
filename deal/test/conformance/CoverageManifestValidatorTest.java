@@ -103,7 +103,7 @@ public class CoverageManifestValidatorTest {
             "compile-error E3001");
         writeFixture(corpusRoot, FFI, "Synthetic spec C", "compile-error E7002");
         writeFixture(corpusRoot, FFI_POLICY, "Synthetic spec C",
-            "known-fail compile-error E2010");
+            "compile-error E2010");
         writeFixture(corpusRoot, FFI_COMPILE_OK, "Synthetic spec C",
             "compile-ok");
         writeFixture(corpusRoot, FFI_TRACKED, "Synthetic spec C",

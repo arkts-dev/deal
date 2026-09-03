@@ -327,6 +327,18 @@ public final class NameResolver {
                 root.remove(alias);
             }
             root.define(alias, new Symbol.ModuleSymbol(alias, exports, imp.span()));
+        } catch (ModuleResolver.CffiImportWithoutNativeLibraryException e) {
+            // The v1.2 C FFI manifest policy (docs/spec-v1.2.md:1891):
+            // importing a C FFI declaration file without an externals
+            // entry specifying nativeLibrary is an invalid project
+            // configuration — E2010 at the import span, never a
+            // module-not-found E2003.
+            error(DiagnosticCode.E2010,
+                "C FFI declaration file '" + e.modulePath()
+                    + "' is imported without an externals entry "
+                    + "specifying nativeLibrary (a C FFI entry must "
+                    + "include nativeLibrary)",
+                imp.span());
         } catch (ModuleResolver.ModuleNotFoundException e) {
             error(DiagnosticCode.E2003, "Module not found: '" + path + "'", imp.span());
         } finally {
@@ -1061,6 +1073,11 @@ public final class NameResolver {
                 modulePath, this.modulePath, new HashSet<>());
             return exports.containsKey(functionName);
         } catch (ModuleResolver.ModuleNotFoundException e) {
+            return false;
+        } catch (ModuleResolver.CffiImportWithoutNativeLibraryException e) {
+            // Unreachable for a module whose import already passed the
+            // manifest-policy check; an unexported function is simply
+            // not found.
             return false;
         }
     }

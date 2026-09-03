@@ -60,8 +60,8 @@ import java.util.stream.Stream;
  *       {@code benchmark}-kind) — with the row pins the design
  *       dispositions require: every C FFI declaration-rules fixture
  *       pins exactly {@code compile-error E7001|E7002} and the C FFI
- *       invalid-manifest-policy fixture pins exactly the tracked
- *       {@code known-fail compile-error E2010} (D6).</li>
+ *       invalid-manifest-policy fixture pins exactly the promoted
+ *       {@code compile-error E2010} manifest-policy rejection (D6).</li>
  * </ol>
  *
  * <p>The suite runs from the repository root (the {@code run_tests.sh}
@@ -627,12 +627,13 @@ public class CoverageManifestCorpusTest {
                 }
                 if (FFI_INVALID_MANIFEST_POLICY_REQUIREMENT
                         .equals(requirement)) {
-                    if (tag.equals("known-fail compile-error E2010")) {
+                    if (tag.equals("compile-error E2010")) {
                         return null;
                     }
                     return "the C FFI invalid-manifest-policy row requires "
-                        + "the exact tracked known-fail compile-error "
-                        + "E2010 pin, got " + describe(tag);
+                        + "the exact compile-error E2010 pin (the "
+                        + "promoted C FFI manifest-policy rejection at "
+                        + "the import), got " + describe(tag);
                 }
                 if (!isCompileClassification(tag)) {
                     return "a compile-kind fixture must be compile-ok, "

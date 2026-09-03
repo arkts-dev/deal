@@ -6,6 +6,7 @@ import java.nio.file.Path;
 import java.util.List;
 
 /**
+
  * std/time.nowMillis branch-1 state pin (ISSUE-0369; header flip applied
  * by the disposition-application unit ISSUE-0380).
  *
@@ -25,12 +26,14 @@ import java.util.List;
  * ({@code deal.test.JvmConformanceTest}), the direct suites
  * ({@code luajit test_stdlib.lua}, {@code node test_stdlib_js.js}) green
  * with their nowMillis cases, and the slice pins green
+
  * ({@code deal.test.BackendConformanceTest}) — is exercised on every gate
  * run by {@code run_tests.sh}. The JS lane has no corpus runner at this
  * state: {@code test/JsConformanceTest.java} is compiled but never launched
  * by {@code run_tests.sh} — a recorded fact
  * (js-v12-completion-architecture D5), not a failure.
  *
+
  * <p>Lifecycle: the disposition-application unit (ISSUE-0380) flipped the
  * fixture header once to the canonical {@code runtime-error E8004}
  * header (std-time-nowmillis-resolution-and-disposition D2); the
@@ -40,9 +43,14 @@ import java.util.List;
  * landed: {@code checkInt}'s single profile-gated range arm (the
  * module-private {@code $int32} flag and the idempotent
  * {@code setInt32Mode} selector), no JS-only legacy-range member, and no
- * second range gate. The retained implementation texts, the runtime's
+ * second range gate. The post-activation fixture-header pins below
+ * close the one registry state the gate-closure shape check cannot
+ * distinguish: a re-flipped {@code runtime-ok} header fails this pin
+ * and {@code ./run_tests.sh} exits 1 (luajit-gate-closure D4). The
+ * retained implementation texts, the runtime's
  * no-time-member shape, the skip registry absence, and the legacy slice
  * pins are permanent under the epic and must keep passing unchanged.
+
  */
 public class StdlibTimePreActivationPinTest {
 
@@ -55,7 +63,7 @@ public class StdlibTimePreActivationPinTest {
     }
 
     public static void main(String[] args) throws Exception {
-        System.out.println("=== std/time.nowMillis Pre-Activation Pin Tests (ISSUE-0369) ===\n");
+        System.out.println("=== std/time.nowMillis Disposition Pin Tests (ISSUE-0369) ===\n");
         testRetainedJsImplementation();
         testRetainedLuaImplementation();
         testRetainedJvmEmission();
@@ -150,11 +158,11 @@ public class StdlibTimePreActivationPinTest {
     }
 
     // =========================================================================
-    // Shared corpus fixture: still runtime-ok, no disposition flip applied
+    // Shared corpus fixture: the canonical post-activation branch-1 header
     // =========================================================================
 
     private static void testFixtureHeader() throws IOException {
-        System.out.println("-- shared corpus fixture header --");
+        System.out.println("-- shared corpus fixture header (post-activation) --");
         Path fixture = Path.of(
             "test/conformance/backend-runtime/stdlib-edge/time-now-millis-positive.deal");
         List<String> ls = Files.readAllLines(fixture);
@@ -163,6 +171,7 @@ public class StdlibTimePreActivationPinTest {
         if (ls.size() >= 4) {
             check("// @spec: Standard library declarations — std/time".equals(ls.get(0)),
                 "the fixture keeps the canonical @spec line");
+
             check(("// @description: std/time.nowMillis under the v1.2 signed-int32 "
                     + "gate — the retained ()->int route raises E8004 for "
                     + "contemporary epoch milliseconds (locked TIME_NOW_MILLIS "
@@ -172,14 +181,17 @@ public class StdlibTimePreActivationPinTest {
                 "the fixture declares the landed @expected: runtime-error E8004");
             check("// @features: stdlib, time, runtime-errors".equals(ls.get(3)),
                 "the fixture carries the canonical landed @features line");
+
         }
         String text = Files.readString(fixture);
         check(!text.contains("runtime-ok"),
             "the fixture contains no runtime-ok expectation "
+
                 + "(the canonical disposition flip landed once)");
         check(count(text, "runtime-error E8004") == 1,
             "the fixture's runtime-error E8004 expectation appears exactly "
                 + "once (single @expected line)");
+
         check(count(text, "@expected") == 1,
             "the fixture has exactly one @expected line");
     }

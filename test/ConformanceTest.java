@@ -185,7 +185,17 @@ public class ConformanceTest {
      * {@code runtime-error E8004} under the legacy-authority catalog row
      * (zero v1.2 credit). The machinery stays: any future
      * design-sanctioned interim state registers here, and a stale entry
-     * still fails the gate with the promotion instruction.</p>
+     * still fails the gate with the promotion instruction.
+     *
+     * <p>The empty registry is the strict-mode activation key of the
+     * gate-closure check (luajit-gate-closure D2). The sanctioned
+     * pre-unit ISSUE-0237 pair this registry carried — path
+     * {@code backend-runtime/stdlib-edge/time-now-millis-positive.deal},
+     * pinned expectation {@code runtime-ok}, artifact {@code E8004},
+     * issue {@code ISSUE-0237} — remains the dormant-mode reference of
+     * the registry-shape check; every other registry shape is a gate
+     * failure with the promotion instruction naming the entry
+     * removal.</p>
      */
     private static final Map<String, StagedEntry> STAGED_FAILURES =
         new LinkedHashMap<>();
@@ -2082,7 +2092,8 @@ public class ConformanceTest {
         @Override
         public Map<String, Type> resolveModule(String modulePath,
                 String importingModule, Set<String> modulesInProgress)
-                throws ModuleNotFoundException {
+                throws ModuleNotFoundException,
+                    CffiImportWithoutNativeLibraryException {
             // Check spec-listed stdlib modules
             if (stdlibExports.containsKey(modulePath)) {
                 return stdlibExports.get(modulePath);
@@ -2110,7 +2121,8 @@ public class ConformanceTest {
             // Try relative file import
             Path resolved = resolveRelativePath(modulePath);
             if (resolved != null && Files.exists(resolved)) {
-                return resolveFileModule(resolved, modulesInProgress);
+                return resolveFileModule(resolved, modulePath,
+                    modulesInProgress);
             }
 
             throw new ModuleNotFoundException("Module not found: " + modulePath);
@@ -2315,7 +2327,10 @@ public class ConformanceTest {
         }
 
         private Map<String, Type> resolveFileModule(Path file,
-                Set<String> modulesInProgress) throws ModuleNotFoundException {
+                String importSpecifier,
+                Set<String> modulesInProgress)
+                throws ModuleNotFoundException,
+                    CffiImportWithoutNativeLibraryException {
             try {
                 // ISSUE-0272 D8 item 2a: in-memory seam site — classification
                 // headers are stripped before the lexer; parseMetadata keeps
@@ -2334,6 +2349,19 @@ public class ConformanceTest {
                 ParseResult parseResult = parser.parse();
                 if (parseResult.hasErrors())
                     throw new ModuleNotFoundException("Parse errors in " + filename);
+
+                // The v1.2 C FFI manifest policy (docs/spec-v1.2.md:1891):
+                // a C FFI declaration file (a .d.deal file carrying
+                // // @extern-c) may only be imported through a deal.json
+                // externals entry specifying nativeLibrary. The
+                // conformance frontend pipeline has no manifest, so such
+                // an import is an invalid project configuration — E2010
+                // at the import span via the checker's manifest-policy
+                // rejection.
+                if (parseResult.program().fileDirectives().externC()) {
+                    throw new ModuleResolver.CffiImportWithoutNativeLibraryException(
+                        importSpecifier);
+                }
 
                 // v1.2 identity carriage: the companion's extracted class
                 // types carry the harness classification's identities

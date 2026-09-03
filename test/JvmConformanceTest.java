@@ -1165,7 +1165,8 @@ public class JvmConformanceTest {
         @Override
         public Map<String, Type> resolveModule(String modulePath,
                 String importingModule, Set<String> modulesInProgress)
-                throws ModuleNotFoundException {
+                throws ModuleNotFoundException,
+                    CffiImportWithoutNativeLibraryException {
             if (stdlibExports.containsKey(modulePath)) {
                 return stdlibExports.get(modulePath);
             }
@@ -1196,6 +1197,20 @@ public class JvmConformanceTest {
                     if (parseResult.hasErrors()) {
                         throw new ModuleNotFoundException("Parse errors in "
                             + resolved);
+                    }
+                    // The v1.2 C FFI manifest policy
+                    // (docs/spec-v1.2.md:1891): a C FFI declaration file
+                    // (a .d.deal file carrying // @extern-c) may only be
+                    // imported through a deal.json externals entry
+                    // specifying nativeLibrary. The conformance frontend
+                    // pipeline has no manifest, so such an import is an
+                    // invalid project configuration — E2010 at the
+                    // import span via the checker's manifest-policy
+                    // rejection.
+                    if (parseResult.program().fileDirectives().externC()) {
+                        throw new ModuleResolver
+                            .CffiImportWithoutNativeLibraryException(
+                                modulePath);
                     }
                     ExportExtractor extractor = new ExportExtractor(
                         resolved.toString(), isDecl);
