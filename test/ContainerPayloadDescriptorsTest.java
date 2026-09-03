@@ -104,6 +104,18 @@ public class ContainerPayloadDescriptorsTest {
                 "String -> the string descriptor"),
             new Case(Type.Table.INSTANCE, RuntimeDescriptor.Table.INSTANCE, "table",
                 "Table -> the table descriptor"),
+            new Case(Type.Bytes.INSTANCE, RuntimeDescriptor.Bytes.INSTANCE, "bytes",
+                "Bytes -> the bytes descriptor (ISSUE-0158)"),
+            new Case(new Type.Array(Type.Bytes.INSTANCE),
+                new RuntimeDescriptor.Array(RuntimeDescriptor.Bytes.INSTANCE),
+                "[bytes]", "Array(Bytes) recursion into the bytes member"),
+            new Case(new Type.Nullable(Type.Bytes.INSTANCE),
+                new RuntimeDescriptor.Nullable(RuntimeDescriptor.Bytes.INSTANCE),
+                "?bytes", "Nullable(Bytes) recursion into the bytes member"),
+            new Case(new Type.Func(List.of(Type.Bytes.INSTANCE), Type.Null.INSTANCE),
+                new RuntimeDescriptor.Func(
+                    List.of(RuntimeDescriptor.Bytes.INSTANCE), RuntimeDescriptor.Null.INSTANCE),
+                "(bytes)->null", "Func with a bytes parameter"),
             new Case(IdentityTestFixtures.classType("User", "src/app"),
                 new RuntimeDescriptor.Class(new ClassId("src/app", "User")),
                 "@src/app/User", "Class(name, modulePath) -> Class(new ClassId(modulePath, name))"),
@@ -221,52 +233,34 @@ public class ContainerPayloadDescriptorsTest {
     // =========================================================================
 
     static void testFailClosedUnrepresentable() {
-        System.out.println("-- fail-closed bytes/Error derivations and the exact "
+        System.out.println("-- fail-closed Error derivations and the exact "
             + "DESCRIPTOR_UNREPRESENTABLE detail --");
 
-        expectDefect(() -> ContainerPayloadDescriptors.elementDescriptorOf(
-                Type.Bytes.INSTANCE),
-            "elementDescriptorOf(Type.Bytes)");
-        expectDefect(() -> ContainerPayloadDescriptors.resultDescriptorOf(
-                Type.Bytes.INSTANCE),
-            "resultDescriptorOf(Type.Bytes)");
+        // Type.Bytes is descriptor-representable since ISSUE-0158 (the
+        // bytes member of the closed schema); only the internal Error
+        // sentinel stays fail closed at any depth.
         expectDefect(() -> ContainerPayloadDescriptors.elementDescriptorOf(
                 Type.Error.INSTANCE),
             "elementDescriptorOf(Type.Error)");
         expectDefect(() -> ContainerPayloadDescriptors.resultDescriptorOf(
                 Type.Error.INSTANCE),
             "resultDescriptorOf(Type.Error)");
-        expectDefect(() -> ContainerPayloadDescriptors.elementDescriptorOf(
-                new Type.Array(Type.Bytes.INSTANCE)),
-            "elementDescriptorOf(Array(Bytes)) — no bytes descriptor at any depth");
-        expectDefect(() -> ContainerPayloadDescriptors.resultDescriptorOf(
-                new Type.Nullable(Type.Bytes.INSTANCE)),
-            "resultDescriptorOf(Nullable(Bytes)) — no bytes descriptor at any depth");
-        expectDefect(() -> ContainerPayloadDescriptors.elementDescriptorOf(
-                new Type.Func(List.of(Type.Bytes.INSTANCE), Type.Null.INSTANCE)),
-            "elementDescriptorOf(Func with a bytes parameter)");
         expectDefect(() -> ContainerPayloadDescriptors.resultDescriptorOf(
                 new Type.Array(Type.Error.INSTANCE)),
             "resultDescriptorOf(Array(Error)) — no sentinel descriptor at any depth");
 
-        ContainerPayloadDescriptors.Defect bytesDefect = defect(
-            () -> ContainerPayloadDescriptors.elementDescriptorOf(Type.Bytes.INSTANCE));
         ContainerPayloadDescriptors.Defect errorDefect = defect(
             () -> ContainerPayloadDescriptors.resultDescriptorOf(Type.Error.INSTANCE));
-        check(bytesDefect.getMessage().contains("Type.Bytes"),
-            "the bytes defect names the bytes primitive");
-        check(bytesDefect.getMessage().contains("elementDescriptorOf"),
-            "the bytes defect names the failing derivation position");
         check(errorDefect.getMessage().contains("Type.Error"),
             "the Error defect names the checker sentinel");
         check(errorDefect.getMessage().contains("resultDescriptorOf"),
             "the Error defect names the failing derivation position");
-        check(bytesDefect.getCause() != null
-                && bytesDefect.getCause().getMessage().contains("Type.Bytes"),
+        check(errorDefect.getCause() != null
+                && errorDefect.getCause().getMessage().contains("Type.Error"),
             "the defect preserves the underlying fail-closed cause");
 
         ModuleId module = new ModuleId("test.module");
-        for (ContainerPayloadDescriptors.Defect d : List.of(bytesDefect, errorDefect)) {
+        for (ContainerPayloadDescriptors.Defect d : List.of(errorDefect)) {
             LoweringFailureDetail detail =
                 ContainerPayloadDescriptors.loweringFailureDetail(module, d);
             check("test.module".equals(detail.module()),

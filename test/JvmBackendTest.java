@@ -9957,6 +9957,37 @@ public class JvmBackendTest {
                     + "      alias[2] = 7;\n"
                     + "      return b[2];",
                 "7"),
+            new BytesPin("identity-alias-eq", "",
+                "let a: bytes = bytes(2);\n"
+                    + "      let b: bytes = a;\n"
+                    + "      if (!(a === b)) { throw { code: \"TEST_FAIL\", message: \"alias identity\" }; }\n"
+                    + "      return 1;",
+                "1"),
+            new BytesPin("identity-distinct-ne", "",
+                "let a: bytes = bytes(2);\n"
+                    + "      let c: bytes = bytes(2);\n"
+                    + "      if (a === c) { throw { code: \"TEST_FAIL\", message: \"distinct buffers\" }; }\n"
+                    + "      if (!(a !== c)) { throw { code: \"TEST_FAIL\", message: \"distinct ne\" }; }\n"
+                    + "      return 1;",
+                "1"),
+            new BytesPin("identity-nullable-vs-null", "",
+                "let n: bytes | null = null;\n"
+                    + "      if (!(n === null)) { throw { code: \"TEST_FAIL\", message: \"null eq\" }; }\n"
+                    + "      if (n !== null) { throw { code: \"TEST_FAIL\", message: \"null ne\" }; }\n"
+                    + "      let m: bytes | null = bytes(1);\n"
+                    + "      if (m === null) { throw { code: \"TEST_FAIL\", message: \"value eq\" }; }\n"
+                    + "      if (!(m !== null)) { throw { code: \"TEST_FAIL\", message: \"value ne\" }; }\n"
+                    + "      if (!(null === n)) { throw { code: \"TEST_FAIL\", message: \"null right\" }; }\n"
+                    + "      return 1;",
+                "1"),
+            new BytesPin("identity-nullable-pair", "",
+                "let a: bytes | null = bytes(1);\n"
+                    + "      let b: bytes | null = a;\n"
+                    + "      if (!(a === b)) { throw { code: \"TEST_FAIL\", message: \"pair eq\" }; }\n"
+                    + "      let c: bytes | null = bytes(1);\n"
+                    + "      if (a === c) { throw { code: \"TEST_FAIL\", message: \"pair distinct\" }; }\n"
+                    + "      return 1;",
+                "1"),
             new BytesPin("fresh-instances", "",
                 "let a: bytes = bytes(2);\n"
                     + "      let c: bytes = bytes(2);\n"
@@ -10605,9 +10636,8 @@ public class JvmBackendTest {
 
         // The bytes/table carrier gate stays: a function-type
         // ANNOTATION whose signature contains a table carrier raises
-        // E6000 with the int32-bytes lane's message (bytes carriers
-        // keep their own pinned E6000 — bytes is unsupported until the
-        // int32-bytes lane lands).
+        // E6000 with the bytes/table-carrier message (the recursive
+        // bytes-bearing wrapper closure stays deferred to ISSUE-0160).
         Frontend tableSig = compileFrontend("""
             async function pick(t: table): int { return 1; }
             export async function test(): int {
@@ -10626,7 +10656,7 @@ public class JvmBackendTest {
                     .anyMatch(d -> "E6000".equals(d.code())
                         && d.message().contains("bytes/table carriers")),
                 "table carriers inside an annotation signature stay E6000 "
-                    + "(int32-bytes lane message): "
+                    + "(bytes/table-carrier message): "
                     + tableRes.diagnostics());
         }
 

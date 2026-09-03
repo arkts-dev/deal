@@ -339,6 +339,17 @@ public class BoundaryTableCorpusTest {
             case RuntimeDescriptor.Number ignored -> BoundaryValueView.ofNumber(1.5);
             case RuntimeDescriptor.String ignored -> BoundaryValueView.of(ActualKind.STRING);
             case RuntimeDescriptor.Table ignored -> BoundaryValueView.of(ActualKind.TABLE);
+            case RuntimeDescriptor.Bytes ignored -> {
+                // Bytes boundaries are backend-owned (ISSUE-0158): the
+                // closed boundary-assignment table has no bytes cell and
+                // no matching view can be constructed — no corpus row
+                // carries a bytes descriptor, so this arm is a
+                // fail-closed pin, never production-reachable.
+                fail("no matching view exists for the bytes descriptor: bytes "
+                    + "boundaries are backend-owned (ISSUE-0158) and the closed "
+                    + "boundary-assignment table has no bytes cell");
+                yield BoundaryValueView.nullView();
+            }
             case RuntimeDescriptor.Class cls -> BoundaryValueView.ofClass(cls.classId().text());
             case RuntimeDescriptor.Array array ->
                 BoundaryValueView.ofArray(matchingView(array.element()));

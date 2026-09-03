@@ -102,6 +102,7 @@ import deal.semantic.ir.SourceSpan;
 import deal.semantic.ir.UnarySelector;
 import deal.semantic.ir.ValueId;
 import deal.types.Type;
+import deal.types.Types;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -309,9 +310,10 @@ import java.util.Set;
  *       element descriptor derived from the recorded array operand type,
  *       {@code [T]} → element {@code T}; a fresh binding per iteration,
  *       mechanics E6). The element type is derived fail-closed through
- *       the {@code ContainerPayloadDescriptors} bridge — an
- *       unrepresentable element ({@code bytes}) is E6005
- *       {@code DESCRIPTOR_UNREPRESENTABLE}, never an invented
+ *       the {@code ContainerPayloadDescriptors} bridge; a bytes-bearing
+ *       element (representable since the ISSUE-0158 schema lift, but
+ *       without shared bytes value semantics) is the container pipeline's
+ *       {@code CONSTRUCT_UNLOWERED} producer guard, never an invented
  *       descriptor.</li>
  * </ul>
  *
@@ -448,10 +450,12 @@ import java.util.Set;
  * window, never a reroute; LEGACY routing for modules containing
  * unlowerable constructs is the plan-time capability-gating consequence,
  * never caused by this E6005. Descriptor positions use
- * {@link ContainerPayloadDescriptors}; a {@code Type.Bytes}/{@code
- * Type.Error} derivation converts at the same seam to E6005
+ * {@link ContainerPayloadDescriptors}; a {@code Type.Error} derivation
+ * converts at the same seam to E6005
  * {@code DESCRIPTOR_UNREPRESENTABLE} — never an invented descriptor,
- * never a crash.</p>
+ * never a crash — and a bytes-bearing container element position stays
+ * the container pipeline's fail-closed exclusion (ISSUE-0158 bytes value
+ * semantics are backend-owned).</p>
  *
  * <p><b>The binding-core child (ISSUE-0444).</b> {@link
  * #lowerModuleBindingCore} drives the same session in binding-core mode:
@@ -5877,8 +5881,28 @@ public final class SemanticLowerer {
          * bridge — an unrepresentable element ({@code bytes}) is a
          * producer defect, never an invented descriptor.
          */
+        /**
+         * The shared container pipeline's bytes-element exclusion
+         * (ISSUE-0158 boundary): bytes <em>value</em> semantics are
+         * backend-owned (the retained Lua/JVM emitters), so a container
+         * element position whose checked type contains bytes — at any
+         * depth — cannot produce an array/boundary op here. The bytes
+         * element descriptor exists since the ISSUE-0158 schema lift, but
+         * no shared bytes value semantics exist, so the position fails
+         * closed as a producer defect (never an invented element check).
+         */
+        private RuntimeDescriptor containerElementDescriptor(Type element) {
+            if (Types.containsBytes(element)) {
+                throw new ConstructUnlowered("a container element position whose checked "
+                    + "type contains bytes: bytes value semantics are backend-owned "
+                    + "(ISSUE-0158) and the shared container pipeline excludes them "
+                    + "(producer defect, never an invented element check)");
+            }
+            return ContainerPayloadDescriptors.elementDescriptorOf(element);
+        }
+
         private OpId lowerArrayForOf(ForOfStatement stmt, Type.Array arrayType) {
-            ContainerPayloadDescriptors.elementDescriptorOf(arrayType.element());
+            containerElementDescriptor(arrayType.element());
             BlockId bodyBlock = allocateBlock();
             ValueId iterable = lowerExpression(stmt.iterable());
             ForEachFrame frame = openForEachScope(stmt.varName());
@@ -6477,7 +6501,7 @@ public final class SemanticLowerer {
         private ValueId lowerArrayIndexAssign(AssignmentExpr assignment, IndexExpr index,
                                               Type.Array arrayType, ValueId slot) {
             RuntimeDescriptor elementDescriptor =
-                ContainerPayloadDescriptors.elementDescriptorOf(arrayType.element());
+                containerElementDescriptor(arrayType.element());
             OpId chainOpId = ids.nextOpId(module, nextOrdinal++, 0);
             chainParents.push(chainOpId);
             ValueId value;
@@ -6683,7 +6707,7 @@ public final class SemanticLowerer {
         private void lowerArrayIndexDelete(DeleteStatement delete, IndexExpr index,
                                            Type.Array arrayType) {
             RuntimeDescriptor elementDescriptor =
-                ContainerPayloadDescriptors.elementDescriptorOf(arrayType.element());
+                containerElementDescriptor(arrayType.element());
             OpId chainOpId = ids.nextOpId(module, nextOrdinal++, 0);
             chainParents.push(chainOpId);
             OpId containerOp;
@@ -8026,7 +8050,7 @@ public final class SemanticLowerer {
                     + typeName(type) + " (a checked ArrayLiteralExpr must be array-typed)");
             }
             RuntimeDescriptor elementDescriptor =
-                ContainerPayloadDescriptors.elementDescriptorOf(arrayType.element());
+                containerElementDescriptor(arrayType.element());
             List<ValueId> values = new ArrayList<>();
             for (ExpressionNode element : literal.elements()) {
                 values.add(lowerExpression(element));

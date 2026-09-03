@@ -92,7 +92,7 @@ import java.util.Set;
  *       phase, registry-instantiated message carrying the detail).</li>
  *   <li>The positive corpus: one passing synthetic unit per
  *       {@link SemanticOpKind} (55), every closed enum value in a passing
- *       unit (3 unary selectors, 40 binary selectors, 4 call modes,
+ *       unit (3 unary selectors, 42 binary selectors, 4 call modes,
  *       3 async sources, 2 parameter boundary modes, 4 index modes,
  *       2 iteration modes, 6 control selectors, 3 capture modes,
  *       2 realization forms, 25 boundary kinds, 24 policy names,
@@ -826,7 +826,7 @@ public class SemanticIrValidatorTest {
                 nextValue(), RuntimeDescriptor.Number.INSTANCE, FailurePolicyId.NO_DEAL_FAILURE,
                 null)), unary, "NUMBER_NEG");
 
-        // Binary selectors: all 40 with their pinned selector policies.
+        // Binary selectors: all 42 with their pinned selector policies.
         for (BinarySelector selector : BinarySelector.values()) {
             NullableSide side = selector.name().startsWith("NULLABLE") ? NullableSide.BOTH : null;
             RuntimeDescriptor inner = selector.name().startsWith("NULLABLE") ? INT : null;
@@ -1117,7 +1117,7 @@ public class SemanticIrValidatorTest {
 
         // Assert complete enumeration coverage.
         check(unary.size() == 3, "all 3 unary selectors appear in passing units; got " + unary);
-        check(binary.size() == 40, "all 40 binary selectors appear in passing units; got " + binary.size());
+        check(binary.size() == 42, "all 42 binary selectors appear in passing units; got " + binary.size());
         check(callModes.size() == 4, "all 4 call modes appear in passing units; got " + callModes);
         check(asyncSources.size() == 3, "all 3 async sources appear in passing units; got " + asyncSources);
         check(paramModes.size() == 2, "both parameter boundary modes appear in passing units; got " + paramModes);

@@ -525,7 +525,8 @@ import java.util.function.Function;
  * (primitives/string/null, arrays, classes, nullables, and nested
  * sync/async function types — the shared wrapper machinery,
  * ISSUE-0301 D2), with only bytes/table carriers inside the signature
- * staying resolveTypeNode-gated with E6000 (the int32-bytes lane).
+ * staying resolveTypeNode-gated with E6000 (deferred to the
+ * ISSUE-0160 recursive bytes-bearing wrapper closure).
  * Async function expressions emit through the same closure machinery
  * with the async descriptor marker (ISSUE-0304), and block-level async
  * function declarations emit through the block-level cell + anonymous
@@ -8435,8 +8436,8 @@ public final class JvmBackend {
         String shape = registerWrapperShape(funcType);
         if (shape == null) {
             unsupported("function values whose signature contains "
-                + "bytes/table carriers (deferred to the int32-bytes "
-                + "lane)", fd.span());
+                + "bytes/table carriers (deferred to the ISSUE-0160 recursive "
+                + "bytes-bearing wrapper closure)", fd.span());
             return;
         }
         String mapped = declareLocal(fd.name(), funcType);
@@ -8477,8 +8478,8 @@ public final class JvmBackend {
         String shape = registerWrapperShape(ft);
         if (shape == null) {
             unsupported("function values whose signature contains "
-                + "bytes/table carriers (deferred to the int32-bytes "
-                + "lane)", fe.span());
+                + "bytes/table carriers (deferred to the ISSUE-0160 recursive "
+                + "bytes-bearing wrapper closure)", fe.span());
             return "null";
         }
         Type returnType = ft.returnType();
@@ -10202,8 +10203,8 @@ public final class JvmBackend {
             // funcType arm stays defensive.
             if (fs.funcType() == null) {
                 unsupported("function values whose signature contains "
-                    + "bytes/table carriers (deferred to the int32-bytes "
-                    + "lane)", id.span());
+                    + "bytes/table carriers (deferred to the ISSUE-0160 recursive "
+                    + "bytes-bearing wrapper closure)", id.span());
                 return "null";
             }
             return javaName(id.name()) + "$fn";
@@ -10339,13 +10340,19 @@ public final class JvmBackend {
                     || rightType instanceof Type.Nullable) {
                 return emitNullableComparison(bin, op == BinaryOp.EQ);
             }
-            // Reference identity comparisons: T[] === T[] and C === C are
-            // value-equality by identity (LuaJIT's `==` on tables —
-            // array wrappers and class instances are the same shape there),
-            // exactly like the Lua backend's plain `(a == b)` fallthrough.
+            // Reference identity comparisons: T[] === T[], C === C, and
+            // bytes === bytes are value-equality by identity (LuaJIT's
+            // `==` on tables — array wrappers, class instances, and
+            // the runtime bytes carriers are the same shapes there) —
+            // Java `==` on the wrapper/$DealRt.Bytes references is the
+            // pinned reference-identity comparison (ISSUE-0158, the
+            // binary-comparison-selectors B-D7 gate lift): alias === alias
+            // true, distinct buffers false. Operands evaluate left to
+            // right exactly once.
             if (leftType instanceof Type.Array
                     || leftType instanceof Type.Class
-                    || leftType instanceof Type.Table) {
+                    || leftType instanceof Type.Table
+                    || leftType instanceof Type.Bytes) {
                 List<String> idOps = emitOperandsInOrder(
                     List.of(bin.left(), bin.right()));
                 return op == BinaryOp.EQ
@@ -11261,15 +11268,15 @@ public final class JvmBackend {
         String shape = registerWrapperShape(target);
         if (shape == null) {
             unsupported("function values whose signature contains "
-                + "bytes/table carriers (deferred to the int32-bytes "
-                + "lane)", value.span());
+                + "bytes/table carriers (deferred to the ISSUE-0160 recursive "
+                + "bytes-bearing wrapper closure)", value.span());
             return "null";
         }
         String actualShape = registerWrapperShape(actual);
         if (actualShape == null) {
             unsupported("function values whose signature contains "
-                + "bytes/table carriers (deferred to the int32-bytes "
-                + "lane)", value.span());
+                + "bytes/table carriers (deferred to the ISSUE-0160 recursive "
+                + "bytes-bearing wrapper closure)", value.span());
             return "null";
         }
         // Evaluate the value expression first (strict left-to-right /
@@ -11393,8 +11400,8 @@ public final class JvmBackend {
         String shape = registerWrapperShape(target);
         if (shape == null) {
             unsupported("function values whose signature contains "
-                + "bytes/table carriers (deferred to the int32-bytes "
-                + "lane)", value.span());
+                + "bytes/table carriers (deferred to the ISSUE-0160 recursive "
+                + "bytes-bearing wrapper closure)", value.span());
             return "null";
         }
         StringBuilder sb = new StringBuilder("new ").append(shape)
@@ -11613,8 +11620,8 @@ public final class JvmBackend {
         String shape = registerWrapperShape(actual);
         if (shape == null) {
             unsupported("function values whose signature contains "
-                + "bytes/table carriers (deferred to the int32-bytes "
-                + "lane)", value.span());
+                + "bytes/table carriers (deferred to the ISSUE-0160 recursive "
+                + "bytes-bearing wrapper closure)", value.span());
             return "null";
         }
         String tmp = nextFunctionValueTempName();
@@ -11904,8 +11911,8 @@ public final class JvmBackend {
             String shape = registerWrapperShape(f);
             if (shape == null) {
                 unsupported("function values whose signature contains "
-                    + "bytes/table carriers (deferred to the int32-bytes "
-                    + "lane)", call.callee().span());
+                    + "bytes/table carriers (deferred to the ISSUE-0160 recursive "
+                    + "bytes-bearing wrapper closure)", call.callee().span());
                 return "null";
             }
             String callee = emitExpression(call.callee());
@@ -13832,7 +13839,8 @@ public final class JvmBackend {
                 // covers), preserving the marker so the wrapper
                 // machinery carries async function values unchanged.
                 // Bytes/table carriers inside the signature stay
-                // rejected here (the int32-bytes lane's carriers) —
+                // rejected here (deferred to the ISSUE-0160 recursive
+                // bytes-bearing wrapper closure) —
                 // E6000, never a silent miscompile (DEAL v1.2 function
                 // types carry no rest arm).
                 List<Type> paramTypes = new ArrayList<>();
@@ -13846,7 +13854,8 @@ public final class JvmBackend {
                     if (hasBytesOrTableCarrier(pt)) {
                         unsupported("function values whose signature "
                             + "contains bytes/table carriers (deferred to "
-                            + "the int32-bytes lane)", p.type().span());
+                            + "the ISSUE-0160 recursive bytes-bearing "
+                            + "wrapper closure)", p.type().span());
                         ok = false;
                         break;
                     }
@@ -13857,8 +13866,8 @@ public final class JvmBackend {
                     ok = false;
                 } else if (hasBytesOrTableCarrier(rt)) {
                     unsupported("function values whose signature contains "
-                        + "bytes/table carriers (deferred to the int32-bytes "
-                        + "lane)", ft.returnType().span());
+                        + "bytes/table carriers (deferred to the ISSUE-0160 recursive "
+                        + "bytes-bearing wrapper closure)", ft.returnType().span());
                     ok = false;
                 }
                 yield ok ? new Type.Func(paramTypes, rt, ft.isAsync())
@@ -13870,7 +13879,8 @@ public final class JvmBackend {
     /** True when the type tree carries a {@code bytes} or {@code table}
      * carrier anywhere inside it (arrays, nullables, and nested
      * function signatures recurse): those carriers stay rejected at
-     * function-type annotations for the int32-bytes lane (E6000).
+     * function-type annotations for the ISSUE-0160 recursive
+     * bytes-bearing wrapper closure (E6000).
      * Every other shape — primitives/string/null, arrays, classes,
      * nullables, and nested sync/async function types — is carried by
      * the shared per-signature wrapper machinery (ISSUE-0301 D2). */
@@ -13976,8 +13986,8 @@ public final class JvmBackend {
                 String shape = registerWrapperShape(f);
                 if (shape == null) {
                     unsupported("function values whose signature contains "
-                        + "bytes/table carriers (deferred to the int32-bytes "
-                        + "lane)", span);
+                        + "bytes/table carriers (deferred to the ISSUE-0160 recursive "
+                        + "bytes-bearing wrapper closure)", span);
                     yield null;
                 }
                 yield shape;
@@ -14063,8 +14073,8 @@ public final class JvmBackend {
                 String shape = registerWrapperShape(f);
                 if (shape == null) {
                     unsupported("function values whose signature contains "
-                        + "bytes/table carriers (deferred to the int32-bytes "
-                        + "lane)", span);
+                        + "bytes/table carriers (deferred to the ISSUE-0160 recursive "
+                        + "bytes-bearing wrapper closure)", span);
                     yield null;
                 }
                 yield shape;
@@ -14115,7 +14125,7 @@ public final class JvmBackend {
                 }
                 case Type.Bytes ignored -> {
                     unsupported("arrays with element type " + typeName(element)
-                        + " (bytes is unsupported — ISSUE-0158 boundary)", span);
+                        + " (recursive bytes-bearing closure — ISSUE-0160)", span);
                     yield null;
                 }
                 case Type.Func f -> {
@@ -14143,7 +14153,7 @@ public final class JvmBackend {
             }
             case Type.Bytes ignored -> {
                 unsupported("arrays with element type " + typeName(element)
-                    + " (bytes is unsupported — ISSUE-0158 boundary)", span);
+                    + " (recursive bytes-bearing closure — ISSUE-0160)", span);
                 yield null;
             }
             case Type.Array inner -> {
@@ -14438,8 +14448,8 @@ public final class JvmBackend {
                 && ne.inner() instanceof Type.Func f) {
             if (registerWrapperShape(f) == null) {
                 unsupported("function arrays whose signature contains "
-                    + "bytes/table carriers (deferred to the int32-bytes "
-                    + "lane)", span);
+                    + "bytes/table carriers (deferred to the ISSUE-0160 recursive "
+                    + "bytes-bearing wrapper closure)", span);
                 return null;
             }
             registerRefArrayShape(element);
@@ -14453,8 +14463,8 @@ public final class JvmBackend {
         if (element instanceof Type.Func f) {
             if (registerWrapperShape(f) == null) {
                 unsupported("function arrays whose signature contains "
-                    + "bytes/table carriers (deferred to the int32-bytes "
-                    + "lane)", span);
+                    + "bytes/table carriers (deferred to the ISSUE-0160 recursive "
+                    + "bytes-bearing wrapper closure)", span);
                 return null;
             }
             registerRefArrayShape(element);
@@ -14491,8 +14501,8 @@ public final class JvmBackend {
                 && ne.inner() instanceof Type.Func f) {
             if (registerWrapperShape(f) == null) {
                 unsupported("function arrays whose signature contains "
-                    + "bytes/table carriers (deferred to the int32-bytes "
-                    + "lane)", span);
+                    + "bytes/table carriers (deferred to the ISSUE-0160 recursive "
+                    + "bytes-bearing wrapper closure)", span);
                 return null;
             }
             registerRefArrayShape(element);
@@ -14506,8 +14516,8 @@ public final class JvmBackend {
         if (element instanceof Type.Func f) {
             if (registerWrapperShape(f) == null) {
                 unsupported("function arrays whose signature contains "
-                    + "bytes/table carriers (deferred to the int32-bytes "
-                    + "lane)", span);
+                    + "bytes/table carriers (deferred to the ISSUE-0160 recursive "
+                    + "bytes-bearing wrapper closure)", span);
                 return null;
             }
             registerRefArrayShape(element);

@@ -18,7 +18,7 @@ import deal.diagnostics.DiagnosticCode;
  * null narrowing, contextual typing for table reads, and class construction
  * checking.
  *
- * <p>Errors produced: E3001–E3019, E4001–E4008, E5001–E5004.</p>
+ * <p>Errors produced: E3001–E3018, E4001–E4008, E5001–E5004.</p>
  */
 public final class TypeChecker {
 
@@ -962,25 +962,15 @@ public final class TypeChecker {
             boolean nullableVsNull = isNullableOf(leftType, rightType)
                 || isNullableOf(rightType, leftType);
             if (equalTypes || nullableVsNull) {
-                // E3019 bytes-comparison gate (binary-comparison-selectors
-                // B-D7): every equality pair admitted by the equality
-                // rules whose checked operand type contains bytes — at any
-                // depth — is rejected at the comparison site in phase 3,
-                // before lowering, on every route purpose. The closed
-                // BinarySelector set has no bytes selector and
-                // RuntimeDescriptor has no bytes member; bytes equality is
-                // spec-pinned as reference identity and its value
-                // semantics belong to ISSUE-0111/ISSUE-0158, which own
-                // lifting this gate. The gate fires before the equality
-                // admission returns and covers equal bytes-containing
-                // types (bytes, bytes[], bytes|null, functions/classes
-                // containing bytes) and nullable-bytes vs null in both
-                // directions.
-                if (Types.containsBytes(leftType) || Types.containsBytes(rightType)) {
-                    error(DiagnosticCode.E3019, "Bytes comparison is not supported",
-                        bin.span());
-                    return Type.Error.INSTANCE;
-                }
+                // Bytes equality admission (ISSUE-0158, the
+                // binary-comparison-selectors B-D7 gate lift): equal
+                // bytes-containing types (bytes, bytes[], bytes|null,
+                // functions/classes containing bytes) and
+                // nullable-bytes-vs-null in both directions are admitted
+                // as boolean — bytes compare by reference identity
+                // (spec-v1.2 equality semantics; the closed
+                // BYTES_EQ/BYTES_NE comparison row and the bytes
+                // descriptor carry the pair through lowering).
                 return Type.Boolean.INSTANCE;
             }
             error(DiagnosticCode.E3006,

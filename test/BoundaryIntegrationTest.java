@@ -97,7 +97,8 @@ import java.util.Set;
  *   <li>Failure injection (in-memory unit variants): a report missing one
  *       boundary entry → E6005 naming the module and the offending op; a
  *       {@code RepresentationProof} on a non-admissible cell → E6005;
- *       {@code describe(Type.Bytes)}/{@code describe(Type.Error)} →
+ *       {@code describe(Type.Bytes)} (the bytes member since ISSUE-0158) and
+ *       {@code describe(Type.Error)} →
  *       {@code DescriptorService.Defect} → E6005
  *       {@code DESCRIPTOR_UNREPRESENTABLE}; a unit whose boundary triple
  *       is outside the closed table → validator R-BOUNDARY-TRIPLE E6005
@@ -918,12 +919,18 @@ public class BoundaryIntegrationTest {
     // =========================================================================
 
     static void testFailureInjectionDescriptorDefect() {
-        System.out.println("-- Fault: describe(Type.Bytes) / describe(Type.Error) fail closed "
-            + "as E6005 DESCRIPTOR_UNREPRESENTABLE (T1) --");
+        System.out.println("-- Fault: describe(Type.Bytes) produces the bytes member; "
+            + "describe(Type.Error) fails closed as E6005 DESCRIPTOR_UNREPRESENTABLE (T1) --");
+
+        // Type.Bytes is descriptor-representable since ISSUE-0158 (the
+        // bytes member); only the internal Error sentinel stays fail
+        // closed on the injection path.
+        check(DescriptorService.describe(Type.Bytes.INSTANCE)
+                == RuntimeDescriptor.Bytes.INSTANCE,
+            "Type.Bytes maps to RuntimeDescriptor.Bytes.INSTANCE");
 
         record DefectCase(Type type, String what) { }
         for (DefectCase defectCase : List.of(
-                new DefectCase(Type.Bytes.INSTANCE, "Type.Bytes"),
                 new DefectCase(Type.Error.INSTANCE, "Type.Error"))) {
             DescriptorService.Defect defect = null;
             try {

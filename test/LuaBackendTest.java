@@ -467,6 +467,7 @@ public class LuaBackendTest {
         testBytesWriteSingleEvaluation();
         testUnaryIntNeg();
         testBytesBoundaryCheck();
+        testBytesEqualityCodegen();
 
         // ISSUE-0018: Template literal codegen tests
         testTemplateLiteralPlain();
@@ -1086,6 +1087,34 @@ public class LuaBackendTest {
             "__rt.check_type(\"bytes\", __rt.bytes_new(__rt.check_int(1, \"test.deal\", 5, 18), \"test.deal\", 5, 18), \"test.deal\", 5, 10)",
             "bytes declaration routes through the canonical matcher");
         check(isValidLua(out.lua), "bytes boundary checks generate valid Lua");
+    }
+
+    // =========================================================================
+    // Test: v1.2 bytes equality codegen (ISSUE-0158 gate lift)
+    // =========================================================================
+
+    static void testBytesEqualityCodegen() {
+        System.out.println("-- Bytes equality: native reference-identity codegen --");
+        CompileOutput out = compile(
+            "export function test_b(): null {\n"
+            + "  let a: bytes = bytes(2);\n"
+            + "  let b: bytes = a;\n"
+            + "  let c: bytes = bytes(2);\n"
+            + "  let same: boolean = a === b;\n"
+            + "  let different: boolean = a !== c;\n"
+            + "  let n: bytes | null = null;\n"
+            + "  let nulled: boolean = n === null;\n"
+            + "  return null;\n"
+            + "}"
+        );
+        assertNoErrors(out, "bytes equality compiles");
+        assertContains(out.lua, "(a == b)",
+            "bytes === bytes lowers to native Lua '==' identity");
+        assertContains(out.lua, "(a ~= c)",
+            "bytes !== bytes lowers to native Lua '~=' identity");
+        assertContains(out.lua, "(n == nil or n == __NULL)",
+            "bytes|null === null keeps the nullable-vs-null null check");
+        check(isValidLua(out.lua), "bytes equality generates valid Lua");
     }
 
     // Test: delete (optional field)

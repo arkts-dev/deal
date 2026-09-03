@@ -474,7 +474,8 @@ public final class SharedValueSemantics {
                  NUMBER_GE -> FailurePolicyId.NO_DEAL_FAILURE;
             case STRING_EQ, STRING_NE, STRING_LT, STRING_LE, STRING_GT, STRING_GE,
                  BOOLEAN_EQ, BOOLEAN_NE, NULL_EQ, NULL_NE, NULLABLE_EQ, NULLABLE_NE,
-                 NULLABLE_NULL_EQ, NULLABLE_NULL_NE, REFERENCE_EQ, REFERENCE_NE ->
+                 NULLABLE_NULL_EQ, NULLABLE_NULL_NE, REFERENCE_EQ, REFERENCE_NE,
+                 BYTES_EQ, BYTES_NE ->
                 throw new IllegalArgumentException("selector " + selector.name()
                     + " is outside the SharedValueSemantics rows (owned by the later "
                     + "construct epics)");
