@@ -7020,10 +7020,17 @@ public final class SemanticLowerer {
                 exportValue, exportDescriptor, List.of(), List.of(),
                 FailurePolicyId.NO_DEAL_FAILURE, exportOrigin));
             // The export value's execution binding (R-FUNCTION-BINDING):
-            // the std/console module's log/error host function identity.
-            functionBindings.put(new FunctionAllocationIdentity(exportValue.id()),
-                new FunctionExecutionBinding.HostFunction(new ModuleId("std/console"),
-                    field, exportDescriptor));
+            // the std/console module's log/error host function identity,
+            // recorded through the registry child's host-export seam
+            // (B5 — the same seam every function-typed host export read
+            // registers through).
+            registry.registerHostOrExternalImport(
+                new FunctionAllocationIdentity(exportValue.id()),
+                new KindPayload.ExportReadPayload(new ModuleId("std/console"), field,
+                    exportDescriptor, exportValue),
+                new FunctionBindingRegistry.FunctionValueImportFacts(
+                    new ModuleId("std/console"), null, field, exportDescriptor),
+                null);
             List<ValueId> args = new ArrayList<>();
             List<RuntimeDescriptor> argTypes = new ArrayList<>();
             for (ExpressionNode argument : call.args()) {
