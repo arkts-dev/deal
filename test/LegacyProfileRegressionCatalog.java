@@ -34,8 +34,8 @@ import java.util.Set;
  * disposition-application unit flipped it to {@code runtime-error E8004}).
  * The three conformance runners consume the catalog per case (A5): a
  * catalogued case resolves the legacy regression invocation with its
- * case resolves the legacy regression invocation with its source and
- * expectations unchanged, every other case and every frontend suite
+ * source and expectations unchanged, every other case and every
+ * frontend suite
  * resolves {@code COMMON_SHADOW + DEAL_V1_2_INT32}, and the JS retained
  * route ignores the profile.
  *

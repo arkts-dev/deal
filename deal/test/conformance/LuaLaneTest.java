@@ -61,6 +61,8 @@ public class LuaLaneTest {
         realFixtureConsoleTranscript();
         realFixtureRuntimeErrorTypeMismatch();
         realFixtureRuntimeErrorIntDivZero();
+        realFixtureTimeNowMillisSpanless();
+        spanPinnedHonestFailureProbe();
         companionThrowSourceFile();
         hostTripletRuntimeOk();
         asyncExportCompletion();
@@ -268,6 +270,71 @@ public class LuaLaneTest {
         String corpusPath = "backend-runtime/arithmetic/int-div-zero.deal";
         assertPassed("real runtime-error (int-div-zero, no optional pins)",
             new LuaLane(CORPUS_ROOT), realLaneCase(corpusPath));
+    }
+
+    /**
+     * The one sanctioned span-less runtime-error shape: the retained
+     * {@code std/time.nowMillis} wrapper raises E8004 with no
+     * file/line/column (the E8004 carries the route's existing shape —
+     * {@code luajit-time-selector-disposition}, Failure and operations),
+     * and the fixture's sidecar omits the whole span group. The lane
+     * emits the span-less snapshot exactly as captured, the comparator
+     * accepts it, and the verdict passes — the producible oracle behind
+     * the deferred differential-gate dispatch of this fixture.
+     */
+    private static void realFixtureTimeNowMillisSpanless() throws Exception {
+        String corpusPath =
+            "backend-runtime/stdlib-edge/time-now-millis-positive.deal";
+        LuaLane lane = new LuaLane(CORPUS_ROOT);
+        LaneCase laneCase = realLaneCase(corpusPath);
+        assertPassed("real span-less runtime-error (time-now-millis-positive)",
+            lane, laneCase);
+        LaneExecution execution = lane.execute(laneCase);
+        check(execution instanceof LaneExecution.Executed,
+            "the time-fixture run is a real execution, got: " + execution);
+        if (execution instanceof LaneExecution.Executed executed) {
+            String stdout = new String(executed.stdout(),
+                StandardCharsets.UTF_8);
+            check(stdout.endsWith("DEAL_ERROR_CODE: E8004\n"
+                    + "DEAL_ERROR_SNAPSHOT: {\"code\":\"E8004\","
+                    + "\"message\":\"int out of safe range\"}\n"),
+                "the span-less snapshot carries exactly code and message "
+                    + "with no fabricated sourceFile/line/column, got: "
+                    + stdout.replace("\n", "\\n"));
+            check(executed.exitCode() == 1,
+                "the time-fixture run exits 1");
+        }
+    }
+
+    /**
+     * The never-fabricate guard: pairing the real time fixture (whose
+     * captured E8004 carries no span) with a sidecar that pins a
+     * call-site span must be an honest infrastructure failure
+     * (PROCESS_FAILURE naming the absent span) — the lane never
+     * fabricates a pinned field the captured error does not carry.
+     */
+    private static void spanPinnedHonestFailureProbe() throws Exception {
+        String corpusPath =
+            "backend-runtime/stdlib-edge/time-now-millis-positive.deal";
+        RealCase real = realCase(corpusPath);
+        SidecarExpectations.ErrorExpectation fabricated = error("E8004",
+            "int out of safe range", corpusPath, 9, 18);
+        LaneCase laneCase = new LaneCase(corpusPath, "luajit",
+            real.fixture().file(),
+            CorpusDiscovery.compilationSet(real.fixture(),
+                indexOf(CORPUS_ROOT),
+                CORPUS_ROOT.toAbsolutePath().normalize()),
+            runtimeError(fabricated));
+        LuaLane lane = new LuaLane(CORPUS_ROOT);
+        LaneExecution execution = lane.execute(laneCase);
+        check(execution instanceof LaneExecution.Infrastructure infra
+                && infra.clazz() == MismatchClass.PROCESS_FAILURE
+                && infra.detail().contains("never")
+                && infra.detail().contains("fabricat")
+                && infra.detail().contains("no span"),
+            "a span-pinning sidecar against the span-less captured error "
+                + "is an honest PROCESS_FAILURE (never fabricated), got: "
+                + execution);
     }
 
     private static void companionThrowSourceFile() throws Exception {

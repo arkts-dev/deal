@@ -3338,14 +3338,15 @@ public final class CompilationOrchestrator {
         public Map<String, Type> resolveModule(String modulePath,
                                                 String importingModule,
                                                 Set<String> modulesInProgress)
-                throws ModuleNotFoundException {
+                throws ModuleNotFoundException,
+                    CffiImportWithoutNativeLibraryException {
             // Direct internal-name match first: the checker passes dotted
             // module paths carried by Type.Class values (e.g. an
             // externals module's "host.x\y"), which are internal names,
             // never import specifiers.
             for (ModuleInfo info : modules.values()) {
                 if (info.modulePath.equals(modulePath)) {
-                    return info.exports != null ? info.exports : Map.of();
+                    return cffiManifestCheckedExports(info, modulePath);
                 }
             }
             // Otherwise modulePath is the import specifier exactly as
@@ -3369,10 +3370,56 @@ public final class CompilationOrchestrator {
                 ModuleInfo target = modules.get(
                     r.location().normalizedSourcePath());
                 if (target != null) {
-                    return target.exports != null ? target.exports : Map.of();
+                    return cffiManifestCheckedExports(target, modulePath);
                 }
             }
             throw new ModuleNotFoundException("Module not found: " + modulePath);
+        }
+
+        /**
+         * The v1.2 C FFI manifest policy (docs/spec-v1.2.md:1891): a C
+         * FFI declaration file — a {@code .d.deal} file whose effective
+         * {@link FileDirectives#externC()} holds — may only be imported
+         * through a {@code deal.json} externals entry that declares the
+         * file with a classified {@code nativeLibrary}. The resolved
+         * target's module classification is
+         * {@code ExternalModule(rawImportSpecifier)} exactly when an
+         * externals entry declares the file (file-keyed,
+         * {@code ModuleIdentityResolver} D6 rule (2)); an entry without
+         * {@code nativeLibrary}, or no entry at all, is the
+         * invalid-manifest-policy rejection the checker maps to E2010 at
+         * the import span ({@code deal/checker/NameResolver.java},
+         * {@code processImport}) — the production emission site behind
+         * the promoted conformance pin.
+         */
+        private Map<String, Type> cffiManifestCheckedExports(
+                ModuleInfo target, String importSpecifier)
+                throws CffiImportWithoutNativeLibraryException {
+            if (target.isDeclarationFile && target.rawAst != null
+                    && target.rawAst.fileDirectives().externC()
+                    && !cffiManifestBacked(target)) {
+                throw new CffiImportWithoutNativeLibraryException(
+                    importSpecifier);
+            }
+            return target.exports != null ? target.exports : Map.of();
+        }
+
+        /**
+         * True when the externals entry that declares the target
+         * (file-keyed classification) carries a classified
+         * {@code nativeLibrary}; false when no entry declares the file
+         * or the declaring entry omits {@code nativeLibrary}.
+         */
+        private boolean cffiManifestBacked(ModuleInfo target) {
+            CanonicalModuleIdentity classification = target.location == null
+                ? null : target.location.moduleClassification();
+            if (!(classification
+                    instanceof CanonicalModuleIdentity.ExternalModule ext)) {
+                return false;
+            }
+            ExternalEntry entry = context.externals().get(
+                ext.rawImportSpecifier());
+            return entry != null && entry.nativeLibrary() != null;
         }
 
         /**

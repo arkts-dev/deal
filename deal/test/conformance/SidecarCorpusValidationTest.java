@@ -61,44 +61,43 @@ import java.util.stream.Stream;
  *       stdout ({@code DEAL_ERROR_CODE: <code>} then
  *       {@code DEAL_ERROR_SNAPSHOT: <canonical JSON>}). The Error
  *       Expectation is the authoritative field set: mandatory
- *       {@code code}/{@code message}/{@code sourceFile}/{@code line}/
- *       {@code column} (the code equals the fixture's {@code @expected}
- *       code; the sourceFile names the module that threw — the fixture
- *       itself or a corpus module of its transitive import closure — in
- *       canonical corpus-relative form), optional {@code expected}/
- *       {@code actual} pinned as the {@code _err} pair where the spec
- *       diagnostic carries them, and no {@code frames}/{@code cause}
- *       pins (today's runtime error values carry no structured frames;
- *       the cause chain is pinned nowhere). The snapshot JSON of the
- *       framing must byte-equal the canonical snapshot serialization
- *       recomputed from the error object: fixed key order
- *       {@code code, message, sourceFile, line, column, expected,
- *       actual, frames, cause}, minimal RFC 8259 §7 escaping, raw UTF-8,
- *       canonical decimal integers, no whitespace between tokens.</li>
- *   <li>The backend-runtime known-fail population is empty post-unit
- *       (ISSUE-0380, the disposition-application unit): the restored
- *       {@code arithmetic/int-add-overflow.deal} fixture
- *       (ISSUE-0378 D3) was promoted in the unit's landing change —
- *       its {@code known-fail runtime-error E8004} marker and
- *       {@code @issue} tag dropped, {@code @expected: runtime-error
- *       E8004} set — so it counts in the runtime-error population
- *       with its three-backend runtime sidecar unchanged (the
- *       differential gate's presence rule, ISSUE-0353: a
- *       runtime-classified fixture requires a valid three-backend
- *       sidecar; the gate has no silent default). The same unit
- *       flipped the shared time fixture
- *       {@code stdlib-edge/time-now-millis-positive.deal} to its
- *       canonical {@code runtime-error E8004} header
- *       (std-time-nowmillis-resolution-and-disposition D2) and
- *       re-authored its sidecar as the uniform three-backend E8004
- *       sidecar — the retained {@code ()->int} route raises E8004 at
- *       the declared int boundary on every lane under its activated
- *       gate. The two-backend slice surface
+
+ *       {@code code}/{@code message} plus the span group
+ *       {@code sourceFile}/{@code line}/{@code column} (the code equals
+ *       the fixture's {@code @expected} code; the sourceFile names the
+ *       module that threw — the fixture itself or a corpus module of
+ *       its transitive import closure — in canonical corpus-relative
+ *       form). The span group is mandatory for every runtime-error
+ *       fixture except the one sanctioned span-less shape
+ *       ({@code stdlib-edge/time-now-millis-positive.deal}: the locked
+ *       time selector's retained {@code nowMillis} wrapper raises E8004
+ *       with no file/line/column at all —
+ *       {@code luajit-time-selector-disposition}, Failure and
+ *       operations — so its sidecar omits the whole group and pinning
+ *       any of the three is a classification failure), optional
+ *       {@code expected}/ {@code actual} pinned as the {@code _err}
+ *       pair where the spec diagnostic carries them, and no
+ *       {@code frames}/{@code cause} pins (today's runtime error values
+ *       carry no structured frames; the cause chain is pinned nowhere).
+ *       The snapshot JSON of the framing must byte-equal the canonical
+ *       snapshot serialization recomputed from the error object: fixed
+ *       key order {@code code, message, sourceFile, line, column,
+ *       expected, actual, frames, cause}, minimal RFC 8259 §7 escaping,
+ *       raw UTF-8, canonical decimal integers, no whitespace between
+ *       tokens.</li>
+ *   <li>The backend-runtime known-fail population is empty. ISSUE-0378
+ *       restored {@code arithmetic/int-add-overflow.deal} byte-exactly
+ *       with its canonical known-fail header and its three-backend
+ *       runtime-error sidecar; the gate-closure promotion then dropped
+ *       the known-fail marker, leaving the fixture as a real
+ *       runtime-error fixture whose uniform E8004 sidecar stays. The
+ *       two-backend slice re-home
  *       ({@code jvm-int32-slice.json#int32-add-overflow}) stays.
- *       ISSUE-0339 promoted the last previously tracked bytes fixture
+ *       ISSUE-0339 promoted the last previously tracked fixture
  *       ({@code bytes-buffer-ops.deal}, which received its runtime-ok
  *       sidecar in the same change that dropped its known-fail
  *       marker).</li>
+
  *   <li>All other fixtures ({@code compile-ok}, {@code compile-error},
  *       {@code companion}, frontend fixtures) carry no sidecar except
  *       the Diagnostics-bullet fixtures.</li>
@@ -501,14 +500,27 @@ public class SidecarCorpusValidationTest {
         check(!message.isEmpty(), fixture.corpusPath()
             + ": error.message must be the exact canonical template "
             + "instantiation, not an empty placeholder");
-        int line = intField(error, "line");
-        int column = intField(error, "column");
-        check(line >= 1, fixture.corpusPath()
-            + ": error.line must trace to the throwing site (a positive "
-            + "line), got " + line);
-        check(column >= 1, fixture.corpusPath()
-            + ": error.column must trace to the throwing site (a positive "
-            + "column), got " + column);
+        int line = optionalIntField(error, "line");
+        int column = optionalIntField(error, "column");
+        boolean spanless = SidecarSchemaValidator.SANCTIONED_SPANLESS_FIXTURE
+            .equals(fixture.corpusPath());
+        if (spanless) {
+            check(!hasErrorField(error, "sourceFile")
+                    && !hasErrorField(error, "line")
+                    && !hasErrorField(error, "column"),
+                fixture.corpusPath() + ": the sanctioned span-less shape "
+                    + "must omit the whole span group (sourceFile, line, "
+                    + "column) — the retained nowMillis wrapper raises "
+                    + "E8004 with no span and a sidecar never pins "
+                    + "fabricated values");
+        } else {
+            check(line >= 1, fixture.corpusPath()
+                + ": error.line must trace to the throwing site (a positive "
+                + "line), got " + line);
+            check(column >= 1, fixture.corpusPath()
+                + ": error.column must trace to the throwing site (a positive "
+                + "column), got " + column);
+        }
         check(!hasErrorField(error, "frames"), fixture.corpusPath()
             + ": no runtime-error sidecar pins frames — today's runtime "
             + "error values carry no structured frames");
@@ -651,6 +663,26 @@ public class SidecarCorpusValidationTest {
             .filter(e -> e.key().equals(key))
             .findFirst().orElseThrow().value();
         return ((CanonicalJson.Int) value).value();
+    }
+
+    /**
+     * The absent-tolerant integer accessor for the span group: returns 0
+     * when the field is absent — the sanctioned span-less error shape
+     * omits {@code line}/{@code column} entirely, and the audit rules
+     * branch on the fixture path before reading them.
+     */
+    private static int optionalIntField(CanonicalJson.Obj obj, String key) {
+        CanonicalJson.Value value = null;
+        for (CanonicalJson.Entry entry : obj.entries()) {
+            if (entry.key().equals(key)) {
+                value = entry.value();
+                break;
+            }
+        }
+        if (!(value instanceof CanonicalJson.Int integer)) {
+            return 0;
+        }
+        return integer.value();
     }
 
     private static String describe(String s) {

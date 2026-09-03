@@ -23,6 +23,19 @@ never been executed or observed. This change set lands the unit and runs
 the closure verification; every claim below was produced by executing the
 named command on the final rebased commit and re-reading the named files.
 
+Review cycle 1 (BOT-2987, commit 8175e9e) found three defects; the
+remediation in this change set corrects each and re-executes the gate:
+(1) the C FFI invalid-manifest-policy known-fail had been promoted with
+the E2010 manufactured only by the conformance harness resolvers — the
+production rejection now lands in
+`deal/module/CompilationOrchestrator.ModuleResolverImpl` and a production
+`deal.Main compile` of the exact fixture case fails with E2010 at the
+import span (section 5); (2) the time-fixture sidecar pinned fabricated
+span values (line 9 / column 18) the retained wrapper can never produce —
+the sidecar now omits the whole span group and the lane/schema sanctions
+exactly that span-less shape (section 4); (3) the duplicated Javadoc
+fragment in `test/LegacyProfileRegressionCatalog.java` is removed.
+
 ## 1. The landed disposition pair (branch 1) and the unit's change set
 
 The ISSUE-0237 resolution's selected branch 1 is applied exactly once:
@@ -62,19 +75,39 @@ the shared fixture carries the canonical disposition header.
   (`time-now-millis-positive.expect.json`) is re-authored to the
   runtime-error expectation: code E8004, message
   `int out of safe range` (the pinned v1.2 int32 template all three
-  backends emit), the fixture's call-site span, exit code 1, and the
-  exact G4.6 framing transcript.
+  backends emit), exit code 1, and the exact G4.6 framing transcript.
+  The sidecar pins no sourceFile/line/column: the retained
+  `()->int` wrapper raises E8004 with no span at all (the E8004
+  carries the route's existing shape —
+  `luajit-time-selector-disposition`, Failure and operations), so any
+  span pin would be a fabricated value the runtime can never produce.
+  The lane/schema sanctions exactly this one span-less shape
+  (`SidecarSchemaValidator.SANCTIONED_SPANLESS_FIXTURE`): the error
+  object omits the whole span group, pinning any of the three there is
+  a classification failure, the lane emits the span-less snapshot
+  exactly as captured, and the comparator accepts it — exercised by
+  `deal.test.conformance.LuaLaneTest` on the real fixture plus
+  `StructuredExpectationComparatorTest.spanGroupAuthority()`.
 - The remaining summary-level known-fail — the C FFI
   invalid-manifest-policy pin — is promoted in the same change so the
   summary-level known-fail zero (the strict gate's D5 assertion) can
-  hold: the checker now rejects an import of a C FFI declaration file
-  (`// @extern-c`) that no externals entry declares with
-  `nativeLibrary` — E2010 at the import span
-  (`deal/checker/ModuleResolver` +
-  `deal/checker/NameResolver`, docs/spec-v1.2.md:1891) — and the
-  fixture promotes to `// @expected: compile-error E2010` with the
-  `@issue` tag dropped, exactly the runner's promotion instruction.
-  The companion `ffi_math.d.deal` keeps compiling standalone
+  hold: the promotion contract requires the production behavior to land
+  with the marker drop, and it does — the production module resolver
+  (`deal/module/CompilationOrchestrator.ModuleResolverImpl`) rejects an
+  import of a C FFI declaration file (`// @extern-c`) that no
+  externals entry declares with `nativeLibrary`, and the checker maps
+  the rejection to E2010 at the import span
+  (`deal/checker/NameResolver`, docs/spec-v1.2.md:1891). A production
+  `deal.Main compile` of the exact fixture case fails with exactly one
+  E2010 at the import span; the same import through an externals entry
+  carrying `nativeLibrary` compiles; an entry that omits
+  `nativeLibrary` is the rejection again (pinned by
+  `deal.test.DirectiveTest.testProductionCffiManifestPolicy`). The
+  conformance harness resolvers mirror the rejection for the
+  manifest-less harness pipeline. The fixture promotes to
+  `// @expected: compile-error E2010` with the `@issue` tag dropped,
+  exactly the runner's promotion instruction. The companion
+  `ffi_math.d.deal` keeps compiling standalone
   (`@expected: companion`).
 - `docs/v1.2-conformance-status.md` — the pending-resolution paragraph
   and the staged-failures bullet are replaced with the closed state;
@@ -152,7 +185,97 @@ produced on the final working tree, observed, and reverted:
   tracked STAGED-FAIL with exit 0) is closed (`luajit-gate-closure`
   D2). Reverted; the registry is empty again.
 
-## 4. Closure checklist (epic objective criteria)
+## 4. The producible span-less time-fixture oracle (finding-2 remediation)
+
+The retained `()->int` wrapper (`std/time.lua:9-10`,
+`check_int(os.time() * 1000)`) raises E8004 before the emitter's
+call-site exit check ever runs, so the runtime error carries no
+file/line/column at all — the E8004 carries the route's existing shape
+(`luajit-time-selector-disposition`, Failure and operations). Direct
+execution of the emitted fixture module under the v1.2 int32 profile
+confirms: code `E8004`, message `int out of safe range`,
+file=nil, line=nil, column=nil. The sidecar therefore pins exactly the
+producible fields and omits the whole span group:
+
+```text
+DEAL_ERROR_CODE: E8004
+DEAL_ERROR_SNAPSHOT: {"code":"E8004","message":"int out of safe range"}
+```
+
+The model/lane/schema close around this shape without weakening the
+corpus contract for any other fixture:
+
+- `SidecarExpectations.ErrorExpectation` — the span group
+  (sourceFile/line/column) is pinned together or null together
+  (`pinsSpan()`); `ErrorSnapshot` emits the group exactly when pinned
+  and its canonical validation requires the group complete-or-absent.
+- `SidecarSchemaValidator` — `SANCTIONED_SPANLESS_FIXTURE`
+  (`backend-runtime/stdlib-edge/time-now-millis-positive.deal`): the
+  span group is optional exactly for that fixture, and pinning any of
+  the three there is a classification failure (a sidecar never pins
+  values the runtime cannot produce). Every other runtime-error sidecar
+  keeps the five mandatory fields.
+- `LuaLane.assembleOutcome` — a span-pinning sidecar against the
+  span-less captured error is an honest PROCESS_FAILURE (never
+  fabricated); the sanctioned span-less pair emits the snapshot exactly
+  as captured and passes the comparison.
+- `StructuredExpectationComparator` — the span group is compared
+  exactly when pinned; a lane emitting an unpinned group or suppressing
+  a pinned group mismatches naming the group.
+
+Exercised by execution (final rebased commit):
+
+- `deal.test.conformance.LuaLaneTest` — `Passed: 47, Failed: 0`,
+  including the new real-fixture probe: the lane executes
+  `time-now-millis-positive.deal` against its span-less sidecar, emits
+  the code/message-only snapshot, and the verdict passes; the
+  span-pinned honest-failure probe returns PROCESS_FAILURE.
+- `deal.test.conformance.StructuredExpectationComparatorTest` —
+  `Passed: 139, Failed: 0`, including `spanGroupAuthority()` (span-less
+  match, unpinned-group emission mismatch, pinned-group suppression
+  mismatch, partial-group canonical violation).
+- `deal.test.conformance.SidecarCorpusValidationTest` —
+  `Passed: 2044, Failed: 0` — the sanctioned span-less sidecar
+  validates clean, its transcript byte-equals the code/message-only
+  canonical snapshot, and its span-group absence is the closed shape.
+
+## 5. The production C FFI manifest-policy rejection (finding-1 remediation)
+
+The promotion contract (retirement page D1) requires the production
+behavior to land with the marker drop; it now does.
+`deal/module/CompilationOrchestrator.ModuleResolverImpl.resolveModule`
+rejects an import whose resolved target is a C FFI declaration file
+(`.d.deal` with effective `FileDirectives.externC`) that no externals
+entry declares with `nativeLibrary` — file-keyed via the target's
+`ExternalModule` classification, so a nativeLibrary-less entry or no
+entry at all throws
+`ModuleResolver.CffiImportWithoutNativeLibraryException` and
+`deal/checker/NameResolver` maps it to E2010 at the import span
+(docs/spec-v1.2.md:1891). Production executions:
+
+- The exact fixture case (`deal.json` `{"languageVersion": "1.2"}`,
+  entry importing `./ffi_math`, `ffi_math.d.deal` carrying
+  `// @extern-c`, no externals entry):
+  `ERROR E2010: C FFI declaration file './ffi_math' is imported without
+  an externals entry specifying nativeLibrary (a C FFI entry must
+  include nativeLibrary)` at the import span; exit 1 — previously
+  `Compilation successful: 2 module(s)`.
+- The same declaration through an externals entry carrying
+  `nativeLibrary` compiles (`Compilation successful: 2 module(s)`,
+  no E2010); the same entry omitting `nativeLibrary` is the rejection
+  again.
+- Pinned by `deal.test.DirectiveTest.testProductionCffiManifestPolicy`
+  (three cases; `Passed: 145, Failed: 0`). The two JS-backend E6003
+  tests (`JsBackendTest`, `SourceMapTest`) now use manifest-backed
+  extern-C imports, so the still-live E6003 arm keeps covering the
+  valid-manifest rejection while the unbacked case is the frontend
+  E2010 (`JsBackendTest` 454/0, `SourceMapTest` 182/0).
+- The promoted conformance pin passes on the frontend lane:
+  `[frontend/modules/ffi-manifest-missing-native-library-rejected.deal]
+  OK (found E2010)` — the harness resolvers mirror the production
+  rejection for the manifest-less harness pipeline.
+
+## 6. Closure checklist (epic objective criteria)
 
 - Phase line and summary show zero failed, zero skipped, zero
   known-fail, zero staged — section 2.
