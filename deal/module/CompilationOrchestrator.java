@@ -19,12 +19,17 @@ import deal.project.OutputConfigResolver;
 import deal.project.ProjectContext;
 import deal.project.ProjectDeploymentIdentity;
 import deal.project.ProjectLocator;
+import deal.project.NativeLibraryRef;
 import deal.project.ProtectedPathOps;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticFormatter;
 import deal.diagnostics.DiagnosticRange;
 import deal.diagnostics.DiagnosticStructuredOutput;
+import deal.descriptors.CanonicalRuntimeTypeDescriptor;
 import deal.distribution.DistributionHome;
+import deal.ffi.FfiDeclarationValidator;
+import deal.ffi.FfiGeneratedModule;
+import deal.ffi.LuaFfiBindingGenerator;
 import deal.identity.CanonicalClassIdentity;
 import deal.publication.PublicationStager;
 import deal.parser.*;
@@ -177,6 +182,25 @@ public final class CompilationOrchestrator {
     private final Map<String, ModuleInfo> modules = new LinkedHashMap<>();
     private final List<CompilerDiagnostic> diagnostics = new ArrayList<>();
     private boolean hasErrors = false;
+
+    /**
+     * The phase-2 dependency (check) order of this compilation, in
+     * module-path form — the graph order the extern-C metadata phase
+     * orders imported provider references by (empty before phase 2).
+     */
+    private List<String> dependencyOrder = List.of();
+
+    /**
+     * The validated extern-C metadata published by the FFI phase
+     * (ISSUE-0162): dotted module path &rarr; the generated module
+     * inputs (descriptor, cdef bundle, retained plans, forward
+     * bindings). Populated only for the LuaJIT backend after successful
+     * validation; empty for JVM/JS and on any validation failure — a
+     * failed validation or an incapable backend publishes no metadata
+     * and no partial artifact.
+     */
+    private final Map<String, FfiGeneratedModule> ffiGenerations =
+        new LinkedHashMap<>();
 
     /**
      * The JVM codegen pass-1 results of this compile (ISSUE-0374 profile
@@ -796,6 +820,7 @@ public final class CompilationOrchestrator {
         log("Phase 2: Dependency graph and ordering");
         List<String> checkOrder = buildCheckOrder();
         if (checkOrder == null) { printDiagnostics(); return false; }
+        this.dependencyOrder = List.copyOf(checkOrder);
 
         log("Phase 3: Type checking (" + checkOrder.size() + " modules)");
         typeCheckAll(checkOrder);
@@ -830,6 +855,19 @@ public final class CompilationOrchestrator {
         // phase is skipped and the retained JS path is untouched.
         log("Phase 3.7: Route plan");
         planRoutesForCompile();
+        if (hasErrors) { printDiagnostics(); return false; }
+
+        // FFI phase (ISSUE-0162, design source
+        // deal-v1.2-directives-and-c-ffi-declarations D4/D7/D8): after
+        // semantic/graph success, validate every extern-C declaration
+        // module (E7002 policy), reject the C FFI on an incapable
+        // backend (JVM: E6003 FFI_UNSUPPORTED_BACKEND at @extern-c)
+        // before any artifact write, and publish the validated
+        // metadata/bundle/bindings on LuaJIT for later runtime loading.
+        // Validation never evaluates defaults; a failed validation or
+        // an incapable backend publishes no metadata and no artifact.
+        log("Phase 3.8: C FFI declaration validation and metadata");
+        validateCffiDeclarations();
         if (hasErrors) { printDiagnostics(); return false; }
 
         log("Phase 4: Code generation");
@@ -1928,6 +1966,175 @@ public final class CompilationOrchestrator {
             log("  Route planning failed: " + result.diagnostics());
         }
     }
+
+    // =========================================================================
+    // Phase 3.8: C FFI declaration validation and metadata (ISSUE-0162)
+    // =========================================================================
+
+    /**
+     * The read-only view of the validated extern-C metadata: dotted
+     * module path &rarr; generated module inputs (descriptor, cdef
+     * bundle, retained plans, forward bindings). Populated only for the
+     * LuaJIT backend after successful validation; empty for JVM/JS and
+     * on any validation failure.
+     *
+     * @return the generated FFI modules (unmodifiable)
+     */
+    public Map<String, FfiGeneratedModule> ffiGenerations() {
+        return Collections.unmodifiableMap(ffiGenerations);
+    }
+
+    /**
+     * The extern-C metadata phase: runs after semantic/graph success
+     * (phases 0–3.7) and before any artifact write (phase 4).
+     *
+     * <p>Per extern-C declaration module in the graph:</p>
+     * <ol>
+     *   <li>validate the declaration policy (E7002: sync functions,
+     *       export/C names, ABI parameter/return allowlists, same-file
+     *       class references, required/defaulted source-order struct
+     *       fields, pointer emptiness/non-constructibility) — never
+     *       evaluating defaults;</li>
+     *   <li>on an incapable backend (JVM) emit E6003 containing
+     *       {@code FFI_UNSUPPORTED_BACKEND} at the {@code @extern-c}
+     *       directive range after validation and before artifacts;</li>
+     *   <li>on LuaJIT publish the validated immutable descriptor plus
+     *       the generated cdef bundle, retained plans, and forward
+     *       bindings for later runtime loading.</li>
+     * </ol>
+     *
+     * <p>A failed validation or an incapable backend publishes no
+     * metadata and no partial artifact (the compile stops before phase
+     * 4). The JS backend keeps its pinned import-site E6003 arm
+     * (ISSUE-0169 skeleton) and does not run this phase.</p>
+     */
+    private void validateCffiDeclarations() {
+        if (backend == Backend.JS) {
+            return;
+        }
+        CanonicalRuntimeTypeDescriptor descriptorEncoder =
+            new CanonicalRuntimeTypeDescriptor(identityAssembly.index());
+        for (ModuleInfo info : modules.values()) {
+            if (!isExternCModuleInfo(info)) {
+                continue;
+            }
+            String canonicalExternalIdentity = canonicalExternalIdentityOf(info);
+            if (canonicalExternalIdentity == null) {
+                // Defensive: an extern-C module that is not
+                // externals-listed has no native library and no public
+                // module identity — the E2010 library/manifest policy
+                // belongs to the config epic (ISSUE-0111); this phase
+                // publishes no metadata for it.
+                continue;
+            }
+            NativeLibraryRef nativeLibrary = nativeLibraryOf(info);
+            FfiDeclarationValidator.Result result =
+                FfiDeclarationValidator.validate(
+                    info.rawAst, info.modulePath, info.location,
+                    canonicalExternalIdentity, identityAssembly,
+                    descriptorEncoder,
+                    nativeLibrary == null ? null
+                        : nativeLibrary.kind().name(),
+                    nativeLibrary == null ? null
+                        : nativeLibrary.loaderText(),
+                    dependencyOrder, importTargetsOf(info));
+            diagnostics.addAll(result.diagnostics());
+            if (result.hasErrors()) {
+                hasErrors = true;
+                continue;
+            }
+            if (backend == Backend.JVM) {
+                // Backend capability rejection (D8): after semantic/
+                // declaration validation, before any artifact write.
+                deal.diagnostics.DiagnosticRange externCRange =
+                    info.rawAst.fileDirectives().externCRange();
+                diagnostics.add(CompilerDiagnostic.error(
+                    DiagnosticCode.E6003,
+                    "JVM backend: C FFI (@extern-c) declarations are not"
+                        + " supported (FFI_UNSUPPORTED_BACKEND)",
+                    externCRange != null ? externCRange
+                        : deal.diagnostics.DiagnosticRange.synthetic(
+                            info.sourcePath)));
+                hasErrors = true;
+                continue;
+            }
+            // LuaJIT: the validated descriptor is accepted for later
+            // runtime loading; the generator produces the loader inputs
+            // (cells before any plan content; imported references in
+            // graph order; no evaluator ever invoked).
+            LuaFfiBindingGenerator.GeneratedBindings generated =
+                LuaFfiBindingGenerator.generate(result.descriptor(),
+                    result.importedFunctions(), result.importedClassPlans());
+            ffiGenerations.put(info.modulePath, new FfiGeneratedModule(
+                info.modulePath, result.descriptor(),
+                generated.cdefBundle(), generated.plans(),
+                generated.bindings()));
+        }
+    }
+
+    /** True for a parsed extern-C declaration module. */
+    private static boolean isExternCModuleInfo(ModuleInfo info) {
+        return info.isDeclarationFile && info.rawAst != null
+            && info.rawAst.fileDirectives().externC();
+    }
+
+    /**
+     * The canonical external module identity text of an externals-listed
+     * module ({@code @$external/&lt;rawImportSpecifier&gt;}), or null
+     * when the module has no external classification.
+     */
+    private String canonicalExternalIdentityOf(ModuleInfo info) {
+        CanonicalModuleIdentity identity = classifyModuleIdentity(info);
+        if (identity instanceof CanonicalModuleIdentity.ExternalModule ext) {
+            return "@$external/" + ext.rawImportSpecifier();
+        }
+        return null;
+    }
+
+    /** The externals entry's classified native library, or null. */
+    private NativeLibraryRef nativeLibraryOf(ModuleInfo info) {
+        CanonicalModuleIdentity identity = classifyModuleIdentity(info);
+        if (identity instanceof CanonicalModuleIdentity.ExternalModule ext) {
+            ExternalEntry entry = context.externals().get(
+                ext.rawImportSpecifier());
+            return entry == null ? null : entry.nativeLibrary();
+        }
+        return null;
+    }
+
+    /**
+     * The resolved import surface of one module: import alias &rarr;
+     * the provider's dotted module path and extracted export map (the
+     * extern-C metadata phase resolves default-expression provider
+     * references through it).
+     */
+    private Map<String, FfiDeclarationValidator.ImportTarget> importTargetsOf(
+            ModuleInfo info) {
+        Map<String, FfiDeclarationValidator.ImportTarget> targets =
+            new LinkedHashMap<>();
+        if (info.rawAst == null) {
+            return targets;
+        }
+        for (StatementNode stmt : info.rawAst.statements()) {
+            if (!(stmt instanceof ImportDeclaration imp)) {
+                continue;
+            }
+            String resolvedSource = resolveImportPath(imp.modulePath(),
+                Path.of(info.sourcePath), imp.span());
+            if (resolvedSource == null) {
+                continue;
+            }
+            ModuleInfo imported = modules.get(resolvedSource);
+            if (imported == null) {
+                continue;
+            }
+            targets.put(imp.alias(), new FfiDeclarationValidator.ImportTarget(
+                imported.modulePath,
+                imported.exports != null ? imported.exports : Map.of()));
+        }
+        return targets;
+    }
+
 
     /**
      * Packages one orchestrator module's read-only facts for the builder:

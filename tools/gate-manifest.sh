@@ -40,6 +40,10 @@ PROD_SOURCES=(
   # ISSUE-0458 registration: the transactional whole-project artifact
   # publication package (Artifact, ArtifactSet, PublicationStager).
   'deal/publication/*.java'
+  # ISSUE-0162 registration: the validated C FFI metadata and forward
+  # binding generation package (FfiDeclarationValidator, descriptor
+  # records, CdefBundle, forward cells, LuaFfiBindingGenerator).
+  'deal/ffi/*.java'
 )
 
 # TEST_SOURCES: the remainder of today's compile list, verbatim, in
@@ -140,6 +144,9 @@ TEST_SOURCES=(
   # purge, crash recovery, concurrency, IR dumps, out-of-checkout
   # copies, and the publish I/O failure path).
   'test/PublicationStagerTest.java'
+  # ISSUE-0162 registration: the C FFI declaration validation and
+  # forward binding generation battery.
+  'test/FfiDeclarationValidatorTest.java'
 )
 
 # TEST_MAINS: ordered "<class>|<banner>|<command>" records reproducing
@@ -203,6 +210,7 @@ TEST_MAINS=(
   'fg|=== Running Project Locator Tests (ISSUE-0265 T4) ===|java -ea -cp build deal.project.ProjectLocatorTest'
   'fg|=== Running Module Identity Resolver Classifier Tests (ISSUE-0266 T5) ===|java -ea -cp build deal.module.ModuleIdentityResolverTest'
   'fg|=== Running Module Identity Assembly Tests (ISSUE-0268 T7) ===|java -ea -cp build deal.module.ModuleIdentityAssemblyTest'
+  'fg|=== Running C FFI Declaration Validation and Forward Binding Tests (ISSUE-0162) ===|java -ea -cp build deal.test.FfiDeclarationValidatorTest'
   'fg|=== Running AST/Types Tests ===|java -ea -cp build deal.test.AstAndTypesTest'
   'fg|=== Running Types Bytes Tests (ISSUE-0308) ===|java -ea -cp build deal.test.TypesBytesTest'
   'fg|=== Running Directive Tests ===|java -ea -cp build deal.test.DirectiveTest'
