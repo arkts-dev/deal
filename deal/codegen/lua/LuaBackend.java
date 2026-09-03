@@ -10,6 +10,7 @@ import deal.checker.SymbolTable;
 import deal.codegen.SourceMapGenerator;
 import deal.descriptors.CanonicalRuntimeTypeDescriptor;
 import deal.diagnostics.CompilerDiagnostic;
+import deal.distribution.DistributionHome;
 import deal.identity.CanonicalClassIdentity;
 import deal.identity.CanonicalClassIdentityIndex;
 import deal.identity.CanonicalModuleIdentity;
@@ -774,16 +775,21 @@ public final class LuaBackend implements Visitor<Void> {
         Path runtimeDest = outputRoot.resolve("deal/runtime.lua");
         if (!Files.exists(runtimeDest)) {
             Files.createDirectories(runtimeDest.getParent());
-            InputStream runtimeStream = LuaBackend.class.getClassLoader()
-                .getResourceAsStream("deal/runtime.lua");
-            if (runtimeStream != null) {
-                Files.copy(runtimeStream, runtimeDest);
-                runtimeStream.close();
-            } else {
-                Path runtimeSrc = Path.of("deal/runtime.lua");
-                if (Files.exists(runtimeSrc)) {
-                    Files.createDirectories(runtimeDest.getParent());
-                    Files.copy(runtimeSrc, runtimeDest);
+            // The deployment copy resolves through the pinned
+            // three-tier distribution order (ISSUE-0457,
+            // release-distribution-packaging-and-discovery D3):
+            // classpath resources, then the DEAL_HOME filesystem
+            // layout, then the checkout CWD dev fallback — no implicit
+            // CWD-only read remains. The project-local tier never
+            // applies to runtime sources, so the manifest directory is
+            // irrelevant (the empty-text resolver keys the same JVM
+            // caches).
+            Optional<DistributionHome.ResolvedSource> runtime =
+                DistributionHome.forManifestDirectory("")
+                    .resolveRuntimeSource("deal/runtime.lua");
+            if (runtime.isPresent()) {
+                try (InputStream in = runtime.get().open()) {
+                    Files.copy(in, runtimeDest);
                 }
             }
         }

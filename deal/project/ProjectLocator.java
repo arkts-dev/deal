@@ -5,6 +5,7 @@ import deal.diagnostics.DiagnosticCode;
 import deal.diagnostics.DiagnosticNote;
 import deal.diagnostics.DiagnosticRange;
 import deal.diagnostics.RangeOrigin;
+import deal.distribution.DistributionHome;
 import deal.source.ScalarSourceCursor;
 import deal.source.SourceScalarRange;
 
@@ -104,15 +105,23 @@ import java.util.Set;
  *       output failure is E2010; a CLI-source failure is
  *       {@link CliDiagnostic}. No directory is created during locate and
  *       the conversion never requires the path to exist.</li>
- *   <li><b>Stdlib surface</b> — {@code <manifestDirectory>/std} when it
- *       exists as a directory, else {@code <processCWD>/std} when that
- *       exists as a directory, else absent (absence is not an error).
- *       The six spec-listed files under the surface are canonicalized
- *       once (fully symlink-resolved; only existing regular resolvable
- *       files contribute) and published as the context's
- *       {@code stdlibDeclarationFiles}; the same canonical paths supply
- *       step 4(b)'s stdlib-overlap check (a symlinked spec-listed file
- *       keeps its pinned identity for its resolved target).</li>
+ *   <li><b>Stdlib surface</b> — the pinned three-tier resolution of
+ *       {@link DistributionHome}
+ *       ({@code release-distribution-packaging-and-discovery} D3):
+ *       {@code <manifestDirectory>/std} when it exists as a directory
+ *       (the pinned v1.2 project-local override surface), else the
+ *       language distribution (the classpath-resource {@code std/}
+ *       directory when a pinned declaration resource materializes,
+ *       then the {@code DEAL_HOME}/{@code deal.home} filesystem
+ *       {@code std/} directory), else {@code <processCWD>/std} when
+ *       that exists as a directory, else absent (absence is not an
+ *       error). The six spec-listed files under the surface are
+ *       canonicalized once (fully symlink-resolved; only existing
+ *       regular resolvable files contribute) and published as the
+ *       context's {@code stdlibDeclarationFiles}; the same canonical
+ *       paths supply step 4(b)'s stdlib-overlap check (a symlinked
+ *       spec-listed file keeps its pinned identity for its resolved
+ *       target).</li>
  *   <li><b>Deployment identity</b> — {@link ProjectDeploymentIdentity}
  *       per D4: the symlink-resolved {@code file:} URI via
  *       {@link ProtectedPathOps#toFileUri(Path)} after protected
@@ -609,21 +618,29 @@ public final class ProjectLocator {
     // =========================================================================
 
     /**
-     * The pure stdlib-surface probe (step 6): the project-local
-     * {@code <manifestDirectory>/std} directory first, else the
-     * language-distribution {@code <processCWD>/std} directory, else
-     * absent ({@code null}). Absence is a plain value, never a failure;
-     * the returned path is fully symlink-resolved when present.
+     * The stdlib-surface probe (step 6), resolved through the pinned
+     * three-tier {@link DistributionHome} order
+     * ({@code release-distribution-packaging-and-discovery} D3): the
+     * project-local {@code <manifestDirectory>/std} directory first
+     * (the pinned v1.2 override surface), then the language
+     * distribution (the materialized classpath-resource {@code std/}
+     * directory, then the {@code DEAL_HOME}/{@code deal.home}
+     * filesystem {@code std/} directory), then the checkout
+     * {@code <processCWD>/std} dev fallback, else absent
+     * ({@code null}). Absence is a plain value, never a failure; the
+     * returned path is fully symlink-resolved when present (the pinned
+     * step-6 shape).
      */
     private static String probeStdlibSurface(String manifestDirectoryText) {
-        Optional<Path> projectLocal = ProtectedPathOps.probeDirectory(
-            Path.of(manifestDirectoryText).resolve("std"));
-        if (projectLocal.isPresent()) {
-            return projectLocal.get().toString();
+        Optional<DistributionHome.ResolvedSurface> surface =
+            DistributionHome.forManifestDirectory(manifestDirectoryText)
+                .resolveStdlibSurface();
+        if (surface.isEmpty()) {
+            return null;
         }
-        Optional<Path> distribution = ProtectedPathOps.probeDirectory(
-            Path.of("").toAbsolutePath().resolve("std"));
-        return distribution.map(Path::toString).orElse(null);
+        Optional<Path> resolved = ProtectedPathOps.probeDirectory(
+            Path.of(surface.get().pathText()));
+        return resolved.map(Path::toString).orElse(null);
     }
 
     /**

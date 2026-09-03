@@ -34,6 +34,9 @@ PROD_SOURCES=(
   'deal/project/*.java'
   'deal/identity/*.java'
   'deal/Main.java'
+  # ISSUE-0457 registration: the distribution-discovery package
+  # (DistributionHome — runtime/stdlib resolution outside the checkout).
+  'deal/distribution/*.java'
 )
 
 # TEST_SOURCES: the remainder of today's compile list, verbatim, in
@@ -127,6 +130,8 @@ TEST_SOURCES=(
   'deal/test/containment/ContainedProcessBrokerStateTest.java'
   'deal/project/ProjectLocatorTest.java'
   'deal/module/ModuleIdentityResolverTest.java'
+  # ISSUE-0457 registration: the DistributionHome tier-selection suite.
+  'test/DistributionHomeTest.java'
 )
 
 # TEST_MAINS: ordered "<class>|<banner>|<command>" records reproducing
@@ -234,4 +239,7 @@ WARNING: luajit not found, skipping async nesting stress tests'
   'fg|=== std/time.nowMillis Pre-Activation Pin (ISSUE-0369) ===|java -ea -cp build deal.test.StdlibTimePreActivationPinTest'
   'golden-ir|=== Stdlib Golden IR Check ===|java -ea -cp build deal.test.GenerateStdlibGoldenIr "$TEMP_FILE" 2>/dev/null'
   'fg|=== Running Conformance Harness Metadata Seam Tests ===|java -ea -cp build deal.test.ConformanceHarnessMetadataTest'
+  # ISSUE-0457 registration: the DistributionHome tier-selection proofs
+  # (project-local, classpath-resource, DEAL_HOME, and CWD tiers).
+  'fg|=== Running Distribution Home Tier-Selection Tests (ISSUE-0457) ===|java -ea -cp build deal.test.DistributionHomeTest'
 )

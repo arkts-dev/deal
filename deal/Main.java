@@ -4,6 +4,7 @@ import deal.codegen.Backend;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticFormatter;
 import deal.diagnostics.DiagnosticStructuredOutput;
+import deal.distribution.DistributionHome;
 import deal.module.CompilationOrchestrator;
 import deal.project.CliOverrides;
 import deal.project.ProjectContext;
@@ -17,6 +18,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * CLI entry point for the DEAL compiler.
@@ -188,8 +190,7 @@ public final class Main {
                 .map(r -> r.configuredText() + " -> " + r.absoluteNormalizedPath())
                 .toList());
             System.out.println("Stdlib surface: "
-                + (context.stdlibSurfacePath() != null
-                    ? context.stdlibSurfacePath() : "none"));
+                + describeStdlibSurface(context));
             if (dumpIr) {
                 System.out.println("IR dump: enabled");
             }
@@ -240,6 +241,30 @@ public final class Main {
         }
 
         return 0;
+    }
+
+    /**
+     * The verbose stdlib-surface report: the surface resolved by
+     * {@link DistributionHome} in the pinned three-tier order
+     * ({@code release-distribution-packaging-and-discovery} D3) —
+     * {@code project-local}, {@code distribution-classpath-resources},
+     * {@code distribution-home}, {@code cwd-fallback}, or {@code none}.
+     * The report comes from the resolver (never from a CWD/entry
+     * heuristic), and the same resolver — with the same inputs —
+     * produced the surface {@link ProjectLocator} published in the
+     * context, so the report never guesses a surface the compile does
+     * not use.
+     */
+    private static String describeStdlibSurface(ProjectContext context) {
+        Optional<DistributionHome.ResolvedSurface> surface =
+            DistributionHome.forManifestDirectory(
+                    context.manifestDirectory())
+                .resolveStdlibSurface();
+        if (surface.isEmpty()) {
+            return "none";
+        }
+        DistributionHome.ResolvedSurface resolved = surface.get();
+        return resolved.tier() + " " + resolved.pathText();
     }
 
     /**

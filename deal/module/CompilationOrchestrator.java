@@ -24,6 +24,7 @@ import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticFormatter;
 import deal.diagnostics.DiagnosticRange;
 import deal.diagnostics.DiagnosticStructuredOutput;
+import deal.distribution.DistributionHome;
 import deal.identity.CanonicalClassIdentity;
 import deal.parser.*;
 import deal.semantic.CheckedProjectBuildResult;
@@ -201,6 +202,18 @@ public final class CompilationOrchestrator {
      */
     private final Path diagnosticsJsonPath;
 
+    /**
+     * The pinned three-tier distribution resolver of this compilation's
+     * project (ISSUE-0457,
+     * {@code release-distribution-packaging-and-discovery} D3): the
+     * runtime and stdlib deployment copies resolve their sources
+     * through it in the pinned order — project-local surface first,
+     * then the language distribution (classpath resources, then the
+     * {@code DEAL_HOME} filesystem layout), then the checkout CWD dev
+     * fallback.
+     */
+    private final DistributionHome distributionHome;
+
     // Host externals (ISSUE-0082, host-module-abi D5, file-keyed since
     // ISSUE-0269): the externals declarations live in
     // ProjectContext.externals (raw import specifier → validated
@@ -282,6 +295,8 @@ public final class CompilationOrchestrator {
         this.sourceMap = sourceMap;
         this.sourceMapExplicit = sourceMapExplicit;
         this.diagnosticsJsonPath = diagnosticsJsonPath;
+        this.distributionHome = DistributionHome.forManifestDirectory(
+            context.manifestDirectory());
         this.sourceResolver = new SourceModuleResolver(context);
         this.identityAssembly = new ModuleIdentityAssembly(context);
     }
@@ -384,6 +399,8 @@ public final class CompilationOrchestrator {
         this.sourceMap = sourceMap;
         this.sourceMapExplicit = sourceMapExplicit;
         this.diagnosticsJsonPath = diagnosticsJsonPath;
+        this.distributionHome = DistributionHome.forManifestDirectory(
+            context.manifestDirectory());
         this.sourceResolver = new SourceModuleResolver(context);
         this.identityAssembly = new ModuleIdentityAssembly(context);
     }
@@ -2694,19 +2711,19 @@ public final class CompilationOrchestrator {
 
         Files.createDirectories(runtimeDest.getParent());
 
-        InputStream runtimeStream = getClass().getClassLoader()
-            .getResourceAsStream("deal/runtime.lua");
-        if (runtimeStream != null) {
-            Files.copy(runtimeStream, runtimeDest);
-            runtimeStream.close();
-            log("  Copied runtime: " + runtimeDest);
-            return;
-        }
-
-        Path runtimeSrc = Path.of("deal/runtime.lua");
-        if (Files.exists(runtimeSrc)) {
-            Files.copy(runtimeSrc, runtimeDest);
-            log("  Copied runtime: " + runtimeDest);
+        // The pinned three-tier distribution order (ISSUE-0457, D3):
+        // classpath resources, then the DEAL_HOME filesystem layout,
+        // then the checkout CWD dev fallback — resolved through
+        // DistributionHome (no project-local location is pinned for the
+        // runtime).
+        Optional<DistributionHome.ResolvedSource> runtime =
+            distributionHome.resolveRuntimeSource("deal/runtime.lua");
+        if (runtime.isPresent()) {
+            try (InputStream in = runtime.get().open()) {
+                Files.copy(in, runtimeDest);
+            }
+            log("  Copied runtime: " + runtimeDest + " ("
+                + runtime.get().tier() + ")");
             return;
         }
 
@@ -2718,41 +2735,35 @@ public final class CompilationOrchestrator {
     }
 
     /**
-     * Copies the spec-listed stdlib .lua implementation files to the output.
-     * The module list is derived from the 6 spec-listed stdlib modules.
+     * Copies the spec-listed stdlib .lua implementation files to the
+     * output. The module list is derived from the 6 spec-listed stdlib
+     * modules. Each copy source resolves through {@link
+     * DistributionHome} in the pinned three-tier order (ISSUE-0457,
+     * {@code release-distribution-packaging-and-discovery} D3) —
+     * project-local surface first, then the language distribution
+     * (classpath resources, then the {@code DEAL_HOME} filesystem
+     * layout), then the checkout CWD dev fallback — so a v1.2 project
+     * shipping a local {@code std/} override stages its own bytes and
+     * an out-of-checkout compile stages the distribution's bytes. A
+     * module absent at every tier is skipped silently (unchanged).
      */
     private void copyStdlibModules() throws IOException {
         for (String stdlibModule : StdlibModuleResolver.SPEC_STDLIB_MODULES) {
             Path destFile = outputRoot.resolve(stdlibModule + ".lua");
             if (Files.exists(destFile)) continue;
 
-            // The pinned stdlib surface is the std directory itself
-            // (ISSUE-0269: the legacy stdlibDir heuristic moved into
-            // ProjectLocator step 6 / the synthesized context), so the
-            // implementation file is <surface>/<name>.lua for the
-            // module std/<name>.
-            String surface = context.stdlibSurfacePath();
-            if (surface != null) {
-                Path srcFile = Path.of(surface).resolve(
-                    stdlibModule.substring("std/".length()) + ".lua");
-                if (Files.exists(srcFile)) {
-                    Files.createDirectories(destFile.getParent());
-                    Files.copy(srcFile, destFile);
-                    log("  Copied stdlib: " + stdlibModule);
-                    continue;
-                }
+            String name = stdlibModule.substring("std/".length());
+            Optional<DistributionHome.ResolvedSource> source =
+                distributionHome.resolveStdlibImplementation(name, "lua");
+            if (source.isEmpty()) {
+                continue;
             }
-
-            // Fallback: try classpath resource for bundled stdlib .lua files
-            String resourcePath = "std/" + stdlibModule.substring(4) + ".lua";
-            InputStream stream = getClass().getClassLoader()
-                .getResourceAsStream(resourcePath);
-            if (stream != null) {
-                Files.createDirectories(destFile.getParent());
-                Files.copy(stream, destFile);
-                stream.close();
-                log("  Copied stdlib: " + stdlibModule);
+            Files.createDirectories(destFile.getParent());
+            try (InputStream in = source.get().open()) {
+                Files.copy(in, destFile);
             }
+            log("  Copied stdlib: " + stdlibModule + " ("
+                + source.get().tier() + ")");
         }
     }
 
@@ -2769,19 +2780,19 @@ public final class CompilationOrchestrator {
 
         Files.createDirectories(runtimeDest.getParent());
 
-        InputStream runtimeStream = getClass().getClassLoader()
-            .getResourceAsStream("deal/runtime.js");
-        if (runtimeStream != null) {
-            Files.copy(runtimeStream, runtimeDest);
-            runtimeStream.close();
-            log("  Copied runtime: " + runtimeDest);
-            return;
-        }
-
-        Path runtimeSrc = Path.of("deal/runtime.js");
-        if (Files.exists(runtimeSrc)) {
-            Files.copy(runtimeSrc, runtimeDest);
-            log("  Copied runtime: " + runtimeDest);
+        // The pinned three-tier distribution order (ISSUE-0457, D3):
+        // classpath resources, then the DEAL_HOME filesystem layout,
+        // then the checkout CWD dev fallback — resolved through
+        // DistributionHome (no project-local location is pinned for the
+        // runtime).
+        Optional<DistributionHome.ResolvedSource> runtime =
+            distributionHome.resolveRuntimeSource("deal/runtime.js");
+        if (runtime.isPresent()) {
+            try (InputStream in = runtime.get().open()) {
+                Files.copy(in, runtimeDest);
+            }
+            log("  Copied runtime: " + runtimeDest + " ("
+                + runtime.get().tier() + ")");
             return;
         }
 
@@ -2795,41 +2806,31 @@ public final class CompilationOrchestrator {
     /**
      * Copies the spec-listed stdlib .js implementation files to the
      * output (the module list is derived from the 6 spec-listed stdlib
-     * modules). Stdlib-directory source first, classpath resource
-     * fallback, a missing source for a module skipped silently;
-     * idempotent. The mirror of copyStdlibModules with the .js spelling
-     * (js-backend-emitter D10).
+     * modules). Each copy source resolves through {@link
+     * DistributionHome} in the pinned three-tier order (ISSUE-0457) —
+     * project-local surface first, then the language distribution
+     * (classpath resources, then the {@code DEAL_HOME} filesystem
+     * layout), then the checkout CWD dev fallback; a missing source for
+     * a module is skipped silently; idempotent. The mirror of
+     * copyStdlibModules with the .js spelling (js-backend-emitter D10).
      */
     private void copyStdlibJsModules() throws IOException {
         for (String stdlibModule : StdlibModuleResolver.SPEC_STDLIB_MODULES) {
             Path destFile = outputRoot.resolve(stdlibModule + ".js");
             if (Files.exists(destFile)) continue;
 
-            // The pinned stdlib surface is the source of the .js
-            // implementations (ISSUE-0269 migration; see
-            // copyStdlibModules).
-            String surface = context.stdlibSurfacePath();
-            if (surface != null) {
-                Path srcFile = Path.of(surface).resolve(
-                    stdlibModule.substring("std/".length()) + ".js");
-                if (Files.exists(srcFile)) {
-                    Files.createDirectories(destFile.getParent());
-                    Files.copy(srcFile, destFile);
-                    log("  Copied stdlib: " + stdlibModule);
-                    continue;
-                }
+            String name = stdlibModule.substring("std/".length());
+            Optional<DistributionHome.ResolvedSource> source =
+                distributionHome.resolveStdlibImplementation(name, "js");
+            if (source.isEmpty()) {
+                continue;
             }
-
-            // Fallback: try classpath resource for bundled stdlib .js files
-            String resourcePath = "std/" + stdlibModule.substring(4) + ".js";
-            InputStream stream = getClass().getClassLoader()
-                .getResourceAsStream(resourcePath);
-            if (stream != null) {
-                Files.createDirectories(destFile.getParent());
-                Files.copy(stream, destFile);
-                stream.close();
-                log("  Copied stdlib: " + stdlibModule);
+            Files.createDirectories(destFile.getParent());
+            try (InputStream in = source.get().open()) {
+                Files.copy(in, destFile);
             }
+            log("  Copied stdlib: " + stdlibModule + " ("
+                + source.get().tier() + ")");
         }
     }
 
