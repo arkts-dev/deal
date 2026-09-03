@@ -47,6 +47,24 @@ TEST_MAINS+=(
 )
 
 # =========================================================================
+# ISSUE-0356 (JS lane): the JavaScript lane of the differential gate plus
+# its lane suite join the compile list and the run phase here. The lane
+# implements the Shared Lane Contract (G4) over the absorbed
+# BackendConformanceTest JS adapter path (real frontend + JsBackend ->
+# deal/runtime.js + std/*.js + host-fixtures/<name>.js deployment -> real
+# node subprocess) and reuses the shared canonical ErrorSnapshot
+# serializer verbatim. BackendConformanceTest/JsE2eTest keep running
+# unchanged until the absorption/retirement children land.
+# =========================================================================
+TEST_SOURCES+=(
+  'deal/test/conformance/JsLane.java'
+  'deal/test/conformance/JsLaneTest.java'
+)
+TEST_MAINS+=(
+  'fg|=== Running JS Lane Tests (ISSUE-0356) ===|java -ea -cp build deal.test.conformance.JsLaneTest'
+)
+
+# =========================================================================
 # ISSUE-0353 (differential gate core): the gate components and their unit
 # suites join the compile list and the run phase here. The gate's own
 # deal.test entry point (deal.test.conformance.DifferentialGate) is NOT
