@@ -440,6 +440,70 @@ public class BindingsValidationTest {
             null, null, FailurePolicyId.NO_DEAL_FAILURE, null);
     }
 
+    private static SemanticOp loopOp(BlockId init, ValueId condition, BlockId body,
+            BlockId update) {
+        return op(SemanticOpKind.LOOP,
+            new KindPayload.LoopPayload(deal.semantic.ir.ControlSelector.FOR, init,
+                condition, body, update),
+            null, null, FailurePolicyId.NO_DEAL_FAILURE, null);
+    }
+
+    /**
+     * The IR-level for-let header fixture blocks: the LOOP op in the
+     * enclosing block, the counter's generation-0 ALLOC/INIT and the
+     * first condition production in the init block, the generation-1
+     * per-iteration ALLOC/INIT in the body block, and a closure
+     * capturing the counter plus the condition re-production in the
+     * update block (C-D4 placement; B1's two-incarnation shape).
+     */
+    private record ForLetHeaderFixture(LoweredModuleUnit unit,
+                                       StructuredBodyTable table,
+                                       BindingId counter,
+                                       BlockId loopInit) {
+    }
+
+    /** Builds the update-block-capture fixture with the given closure-body load generation. */
+    private static ForLetHeaderFixture forLetHeaderFixture(long closureBodyGeneration) {
+        BindingId counter = nextBindingId();
+        BlockId loopInit = nextBlock();
+        BlockId loopBody = nextBlock();
+        BlockId loopUpdate = nextBlock();
+        BlockId closureBody = nextBlock();
+        FunctionId closureFn = nextFunctionId();
+        ValueId closureIdentity = nextValue();
+        ValueId conditionFirst = nextValue();
+        ValueId conditionRepro = nextValue();
+        SemanticOp alloc0 = allocOp(counter, loopInit, 0);
+        SemanticOp init0 = initOp(counter, 0, nextValue());
+        SemanticOp condition1 = opWith(nextOpId(), SemanticOpKind.BINDING_LOAD,
+            new KindPayload.BindingLoadPayload(counter, 0),
+            conditionFirst, INT, List.of(), List.of(), FailurePolicyId.NO_DEAL_FAILURE, null);
+        SemanticOp loop = loopOp(loopInit, conditionFirst, loopBody, loopUpdate);
+        SemanticOp alloc1 = allocOp(counter, loopBody, 1);
+        SemanticOp init1 = initOp(counter, 1, nextValue());
+        SemanticOp closure = closureNewOp(closureFn, SIG0, List.of(counter), closureBody,
+            closureIdentity);
+        SemanticOp condition2 = opWith(nextOpId(), SemanticOpKind.BINDING_LOAD,
+            new KindPayload.BindingLoadPayload(counter, 0),
+            conditionRepro, INT, List.of(), List.of(), FailurePolicyId.NO_DEAL_FAILURE, null);
+        SemanticOp loadInBody = opWith(nextOpId(), SemanticOpKind.BINDING_LOAD,
+            new KindPayload.BindingLoadPayload(counter, closureBodyGeneration),
+            nextValue(), INT, List.of(), List.of(), FailurePolicyId.NO_DEAL_FAILURE, null);
+        LoweredModuleUnit unit = unit(
+            Map.of(closureFn, function(closureFn, SIG0, List.of(counter), closureBody)),
+            Map.of(new FunctionAllocationIdentity(closureIdentity.id()),
+                new FunctionExecutionBinding.LoweredBody(closureFn, closureBody)),
+            List.of(loop, alloc0, init0, condition1, alloc1, init1, closure, condition2,
+                loadInBody));
+        StructuredBodyTable table = tableOf(Map.ofEntries(
+            Map.entry(INIT_BLOCK, List.of(loop)),
+            Map.entry(loopInit, List.of(alloc0, init0, condition1)),
+            Map.entry(loopBody, List.of(alloc1, init1)),
+            Map.entry(loopUpdate, List.of(closure, condition2)),
+            Map.entry(closureBody, List.of(loadInBody))));
+        return new ForLetHeaderFixture(unit, table, counter, loopInit);
+    }
+
     private static SemanticOp boundaryOp(BoundaryKind kind, RuntimeDescriptor descriptor,
             ValueId input) {
         return op(SemanticOpKind.BOUNDARY,
@@ -843,6 +907,20 @@ public class BindingsValidationTest {
         assertE6005(BindingsProductionValidator.validate(unitY, tableY),
             "BINDING_GENERATION_RESOLUTION", "a stale-generation store",
             "stale/unresolvable");
+
+        // Generation equality at every chain step: a closure created in
+        // the for-let update block captures the counter, which resolves
+        // to the generation-0 incarnation at header sites (B1/B2 — the
+        // per-iteration generation-1 incarnation is out of lexical
+        // scope there), so a closure body load naming generation 1 is
+        // stale/unresolvable.
+        ForLetHeaderFixture staleCapture = forLetHeaderFixture(1L);
+        assertE6005(BindingsProductionValidator.validate(staleCapture.unit(),
+                staleCapture.table()),
+            "BINDING_GENERATION_RESOLUTION",
+            "an update-block capture whose closure body names the generation-1 "
+                + "incarnation",
+            "stale/unresolvable");
     }
 
     private static void testCaptureResolutionNegatives() {
@@ -1199,6 +1277,73 @@ public class BindingsValidationTest {
         assertE6005(BindingsProductionValidator.validate(unitHost, tableHost),
             "REGISTRY_ONE_TO_ONE", "a host-materialized function value without its "
                 + "HostFunctionValue registration", "HostFunctionValue");
+
+        // The host/external seam: an orphan HostFunction registration
+        // (a registry key no import member read produces).
+        LoweredModuleUnit unitOrphanHost = unit(Map.of(),
+            Map.of(nextIdentity(),
+                new FunctionExecutionBinding.HostFunction(new ModuleId("host"), "g", SIG1)),
+            List.of());
+        StructuredBodyTable tableOrphanHost = tableOf(Map.of(INIT_BLOCK, List.of()));
+        assertE6005(BindingsProductionValidator.validate(unitOrphanHost, tableOrphanHost),
+            "REGISTRY_ONE_TO_ONE", "an orphan HostFunction registration",
+            "produced by 0");
+
+        // The host/external seam: an orphan ExternalFunction
+        // registration (a registry key no export read produces).
+        LoweredModuleUnit unitOrphanExternal = unit(Map.of(),
+            Map.of(nextIdentity(),
+                new FunctionExecutionBinding.ExternalFunction(new ModuleId("lib.math"),
+                    "g", SIG1, deal.semantic.ir.ExternalExecutionOwner.SHARED_BODY)),
+            List.of());
+        StructuredBodyTable tableOrphanExternal = tableOf(Map.of(INIT_BLOCK, List.of()));
+        assertE6005(BindingsProductionValidator.validate(unitOrphanExternal,
+                tableOrphanExternal),
+            "REGISTRY_ONE_TO_ONE", "an orphan ExternalFunction registration",
+            "produced by 0");
+
+        // The host/external seam: a duplicate production — two import
+        // member reads publishing one HostFunction key.
+        ValueId readIdentity = nextValue();
+        SemanticOp memberReadA = opWith(nextOpId(), SemanticOpKind.MEMBER_READ,
+            new KindPayload.MemberReadPayload(nextValue(), "g"),
+            readIdentity, SIG1, List.of(), List.of(), FailurePolicyId.NO_DEAL_FAILURE,
+            null);
+        SemanticOp memberReadB = opWith(nextOpId(), SemanticOpKind.MEMBER_READ,
+            new KindPayload.MemberReadPayload(nextValue(), "g"),
+            readIdentity, SIG1, List.of(), List.of(), FailurePolicyId.NO_DEAL_FAILURE,
+            null);
+        LoweredModuleUnit unitDupRead = unit(Map.of(),
+            Map.of(new FunctionAllocationIdentity(readIdentity.id()),
+                new FunctionExecutionBinding.HostFunction(new ModuleId("host"), "g", SIG1)),
+            List.of(memberReadA, memberReadB));
+        StructuredBodyTable tableDupRead = tableOf(Map.of(INIT_BLOCK,
+            List.of(memberReadA, memberReadB)));
+        assertE6005(BindingsProductionValidator.validate(unitDupRead, tableDupRead),
+            "REGISTRY_ONE_TO_ONE", "a duplicate import member-read production of one "
+                + "HostFunction key", "produced by 2");
+
+        // The host/external seam: a duplicate production — two export
+        // reads publishing one ExternalFunction key.
+        ValueId exportIdentity = nextValue();
+        SemanticOp exportReadA = opWith(nextOpId(), SemanticOpKind.EXPORT_READ,
+            new KindPayload.ExportReadPayload(new ModuleId("lib.math"), "g", SIG1,
+                exportIdentity),
+            null, null, List.of(), List.of(), FailurePolicyId.NO_DEAL_FAILURE, null);
+        SemanticOp exportReadB = opWith(nextOpId(), SemanticOpKind.EXPORT_READ,
+            new KindPayload.ExportReadPayload(new ModuleId("lib.math"), "g", SIG1,
+                exportIdentity),
+            null, null, List.of(), List.of(), FailurePolicyId.NO_DEAL_FAILURE, null);
+        LoweredModuleUnit unitDupExport = unit(Map.of(),
+            Map.of(new FunctionAllocationIdentity(exportIdentity.id()),
+                new FunctionExecutionBinding.ExternalFunction(new ModuleId("lib.math"),
+                    "g", SIG1, deal.semantic.ir.ExternalExecutionOwner.SHARED_BODY)),
+            List.of(exportReadA, exportReadB));
+        StructuredBodyTable tableDupExport = tableOf(Map.of(INIT_BLOCK,
+            List.of(exportReadA, exportReadB)));
+        assertE6005(BindingsProductionValidator.validate(unitDupExport, tableDupExport),
+            "REGISTRY_ONE_TO_ONE", "a duplicate export-read production of one "
+                + "ExternalFunction key", "produced by 2");
     }
 
     private static void testNoAdapterAtBoundaryNegative() {
@@ -1253,6 +1398,51 @@ public class BindingsValidationTest {
         assertE6005(BindingsProductionValidator.validate(unitFor, tableFor),
             "BINDING_INIT_ONCE", "an INIT targeting a FOR_EACH iteration binding's cell",
             "never carries a BINDING_INIT");
+
+        // An INIT targeting a parameter cell: the unit payload alone
+        // cannot distinguish a parameter ALLOC from a local ALLOC (both
+        // mutable=true, generation 0, body-root block), so the walk's
+        // checker facts name the parameter binding (the synthetic
+        // parameter-transfer entry write is the invoking machinery's
+        // pinned initializing write).
+        BindingId parameter = nextBindingId();
+        FunctionId paramFn = nextFunctionId();
+        BlockId paramBody = nextBlock();
+        ValueId paramIdentity = nextValue();
+        SemanticOp paramAlloc = allocOp(parameter, paramBody, 0);
+        SemanticOp rogueParamInit = initOp(parameter, 0, nextValue());
+        SemanticOp paramClosure = closureNewOp(paramFn, SIG0, List.of(), paramBody,
+            paramIdentity);
+        LoweredModuleUnit unitParam = unit(
+            Map.of(paramFn, function(paramFn, SIG0, List.of(), paramBody)),
+            Map.of(new FunctionAllocationIdentity(paramIdentity.id()),
+                new FunctionExecutionBinding.LoweredBody(paramFn, paramBody)),
+            List.of(paramClosure, paramAlloc, rogueParamInit));
+        StructuredBodyTable tableParam = tableOf(Map.ofEntries(
+            Map.entry(INIT_BLOCK, List.of(paramClosure)),
+            Map.entry(paramBody, List.of(paramAlloc, rogueParamInit))));
+        assertE6005(BindingsProductionValidator.validate(unitParam, tableParam,
+                new BindingsProductionValidator.PinnedWriteFacts(Set.of(parameter), Set.of())),
+            "BINDING_INIT_ONCE", "an INIT targeting a parameter cell", "parameter cell");
+
+        // An INIT targeting an import-alias cell: the unit payload
+        // alone cannot distinguish an alias ALLOC from an intrinsic
+        // ALLOC (both module-region mutable=false ALLOCs), so the
+        // walk's checker facts name the alias binding (the
+        // MODULE_IMPORT completion write is the pinned initializing
+        // write).
+        BindingId alias = nextBindingId();
+        SemanticOp aliasAlloc = allocOp(alias, INIT_BLOCK, 0);
+        SemanticOp rogueAliasInit = initOp(alias, 0, nextValue());
+        SemanticOp moduleImport = moduleImportOp();
+        LoweredModuleUnit unitAlias = unit(Map.of(), Map.of(),
+            List.of(aliasAlloc, rogueAliasInit, moduleImport));
+        StructuredBodyTable tableAlias = tableOf(Map.of(INIT_BLOCK,
+            List.of(aliasAlloc, rogueAliasInit, moduleImport)));
+        assertE6005(BindingsProductionValidator.validate(unitAlias, tableAlias,
+                new BindingsProductionValidator.PinnedWriteFacts(Set.of(), Set.of(alias))),
+            "BINDING_INIT_ONCE", "an INIT targeting an import-alias cell",
+            "import-alias cell");
     }
 
     // =========================================================================
@@ -1328,6 +1518,78 @@ public class BindingsValidationTest {
             Map.entry(paramBody, List.of(paramAlloc, paramLoad))));
         assertPass(BindingsProductionValidator.validate(unitParam, tableParam),
             "the parameter-transfer entry write dominates body loads");
+
+        // The for-let header capture (B1/B2): a closure created in the
+        // update block captures the generation-0 counter — the
+        // per-iteration incarnation is out of lexical scope at header
+        // sites, so the capture resolves to the counter, the closure
+        // body's generation-0 loads match, and the counter derives
+        // SHARED_CELL (DIRECT unless a closure in the condition/update
+        // captures it).
+        ForLetHeaderFixture updateCapture = forLetHeaderFixture(0L);
+        assertPass(BindingsProductionValidator.validate(updateCapture.unit(),
+                updateCapture.table()),
+            "the for-let update-block capture of the generation-0 counter");
+        List<BindingsProductionValidator.DerivedCellKind> derived =
+            BindingsProductionValidator.deriveCellKinds(updateCapture.unit(),
+                updateCapture.table());
+        check(derived.stream().anyMatch(row ->
+                row.key().binding().equals(updateCapture.counter())
+                    && row.key().generation() == 0
+                    && row.key().scope().equals(updateCapture.loopInit())
+                    && row.kind() == BindingCellKind.SHARED_CELL),
+            "the update-site capture makes the generation-0 counter derive SHARED_CELL "
+                + "(the B2 condition/update-capture arm)");
+
+        // A HostFunctionValue whose identity later crosses an ordinary
+        // VARIABLE_DECLARATION boundary (identity-preserving flow):
+        // only the producing HOST_TO_DEAL crossing counts toward the
+        // exactly-one requirement.
+        ValueId hostValue = nextValue();
+        SemanticOp hostCrossing = boundaryOp(BoundaryKind.HOST_TO_DEAL, SIG1, hostValue);
+        SemanticOp laterDeclaration = boundaryOp(BoundaryKind.VARIABLE_DECLARATION, SIG1,
+            hostValue);
+        LoweredModuleUnit unitHostFlow = unit(Map.of(),
+            Map.of(new FunctionAllocationIdentity(hostValue.id()),
+                new FunctionExecutionBinding.HostFunctionValue(MOD,
+                    hostCrossing.opId(), SIG1)),
+            List.of(hostCrossing, laterDeclaration));
+        StructuredBodyTable tableHostFlow = tableOf(Map.of(INIT_BLOCK,
+            List.of(hostCrossing, laterDeclaration)));
+        assertPass(BindingsProductionValidator.validate(unitHostFlow, tableHostFlow),
+            "a HostFunctionValue followed by an identity-preserving VARIABLE_DECLARATION "
+                + "crossing");
+
+        // A HostFunction produced by exactly one import member read
+        // (the host/external seam's producing site).
+        ValueId memberReadResult = nextValue();
+        SemanticOp memberRead = opWith(nextOpId(), SemanticOpKind.MEMBER_READ,
+            new KindPayload.MemberReadPayload(nextValue(), "g"),
+            memberReadResult, SIG1, List.of(), List.of(), FailurePolicyId.NO_DEAL_FAILURE,
+            null);
+        LoweredModuleUnit unitHostRead = unit(Map.of(),
+            Map.of(new FunctionAllocationIdentity(memberReadResult.id()),
+                new FunctionExecutionBinding.HostFunction(new ModuleId("host"), "g", SIG1)),
+            List.of(memberRead));
+        StructuredBodyTable tableHostRead = tableOf(Map.of(INIT_BLOCK, List.of(memberRead)));
+        assertPass(BindingsProductionValidator.validate(unitHostRead, tableHostRead),
+            "a HostFunction produced by exactly one import member read");
+
+        // An ExternalFunction produced by exactly one export read.
+        ValueId exportReadValue = nextValue();
+        SemanticOp exportRead = opWith(nextOpId(), SemanticOpKind.EXPORT_READ,
+            new KindPayload.ExportReadPayload(new ModuleId("lib.math"), "g", SIG1,
+                exportReadValue),
+            null, null, List.of(), List.of(), FailurePolicyId.NO_DEAL_FAILURE, null);
+        LoweredModuleUnit unitExternalRead = unit(Map.of(),
+            Map.of(new FunctionAllocationIdentity(exportReadValue.id()),
+                new FunctionExecutionBinding.ExternalFunction(new ModuleId("lib.math"),
+                    "g", SIG1, deal.semantic.ir.ExternalExecutionOwner.SHARED_BODY)),
+            List.of(exportRead));
+        StructuredBodyTable tableExternalRead = tableOf(Map.of(INIT_BLOCK,
+            List.of(exportRead)));
+        assertPass(BindingsProductionValidator.validate(unitExternalRead, tableExternalRead),
+            "an ExternalFunction produced by exactly one export read");
     }
 
     // =========================================================================

@@ -166,9 +166,33 @@ public final class BindingsProductionValidator {
      */
     public static Optional<CompilerDiagnostic> validate(LoweredModuleUnit unit,
                                                         StructuredBodyTable table) {
+        return validate(unit, table, PinnedWriteFacts.empty());
+    }
+
+    /**
+     * Validates one unit plus its block-membership table plus the
+     * walk's pinned-write binding facts against the B9 rule set.
+     * {@link PinnedWriteFacts} carries the two checker-fact arms the
+     * unit payload cannot express — parameter bindings and import
+     * aliases ({@code BINDING_INIT_ONCE} consumes them; the catch,
+     * group-member, and {@code FOR_EACH} arms are unit-derivable).
+     * Returns empty on pass and exactly one E6005 diagnostic naming
+     * the first failing rule on failure. No mutation; deterministic;
+     * linear in ops plus block edges and capture chains.
+     *
+     * @param unit  the lowered module unit; non-null
+     * @param table the block-membership table of the unit; non-null
+     * @param facts the walk's pinned-write binding facts; non-null
+     * @return empty on pass, otherwise the first E6005
+     */
+    public static Optional<CompilerDiagnostic> validate(LoweredModuleUnit unit,
+                                                        StructuredBodyTable table,
+                                                        PinnedWriteFacts facts) {
         Objects.requireNonNull(unit, "unit must not be null");
         Objects.requireNonNull(table, "table must not be null");
-        Model model = Model.build(unit, table);
+        Objects.requireNonNull(facts, "facts must not be null");
+        Model model = Model.build(unit, table, facts);
+
         Optional<CompilerDiagnostic> failure = checkGroupShape(model);
         if (failure.isPresent()) {
             return failure;
@@ -204,6 +228,33 @@ public final class BindingsProductionValidator {
         return checkNoAdapterAtBoundary(model);
     }
 
+    /**
+     * The walk's pinned-write binding facts supplied to the validator
+     * ({@code BINDING_INIT_ONCE}'s two checker-fact arms). The unit
+     * payload alone cannot distinguish a parameter ALLOC from a local
+     * ALLOC (both {@code mutable=true}, generation 0, body-root block)
+     * or an import-alias ALLOC from an intrinsic ALLOC (both
+     * module-region {@code mutable=false} ALLOCs) — the walk owns the
+     * checker facts and supplies them here. The remaining pinned
+     * initializing writes (catch binding, group member,
+     * {@code FOR_EACH} iteration binding) are unit-derivable and need
+     * no fact arm.
+     */
+    public record PinnedWriteFacts(Set<BindingId> parameters, Set<BindingId> importAliases) {
+
+        /** The empty fact set (the non-walk validation surface's default). */
+        public static PinnedWriteFacts empty() {
+            return new PinnedWriteFacts(Set.of(), Set.of());
+        }
+
+        public PinnedWriteFacts {
+            Objects.requireNonNull(parameters, "parameters must not be null");
+            Objects.requireNonNull(importAliases, "importAliases must not be null");
+            parameters = Set.copyOf(parameters);
+            importAliases = Set.copyOf(importAliases);
+        }
+    }
+
     /** One derived cell kind of an incarnation (the {@link #deriveCellKinds} row). */
     public record DerivedCellKind(IncarnationKey key, BindingCellKind kind) {
     }
@@ -234,7 +285,7 @@ public final class BindingsProductionValidator {
                                                         StructuredBodyTable table) {
         Objects.requireNonNull(unit, "unit must not be null");
         Objects.requireNonNull(table, "table must not be null");
-        Model model = Model.build(unit, table);
+        Model model = Model.build(unit, table, PinnedWriteFacts.empty());
         List<DerivedCellKind> derived = new ArrayList<>();
         // The for-let per-iteration detection: a binding with both a
         // generation-0 incarnation and a generation-1 incarnation is
@@ -389,11 +440,20 @@ public final class BindingsProductionValidator {
         final List<SemanticOp> moduleImports = new ArrayList<>();
         /** The no-INIT module-region ALLOCs in unit op order (the import aliases). */
         final List<SemanticOp> aliasAllocs = new ArrayList<>();
+        /** The walk's pinned parameter bindings (BINDING_INIT_ONCE's checker-fact arm). */
+        final Set<BindingId> parameters;
+        /** The walk's pinned import-alias bindings (BINDING_INIT_ONCE's checker-fact arm). */
+        final Set<BindingId> importAliases;
+        /** The LOOP op of every LOOP child block (init/body/update → the op). */
+        final Map<BlockId, SemanticOp> loopOfBlock = new LinkedHashMap<>();
 
-        Model(LoweredModuleUnit unit, StructuredBodyTable table, BlockId moduleRoot) {
+        Model(LoweredModuleUnit unit, StructuredBodyTable table, BlockId moduleRoot,
+              PinnedWriteFacts facts) {
             this.unit = unit;
             this.table = table;
             this.moduleRoot = moduleRoot;
+            this.parameters = facts.parameters();
+            this.importAliases = facts.importAliases();
         }
 
         /** The block an op is a member of (or null for module-level kinds). */
@@ -401,9 +461,10 @@ public final class BindingsProductionValidator {
             return blockOfOp.get(opId);
         }
 
-        static Model build(LoweredModuleUnit unit, StructuredBodyTable table) {
+        static Model build(LoweredModuleUnit unit, StructuredBodyTable table,
+                           PinnedWriteFacts facts) {
             BlockId moduleRoot = unit.moduleInit().initBlock();
-            Model model = new Model(unit, table, moduleRoot);
+            Model model = new Model(unit, table, moduleRoot, facts);
             for (SemanticOp op : unit.ops()) {
                 model.opById.put(op.opId(), op);
             }
@@ -430,6 +491,13 @@ public final class BindingsProductionValidator {
                     }
                     if (op.kind() == SemanticOpKind.LOOP
                             && op.payload() instanceof KindPayload.LoopPayload loop) {
+                        if (loop.initBlock() != null) {
+                            model.loopOfBlock.put(loop.initBlock(), op);
+                        }
+                        model.loopOfBlock.put(loop.bodyBlock(), op);
+                        if (loop.updateBlock() != null) {
+                            model.loopOfBlock.put(loop.updateBlock(), op);
+                        }
                         if (loop.initBlock() != null && loop.bodyBlock() != null) {
                             model.intraLoopEdges.computeIfAbsent(loop.initBlock(),
                                 k -> new ArrayList<>()).add(loop.bodyBlock());
@@ -802,6 +870,37 @@ public final class BindingsProductionValidator {
         }
 
         /**
+         * The producing allocations of one binding a capture at a site
+         * may resolve to: the dominance-visible allocations minus the
+         * same {@code LOOP}'s body-block incarnations when the site sits
+         * in that {@code LOOP}'s init or update block. The body block is
+         * a nested scope of the loop header — its per-iteration
+         * incarnation (B1: the generation-1 body-top ALLOC) is out of
+         * lexical scope at header sites, so an update-block or
+         * condition-re-production capture resolves to the generation-0
+         * counter (B1/B2: the counter incarnation is {@code DIRECT}
+         * unless a closure in the condition/update captures it;
+         * update/condition captures target the generation-0 counter,
+         * never the per-iteration incarnation).
+         */
+        List<Allocation> captureCandidates(BindingId binding, BlockId site) {
+            List<Allocation> candidates = new ArrayList<>(visibleAllocations(binding, site));
+            SemanticOp loop = loopOfBlock.get(site);
+            if (loop != null && loop.payload() instanceof KindPayload.LoopPayload payload
+                    && !payload.bodyBlock().equals(site)) {
+                BlockId bodyBlock = payload.bodyBlock();
+                candidates.removeIf(allocation ->
+                    allocation.block != null && allocation.block.equals(bodyBlock));
+            }
+            return candidates;
+        }
+
+        /** The dominant capture candidate of one binding at a site. */
+        Optional<Allocation> dominantCaptureAllocation(BindingId binding, BlockId site) {
+            return dominantAmong(captureCandidates(binding, site));
+        }
+
+        /**
          * Resolves one binding capture at a detaching op's creation site
          * under the uniform context (R1-R4), recursively along the
          * detaching chain. Empty on zero or multiple producing
@@ -817,14 +916,14 @@ public final class BindingsProductionValidator {
                 return Optional.empty();
             }
             if (root.equals(moduleRoot)) {
-                return dominantAllocation(binding, site)
+                return dominantCaptureAllocation(binding, site)
                     .map(allocation -> new ResolvedCapture(allocation.op,
                         allocation.generation));
             }
             if (functionRoots.contains(root)) {
-                List<Allocation> candidates = visibleAllocations(binding, site);
+                List<Allocation> candidates = captureCandidates(binding, site);
                 if (!candidates.isEmpty()) {
-                    return dominantAllocation(binding, site)
+                    return dominantCaptureAllocation(binding, site)
                         .map(allocation -> new ResolvedCapture(allocation.op,
                             allocation.generation));
                 }
@@ -838,9 +937,9 @@ public final class BindingsProductionValidator {
                 return resolveCaptureBinding(binding, detaching);
             }
             if (thunkRoots.contains(root)) {
-                List<Allocation> candidates = visibleAllocations(binding, site);
+                List<Allocation> candidates = captureCandidates(binding, site);
                 if (!candidates.isEmpty()) {
-                    return dominantAllocation(binding, site)
+                    return dominantCaptureAllocation(binding, site)
                         .map(allocation -> new ResolvedCapture(allocation.op,
                             allocation.generation));
                 }
@@ -866,9 +965,9 @@ public final class BindingsProductionValidator {
                 return resolved;
             }
             if (defaultRoots.contains(root)) {
-                List<Allocation> candidates = visibleAllocations(binding, site);
+                List<Allocation> candidates = captureCandidates(binding, site);
                 if (!candidates.isEmpty()) {
-                    return dominantAllocation(binding, site)
+                    return dominantCaptureAllocation(binding, site)
                         .map(allocation -> new ResolvedCapture(allocation.op,
                             allocation.generation));
                 }
@@ -891,7 +990,7 @@ public final class BindingsProductionValidator {
                 // An enclosing-region free reference: ISSUE-0238's boundary.
                 return Optional.empty();
             }
-            return dominantAllocation(binding, site)
+            return dominantCaptureAllocation(binding, site)
                 .map(allocation -> new ResolvedCapture(allocation.op,
                     allocation.generation));
         }
@@ -1541,6 +1640,20 @@ public final class BindingsProductionValidator {
                     + initBlock + " but its producing ALLOC sits in block " + allocBlock
                     + " (the INIT must be on the incarnation's block's path)");
             }
+            if (model.parameters.contains(entry.getKey().binding())) {
+                return fail(model, BINDING_INIT_ONCE, "the INIT of {" + entry.getKey()
+                    .binding() + ", " + entry.getKey().generation()
+                    + "} targets a parameter cell (the synthetic parameter-transfer "
+                    + "entry write is the invoking machinery's pinned initializing "
+                    + "write — a parameter never carries a BINDING_INIT)");
+            }
+            if (model.importAliases.contains(entry.getKey().binding())) {
+                return fail(model, BINDING_INIT_ONCE, "the INIT of {" + entry.getKey()
+                    .binding() + ", " + entry.getKey().generation()
+                    + "} targets an import-alias cell (the MODULE_IMPORT op's "
+                    + "completion write is the pinned initializing write — an import "
+                    + "alias never carries a BINDING_INIT)");
+            }
             for (SemanticOp other : model.unit.ops()) {
                 if (other.payload() instanceof KindPayload.TryCatchPayload payload
                         && payload.catchBinding().equals(entry.getKey().binding())) {
@@ -1922,7 +2035,15 @@ public final class BindingsProductionValidator {
                     }
                 }
                 case BOUNDARY -> {
-                    if (op.payload() instanceof KindPayload.BoundaryPayload boundary) {
+                    // Only the producing host crossings count toward a
+                    // HostFunctionValue key's exactly-one requirement:
+                    // loads/reads/argument passing/returns preserve
+                    // allocation identity, so a later crossing of the
+                    // same identity through any other boundary kind is
+                    // an ordinary identity-preserving flow, not a
+                    // production.
+                    if (op.payload() instanceof KindPayload.BoundaryPayload boundary
+                            && boundary.kind() == BoundaryKind.HOST_TO_DEAL) {
                         boundaryInputs.merge(boundary.input().id(), 1, Integer::sum);
                     }
                 }

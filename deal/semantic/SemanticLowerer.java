@@ -2371,7 +2371,8 @@ public final class SemanticLowerer {
                 lowerer.proofFacts(), lowerer.creationRuleFacts(), lowerer.shapeMapFacts());
         }
         Optional<CompilerDiagnostic> bindings =
-            BindingsProductionValidator.validate(unit, lowerer.bodyTable());
+            BindingsProductionValidator.validate(unit, lowerer.bodyTable(),
+                lowerer.pinnedWriteFacts());
         if (bindings.isPresent()) {
             return new ValidationCoreResult(new LoweringResult(null, null,
                 List.of(bindings.get())),
@@ -2603,6 +2604,25 @@ public final class SemanticLowerer {
          * {@link #groupFacts()}.
          */
         private final List<GroupFacts> groupFactsList = new ArrayList<>();
+        /**
+         * The pinned parameter bindings of the walk (B1/B9): every
+         * parameter ALLOC emission records its {@link BindingId} — the
+         * checker facts {@code BINDING_INIT_ONCE}'s parameter arm
+         * consumes ({@link #pinnedWriteFacts()}). The unit payload alone
+         * cannot distinguish a parameter ALLOC from a local ALLOC (both
+         * {@code mutable=true}, generation 0, body-root block).
+         */
+        private final LinkedHashSet<BindingId> parameterBindings = new LinkedHashSet<>();
+        /**
+         * The pinned import-alias bindings of the walk (B1/B9): every
+         * hoisted import-alias ALLOC emission records its
+         * {@link BindingId} — the checker facts
+         * {@code BINDING_INIT_ONCE}'s import-alias arm consumes
+         * ({@link #pinnedWriteFacts()}). The unit payload alone cannot
+         * distinguish an alias ALLOC from an intrinsic ALLOC (both
+         * module-region {@code mutable=false} ALLOCs).
+         */
+        private final LinkedHashSet<BindingId> importAliasBindings = new LinkedHashSet<>();
         /**
          * The single cell-kind derivation of the session (B2): every
          * {@code BINDING_ALLOC} payload cell kind flows through
@@ -3351,6 +3371,21 @@ public final class SemanticLowerer {
         }
 
         /**
+         * The walk's pinned-write binding facts (B1/B9): the parameter
+         * and import-alias bindings the session recorded during the
+         * walk — the checker-fact arms
+         * {@code BindingsProductionValidator.BINDING_INIT_ONCE}
+         * consumes (the unit payload alone cannot distinguish these two
+         * pinned-write cells).
+         *
+         * @return the recorded pinned-write facts; non-null
+         */
+        public BindingsProductionValidator.PinnedWriteFacts pinnedWriteFacts() {
+            return new BindingsProductionValidator.PinnedWriteFacts(parameterBindings,
+                importAliasBindings);
+        }
+
+        /**
          * The closure walk's complete closure fact surface: one
          * {@link ClosureFacts} per produced {@code CLOSURE_NEW} in
          * creation order, each with its captures resolved at the
@@ -3559,6 +3594,7 @@ public final class SemanticLowerer {
                         INITIAL_LOOP_GENERATION, moduleInitBlock, BindingCellKind.DIRECT,
                         false, BindingProducer.BINDING_ALLOC, false);
                     registerBinding(importDecl.alias(), binding, incarnation);
+                    importAliasBindings.add(binding);
                     emitUserNullOp(SemanticOpKind.BINDING_ALLOC,
                         new KindPayload.BindingAllocPayload(binding, moduleInitBlock, false,
                             cellKinds.cellKindOf(incarnation), INITIAL_LOOP_GENERATION),
@@ -4271,6 +4307,7 @@ public final class SemanticLowerer {
                         INITIAL_LOOP_GENERATION, bodyBlock, BindingCellKind.DIRECT,
                         true, BindingProducer.BINDING_ALLOC, false);
                     registerBinding(parameter.name(), binding, incarnation);
+                    parameterBindings.add(binding);
                     emitUserNullOp(SemanticOpKind.BINDING_ALLOC,
                         new KindPayload.BindingAllocPayload(binding, bodyBlock, true,
                             cellKinds.cellKindOf(incarnation), INITIAL_LOOP_GENERATION),
@@ -4324,6 +4361,7 @@ public final class SemanticLowerer {
                         INITIAL_LOOP_GENERATION, bodyBlock, BindingCellKind.DIRECT,
                         true, BindingProducer.BINDING_ALLOC, false);
                     registerBinding(parameter.name(), binding, incarnation);
+                    parameterBindings.add(binding);
                     emitUserNullOp(SemanticOpKind.BINDING_ALLOC,
                         new KindPayload.BindingAllocPayload(binding, bodyBlock, true,
                             cellKinds.cellKindOf(incarnation), INITIAL_LOOP_GENERATION),
@@ -4453,6 +4491,7 @@ public final class SemanticLowerer {
                             INITIAL_LOOP_GENERATION, bodyBlock, BindingCellKind.DIRECT,
                             true, BindingProducer.BINDING_ALLOC, false);
                         registerBinding(parameter.name(), binding, incarnation);
+                        parameterBindings.add(binding);
                         emitUserNullOp(SemanticOpKind.BINDING_ALLOC,
                             new KindPayload.BindingAllocPayload(binding, bodyBlock, true,
                                 cellKinds.cellKindOf(incarnation), INITIAL_LOOP_GENERATION),
@@ -7125,6 +7164,7 @@ public final class SemanticLowerer {
                         INITIAL_LOOP_GENERATION, bodyBlock, BindingCellKind.DIRECT,
                         true, BindingProducer.BINDING_ALLOC, false);
                     registerBinding(parameter.name(), binding, incarnation);
+                    parameterBindings.add(binding);
                     emitUserNullOp(SemanticOpKind.BINDING_ALLOC,
                         new KindPayload.BindingAllocPayload(binding, bodyBlock, true,
                             cellKinds.cellKindOf(incarnation), INITIAL_LOOP_GENERATION),
