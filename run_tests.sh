@@ -27,6 +27,26 @@ TEST_MAINS+=(
 )
 
 # =========================================================================
+# ISSUE-0354 (LuaJIT lane): the Lua lane of the differential gate plus its
+# lane suite join the compile list and the run phase here. The lane
+# implements the Shared Lane Contract (G4) over the absorbed
+# ConformanceTest compile -> LuaBackend -> luajit path and reuses the
+# shared canonical ErrorSnapshot serializer verbatim. The
+# LegacyProfileRegressionCatalog authority (the A5 per-case profile
+# selection) was extracted from test/ConformanceTest.java into its own
+# gate-compiled file so the lane can consume it; ConformanceTest keeps
+# running unchanged in run_tests.sh until the flip retires it.
+# =========================================================================
+TEST_SOURCES+=(
+  'deal/test/conformance/LuaLane.java'
+  'deal/test/conformance/LuaLaneTest.java'
+  'test/LegacyProfileRegressionCatalog.java'
+)
+TEST_MAINS+=(
+  'fg|=== Running Lua Lane Tests (ISSUE-0354) ===|java -ea -cp build deal.test.conformance.LuaLaneTest'
+)
+
+# =========================================================================
 # ISSUE-0353 (differential gate core): the gate components and their unit
 # suites join the compile list and the run phase here. The gate's own
 # deal.test entry point (deal.test.conformance.DifferentialGate) is NOT
