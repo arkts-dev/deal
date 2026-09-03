@@ -96,18 +96,33 @@ public final class ContainedProcessBroker implements AutoCloseable {
      * bitmask: bit 1 subreaper, bit 2 monotonic timer, bit 4 negative-PGID
      * signaling, bit 8 parent-death signal, bit 16 bounded drains, bit 32
      * outer registry/broker). The coordinator must observe every expected
-     * bit before sending FEATURE_READY. */
+     * bit before sending FEATURE_READY.
+     *
+     * <p>Staging (dealpg4-probe-selftest-foundation D2/D6,
+     * tools/src/outer.h outer-registry-broker battery contract): at this
+     * stage the native artifact advertises exactly the five
+     * battery-backed probe bits (1|2|4|8|16 = 31) on both the probe
+     * identity line and {@code HELLO_OK}. Bit 32 (outer registry/broker)
+     * joins the advertised set with ISSUE-0184's fault-injection battery
+     * — the atomic CAPS flip to 63 — and
+     * {@link #EXPECTED_CAPABILITY_MASK} flips to the full 63 in the same
+     * change. The mask below is therefore the stage expectation: every
+     * probe bit must be present, and a broker advertising extra bits
+     * (63) is accepted as a superset of the stage set. */
     public static final long CAP_SUBREAPER = 1L << 0;
     public static final long CAP_MONOTONIC_TIMER = 1L << 1;
     public static final long CAP_NEGATIVE_PGID_SIGNALING = 1L << 2;
     public static final long CAP_PARENT_DEATH_SIGNAL = 1L << 3;
     public static final long CAP_BOUNDED_DRAINS = 1L << 4;
     public static final long CAP_OUTER_REGISTRY_BROKER = 1L << 5;
-    /** Union of every defined capability bit: 63 (all six bits). */
+    /** The capability bits the live broker must advertise at this
+     * stage: 31 (the five battery-backed probe bits, every one required
+     * — a {@code HELLO_OK} missing any of them is
+     * {@code CAPABILITY_MISSING} before {@code FEATURE_READY}).
+     * ISSUE-0184's atomic CAPS flip raises this mask to the full 63. */
     public static final long EXPECTED_CAPABILITY_MASK =
             CAP_SUBREAPER | CAP_MONOTONIC_TIMER | CAP_NEGATIVE_PGID_SIGNALING
-                    | CAP_PARENT_DEATH_SIGNAL | CAP_BOUNDED_DRAINS
-                    | CAP_OUTER_REGISTRY_BROKER;
+                    | CAP_PARENT_DEATH_SIGNAL | CAP_BOUNDED_DRAINS;
 
     /** 1 MiB per-stream output retention cap (supervisor-page D7 drain rule). */
     public static final int MAX_OUTPUT_RETAINED_BYTES = 1048576;
@@ -526,11 +541,20 @@ public final class ContainedProcessBroker implements AutoCloseable {
 
     /**
      * Sends the session-level {@code BYE} record (canonical frame
-     * sequence terminator). Call once after {@link #featureReady()} and
-     * after all invocations completed: a {@code BYE} before
-     * {@code FEATURE_READY} or a duplicate {@code BYE} is refused
-     * client-side ({@code PROTOCOL_ERROR}) before any write, so the
-     * session terminator can never be emitted out of order.
+     * sequence terminator). The canonical frame pins {@code DONE ->
+     * BYE}: the live outer broker accepts {@code BYE} only after it
+     * has emitted {@code DONE} (its INVOKE acceptance cutoff, 14:40),
+     * and answers a {@code BYE} in the live phase with
+     * {@code PROTOCOL_ERROR} and a channel close. A caller whose work
+     * completes before the cutoff — the preflight coordinator — ends
+     * the session by closing the connection and exiting 0 instead
+     * (the outer's clean-exit discrimination: reaped status 0 with
+     * every record terminal at broker EOF,
+     * outer-coordinator-and-broker Verification 2). Client-side
+     * ordering guards: a {@code BYE} before {@code FEATURE_READY} or
+     * a duplicate {@code BYE} is refused ({@code PROTOCOL_ERROR})
+     * before any write, so the session terminator can never be
+     * emitted out of order on this client.
      */
     public void bye() {
         synchronized (writeLock) {

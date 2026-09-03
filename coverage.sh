@@ -17,19 +17,113 @@ set -e
 # BRANCH_MISSED=0 in build/coverage.csv) and zero deal.test rows.
 # =========================================================================
 
+# Single compile/test-list authority (gate-manifest-authority M1-M3):
+# coverage.sh mirrors run_tests.sh's compile list at --release 22 and
+# runs the same ordered run phase under the JaCoCo agent.
+source tools/gate-manifest.sh
+# The run_tests.sh script-local additions (ISSUE-0474/0475, ISSUE-0353)
+# join the mirror so both gates compile and run the identical set.
+TEST_SOURCES+=(
+  'deal/test/conformance/CoverageManifestValidator.java'
+  'deal/test/conformance/CoverageManifestValidatorTest.java'
+  'deal/test/conformance/CoverageManifestCorpusTest.java'
+)
+TEST_MAINS+=(
+  'fg|=== Running Coverage Manifest Validator Tests (ISSUE-0474) ===|java -ea -cp build deal.test.conformance.CoverageManifestValidatorTest'
+  'fg|=== Running Coverage Manifest Corpus Tests (ISSUE-0475) ===|java -ea -cp build deal.test.conformance.CoverageManifestCorpusTest'
+)
+
+# =========================================================================
+# ISSUE-0354 (LuaJIT lane): the Lua lane of the differential gate plus its
+# lane suite join the coverage mirror exactly as in run_tests.sh (the
+# Shared Lane Contract G4 over the absorbed ConformanceTest compile ->
+# LuaBackend -> luajit path; LegacyProfileRegressionCatalog is the A5
+# per-case profile-selection authority extracted from ConformanceTest).
+# =========================================================================
+TEST_SOURCES+=(
+  'deal/test/conformance/LuaLane.java'
+  'deal/test/conformance/LuaLaneTest.java'
+  'test/LegacyProfileRegressionCatalog.java'
+)
+TEST_MAINS+=(
+  'fg|=== Running Lua Lane Tests (ISSUE-0354) ===|java -ea -cp build deal.test.conformance.LuaLaneTest'
+)
+
+# =========================================================================
+# ISSUE-0353 (differential gate core): the gate components and their unit
+# suites join the coverage mirror exactly as in run_tests.sh.
+# =========================================================================
+TEST_SOURCES+=(
+  'deal/test/conformance/MismatchClass.java'
+  'deal/test/conformance/GateMismatch.java'
+  'deal/test/conformance/CorpusDiscovery.java'
+  'deal/test/conformance/SidecarExpectations.java'
+  'deal/test/conformance/ErrorSnapshot.java'
+  'deal/test/conformance/StructuredExpectationComparator.java'
+  'deal/test/conformance/FrontendCompiler.java'
+  'deal/test/conformance/CompileDiagnosticComparator.java'
+  'deal/test/conformance/Lane.java'
+  'deal/test/conformance/LaneCase.java'
+  'deal/test/conformance/LaneExecution.java'
+  'deal/test/conformance/GateDispatcher.java'
+  'deal/test/conformance/SidecarGateLoader.java'
+  'deal/test/conformance/DifferentialGate.java'
+  'deal/test/conformance/StructuredExpectationComparatorTest.java'
+  'deal/test/conformance/CompileDiagnosticComparatorTest.java'
+  'deal/test/conformance/GateDispatcherTest.java'
+  'deal/test/conformance/GateClassificationTest.java'
+  'deal/test/conformance/DifferentialGateCorpusTest.java'
+)
+TEST_MAINS+=(
+  'fg|=== Running Differential Gate Comparator Tests (ISSUE-0353) ===|java -ea -cp build deal.test.conformance.StructuredExpectationComparatorTest'
+  'fg|=== Running Compile Diagnostic Comparator Tests (ISSUE-0353) ===|java -ea -cp build deal.test.conformance.CompileDiagnosticComparatorTest'
+  'fg|=== Running Gate Dispatcher Tests (ISSUE-0353) ===|java -ea -cp build deal.test.conformance.GateDispatcherTest'
+  'fg|=== Running Gate Classification Tests (ISSUE-0353) ===|java -ea -cp build deal.test.conformance.GateClassificationTest'
+  'fg|=== Running Differential Gate Corpus Tests (ISSUE-0353) ===|java -ea -cp build deal.test.conformance.DifferentialGateCorpusTest'
+)
+
 JACOCO_DIR="/tmp/opencode/jacoco"
 JUNIT_CP="/usr/share/java/junit4.jar:/usr/share/java/hamcrest-core.jar"
 
-if [ ! -f "$JACOCO_DIR/jacocoagent.jar" ] || [ ! -f "$JACOCO_DIR/jacococli.jar" ]; then
-  echo "ERROR: JaCoCo jars not found under $JACOCO_DIR" >&2
-  exit 1
-fi
-if [ ! -f /usr/share/java/junit4.jar ] || [ ! -f /usr/share/java/hamcrest-core.jar ]; then
-  echo "ERROR: JUnit4/Hamcrest jars not found under /usr/share/java" >&2
-  exit 1
-fi
-
 AGENT="-javaagent:$JACOCO_DIR/jacocoagent.jar=destfile=build/jacoco.exec,append=true,includes=deal.*,excludes=deal.test.*"
+
+# =========================================================================
+# DEALPG4 fail-closed toolchain preflight (ISSUE-0183,
+# fail-closed-toolchain-preflight D1/D2/D5): the identical ordered phase
+# sequence P0-P5 shared verbatim with run_tests.sh via
+# tools/preflight-lib.sh, with the coverage-specific assets per D5: P3
+# additionally requires the JaCoCo agent/CLI jars and the JUnit/Hamcrest
+# jars (absence -> TOOL_MISSING <asset>, never a skip); P4 passes the
+# --release 22 compile list; P5 runs the coordinator under the same
+# JaCoCo agent flags as the rest of the coverage suites. P0-P3 run
+# before any GCC/Javac/Java probe, P4 replaces the raw javac below, and
+# P5 runs after the compile. No phase is skipped, downgraded, or
+# retried; every failure prints its named token on stderr and exits
+# nonzero immediately. No Java process in this script spawns the
+# launcher or an outer (D7).
+# =========================================================================
+source tools/preflight-lib.sh
+DEALPG4_PREFLIGHT_JAVAC_ARGS=(
+  javac --release 22 -proc:none -d build \
+  -cp "$JUNIT_CP" \
+  # shellcheck disable=SC2206
+  ${PROD_SOURCES[@]} "${TEST_SOURCES[@]}"
+)
+DEALPG4_PREFLIGHT_COORD_ARGS=(
+  java -ea "$AGENT" -cp "build:$JUNIT_CP" deal.test.containment.PreflightCoordinator
+)
+dealpg4_preflight_extra_tool_check() {
+    [ -f "$JACOCO_DIR/jacocoagent.jar" ] \
+        || dealpg4_preflight_fail "TOOL_MISSING jacocoagent.jar"
+    [ -f "$JACOCO_DIR/jacococli.jar" ] \
+        || dealpg4_preflight_fail "TOOL_MISSING jacococli.jar"
+    [ -f /usr/share/java/junit4.jar ] \
+        || dealpg4_preflight_fail "TOOL_MISSING junit4.jar"
+    [ -f /usr/share/java/hamcrest-core.jar ] \
+        || dealpg4_preflight_fail "TOOL_MISSING hamcrest-core.jar"
+    echo "  JaCoCo agent/CLI and JUnit/Hamcrest jars present"
+}
+dealpg4_preflight_run
 
 # =========================================================================
 # Reset the build directory before the --release 22 compile below. The
@@ -47,52 +141,23 @@ rm -rf build
 mkdir -p build
 
 # =========================================================================
-# Single compilation step at --release 22 (same explicit file list as
-# run_tests.sh)
+# Single compilation step at --release 22 (the full mirrored compile
+# list, bounded): preflight P4 — launcher run replaces the raw javac
+# step (45 s native deadline, 1 MiB drained output).
 # =========================================================================
 echo "=== Compiling all DEAL sources and tests (--release 22) ==="
-javac --release 22 -d build \
-  -cp "$JUNIT_CP" \
-  deal/ast/*.java \
-  deal/types/*.java \
-  deal/diagnostics/*.java \
-  deal/lexer/*.java \
-  deal/parser/*.java \
-  deal/checker/*.java \
-  deal/codegen/*.java \
-  deal/codegen/lua/*.java \
-  deal/ir/*.java \
-  deal/module/*.java \
-  deal/Main.java \
-  test/StubModuleResolver.java \
-  test/DiagnosticClassificationTest.java \
-  test/AstAndTypesTest.java \
-  test/LexerTest.java \
-  test/ParserTest.java \
-  test/DirectiveTest.java \
-  test/CheckerTest.java \
-  test/IrDumperTest.java \
-  test/IrGoldenTest.java \
-  test/TypeDescriptorTest.java \
-  test/BackendConformanceTest.java \
-  test/LuaBackendTest.java \
-  test/LuaBackendIntegrationTest.java \
-  test/ModuleSystemTest.java \
-  test/StdlibDeclParseTest.java \
-  test/SourceMapTest.java \
-  test/RuntimeSourceLocationTest.java \
-  test/StdlibContractTest.java \
-  test/GenerateStdlibGoldenIr.java \
-  test/ConformanceTest.java \
-  test/LegacyProfileRegressionCatalog.java \
-  test/ConformanceHarnessMetadata.java \
-  test/LuaAbiTest.java \
-  test/LuaAbiBackendTest.java \
-  test/CrossModuleTypingTest.java \
-  deal/test/containment/ContainedProcessBroker.java \
-  deal/test/containment/PreflightCoordinator.java \
-  deal/test/containment/ContainedProcessBrokerFramingTest.java \
-  deal/test/containment/ContainedProcessBrokerStateTest.java
+dealpg4_preflight_javac "${DEALPG4_PREFLIGHT_JAVAC_ARGS[@]}"
+
+# =========================================================================
+# Preflight P5: the outer feature supervisor runs the
+# deal.test.containment.PreflightCoordinator JVM under the same JaCoCo
+# agent flags as the rest of the coverage suites (D5). The agent filter
+# excludes deal.test.* from recording, so the preflight adds no coverage
+# debt; the coordinator requests all work through the inherited broker.
+# Any FAILED record or coordinator failure token exits nonzero. The
+# broker socket is unlinked by the outer's final proof.
+# =========================================================================
+dealpg4_preflight_outer
 
 # Runs a JVM suite under the JaCoCo agent.
 run_java() {
@@ -100,137 +165,109 @@ run_java() {
 }
 
 # =========================================================================
-# Run all suites under the agent
+# Run the full ordered suite under the agent (the same TEST_MAINS run
+# phase as run_tests.sh: background suites in parallel, foreground mains
+# in order, guarded luajit/node suites with their verbatim skip
+# messages, and the golden-IR check at its position). Each record's
+# command shape is "java -ea -cp <cp> <main...>"; the foreground records
+# drop the first four tokens and re-run under the agent's own classpath.
 # =========================================================================
+BACKGROUND_PIDS=""
+
+launch_background() {
+  "$@" &
+  BACKGROUND_PIDS="$BACKGROUND_PIDS $!"
+}
+
+cleanup_background() {
+  # shellcheck disable=SC2086
+  if [ -n "$BACKGROUND_PIDS" ]; then
+    kill $BACKGROUND_PIDS 2>/dev/null || true
+  fi
+}
+trap cleanup_background EXIT
+
+for record in "${TEST_MAINS[@]}"; do
+  record_class="${record%%|*}"
+  record_rest="${record#*|}"
+  record_banner="${record_rest%%|*}"
+  record_command="${record_rest#*|}"
+  if [ -n "$record_banner" ]; then
+    echo ""
+    echo "$record_banner"
+  fi
+  case "$record_class" in
+    bg)
+      read -r -a record_args <<< "$record_command"
+      launch_background "${record_args[@]}"
+      ;;
+    fg)
+      read -r -a record_args <<< "$record_command"
+      run_java "${record_args[@]:4}"
+      ;;
+    luajit|node)
+      if command -v "$record_class" &> /dev/null; then
+        # Today's command lines run under the guard; the trailing
+        # WARNING: line is today's skip message, printed only when the
+        # tool is absent.
+        while IFS= read -r record_line; do
+          case "$record_line" in
+            WARNING:*) ;;
+            *)
+              read -r -a record_args <<< "$record_line"
+              "${record_args[@]}"
+              ;;
+          esac
+        done <<< "$record_command"
+      else
+        while IFS= read -r record_line; do
+          case "$record_line" in
+            WARNING:*) echo "$record_line" ;;
+          esac
+        done <<< "$record_command"
+      fi
+      ;;
+    golden-ir)
+      GOLDEN_FILE="test/goldens/stdlib-declarations.ir.txt"
+      TEMP_FILE="/tmp/deal-stdlib-ir-cov-$$.txt"
+      run_java deal.test.GenerateStdlibGoldenIr "$TEMP_FILE" 2>/dev/null
+      if [ "${DEAL_UPDATE_GOLDENS}" = "true" ]; then
+        cp "$TEMP_FILE" "$GOLDEN_FILE"
+        echo "  Golden IR file updated"
+      else
+        if diff -q "$GOLDEN_FILE" "$TEMP_FILE" > /dev/null 2>&1; then
+          echo "  Golden IR file is current"
+        else
+          echo "  ERROR: Golden IR file differs from generated output!"
+          echo "  Run 'DEAL_UPDATE_GOLDENS=true ./coverage.sh' to update."
+          diff "$GOLDEN_FILE" "$TEMP_FILE" || true
+          rm -f "$TEMP_FILE"
+          exit 1
+        fi
+      fi
+      rm -f "$TEMP_FILE"
+      ;;
+    *)
+      echo "INTERNAL ERROR: unknown TEST_MAINS record class '${record_class}'" >&2
+      exit 1
+      ;;
+  esac
+done
 
 echo ""
-echo "=== Running ContainedProcessBroker Framing Tests ==="
-run_java deal.test.containment.ContainedProcessBrokerFramingTest
-
-echo ""
-echo "=== Running ContainedProcessBroker State Tests ==="
-run_java deal.test.containment.ContainedProcessBrokerStateTest
-
-echo ""
-echo "=== Running Diagnostic Classification Tests ==="
-run_java deal.test.DiagnosticClassificationTest
-
-echo ""
-echo "=== Running AST/Types Tests ==="
-run_java deal.test.AstAndTypesTest
-
-echo ""
-echo "=== Running Directive Tests ==="
-run_java deal.test.DirectiveTest
-
-echo ""
-echo "=== Running Lexer Tests ==="
-run_java deal.test.LexerTest
-
-echo ""
-echo "=== Running Parser Tests ==="
-run_java deal.test.ParserTest
-
-echo ""
-echo "=== Running Checker Tests ==="
-run_java deal.test.CheckerTest
-
-echo ""
-echo "=== Running IR Dumper Tests ==="
-run_java deal.test.IrDumperTest
-
-echo ""
-echo "=== Running IR Golden Tests ==="
-run_java deal.test.IrGoldenTest
-
-echo ""
-echo "=== Running Type Descriptor Tests ==="
-run_java deal.test.TypeDescriptorTest
-
-echo ""
-echo "=== Running Backend Conformance Tests ==="
-run_java deal.test.BackendConformanceTest
-
-echo ""
-echo "=== Running Lua Backend Tests ==="
-run_java deal.test.LuaBackendTest
-
-echo ""
-echo "=== Running Lua Backend Integration Tests ==="
-run_java deal.test.LuaBackendIntegrationTest
-
-echo ""
-echo "=== Running Lua ABI Unit Tests (JUnit4 + Hamcrest) ==="
-run_java org.junit.runner.JUnitCore deal.test.LuaAbiTest deal.test.LuaAbiBackendTest deal.test.CrossModuleTypingTest
-
-echo ""
-echo "=== Running Module System Tests ==="
-run_java deal.test.ModuleSystemTest
-
-echo ""
-echo "=== Running Stdlib .d.deal Parse Tests ==="
-run_java deal.test.StdlibDeclParseTest
-
-echo ""
-echo "=== Running Source Map Tests ==="
-run_java deal.test.SourceMapTest
-
-echo ""
-echo "=== Running Runtime Source Location Tests ==="
-run_java deal.test.RuntimeSourceLocationTest
-
-echo ""
-echo "=== Running Runtime Library Tests ==="
-if command -v luajit &> /dev/null; then
-  luajit test_runtime.lua
-else
-  echo "WARNING: luajit not found, skipping runtime library tests"
-fi
-
-echo ""
-echo "=== Running Jsonable Runtime Tests ==="
-if command -v luajit &> /dev/null; then
-  luajit test_runtime_jsonable.lua
-else
-  echo "WARNING: luajit not found, skipping jsonable runtime tests"
-fi
-
-echo ""
-echo "=== Running Standard Library Tests ==="
-if command -v luajit &> /dev/null; then
-  luajit test_stdlib.lua
-else
-  echo "WARNING: luajit not found, skipping standard library tests"
-fi
-
-echo ""
-echo ""
-echo "=== Running Async Nesting Stress Tests ==="
-if command -v luajit &> /dev/null; then
-  luajit test_async_nesting.lua
-else
-  echo "WARNING: luajit not found, skipping async nesting stress tests"
-fi
-run_java deal.test.StdlibContractTest
-
-echo ""
-echo "=== Stdlib Golden IR Check ==="
-GOLDEN_FILE="test/goldens/stdlib-declarations.ir.txt"
-TEMP_FILE="/tmp/deal-stdlib-ir-cov-$$.txt"
-run_java deal.test.GenerateStdlibGoldenIr "$TEMP_FILE" 2>/dev/null
-if diff -q "$GOLDEN_FILE" "$TEMP_FILE" > /dev/null 2>&1; then
-  echo "  Golden IR file is current"
-else
-  echo "  ERROR: Golden IR file differs from generated output!"
-  diff "$GOLDEN_FILE" "$TEMP_FILE" || true
-  rm -f "$TEMP_FILE"
+echo "=== Waiting for background suites ==="
+BACKGROUND_FAILED=0
+# shellcheck disable=SC2086
+for pid in $BACKGROUND_PIDS; do
+  if ! wait "$pid"; then
+    BACKGROUND_FAILED=1
+  fi
+done
+if [ "$BACKGROUND_FAILED" -eq 1 ]; then
+  echo "=== A background test suite failed ===" >&2
   exit 1
 fi
-rm -f "$TEMP_FILE"
-
-echo ""
-echo "=== Running Conformance Tests ==="
-run_java deal.test.ConformanceTest test/conformance/
+trap - EXIT
 
 # =========================================================================
 # JaCoCo report + gate (CSV is the only accepted proof)
