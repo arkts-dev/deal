@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "feature": "PROJECT_CONFIG",
+  "spec": "spec-v1.2.md §Package manifest",
+  "description": "a source compiled under the exact-v1.2 project context (languageVersion \"1.2\") compiles clean",
+  "expected": "compile-ok",
+  "backends": ["luajit", "jvm"],
+  "invocation": "compile-only",
+  "support": []
+}

@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "feature": "C_FFI_DECLARATION_ERROR",
+  "spec": "spec-v1.2.md §C FFI declaration files",
+  "description": "a C marker anchored to an exported extern-C function is rejected with E7002 — the backend-specific JVM pipeline record",
+  "expected": { "compile-error": "E7002" },
+  "backends": ["jvm"],
+  "invocation": "compile-only",
+  "support": []
+}

@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "feature": "BYTES_ASYNC_FUNCTION",
+  "spec": "spec-v1.2.md §Async/Await",
+  "description": "the async oracle invokes and awaits a first-class async(bytes)->bytes value and asserts bytes identity/content on both backends",
+  "expected": "runtime-ok",
+  "backends": ["luajit", "jvm"],
+  "invocation": "async-export",
+  "oracle": { "exportName": "oracle", "functionDescriptor": "async()->null" },
+  "support": []
+}

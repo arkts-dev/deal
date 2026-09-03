@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "feature": "BYTES_DEFAULTS",
+  "spec": "spec-v1.2.md §Classes / Construction",
+  "description": "per-attempt bytes class defaults are freshly constructed and never shared across instances, on both backends",
+  "expected": "runtime-ok",
+  "backends": ["luajit", "jvm"],
+  "invocation": "synthetic-main",
+  "oracle": { "exportName": "defaultsOracle", "functionDescriptor": "()->int" },
+  "support": ["bytes-core/helper/bytes-ops.deal"]
+}

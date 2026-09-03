@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "feature": "PROJECT_CONFIG",
+  "spec": "spec-v1.2.md §Module resolution",
+  "description": "an out-of-root project class has no representable configured-root identity — E2010 before metadata/artifacts",
+  "expected": { "compile-error": "E2010" },
+  "backends": ["luajit", "jvm"],
+  "invocation": "compile-only",
+  "support": []
+}

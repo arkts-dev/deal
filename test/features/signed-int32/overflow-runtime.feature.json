@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "feature": "SIGNED_INT32",
+  "spec": "spec-v1.2.md §Numeric overflow",
+  "description": "int addition leaving the signed 32-bit range raises E8004 on both backends",
+  "expected": { "runtime-error": "E8004" },
+  "backends": ["luajit", "jvm"],
+  "invocation": "direct-main",
+  "support": []
+}

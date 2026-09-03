@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "feature": "C_FFI_DECLARATION_ERROR",
+  "spec": "spec-v1.2.md §C FFI declaration files",
+  "description": "an extern-C exported class with two C markers is rejected with E7002 on both backend pipelines",
+  "expected": { "compile-error": "E7002" },
+  "backends": ["luajit", "jvm"],
+  "invocation": "compile-only",
+  "support": []
+}

@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "feature": "C_FFI",
+  "spec": "spec-v1.2.md §C FFI runtime semantics",
+  "description": "JVM extern-C emits FFI_UNSUPPORTED_BACKEND (E6006) before artifacts — the linked rejection record of the LuaJIT runtime record",
+  "expected": { "compile-error": "E6006" },
+  "backends": ["jvm"],
+  "invocation": "compile-only",
+  "support": ["c-ffi/native-add.d.deal"]
+}

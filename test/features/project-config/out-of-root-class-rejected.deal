@@ -1,0 +1,11 @@
+// v1.2 feature fixture — PROJECT_CONFIG compile-error E2010 record
+// (compile-only): this class is compiled from a source outside every
+// configured root, so its public class identity is unrepresentable and
+// the compiler rejects the project with E2010 before any artifact.
+class Orphan {
+  x: int = 0;
+}
+
+export function main(): null {
+  return null;
+}

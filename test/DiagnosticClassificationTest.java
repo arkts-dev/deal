@@ -329,6 +329,11 @@ public class DiagnosticClassificationTest {
             "FailureContractRegistryTest (registry-owned detail/message construction; "
             + "ISSUE-0230 foundation, ISSUE-0285) — LoweringFoundationTest pins the "
             + "registration");
+        coverage.put("E6006",
+            "SidecarSchemaValidator C6 divergent pin (FFI_UNSUPPORTED_BACKEND; "
+            + "the backend epics emit it at @extern-c on unsupported backends) — "
+            + "FeatureBackendMatrixTest / V12FeatureCatalogCorpusTest pin the "
+            + "ISSUE-0157 linked JVM C_FFI rejection record");
 
         coverage.put("E7001", "ModuleSystemTest (decl file exec stmt)");
         coverage.put("E7002",

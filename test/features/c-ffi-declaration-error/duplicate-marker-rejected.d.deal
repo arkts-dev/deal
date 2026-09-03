@@ -1,0 +1,11 @@
+// v1.2 feature fixture — C_FFI_DECLARATION_ERROR compile-error E7002
+// record (compile-only, both pipelines): under effective @extern-c an
+// exported class with two attached C markers is rejected with E7002 at
+// the class declaration.
+// @extern-c
+
+// @c-struct
+// @c-pointer
+export class DoubleMarked {
+  x: number = 0.0;
+}

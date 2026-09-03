@@ -1,0 +1,3 @@
+// v1.2 feature fixture — C FFI support declaration module (no sidecar).
+// @extern-c
+export function native_add(a: int, b: int): int;

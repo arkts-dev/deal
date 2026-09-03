@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "feature": "DIAGNOSTIC_RANGE",
+  "spec": "spec-v1.2.md §Compile-time diagnostic format",
+  "description": "the E1036 literal-range diagnostic carries the exact scalar range of the out-of-range literal",
+  "expected": { "compile-error": "E1036" },
+  "backends": ["luajit", "jvm"],
+  "invocation": "compile-only",
+  "support": []
+}

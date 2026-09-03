@@ -1,0 +1,7 @@
+// v1.2 feature fixture — SIGNED_INT32 runtime-error record (direct-main).
+// No directive-shaped metadata: production // @spec: is E1044.
+export function main(): null {
+  let max: int = 2147483647;
+  let overflow: int = max + 1;
+  return null;
+}

@@ -1,0 +1,21 @@
+// v1.2 feature fixture — BYTES_DEFAULTS runtime-ok record (synthetic-main):
+// the generated typed entry imports this module unchanged, calls
+// defaultsOracle() once through a normal typed boundary, and returns null.
+import * as Ops from "../bytes-core/helper/bytes-ops"
+
+class BufferBox {
+  data: bytes = bytes(2);
+}
+
+export function defaultsOracle(): int {
+  let a: BufferBox = {};
+  let b: BufferBox = {};
+  a.data[0] = 9;
+  if (b.data[0] !== 0) {
+    throw { code: "TEST_FAIL", message: "defaults: bytes shared across instances" };
+  }
+  if (b.data.length !== 2) {
+    throw { code: "TEST_FAIL", message: "defaults: bytes default length mismatch" };
+  }
+  return Ops.byteSum(a.data) + b.data.length;
+}

@@ -1,0 +1,26 @@
+// v1.2 feature fixture — BYTES_CORE runtime-ok record (direct-main).
+import * as Ops from "./helper/bytes-ops"
+
+export function main(): null {
+  let b: bytes = Ops.zeroFill(4);
+  if (b.length !== 4) {
+    throw { code: "TEST_FAIL", message: "bytes: initial length mismatch" };
+  }
+  if (b[0] !== 0) {
+    throw { code: "TEST_FAIL", message: "bytes: zero-fill mismatch" };
+  }
+  b[0] = 255;
+  b[1] = 128;
+  if (b[0] !== 255 || b[1] !== 128) {
+    throw { code: "TEST_FAIL", message: "bytes: byte roundtrip mismatch" };
+  }
+  let alias: bytes = b;
+  alias[2] = 7;
+  if (b[2] !== 7) {
+    throw { code: "TEST_FAIL", message: "bytes: reference copy mismatch" };
+  }
+  if (Ops.byteSum(b) !== 255 + 128 + 7) {
+    throw { code: "TEST_FAIL", message: "bytes: imported helper mismatch" };
+  }
+  return null;
+}

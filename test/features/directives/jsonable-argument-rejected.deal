@@ -1,0 +1,8 @@
+// v1.2 feature fixture — DIRECTIVES compile-error E1045 record
+// (compile-only): @jsonablex scans as the recognized jsonable name with
+// the forbidden argument "x", so placement/argument validation rejects
+// it as E1045.
+// @jsonablex
+class C {
+  x: int = 0;
+}

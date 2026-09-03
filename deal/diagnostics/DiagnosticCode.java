@@ -286,6 +286,13 @@ public enum DiagnosticCode {
 
     /** Common semantic lowering contract violation (ISSUE-0230 foundation, parent D11). */
     E6005(Phase.BACKEND_LOWERING, "Common semantic lowering failed"),
+    /**
+     * The C FFI contract is unsupported on this backend
+     * (FFI_UNSUPPORTED_BACKEND) — the pinned rejection code of the C6
+     * differential-gate design (SidecarSchemaValidator) and of the
+     * ISSUE-0157 feature catalog's linked JVM C_FFI rejection record.
+     */
+    E6006(Phase.BACKEND_LOWERING, "C FFI unsupported on this backend"),
 
     // =========================================================================
     // E7xxx — declaration-file errors (FRONTEND)

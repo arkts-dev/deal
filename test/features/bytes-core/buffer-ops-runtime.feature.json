@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "feature": "BYTES_CORE",
+  "spec": "spec-v1.2.md §Bytes",
+  "description": "bytes allocation, zero fill, immutable .length, unsigned reads, checked writes, and reference identity on both backends",
+  "expected": "runtime-ok",
+  "backends": ["luajit", "jvm"],
+  "invocation": "direct-main",
+  "support": ["bytes-core/helper/bytes-ops.deal"]
+}

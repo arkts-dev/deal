@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "feature": "C_FFI",
+  "spec": "spec-v1.2.md §C FFI runtime semantics",
+  "description": "the C FFI runtime record runs exactly on LuaJIT and links the JVM FFI_UNSUPPORTED_BACKEND compile-error record",
+  "expected": "runtime-ok",
+  "backends": ["luajit"],
+  "invocation": "direct-main",
+  "support": ["c-ffi/native-add.d.deal"],
+  "linkedRecord": "c-ffi/jvm-unsupported"
+}
