@@ -257,10 +257,84 @@ public class JsLane implements Lane {
                 compileOutcome.artifactMissing());
         }
         CompiledModule entry = compileOutcome.entry();
-        List<String> orderedExports = orderedZeroArityExports(
-            entry.program);
 
         // Deploy the workspace and execute the real node subprocess.
+        return runDeployedCase(entry, compileOutcome, compilation,
+            (subprocess, workspace) -> assembleOutcome(expected,
+                subprocess, workspace, compilation));
+    }
+
+    /**
+     * The compile-reject execution path (corpus C6): compile without
+     * executing and report the compile's first error diagnostic as the
+     * rejection object — exactly the pinned diagnostic: the code plus
+     * the pinned line/column only, with every unpinned field suppressed
+     * (the sidecar is the authoritative field set). The comparator's
+     * closed cross-check compares it against the pinned diagnostic. A
+     * divergent code fails the cross-check; a clean compile under a
+     * rejection expectation executes the real artifacts so the
+     * comparator names {@code COMPILE_REJECT_MISMATCH} (G6) — the lane
+     * never fabricates a rejection, never a skip.
+     */
+    private LaneExecution executeRejected(LaneCase laneCase)
+            throws IOException, InterruptedException {
+        SidecarExpectations.RuntimeExpectation.Rejected rejected =
+            (SidecarExpectations.RuntimeExpectation.Rejected)
+                laneCase.expectation();
+        JsCompilation compilation = new JsCompilation(laneCase);
+        CompilationOutcome outcome = compilation.compileCase();
+        if (outcome.failure() == null && outcome.artifactMissing() == null) {
+            // The case compiled clean but the sidecar pins compile
+            // rejection: the lane executes the real artifacts (the lane
+            // executed instead of rejecting) and the comparator's closed
+            // cross-check names COMPILE_REJECT_MISMATCH — an expected
+            // rejection that never materialized is a DEAL outcome
+            // mismatch, not an infrastructure failure (G6). The lane
+            // never fabricates a rejection.
+            if (!nodeAvailable()) {
+                return new LaneExecution.Infrastructure(
+                    MismatchClass.TOOL_MISSING,
+                    "the required tool node is missing or broken — the "
+                        + "lane never skips (G3)");
+            }
+            return runDeployedCase(outcome.entry(), outcome, compilation,
+                (subprocess, workspace) -> new LaneExecution.Executed(
+                    subprocess.stdout(), subprocess.stderr(),
+                    subprocess.exitCode()));
+        }
+        if (compilation.firstErrorCode() == null) {
+            String detail = outcome.failure() != null
+                ? outcome.failure() : outcome.artifactMissing();
+            return new LaneExecution.Infrastructure(MismatchClass.PROCESS_FAILURE,
+                "the case failed to compile without an error diagnostic "
+                    + "while the sidecar pins compile rejection with code "
+                    + rejected.code() + ": " + detail);
+        }
+        // The rejection object carries exactly the pinned diagnostic:
+        // the code plus the pinned line/column; an unpinned field is
+        // suppressed (the comparator's closed cross-check fails a lane
+        // emitting a field the sidecar does not pin).
+        return new LaneExecution.Rejected(compilation.firstErrorCode(),
+            rejected.line().isPresent()
+                ? OptionalInt.of(compilation.firstErrorLine())
+                : OptionalInt.empty(),
+            rejected.column().isPresent()
+                ? OptionalInt.of(compilation.firstErrorColumn())
+                : OptionalInt.empty());
+    }
+
+    /**
+     * Deploys the compiled case into a fresh temp workspace, asserts
+     * artifact presence, and runs the real node subprocess; the given
+     * assembler converts the captured subprocess result into the closed
+     * lane outcome (the canonical framing assembly for an executed
+     * expectation; the raw pass-through for the clean-compile rejection
+     * path — the comparator's cross-check owns that verdict).
+     */
+    private LaneExecution runDeployedCase(CompiledModule entry,
+            CompilationOutcome compileOutcome, JsCompilation compilation,
+            OutcomeAssembler assembler) throws IOException,
+            InterruptedException {
         Path workspace = Files.createTempDirectory("deal_conf_js_");
         try {
             DeployResult deploy = deployWorkspace(workspace, entry,
@@ -281,44 +355,16 @@ public class JsLane implements Lane {
                         + " — the lane never substitutes a fabricated result");
             }
             SubprocessResult subprocess = runSubprocess(workspace);
-            return assembleOutcome(expected, subprocess, workspace,
-                compilation);
+            return assembler.assemble(subprocess, workspace);
         } finally {
             deleteRecursively(workspace);
         }
     }
 
-    /**
-     * The compile-reject execution path (corpus C6): compile without
-     * executing and report the compile's first error diagnostic as the
-     * rejection object. The comparator's closed cross-check compares it
-     * against the pinned diagnostic — a divergent code or a clean compile
-     * under a rejection expectation fails honestly, never a skip.
-     */
-    private LaneExecution executeRejected(LaneCase laneCase) {
-        SidecarExpectations.RuntimeExpectation.Rejected rejected =
-            (SidecarExpectations.RuntimeExpectation.Rejected)
-                laneCase.expectation();
-        JsCompilation compilation = new JsCompilation(laneCase);
-        CompilationOutcome outcome = compilation.compileCase();
-        if (outcome.failure() == null && outcome.artifactMissing() == null) {
-            return new LaneExecution.Infrastructure(
-                MismatchClass.PROCESS_FAILURE,
-                "the case compiled clean but the sidecar pins compile "
-                    + "rejection with diagnostic code " + rejected.code()
-                    + " — the lane never fabricates a rejection");
-        }
-        if (compilation.firstErrorCode() == null) {
-            String detail = outcome.failure() != null
-                ? outcome.failure() : outcome.artifactMissing();
-            return new LaneExecution.Infrastructure(MismatchClass.PROCESS_FAILURE,
-                "the case failed to compile without an error diagnostic "
-                    + "while the sidecar pins compile rejection with code "
-                    + rejected.code() + ": " + detail);
-        }
-        return new LaneExecution.Rejected(compilation.firstErrorCode(),
-            OptionalInt.of(compilation.firstErrorLine()),
-            OptionalInt.of(compilation.firstErrorColumn()));
+    /** One subprocess-result → lane-outcome assembly step. */
+    @FunctionalInterface
+    private interface OutcomeAssembler {
+        LaneExecution assemble(SubprocessResult subprocess, Path workspace);
     }
 
     /** One lane compilation outcome: the modules or one failure detail. */

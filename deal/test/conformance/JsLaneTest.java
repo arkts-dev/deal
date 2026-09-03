@@ -12,6 +12,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalInt;
 
 /**
  * JS lane tests (ISSUE-0356 Verification): the JavaScript lane of the v1.2
@@ -36,6 +37,12 @@ import java.util.Optional;
  *       authoritative field set — unpinned optionals are suppressed and
  *       a pinned field the captured error does not carry is never
  *       fabricated (the case fails honestly).</li>
+ *   <li>Compile-reject (corpus C6): the lane emits exactly the pinned
+ *       diagnostic object — the code plus the pinned line/column only,
+ *       with unpinned fields suppressed — a divergent code fails the
+ *       closed cross-check, and a clean compile under a rejection pin
+ *       is {@code COMPILE_REJECT_MISMATCH}, never an infrastructure
+ *       label.</li>
  *   <li>Host triplets (corpus C5): the lane deploys
  *       {@code host-fixtures/<name>.js}; a fixture importing
  *       {@code host/<name>} with the {@code .js} missing is a corpus
@@ -79,6 +86,10 @@ public class JsLaneTest {
         printReturnValueDivergenceProbe();
         invokeMainTwiceDivergenceProbe();
         stderrFramingDivergenceProbe();
+        dollarExportsNotAutoInvokedProbe();
+        compileRejectCodeOnlyProbe();
+        compileRejectDivergentCodeProbe();
+        cleanCompileRejectLabelProbe();
         framesSuppressionProbe();
         framesPinnedHonestFailureProbe();
         perturbedSnapshotFieldProbe();
@@ -659,6 +670,216 @@ public class JsLaneTest {
                     .contains("stderr differs at byte 0"),
             "the stderr framing divergence is TRANSCRIPT_MISMATCH naming "
                 + "the backend, got: " + outcome.mismatch());
+    }
+
+    private static final String DOLLAR_EXPORT_PROBE_SOURCE =
+        "import * as console from \"std/console\"\n"
+        + "\n"
+        + "function probeDefault(): int {\n"
+        + "  console.log(\"default-evaluated\");\n"
+        + "  return 7;\n"
+        + "}\n"
+        + "\n"
+        + "export class Counter {\n"
+        + "  value: int = probeDefault();\n"
+        + "}\n"
+        + "\n"
+        + "export function main(): null {\n"
+        + "  return null;\n"
+        + "}\n";
+
+    /**
+     * TEST DOUBLE — a scratch lane whose runner iterates the module's
+     * runtime export keys and invokes every raw function-valued export
+     * (the absorbed adapter's invocation surface without its {@code $}
+     * skip rule): the hidden compiler-generated {@code Counter$new}
+     * closure gets auto-invoked, evaluating the class defaults thunk.
+     */
+    private static final class AutoInvokeRawExportsLane extends JsLane {
+        AutoInvokeRawExportsLane(Path conformanceRoot) {
+            super(conformanceRoot);
+        }
+
+        @Override
+        protected String buildRunner(String entryModule,
+                List<String> orderedZeroArityExports) {
+            return super.runnerPreamble(entryModule,
+                    orderedZeroArityExports)
+                + JsLane.transportWriterJs()
+                + """
+(async () => {
+  const $mod = require("./$ENTRY$");
+  for (const $k of Object.keys($mod)) {
+    const $v = $mod[$k];
+    if (typeof $v === "function") {
+      $v();
+    }
+  }
+})().catch(($e) => { process.exitCode = 1; });
+""".replace("$ENTRY$", entryModule);
+        }
+    }
+
+    private static void dollarExportsNotAutoInvokedProbe()
+            throws Exception {
+        // The G4.4 $ export skip rule: an exported class generates the
+        // hidden compiler-generated Counter$new runtime export; the lane
+        // never auto-invokes $-named exports. The class defaults thunk
+        // logs "default-evaluated" per construction, so any auto-invoke
+        // of Counter$new diverges from the pinned empty transcript.
+        String corpusPath = "backend-runtime/scratch/dollar-export-probe.deal";
+        ScratchFixture scratch = writeScratchFixture(corpusPath,
+            DOLLAR_EXPORT_PROBE_SOURCE);
+        LaneCase laneCase = laneCase(corpusPath, scratch.file(),
+            scratch.strippedSource(), runtimeOk(""));
+        assertPassed("$ exports not auto-invoked (an exported class's "
+            + "hidden Counter$new never runs — the pinned transcript "
+            + "stays empty)", new JsLane(scratch.root()), laneCase);
+
+        // The probe is not vacuous: the generated module really exports
+        // the hidden C$new closure, and auto-invoking it evaluates the
+        // defaults thunk (observable log) — pinned through the
+        // divergent double.
+        JsLane autoInvokeLane = new AutoInvokeRawExportsLane(
+            scratch.root());
+        LaneExecution doubleRun = autoInvokeLane.execute(laneCase);
+        check(doubleRun instanceof LaneExecution.Executed executed
+                && new String(executed.stdout(), StandardCharsets.UTF_8)
+                    .contains("default-evaluated"),
+            "the hidden Counter$new export exists on the emitted module "
+                + "and auto-invoking it evaluates the class defaults "
+                + "(the probe is not vacuous), got: " + doubleRun);
+        GateDispatcher.LaneOutcome outcome = dispatch(autoInvokeLane,
+            laneCase);
+        check(!outcome.passed(), "a lane auto-invoking $-named runtime "
+            + "exports fails the case (the pinned transcript stays "
+            + "empty)");
+        check(outcome.mismatch().isPresent()
+                && outcome.mismatch().get().clazz()
+                    == MismatchClass.TRANSCRIPT_MISMATCH
+                && outcome.mismatch().get().subject().equals("js")
+                && outcome.mismatch().get().detail()
+                    .contains("stdout differs at byte 0"),
+            "the $-export auto-invocation is TRANSCRIPT_MISMATCH naming "
+                + "the backend, got: " + outcome.mismatch());
+    }
+
+    // =========================================================================
+    // Compile-reject probes (corpus C6 — the sanctioned divergence)
+    // =========================================================================
+
+    private static final String REJECT_PROBE_SOURCE =
+        "export function test_bad(): int {\n"
+        + "  let x: int = \"not-int\";\n"
+        + "  return x;\n"
+        + "}\n"
+        + "\n"
+        + "export function main(): null {\n"
+        + "  return null;\n"
+        + "}\n";
+
+    private static void compileRejectCodeOnlyProbe() throws Exception {
+        // The C6 closed cross-check on a code-only pin: the lane emits
+        // exactly the pinned diagnostic object — E3001 without the
+        // compile error's line/column, which the sidecar does not pin
+        // (the sidecar is the authoritative field set).
+        String corpusPath = "backend-runtime/scratch/reject-probe.deal";
+        ScratchFixture scratch = writeScratchFixture(corpusPath,
+            REJECT_PROBE_SOURCE);
+        SidecarExpectations.RuntimeExpectation.Rejected codeOnly =
+            new SidecarExpectations.RuntimeExpectation.Rejected(
+                "compile-reject", "E3001", OptionalInt.empty(),
+                OptionalInt.empty());
+        LaneCase laneCase = laneCase(corpusPath, scratch.file(),
+            scratch.strippedSource(), codeOnly);
+        assertPassed("code-only compile-reject pin (E3001) passes the "
+            + "closed cross-check", new JsLane(scratch.root()), laneCase);
+        LaneExecution execution = new JsLane(scratch.root())
+            .execute(laneCase);
+        check(execution instanceof LaneExecution.Rejected rejected
+                && rejected.code().equals("E3001")
+                && rejected.line().isEmpty()
+                && rejected.column().isEmpty(),
+            "the lane emits exactly the pinned diagnostic object — the "
+                + "code with every unpinned line/column suppressed, got: "
+                + execution);
+
+        // The same compile failure with the line/column pinned: the lane
+        // emits the pinned span and the cross-check passes.
+        SidecarExpectations.RuntimeExpectation.Rejected pinnedSpan =
+            new SidecarExpectations.RuntimeExpectation.Rejected(
+                "compile-reject", "E3001", OptionalInt.of(2),
+                OptionalInt.of(16));
+        LaneCase pinnedCase = laneCase(corpusPath, scratch.file(),
+            scratch.strippedSource(), pinnedSpan);
+        assertPassed("pinned compile-reject diagnostic span (E3001 at "
+            + "2:16) passes the closed cross-check",
+            new JsLane(scratch.root()), pinnedCase);
+    }
+
+    private static void compileRejectDivergentCodeProbe() throws Exception {
+        // The same compile failure under a divergent code pin: the
+        // closed cross-check names COMPILE_REJECT_MISMATCH with the
+        // first differing diagnostic field — a real differential
+        // failure, never a skip.
+        String corpusPath = "backend-runtime/scratch/reject-probe.deal";
+        ScratchFixture scratch = writeScratchFixture(corpusPath,
+            REJECT_PROBE_SOURCE);
+        SidecarExpectations.RuntimeExpectation.Rejected divergent =
+            new SidecarExpectations.RuntimeExpectation.Rejected(
+                "compile-reject", "E6006", OptionalInt.empty(),
+                OptionalInt.empty());
+        LaneCase laneCase = laneCase(corpusPath, scratch.file(),
+            scratch.strippedSource(), divergent);
+        GateDispatcher.LaneOutcome outcome = dispatch(
+            new JsLane(scratch.root()), laneCase);
+        check(!outcome.passed(), "a divergent compile-reject code fails "
+            + "the case (the lane emits the real diagnostic, never the "
+            + "fabricated pin)");
+        check(outcome.mismatch().isPresent()
+                && outcome.mismatch().get().clazz()
+                    == MismatchClass.COMPILE_REJECT_MISMATCH
+                && outcome.mismatch().get().subject().equals("js")
+                && outcome.mismatch().get().detail().contains(
+                    "diagnostic.code must be E6006, got E3001"),
+            "the divergent code is COMPILE_REJECT_MISMATCH naming the "
+                + "backend and the first differing diagnostic field, "
+                + "got: " + outcome.mismatch());
+    }
+
+    private static void cleanCompileRejectLabelProbe() throws Exception {
+        // A case that compiles clean but whose sidecar pins compile
+        // rejection: the lane executes the real artifacts (never a
+        // fabricated rejection) and the comparator's closed cross-check
+        // labels the expected-but-absent rejection
+        // COMPILE_REJECT_MISMATCH — a DEAL outcome mismatch, never an
+        // infrastructure PROCESS_FAILURE label (G6).
+        String corpusPath = "backend-runtime/scratch/clean-reject-probe.deal";
+        ScratchFixture scratch = writeScratchFixture(corpusPath,
+            VALUE_PROBE_SOURCE);
+        SidecarExpectations.RuntimeExpectation.Rejected rejected =
+            new SidecarExpectations.RuntimeExpectation.Rejected(
+                "compile-reject", "E6006", OptionalInt.empty(),
+                OptionalInt.empty());
+        LaneCase laneCase = laneCase(corpusPath, scratch.file(),
+            scratch.strippedSource(), rejected);
+        JsLane lane = new JsLane(scratch.root());
+        LaneExecution execution = lane.execute(laneCase);
+        check(execution instanceof LaneExecution.Executed,
+            "a clean compile under a rejection pin is a real execution "
+                + "(the lane never fabricates a rejection), got: "
+                + execution);
+        GateDispatcher.LaneOutcome outcome = dispatch(lane, laneCase);
+        check(!outcome.passed(), "a clean compile under a rejection pin "
+            + "fails the case");
+        check(outcome.mismatch().isPresent()
+                && outcome.mismatch().get().clazz()
+                    == MismatchClass.COMPILE_REJECT_MISMATCH
+                && outcome.mismatch().get().subject().equals("js")
+                && !outcome.mismatch().get().infrastructure(),
+            "the expected-but-absent rejection is COMPILE_REJECT_MISMATCH "
+                + "(a DEAL outcome, never an infrastructure label), got: "
+                + outcome.mismatch());
     }
 
     // =========================================================================
