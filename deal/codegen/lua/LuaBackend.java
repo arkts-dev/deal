@@ -724,6 +724,40 @@ public final class LuaBackend implements Visitor<Void> {
                                        ModuleIdentityResolver.IdentityIndex identityIndex,
                                        SemanticProfile semanticProfile)
                                        throws IOException {
+        return generateToFile(program, result, sourcePath, modulePath,
+            outputRoot, outputPath, outputRoot, outputPath, emitSourceMap,
+            importResolutions, hostModules, entryModule, identityIndex,
+            semanticProfile);
+    }
+
+    /**
+     * Staged-write production seam (whole-project-artifact-publication
+     * D5): the artifact and sidecar files are written inside the
+     * staging tree — {@code outputRoot}/{@code outputPath} are the
+     * stage-tree-resolved paths the orchestrator resolved from the
+     * final module-relative paths — while the source-map sidecar's
+     * source/generated path strings are computed from the publication
+     * paths ({@code liveRoot}/{@code livePath}, the same relative paths
+     * under the live output root). The staging tree's per-invocation
+     * nonce exists in on-disk tree names only and never enters any
+     * artifact content, so the published sidecar is byte-identical to
+     * the pre-staging strings and the rebuilt set stays deterministic.
+     * The runtime deployment copy inside this method also targets the
+     * staging tree ({@code outputRoot}); the orchestrator's own
+     * runtime/stdlib copies stage the same resolved bytes fresh.
+     */
+    public static GenerationResult generateToFile(ProgramNode program,
+                                       CheckResult result,
+                                       String sourcePath, String modulePath,
+                                       Path outputRoot, Path outputPath,
+                                       Path liveRoot, Path livePath,
+                                       boolean emitSourceMap,
+                                       Map<String, String> importResolutions,
+                                       Map<String, Map<String, Type>> hostModules,
+                                       boolean entryModule,
+                                       ModuleIdentityResolver.IdentityIndex identityIndex,
+                                       SemanticProfile semanticProfile)
+                                       throws IOException {
         SourceMapGenerator smg = emitSourceMap ? new SourceMapGenerator() : null;
         GenerationResult gen = generateResult(program, result, sourcePath,
             modulePath, importResolutions, hostModules, entryModule, smg,
@@ -740,15 +774,18 @@ public final class LuaBackend implements Visitor<Void> {
 
         // Write source map sidecar
         if (smg != null && smg.hasMappings()) {
-            // Normalize both source and generated paths to be project-relative.
-            // The project root is inferred as outputRoot/../.. (for a typical
-            // build/lua output dir, this yields the project root).  When that
-            // fails we fall back to keeping absolute/relative paths consistent.
+            // Normalize both source and generated paths to be
+            // project-relative. The project root is inferred as
+            // liveRoot/../.. (for a typical build/lua output dir, this
+            // yields the project root) — computed from the PUBLICATION
+            // paths, never from the nonce-suffixed stage tree. When
+            // that fails we fall back to keeping absolute/relative
+            // paths consistent.
             String relSourcePath = sourcePath;
-            String relGeneratedPath = outputRoot.relativize(outputPath).toString();
+            String relGeneratedPath = liveRoot.relativize(livePath).toString();
 
             try {
-                Path absOutputRoot = outputRoot.toAbsolutePath().normalize();
+                Path absOutputRoot = liveRoot.toAbsolutePath().normalize();
                 Path projectRoot = absOutputRoot.resolve("..").resolve("..").normalize();
                 Path absSource = Path.of(sourcePath).toAbsolutePath();
 
@@ -757,7 +794,7 @@ public final class LuaBackend implements Visitor<Void> {
                     relSourcePath = srcRel.toString();
                 }
 
-                Path genRel = projectRoot.relativize(outputPath.toAbsolutePath());
+                Path genRel = projectRoot.relativize(livePath.toAbsolutePath());
                 if (!genRel.startsWith("..")) {
                     relGeneratedPath = genRel.toString();
                 }

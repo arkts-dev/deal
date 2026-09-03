@@ -4894,15 +4894,17 @@ public class JsBackendTest {
         // The retired @jsonable rejection (js-v12-jsonable-completion
         // D1), the retired nested-class rejection (ISSUE-0318), and the
         // retired host-ABI E6000 (ISSUE-0328 — the passing model lives
-        // in testHostAbiOrchestratorNode) no longer drive this two-pass
-        // pin; the still-live @extern-c E6003 arm keeps the
-        // no-partial-artifact rejection model covered — the rejected
-        // lib writes no artifact while the clean sibling entry still
-        // writes its own (the single-module model lives in
-        // testNoPartialArtifactOnRejection). ISSUE-0273 D9 re-key: the
-        // E6003 trigger is an import of an extern-C declaration module —
-        // the @extern-c file directive lives on ffi.d.deal, never on the
-        // importing implementation file (where it is E1046).
+        // in testHostAbiOrchestratorNode) no longer drive this pin; the
+        // still-live @extern-c E6003 arm keeps the
+        // no-partial-artifact rejection model covered — a rejected
+        // module fails the whole compilation and nothing is published
+        // (the transactional whole-set contract,
+        // whole-project-artifact-publication D3/D4; the single-module
+        // model lives in testNoPartialArtifactOnRejection).
+        // ISSUE-0273 D9 re-key: the E6003 trigger is an import of an
+        // extern-C declaration module — the @extern-c file directive
+        // lives on ffi.d.deal, never on the importing implementation
+        // file (where it is E1046).
         writeFile("rej_proj/deal.json",
             "{\"languageVersion\": \"1.2\", \"backend\": \"js\"}");
         writeFile("rej_proj/src/ffi.d.deal", """
@@ -4935,8 +4937,16 @@ public class JsBackendTest {
             "the orchestrator reports E6003: " + orchestrator.diagnostics());
         check(!Files.exists(outputDir.resolve("lib.js")),
             "the rejected module writes no artifact");
-        check(Files.exists(outputDir.resolve("rej_main.js")),
-            "the clean sibling entry still writes its artifact (two-pass model)");
+        // Transactional publication (whole-project-artifact-publication
+        // D3/D4): a rejected module fails the whole compilation, so
+        // nothing is published — the clean sibling's staged artifact is
+        // discarded with the stage tree and never reaches the live
+        // root.
+        check(!Files.exists(outputDir.resolve("rej_main.js")),
+            "no clean-sibling artifact is published (whole-set failure "
+                + "contract)");
+        check(!Files.exists(outputDir),
+            "the failed compilation publishes no live root at all");
     }
 
     // =========================================================================

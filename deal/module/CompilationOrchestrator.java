@@ -26,6 +26,7 @@ import deal.diagnostics.DiagnosticRange;
 import deal.diagnostics.DiagnosticStructuredOutput;
 import deal.distribution.DistributionHome;
 import deal.identity.CanonicalClassIdentity;
+import deal.publication.PublicationStager;
 import deal.parser.*;
 import deal.semantic.CheckedProjectBuildResult;
 import deal.semantic.CheckedProjectBuilder;
@@ -43,8 +44,8 @@ import deal.types.Type;
 import deal.types.Types;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import deal.diagnostics.DiagnosticCode;
@@ -213,6 +214,29 @@ public final class CompilationOrchestrator {
      * fallback.
      */
     private final DistributionHome distributionHome;
+
+    /**
+     * The transactional whole-project publication stager of the running
+     * {@link #compile()} call (design source
+     * {@code whole-project-artifact-publication} D1-D6): every output
+     * byte — phase-4 module artifacts, the runtime/stdlib deployment
+     * copies, the IR dumps, and the source-map sidecars — is staged
+     * into its per-invocation staging tree and atomically swapped into
+     * the live output root by the publish step; nothing writes the live
+     * root except that step. {@code null} outside a {@code compile()}
+     * call.
+     */
+    private PublicationStager stager;
+
+    /**
+     * The first staging write failure of the running compile (D4): when
+     * set, nothing is published, the stage tree is removed in
+     * {@link #compile()}, the diagnostics report is unchanged, and the
+     * pinned deterministic compiler I/O diagnostic
+     * {@code deal: cannot publish artifacts to '<root>': <reason>} is
+     * printed on stderr with exit 1.
+     */
+    private IOException pendingStageFailure;
 
     // Host externals (ISSUE-0082, host-module-abi D5, file-keyed since
     // ISSUE-0269): the externals declarations live in
@@ -678,13 +702,56 @@ public final class CompilationOrchestrator {
     // =========================================================================
 
     public boolean compile() throws IOException {
-        boolean success = compileInternal();
+        // Transactional publication (whole-project-artifact-publication
+        // D1-D6): one fresh staging stager per compile; the stage tree
+        // and the per-root lock are created lazily at the first staged
+        // write (an IR dump in phase 1/3, or a phase-4 artifact) and
+        // the staged set is atomically swapped into the live output
+        // root only when the compilation succeeded.
+        stager = PublicationStager.forRoot(outputRoot);
+        pendingStageFailure = null;
+        boolean success;
+        try {
+            success = compileInternal();
+            if (success) {
+                try {
+                    stager.publish();
+                } catch (IOException publishFailure) {
+                    // Publish-step I/O failure (D4): the stager already
+                    // restored/cleaned per D2; report the pinned
+                    // deterministic compiler I/O diagnostic on stderr
+                    // with exit 1.
+                    System.err.println("deal: cannot publish artifacts to '"
+                        + outputRoot + "': " + publishFailure.getMessage());
+                    success = false;
+                }
+            }
+        } finally {
+            if (!stager.published()) {
+                // Any failure (or no publish) removes the stage tree and
+                // releases the per-root lock: the prior live set is
+                // untouched (an absent prior set stays absent) and no
+                // staging residue survives.
+                stager.discard();
+            }
+            stager = null;
+        }
+        if (pendingStageFailure != null) {
+            // Staging write failure (D4): nothing published, diagnostics
+            // report unchanged, pinned deterministic compiler I/O
+            // diagnostic on stderr with exit 1.
+            System.err.println("deal: cannot publish artifacts to '"
+                + outputRoot + "': " + pendingStageFailure.getMessage());
+            success = false;
+        }
 
         // Structured output (D8): the document is written for every
         // compilation — successful or failed — when --diagnostics-json
-        // was requested, without changing the exit code. A write failure
-        // is a deterministic compiler I/O diagnostic on stderr with exit
-        // 1; no raw path exception escapes (parent D11 I/O discipline).
+        // was requested, without changing the exit code; it is a
+        // caller-requested report outside the published set. A write
+        // failure is a deterministic compiler I/O diagnostic on stderr
+        // with exit 1; no raw path exception escapes (parent D11 I/O
+        // discipline).
         if (diagnosticsJsonPath != null) {
             try {
                 Files.writeString(diagnosticsJsonPath,
@@ -2028,39 +2095,58 @@ public final class CompilationOrchestrator {
 
     private void codegenAll() throws IOException {
         long phaseStart = System.currentTimeMillis();
-        Files.createDirectories(outputRoot);
-
-        if (backend == Backend.JVM) {
-            // JVM use site (ISSUE-0091): emit one .java module class per
-            // module. Import resolution and the Lua runtime copies are
-            // LuaJIT-specific and skipped here.
-            codegenAllJvm();
-        } else if (backend == Backend.JS) {
-            // JS use site (ISSUE-0247 core slice, js-backend-emitter D3):
-            // codegenAllJs() replaces the ISSUE-0189 staging guard with the
-            // two-pass emitter plus the runtime/stdlib deployment copies.
-            codegenAllJs();
-        } else {
-            // Lua use site (emitter page D1): the LuaJIT emitter consumes
-            // the same per-compilation canonical identity surface the JS
-            // arm builds — one identity index over the module-path
-            // classification plus the intrinsic builtin Error module.
-            // Every descriptor the Lua emitter writes resolves through
-            // it; the local legacy dialect producer is retired.
-            ModuleIdentityResolver.IdentityIndex identityIndex =
-                buildCanonicalIdentitySurface();
-            for (ModuleInfo info : modules.values()) {
-                if (info.isDeclarationFile) continue;
-                codegenLuaModule(info, identityIndex);
+        try {
+            if (backend == Backend.JVM) {
+                // JVM use site (ISSUE-0091): emit one .java module class per
+                // module. Import resolution and the Lua runtime copies are
+                // LuaJIT-specific and skipped here.
+                codegenAllJvm();
+            } else if (backend == Backend.JS) {
+                // JS use site (ISSUE-0247 core slice, js-backend-emitter D3):
+                // codegenAllJs() replaces the ISSUE-0189 staging guard with the
+                // two-pass emitter plus the runtime/stdlib deployment copies.
+                codegenAllJs();
+            } else {
+                // Lua use site (emitter page D1): the LuaJIT emitter consumes
+                // the same per-compilation canonical identity surface the JS
+                // arm builds — one identity index over the module-path
+                // classification plus the intrinsic builtin Error module.
+                // Every descriptor the Lua emitter writes resolves through
+                // it; the local legacy dialect producer is retired.
+                ModuleIdentityResolver.IdentityIndex identityIndex =
+                    buildCanonicalIdentitySurface();
+                for (ModuleInfo info : modules.values()) {
+                    if (info.isDeclarationFile) continue;
+                    codegenLuaModule(info, identityIndex);
+                }
+                copyRuntimeLibrary();
+                copyStdlibModules();
             }
-            copyRuntimeLibrary();
-            copyStdlibModules();
+        } catch (IOException stagingFailure) {
+            // A staging write failure (D4): nothing is published, the
+            // stage tree is removed by compile(), the diagnostics report
+            // is unchanged, and the pinned deterministic compiler I/O
+            // diagnostic is printed with exit 1.
+            stageFailure(stagingFailure);
         }
 
         long phaseElapsed = System.currentTimeMillis() - phaseStart;
         if (verbose) {
             System.out.println("  Phase 4 total: " + phaseElapsed + "ms");
         }
+    }
+
+    /**
+     * Records the first staging write failure of the compile (D4): it
+     * sets the error state so the compile stops at the next phase
+     * boundary, and {@link #compile()} renders the pinned deterministic
+     * compiler I/O diagnostic.
+     */
+    private void stageFailure(IOException failure) {
+        if (pendingStageFailure == null) {
+            pendingStageFailure = failure;
+        }
+        hasErrors = true;
     }
 
     /**
@@ -2100,9 +2186,15 @@ public final class CompilationOrchestrator {
             }
         }
 
+        // The staging sink (whole-project-artifact-publication D1/D5):
+        // the same module-relative path, resolved inside the staging
+        // tree. The backend writes the artifact and its sidecar there;
+        // the live publication paths are passed only for the sidecar's
+        // path-string computation, so the per-invocation stage-tree
+        // nonce (on-disk names only) never enters artifact content.
         String filePath = info.modulePath.replace('.', '/') + ".lua";
-        Path outputPath = outputRoot.resolve(filePath);
-        Files.createDirectories(outputPath.getParent());
+        Path liveOutputPath = outputRoot.resolve(filePath);
+        Path stageOutputPath = stager.stagePath(filePath);
 
         // v1.2 entry contract: the selected entry module must export a
         // non-async main(): null and the backend invokes main() from that
@@ -2124,7 +2216,8 @@ public final class CompilationOrchestrator {
         // (runtime-class-identity D2(0)).
         LuaBackend.GenerationResult gen = LuaBackend.generateToFile(
             info.rawAst, info.checkResult, info.sourcePath, info.modulePath,
-            outputRoot, outputPath, sourceMap, importResolutions, hostModules,
+            stager.stageTree(), stageOutputPath, outputRoot, liveOutputPath,
+            sourceMap, importResolutions, hostModules,
             isEntry, identityIndex, invocation.semanticProfile());
         // Native ranged backend list (T12): the backend emits
         // CompilerDiagnostic entries directly, so the orchestrator merge
@@ -2142,7 +2235,7 @@ public final class CompilationOrchestrator {
         }
 
         long modElapsed = System.currentTimeMillis() - modStart;
-        log("  Generated: " + outputPath + " (" + modElapsed + "ms)");
+        log("  Generated: " + liveOutputPath + " (" + modElapsed + "ms)");
     }
 
     /**
@@ -2385,10 +2478,12 @@ public final class CompilationOrchestrator {
                         + "' (class '" + className + "')");
                 continue;
             }
-            Path outputPath = outputRoot.resolve(className + ".java");
-            Files.createDirectories(outputPath.getParent());
-            Files.writeString(outputPath, res.source());
-            log("  Generated: " + outputPath);
+            // The staging sink (whole-project-artifact-publication
+            // D1/D5): the same module-relative path inside the staging
+            // tree; the live root is written only by the publish step.
+            Path stageOutputPath = stager.stagePath(className + ".java");
+            Files.writeString(stageOutputPath, res.source());
+            log("  Generated: " + outputRoot.resolve(className + ".java"));
         }
     }
 
@@ -2566,21 +2661,28 @@ public final class CompilationOrchestrator {
         // and no sidecar (the two-pass no-partial-artifact contract).
         for (ModuleInfo info : cleanModules) {
             JsBackend.JsCodegenResult res = results.get(info);
-            Path outputPath = outputRoot.resolve(
-                res.modulePath().replace('.', '/') + ".js");
-            Files.createDirectories(outputPath.getParent());
-            Files.writeString(outputPath, res.source());
-            log("  Generated: " + outputPath);
+            // The staging sink (whole-project-artifact-publication
+            // D1/D5): the same module-relative paths inside the staging
+            // tree; the live publication path feeds only the sidecar's
+            // path-string computation, so the per-invocation stage-tree
+            // nonce (on-disk names only) never enters artifact content.
+            String artifactRel = res.modulePath().replace('.', '/') + ".js";
+            Path liveArtifactPath = outputRoot.resolve(artifactRel);
+            Path stageOutputPath = stager.stagePath(artifactRel);
+            Files.writeString(stageOutputPath, res.source());
+            log("  Generated: " + liveArtifactPath);
 
             if (sourceMap && res.sourceMap() != null) {
                 String[] paths = sourceMapSidecarPaths(info.sourcePath,
-                    outputRoot, outputPath);
+                    outputRoot, liveArtifactPath);
                 String mapJson = res.sourceMap().toJson(paths[0], paths[1]);
-                Path mapPath = outputRoot.resolve(
+                Path stageMapPath = stager.stagePath(
                     res.modulePath().replace('.', '/')
                         + ".deal.map.json");
-                Files.writeString(mapPath, mapJson);
-                log("  Source map: " + mapPath);
+                Files.writeString(stageMapPath, mapJson);
+                log("  Source map: " + outputRoot.resolve(
+                    res.modulePath().replace('.', '/')
+                        + ".deal.map.json"));
             }
         }
 
@@ -2706,24 +2808,19 @@ public final class CompilationOrchestrator {
     }
 
     private void copyRuntimeLibrary() throws IOException {
-        Path runtimeDest = outputRoot.resolve("deal/runtime.lua");
-        if (Files.exists(runtimeDest)) return;
-
-        Files.createDirectories(runtimeDest.getParent());
-
-        // The pinned three-tier distribution order (ISSUE-0457, D3):
-        // classpath resources, then the DEAL_HOME filesystem layout,
-        // then the checkout CWD dev fallback — resolved through
-        // DistributionHome (no project-local location is pinned for the
-        // runtime).
+        // Whole-set semantics (whole-project-artifact-publication D3/D6):
+        // the runtime copy always stages fresh from the resolved
+        // distribution surface — the pinned three-tier order
+        // (ISSUE-0457, D3): classpath resources, then the DEAL_HOME
+        // filesystem layout, then the checkout CWD dev fallback
+        // (no project-local location is pinned for the runtime) — and
+        // the whole-set swap replaces any earlier bytes; no skip of an
+        // existing destination remains.
         Optional<DistributionHome.ResolvedSource> runtime =
-            distributionHome.resolveRuntimeSource("deal/runtime.lua");
+            stager.stageRuntimeCopy("deal/runtime.lua", distributionHome);
         if (runtime.isPresent()) {
-            try (InputStream in = runtime.get().open()) {
-                Files.copy(in, runtimeDest);
-            }
-            log("  Copied runtime: " + runtimeDest + " ("
-                + runtime.get().tier() + ")");
+            log("  Copied runtime: " + outputRoot.resolve("deal/runtime.lua")
+                + " (" + runtime.get().tier() + ")");
             return;
         }
 
@@ -2749,18 +2846,17 @@ public final class CompilationOrchestrator {
      */
     private void copyStdlibModules() throws IOException {
         for (String stdlibModule : StdlibModuleResolver.SPEC_STDLIB_MODULES) {
-            Path destFile = outputRoot.resolve(stdlibModule + ".lua");
-            if (Files.exists(destFile)) continue;
-
+            // Whole-set semantics (whole-project-artifact-publication
+            // D3/D6): each stdlib copy stages fresh from the resolved
+            // distribution surface — project-local surface first, then
+            // the language distribution, then the checkout CWD dev
+            // fallback — so a project-local std/ override stages its
+            // own bytes and no skip of an existing destination remains.
             String name = stdlibModule.substring("std/".length());
             Optional<DistributionHome.ResolvedSource> source =
-                distributionHome.resolveStdlibImplementation(name, "lua");
+                stager.stageStdlibCopy(name, "lua", distributionHome);
             if (source.isEmpty()) {
                 continue;
-            }
-            Files.createDirectories(destFile.getParent());
-            try (InputStream in = source.get().open()) {
-                Files.copy(in, destFile);
             }
             log("  Copied stdlib: " + stdlibModule + " ("
                 + source.get().tier() + ")");
@@ -2769,30 +2865,22 @@ public final class CompilationOrchestrator {
 
     /**
      * JS deployment copy (js-backend-emitter D10): copies deal/runtime.js
-     * to <output>/deal/runtime.js — classpath resource first, then the
-     * repo-root file, else E6000 — and skips an existing destination
-     * (idempotent). The mirror of copyRuntimeLibrary with the .js
+     * to <output>/deal/runtime.js — the resolved distribution surface,
+     * else E6000 — staged fresh every compile (whole-set semantics; no
+     * destination skip). The mirror of copyRuntimeLibrary with the .js
      * spelling.
      */
     private void copyJsRuntimeLibrary() throws IOException {
-        Path runtimeDest = outputRoot.resolve("deal/runtime.js");
-        if (Files.exists(runtimeDest)) return;
-
-        Files.createDirectories(runtimeDest.getParent());
-
-        // The pinned three-tier distribution order (ISSUE-0457, D3):
-        // classpath resources, then the DEAL_HOME filesystem layout,
-        // then the checkout CWD dev fallback — resolved through
-        // DistributionHome (no project-local location is pinned for the
-        // runtime).
+        // Whole-set semantics (whole-project-artifact-publication D3/D6):
+        // the runtime copy always stages fresh from the resolved
+        // distribution surface — the pinned three-tier order
+        // (ISSUE-0457, D3) — and the whole-set swap replaces any
+        // earlier bytes; no skip of an existing destination remains.
         Optional<DistributionHome.ResolvedSource> runtime =
-            distributionHome.resolveRuntimeSource("deal/runtime.js");
+            stager.stageRuntimeCopy("deal/runtime.js", distributionHome);
         if (runtime.isPresent()) {
-            try (InputStream in = runtime.get().open()) {
-                Files.copy(in, runtimeDest);
-            }
-            log("  Copied runtime: " + runtimeDest + " ("
-                + runtime.get().tier() + ")");
+            log("  Copied runtime: " + outputRoot.resolve("deal/runtime.js")
+                + " (" + runtime.get().tier() + ")");
             return;
         }
 
@@ -2811,23 +2899,22 @@ public final class CompilationOrchestrator {
      * project-local surface first, then the language distribution
      * (classpath resources, then the {@code DEAL_HOME} filesystem
      * layout), then the checkout CWD dev fallback; a missing source for
-     * a module is skipped silently; idempotent. The mirror of
-     * copyStdlibModules with the .js spelling (js-backend-emitter D10).
+     * a module is skipped silently. Staged fresh every compile
+     * (whole-set semantics). The mirror of copyStdlibModules with the
+     * .js spelling (js-backend-emitter D10).
      */
     private void copyStdlibJsModules() throws IOException {
         for (String stdlibModule : StdlibModuleResolver.SPEC_STDLIB_MODULES) {
-            Path destFile = outputRoot.resolve(stdlibModule + ".js");
-            if (Files.exists(destFile)) continue;
-
+            // Whole-set semantics (whole-project-artifact-publication
+            // D3/D6): each stdlib copy stages fresh from the resolved
+            // distribution surface — project-local surface first, then
+            // the language distribution, then the checkout CWD dev
+            // fallback — and no skip of an existing destination remains.
             String name = stdlibModule.substring("std/".length());
             Optional<DistributionHome.ResolvedSource> source =
-                distributionHome.resolveStdlibImplementation(name, "js");
+                stager.stageStdlibCopy(name, "js", distributionHome);
             if (source.isEmpty()) {
                 continue;
-            }
-            Files.createDirectories(destFile.getParent());
-            try (InputStream in = source.get().open()) {
-                Files.copy(in, destFile);
             }
             log("  Copied stdlib: " + stdlibModule + " ("
                 + source.get().tier() + ")");
@@ -2839,15 +2926,27 @@ public final class CompilationOrchestrator {
     // =========================================================================
 
     /**
-     * Writes an IR dump string to the output directory.
-     * The file is placed at {@code <outputRoot>/<module-path>.ir.txt}.
+     * Stages an IR dump string into the publication staging tree (D1/D5):
+     * the file is placed at {@code <outputRoot>/<module-path>.ir.txt}
+     * after a successful publish, and appears atomically with the set —
+     * dumps of a failed compilation are discarded with the stage tree
+     * and never reach the live root (today's phases 1/3 dumps wrote the
+     * live root directly). A staging write failure records the pinned
+     * publish diagnostic (D4); the {@link IrDumper} failure diagnostic
+     * (E6001) stays with the callers' exception handling.
      */
-    private void writeIrDump(String modulePath, String irText) throws IOException {
+    private void writeIrDump(String modulePath, String irText) {
+        if (pendingStageFailure != null) {
+            return; // a staging failure already recorded: nothing more stages
+        }
         String filePath = modulePath.replace('.', '/') + ".ir.txt";
-        Path outputPath = outputRoot.resolve(filePath);
-        Files.createDirectories(outputPath.getParent());
-        Files.writeString(outputPath, irText);
-        log("  IR dumped: " + outputPath);
+        try {
+            stager.stage(filePath, irText.getBytes(StandardCharsets.UTF_8));
+        } catch (IOException stagingFailure) {
+            stageFailure(stagingFailure);
+            return;
+        }
+        log("  IR dumped: " + outputRoot.resolve(filePath));
     }
 
     // =========================================================================
