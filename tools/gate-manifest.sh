@@ -37,6 +37,9 @@ PROD_SOURCES=(
   # ISSUE-0457 registration: the distribution-discovery package
   # (DistributionHome — runtime/stdlib resolution outside the checkout).
   'deal/distribution/*.java'
+  # ISSUE-0458 registration: the transactional whole-project artifact
+  # publication package (Artifact, ArtifactSet, PublicationStager).
+  'deal/publication/*.java'
 )
 
 # TEST_SOURCES: the remainder of today's compile list, verbatim, in
@@ -132,6 +135,11 @@ TEST_SOURCES=(
   'deal/module/ModuleIdentityResolverTest.java'
   # ISSUE-0457 registration: the DistributionHome tier-selection suite.
   'test/DistributionHomeTest.java'
+  # ISSUE-0458 registration: the transactional publication contract
+  # suite (forced-failure stage test, fresh-root publish, stale-set
+  # purge, crash recovery, concurrency, IR dumps, out-of-checkout
+  # copies, and the publish I/O failure path).
+  'test/PublicationStagerTest.java'
 )
 
 # TEST_MAINS: ordered "<class>|<banner>|<command>" records reproducing
@@ -242,4 +250,7 @@ WARNING: luajit not found, skipping async nesting stress tests'
   # ISSUE-0457 registration: the DistributionHome tier-selection proofs
   # (project-local, classpath-resource, DEAL_HOME, and CWD tiers).
   'fg|=== Running Distribution Home Tier-Selection Tests (ISSUE-0457) ===|java -ea -cp build deal.test.DistributionHomeTest'
+  # ISSUE-0458 registration: the transactional publication contract
+  # suite (whole-project-artifact-publication Verification 1-7).
+  'fg|=== Running Publication Stager Tests (ISSUE-0458) ===|java -ea -cp build deal.test.PublicationStagerTest'
 )

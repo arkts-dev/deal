@@ -6232,11 +6232,13 @@ public class JvmBackendTest {
      * {@code abstract HostCfg.$C_ServerConfig invoke();} inside
      * {@code $DealRt}, which javac rejected ("package HostCfg does not
      * exist"), violating the self-contained single-source-Java
-     * post-state. The host ABI lane's import-time E6000s stay, the
-     * two-pass site still writes the clean entry artifact, and that
-     * artifact carries no host-class reference at all. Runs the real
-     * orchestrator pipeline (collection seam → codegen → artifact
-     * write).
+     * post-state. The host ABI lane's import-time E6000s stay, and the
+     * transactional publication contract
+     * (whole-project-artifact-publication D3/D4) publishes nothing for
+     * the failed whole compilation — the clean entry's staged artifact
+     * is discarded with the stage tree, so no host-class-referencing
+     * artifact can ever reach the live root. Runs the real orchestrator
+     * pipeline (collection seam → codegen → transactional publish).
      */
     private static void testSharedCarrierHostClassShapes()
             throws Exception {
@@ -6292,18 +6294,18 @@ public class JvmBackendTest {
                 d.toString().contains("host export 'ServerConfig'")),
             "the host class export keeps its import-time E6000: "
                 + orchestrator.diagnostics());
+        // Transactional publication (whole-project-artifact-
+        // publication D3/D4): the host-class rejection fails the whole
+        // compilation, so nothing is published — no artifact (clean
+        // entry included) reaches the live root, and the pre-fix
+        // 'abstract HostCfg.$C_ServerConfig invoke();' entry artifact
+        // can never be published at all.
         Path entryArtifact = outputRoot.resolve("Hostshape_entry.java");
-        check(Files.exists(entryArtifact),
-            "the two-pass site still writes the clean entry artifact");
-        if (Files.exists(entryArtifact)) {
-            String artifact = Files.readString(entryArtifact);
-            check(!artifact.contains("HostCfg")
-                    && !artifact.contains("ServerConfig"),
-                "the entry artifact's shared $DealRt carries no wrapper "
-                    + "referencing the never-emitted host Java class "
-                    + "(pre-fix: 'abstract HostCfg.$C_ServerConfig "
-                    + "invoke();')");
-        }
+        check(!Files.exists(entryArtifact),
+            "no artifact is published for the host-class rejection "
+                + "(whole-set failure contract)");
+        check(!Files.exists(outputRoot),
+            "the failed compilation publishes no live root at all");
     }
 
     /**
@@ -9703,11 +9705,19 @@ public class JvmBackendTest {
         check(!orchestrator.jvmGeneratedResults()
                 .containsKey(entryFile.toString()),
             "no generated result recorded for the rejected module");
-        try (var stream = Files.list(outputRoot)) {
-            check(stream.noneMatch(p -> p.getFileName().toString()
-                    .endsWith(".java")),
-                "the rejected module wrote no Java artifact (javac never "
-                    + "sees a duplicate numPow)");
+        // Transactional publication (whole-project-artifact-publication
+        // D3/D4): the rejection fails the whole compilation, so nothing
+        // is published — the live root does not exist at all.
+        check(!Files.exists(outputRoot),
+            "the rejected module published no live root at all "
+                + "(transactional whole-set contract)");
+        if (Files.exists(outputRoot)) {
+            try (var stream = Files.list(outputRoot)) {
+                check(stream.noneMatch(p -> p.getFileName().toString()
+                        .endsWith(".java")),
+                    "the rejected module wrote no Java artifact (javac never "
+                        + "sees a duplicate numPow)");
+            }
         }
 
         // Parity control: the analogous numMod declaration hits the

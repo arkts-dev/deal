@@ -1516,10 +1516,17 @@ public class SourceMapTest {
                 "the rejected module writes no .js artifact");
             check(!Files.exists(outputRoot.resolve("bad.deal.map.json")),
                 "the rejected module writes no sidecar");
-            check(Files.exists(outputRoot.resolve("main.js")),
-                "the clean sibling writes its artifact (two-pass model)");
-            check(Files.exists(outputRoot.resolve("main.deal.map.json")),
-                "the clean sibling writes its sidecar (two-pass model)");
+            // Transactional publication (whole-project-artifact-
+            // publication D3/D4): a rejected module fails the whole
+            // compilation, so nothing is published — the clean
+            // sibling's staged artifact is discarded with the stage
+            // tree and never reaches the live root.
+            check(!Files.exists(outputRoot.resolve("main.js")),
+                "no clean-sibling artifact is published (whole-set "
+                    + "failure contract)");
+            check(!Files.exists(outputRoot.resolve("main.deal.map.json")),
+                "no clean-sibling sidecar is published (whole-set "
+                    + "failure contract)");
         } catch (IOException e) {
             fail("JS rejected-module sidecar case threw: " + e);
         } finally {

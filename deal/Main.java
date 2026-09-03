@@ -226,11 +226,12 @@ public final class Main {
         try {
             success = orchestrator.compile();
         } catch (IOException e) {
-            // Post-validation write failure (D3/D11): a deterministic
+            // I/O failure escaping the compile (D3/D11): a deterministic
             // compiler I/O diagnostic with exit 1 — never E2010, never a
-            // raw path exception. The output directory is created only in
-            // the write phase; a permission/device failure there surfaces
-            // here.
+            // raw path exception. Write-phase failures surface inside the
+            // orchestrator as the pinned publish diagnostic
+            // (whole-project-artifact-publication D4); this catch covers
+            // the remaining I/O escapes (e.g. an unreadable source).
             System.err.println("deal: cannot write output to '"
                 + outputDir + "': " + e.getMessage());
             return 1;
