@@ -55,6 +55,12 @@ import java.util.Set;
  *       fixture or a fixture that starts passing) fails the gate with a
  *       promotion instruction; a corpus error (missing host
  *       implementation) is never tracked.</li>
+ *   <li>Compile-reject path (corpus C6): the lane reports a real
+ *       rejection honestly with its actual diagnostic code, so the
+ *       comparator reports the exact {@code COMPILE_REJECT_MISMATCH}
+ *       code delta on a differently-coded rejection (never an
+ *       infrastructure failure); a clean compile under a rejection pin
+ *       is refused as {@code PROCESS_FAILURE}.</li>
  *   <li>Infrastructure: {@code ARTIFACT_MISSING} on a deleted generated
  *       artifact, {@code TOOL_MISSING} on a failed tool probe, an
  *       unmappable captured {@code file} emitted verbatim, compile
@@ -107,6 +113,8 @@ public class JvmLaneTest {
         artifactPresenceProbe();
         codegenFailureProbe();
         compileRejectPathProbe();
+        compileRejectDivergentCodeProbe();
+        compileRejectCleanCompileProbe();
         hostJavaMissingProbe();
         toolMissingProbe();
         nonDealErrorProbe();
@@ -983,6 +991,91 @@ public class JvmLaneTest {
         check(outcome.passed(),
             "the rejection verdict matches the pinned diagnostic object, "
                 + "got: " + outcome.mismatch());
+    }
+
+    private static void compileRejectDivergentCodeProbe()
+            throws Exception {
+        // A differently-coded rejection (G6 closes "expected or
+        // unexpected rejection"): the lane reports the real rejection
+        // honestly with its actual code, and the comparator reports the
+        // exact COMPILE_REJECT_MISMATCH delta — never an infrastructure
+        // failure. The probe pins the C6 FFI code E6006 against a
+        // scratch fixture whose shape gate rejects with E2012 (the real
+        // divergent FFI case lands with the backend epics' E6006
+        // registration; this dispatch-level probe exercises the lane's
+        // rejection plumbing mechanically).
+        String source =
+            "export function test_nothing(): null {\n"
+            + "  return null;\n"
+            + "}\n";
+        String corpusPath =
+            "backend-runtime/scratch/no-main-reject-divergent.deal";
+        ScratchFixture scratch = writeScratchFixture(corpusPath, source);
+        SidecarExpectations.RuntimeExpectation.Rejected rejected =
+            new SidecarExpectations.RuntimeExpectation.Rejected(
+                "compile-reject", "E6006", OptionalInt.empty(),
+                OptionalInt.empty());
+        LaneCase laneCase = new LaneCase(corpusPath, "jvm", scratch.file(),
+            List.of(new SidecarSchemaValidator.CompilationModule(corpusPath,
+                scratch.strippedSource())),
+            rejected);
+        LaneExecution execution = new JvmLane(scratch.root()).execute(laneCase);
+        check(execution instanceof LaneExecution.Rejected r
+                && r.code().equals("E2012") && r.line().isEmpty()
+                && r.column().isEmpty(),
+            "a differently-coded rejection is reported honestly as a "
+                + "Rejected outcome with the actual code (E2012), got: "
+                + execution);
+        GateDispatcher.LaneOutcome outcome = dispatch(
+            new JvmLane(scratch.root()), laneCase);
+        check(!outcome.passed() && outcome.mismatch().isPresent()
+                && outcome.mismatch().get().clazz()
+                    == MismatchClass.COMPILE_REJECT_MISMATCH
+                && outcome.mismatch().get().subject().equals("jvm")
+                && outcome.mismatch().get().detail().contains(
+                    "diagnostic.code must be E6006")
+                && outcome.mismatch().get().detail().contains("got E2012"),
+            "the comparator reports the exact COMPILE_REJECT_MISMATCH "
+                + "code delta (diagnostic.code must be E6006, got E2012), "
+                + "got: " + outcome.mismatch());
+    }
+
+    private static void compileRejectCleanCompileProbe() throws Exception {
+        // A clean compile under a rejection pin: the lane refuses to
+        // execute a module whose sidecar pins rejection and reports the
+        // missing rejection as PROCESS_FAILURE — never a fabricated
+        // rejection and never an execution.
+        String source =
+            "export function main(): null {\n"
+            + "  return null;\n"
+            + "}\n";
+        String corpusPath = "backend-runtime/scratch/clean-reject-pin.deal";
+        ScratchFixture scratch = writeScratchFixture(corpusPath, source);
+        SidecarExpectations.RuntimeExpectation.Rejected rejected =
+            new SidecarExpectations.RuntimeExpectation.Rejected(
+                "compile-reject", "E6006", OptionalInt.empty(),
+                OptionalInt.empty());
+        LaneCase laneCase = new LaneCase(corpusPath, "jvm", scratch.file(),
+            List.of(new SidecarSchemaValidator.CompilationModule(corpusPath,
+                scratch.strippedSource())),
+            rejected);
+        LaneExecution execution = new JvmLane(scratch.root()).execute(laneCase);
+        check(execution instanceof LaneExecution.Infrastructure infra
+                && infra.clazz() == MismatchClass.PROCESS_FAILURE
+                && infra.detail().contains("compiled cleanly")
+                && infra.detail().contains("never fabricates"),
+            "a clean compile under a rejection pin is refused as "
+                + "PROCESS_FAILURE naming the missing rejection, got: "
+                + execution);
+        GateDispatcher.LaneOutcome outcome = dispatch(
+            new JvmLane(scratch.root()), laneCase);
+        check(!outcome.passed() && outcome.mismatch().isPresent()
+                && outcome.mismatch().get().clazz()
+                    == MismatchClass.PROCESS_FAILURE
+                && outcome.mismatch().get().subject().equals("jvm"),
+            "the gate passes the clean-compile refusal through as an "
+                + "infrastructure PROCESS_FAILURE outcome, got: "
+                + outcome.mismatch());
     }
 
     private static void hostJavaMissingProbe() throws Exception {

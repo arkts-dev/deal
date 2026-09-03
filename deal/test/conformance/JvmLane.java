@@ -144,11 +144,15 @@ import java.util.concurrent.TimeUnit;
  *   <li>Compile-reject path (corpus C6): for a {@code compile-reject}
  *       expectation the lane reports the orchestrator's rejection as
  *       {@link LaneExecution.Rejected} when the first error diagnostic
- *       equals the pinned code and no entry artifact was emitted (the
- *       pinned line/column only when the sidecar pins them); a
- *       differently-coded rejection or a clean compile flows into the
- *       normal outcomes so the comparator reports the exact
- *       {@code COMPILE_REJECT_MISMATCH} class.</li>
+ *       exists and no entry artifact was emitted — with the actual
+ *       diagnostic code, matching or not, so the comparator
+ *       cross-checks the exact diagnostic object and reports
+ *       {@code COMPILE_REJECT_MISMATCH} with the exact code delta on a
+ *       differently-coded rejection (the pinned line/column are
+ *       emitted only when the sidecar pins them). A clean compile
+ *       under a rejection pin is refused as {@code PROCESS_FAILURE} —
+ *       the lane never executes a module whose sidecar pins
+ *       rejection.</li>
  * </ol>
  *
  * <p>Pre-flip skip tolerance (G2/G8): the lane keeps the absorbed
@@ -348,14 +352,19 @@ public class JvmLane implements Lane {
     }
 
     /**
-     * Assembles the compile-reject outcome (corpus C6): the
-     * orchestrator's first error diagnostic becomes the rejection when
-     * its code equals the pinned code and no entry artifact was emitted
-     * (the pinned line/column only when the sidecar pins them — the
-     * comparator rejects an unpinned emitted field). A differently-coded
-     * rejection is a lane compile failure; a clean compile keeps
-     * flowing (the comparator then reports the unexpected execution as
-     * {@code COMPILE_REJECT_MISMATCH}).
+     * Assembles the compile-reject outcome (corpus C6): when the first
+     * error diagnostic exists and no entry artifact was emitted, the
+     * lane reports the rejection honestly as
+     * {@link LaneExecution.Rejected} with the actual diagnostic code —
+     * matching or not — so the comparator cross-checks the exact
+     * diagnostic object and reports {@code COMPILE_REJECT_MISMATCH}
+     * with the exact code delta on a differently-coded rejection (the
+     * pinned line/column are emitted only when the sidecar pins them;
+     * the comparator rejects an unpinned emitted field). An emitted
+     * entry artifact alongside the failure, a clean compile, or a
+     * failure without diagnostics is refused as
+     * {@code PROCESS_FAILURE} — the lane never executes a module whose
+     * sidecar pins rejection and never fabricates a rejection.
      */
     private LaneExecution assembleRejection(CompilationOutcome outcome,
             SidecarExpectations.RuntimeExpectation.Rejected rejected,
@@ -371,12 +380,22 @@ public class JvmLane implements Lane {
             CompilerDiagnostic first = errors.get(0);
             Path entryJava = outputRoot.resolve(
                 compilation.entryClass() + ".java");
-            if (!rejected.code().equals(first.code())
-                    || Files.exists(entryJava)) {
+            if (Files.exists(entryJava)) {
+                // The pipeline emitted the entry artifact and still
+                // failed: the C6 rejection contract (reject before any
+                // artifact) is broken — report the pipeline failure
+                // honestly, never as a rejection.
                 return new LaneExecution.Infrastructure(
                     MismatchClass.PROCESS_FAILURE,
                     outcome.failure());
             }
+            // No entry artifact was emitted: the backend genuinely
+            // rejected. Report the rejection with its actual code —
+            // matching or not — so the comparator cross-checks the
+            // exact diagnostic object and reports
+            // COMPILE_REJECT_MISMATCH with the exact code delta on
+            // divergence (G6 closes "expected or unexpected
+            // rejection").
             return new LaneExecution.Rejected(first.code(),
                 rejected.line().isPresent()
                     ? OptionalInt.of(first.line())
@@ -391,10 +410,10 @@ public class JvmLane implements Lane {
         }
         // The compile succeeded: the backend did not reject. The caller
         // continues into the execution path only when the expectation is
-        // Executed; for a Rejected expectation the comparator must see
-        // the unexpected execution — report it as a process failure
-        // naming the missing rejection (never execute a module whose
-        // sidecar pins rejection).
+        // Executed; for a Rejected expectation the lane refuses to
+        // execute a module whose sidecar pins rejection and reports the
+        // missing rejection as PROCESS_FAILURE — never a fabricated
+        // rejection.
         return new LaneExecution.Infrastructure(MismatchClass.PROCESS_FAILURE,
             "the sidecar pins compile rejection with diagnostic code "
                 + rejected.code() + " but the real pipeline compiled "
@@ -660,6 +679,12 @@ public class JvmLane implements Lane {
                 String entryRel = SRC_DIRECTORY + "/"
                     + moduleNameOf(entryCorpusFile.getFileName().toString())
                     + ".deal";
+                // The entry class name is fixed by the entry's module
+                // path (the orchestrator's naming), so the
+                // compile-reject path can check whether the entry
+                // artifact was emitted even when the orchestrator
+                // fails.
+                entryClass = entryClassName(entryRel);
                 Path entryFile = projectRoot.resolve(entryRel);
                 ProjectLocator.LocateResult located =
                     ProjectLocator.locate(entryFile.toString(), null);
@@ -691,7 +716,6 @@ public class JvmLane implements Lane {
 
                 // 5. Codegen was real: the entry artifact must exist
                 // before javac runs.
-                entryClass = entryClassName(entryRel);
                 Path entryJava = outputRoot.resolve(entryClass + ".java");
                 if (!Files.exists(entryJava)) {
                     return CompilationOutcome.artifactMissing(
