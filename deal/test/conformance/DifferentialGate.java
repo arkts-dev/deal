@@ -26,15 +26,23 @@ import java.util.stream.Stream;
  * dispatch seam (G7 worker pool + harness-owned per-lane deadlines), and
  * the verdict/summary with the closed G6 mismatch classes.
  *
- * <p>This child lands the gate core only: no lane implementation is
- * registered yet (the LuaJIT/JVM/JS lanes land in the T7-T9 lane
- * children), so the runtime dispatch phase reports the deferral
- * explicitly and the legacy runners keep executing the runtime corpus
- * during the G5 temporary-coexistence window. The Coverage Manifest
- * Validator is not wired either (T14 wires it when the manifest is
- * complete); the pre-flip tolerances — the {@code known-fail} grammar
- * and its forced-promotion rules — stay active until the flip deletes
- * them (G2/G8).</p>
+ * <p>The lane children register the LuaJIT/JVM/JS lanes (ISSUE-0354/
+ * 0355/0356). Pre-flip, the JVM lane additionally registers its
+ * capability skip registry ({@code JvmLane.preFlipSkipRegistry()},
+ * absorbed from {@code JvmConformanceTest.SKIPS}) through the
+ * {@link #run(Path, Map, int, Duration, PrintStream, Map)} overload: a
+ * registry-tracked fixture whose lane outcome still fails is reported
+ * tracked non-fatal with its gap id (G8 — the tracked non-fatal paths
+ * remain before the flip), a registry-tracked fixture that starts
+ * passing is a stale skip-registry entry failing the gate with a
+ * promotion instruction, and a registry entry naming a fixture that is
+ * missing from the corpus (or carries no runtime classification) fails
+ * the gate the same way (G2's forced-promotion rules stay active until
+ * the flip deletes the registry with its mechanisms).</p>
+ *
+ * <p>The legacy runners keep executing the runtime corpus during the G5
+ * temporary-coexistence window; {@code run_tests.sh} wires this gate's
+ * own entry point only at the flip (T14).</p>
  */
 public final class DifferentialGate {
 
@@ -58,6 +66,38 @@ public final class DifferentialGate {
         public String message() {
             return subject + " [" + kind + "] " + detail;
         }
+    }
+
+    /**
+     * One pre-flip skip-registry entry (G8 tolerance): the corpus path,
+     * the gap id, and the documented reason. The registry is the JVM
+     * lane's capability-skip baseline absorbed from
+     * {@code JvmConformanceTest.SKIPS}; the flip (T14) deletes the
+     * registry and this surface with it.
+     */
+    public record PreFlipSkipEntry(String corpusPath, String gapId,
+                                   String reason) {
+
+        public PreFlipSkipEntry {
+            Objects.requireNonNull(corpusPath, "corpusPath must not be null");
+            Objects.requireNonNull(gapId, "gapId must not be null");
+            Objects.requireNonNull(reason, "reason must not be null");
+        }
+    }
+
+    /**
+     * A pre-flip skip-registry view a lane registers with the gate: the
+     * gate applies the G8 tolerance to the registry's backend (a tracked
+     * failing outcome is non-fatal; a passing outcome or a missing
+     * fixture is a stale entry with a promotion instruction).
+     */
+    public interface PreFlipSkipRegistry {
+
+        /** The entry of {@code corpusPath}, or empty when not registered. */
+        Optional<PreFlipSkipEntry> entryFor(String corpusPath);
+
+        /** Every registry entry, in registry order. */
+        List<PreFlipSkipEntry> entries();
     }
 
     /** One fixture with its loaded sidecar (runtime or compile pin). */
@@ -85,6 +125,7 @@ public final class DifferentialGate {
         int runtimeCasesDeferred,
         Map<String, int[]> perBackend,
         int skipped,
+        int skipRegistryTracked,
         boolean ok
     ) {
 
@@ -106,11 +147,13 @@ public final class DifferentialGate {
     /**
      * Runs the gate over one conformance root and returns the complete
      * run result. Read-only over the corpus; lane executions happen only
-     * for registered lanes.
+     * for registered lanes. No skip registry is registered (the
+     * pre-flip JVM skip tolerance needs the
+     * {@link #run(Path, Map, int, Duration, PrintStream, Map)} overload).
      *
      * @param conformanceRoot the conformance root (any path form)
      * @param lanes           the registered lane implementations by
-     *                        backend name (empty in this child)
+     *                        backend name (empty defers the dispatch)
      * @param parallelism     the worker-pool bound (the gate passes
      *                        available processors)
      * @param laneDeadline    the harness-owned per-lane deadline
@@ -119,10 +162,36 @@ public final class DifferentialGate {
     public static GateRun run(Path conformanceRoot, Map<String, Lane> lanes,
             int parallelism, Duration laneDeadline, PrintStream out)
             throws IOException {
+        return run(conformanceRoot, lanes, parallelism, laneDeadline, out,
+            Map.of());
+    }
+
+    /**
+     * Runs the gate over one conformance root with the registered
+     * pre-flip skip registries (keyed by backend name) and returns the
+     * complete run result. The skip-registry tolerance (G8 pre-flip):
+     * a registry entry naming a fixture missing from the corpus or
+     * without a runtime classification is a stale entry failing the gate
+     * with a promotion instruction; a registry-tracked fixture whose
+     * registry backend outcome passes is a stale entry failing the gate
+     * the same way; a registry-tracked fixture whose registry backend
+     * outcome fails with a DEAL-outcome or artifact/process class is
+     * reported tracked non-fatal with its gap id (never a gate failure);
+     * infrastructure outcomes of {@code HARNESS_DEFECT},
+     * {@code TOOL_MISSING}, and {@code LANE_TIMEOUT} are never tracked —
+     * they stay gate-fatal (G6: infrastructure outcomes never satisfy a
+     * case).
+     */
+    public static GateRun run(Path conformanceRoot, Map<String, Lane> lanes,
+            int parallelism, Duration laneDeadline, PrintStream out,
+            Map<String, PreFlipSkipRegistry> skipRegistries)
+            throws IOException {
         Objects.requireNonNull(conformanceRoot, "conformanceRoot must not be null");
         Objects.requireNonNull(lanes, "lanes must not be null");
         Objects.requireNonNull(laneDeadline, "laneDeadline must not be null");
         Objects.requireNonNull(out, "out must not be null");
+        Objects.requireNonNull(skipRegistries,
+            "skipRegistries must not be null");
         Path root = conformanceRoot.toAbsolutePath().normalize();
         List<GateFailure> failures = new ArrayList<>();
         Map<String, int[]> perBackend = new LinkedHashMap<>();
@@ -161,6 +230,37 @@ public final class DifferentialGate {
         out.println("Discovered " + discovery.fixtures().size()
             + " conformance fixture(s) (" + kindCounts + ")");
         out.println();
+
+        // ---------------------------------------------------------------------
+        // Phase 1b: pre-flip skip-registry validation (G2/G8): every entry
+        // must name an on-disk runtime-classified fixture; a stale entry
+        // fails the gate with a promotion instruction (the forced-promotion
+        // rules stay active until the flip deletes the registry).
+        // ---------------------------------------------------------------------
+        for (Map.Entry<String, PreFlipSkipRegistry> registration
+                : skipRegistries.entrySet()) {
+            for (PreFlipSkipEntry entry : registration.getValue().entries()) {
+                CorpusDiscovery.Fixture fixture =
+                    corpusByPath.get(entry.corpusPath());
+                if (fixture == null || !fixture.runtimeClassified()) {
+                    failures.add(new GateFailure("stale skip-registry",
+                        registration.getKey() + " " + entry.corpusPath(),
+                        "the skip-registry entry names a fixture that is "
+                            + (fixture == null
+                                ? "missing from the corpus"
+                                : "not runtime-classified")
+                            + " — promotion instruction: remove the "
+                            + "skip-registry entry (gap id " + entry.gapId()
+                            + ")"));
+                    out.println("  STALE SKIP-REGISTRY: " + entry.corpusPath()
+                        + " — remove the skip-registry entry (gap id "
+                        + entry.gapId() + ")");
+                }
+            }
+        }
+        if (!skipRegistries.isEmpty()) {
+            out.println();
+        }
 
         // ---------------------------------------------------------------------
         // Phase 2: sidecar loading + schema validation (T1 wiring).
@@ -293,11 +393,12 @@ public final class DifferentialGate {
         // ---------------------------------------------------------------------
         int dispatched = 0;
         int deferred = 0;
+        int skipRegistryTracked = 0;
         if (lanes.isEmpty()) {
-            // This build child registers no lane implementations (they land
-            // in T7-T9): the dispatch phase is deferred explicitly — never
-            // silently — and the legacy runners keep executing the runtime
-            // corpus during the G5 temporary-coexistence window.
+            // No lane implementation registered: the dispatch phase is
+            // deferred explicitly — never silently — and the legacy runners
+            // keep executing the runtime corpus during the G5
+            // temporary-coexistence window.
             deferred = runtimeLoaded.size();
             out.println("Runtime dispatch: DEFERRED — no lane implementation "
                 + "is registered in this build child (the LuaJIT/JVM/JS lanes "
@@ -339,6 +440,51 @@ public final class DifferentialGate {
                         }
                     }
                 }
+
+                // Pre-flip skip-registry tolerance (G2/G8): a
+                // registry-tracked fixture's registry-backend outcome is
+                // tracked non-fatal when it still fails with a
+                // DEAL-outcome/artifact/process class; a passing outcome
+                // or a gate-fatal infrastructure outcome is never tracked.
+                GateDispatcher.LaneOutcome registryOutcome = null;
+                PreFlipSkipEntry registryEntry = null;
+                for (GateDispatcher.LaneOutcome outcome : verdict.outcomes()) {
+                    PreFlipSkipRegistry registry =
+                        skipRegistries.get(outcome.backend());
+                    if (registry == null) {
+                        continue;
+                    }
+                    Optional<PreFlipSkipEntry> entry =
+                        registry.entryFor(verdict.fixturePath());
+                    if (entry.isPresent()) {
+                        registryOutcome = outcome;
+                        registryEntry = entry.get();
+                        break;
+                    }
+                }
+                String toleratedBackend = null;
+                if (registryEntry != null && registryOutcome.passed()) {
+                    failures.add(new GateFailure("stale skip-registry",
+                        verdict.fixturePath(),
+                        "the fixture now passes on the "
+                            + registryOutcome.backend() + " lane — promotion "
+                            + "instruction: remove the skip-registry entry "
+                            + "(gap id " + registryEntry.gapId() + ")"));
+                    out.println("  STALE SKIP: " + verdict.fixturePath()
+                        + " — remove the skip-registry entry (gap id "
+                        + registryEntry.gapId() + ")");
+                } else if (registryEntry != null
+                        && registryOutcome.mismatch().isPresent()
+                        && tolerablePreFlipSkip(
+                            registryOutcome.mismatch().get())) {
+                    skipRegistryTracked++;
+                    toleratedBackend = registryOutcome.backend();
+                    out.println("  SKIP-REGISTRY (tracked non-fatal, "
+                        + registryEntry.gapId() + "): "
+                        + verdict.fixturePath() + " — "
+                        + registryOutcome.mismatch().get().detail());
+                }
+
                 boolean knownFailRuntime = fixture != null
                     && fixture.classification() != null
                     && fixture.classification().kind()
@@ -363,6 +509,11 @@ public final class DifferentialGate {
                 } else {
                     for (GateDispatcher.LaneOutcome outcome
                             : verdict.outcomes()) {
+                        if (toleratedBackend != null
+                                && toleratedBackend.equals(
+                                    outcome.backend())) {
+                            continue; // tracked non-fatal, never re-recorded
+                        }
                         if (outcome.mismatch().isPresent()) {
                             GateMismatch mismatch = outcome.mismatch().get();
                             String kind = mismatch.infrastructure()
@@ -389,10 +540,29 @@ public final class DifferentialGate {
         // Summary / verdict (pre-flip counters, closed classes).
         // ---------------------------------------------------------------------
         printSummary(out, discovery, failures, compileComparisons,
-            knownFailures, dispatched, deferred, perBackend);
+            knownFailures, dispatched, deferred, skipRegistryTracked,
+            perBackend);
         return new GateRun(root, discovery.fixtures(), loaded, failures,
             compileComparisons, knownFailures, dispatched, deferred,
-            perBackend, 0, failures.isEmpty());
+            perBackend, 0, skipRegistryTracked, failures.isEmpty());
+    }
+
+    /**
+     * The pre-flip skip-registry tolerance classes (G6/G8): a
+     * registry-tracked fixture whose outcome is a DEAL-outcome mismatch
+     * or an artifact/process infrastructure outcome is tracked non-fatal
+     * (the fixture's underlying mode still fails); a harness defect, a
+     * missing tool, or a deadline kill is never tracked — infrastructure
+     * outcomes never satisfy a case and stay gate-fatal.
+     */
+    private static boolean tolerablePreFlipSkip(GateMismatch mismatch) {
+        return switch (mismatch.clazz()) {
+            case TRANSCRIPT_MISMATCH, ERROR_SNAPSHOT_MISMATCH,
+                 COMPILE_DIAGNOSTIC_MISMATCH, EXIT_CODE_MISMATCH,
+                 COMPILE_REJECT_MISMATCH, ARTIFACT_MISSING,
+                 PROCESS_FAILURE -> true;
+            case TOOL_MISSING, LANE_TIMEOUT, HARNESS_DEFECT -> false;
+        };
     }
 
     /** One closed known-fail probe result (pre-flip forced promotion). */
@@ -481,7 +651,7 @@ public final class DifferentialGate {
             CorpusDiscovery.DiscoveryResult discovery,
             List<GateFailure> failures, int compileComparisons,
             int knownFailures, int dispatched, int deferred,
-            Map<String, int[]> perBackend) {
+            int skipRegistryTracked, Map<String, int[]> perBackend) {
         out.println("=== Differential Gate Summary ===");
         out.println("Fixtures: " + discovery.fixtures().size());
         out.println("Classification failures: "
@@ -500,6 +670,10 @@ public final class DifferentialGate {
         }
         out.println("Skipped: 0");
         out.println("KnownFailures: " + knownFailures);
+        out.println("Skip registry tracked (pre-flip): " + skipRegistryTracked
+            + " non-fatal (stale entries: "
+            + failures.stream().filter(
+                f -> "stale skip-registry".equals(f.kind())).count() + ")");
         out.println("Differential failures: "
             + failures.stream().filter(f -> "lane".equals(f.kind())).count());
         out.println("Infrastructure failures: "

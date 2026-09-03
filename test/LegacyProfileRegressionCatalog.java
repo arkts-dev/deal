@@ -246,8 +246,14 @@ public final class LegacyProfileRegressionCatalog {
      * requests (F4 rule 5 leaves every module on the retained LEGACY
      * route, and the A1-updated planner guard admits the invocation at
      * phase 3.7).
+     *
+     * <p>Public so the JVM lane of the differential gate (ISSUE-0355)
+     * routes every corpus fixture through the catalog's per-case A5
+     * seam — the catalogued legacy-regression fixtures must compile
+     * under {@code LEGACY_REGRESSION + LEGACY_SAFE_INT} on the lane
+     * exactly as they do on the legacy harness.</p>
      */
-    static CompilerInvocation invocationFor(String locator) {
+    public static CompilerInvocation invocationFor(String locator) {
         Row row = BY_LOCATOR.get(locator);
         if (row != null) {
             // The row's own pinned purpose/profile pair (A4): the closed

@@ -82,6 +82,26 @@ TEST_MAINS+=(
 )
 
 # =========================================================================
+# ISSUE-0355 (JVM lane): the JVM lane of the differential gate plus its
+# lane suite join the compile list and the run phase here. The lane
+# implements the Shared Lane Contract (G4) over the absorbed
+# JvmConformanceTest whole-project pipeline (ProjectLocator ->
+# CompilationOrchestrator -> JvmBackend codegen -> javac -> real java
+# subprocess) and reuses the shared canonical ErrorSnapshot serializer
+# verbatim. Pre-flip, the lane keeps the absorbed skip registry as
+# tracked non-fatal paths (G8); JvmConformanceTest keeps running
+# unchanged in run_tests.sh until the flip retires it (G5's
+# temporary-coexistence window).
+# =========================================================================
+TEST_SOURCES+=(
+  'deal/test/conformance/JvmLane.java'
+  'deal/test/conformance/JvmLaneTest.java'
+)
+TEST_MAINS+=(
+  'fg|=== Running JVM Lane Tests (ISSUE-0355) ===|java -ea -cp build deal.test.conformance.JvmLaneTest'
+)
+
+# =========================================================================
 # ISSUE-0353 (differential gate core): the gate components and their unit
 # suites join the compile list and the run phase here. The gate's own
 # deal.test entry point (deal.test.conformance.DifferentialGate) is NOT
