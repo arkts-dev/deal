@@ -585,6 +585,198 @@ public class LuaJitAsyncExportInvokerTest {
     }
 
     // =========================================================================
+    // The parent D9 production scenario: an async()->null oracle that
+    // assigns and containerizes legal first-class async(bytes)->bytes
+    // values, invokes and awaits one, checks bytes identity/content in
+    // source, and completes null (ISSUE-0161, E6 bytes composition).
+    // =========================================================================
+
+    @Test
+    public void productionCompiledAsyncBytesOracleCompletesNull()
+            throws Exception {
+        assumeTrue(luajitAvailable);
+
+        Path out = tmp.resolve("bytes-oracle-out");
+        compileProductionEntry(tmp.resolve("bytes-oracle-src"),
+            "oracle_entry.deal", """
+                async function echo(b: bytes): bytes {
+                  return b;
+                }
+                async function fill(b: bytes): bytes {
+                  b[1] = 200;
+                  return b;
+                }
+                export function main(): null {
+                  return null;
+                }
+                export async function oracle(): null {
+                  let handlers: (async (b: bytes) => bytes)[] = [];
+                  handlers[handlers.length] = echo;
+                  handlers[handlers.length] = fill;
+                  let buf: bytes = bytes(3);
+                  buf[0] = 7;
+                  let through: bytes = await handlers[0](buf);
+                  through[2] = 9;
+                  if (buf[2] !== 9) {
+                    throw { code: "TEST_FAIL",
+                      message: "async bytes identity lost" };
+                  }
+                  let filled: bytes = await handlers[1](through);
+                  if (filled[0] !== 7 || filled[1] !== 200
+                      || filled.length !== 3) {
+                    throw { code: "TEST_FAIL",
+                      message: "async bytes content mismatch" };
+                  }
+                  return null;
+                }
+                """, null, out);
+
+        Path entryArtifact = entryArtifactOf(out);
+        String generated = Files.readString(entryArtifact);
+        assertTrue("the oracle assigns first-class async bytes function"
+            + " values with the byte-exact canonical sig",
+            generated.contains("\"async(bytes)->bytes\""));
+
+        Result result = invoke(entryArtifact, "oracle", "null");
+        assertEquals("the oracle invokes and awaits one async bytes"
+            + " function, checks identity and content, and completes null",
+            new Result.Value("null", "null"), result);
+    }
+
+    @Test
+    public void noAwaitBytesOracleFailsCompilationProvingTheAwaitIsReal()
+            throws IOException {
+        // The no-await mutation control: removing await leaves an
+        // un-awaited async call, which the checker rejects (E3014) — the
+        // production scenario cannot pass by skipping the await.
+        Path out = tmp.resolve("bytes-oracle-noawait-out");
+        compileExpectingFailure(tmp.resolve("bytes-oracle-noawait-src"),
+            "oracle_entry.deal", """
+                async function echo(b: bytes): bytes {
+                  return b;
+                }
+                export function main(): null {
+                  return null;
+                }
+                export async function oracle(): null {
+                  let handlers: (async (b: bytes) => bytes)[] = [echo];
+                  handlers[0](bytes(1));
+                  return null;
+                }
+                """, out, "E3014");
+    }
+
+    @Test
+    public void incorrectBytesOutputMakesTheOracleFailWithItsOwnDealError()
+            throws Exception {
+        assumeTrue(luajitAvailable);
+        // The incorrect-output mutation control: the awaited handler
+        // returns different content, so the oracle's own assertion throws
+        // TEST_FAIL and the invoker propagates that exact DEAL error — a
+        // wrong bytes result can never become a successful value.
+        Path out = tmp.resolve("bytes-oracle-bad-out");
+        compileProductionEntry(tmp.resolve("bytes-oracle-bad-src"),
+            "oracle_entry.deal", """
+                async function echo(b: bytes): bytes {
+                  return b;
+                }
+                async function fill(b: bytes): bytes {
+                  b[1] = 201;
+                  return b;
+                }
+                export function main(): null {
+                  return null;
+                }
+                export async function oracle(): null {
+                  let handlers: (async (b: bytes) => bytes)[] = [echo, fill];
+                  let buf: bytes = bytes(3);
+                  buf[0] = 7;
+                  let through: bytes = await handlers[0](buf);
+                  let filled: bytes = await handlers[1](through);
+                  if (filled[0] !== 7 || filled[1] !== 200
+                      || filled.length !== 3) {
+                    throw { code: "TEST_FAIL",
+                      message: "async bytes content mismatch" };
+                  }
+                  return null;
+                }
+                """, null, out);
+        Result result = invoke(entryArtifactOf(out), "oracle", "null");
+        assertTrue("the oracle's own TEST_FAIL propagates: " + result,
+            result instanceof Result.DealError);
+        Result.DealError error = (Result.DealError) result;
+        assertEquals("TEST_FAIL", error.code());
+        assertEquals("async bytes content mismatch", error.message());
+        assertTrue("the raise location propagates from source",
+            error.file() != null
+                && error.file().endsWith("oracle_entry.deal"));
+    }
+
+    @Test
+    public void freshBufferEchoMakesTheOracleFailOnBytesIdentity()
+            throws Exception {
+        assumeTrue(luajitAvailable);
+        // The identity mutation control: the awaited handler returns a
+        // fresh buffer instead of the same reference, so the
+        // alias-observed mutation never reaches the caller buffer — the
+        // oracle's identity assertion throws TEST_FAIL.
+        Path out = tmp.resolve("bytes-oracle-identity-out");
+        compileProductionEntry(tmp.resolve("bytes-oracle-identity-src"),
+            "oracle_entry.deal", """
+                async function echo(b: bytes): bytes {
+                  return bytes(b.length);
+                }
+                export function main(): null {
+                  return null;
+                }
+                export async function oracle(): null {
+                  let handlers: (async (b: bytes) => bytes)[] = [echo];
+                  let buf: bytes = bytes(3);
+                  let through: bytes = await handlers[0](buf);
+                  through[2] = 9;
+                  if (buf[2] !== 9) {
+                    throw { code: "TEST_FAIL",
+                      message: "async bytes identity lost" };
+                  }
+                  return null;
+                }
+                """, null, out);
+        Result result = invoke(entryArtifactOf(out), "oracle", "null");
+        assertTrue("the oracle's identity assertion propagates: " + result,
+            result instanceof Result.DealError);
+        Result.DealError error = (Result.DealError) result;
+        assertEquals("TEST_FAIL", error.code());
+        assertEquals("async bytes identity lost", error.message());
+        assertTrue("the raise location propagates from source",
+            error.file() != null
+                && error.file().endsWith("oracle_entry.deal"));
+    }
+
+    /**
+     * Compiles a fixture expected to fail with the given diagnostic code
+     * (the mutation-control compilation gate): a clean compile fails the
+     * assertion, and any diagnostic besides the pinned code is reported.
+     */
+    private static void compileExpectingFailure(Path projectDir,
+            String entryFileName, String source, Path outRoot,
+            String expectedCode) throws IOException {
+        Path srcRoot = projectDir.resolve("src");
+        Files.createDirectories(srcRoot);
+        Path entrySource = srcRoot.resolve(entryFileName);
+        Files.writeString(entrySource, source);
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entrySource.toAbsolutePath(), outRoot, false, null,
+            List.of(srcRoot.toAbsolutePath()),
+            Path.of("").toAbsolutePath());
+        boolean ok = orchestrator.compile();
+        assertFalse("the mutation control must fail compilation: "
+            + orchestrator.diagnostics(), ok);
+        assertTrue("the pinned diagnostic " + expectedCode + " fires",
+            orchestrator.diagnostics().stream()
+                .anyMatch(d -> d.code().equals(expectedCode)));
+    }
+
+    // =========================================================================
     // Value mapping (staged component tests)
     // =========================================================================
 

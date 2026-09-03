@@ -637,7 +637,13 @@ public class LuaJitAsyncExportInvoker {
 
         /** A codec failure: malformed conventional JSON text. */
         public static final class ParseException extends RuntimeException {
-            ParseException(String message) {
+            /**
+             * Public construction (ISSUE-0161): the JVM async-export
+             * invoker validates the shared closed envelope schema with
+             * this same codec from {@code deal.codegen.jvm}, so its
+             * schema validation failures are this exception type.
+             */
+            public ParseException(String message) {
                 super(message);
             }
         }
