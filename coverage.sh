@@ -84,6 +84,7 @@ javac --release 22 -d build \
   test/StdlibContractTest.java \
   test/GenerateStdlibGoldenIr.java \
   test/ConformanceTest.java \
+  test/LegacyProfileRegressionCatalog.java \
   test/ConformanceHarnessMetadata.java \
   test/LuaAbiTest.java \
   test/LuaAbiBackendTest.java \
