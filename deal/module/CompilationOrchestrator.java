@@ -8,6 +8,7 @@ import deal.codegen.jvm.JvmBackend;
 import deal.codegen.js.HostModuleDeclarations;
 import deal.codegen.js.JsBackend;
 import deal.codegen.lua.LuaBackend;
+import deal.codegen.lua.LuaFfiBindingGenerator;
 import deal.identity.CanonicalModuleIdentity;
 import deal.identity.ProjectModuleIdentity;
 import deal.ir.IrDumper;
@@ -2059,6 +2060,12 @@ public final class CompilationOrchestrator {
 
         Map<String, String> importResolutions = new HashMap<>();
         Map<String, Map<String, Type>> hostModules = new HashMap<>();
+        // Extern-C imports (emitter page D6): raw import path → the
+        // generator input assembled from the declaration module's checked
+        // facts; the emitted import routes through __rt.load_ffi and never
+        // through load_host or a raw require.
+        Map<String, LuaFfiBindingGenerator.FfiModuleInput> ffiModules =
+            new HashMap<>();
         for (StatementNode stmt : info.rawAst.statements()) {
             if (stmt instanceof ImportDeclaration imp) {
                 String resolvedSource = resolveImportPath(imp.modulePath(),
@@ -2072,11 +2079,34 @@ public final class CompilationOrchestrator {
                         // declaration files that are not spec stdlib
                         // modules load through __rt.load_host with the
                         // raw import path verbatim as the require key.
+                        // An effective extern-C declaration is an FFI
+                        // module instead (emitter page D6): it loads
+                        // through __rt.load_ffi and is never a host
+                        // module.
                         if (imported.isDeclarationFile
                                 && !isSpecStdlibModuleInfo(imported)) {
-                            hostModules.put(imp.modulePath(),
-                                imported.exports != null
-                                    ? imported.exports : Map.of());
+                            if (imported.rawAst != null
+                                    && imported.rawAst.fileDirectives()
+                                        .externC()) {
+                                LuaFfiBindingGenerator.FfiModuleInput ffi =
+                                    ffiModuleInputOf(imported, imp);
+                                if (ffi == null) {
+                                    // Defensive fail-closed: an extern-c
+                                    // declaration the emitter cannot
+                                    // represent (e.g. no externals entry
+                                    // or no classified native library —
+                                    // the frontend FFI validation gate is
+                                    // the owning rejection). The module
+                                    // is skipped entirely so no artifact
+                                    // misrepresents the import.
+                                    return;
+                                }
+                                ffiModules.put(imp.modulePath(), ffi);
+                            } else {
+                                hostModules.put(imp.modulePath(),
+                                    imported.exports != null
+                                        ? imported.exports : Map.of());
+                            }
                         }
                     }
                 }
@@ -2108,7 +2138,7 @@ public final class CompilationOrchestrator {
         LuaBackend.GenerationResult gen = LuaBackend.generateToFile(
             info.rawAst, info.checkResult, info.sourcePath, info.modulePath,
             outputRoot, outputPath, sourceMap, importResolutions, hostModules,
-            isEntry, identityIndex, invocation.semanticProfile());
+            ffiModules, isEntry, identityIndex, invocation.semanticProfile());
         // Native ranged backend list (T12): the backend emits
         // CompilerDiagnostic entries directly, so the orchestrator merge
         // needs no boundary conversion — real spans keep their exact
@@ -2126,6 +2156,155 @@ public final class CompilationOrchestrator {
 
         long modElapsed = System.currentTimeMillis() - modStart;
         log("  Generated: " + outputPath + " (" + modElapsed + "ms)");
+    }
+
+    /**
+     * Assembles one extern-c import's FFI binding input (emitter page D6)
+     * from the declaration module's checked facts — the same declaration
+     * surface the host-module seam consumes ({@link #hostDeclarationsOf}):
+     * the phase-1 export map for function signatures and class identities
+     * (an extern-C declaration never runs the phase-3 name-resolver pass),
+     * the {@code @c-struct}/{@code @c-pointer} markers recorded on the
+     * declaration AST, and the externals entry's classified
+     * {@code nativeLibrary}. Returns null after recording a defensive
+     * E6000 at the import statement when the declaration cannot be
+     * represented (no externals entry, no native library, or a class
+     * without a canonical identity — the frontend FFI declaration
+     * validation is the owning gate).
+     */
+    private LuaFfiBindingGenerator.FfiModuleInput ffiModuleInputOf(
+            ModuleInfo imported, ImportDeclaration imp) {
+        CanonicalModuleIdentity classification = classifyModuleIdentity(imported);
+        if (!(classification instanceof CanonicalModuleIdentity.ExternalModule external)) {
+            error(DiagnosticCode.E6000,
+                "unsupported extern-c import \"" + imp.modulePath()
+                    + "\": the declaration is not a deal.json externals entry",
+                imp.span());
+            return null;
+        }
+        ExternalEntry entry = context.externals().get(
+            external.rawImportSpecifier());
+        if (entry == null || entry.nativeLibrary() == null) {
+            error(DiagnosticCode.E6000,
+                "unsupported extern-c import \"" + imp.modulePath()
+                    + "\": the externals entry \""
+                    + external.rawImportSpecifier()
+                    + "\" carries no classified nativeLibrary",
+                imp.span());
+            return null;
+        }
+
+        Map<String, String> importAliasMap = new HashMap<>();
+        for (StatementNode stmt : imported.rawAst.statements()) {
+            if (stmt instanceof ImportDeclaration dep) {
+                String resolved = resolveImportPath(dep.modulePath(),
+                    Path.of(imported.sourcePath));
+                if (resolved != null) {
+                    ModuleInfo target = modules.get(resolved);
+                    if (target != null) {
+                        importAliasMap.put(dep.alias(), target.modulePath);
+                    }
+                }
+            }
+        }
+        ExportExtractor extractor = new ExportExtractor(
+            imported.modulePath, true, modulePathClassification()::get);
+        extractor.setImportModulePaths(importAliasMap);
+        extractor.extract(imported.rawAst);
+        Map<String, Type> exports = imported.exports != null
+            ? imported.exports : Map.of();
+
+        // Declared functions in source order; the exported function name
+        // is its C symbol name (spec §C FFI declaration files).
+        List<LuaFfiBindingGenerator.FfiFunctionInput> functions =
+            new ArrayList<>();
+        // Declared C classes in source order (the parser's E7002
+        // cardinality gate pins exactly one C marker per exported class).
+        List<LuaFfiBindingGenerator.FfiClassInput> classes =
+            new ArrayList<>();
+        for (StatementNode stmt : imported.rawAst.statements()) {
+            if (stmt instanceof ExportDeclaration exp) {
+                if (exp.declaration() instanceof FunctionDeclaration fd) {
+                    Type type = exports.get(fd.name());
+                    if (type instanceof Type.Func func) {
+                        functions.add(new LuaFfiBindingGenerator.FfiFunctionInput(
+                            fd.name(), func));
+                    } else {
+                        error(DiagnosticCode.E6000,
+                            "unsupported extern-c import \"" + imp.modulePath()
+                                + "\": exported function '" + fd.name()
+                                + "' has no resolved function type",
+                            imp.span());
+                        return null;
+                    }
+                } else if (exp.declaration() instanceof ClassDeclaration cd) {
+                    LuaFfiBindingGenerator.FfiClassInput cls =
+                        ffiClassInputOf(cd, exports, extractor, imp);
+                    if (cls == null) {
+                        return null;
+                    }
+                    classes.add(cls);
+                }
+            } else if (stmt instanceof ClassDeclaration cd
+                    && (cd.directives().contains(DeclarationDirective.C_STRUCT)
+                        || cd.directives().contains(DeclarationDirective.C_POINTER))) {
+                // A marked class declaration outside an export wrapper is
+                // rejected by the parser's E7002 placement gate, so this
+                // arm is defensive only.
+                LuaFfiBindingGenerator.FfiClassInput cls =
+                    ffiClassInputOf(cd, exports, extractor, imp);
+                if (cls == null) {
+                    return null;
+                }
+                classes.add(cls);
+            }
+        }
+
+        String moduleKey = "ffi:" + external.rawImportSpecifier();
+        return new LuaFfiBindingGenerator.FfiModuleInput(moduleKey,
+            entry.nativeLibrary().kind().name(),
+            entry.nativeLibrary().loaderText(), functions, classes);
+    }
+
+    /**
+     * One declared FFI class: the marker-derived kind, the canonical
+     * class identity from the phase-1 export map, and the source-order
+     * fields with their extractor-resolved types. Returns null after
+     * recording the defensive E6000 for an unrepresentable class.
+     */
+    private LuaFfiBindingGenerator.FfiClassInput ffiClassInputOf(
+            ClassDeclaration cd, Map<String, Type> exports,
+            ExportExtractor extractor, ImportDeclaration imp) {
+        String kind = null;
+        if (cd.directives().contains(DeclarationDirective.C_STRUCT)) {
+            kind = "C_STRUCT";
+        } else if (cd.directives().contains(DeclarationDirective.C_POINTER)) {
+            kind = "C_POINTER";
+        }
+        if (kind == null) {
+            error(DiagnosticCode.E6000,
+                "unsupported extern-c import \"" + imp.modulePath()
+                    + "\": class '" + cd.name()
+                    + "' carries no C marker", imp.span());
+            return null;
+        }
+        Type exportType = exports.get(cd.name());
+        if (!(exportType instanceof Type.Class clsType)) {
+            error(DiagnosticCode.E6000,
+                "unsupported extern-c import \"" + imp.modulePath()
+                    + "\": class '" + cd.name()
+                    + "' has no resolved class identity", imp.span());
+            return null;
+        }
+        List<LuaFfiBindingGenerator.FfiFieldInput> fields = new ArrayList<>();
+        for (int i = 0; i < cd.fields().size(); i++) {
+            ClassField field = cd.fields().get(i);
+            fields.add(new LuaFfiBindingGenerator.FfiFieldInput(
+                field.name(), i, extractor.resolveFieldType(field.type()),
+                field.defaultExpr(), field.optional()));
+        }
+        return new LuaFfiBindingGenerator.FfiClassInput(cd.name(),
+            clsType.identity(), kind, fields);
     }
 
     /**
