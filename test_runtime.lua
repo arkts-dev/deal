@@ -4233,6 +4233,1072 @@ test("FFI negative-constraint source audits against deal/runtime.lua hold", func
   absent("coroutine scheduling", "coroutine")
 end)
 
+-- ==================== D-series: ISSUE-0163 acceptance matrix ====================
+-- ISSUE-0163 (LuaJIT FFI loading, cdef certainty, and ABI wrappers):
+-- the acceptance matrix over the production __rt.load_ffi path — cache
+-- identity variants (library/provider/evaluator/descriptor/cdef/ABI/
+-- fresh bindings), the full cdef certainty matrix (collisions, failure
+-- after prior success, indeterminate current and blocked future entries,
+-- failed replay, safe non-overlapping modules), two real libraries
+-- exporting one symbol with different signatures through retained exact
+-- handles and private casts, the complete D4-D5 ABI rows (int32
+-- bounds/sign and inbound bit patterns, IEEE, booleans, void, Unicode/
+-- long strings, empty/non-empty bytes with pointer-length adjacency and
+-- rooting, source-order keyword-named structs, by-value isolation,
+-- nominal/null pointer direct and field values), before/after-call
+-- atomicity, and the E6/E10 seam-breaking negatives. The D-series drives
+-- only __rt.load_ffi and the published wrappers/plans; every cdef
+-- carries a private digest-qualified name or reuses an already-registered
+-- entry text byte-exactly (cross-module replay).
+
+-- D-series bootstrap: compile the two real dual libraries (D8-D11) with
+-- GCC to build/, each with its own event file so open/close counts stay
+-- exact for scenarios whose first load in the process uses them. A
+-- missing GCC or a failed compile fails the battery immediately
+-- (nonzero battery exit -> run_tests.sh gate failure).
+local ffi_d_dual_a_so = ffi_batt_abs_path .. "/build/ffi-runtime-dual-a.so"
+local ffi_d_dual_b_so = ffi_batt_abs_path .. "/build/ffi-runtime-dual-b.so"
+local ffi_d_dual_a_events = ffi_batt_abs_path .. "/build/ffi-runtime-dual-a-events.log"
+local ffi_d_dual_b_events = ffi_batt_abs_path .. "/build/ffi-runtime-dual-b-events.log"
+do
+  local a = os.execute("gcc -shared -fPIC -O2 -DFIXTURE_EVENTS_PATH='\""
+      .. ffi_d_dual_a_events
+      .. "\"' -o build/ffi-runtime-dual-a.so test/fixtures/ffi-runtime-dual-a.c")
+  local b = os.execute("gcc -shared -fPIC -O2 -DFIXTURE_EVENTS_PATH='\""
+      .. ffi_d_dual_b_events
+      .. "\"' -o build/ffi-runtime-dual-b.so test/fixtures/ffi-runtime-dual-b.c")
+  if a ~= 0 then
+    error("FFI D-series bootstrap failed: dual-a GCC compile exited with status " .. tostring(a))
+  end
+  if b ~= 0 then
+    error("FFI D-series bootstrap failed: dual-b GCC compile exited with status " .. tostring(b))
+  end
+  local pa = io.open(ffi_d_dual_a_so, "r")
+  if pa == nil then
+    error("FFI D-series bootstrap failed: " .. ffi_d_dual_a_so .. " missing after the compile")
+  end
+  pa:close()
+  local pb = io.open(ffi_d_dual_b_so, "r")
+  if pb == nil then
+    error("FFI D-series bootstrap failed: " .. ffi_d_dual_b_so .. " missing after the compile")
+  end
+  pb:close()
+end
+
+local function ffi_d_reset_events(path)
+  os.remove(path)
+end
+
+local function ffi_d_read_events(path)
+  local lines = {}
+  local f = io.open(path, "r")
+  if f ~= nil then
+    for line in f:lines() do
+      lines[#lines + 1] = line
+    end
+    f:close()
+  end
+  return lines
+end
+
+-- Every translated error message must stay address-free (no "0x").
+local function ffi_d_assert_no_address(err)
+  assert(err.message ~= nil, "the translated error must carry a message")
+  assert(string.find(err.message, "0x", 1, true) == nil,
+      "the translated error message must contain no address, got: " .. tostring(err.message))
+end
+
+local FFI_D_KW_IDENTITY = "@deal.test.ffi.issue0163/Kw"
+
+-- D-series default-evaluation counter: the Kw plan's evaluators
+-- increment it, proving zero evaluation at load (D0) and exactly one
+-- evaluation per attempt after READY (D16).
+local ffi_d_evaluator_count = 0
+
+-- Private cdef entry texts with digest-qualified private names and
+-- declaration ordinals (adopted D2); struct members use the source-order
+-- deal_fN names. No real target-function prototype is declared.
+local FFI_D_TYPEDEFS = {
+  fn_0001 = { "typedef int32_t (*deal_ffi_0163_fn_0001)(int32_t);", "deal_ffi_0163_fn_0001" },
+  fn_0002 = { "typedef int32_t (*deal_ffi_0163_fn_0002)(int32_t);", "deal_ffi_0163_fn_0002" },
+  fn_0003 = { "typedef double (*deal_ffi_0163_fn_0003)(int32_t);", "deal_ffi_0163_fn_0003" },
+  fn_0004 = { "typedef int32_t (*deal_ffi_0163_fn_0004)(void);", "deal_ffi_0163_fn_0004" },
+  fn_0005 = { "typedef int32_t (*deal_ffi_0163_fn_0005)(void);", "deal_ffi_0163_fn_0005" },
+  fn_0006 = { "typedef const char *(*deal_ffi_0163_fn_0006)(void);", "deal_ffi_0163_fn_0006" },
+  fn_0007 = { "typedef const char *(*deal_ffi_0163_fn_0007)(const char *);", "deal_ffi_0163_fn_0007" },
+  fn_0008 = { "typedef int32_t (*deal_ffi_0163_fn_0008)(const uint8_t *, int32_t, const uint8_t *, int32_t);", "deal_ffi_0163_fn_0008" },
+  fn_0009 = { "typedef int32_t (*deal_ffi_0163_fn_0009)(int32_t);", "deal_ffi_0163_fn_0009" },
+  kw = { "typedef struct { int32_t deal_f0; int32_t deal_f1; int32_t deal_f2; } deal_ffi_0163_kw_t;", "deal_ffi_0163_kw_t" },
+  matrix_good = { "typedef int32_t (*deal_ffi_0163_good_fn)(int32_t, int32_t);", "deal_ffi_0163_good_fn" },
+  matrix_bad = { "typedef deal_ffi_0163_unknown_base_t deal_ffi_0163_bad_alias;", "deal_ffi_0163_bad_alias" },
+  matrix_blocked = { "typedef int32_t (*deal_ffi_0163_blocked_fn)(void);", "deal_ffi_0163_blocked_fn" },
+  dual_a = { "typedef int32_t (*deal_ffi_0163_dual_a_fn)(int32_t, int32_t);", "deal_ffi_0163_dual_a_fn" },
+  dual_b = { "typedef double (*deal_ffi_0163_dual_b_fn)(double, double);", "deal_ffi_0163_dual_b_fn" },
+}
+
+local function ffi_d_entries(names)
+  local out = {}
+  for i = 1, #names do
+    local td = FFI_D_TYPEDEFS[names[i]]
+    out[i] = { entryDigest = "ffi-issue0163:entry:" .. names[i],
+               fullText = td[1], ownedNames = { td[2] } }
+  end
+  return out
+end
+
+-- The ABI module's function metadata (R10 shapes). C_STRUCT-bearing
+-- functions carry the full anonymous function-pointer spelling so the
+-- wrapper builder can split it for the struct ctypes; scalar functions
+-- carry the bare private typedef name.
+local FFI_D_FN_META = {
+  identity_int = { cSymbol = "fixture_identity_int", fpt = "deal_ffi_0163_fn_0001",
+                   params = { ffi_batt_t("INT", "int") }, ret = ffi_batt_t("INT", "int") },
+  extreme_int = { cSymbol = "fixture_extreme_int", fpt = "deal_ffi_0163_fn_0002",
+                  params = { ffi_batt_t("INT", "int") }, ret = ffi_batt_t("INT", "int") },
+  number_special = { cSymbol = "fixture_number_special", fpt = "deal_ffi_0163_fn_0003",
+                     params = { ffi_batt_t("INT", "int") }, ret = ffi_batt_t("NUMBER", "number") },
+  nonzero_bool = { cSymbol = "fixture_nonzero_bool", fpt = "deal_ffi_0163_fn_0004",
+                   params = {}, ret = ffi_batt_t("BOOLEAN", "boolean") },
+  zero_bool = { cSymbol = "fixture_zero_bool", fpt = "deal_ffi_0163_fn_0005",
+                params = {}, ret = ffi_batt_t("BOOLEAN", "boolean") },
+  long_string = { cSymbol = "fixture_long_string", fpt = "deal_ffi_0163_fn_0006",
+                  params = {}, ret = ffi_batt_t("STRING", "string") },
+  echo_long = { cSymbol = "fixture_echo_long", fpt = "deal_ffi_0163_fn_0007",
+                params = { ffi_batt_t("STRING", "string") }, ret = ffi_batt_t("STRING", "string") },
+  bytes_sum2 = { cSymbol = "fixture_bytes_sum2", fpt = "deal_ffi_0163_fn_0008",
+                 params = { ffi_batt_t("BYTES", "bytes"), ffi_batt_t("BYTES", "bytes") },
+                 ret = ffi_batt_t("INT", "int") },
+  echo_pair = { cSymbol = "fixture_echo_pair",
+                fpt = "deal_ffi_0435_pair_t (*)(deal_ffi_0435_pair_t)",
+                params = { ffi_batt_t("C_STRUCT", FFI_BATT_PAIR_IDENTITY, FFI_BATT_PAIR_IDENTITY) },
+                ret = ffi_batt_t("C_STRUCT", FFI_BATT_PAIR_IDENTITY, FFI_BATT_PAIR_IDENTITY) },
+  bump_pair = { cSymbol = "fixture_bump_pair",
+                fpt = "deal_ffi_0435_pair_t (*)(deal_ffi_0435_pair_t)",
+                params = { ffi_batt_t("C_STRUCT", FFI_BATT_PAIR_IDENTITY, FFI_BATT_PAIR_IDENTITY) },
+                ret = ffi_batt_t("C_STRUCT", FFI_BATT_PAIR_IDENTITY, FFI_BATT_PAIR_IDENTITY) },
+  sum_pair = { cSymbol = "fixture_sum_pair",
+               fpt = "int32_t (*)(deal_ffi_0435_pair_t)",
+               params = { ffi_batt_t("C_STRUCT", FFI_BATT_PAIR_IDENTITY, FFI_BATT_PAIR_IDENTITY) },
+               ret = ffi_batt_t("INT", "int") },
+  make_kw = { cSymbol = "fixture_make_kw",
+              fpt = "deal_ffi_0163_kw_t (*)(int32_t, int32_t, int32_t)",
+              params = { ffi_batt_t("INT", "int"), ffi_batt_t("INT", "int"), ffi_batt_t("INT", "int") },
+              ret = ffi_batt_t("C_STRUCT", FFI_D_KW_IDENTITY, FFI_D_KW_IDENTITY) },
+  ptrbox_nonnull = { cSymbol = "fixture_ptrbox_nonnull",
+                     fpt = "int32_t (*)(deal_ffi_0435_ptr_box_t)",
+                     params = { ffi_batt_t("C_STRUCT", FFI_BATT_PTRBOX_IDENTITY, FFI_BATT_PTRBOX_IDENTITY) },
+                     ret = ffi_batt_t("INT", "int") },
+}
+
+local function ffi_d_functions(names)
+  local out = {}
+  for i = 1, #names do
+    local meta = FFI_D_FN_META[names[i]]
+    local params = {}
+    for j = 1, #meta.params do
+      params[j] = meta.params[j]
+    end
+    out[i] = { dealName = names[i], cSymbol = meta.cSymbol,
+               privateFunctionPointerType = meta.fpt,
+               orderedParams = params, returnType = meta.ret }
+  end
+  return out
+end
+
+-- The ABI module's class metadata (R12 shapes): Pair/PtrBox reuse the
+-- battery identities; Kw's DEAL field names are C keywords that only the
+-- ordinal deal_fN members ever carry into the cdef.
+local function ffi_d_classes()
+  return {
+    { name = "Pair", canonicalClassIdentity = FFI_BATT_PAIR_IDENTITY,
+      qualifiedDealDescriptor = FFI_BATT_PAIR_IDENTITY, kind = "C_STRUCT",
+      orderedFields = {
+        { dealName = "x", fieldOrdinal = 0, type = ffi_batt_t("INT", "int") },
+        { dealName = "y", fieldOrdinal = 1, type = ffi_batt_t("NUMBER", "number") },
+      } },
+    { name = "PtrBox", canonicalClassIdentity = FFI_BATT_PTRBOX_IDENTITY,
+      qualifiedDealDescriptor = FFI_BATT_PTRBOX_IDENTITY, kind = "C_STRUCT",
+      orderedFields = {
+        { dealName = "ptr", fieldOrdinal = 0,
+          type = ffi_batt_t("C_POINTER", FFI_BATT_PTR_IDENTITY, FFI_BATT_PTR_IDENTITY) },
+      } },
+    { name = "Kw", canonicalClassIdentity = FFI_D_KW_IDENTITY,
+      qualifiedDealDescriptor = FFI_D_KW_IDENTITY, kind = "C_STRUCT",
+      orderedFields = {
+        { dealName = "if", fieldOrdinal = 0, type = ffi_batt_t("INT", "int") },
+        { dealName = "return", fieldOrdinal = 1, type = ffi_batt_t("INT", "int") },
+        { dealName = "int", fieldOrdinal = 2, type = ffi_batt_t("INT", "int") },
+      } },
+  }
+end
+
+local function ffi_d_pair_plan_list()
+  return {
+    { name = "x", descriptor = "int", optional = false,
+      evaluator = function()
+        ffi_d_evaluator_count = ffi_d_evaluator_count + 1
+        return 0
+      end },
+    { name = "y", descriptor = "number", optional = true,
+      evaluator = function()
+        ffi_d_evaluator_count = ffi_d_evaluator_count + 1
+        return 0.0
+      end },
+  }
+end
+
+local function ffi_d_ptrbox_plan_list()
+  return {
+    { name = "ptr", descriptor = FFI_BATT_PTR_IDENTITY,
+      optional = false, evaluator = nil },
+  }
+end
+
+local function ffi_d_kw_plan_list()
+  return {
+    { name = "if", descriptor = "int", optional = false,
+      evaluator = function()
+        ffi_d_evaluator_count = ffi_d_evaluator_count + 1
+        return 0
+      end },
+    { name = "return", descriptor = "int", optional = false,
+      evaluator = function()
+        ffi_d_evaluator_count = ffi_d_evaluator_count + 1
+        return 0
+      end },
+    { name = "int", descriptor = "int", optional = false,
+      evaluator = function()
+        ffi_d_evaluator_count = ffi_d_evaluator_count + 1
+        return 0
+      end },
+  }
+end
+
+local function ffi_d_build_plans()
+  return {
+    [FFI_BATT_PAIR_IDENTITY] = {
+      plan = ffi_d_pair_plan_list(),
+      canonicalPlanContent = "ffi-issue0163:pair:canonical-plan-content:v1",
+      semanticDefaultContents = "ffi-issue0163:pair:semantic-default-contents:v1",
+      evaluatorImplementationContents = "ffi-issue0163:pair:evaluator-implementation-contents:v1",
+      planDigest = "ffi-issue0163:pair:plan-digest:v1",
+    },
+    [FFI_BATT_PTRBOX_IDENTITY] = {
+      plan = ffi_d_ptrbox_plan_list(),
+      canonicalPlanContent = "ffi-issue0163:ptrbox:canonical-plan-content:v1",
+      semanticDefaultContents = "ffi-issue0163:ptrbox:semantic-default-contents:v1",
+      evaluatorImplementationContents = "ffi-issue0163:ptrbox:evaluator-implementation-contents:v1",
+      planDigest = "ffi-issue0163:ptrbox:plan-digest:v1",
+    },
+    [FFI_D_KW_IDENTITY] = {
+      plan = ffi_d_kw_plan_list(),
+      canonicalPlanContent = "ffi-issue0163:kw:canonical-plan-content:v1",
+      semanticDefaultContents = "ffi-issue0163:kw:semantic-default-contents:v1",
+      evaluatorImplementationContents = "ffi-issue0163:kw:evaluator-implementation-contents:v1",
+      planDigest = "ffi-issue0163:kw:plan-digest:v1",
+    },
+  }
+end
+
+-- The ABI module's entries: nine fresh private typedefs plus the kw
+-- struct typedef, and the pair/ptr_box struct entries re-claimed
+-- byte-exactly as cross-module registered replay (adopted D1 rule 3).
+local function ffi_d_abi_entries()
+  local out = {}
+  for i = 1, 9 do
+    local td = FFI_D_TYPEDEFS["fn_000" .. i]
+    out[#out + 1] = { entryDigest = "ffi-issue0163:entry:fn_000" .. i,
+                      fullText = td[1], ownedNames = { td[2] } }
+  end
+  out[#out + 1] = { entryDigest = "ffi-issue0163:entry:kw",
+                    fullText = FFI_D_TYPEDEFS.kw[1], ownedNames = { FFI_D_TYPEDEFS.kw[2] } }
+  out[#out + 1] = { entryDigest = "ffi-issue0163:entry:pair-replay",
+                    fullText = FFI_BATT_TYPEDEFS.pair[1], ownedNames = { FFI_BATT_TYPEDEFS.pair[2] } }
+  out[#out + 1] = { entryDigest = "ffi-issue0163:entry:ptr-box-replay",
+                    fullText = FFI_BATT_TYPEDEFS.ptr_box[1], ownedNames = { FFI_BATT_TYPEDEFS.ptr_box[2] } }
+  return out
+end
+
+local FFI_D_KEY_ABI = "ffi:deal.test.ffi.issue0163/abi"
+local FFI_D_ABI_NAMES = {
+  "identity_int", "extreme_int", "number_special", "nonzero_bool",
+  "zero_bool", "long_string", "echo_long", "bytes_sum2", "echo_pair",
+  "bump_pair", "sum_pair", "make_kw", "ptrbox_nonnull",
+}
+
+local function ffi_d_bundle_abi()
+  return {
+    bundleDigest = "ffi-issue0163:abi:bundle-digest",
+    identityDigest = "ffi-issue0163:abi:identity-digest",
+    fullContent = "ffi-issue0163:abi:cdef-bundle-content:v1",
+    nativeLibrary = { kind = "ABSOLUTE_PATH", loaderText = ffi_batt_so_path },
+    entries = ffi_d_abi_entries(),
+    functions = ffi_d_functions(FFI_D_ABI_NAMES),
+    classes = ffi_d_classes(),
+  }
+end
+
+-- Minimal bundles for the loader-text defense (empty metadata: the
+-- defense fires before any open).
+local function ffi_d_empty_bundle(loaderText, fullContent)
+  return {
+    bundleDigest = "ffi-issue0163:defense:bundle-digest",
+    identityDigest = "ffi-issue0163:defense:identity-digest",
+    fullContent = fullContent,
+    nativeLibrary = { kind = "ABSOLUTE_PATH", loaderText = loaderText },
+    entries = {},
+    functions = {},
+    classes = {},
+  }
+end
+
+local ffi_d_exports = nil
+
+local function ffi_d_require_exports()
+  assert(ffi_d_exports ~= nil, "the ISSUE-0163 ABI module must be loaded first")
+  return ffi_d_exports
+end
+
+-- ===== D-series case matrix =====
+
+test("FFI ISSUE-0163 D0: the ABI module loads through the production path with exact R17 sigs, READY cells, retained plans, and zero default evaluation", function()
+  local bindings = ffi_batt_bindings(FFI_D_KEY_ABI, FFI_D_ABI_NAMES)
+  local plans = ffi_d_build_plans()
+  local exports = __rt.load_ffi(FFI_D_KEY_ABI, ffi_d_bundle_abi(), plans,
+      bindings, FFI_BATT_IMPORT_FILE, FFI_BATT_IMPORT_LINE, FFI_BATT_IMPORT_COL)
+  ffi_d_exports = exports
+  local sigs = {
+    identity_int = "(int)->int",
+    extreme_int = "(int)->int",
+    number_special = "(int)->number",
+    nonzero_bool = "()->boolean",
+    zero_bool = "()->boolean",
+    long_string = "()->string",
+    echo_long = "(string)->string",
+    bytes_sum2 = "(bytes,bytes)->int",
+    echo_pair = "(" .. FFI_BATT_PAIR_IDENTITY .. ")->" .. FFI_BATT_PAIR_IDENTITY,
+    bump_pair = "(" .. FFI_BATT_PAIR_IDENTITY .. ")->" .. FFI_BATT_PAIR_IDENTITY,
+    sum_pair = "(" .. FFI_BATT_PAIR_IDENTITY .. ")->int",
+    make_kw = "(int,int,int)->" .. FFI_D_KW_IDENTITY,
+    ptrbox_nonnull = "(" .. FFI_BATT_PTRBOX_IDENTITY .. ")->int",
+  }
+  for i = 1, #FFI_D_ABI_NAMES do
+    local name = FFI_D_ABI_NAMES[i]
+    local w = exports[name]
+    assert(type(w) == "table" and w.__kind == "function",
+        "export " .. name .. " must be a function_-shaped wrapper table")
+    assert(type(w.f) == "function", "export " .. name .. " must carry a working .f closure")
+    assert(w.sig == sigs[name],
+        "export " .. name .. " must carry the byte-exact composed sig '"
+        .. tostring(sigs[name]) .. "', got '" .. tostring(w.sig) .. "'")
+    local cell = bindings.cells[name]
+    assert(cell.state == "READY", "cell " .. name .. " must be READY")
+    assert(cell.wrapper == w, "cell " .. name .. " must carry the published wrapper")
+  end
+  assert(bindings.state == "READY", "the ABI module bindings must end READY")
+  assert(exports["Pair_plan"] == plans[FFI_BATT_PAIR_IDENTITY].plan,
+      "the exported Pair_plan must be the retained plan list (reference equality)")
+  assert(exports["PtrBox_plan"] == plans[FFI_BATT_PTRBOX_IDENTITY].plan,
+      "the exported PtrBox_plan must be the retained plan list (reference equality)")
+  assert(exports["Kw_plan"] == plans[FFI_D_KW_IDENTITY].plan,
+      "the exported Kw_plan must be the retained plan list (reference equality)")
+  assert(ffi_d_evaluator_count == 0,
+      "no default evaluator may run during load (zero default evaluation)")
+end)
+
+test("FFI ISSUE-0163 D1: loader-text defense (empty, embedded NUL, invalid UTF-8) fails FFI_LIBRARY_LOAD at the import span before any open", function()
+  ffi_batt_reset_events()
+  local cases = {
+    { key = "ffi:deal.test.ffi.issue0163/defense-empty", text = "" },
+    { key = "ffi:deal.test.ffi.issue0163/defense-nul", text = "lib\0x.so" },
+    { key = "ffi:deal.test.ffi.issue0163/defense-utf8", text = "\255\xFE.so" },
+  }
+  for i = 1, #cases do
+    local c = cases[i]
+    local bindings = ffi_batt_bindings(c.key, {})
+    local err = assert_error(function()
+      return __rt.load_ffi(c.key, ffi_d_empty_bundle(c.text, "ffi-issue0163:defense:content:" .. i), {},
+          bindings, FFI_BATT_IMPORT_FILE, FFI_BATT_IMPORT_LINE, FFI_BATT_IMPORT_COL)
+    end, "FFI_LIBRARY_LOAD")
+    assert(err.file == FFI_BATT_IMPORT_FILE and err.line == FFI_BATT_IMPORT_LINE
+        and err.column == FFI_BATT_IMPORT_COL, "the defense failure must carry the import span")
+    ffi_d_assert_no_address(err)
+    assert(bindings.state == "FAILED", "the defense-failed bindings must end FAILED")
+  end
+  local events = ffi_batt_read_events()
+  assert(#events == 0, "no open ever happened, so the event file must gain zero lines")
+end)
+
+test("FFI ISSUE-0163 D2: a generated bundle claiming a resolver-reserved cdef name is rejected before mutation", function()
+  local key = "ffi:deal.test.ffi.issue0163/reserved"
+  local bundle = {
+    bundleDigest = "ffi-issue0163:reserved:bundle-digest",
+    identityDigest = "ffi-issue0163:reserved:identity-digest",
+    fullContent = "ffi-issue0163:reserved:cdef-bundle-content:v1",
+    nativeLibrary = { kind = "ABSOLUTE_PATH", loaderText = ffi_batt_so_path },
+    entries = { { entryDigest = "ffi-issue0163:reserved:entry",
+                  fullText = "typedef void (*deal_ffi_0163_reserved_fn)(void);",
+                  ownedNames = { "dlopen" } } },
+    functions = {},
+    classes = {},
+  }
+  local bindings = ffi_batt_bindings(key, {})
+  local err = assert_error(function()
+    return __rt.load_ffi(key, bundle, {}, bindings,
+        FFI_BATT_IMPORT_FILE, FFI_BATT_IMPORT_LINE, FFI_BATT_IMPORT_COL)
+  end, "FFI_LIBRARY_LOAD")
+  assert(string.find(err.message, "reserved", 1, true) ~= nil,
+      "the reserved-name rejection must name the reserved claim")
+  ffi_d_assert_no_address(err)
+  assert(bindings.state == "FAILED", "the rejected bindings must end FAILED")
+end)
+
+test("FFI ISSUE-0163 D3: changed descriptor content under the loaded key fails before any cdef/cell/handle/export mutation", function()
+  ffi_batt_reset_events()
+  local exports = ffi_batt_require_full_exports()
+  local b = ffi_batt_bindings(FFI_BATT_KEY_FULL, FFI_BATT_FULL_NAMES)
+  local changed = ffi_batt_bundle_full()
+  changed.functions[4].returnType = ffi_batt_t("NUMBER", "number")
+  local err = assert_error(function()
+    return __rt.load_ffi(FFI_BATT_KEY_FULL, changed,
+        ffi_batt_build_plans(ffi_batt_build_plan_list()), b,
+        FFI_BATT_IMPORT_FILE, FFI_BATT_IMPORT_LINE, FFI_BATT_IMPORT_COL)
+  end, "FFI_LIBRARY_LOAD")
+  ffi_d_assert_no_address(err)
+  assert(b.state == "UNBOUND", "the changed-descriptor bindings must stay UNBOUND")
+  for i = 1, #FFI_BATT_FULL_NAMES do
+    local cell = b.cells[FFI_BATT_FULL_NAMES[i]]
+    assert(cell.state == "UNBOUND" and cell.wrapper == nil and cell.errorValue == nil,
+        "the changed-descriptor cells must stay UNBOUND")
+  end
+  assert(exports.add_int.f(2, 3, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL) == 5,
+      "the previously published exports must stay callable")
+  local events = ffi_batt_read_events()
+  assert(#events == 0, "changed-descriptor replay must gain no open/close lines")
+end)
+
+test("FFI ISSUE-0163 D4: changed ABI (private cast) and provider (symbol) content under the loaded key fail before mutation", function()
+  ffi_batt_reset_events()
+  local exports = ffi_batt_require_full_exports()
+  -- ABI: the private function-pointer type changes (int32 -> double cast).
+  local b1 = ffi_batt_bindings(FFI_BATT_KEY_FULL, FFI_BATT_FULL_NAMES)
+  local changed_abi = ffi_batt_bundle_full()
+  changed_abi.functions[4].privateFunctionPointerType = "deal_ffi_0435_fn_0005"
+  assert_error(function()
+    return __rt.load_ffi(FFI_BATT_KEY_FULL, changed_abi,
+        ffi_batt_build_plans(ffi_batt_build_plan_list()), b1,
+        FFI_BATT_IMPORT_FILE, FFI_BATT_IMPORT_LINE, FFI_BATT_IMPORT_COL)
+  end, "FFI_LIBRARY_LOAD")
+  assert(b1.state == "UNBOUND", "the changed-ABI bindings must stay UNBOUND")
+  -- Provider: the resolved C symbol changes.
+  local b2 = ffi_batt_bindings(FFI_BATT_KEY_FULL, FFI_BATT_FULL_NAMES)
+  local changed_provider = ffi_batt_bundle_full()
+  changed_provider.functions[4].cSymbol = "fixture_add_number"
+  assert_error(function()
+    return __rt.load_ffi(FFI_BATT_KEY_FULL, changed_provider,
+        ffi_batt_build_plans(ffi_batt_build_plan_list()), b2,
+        FFI_BATT_IMPORT_FILE, FFI_BATT_IMPORT_LINE, FFI_BATT_IMPORT_COL)
+  end, "FFI_LIBRARY_LOAD")
+  assert(b2.state == "UNBOUND", "the changed-provider bindings must stay UNBOUND")
+  assert(exports.add_int.f(2, 3, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL) == 5,
+      "the previously published exports must stay callable")
+  local events = ffi_batt_read_events()
+  assert(#events == 0, "changed-ABI/provider replays must gain no open/close lines")
+end)
+
+test("FFI ISSUE-0163 D5: changed default/provider/evaluator semantic content under the loaded key fails before mutation", function()
+  ffi_batt_reset_events()
+  local exports = ffi_batt_require_full_exports()
+  local variants = { "canonicalPlanContent", "semanticDefaultContents",
+                     "evaluatorImplementationContents" }
+  for i = 1, #variants do
+    local field = variants[i]
+    local b = ffi_batt_bindings(FFI_BATT_KEY_FULL, FFI_BATT_FULL_NAMES)
+    local plans = ffi_batt_build_plans(ffi_batt_build_plan_list())
+    plans[FFI_BATT_PAIR_IDENTITY][field] = plans[FFI_BATT_PAIR_IDENTITY][field] .. "-changed"
+    local err = assert_error(function()
+      return __rt.load_ffi(FFI_BATT_KEY_FULL, ffi_batt_bundle_full(), plans, b,
+          FFI_BATT_IMPORT_FILE, FFI_BATT_IMPORT_LINE, FFI_BATT_IMPORT_COL)
+    end, "FFI_LIBRARY_LOAD")
+    ffi_d_assert_no_address(err)
+    assert(b.state == "UNBOUND",
+        "the changed-" .. field .. " bindings must stay UNBOUND")
+  end
+  assert(exports.add_int.f(2, 3, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL) == 5,
+      "the previously published exports must stay callable")
+  local events = ffi_batt_read_events()
+  assert(#events == 0, "changed-semantic-content replays must gain no open/close lines")
+end)
+
+test("FFI ISSUE-0163 D6: incompatible fresh bindings on ready replay fail before mutation; the next exact replay still succeeds", function()
+  local exports = ffi_batt_require_full_exports()
+  local bundle = ffi_batt_bundle_full()
+  local plans = ffi_batt_build_plans(ffi_batt_build_plan_list())
+  -- Wrong moduleKey on the fresh bindings.
+  local b1 = ffi_batt_bindings("ffi:wrong/module-key", FFI_BATT_FULL_NAMES)
+  assert_error(function()
+    return __rt.load_ffi(FFI_BATT_KEY_FULL, bundle, plans, b1,
+        FFI_BATT_IMPORT_FILE, FFI_BATT_IMPORT_LINE, FFI_BATT_IMPORT_COL)
+  end, "FFI_LIBRARY_LOAD")
+  assert(b1.state == "UNBOUND", "the wrong-key bindings must stay UNBOUND")
+  -- An extra cell beyond the cached export-name set.
+  local b2 = ffi_batt_bindings(FFI_BATT_KEY_FULL, FFI_BATT_FULL_NAMES)
+  b2.cells["extra"] = { state = "UNBOUND" }
+  assert_error(function()
+    return __rt.load_ffi(FFI_BATT_KEY_FULL, bundle, plans, b2,
+        FFI_BATT_IMPORT_FILE, FFI_BATT_IMPORT_LINE, FFI_BATT_IMPORT_COL)
+  end, "FFI_LIBRARY_LOAD")
+  assert(b2.state == "UNBOUND", "the extra-cell bindings must stay UNBOUND")
+  -- A missing cell.
+  local b3 = ffi_batt_bindings(FFI_BATT_KEY_FULL, FFI_BATT_FULL_NAMES)
+  b3.cells["add_int"] = nil
+  assert_error(function()
+    return __rt.load_ffi(FFI_BATT_KEY_FULL, bundle, plans, b3,
+        FFI_BATT_IMPORT_FILE, FFI_BATT_IMPORT_LINE, FFI_BATT_IMPORT_COL)
+  end, "FFI_LIBRARY_LOAD")
+  assert(b3.state == "UNBOUND", "the missing-cell bindings must stay UNBOUND")
+  -- A non-UNBOUND cell.
+  local b4 = ffi_batt_bindings(FFI_BATT_KEY_FULL, FFI_BATT_FULL_NAMES)
+  b4.cells["add_int"].state = "READY"
+  assert_error(function()
+    return __rt.load_ffi(FFI_BATT_KEY_FULL, bundle, plans, b4,
+        FFI_BATT_IMPORT_FILE, FFI_BATT_IMPORT_LINE, FFI_BATT_IMPORT_COL)
+  end, "FFI_LIBRARY_LOAD")
+  assert(b4.state == "UNBOUND", "the non-UNBOUND-cell bindings must stay UNBOUND")
+  -- The exact replay afterwards still returns the cached exports.
+  local b5 = ffi_batt_bindings(FFI_BATT_KEY_FULL, FFI_BATT_FULL_NAMES)
+  local replays = __rt.load_ffi(FFI_BATT_KEY_FULL, bundle,
+      ffi_batt_build_plans(ffi_batt_build_plan_list()), b5,
+      FFI_BATT_IMPORT_FILE, FFI_BATT_IMPORT_LINE, FFI_BATT_IMPORT_COL)
+  assert(replays == exports, "the exact replay must return the cached exports table")
+  assert(b5.state == "READY", "the exact replay bindings must end READY")
+  for i = 1, #FFI_BATT_FULL_NAMES do
+    assert(b5.cells[FFI_BATT_FULL_NAMES[i]].wrapper == exports[FFI_BATT_FULL_NAMES[i]],
+        "the exact replay cells must carry the cached wrappers")
+  end
+end)
+
+test("FFI ISSUE-0163 D7: a differing-text claim on a registered cdef name is a collision failure before mutation", function()
+  local key = "ffi:deal.test.ffi.issue0163/collision"
+  local bundle = {
+    bundleDigest = "ffi-issue0163:collision:bundle-digest",
+    identityDigest = "ffi-issue0163:collision:identity-digest",
+    fullContent = "ffi-issue0163:collision:cdef-bundle-content:v1",
+    nativeLibrary = { kind = "ABSOLUTE_PATH", loaderText = ffi_batt_so_path },
+    entries = { { entryDigest = "ffi-issue0163:collision:entry",
+                  fullText = "typedef double (*deal_ffi_0435_fn_0004)(double, double);",
+                  ownedNames = { "deal_ffi_0435_fn_0004" } } },
+    functions = {},
+    classes = {},
+  }
+  local bindings = ffi_batt_bindings(key, {})
+  local err = assert_error(function()
+    return __rt.load_ffi(key, bundle, {}, bindings,
+        FFI_BATT_IMPORT_FILE, FFI_BATT_IMPORT_LINE, FFI_BATT_IMPORT_COL)
+  end, "FFI_LIBRARY_LOAD")
+  assert(string.find(err.message, "differing cdef text", 1, true) ~= nil,
+      "the collision must name the differing cdef text")
+  ffi_d_assert_no_address(err)
+  assert(bindings.state == "FAILED", "the collision bindings must end FAILED")
+end)
+
+test("FFI ISSUE-0163 D8: cdef certainty matrix — failure after prior success, indeterminate current, blocked future, cached replay, and safe non-overlapping modules", function()
+  -- The matrix modules target dual-a, which is fresh in the process at
+  -- this point: any would-be open would append a constructor line to its
+  -- event file, so the zero-line assertions prove the failures precede
+  -- any open.
+  ffi_d_reset_events(ffi_d_dual_a_events)
+  local matrix_key = "ffi:deal.test.ffi.issue0163/matrix"
+  local good_key = "ffi:deal.test.ffi.issue0163/matrix-good"
+  local bad_key = "ffi:deal.test.ffi.issue0163/matrix-bad"
+  local blocked_key = "ffi:deal.test.ffi.issue0163/matrix-blocked"
+  local matrix_bundle = {
+    bundleDigest = "ffi-issue0163:matrix:bundle-digest",
+    identityDigest = "ffi-issue0163:matrix:identity-digest",
+    fullContent = "ffi-issue0163:matrix:cdef-bundle-content:v1",
+    nativeLibrary = { kind = "ABSOLUTE_PATH", loaderText = ffi_d_dual_a_so },
+    entries = {
+      { entryDigest = "ffi-issue0163:matrix:good",
+        fullText = FFI_D_TYPEDEFS.matrix_good[1], ownedNames = { FFI_D_TYPEDEFS.matrix_good[2] } },
+      { entryDigest = "ffi-issue0163:matrix:bad",
+        fullText = FFI_D_TYPEDEFS.matrix_bad[1], ownedNames = { FFI_D_TYPEDEFS.matrix_bad[2] } },
+      { entryDigest = "ffi-issue0163:matrix:blocked",
+        fullText = FFI_D_TYPEDEFS.matrix_blocked[1], ownedNames = { FFI_D_TYPEDEFS.matrix_blocked[2] } },
+    },
+    functions = {},
+    classes = {},
+  }
+  -- Failure after prior success: the good entry registers, the bad entry
+  -- fails and becomes indeterminate, the blocked entry stays blocked,
+  -- the module fails, and nothing is removed.
+  local bindings = ffi_batt_bindings(matrix_key, {})
+  local err = assert_error(function()
+    return __rt.load_ffi(matrix_key, matrix_bundle, {}, bindings,
+        FFI_BATT_IMPORT_FILE, FFI_BATT_IMPORT_LINE, FFI_BATT_IMPORT_COL)
+  end, "FFI_LIBRARY_LOAD")
+  assert(string.find(err.message, "cdef registration failed", 1, true) ~= nil,
+      "the matrix failure must be the translated cdef registration failure")
+  ffi_d_assert_no_address(err)
+  assert(bindings.state == "FAILED", "the matrix bindings must end FAILED")
+  -- (a) Prior registered entries remain usable: a non-overlapping module
+  -- replaying only the good entry (known registered, same text) loads and
+  -- calls through it.
+  local good_bundle = {
+    bundleDigest = "ffi-issue0163:matrix-good:bundle-digest",
+    identityDigest = "ffi-issue0163:matrix-good:identity-digest",
+    fullContent = "ffi-issue0163:matrix-good:cdef-bundle-content:v1",
+    nativeLibrary = { kind = "ABSOLUTE_PATH", loaderText = ffi_d_dual_a_so },
+    entries = { { entryDigest = "ffi-issue0163:matrix:good",
+                  fullText = FFI_D_TYPEDEFS.matrix_good[1], ownedNames = { FFI_D_TYPEDEFS.matrix_good[2] } } },
+    functions = {
+      { dealName = "good_add", cSymbol = "fixture_dual_combine",
+        privateFunctionPointerType = FFI_D_TYPEDEFS.matrix_good[2],
+        orderedParams = { ffi_batt_t("INT", "int"), ffi_batt_t("INT", "int") },
+        returnType = ffi_batt_t("INT", "int") },
+    },
+    classes = {},
+  }
+  local good_bindings = ffi_batt_bindings(good_key, { "good_add" })
+  local good_exports = __rt.load_ffi(good_key, good_bundle, {}, good_bindings,
+      FFI_BATT_IMPORT_FILE, FFI_BATT_IMPORT_LINE, FFI_BATT_IMPORT_COL)
+  assert(good_exports.good_add.f(20, 22, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL) == 42,
+      "the replayed good entry must yield a working wrapper")
+  assert(good_bindings.state == "READY", "the good module bindings must end READY")
+  local good_events = ffi_d_read_events(ffi_d_dual_a_events)
+  assert(#good_events == 1 and good_events[1] == "open",
+      "exactly the good module may open dual-a once (the matrix/bad/blocked failures precede any open), got "
+      .. table.concat(good_events, ","))
+  -- (b) The indeterminate entry blocks any later claim, even with the
+  -- exact same text (uncertainty is never removed or replayed).
+  local bad_bundle = {
+    bundleDigest = "ffi-issue0163:matrix-bad:bundle-digest",
+    identityDigest = "ffi-issue0163:matrix-bad:identity-digest",
+    fullContent = "ffi-issue0163:matrix-bad:cdef-bundle-content:v1",
+    nativeLibrary = { kind = "ABSOLUTE_PATH", loaderText = ffi_d_dual_a_so },
+    entries = { { entryDigest = "ffi-issue0163:matrix:bad",
+                  fullText = FFI_D_TYPEDEFS.matrix_bad[1], ownedNames = { FFI_D_TYPEDEFS.matrix_bad[2] } } },
+    functions = {},
+    classes = {},
+  }
+  local bad_bindings = ffi_batt_bindings(bad_key, {})
+  local bad_err = assert_error(function()
+    return __rt.load_ffi(bad_key, bad_bundle, {}, bad_bindings,
+        FFI_BATT_IMPORT_FILE, FFI_BATT_IMPORT_LINE, FFI_BATT_IMPORT_COL)
+  end, "FFI_LIBRARY_LOAD")
+  assert(string.find(bad_err.message, "uncertain", 1, true) ~= nil,
+      "the indeterminate claim must name the uncertain record")
+  assert(bad_bindings.state == "FAILED", "the bad-overlap bindings must end FAILED")
+  -- (c) The blocked future entry blocks any later claim too.
+  local blocked_bundle = {
+    bundleDigest = "ffi-issue0163:matrix-blocked:bundle-digest",
+    identityDigest = "ffi-issue0163:matrix-blocked:identity-digest",
+    fullContent = "ffi-issue0163:matrix-blocked:cdef-bundle-content:v1",
+    nativeLibrary = { kind = "ABSOLUTE_PATH", loaderText = ffi_d_dual_a_so },
+    entries = { { entryDigest = "ffi-issue0163:matrix:blocked",
+                  fullText = FFI_D_TYPEDEFS.matrix_blocked[1], ownedNames = { FFI_D_TYPEDEFS.matrix_blocked[2] } } },
+    functions = {},
+    classes = {},
+  }
+  local blocked_bindings = ffi_batt_bindings(blocked_key, {})
+  local blocked_err = assert_error(function()
+    return __rt.load_ffi(blocked_key, blocked_bundle, {}, blocked_bindings,
+        FFI_BATT_IMPORT_FILE, FFI_BATT_IMPORT_LINE, FFI_BATT_IMPORT_COL)
+  end, "FFI_LIBRARY_LOAD")
+  assert(string.find(blocked_err.message, "uncertain or blocked", 1, true) ~= nil,
+      "the blocked claim must name the uncertain-or-blocked record")
+  assert(blocked_bindings.state == "FAILED", "the blocked-overlap bindings must end FAILED")
+  -- (d) Exact failed replay re-raises the same cached error table with no
+  -- retry and fails the fresh bindings with it.
+  local replay_bindings = ffi_batt_bindings(matrix_key, {})
+  local replay_err = assert_error(function()
+    return __rt.load_ffi(matrix_key, matrix_bundle, {}, replay_bindings,
+        FFI_BATT_IMPORT_FILE, FFI_BATT_IMPORT_LINE, FFI_BATT_IMPORT_COL)
+  end, "FFI_LIBRARY_LOAD")
+  assert(replay_err == err,
+      "exact failed replay must re-raise the same cached error table (reference equality; no retry)")
+  assert(replay_bindings.state == "FAILED", "the failed-replay bindings must end FAILED")
+  -- (e) A changed bundle under the failed key fails before mutation.
+  local changed = matrix_bundle
+  changed.fullContent = changed.fullContent .. "-changed"
+  local changed_bindings = ffi_batt_bindings(matrix_key, {})
+  local changed_err = assert_error(function()
+    return __rt.load_ffi(matrix_key, changed, {}, changed_bindings,
+        FFI_BATT_IMPORT_FILE, FFI_BATT_IMPORT_LINE, FFI_BATT_IMPORT_COL)
+  end, "FFI_LIBRARY_LOAD")
+  ffi_d_assert_no_address(changed_err)
+  assert(changed_bindings.state == "UNBOUND", "the changed bindings must stay untouched")
+end)
+
+test("FFI ISSUE-0163 D9: an unresolvable private cast target is a translated FFI_LIBRARY_LOAD with one open/one close and no raw LuaJIT error or address", function()
+  -- dual-b is fresh in the process: its constructor/destructor pair makes
+  -- the open/close proof exact.
+  ffi_d_reset_events(ffi_d_dual_b_events)
+  local key = "ffi:deal.test.ffi.issue0163/castfail"
+  local bundle = {
+    bundleDigest = "ffi-issue0163:castfail:bundle-digest",
+    identityDigest = "ffi-issue0163:castfail:identity-digest",
+    fullContent = "ffi-issue0163:castfail:cdef-bundle-content:v1",
+    nativeLibrary = { kind = "ABSOLUTE_PATH", loaderText = ffi_d_dual_b_so },
+    entries = {},
+    functions = {
+      { dealName = "bad_cast", cSymbol = "fixture_dual_combine",
+        privateFunctionPointerType = "deal_ffi_0163_nonexistent_fn",
+        orderedParams = { ffi_batt_t("INT", "int"), ffi_batt_t("INT", "int") },
+        returnType = ffi_batt_t("INT", "int") },
+    },
+    classes = {},
+  }
+  local bindings = ffi_batt_bindings(key, { "bad_cast" })
+  local err = assert_error(function()
+    return __rt.load_ffi(key, bundle, {}, bindings,
+        FFI_BATT_IMPORT_FILE, FFI_BATT_IMPORT_LINE, FFI_BATT_IMPORT_COL)
+  end, "FFI_LIBRARY_LOAD")
+  assert(err.file == FFI_BATT_IMPORT_FILE and err.line == FFI_BATT_IMPORT_LINE
+      and err.column == FFI_BATT_IMPORT_COL, "the cast failure must carry the import span")
+  assert(string.find(err.message, "ffi.cast failed", 1, true) ~= nil,
+      "the cast failure must be the translated cast error")
+  ffi_d_assert_no_address(err)
+  local events = ffi_d_read_events(ffi_d_dual_b_events)
+  assert(#events == 2 and events[1] == "open" and events[2] == "close",
+      "the failed load must open the library once and close the failed opened handle exactly once, got "
+      .. table.concat(events, ","))
+  assert(bindings.state == "FAILED", "the cast-failed bindings must end FAILED")
+  assert(bindings.cells.bad_cast.state == "FAILED" and bindings.cells.bad_cast.errorValue == err,
+      "the cast-failed cell must carry the cached error table")
+end)
+
+test("FFI ISSUE-0163 D10: breaking the E10 canonical-descriptor seam fails the loader with FFI_LIBRARY_LOAD", function()
+  -- The D9 close returned dual-b's refcount to zero, so the next open
+  -- re-runs the constructor and the open/close proof stays exact.
+  ffi_d_reset_events(ffi_d_dual_b_events)
+  local key = "ffi:deal.test.ffi.issue0163/legacy-descriptor"
+  local bundle = {
+    bundleDigest = "ffi-issue0163:legacy-descriptor:bundle-digest",
+    identityDigest = "ffi-issue0163:legacy-descriptor:identity-digest",
+    fullContent = "ffi-issue0163:legacy-descriptor:cdef-bundle-content:v1",
+    nativeLibrary = { kind = "ABSOLUTE_PATH", loaderText = ffi_d_dual_b_so },
+    entries = {},
+    functions = {
+      { dealName = "legacy", cSymbol = "fixture_dual_combine",
+        privateFunctionPointerType = "deal_ffi_0435_fn_0004",
+        orderedParams = { ffi_batt_t("INT", "int"), ffi_batt_t("INT", "int") },
+        returnType = ffi_batt_t("INT", "int[]") },
+    },
+    classes = {},
+  }
+  local bindings = ffi_batt_bindings(key, { "legacy" })
+  local err = assert_error(function()
+    return __rt.load_ffi(key, bundle, {}, bindings,
+        FFI_BATT_IMPORT_FILE, FFI_BATT_IMPORT_LINE, FFI_BATT_IMPORT_COL)
+  end, "FFI_LIBRARY_LOAD")
+  assert(string.find(err.message, "non-canonical", 1, true) ~= nil,
+      "the legacy descriptor must be rejected as non-canonical at load")
+  ffi_d_assert_no_address(err)
+  local events = ffi_d_read_events(ffi_d_dual_b_events)
+  assert(#events == 2 and events[1] == "open" and events[2] == "close",
+      "the seam-breaking load must still open once and close the failed opened handle exactly once, got "
+      .. table.concat(events, ","))
+  assert(bindings.state == "FAILED", "the seam-breaking bindings must end FAILED")
+end)
+
+test("FFI ISSUE-0163 D11: two real libraries exporting the same symbol with different signatures resolve and call through their retained exact handles and private casts", function()
+  local key_a = "ffi:deal.test.ffi.issue0163/dual-a"
+  local key_b = "ffi:deal.test.ffi.issue0163/dual-b"
+  local bundle_a = {
+    bundleDigest = "ffi-issue0163:dual-a:bundle-digest",
+    identityDigest = "ffi-issue0163:dual-a:identity-digest",
+    fullContent = "ffi-issue0163:dual-a:cdef-bundle-content:v1",
+    nativeLibrary = { kind = "ABSOLUTE_PATH", loaderText = ffi_d_dual_a_so },
+    entries = ffi_d_entries({ "dual_a" }),
+    functions = {
+      { dealName = "combine", cSymbol = "fixture_dual_combine",
+        privateFunctionPointerType = FFI_D_TYPEDEFS.dual_a[2],
+        orderedParams = { ffi_batt_t("INT", "int"), ffi_batt_t("INT", "int") },
+        returnType = ffi_batt_t("INT", "int") },
+    },
+    classes = {},
+  }
+  local bundle_b = {
+    bundleDigest = "ffi-issue0163:dual-b:bundle-digest",
+    identityDigest = "ffi-issue0163:dual-b:identity-digest",
+    fullContent = "ffi-issue0163:dual-b:cdef-bundle-content:v1",
+    nativeLibrary = { kind = "ABSOLUTE_PATH", loaderText = ffi_d_dual_b_so },
+    entries = ffi_d_entries({ "dual_b" }),
+    functions = {
+      { dealName = "combine", cSymbol = "fixture_dual_combine",
+        privateFunctionPointerType = FFI_D_TYPEDEFS.dual_b[2],
+        orderedParams = { ffi_batt_t("NUMBER", "number"), ffi_batt_t("NUMBER", "number") },
+        returnType = ffi_batt_t("NUMBER", "number") },
+    },
+    classes = {},
+  }
+  local bindings_a = ffi_batt_bindings(key_a, { "combine" })
+  local exports_a = __rt.load_ffi(key_a, bundle_a, {}, bindings_a,
+      FFI_BATT_IMPORT_FILE, FFI_BATT_IMPORT_LINE, FFI_BATT_IMPORT_COL)
+  local bindings_b = ffi_batt_bindings(key_b, { "combine" })
+  local exports_b = __rt.load_ffi(key_b, bundle_b, {}, bindings_b,
+      FFI_BATT_IMPORT_FILE, FFI_BATT_IMPORT_LINE, FFI_BATT_IMPORT_COL)
+  assert(exports_a.combine.sig == "(int,int)->int",
+      "dual-a must carry the int signature, got '" .. tostring(exports_a.combine.sig) .. "'")
+  assert(exports_b.combine.sig == "(number,number)->number",
+      "dual-b must carry the number signature, got '" .. tostring(exports_b.combine.sig) .. "'")
+  assert(exports_a.combine.f(2, 3, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL) == 5,
+      "dual-a must compute 2 + 3 through its retained handle")
+  assert(exports_b.combine.f(2.0, 3.0, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL) == 6.0,
+      "dual-b must compute 2.0 * 3.0 through its retained handle")
+  -- Both handles stay retained and exact after both loads.
+  assert(exports_a.combine.f(10, 32, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL) == 42,
+      "dual-a must stay callable after dual-b loaded")
+  assert(exports_b.combine.f(2.5, 4.0, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL) == 10.0,
+      "dual-b must stay callable after dual-a loaded")
+  assert(bindings_a.state == "READY" and bindings_b.state == "READY",
+      "both dual modules must end READY")
+end)
+
+test("FFI ISSUE-0163 D12: int32 bounds/sign roundtrips, inbound bit patterns, and out-of-range outbound rejection before the call", function()
+  local exports = ffi_d_require_exports()
+  local full = ffi_batt_require_full_exports()
+  assert(exports.identity_int.f(-2147483648, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL) == -2147483648,
+      "INT_MIN must sign-preserve through the roundtrip")
+  assert(exports.identity_int.f(2147483647, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL) == 2147483647,
+      "INT_MAX must roundtrip")
+  assert(exports.identity_int.f(0, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL) == 0,
+      "0 must roundtrip")
+  assert(exports.identity_int.f(-1, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL) == -1,
+      "-1 must sign-preserve")
+  assert(exports.extreme_int.f(0, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL) == -2147483648,
+      "the INT_MIN inbound bit pattern must be total")
+  assert(exports.extreme_int.f(1, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL) == 2147483647,
+      "the INT_MAX inbound bit pattern must be total")
+  assert(full.add_int.f(-7, -8, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL) == -15,
+      "negative int arithmetic must sign-preserve through the native call")
+  -- Out-of-range outbound validation happens before narrowing and before
+  -- the call: the counter proves the native function never ran.
+  full.reset_counter.f(FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
+  local e1 = assert_error(function()
+    return full.add_int.f(2147483648, 0, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
+  end, "E8004")
+  assert(e1.file == FFI_BATT_CALL_FILE and e1.line == FFI_BATT_CALL_LINE
+      and e1.column == FFI_BATT_CALL_COL, "E8004 must carry the call span")
+  assert(full.call_count.f(FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL) == 0,
+      "the native call must never have run for the out-of-range int")
+  local e2 = assert_error(function()
+    return full.add_int.f(-2147483649, 0, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
+  end, "E8004")
+  assert(e2.file == FFI_BATT_CALL_FILE and e2.line == FFI_BATT_CALL_LINE
+      and e2.column == FFI_BATT_CALL_COL, "E8004 must carry the call span")
+  assert(full.call_count.f(FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL) == 0,
+      "the native call must never have run for the out-of-range int")
+  -- Inbound boolean rows: zero false, nonzero true, without error.
+  assert(exports.nonzero_bool.f(FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL) == true,
+      "a nonzero return must become true")
+  assert(exports.zero_bool.f(FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL) == false,
+      "a zero return must become false")
+  assert(full["not"].f(true, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL) == false,
+      "the 0/1 boolean outbound row must still hold")
+end)
+
+test("FFI ISSUE-0163 D13: every inbound IEEE-754 double pattern is total", function()
+  local exports = ffi_d_require_exports()
+  local nan = exports.number_special.f(0, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
+  assert(type(nan) == "number" and nan ~= nan, "NaN must roundtrip as a Lua NaN")
+  local pinf = exports.number_special.f(1, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
+  assert(pinf == math.huge, "+Infinity must roundtrip")
+  local ninf = exports.number_special.f(2, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
+  assert(ninf == -math.huge, "-Infinity must roundtrip")
+  local posz = exports.number_special.f(3, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
+  assert(posz == 0 and 1 / posz == math.huge, "+0.0 must roundtrip")
+  local negz = exports.number_special.f(4, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
+  assert(negz == 0 and 1 / negz == -math.huge, "-0.0 must roundtrip sign-preserving")
+  assert(exports.number_special.f(9, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL) == 1.0,
+      "ordinary doubles must stay exact")
+end)
+
+test("FFI ISSUE-0163 D14: Unicode strings roundtrip byte-exactly and valid long strings have no DEAL cap in either direction", function()
+  local exports = ffi_d_require_exports()
+  local full = ffi_batt_require_full_exports()
+  local unicode = "h\xC3\xA9llo \xE2\x9C\x93 \xE4\xB8\x96\xE7\x95\x8C"
+  assert(full.echo_string.f(unicode, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL) == unicode,
+      "the multibyte UTF-8 string must echo byte-exactly")
+  local long = exports.long_string.f(FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
+  assert(type(long) == "string" and #long == 8191,
+      "the long return must be 8191 bytes (no DEAL cap)")
+  for k = 1, 8191, 511 do
+    assert(string.byte(long, k) == string.byte("a") + ((k - 1) % 26),
+        "the long return must match the ('a' + i % 26) pattern at offset " .. k)
+  end
+  local big = string.rep("x", 5000)
+  local echoed = exports.echo_long.f(big, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
+  assert(type(echoed) == "string" and echoed == big,
+      "the 5000-byte parameter/return must roundtrip byte-exactly (no DEAL cap)")
+end)
+
+test("FFI ISSUE-0163 D15: empty and non-empty bytes carry pointer-immediately-length at each source position and stay DEAL-owned/rooted", function()
+  local exports = ffi_d_require_exports()
+  local full = ffi_batt_require_full_exports()
+  -- Empty buffer: the stable storage pointer plus signed-int32 length 0
+  -- reach the native function; the result is exact.
+  local empty = __rt.bytes_new(0)
+  assert(__rt.bytes_length(empty) == 0, "the empty buffer must have logical length 0")
+  assert(full.bytes_sum.f(empty, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL) == 0,
+      "an empty borrowed buffer must sum to zero")
+  assert(__rt.bytes_length(empty) == 0, "the empty buffer must stay valid after the call")
+  -- Two bytes parameters at distinct source positions: each lowers to
+  -- const uint8_t* immediately followed by its signed-int32 length.
+  local b1 = __rt.bytes_new(3)
+  __rt.bytes_set(b1, 0, 200)
+  __rt.bytes_set(b1, 1, 30)
+  __rt.bytes_set(b1, 2, 25)
+  local b2 = __rt.bytes_new(2)
+  __rt.bytes_set(b2, 0, 4)
+  __rt.bytes_set(b2, 1, 1)
+  assert(exports.bytes_sum2.f(b1, b2, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL) == 260,
+      "the two pointer-length pairs must land at their source positions (200+30+25+4+1)")
+  -- Rooting/ownership: the borrowed buffers stay DEAL-owned, and an alias
+  -- observes the same storage after the call.
+  assert(__rt.bytes_get(b1, 0) == 200 and __rt.bytes_get(b2, 1) == 1,
+      "the buffers must stay usable after the native call")
+  local alias = b1
+  __rt.bytes_set(alias, 1, 31)
+  assert(__rt.bytes_get(b1, 1) == 31, "aliases must observe the same DEAL-owned storage")
+end)
+
+test("FFI ISSUE-0163 D16: source-order struct conversion uses deal_fN members, keyword-named DEAL fields, and defaults evaluate once per attempt only after READY", function()
+  local exports = ffi_d_require_exports()
+  local kw = exports.make_kw.f(11, 22, 33, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
+  assert(kw.__kind == "class" and kw.__classname == FFI_D_KW_IDENTITY,
+      "the inbound Kw instance must carry the canonical class identity")
+  assert(kw["if"] == 11 and kw["return"] == 22 and kw["int"] == 33,
+      "the keyword-named fields must arrive through the ordinal deal_f0/deal_f1/deal_f2 members")
+  assert(type(kw["if"]) == "number" and type(kw["return"]) == "number" and type(kw["int"]) == "number",
+      "the inbound int members must be Lua numbers (the D7 unboxing)")
+  assert(type(exports["Kw_plan"]) == "table", "the Kw plan must be retained and exported")
+  local before = ffi_d_evaluator_count
+  local inst = __rt.class_plan_(FFI_D_KW_IDENTITY, exports["Kw_plan"], {},
+      FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
+  assert(inst["if"] == 0 and inst["return"] == 0 and inst["int"] == 0,
+      "the defaulted construction must evaluate each omitted required default")
+  assert(ffi_d_evaluator_count - before == 3,
+      "exactly one evaluation per omitted required field, once per attempt")
+  local inst2 = __rt.class_plan_(FFI_D_KW_IDENTITY, exports["Kw_plan"], {},
+      FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
+  assert(inst2["if"] == 0 and inst2["return"] == 0 and inst2["int"] == 0,
+      "the second attempt must default identically")
+  assert(ffi_d_evaluator_count - before == 6,
+      "the second attempt must run exactly one more evaluation per omitted required field")
+  assert(inst ~= inst2, "each attempt must publish a distinct instance table")
+end)
+
+test("FFI ISSUE-0163 D17: by-value struct parameters convert through one unpublished copy; C mutations never touch the DEAL source", function()
+  local exports = ffi_d_require_exports()
+  local p = __rt.class_plan_(FFI_BATT_PAIR_IDENTITY, exports["Pair_plan"],
+      { x = 5, y = 2.5 }, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
+  local bumped = exports.bump_pair.f(p, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
+  assert(bumped.__kind == "class" and bumped.__classname == FFI_BATT_PAIR_IDENTITY,
+      "the bumped result must be a tagged Pair class")
+  assert(bumped.x == 6 and bumped.y == 3.5, "C must see the converted copy and mutate only it")
+  assert(p.x == 5 and p.y == 2.5, "the C copy mutation must never touch the DEAL source class")
+  assert(exports.sum_pair.f(p, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL) == 7,
+      "the scalar-by-value-struct function must read the copy (5 + trunc(2.5))")
+  local echoed = exports.echo_pair.f(p, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
+  assert(echoed ~= p and echoed.x == 5 and echoed.y == 2.5,
+      "the by-value roundtrip must publish a fresh class with the same values")
+  echoed.x = 999
+  assert(p.x == 5, "mutating the returned instance must not affect the source (fresh class)")
+end)
+
+test("FFI ISSUE-0163 D18: outbound struct/field validation failures raise before the call and prevent native effects", function()
+  local exports = ffi_d_require_exports()
+  local full = ffi_batt_require_full_exports()
+  full.reset_counter.f(FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
+  -- A struct field that fails int validation must stop the outbound
+  -- conversion before the single native call.
+  local bad_pair = { __kind = "class", __classname = FFI_BATT_PAIR_IDENTITY,
+                     x = "not-an-int", y = 0 }
+  local e1 = assert_error(function()
+    return exports.sum_pair.f(bad_pair, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
+  end, "E8001")
+  assert(e1.file == FFI_BATT_CALL_FILE and e1.line == FFI_BATT_CALL_LINE
+      and e1.column == FFI_BATT_CALL_COL, "E8001 must carry the call span")
+  assert(full.call_count.f(FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL) == 0,
+      "the native call must never have run for the invalid struct field")
+  -- A NULL pointer field in a by-value struct parameter is an outbound
+  -- non-null-token failure before the call.
+  local null_token = { __kind = "class", __classname = FFI_BATT_PTR_IDENTITY }
+  local bad_box = { __kind = "class", __classname = FFI_BATT_PTRBOX_IDENTITY,
+                    ptr = null_token }
+  local e2 = assert_error(function()
+    return exports.ptrbox_nonnull.f(bad_box, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
+  end, "E8001")
+  assert(e2.file == FFI_BATT_CALL_FILE and e2.line == FFI_BATT_CALL_LINE
+      and e2.column == FFI_BATT_CALL_COL, "E8001 must carry the call span")
+  assert(full.call_count.f(FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL) == 0,
+      "the native call must never have run for the NULL pointer field")
+  -- A valid non-null pointer field passes the nominal check and reaches C.
+  local tok = full.static_pointer.f(FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL)
+  local good_box = { __kind = "class", __classname = FFI_BATT_PTRBOX_IDENTITY,
+                     ptr = tok }
+  assert(exports.ptrbox_nonnull.f(good_box, FFI_BATT_CALL_FILE, FFI_BATT_CALL_LINE, FFI_BATT_CALL_COL) == 1,
+      "the non-null pointer field must reach C through the nominal check")
+end)
+
+test("FFI ISSUE-0163 D19: ISSUE-0163 structural pins hold in the FFI half (rooting, adjacency, ordinal members, one call, digest indexes only)", function()
+  local f = io.open("deal/runtime.lua", "r")
+  assert(f ~= nil, "deal/runtime.lua must be readable for the structural audits")
+  local src = f:read("*a")
+  f:close()
+  local marker = "-- ===== C FFI runtime half (v1.2) ====="
+  local start = string.find(src, marker, 1, true)
+  assert(start ~= nil, "the FFI half section marker must exist in deal/runtime.lua")
+  local half = string.sub(src, start)
+  local function count_all(text, pattern)
+    local n = 0
+    local i = 1
+    while true do
+      local p = string.find(text, pattern, i, true)
+      if p == nil then
+        return n
+      end
+      n = n + 1
+      i = p + 1
+    end
+  end
+  -- Rooting: argument values and temporaries stay alive in wrapper locals
+  -- through result conversion.
+  assert(string.find(half, "local keep = { args = args, handle = handle }", 1, true) ~= nil,
+      "the wrapper must keep argument values and the handle alive through result conversion")
+  -- Bytes adjacency: the storage pointer is immediately followed by the
+  -- signed-int32 logical length at the source parameter position.
+  assert(string.find(half,
+      'cargs[#cargs + 1] = ffi.cast("const uint8_t *", v.__data)\n    cargs[#cargs + 1] = v.__len',
+      1, true) ~= nil,
+      "the BYTES row must append the pointer immediately followed by the length")
+  -- Ordinal struct members: every struct conversion reads deal_fN only.
+  assert(count_all(half, '"deal_f" ..') == 2,
+      "exactly two deal_fN member-composition sites must exist (outbound and inbound struct rows)")
+  -- Exactly one synchronous native call per wrapper invocation.
+  assert(count_all(half, "local result = cast(unpack(cargs))") == 1,
+      "exactly one native call site must exist in the wrapper closure")
+  -- SHA-256 digests are carried indexes only: no digest participates in
+  -- an equality/replay/collision decision.
+  assert(string.find(half, "identityDigest ==", 1, true) == nil,
+      "identityDigest must never be compared for identity")
+  assert(string.find(half, "bundleDigest ==", 1, true) == nil,
+      "bundleDigest must never be compared for identity")
+  assert(string.find(half, "entryDigest ==", 1, true) == nil,
+      "entryDigest must never be compared for identity")
+  assert(string.find(half, "planDigest ==", 1, true) == nil,
+      "planDigest must never be compared for identity")
+  -- No raw LuaJIT error or address value is ever interpolated into a
+  -- resolver/open/lookup message (the defensive paths keep the messages
+  -- pure module/symbol text).
+  assert(string.find(half, '.. tostring(handle)', 1, true) == nil,
+      "no raw dlopen pcall error or address may be interpolated into a message")
+  assert(string.find(half, '.. tostring(addr)', 1, true) == nil,
+      "no raw dlsym pcall error or address may be interpolated into a message")
+end)
+
+
 -- ==================== Summary ====================
 
 print("")

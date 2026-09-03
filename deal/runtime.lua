@@ -2921,7 +2921,7 @@ function posix_native_symbol_resolver.open(nativeLibrary, moduleKey, file, line,
   local ok, handle = pcall(ffi.C.dlopen, text, flags)
   if not ok then
     error(__rt._err("FFI_LIBRARY_LOAD",
-      "dlopen failed for module '" .. moduleKey .. "': " .. tostring(handle),
+      "dlopen failed for module '" .. moduleKey .. "'",
       file, line, column, nil, nil))
   end
   if handle == nil then
@@ -2942,7 +2942,7 @@ function posix_native_symbol_resolver.resolve(handle, cSymbol, moduleKey, file, 
   local ok, addr = pcall(ffi.C.dlsym, handle, cSymbol)
   if not ok then
     error(__rt._err("FFI_LIBRARY_LOAD",
-      "dlsym failed for symbol '" .. cSymbol .. "' in module '" .. moduleKey .. "': " .. tostring(addr),
+      "dlsym failed for symbol '" .. cSymbol .. "' in module '" .. moduleKey .. "'",
       file, line, column, nil, nil))
   end
   local ok_err, errmsg = pcall(ffi.C.dlerror)
