@@ -4836,8 +4836,10 @@ test("FFI ISSUE-0163 D8: cdef certainty matrix — failure after prior success, 
     return __rt.load_ffi(matrix_key, matrix_bundle, {}, bindings,
         FFI_BATT_IMPORT_FILE, FFI_BATT_IMPORT_LINE, FFI_BATT_IMPORT_COL)
   end, "FFI_LIBRARY_LOAD")
-  assert(string.find(err.message, "cdef registration failed", 1, true) ~= nil,
-      "the matrix failure must be the translated cdef registration failure")
+  assert(err.message == "cdef registration failed for an entry of module 'ffi:deal.test.ffi.issue0163/matrix'",
+      "the matrix failure must be the exact translated identifier-only cdef message, got: " .. tostring(err.message))
+  assert(string.find(err.message, "unknown", 1, true) == nil,
+      "the translated cdef failure must contain no raw LuaJIT error text, got: " .. tostring(err.message))
   ffi_d_assert_no_address(err)
   assert(bindings.state == "FAILED", "the matrix bindings must end FAILED")
   -- (a) Prior registered entries remain usable: a non-overlapping module
@@ -4955,8 +4957,10 @@ test("FFI ISSUE-0163 D9: an unresolvable private cast target is a translated FFI
   end, "FFI_LIBRARY_LOAD")
   assert(err.file == FFI_BATT_IMPORT_FILE and err.line == FFI_BATT_IMPORT_LINE
       and err.column == FFI_BATT_IMPORT_COL, "the cast failure must carry the import span")
-  assert(string.find(err.message, "ffi.cast failed", 1, true) ~= nil,
-      "the cast failure must be the translated cast error")
+  assert(err.message == "ffi.cast failed for symbol 'fixture_dual_combine' of module 'ffi:deal.test.ffi.issue0163/castfail'",
+      "the cast failure must be the exact translated identifier-only message, got: " .. tostring(err.message))
+  assert(string.find(err.message, "declaration specifier expected", 1, true) == nil,
+      "the translated cast failure must contain no raw LuaJIT error text, got: " .. tostring(err.message))
   ffi_d_assert_no_address(err)
   local events = ffi_d_read_events(ffi_d_dual_b_events)
   assert(#events == 2 and events[1] == "open" and events[2] == "close",
@@ -5296,6 +5300,15 @@ test("FFI ISSUE-0163 D19: ISSUE-0163 structural pins hold in the FFI half (rooti
       "no raw dlopen pcall error or address may be interpolated into a message")
   assert(string.find(half, '.. tostring(addr)', 1, true) == nil,
       "no raw dlsym pcall error or address may be interpolated into a message")
+  -- Cast/cdef translation purity: no raw LuaJIT pcall error text may be
+  -- interpolated into a load_ffi message anywhere in the FFI half, and
+  -- no generic raw-error suffix pattern remains.
+  assert(string.find(half, '.. tostring(cast)', 1, true) == nil,
+      "no raw ffi.cast pcall error may be interpolated into a message")
+  assert(string.find(half, '.. tostring(raw)', 1, true) == nil,
+      "no raw ffi.cdef pcall error may be interpolated into a message")
+  assert(string.find(half, ': " .. tostring', 1, true) == nil,
+      "no raw pcall error suffix may be interpolated into a message in the FFI half")
 end)
 
 

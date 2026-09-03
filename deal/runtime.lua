@@ -2651,12 +2651,14 @@ local resolver_entry_registered = false
 --- The registry's single protected cdef call path (R6): every cdef call
 -- in the runtime — generated entries and the resolver's entry — goes
 -- through this one path; every LuaJIT cdef error is translated to
--- FFI_LIBRARY_LOAD (adopted D3: no raw LuaJIT exception escapes).
+-- FFI_LIBRARY_LOAD (adopted D3: no raw LuaJIT exception escapes). The
+-- translated message carries identifiers only (the owner module or the
+-- resolver entry) and never interpolates the raw LuaJIT error text.
 local function ffi_cdef_protected(fullText, file, line, column, what)
-  local ok, raw = pcall(ffi.cdef, fullText)
+  local ok = pcall(ffi.cdef, fullText)
   if not ok then
     error(__rt._err("FFI_LIBRARY_LOAD",
-      "cdef registration failed for " .. what .. ": " .. tostring(raw),
+      "cdef registration failed for " .. what,
       file, line, column, nil, nil))
   end
 end
@@ -3603,8 +3605,10 @@ local function ffi_run_first_load(record, moduleKey, bundle, plans, bindings, fi
       local fn = bundle.functions[i]
       local okc, cast = pcall(ffi.cast, fn.privateFunctionPointerType, addresses[fn.dealName])
       if not okc then
+        -- Identifier-only translated message (D2/D3): the module key and
+        -- the C symbol, never the raw LuaJIT cast error text.
         error(__rt._err("FFI_LIBRARY_LOAD",
-          "ffi.cast failed for symbol '" .. fn.cSymbol .. "' of module '" .. moduleKey .. "': " .. tostring(cast),
+          "ffi.cast failed for symbol '" .. fn.cSymbol .. "' of module '" .. moduleKey .. "'",
           file, line, column, nil, nil))
       end
       casts[fn.dealName] = cast
