@@ -4955,13 +4955,22 @@ public final class SemanticLowerer {
             ValueId condition = fullProgram
                 ? lowerExpression(statement.condition().get(), conditionSlot)
                 : lowerExpression(statement.condition().get());
+            // The LOOP op itself sits in the enclosing block (the
+            // control-flow epic's placement contract, C-D4): the init
+            // block is the one-time init child including the first
+            // condition production — the op is not a member of its own
+            // init child block (C-D2 block-tree shape). Pop before the
+            // emission so the op lands in the enclosing block; the
+            // full-program carrier emits the op at the top of this arm
+            // instead (its condition slot is threaded through
+            // init/update productions).
+            blockStack.pop();
             if (!fullProgram) {
                 emitUserNullOp(SemanticOpKind.LOOP,
                     new KindPayload.LoopPayload(ControlSelector.FOR, initBlock, condition,
                         bodyBlock, updateBlock),
                     statement.span(), FailurePolicyId.NO_DEAL_FAILURE);
             }
-            blockStack.pop();
             // Body block: the per-iteration incarnation (generation 1,
             // SHARED_CELL) at the body top, INIT from the generation-0
             // load, then the body statements (dominant generation 1).
