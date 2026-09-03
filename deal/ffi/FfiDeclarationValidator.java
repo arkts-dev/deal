@@ -195,12 +195,15 @@ public final class FfiDeclarationValidator {
         Map<String, ClassInfo> classes = new LinkedHashMap<>();
         List<ClassInfo> classOrder = new ArrayList<>();
         List<FunctionDeclaration> functions = new ArrayList<>();
+        Map<String, FunctionDeclaration> functionsByName =
+            new LinkedHashMap<>();
         Set<String> declaredNames = new LinkedHashSet<>();
 
         for (StatementNode stmt : program.statements()) {
             if (stmt instanceof ExportDeclaration exp) {
                 if (exp.declaration() instanceof FunctionDeclaration fd) {
                     functions.add(fd);
+                    functionsByName.putIfAbsent(fd.name(), fd);
                     if (!declaredNames.add(fd.name())) {
                         diagnostics.add(error(
                             "Invalid C FFI declaration: duplicate exported"
@@ -218,6 +221,8 @@ public final class FfiDeclarationValidator {
                     classes.put(cd.name(), info);
                     classOrder.add(info);
                 }
+            } else if (stmt instanceof FunctionDeclaration fd) {
+                functionsByName.putIfAbsent(fd.name(), fd);
             } else if (stmt instanceof ClassDeclaration cd) {
                 ClassInfo info = classInfoOf(cd, false, location,
                     identityAssembly, diagnostics);
@@ -256,8 +261,8 @@ public final class FfiDeclarationValidator {
             }
             ClassPlanBuilder planBuilder = buildStructPlan(info, classes,
                 modulePath, location, importTargets, dependencyOrder,
-                functionRefs, classPlanRefs, descriptorEncoder,
-                diagnostics);
+                functionsByName, functionRefs, classPlanRefs,
+                descriptorEncoder, diagnostics);
             if (planBuilder == null) {
                 continue;
             }
@@ -307,6 +312,20 @@ public final class FfiDeclarationValidator {
                 classes, diagnostics);
             if (returnType == null) {
                 functionOk = false;
+            }
+            if (functionOk) {
+                // A resolved C_STRUCT parameter/return whose class failed
+                // its own struct-field validation has no validated field
+                // rows, so the row cannot be built: the function is
+                // invalid too. The class's own E7002 is already
+                // reported; this guard turns the case into clean
+                // diagnostics instead of a raw ctype NPE.
+                if (referencesUnvalidatedStruct(params, structFieldsByName)
+                        || referencesUnvalidatedStruct(
+                            List.of(returnType.type()),
+                            structFieldsByName)) {
+                    functionOk = false;
+                }
             }
             if (functionOk) {
                 functionOrdinal++;
@@ -593,6 +612,7 @@ public final class FfiDeclarationValidator {
             SourceModuleLocation location,
             Map<String, ImportTarget> importTargets,
             List<String> dependencyOrder,
+            Map<String, FunctionDeclaration> functionsByName,
             List<FfiImportedFunctionReference> functionRefs,
             List<FfiImportedClassPlanReference> classPlanRefs,
             CanonicalRuntimeTypeDescriptor descriptorEncoder,
@@ -640,11 +660,11 @@ public final class FfiDeclarationValidator {
             }
             FfiType ffiType = resolved.type();
             ExpressionNode defaultExpr = field.defaultExpr().orElse(null);
-            if (defaultExpr != null && resolved.classInfo != null
-                    && resolved.classInfo.kind
-                        == FfiClassDescriptor.ClassKind.C_POINTER) {
+            if (defaultExpr != null
+                    && ffiType.kind() == FfiType.Kind.C_POINTER) {
                 ObjectLiteralExpr construction = findPointerConstruction(
-                    defaultExpr);
+                    defaultExpr, ffiType.canonicalDescriptor(), classes,
+                    functionsByName, importTargets, descriptorEncoder);
                 if (construction != null) {
                     diagnostics.add(error(
                         "Invalid C FFI declaration: object-literal"
@@ -748,44 +768,62 @@ public final class FfiDeclarationValidator {
     }
 
     /**
-     * Walks one default expression and returns the first object-literal
-     * node that constructs a pointer value (the walk is type-directed
-     * from the pointer-typed field downward through positions that
-     * preserve the pointer type).
+     * Walks one default expression of a {@code @c-pointer}-typed field
+     * and returns the first object literal whose resolved constructed
+     * class is a {@code @c-pointer} class. The walk is type-directed:
+     * the expected descriptor at each position comes from the field
+     * type, a resolved call's parameter type, a struct field type, or a
+     * function expression's declared return type. Object literals that
+     * construct other classes — for example a {@code @c-struct} literal
+     * passed as a call argument — are legal and are only descended into
+     * through the constructed class's field types; unresolvable
+     * positions are never flagged.
      */
     private static ObjectLiteralExpr findPointerConstruction(
-            ExpressionNode expr) {
-        if (expr instanceof ObjectLiteralExpr ole) {
-            return ole;
+            ExpressionNode expr,
+            String expectedDescriptor,
+            Map<String, ClassInfo> classes,
+            Map<String, FunctionDeclaration> functionsByName,
+            Map<String, ImportTarget> importTargets,
+            CanonicalRuntimeTypeDescriptor descriptorEncoder) {
+        if (expr == null) {
+            return null;
         }
-        if (expr instanceof CallExpr ce) {
-            for (ExpressionNode arg : ce.args()) {
-                ObjectLiteralExpr nested = findPointerConstruction(arg);
-                if (nested != null) {
-                    return nested;
+        if (expr instanceof ObjectLiteralExpr ole) {
+            ClassInfo constructed = classInfoForDescriptor(
+                expectedDescriptor, classes);
+            if (constructed != null && constructed.kind
+                    == FfiClassDescriptor.ClassKind.C_POINTER) {
+                return ole;
+            }
+            if (constructed != null && constructed.kind
+                    == FfiClassDescriptor.ClassKind.C_STRUCT) {
+                Map<String, String> fieldDescriptors =
+                    structFieldDescriptors(constructed, classes);
+                for (deal.ast.Property property : ole.properties()) {
+                    ObjectLiteralExpr nested = findPointerConstruction(
+                        property.value(),
+                        fieldDescriptors.get(property.name()),
+                        classes, functionsByName, importTargets,
+                        descriptorEncoder);
+                    if (nested != null) {
+                        return nested;
+                    }
                 }
             }
             return null;
         }
-        if (expr instanceof BinaryExpr be) {
-            ObjectLiteralExpr left = findPointerConstruction(be.left());
-            return left != null ? left
-                : findPointerConstruction(be.right());
-        }
-        if (expr instanceof UnaryExpr ue) {
-            return findPointerConstruction(ue.expr());
-        }
-        if (expr instanceof MemberAccessExpr mae) {
-            return findPointerConstruction(mae.object());
-        }
-        if (expr instanceof IndexExpr ie) {
-            ObjectLiteralExpr array = findPointerConstruction(ie.array());
-            return array != null ? array
-                : findPointerConstruction(ie.index());
-        }
-        if (expr instanceof ArrayLiteralExpr ale) {
-            for (ExpressionNode element : ale.elements()) {
-                ObjectLiteralExpr nested = findPointerConstruction(element);
+        if (expr instanceof CallExpr ce) {
+            List<String> parameterDescriptors = callParameterDescriptors(
+                ce.callee(), classes, functionsByName, importTargets,
+                descriptorEncoder);
+            for (int i = 0; i < ce.args().size(); i++) {
+                String expected = parameterDescriptors != null
+                    && i < parameterDescriptors.size()
+                    ? parameterDescriptors.get(i) : null;
+                ObjectLiteralExpr nested = findPointerConstruction(
+                    ce.args().get(i), expected, classes, functionsByName,
+                    importTargets, descriptorEncoder);
                 if (nested != null) {
                     return nested;
                 }
@@ -793,28 +831,377 @@ public final class FfiDeclarationValidator {
             return null;
         }
         if (expr instanceof FunctionExpr fe) {
-            return null; // deferred: a fresh closure is not a pointer
+            String returnDescriptor = typeNodeDescriptor(fe.returnType(),
+                classes);
+            return findPointerConstructionInStatements(
+                fe.body().statements(), returnDescriptor, classes,
+                functionsByName, importTargets, descriptorEncoder);
         }
-        if (expr instanceof HasExpr he) {
-            return findPointerConstruction(he.object());
+        if (expr instanceof BinaryExpr be) {
+            ObjectLiteralExpr left = findPointerConstruction(be.left(),
+                expectedDescriptor, classes, functionsByName,
+                importTargets, descriptorEncoder);
+            return left != null ? left : findPointerConstruction(
+                be.right(), expectedDescriptor, classes, functionsByName,
+                importTargets, descriptorEncoder);
+        }
+        if (expr instanceof UnaryExpr ue) {
+            return findPointerConstruction(ue.expr(), expectedDescriptor,
+                classes, functionsByName, importTargets, descriptorEncoder);
         }
         if (expr instanceof AwaitExpression aw) {
-            return findPointerConstruction(aw.callee());
+            return findPointerConstruction(aw.callee(), expectedDescriptor,
+                classes, functionsByName, importTargets, descriptorEncoder);
         }
-        if (expr instanceof TemplateLiteralExpr tle) {
-            for (ExpressionNode part : tle.parts()) {
-                ObjectLiteralExpr nested = findPointerConstruction(part);
+        // Member access, indexing, has, template literals, and array
+        // literals do not propagate the expected type; nested calls
+        // still resolve their own signatures.
+        if (expr instanceof MemberAccessExpr mae) {
+            return findPointerConstruction(mae.object(), null, classes,
+                functionsByName, importTargets, descriptorEncoder);
+        }
+        if (expr instanceof IndexExpr ie) {
+            ObjectLiteralExpr array = findPointerConstruction(ie.array(),
+                null, classes, functionsByName, importTargets,
+                descriptorEncoder);
+            return array != null ? array : findPointerConstruction(
+                ie.index(), null, classes, functionsByName, importTargets,
+                descriptorEncoder);
+        }
+        if (expr instanceof ArrayLiteralExpr ale) {
+            for (ExpressionNode element : ale.elements()) {
+                ObjectLiteralExpr nested = findPointerConstruction(element,
+                    null, classes, functionsByName, importTargets,
+                    descriptorEncoder);
                 if (nested != null) {
                     return nested;
                 }
             }
             return null;
         }
-        if (expr instanceof IdentifierExpr || expr instanceof LiteralExpr
-                || expr instanceof deal.ast.AssignmentExpr) {
+        if (expr instanceof HasExpr he) {
+            return findPointerConstruction(he.object(), null, classes,
+                functionsByName, importTargets, descriptorEncoder);
+        }
+        if (expr instanceof TemplateLiteralExpr tle) {
+            for (ExpressionNode part : tle.parts()) {
+                ObjectLiteralExpr nested = findPointerConstruction(part,
+                    null, classes, functionsByName, importTargets,
+                    descriptorEncoder);
+                if (nested != null) {
+                    return nested;
+                }
+            }
             return null;
         }
+        // Identifier/literal/assignment leaves: no constructed literal.
         return null;
+    }
+
+    /**
+     * Statement-level type-directed walk (function-expression bodies):
+     * returns propagate the function's declared return descriptor;
+     * variable declarations resolve their declared type; other
+     * statements walk nested expressions/blocks with no inherited
+     * expected type (nested calls still resolve their own signatures).
+     */
+    private static ObjectLiteralExpr findPointerConstructionInStatements(
+            List<StatementNode> statements,
+            String expectedReturnDescriptor,
+            Map<String, ClassInfo> classes,
+            Map<String, FunctionDeclaration> functionsByName,
+            Map<String, ImportTarget> importTargets,
+            CanonicalRuntimeTypeDescriptor descriptorEncoder) {
+        for (StatementNode stmt : statements) {
+            ObjectLiteralExpr hit = findPointerConstructionInStatement(
+                stmt, expectedReturnDescriptor, classes, functionsByName,
+                importTargets, descriptorEncoder);
+            if (hit != null) {
+                return hit;
+            }
+        }
+        return null;
+    }
+
+    /** One closure-body statement of the type-directed walk. */
+    private static ObjectLiteralExpr findPointerConstructionInStatement(
+            StatementNode stmt,
+            String expectedReturnDescriptor,
+            Map<String, ClassInfo> classes,
+            Map<String, FunctionDeclaration> functionsByName,
+            Map<String, ImportTarget> importTargets,
+            CanonicalRuntimeTypeDescriptor descriptorEncoder) {
+        switch (stmt) {
+            case deal.ast.ExpressionStatement es -> {
+                return findPointerConstruction(es.expr(), null, classes,
+                    functionsByName, importTargets, descriptorEncoder);
+            }
+            case deal.ast.ReturnStatement rs -> {
+                return rs.expr().map(e -> findPointerConstruction(e,
+                    expectedReturnDescriptor, classes, functionsByName,
+                    importTargets, descriptorEncoder)).orElse(null);
+            }
+            case deal.ast.VariableDeclaration vd -> {
+                String expected = vd.typeAnnotation().map(t ->
+                    typeNodeDescriptor(t, classes)).orElse(null);
+                return findPointerConstruction(vd.initializer(), expected,
+                    classes, functionsByName, importTargets,
+                    descriptorEncoder);
+            }
+            case deal.ast.ThrowStatement ts -> {
+                return findPointerConstruction(ts.expr(), null, classes,
+                    functionsByName, importTargets, descriptorEncoder);
+            }
+            case deal.ast.DeleteStatement ds -> {
+                return findPointerConstruction(ds.target(), null, classes,
+                    functionsByName, importTargets, descriptorEncoder);
+            }
+            case deal.ast.Block b -> {
+                return findPointerConstructionInStatements(
+                    b.statements(), expectedReturnDescriptor, classes,
+                    functionsByName, importTargets, descriptorEncoder);
+            }
+            case deal.ast.FunctionDeclaration fd -> {
+                String returnDescriptor = typeNodeDescriptor(
+                    fd.returnType(), classes);
+                return findPointerConstructionInStatements(
+                    fd.body().statements(), returnDescriptor, classes,
+                    functionsByName, importTargets, descriptorEncoder);
+            }
+            case deal.ast.IfStatement ifs -> {
+                ObjectLiteralExpr hit = findPointerConstruction(
+                    ifs.condition(), null, classes, functionsByName,
+                    importTargets, descriptorEncoder);
+                if (hit != null) {
+                    return hit;
+                }
+                hit = findPointerConstructionInStatements(
+                    ifs.thenBlock().statements(), expectedReturnDescriptor,
+                    classes, functionsByName, importTargets,
+                    descriptorEncoder);
+                if (hit != null) {
+                    return hit;
+                }
+                if (ifs.elseBranch().isPresent()) {
+                    deal.ast.Either<deal.ast.IfStatement, deal.ast.Block>
+                        branch = ifs.elseBranch().get();
+                    if (branch instanceof deal.ast.Either.Left<
+                            deal.ast.IfStatement, deal.ast.Block> left) {
+                        return findPointerConstructionInStatement(
+                            left.value(), expectedReturnDescriptor, classes,
+                            functionsByName, importTargets,
+                            descriptorEncoder);
+                    }
+                    if (branch instanceof deal.ast.Either.Right<
+                            deal.ast.IfStatement, deal.ast.Block> right) {
+                        return findPointerConstructionInStatements(
+                            right.value().statements(),
+                            expectedReturnDescriptor, classes,
+                            functionsByName, importTargets,
+                            descriptorEncoder);
+                    }
+                }
+                return null;
+            }
+            case deal.ast.WhileStatement ws -> {
+                ObjectLiteralExpr hit = findPointerConstruction(
+                    ws.condition(), null, classes, functionsByName,
+                    importTargets, descriptorEncoder);
+                return hit != null ? hit
+                    : findPointerConstructionInStatements(
+                        ws.body().statements(), expectedReturnDescriptor,
+                        classes, functionsByName, importTargets,
+                        descriptorEncoder);
+            }
+            case deal.ast.ForStatement fs -> {
+                if (fs.init().isPresent()) {
+                    ObjectLiteralExpr init = switch (fs.init().get()) {
+                        case deal.ast.ForInit.VarDecl vd ->
+                            findPointerConstructionInStatement(vd.decl(),
+                                expectedReturnDescriptor, classes,
+                                functionsByName, importTargets,
+                                descriptorEncoder);
+                        case deal.ast.ForInit.AssignExpr ae ->
+                            findPointerConstruction(ae.expr(), null, classes,
+                                functionsByName, importTargets,
+                                descriptorEncoder);
+                    };
+                    if (init != null) {
+                        return init;
+                    }
+                }
+                if (fs.condition().isPresent()) {
+                    ObjectLiteralExpr hit = findPointerConstruction(
+                        fs.condition().get(), null, classes,
+                        functionsByName, importTargets, descriptorEncoder);
+                    if (hit != null) {
+                        return hit;
+                    }
+                }
+                if (fs.update().isPresent()) {
+                    ObjectLiteralExpr hit = findPointerConstruction(
+                        fs.update().get(), null, classes, functionsByName,
+                        importTargets, descriptorEncoder);
+                    if (hit != null) {
+                        return hit;
+                    }
+                }
+                return findPointerConstructionInStatements(
+                    fs.body().statements(), expectedReturnDescriptor,
+                    classes, functionsByName, importTargets,
+                    descriptorEncoder);
+            }
+            case deal.ast.ForOfStatement fos -> {
+                ObjectLiteralExpr hit = findPointerConstruction(
+                    fos.iterable(), null, classes, functionsByName,
+                    importTargets, descriptorEncoder);
+                return hit != null ? hit
+                    : findPointerConstructionInStatements(
+                        fos.body().statements(), expectedReturnDescriptor,
+                        classes, functionsByName, importTargets,
+                        descriptorEncoder);
+            }
+            case deal.ast.TryStatement ts -> {
+                ObjectLiteralExpr hit = findPointerConstructionInStatements(
+                    ts.tryBlock().statements(), expectedReturnDescriptor,
+                    classes, functionsByName, importTargets,
+                    descriptorEncoder);
+                return hit != null ? hit
+                    : findPointerConstructionInStatements(
+                        ts.catchBlock().statements(),
+                        expectedReturnDescriptor, classes, functionsByName,
+                        importTargets, descriptorEncoder);
+            }
+            default -> {
+                // Remaining statements carry no object-literal
+                // construction position.
+                return null;
+            }
+        }
+    }
+
+    /** The same-file class whose identity descriptor text matches, or null. */
+    private static ClassInfo classInfoForDescriptor(String descriptor,
+            Map<String, ClassInfo> classes) {
+        if (descriptor == null) {
+            return null;
+        }
+        for (ClassInfo info : classes.values()) {
+            if (descriptor.equals(info.identityText)) {
+                return info;
+            }
+        }
+        return null;
+    }
+
+    /** The canonical descriptor of one type node through the class map. */
+    private static String typeNodeDescriptor(TypeNode tn,
+            Map<String, ClassInfo> classes) {
+        if (tn instanceof deal.ast.NamedType named) {
+            String primitive = switch (named.name()) {
+                case "int" -> "int";
+                case "number" -> "number";
+                case "boolean" -> "boolean";
+                case "string" -> "string";
+                case "bytes" -> "bytes";
+                case "null" -> "null";
+                default -> null;
+            };
+            if (primitive != null) {
+                return primitive;
+            }
+            ClassInfo info = classes.get(named.name());
+            return info == null ? null : info.identityText;
+        }
+        return null;
+    }
+
+    /** Field name &rarr; canonical descriptor of one struct class's fields. */
+    private static Map<String, String> structFieldDescriptors(ClassInfo info,
+            Map<String, ClassInfo> classes) {
+        Map<String, String> descriptors = new LinkedHashMap<>();
+        for (ClassField field : info.declaration.fields()) {
+            descriptors.put(field.name(),
+                typeNodeDescriptor(field.type(), classes));
+        }
+        return descriptors;
+    }
+
+    /**
+     * The resolved parameter descriptors of one callee: a same-file
+     * function declaration by name, or an imported provider function
+     * through the import surface. Null when the callee does not resolve.
+     */
+    private static List<String> callParameterDescriptors(
+            ExpressionNode callee,
+            Map<String, ClassInfo> classes,
+            Map<String, FunctionDeclaration> functionsByName,
+            Map<String, ImportTarget> importTargets,
+            CanonicalRuntimeTypeDescriptor descriptorEncoder) {
+        if (callee instanceof IdentifierExpr id) {
+            FunctionDeclaration fd = functionsByName.get(id.name());
+            if (fd == null) {
+                return null;
+            }
+            List<String> descriptors = new ArrayList<>();
+            for (deal.ast.Parameter parameter : fd.params()) {
+                descriptors.add(typeNodeDescriptor(parameter.type(),
+                    classes));
+            }
+            return descriptors;
+        }
+        if (callee instanceof MemberAccessExpr mae
+                && mae.object() instanceof IdentifierExpr id) {
+            ImportTarget target = importTargets.get(id.name());
+            if (target == null) {
+                return null;
+            }
+            Type exportType = target.exports().get(mae.field());
+            if (!(exportType instanceof Type.Func fn)) {
+                return null;
+            }
+            List<String> descriptors = new ArrayList<>();
+            for (Type parameter : fn.paramTypes()) {
+                descriptors.add(encodeProviderType(parameter,
+                    descriptorEncoder));
+            }
+            return descriptors;
+        }
+        return null;
+    }
+
+    /**
+     * The canonical descriptor of one provider-side resolved type;
+     * unregistered identities (which cannot be this file's pointer
+     * class) resolve to null so the position is never flagged.
+     */
+    private static String encodeProviderType(Type type,
+            CanonicalRuntimeTypeDescriptor encoder) {
+        try {
+            return encoder.encode(type);
+        } catch (IllegalStateException e) {
+            return null;
+        }
+    }
+
+    /**
+     * True when any row is a {@code C_STRUCT} whose class has no
+     * validated field rows (its own struct-field validation failed).
+     */
+    private static boolean referencesUnvalidatedStruct(List<FfiType> rows,
+            Map<String, List<FfiFieldDescriptor>> structFieldsByName) {
+        for (FfiType type : rows) {
+            if (type.kind() == FfiType.Kind.C_STRUCT) {
+                String identity = type.canonicalClassIdentity();
+                String className = identity == null ? null
+                    : identity.substring(identity.lastIndexOf('/') + 1);
+                if (className == null
+                        || !structFieldsByName.containsKey(className)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /**

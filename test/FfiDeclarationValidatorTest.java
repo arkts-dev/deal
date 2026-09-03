@@ -471,6 +471,188 @@ public class FfiDeclarationValidatorTest {
         check(h.result.descriptor() != null, "descriptor published");
     }
 
+    private static void testPointerConstructionIsTypeDirected() {
+        System.out.println("-- Pointer construction check is type-directed --");
+        // Valid: a @c-struct literal passed as a call argument to a
+        // same-file function constructs the struct class, not the
+        // pointer class.
+        ValidatorHarness h = validate("""
+            // @extern-c
+
+            // @c-pointer
+            export class Handle {}
+
+            // @c-struct
+            export class Vec2 {
+              x: int = 0;
+            }
+
+            export function wrap(v: Vec2): Handle;
+
+            // @c-struct
+            export class Box {
+              ptr: Handle = wrap({ x: 0 });
+            }
+            """, "native/math");
+        check(!h.result.hasErrors(), "struct literal call argument is valid: "
+            + h.diagnostics);
+        check(h.result.descriptor() != null, "descriptor published");
+
+        // A struct literal with a pointer-typed property that itself
+        // constructs the pointer is still diagnosed at the nested
+        // literal (the walk follows the constructed class's field
+        // types).
+        ValidatorHarness nested = validate("""
+            // @extern-c
+
+            // @c-pointer
+            export class Handle {}
+
+            // @c-struct
+            export class Holder {
+              h: Handle = {};
+            }
+
+            export function wrap(h: Holder): Handle;
+
+            // @c-struct
+            export class Box {
+              ptr: Handle = wrap({ h: {} });
+            }
+            """, "native/math");
+        CompilerDiagnostic nestedDiag = nested.diagnostics.stream()
+            .filter(d -> "E7002".equals(d.code())
+                && d.message().contains("object-literal")
+                && d.range().startLine() == 15)
+            .findFirst().orElse(null);
+        check(nestedDiag != null, "nested pointer literal inside a struct"
+            + " call argument diagnosed at the literal: "
+            + nested.diagnostics);
+
+        // A pointer literal passed to a same-file function whose
+        // parameter is the pointer class is still diagnosed.
+        ValidatorHarness callArg = validate("""
+            // @extern-c
+
+            // @c-pointer
+            export class Handle {}
+
+            export function wrap(h: Handle): Handle;
+
+            // @c-struct
+            export class Box {
+              ptr: Handle = wrap({});
+            }
+            """, "native/math");
+        CompilerDiagnostic callArgDiag = errorDiag(callArg.diagnostics,
+            "E7002");
+        check(callArgDiag != null
+                && callArgDiag.message().contains("object-literal"),
+            "pointer literal inside a resolved call argument diagnosed: "
+                + callArg.diagnostics);
+        check(callArgDiag != null && callArgDiag.range().startLine() == 10,
+            "call-argument E7002 at the literal, got "
+                + (callArgDiag == null ? "none"
+                    : callArgDiag.range().startLine()));
+
+        // A pointer literal inside a function-expression body is
+        // diagnosed (the walk descends into closure bodies).
+        ValidatorHarness closure = validate("""
+            // @extern-c
+
+            // @c-pointer
+            export class Handle {}
+
+            // @c-struct
+            export class Box {
+              ptr: Handle = function(): Handle { return {}; };
+            }
+            """, "native/math");
+        CompilerDiagnostic closureDiag = errorDiag(closure.diagnostics,
+            "E7002");
+        check(closureDiag != null
+                && closureDiag.message().contains("object-literal"),
+            "pointer literal inside a closure body diagnosed: "
+                + closure.diagnostics);
+        check(closureDiag != null
+                && closureDiag.range().startLine() == 8,
+            "closure E7002 at the literal, got "
+                + (closureDiag == null ? "none"
+                    : closureDiag.range().startLine()));
+
+        // An imported provider call whose parameter is not the pointer
+        // class is never flagged (provider signatures resolve through
+        // the import surface).
+        Map<String, FfiDeclarationValidator.ImportTarget> imports =
+            new LinkedHashMap<>();
+        imports.put("prov", new FfiDeclarationValidator.ImportTarget(
+            "prov.tools", Map.of("make", new Type.Func(
+                List.of(Type.Int.INSTANCE), Type.Int.INSTANCE, false))));
+        ValidatorHarness providerCall = new ValidatorHarness("""
+            import * as prov from "prov/tools"
+
+            // @extern-c
+
+            // @c-pointer
+            export class Handle {}
+
+            // @c-struct
+            export class Box {
+              ptr: Handle = prov.make({});
+            }
+            """, "native/math", null, null, List.of(), imports);
+        check(!providerCall.diagnostics.stream().anyMatch(d ->
+                "E7002".equals(d.code())
+                    && d.message().contains("object-literal")),
+            "provider-call argument typed int is never a pointer"
+                + " construction: " + providerCall.diagnostics);
+
+        // An unresolvable callee yields no false positive: the
+        // literal's constructed class cannot be established.
+        ValidatorHarness unknown = validate("""
+            // @extern-c
+
+            // @c-pointer
+            export class Handle {}
+
+            // @c-struct
+            export class Box {
+              ptr: Handle = f({ x: 0 });
+            }
+            """, "native/math");
+        check(!unknown.diagnostics.stream().anyMatch(d ->
+                "E7002".equals(d.code())
+                    && d.message().contains("object-literal")),
+            "unresolvable callee argument is never flagged: "
+                + unknown.diagnostics);
+    }
+
+    private static void testStructFailureSkipsFunctionRowsCleanly() {
+        System.out.println("-- Failed struct validation never crashes"
+            + " function rows --");
+        ValidatorHarness h = validate("""
+            // @extern-c
+
+            // @c-struct
+            export class Vec2 {
+              x: number;
+            }
+
+            export function length(v: Vec2): number;
+            export function midpoint(): Vec2;
+            """, "native/math");
+        CompilerDiagnostic d = errorDiag(h.diagnostics, "E7002");
+        check(d != null && d.message().contains("must carry a default"),
+            "the class's own E7002 is reported: " + h.diagnostics);
+        check(h.result.descriptor() == null,
+            "no descriptor after failed struct validation");
+        check(h.diagnostics.stream().filter(x ->
+                "E7002".equals(x.code())
+                    && "error".equals(x.severity())).count() == 1,
+            "exactly the class's E7002 (no crash, no spurious function"
+                + " errors): " + h.diagnostics);
+    }
+
     private static void testDuplicateExportsAndPlanKeyCollision() {
         System.out.println("-- Duplicate exports and plan-key collisions --");
         ValidatorHarness dup = validate("""
@@ -974,6 +1156,124 @@ public class FfiDeclarationValidatorTest {
         }
     }
 
+    private static void testOrchestratorFailedStructValidationNoCrash()
+            throws Exception {
+        System.out.println("-- Orchestrator: failed struct validation yields"
+            + " clean E7002 (no raw exception) --");
+        Path proj = Files.createTempDirectory("ffi-structfail-proj");
+        try {
+            writeFileIn(proj, "deal.json",
+                "{\"languageVersion\": \"1.2\", \"backend\": \"luajit\","
+                    + " \"moduleRoots\": [\"src\"]}");
+            writeFileIn(proj, "src/math.d.deal", """
+                // @extern-c
+
+                // @c-struct
+                export class Vec2 {
+                  x: number;
+                }
+
+                export function length(v: Vec2): number;
+                export function midpoint(): Vec2;
+                """);
+            writeFileIn(proj, "src/app.deal", """
+                import * as math from "native/math"
+                export function main(): null { return null; }
+                """);
+            Path entry = proj.resolve("src/app.deal").toAbsolutePath();
+            Path output = proj.resolve("build/lua").toAbsolutePath();
+            CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+                entry, output, false, false, false, Backend.LUAJIT,
+                Map.of("native/math",
+                    proj.resolve("src/math.d.deal").toString()),
+                List.of(proj.resolve("src").toAbsolutePath()),
+                Path.of(".").toAbsolutePath().normalize());
+            boolean success = orchestrator.compile();
+            check(!success, "failed struct validation fails the compile");
+            check(orchestrator.diagnostics().stream().anyMatch(d ->
+                    "E7002".equals(d.code()) && "error".equals(d.severity())
+                        && d.message().contains("must carry a default")),
+                "E7002 missing default reported: "
+                    + orchestrator.diagnostics());
+            check(orchestrator.ffiGenerations().isEmpty(),
+                "no metadata published on failed struct validation");
+            check(!Files.exists(output),
+                "no artifact directory written on failed struct"
+                    + " validation");
+        } finally {
+            deleteRecursively(proj);
+        }
+    }
+
+    private static void testOrchestratorImportedReferencesFollowGraphOrder()
+            throws Exception {
+        System.out.println("-- Orchestrator: imported references follow graph"
+            + " order in production wiring --");
+        Path proj = Files.createTempDirectory("ffi-order-proj");
+        try {
+            writeFileIn(proj, "deal.json",
+                "{\"languageVersion\": \"1.2\", \"backend\": \"luajit\","
+                    + " \"moduleRoots\": [\"src\"]}");
+            // The extern-C module imports late first, but late imports
+            // early: the dependency (check) order is early(0), late(1),
+            // and the imported references must follow it.
+            writeFileIn(proj, "src/math.d.deal", """
+                import * as late from "./prov/late"
+                import * as early from "./prov/early"
+
+                // @extern-c
+
+                // @c-struct
+                export class Box {
+                  a: int = late.seed();
+                  b: int = early.seed();
+                }
+                """);
+            writeFileIn(proj, "src/prov/early.deal", """
+                export function seed(): int { return 1; }
+                """);
+            writeFileIn(proj, "src/prov/late.deal", """
+                import * as early from "./early"
+                export function seed(): int { return early.seed() + 1; }
+                """);
+            writeFileIn(proj, "src/app.deal", """
+                import * as math from "native/math"
+                export function main(): null { return null; }
+                """);
+            Path entry = proj.resolve("src/app.deal").toAbsolutePath();
+            Path output = proj.resolve("build/lua").toAbsolutePath();
+            CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+                entry, output, false, false, false, Backend.LUAJIT,
+                Map.of("native/math",
+                    proj.resolve("src/math.d.deal").toString()),
+                List.of(proj.resolve("src").toAbsolutePath()),
+                Path.of(".").toAbsolutePath().normalize());
+            boolean success = orchestrator.compile();
+            check(success, "Lua extern-C compile succeeds: "
+                + orchestrator.diagnostics());
+            FfiGeneratedModule module =
+                orchestrator.ffiGenerations().get("native.math");
+            check(module != null, "FFI module retained");
+            if (module == null) return;
+            List<FfiImportedFunctionReference> refs =
+                module.bindings().importedFunctions();
+            check(refs.size() == 2, "two imported function references: "
+                + refs);
+            if (refs.size() == 2) {
+                check("prov.early".equals(refs.get(0).importedModulePath())
+                        && "prov.late".equals(refs.get(1)
+                            .importedModulePath()),
+                    "references in dependency order (early before late): "
+                        + refs);
+                check(refs.get(0).graphOrder() == 0
+                        && refs.get(1).graphOrder() == 1,
+                    "non-degenerate graph orders (0, 1): " + refs);
+            }
+        } finally {
+            deleteRecursively(proj);
+        }
+    }
+
     private static void writeFileIn(Path root, String rel, String content)
             throws IOException {
         Path path = root.resolve(rel);
@@ -1007,6 +1307,8 @@ public class FfiDeclarationValidatorTest {
         testStructNestingRejected();
         testPointerPolicy();
         testPointerDefaultFromProviderIsValid();
+        testPointerConstructionIsTypeDirected();
+        testStructFailureSkipsFunctionRowsCleanly();
         testDuplicateExportsAndPlanKeyCollision();
         testImportedReferencesFollowGraphOrder();
         testGeneratorBundleAndNames();
@@ -1016,6 +1318,8 @@ public class FfiDeclarationValidatorTest {
         testOrchestratorJvmRejectsExternC();
         testOrchestratorLuaAcceptsDescriptor();
         testOrchestratorLuaFailedValidationPublishesNothing();
+        testOrchestratorFailedStructValidationNoCrash();
+        testOrchestratorImportedReferencesFollowGraphOrder();
 
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);

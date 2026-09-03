@@ -2012,6 +2012,17 @@ public final class CompilationOrchestrator {
         if (backend == Backend.JS) {
             return;
         }
+        // The validator keys graph-order lookups by dotted module path
+        // (the import-surface key space), while {@code dependencyOrder}
+        // is the phase-2 check order of absolute source paths: translate
+        // the order into the validator's key space so every imported
+        // reference receives its real dependency-order position instead
+        // of a degenerate constant.
+        List<String> ffiDependencyOrder = dependencyOrder.stream()
+            .map(modules::get)
+            .filter(Objects::nonNull)
+            .map(info -> info.modulePath)
+            .toList();
         CanonicalRuntimeTypeDescriptor descriptorEncoder =
             new CanonicalRuntimeTypeDescriptor(identityAssembly.index());
         for (ModuleInfo info : modules.values()) {
@@ -2037,7 +2048,7 @@ public final class CompilationOrchestrator {
                         : nativeLibrary.kind().name(),
                     nativeLibrary == null ? null
                         : nativeLibrary.loaderText(),
-                    dependencyOrder, importTargetsOf(info));
+                    ffiDependencyOrder, importTargetsOf(info));
             diagnostics.addAll(result.diagnostics());
             if (result.hasErrors()) {
                 hasErrors = true;
