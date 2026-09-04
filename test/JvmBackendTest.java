@@ -317,6 +317,8 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public class JvmBackendTest {
 
+    private static final int DEFAULT_JOBS = 1;
+
     private static final AtomicInteger passed = new AtomicInteger();
     private static final AtomicInteger failed = new AtomicInteger();
 
@@ -486,7 +488,7 @@ public class JvmBackendTest {
             new TestCase("testIrDumpExactMigration", () -> testIrDumpExactMigration()));
 
         int workers = Math.max(1, Math.min(
-            2 * Runtime.getRuntime().availableProcessors(),
+            Integer.getInteger("deal.test.jobs", DEFAULT_JOBS),
             parallelTests.size()));
         ExecutorService pool = Executors.newFixedThreadPool(workers);
         try {

@@ -345,6 +345,8 @@ import javax.tools.ToolProvider;
  */
 public class BackendConformanceTest {
 
+    private static final int DEFAULT_JOBS = 1;
+
     private static final AtomicInteger passed = new AtomicInteger();
     private static final AtomicInteger failed = new AtomicInteger();
     private static final AtomicInteger skipped = new AtomicInteger();
@@ -513,9 +515,9 @@ public class BackendConformanceTest {
             System.exit(1);
         }
 
-        int workers = Math.max(1,
-            Math.min(2 * Runtime.getRuntime().availableProcessors(),
-                caseTasks.size()));
+        int workers = Math.max(1, Math.min(
+            Integer.getInteger("deal.test.jobs", DEFAULT_JOBS),
+            caseTasks.size()));
         ExecutorService pool = Executors.newFixedThreadPool(workers);
         try {
             List<Future<?>> futures = new ArrayList<>();

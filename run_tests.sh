@@ -1,6 +1,23 @@
 #!/bin/bash
 set -e
 
+DEFAULT_JOBS=1
+JOBS="$DEFAULT_JOBS"
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --jobs)
+      JOBS="${2:--}"
+      shift 2
+      ;;
+    *)
+      echo "ERROR: unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
+case "$JOBS" in
+  ''|-|*[!0-9]*|0) echo "ERROR: --jobs requires a positive integer" >&2; exit 2 ;;
+esac
+echo "=== DEAL test parallelism: jobs=$JOBS ==="
+
 mkdir -p build
 
 # Single compile/test-list authority: tools/gate-manifest.sh provides
@@ -212,7 +229,7 @@ echo "  Migration gate scans pass (no legacy record, no legacy references, no pr
 BACKGROUND_PIDS=""
 
 launch_background() {
-  "$@" &
+  java "-Ddeal.test.jobs=$JOBS" "${@:2}" &
   BACKGROUND_PIDS="$BACKGROUND_PIDS $!"
 }
 
@@ -240,7 +257,7 @@ for record in "${TEST_MAINS[@]}"; do
       ;;
     fg)
       read -r -a record_args <<< "$record_command"
-      "${record_args[@]}"
+      java "-Ddeal.test.jobs=$JOBS" "${record_args[@]:1}"
       ;;
     luajit|node)
       if command -v "$record_class" &> /dev/null; then

@@ -145,6 +145,8 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public class JvmConformanceTest {
 
+    private static final int DEFAULT_JOBS = 1;
+
     // =========================================================================
     // Applicability policy: the explicit skip registry
     // =========================================================================
@@ -690,9 +692,9 @@ public class JvmConformanceTest {
         List<Classified> ordered = new ArrayList<>(tests);
         ordered.sort(Comparator.comparing(c -> c.test().relativePath()));
 
-        int workers = Math.max(1,
-            Math.min(Runtime.getRuntime().availableProcessors(),
-                ordered.size()));
+        int workers = Math.max(1, Math.min(
+            Integer.getInteger("deal.test.jobs", DEFAULT_JOBS),
+            ordered.size()));
         ExecutorService pool = Executors.newFixedThreadPool(workers);
         try {
             List<Future<?>> futures = new ArrayList<>();
