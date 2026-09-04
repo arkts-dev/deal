@@ -102,6 +102,35 @@ TEST_MAINS+=(
 )
 
 # =========================================================================
+# DEALPG4 fail-closed toolchain preflight (ISSUE-0183,
+# fail-closed-toolchain-preflight D1/D2/D5): one ordered, fail-closed
+# phase sequence P0-P5 shared verbatim with coverage.sh via
+# tools/preflight-lib.sh. P0 (launcher integrity), P1 (probe identity +
+# LIMITS cross-check), P2 (native selftest), and P3 (fail-closed tool
+# presence) run here, before any GCC/Javac/Java probe; P4 (bounded
+# standalone javac under launcher run) replaces the raw compile below;
+# P5 (outer feature supervisor + PreflightCoordinator) runs after the
+# compile and before the legacy phases (P6, unchanged). No phase is
+# skipped, downgraded, or retried; every failure prints its named token
+# on stderr and exits nonzero immediately. No Java process in this
+# script spawns the launcher or an outer (D7).
+# =========================================================================
+source tools/preflight-lib.sh
+# PROD_SOURCES is expanded unquoted so the manifest's quoted globs are
+# expanded here exactly as they were when the list lived inline (the
+# identical expanded file list javac has always received).
+DEALPG4_PREFLIGHT_JAVAC_ARGS=(
+  javac --release 25 -proc:none -d build \
+  -cp /usr/share/java/junit4.jar:/usr/share/java/hamcrest-core.jar \
+  # shellcheck disable=SC2206
+  ${PROD_SOURCES[@]} "${TEST_SOURCES[@]}"
+)
+DEALPG4_PREFLIGHT_COORD_ARGS=(
+  java -ea -cp build deal.test.containment.PreflightCoordinator
+)
+dealpg4_preflight_run
+
+# =========================================================================
 # Single compilation step: compile all source and test files at once.
 # Incremental: when every .java source under deal/ and test/ is older
 # than the recorded build stamp (and this script itself has not changed
@@ -109,12 +138,18 @@ TEST_MAINS+=(
 # every successful full compile, so repeated gate runs on an unchanged
 # tree skip the recompilation while a fresh checkout or any touched
 # source still compiles everything.
+#
+# The compile is preflight P4: it runs under `launcher run` (bounded
+# standalone javac — 45 s native deadline, 1 MiB drained output) instead
+# of the raw javac; the stamp logic is unchanged.
 # =========================================================================
 STAMP="build/.deal-build-stamp"
 NEEDS_BUILD=0
 if [ ! -f "$STAMP" ]; then
   NEEDS_BUILD=1
 elif [ run_tests.sh -nt "$STAMP" ]; then
+  NEEDS_BUILD=1
+elif [ tools/preflight-lib.sh -nt "$STAMP" ]; then
   NEEDS_BUILD=1
 elif [ -n "$(find deal test -name '*.java' -newer "$STAMP" -print -quit)" ]; then
   NEEDS_BUILD=1
@@ -129,13 +164,25 @@ echo "=== Compiling all DEAL sources and tests ==="
 # PROD_SOURCES is expanded unquoted so the manifest's quoted globs are
 # expanded here exactly as they were when the list lived inline; javac
 # receives the identical expanded file list it receives today.
-javac --release 25 -proc:none -d build \
-  -cp /usr/share/java/junit4.jar:/usr/share/java/hamcrest-core.jar \
-  ${PROD_SOURCES[@]} "${TEST_SOURCES[@]}"
+dealpg4_preflight_javac "${DEALPG4_PREFLIGHT_JAVAC_ARGS[@]}"
   touch "$STAMP"
 else
   echo "=== DEAL sources and tests unchanged since the last build; reusing build/ ==="
 fi
+
+# =========================================================================
+# Preflight P5: the outer feature supervisor runs the
+# deal.test.containment.PreflightCoordinator JVM (the only post-readiness
+# JVM this epic owns): authenticated broker HELLO/FEATURE_READY, bounded
+# round-trip nested invocations (luajit -v, /bin/true) through the
+# inherited broker, a clean session end (the coordinator closes the
+# broker and exits 0; the outer's clean-exit discrimination takes the
+# BYE-less short run — the frame pins DONE -> BYE, and DONE lands only
+# at the 14:40 cutoff), and a clean outer final proof. Any FAILED
+# record or coordinator failure token exits nonzero. The broker socket
+# is unlinked by the outer's final proof.
+# =========================================================================
+dealpg4_preflight_outer
 
 # =========================================================================
 # Identity package gate (ISSUE-0309): deal.identity is the neutral
