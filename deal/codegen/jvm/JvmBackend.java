@@ -236,9 +236,21 @@ import java.util.function.Function;
  * ({@code let f: async (x: int) =&gt; int = value; await f(6);})
  * dispatch through {@code invoke} with the same completion check.
  * Cross-module async function values flow on the shared carriers like
- * sync ones (ISSUE-0301). Deferred to the async-expressions lane with
- * E6000: async function expressions and block-level async functions.
- * The frontend keeps enforcing every spec-v1.2 async rule
+ * sync ones (ISSUE-0301). ISSUE-0304 (jvm-v12-async-expressions D1/D2)
+ * lifts the async-expressions lane the same way: an async function
+ * expression emits exactly like a sync function expression — an
+ * anonymous subclass of the signature's shared wrapper class, carrying
+ * the canonical {@code async} descriptor marker, whose {@code invoke}
+ * executes the body as a plain blocking method with the async-body
+ * awaits as direct blocking calls — and a block-level {@code async
+ * function} declares like a block-level sync function (fresh cell plus
+ * anonymous wrapper instance at the declaration's source position).
+ * An {@code await E;} statement evaluates the awaited call (callee and
+ * arguments) exactly once in left-to-right order with the await-site
+ * completion check and discards the value. The module-level
+ * static-block placement of block-level functions, load-time uses of a
+ * not-yet-declared async function, and the reassigned-binding adapter
+ * shapes stay E6000. The frontend keeps enforcing every spec-v1.2 async rule
  * (E3012 await outside async, E3013 await on a non-async call, E3014
  * async call without await — the backend never sees a non-conforming
  * await).
@@ -513,9 +525,11 @@ import java.util.function.Function;
  * (primitives/string/null, arrays, classes, nullables, and nested
  * sync/async function types — the shared wrapper machinery,
  * ISSUE-0301 D2), with only bytes/table carriers inside the signature
- * staying resolveTypeNode-gated with E6000 (the int32-bytes lane),
- * and async function expressions stay E6000 (the async-expressions
- * lane).
+ * staying resolveTypeNode-gated with E6000 (the int32-bytes lane).
+ * Async function expressions emit through the same closure machinery
+ * with the async descriptor marker (ISSUE-0304), and block-level async
+ * function declarations emit through the block-level cell + anonymous
+ * wrapper path.
  *
  * <p>JVM value mapping follows the spec's JVM backend contract
  * ({@code docs/spec-v1.2.md} §JVM value mapping / §JVM backend contract —
@@ -8111,8 +8125,9 @@ public final class JvmBackend {
         // adds the await-site completion check for DEAL async calls and
         // lifts async markers into the ISSUE-0098 wrapper machinery, so
         // async function VALUES emit the same per-declaration wrapper
-        // field as sync ones (below); async function EXPRESSIONS stay
-        // E6000.
+        // field as sync ones (below); async function EXPRESSIONS emit
+        // through the same closure machinery with the async descriptor
+        // marker and blocking bodies (ISSUE-0304).
         if (!moduleLevel) {
             // ISSUE-0102: a block-level function declaration is a fresh
             // first-class function value at its declaration point (a
@@ -8330,12 +8345,17 @@ public final class JvmBackend {
     // =========================================================================
 
     /**
-     * Block-level function declaration (ISSUE-0102): a fresh first-class
-     * function value at its declaration point, bound through a
-     * one-element cell so the body's self-recursion reads the binding
-     * (a direct {@code final} local self-reference would be an illegal
-     * forward reference in Java). Reads and writes of the binding route
-     * through the cell like any other captured binding.
+     * Block-level function declaration (ISSUE-0102; ISSUE-0304 async):
+     * a fresh first-class function value at its declaration point, bound
+     * through a one-element cell so the body's self-recursion reads the
+     * binding (a direct {@code final} local self-reference would be an
+     * illegal forward reference in Java). Reads and writes of the
+     * binding route through the cell like any other captured binding.
+     * A block-level {@code async function} declares exactly like the
+     * sync form — the wrapper shape carries the async descriptor marker
+     * ({@link #registerWrapperShape} keys on {@link Type.Func#isAsync})
+     * and the body emits as a plain blocking method whose awaits are
+     * direct blocking calls with the await-site completion check.
      */
     private void emitBlockFunction(FunctionDeclaration fd) {
         if (capturedMappedStack.isEmpty()) {
@@ -8344,11 +8364,6 @@ public final class JvmBackend {
             // never a broken artifact. (Function-local blocks always
             // have the enclosing function's capture frame.)
             unsupported("block-level functions at module level", fd.span());
-            return;
-        }
-        if (fd.isAsync()) {
-            unsupported("async function expressions and block-level async "
-                + "functions", fd.span());
             return;
         }
         Type returnType = resolveTypeNode(fd.returnType());
@@ -8365,7 +8380,16 @@ public final class JvmBackend {
             paramTypes.add(pt);
         }
         if (!ok) return;
-        Type.Func funcType = new Type.Func(paramTypes, returnType, false);
+        // ISSUE-0304 (jvm-v12-async-expressions D2): a block-level async
+        // function declares exactly like the block-level sync form — a
+        // fresh cell plus an anonymous wrapper instance assigned at the
+        // declaration's source position — with the async descriptor
+        // marker on the shared carrier shape. The body emits as a plain
+        // blocking method whose awaits are direct blocking calls with
+        // the await-site completion check (the async-declaration
+        // machinery), so the wrapper's invoke executes it synchronously.
+        Type.Func funcType = new Type.Func(paramTypes, returnType,
+            fd.isAsync());
         String shape = registerWrapperShape(funcType);
         if (shape == null) {
             unsupported("function values whose signature contains "
@@ -8384,17 +8408,24 @@ public final class JvmBackend {
             fd.params(), fd.body(), returnType, fd.span()) + ";");
     }
 
-    /** A function expression (ISSUE-0102): an anonymous subclass of the
-     * signature's wrapper class emitted inline at the expression
-     * position. The body captures enclosing locals through their cells
-     * (the enclosing function's analysis cell-ified every captured
-     * binding), and the body's OWN captured locals (captured by deeper
-     * nested functions) cell-ify in their own frame. */
+    /** A function expression (ISSUE-0102; ISSUE-0304 async): an
+     * anonymous subclass of the signature's wrapper class emitted inline
+     * at the expression position. The body captures enclosing locals
+     * through their cells (the enclosing function's analysis cell-ified
+     * every captured binding), and the body's OWN captured locals
+     * (captured by deeper nested functions) cell-ify in their own frame.
+     * An async function expression emits exactly like the sync form with
+     * the async descriptor marker on the registered wrapper shape and a
+     * blocking body whose awaits run the await-site completion check. */
     private String emitFunctionExpr(FunctionExpr fe) {
-        if (fe.isAsync()) {
-            unsupported("async function expressions", fe.span());
-            return "null";
-        }
+        // ISSUE-0304 (jvm-v12-async-expressions D1): an async function
+        // expression emits exactly like a sync function expression — an
+        // anonymous subclass of the signature's shared wrapper class —
+        // with two async-specific differences: the wrapper's canonical
+        // descriptor carries the async marker (the checker's function
+        // type records fe.isAsync(), so registerWrapperShape produces
+        // the distinct async shape id), and the body's awaits compile as
+        // direct blocking calls with the await-site completion check.
         Type t = typeOf(fe);
         if (!(t instanceof Type.Func ft)) {
             unsupported("function expression without a function type",

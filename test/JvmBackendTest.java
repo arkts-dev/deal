@@ -1032,12 +1032,6 @@ public class JvmBackendTest {
                   return 1;
                 }
                 """),
-            new Case("async function expression", """
-                export function test(): null {
-                  let f: async () => int = async function(): int { return 5; };
-                  return null;
-                }
-                """),
             new Case("unused stdlib module import whose functions need table values", """
                 import * as j from "std/json"
                 export function test(): int { return 1; }
@@ -1088,6 +1082,12 @@ public class JvmBackendTest {
         // rejection list now compile (each generates an artifact the
         // runtime fixtures above also execute through javac + java).
         List<Case> promoted = List.of(
+            new Case("async function expression (ISSUE-0304)", """
+                export function test(): null {
+                  let f: async () => int = async function(): int { return 5; };
+                  return null;
+                }
+                """),
             new Case("optional class field", """
                 class Point { x?: int; }
                 export function test(): int { return 1; }
@@ -10091,11 +10091,16 @@ public class JvmBackendTest {
      * unchanged — the per-signature wrapper shape class, the
      * per-declaration wrapper instance field assigned at the
      * declaration point, indirect awaited calls dispatching through
-     * {@code invoke}, and the arity-extension adapter. Async function
-     * expressions and non-representable function-type signatures stay
-     * E6000, and the pre-rebase module-level function-value read shapes
-     * are the v1.2 grammar gate E1049 — never an artifact javac
-     * rejects after the CLI reported success.
+     * {@code invoke}, and the arity-extension adapter. ISSUE-0304
+     * lifts the async-expressions lane: async function expressions and
+     * block-level async function declarations emit through the sync
+     * closure machinery with async descriptors and blocking bodies,
+     * and an {@code await E;} statement evaluates exactly once with
+     * the completion check. Non-representable function-type signatures
+     * (bytes/table carriers) stay E6000, and the pre-rebase
+     * module-level function-value read shapes are the v1.2 grammar
+     * gate E1049 — never an artifact javac rejects after the CLI
+     * reported success.
      */
     private static void testAsyncSlice() throws Exception {
         System.out.println("-- Async/await slice (javac + java) --");
@@ -10238,8 +10243,12 @@ public class JvmBackendTest {
                     + hiddenRes.diagnostics());
         }
 
-        // Deferred shapes stay E6000: async function expressions
-        // (the async-expressions lane's gate).
+        // ISSUE-0304: async function expressions emit through the sync
+        // closure machinery with the async descriptor marker and the
+        // blocking body — the E6000 gate is lifted, the anonymous
+        // subclass carries the async shape id (FnA0_R_I), and the
+        // awaited indirect call runs the completion check (checkInt
+        // around invoke) at the await site.
         Frontend expr = compileFrontend("""
             export async function test(): int {
               let f: async () => int = async function(): int { return 42; };
@@ -10252,10 +10261,107 @@ public class JvmBackendTest {
         if (!expr.errors().isEmpty()) return;
         JvmBackend.JvmCodegenResult exprRes = JvmBackend.generate(
             expr.program(), expr.checkResult(), "jvmtest-async-expr.deal", "main");
-        check(exprRes.hasErrors() && exprRes.diagnostics().stream()
-                .anyMatch(d -> "E6000".equals(d.code())),
-            "async function expressions stay E6000 (deferred): "
+        check(!exprRes.hasErrors(),
+            "async function expression codegen clean: "
                 + exprRes.diagnostics());
+        check(exprRes.source().contains(
+                "$DealRt.FnA0_R_I f = new $DealRt.FnA0_R_I()"),
+            "async function expression emits an anonymous FnA0_R_I "
+                + "subclass into the typed local: " + exprRes.source());
+        check(exprRes.source().contains("checkInt(f.invoke())"),
+            "awaited async function expression runs the completion "
+                + "check at the await site: " + exprRes.source());
+        ExecResult exprRun = compileAndRunJvm("""
+            export async function test(): int {
+              let f: async () => int = async function(): int { return 42; };
+              return await f();
+            }
+            """, "asyncexpr");
+        check(exprRun.exitCode() == 0,
+            "async function expression executes: exit 0: "
+                + exprRun.output());
+        check(exprRun.output().contains("42"),
+            "awaited async function expression computes 42: "
+                + exprRun.output());
+
+        // An async function expression body's awaits compile as direct
+        // blocking calls with the completion check at the await site
+        // (checkInt around the inner direct call), and captured
+        // enclosing locals route through cells so a later reassignment
+        // is observed by the wrapper's invoke (LuaJIT's upvalue
+        // semantics) — the anonymous subclass with captured cells is
+        // valid Java.
+        Frontend exprAwait = compileFrontend("""
+            async function base(): int { return 5; }
+            export async function test(): int {
+              let x: int = 41;
+              let f: async () => int = async function(): int { return await base() + x; };
+              x = 100;
+              return await f();
+            }
+            """, "jvmtest-async-expr-await.deal");
+        check(exprAwait.errors().isEmpty(),
+            "frontend accepts the awaiting async function expression: "
+                + exprAwait.errors());
+        if (!exprAwait.errors().isEmpty()) return;
+        JvmBackend.JvmCodegenResult exprAwaitRes = JvmBackend.generate(
+            exprAwait.program(), exprAwait.checkResult(),
+            "jvmtest-async-expr-await.deal", "main");
+        check(!exprAwaitRes.hasErrors(),
+            "awaiting async function expression codegen clean: "
+                + exprAwaitRes.diagnostics());
+        check(exprAwaitRes.source().contains(
+                "return intAdd(checkInt(base()), x$c[0]);"),
+            "the expression body's await is a direct blocking call with "
+                + "the completion check, and the captured local routes "
+                + "through its cell: " + exprAwaitRes.source());
+        ExecResult exprAwaitRun = compileAndRunJvm("""
+            async function base(): int { return 5; }
+            export async function test(): int {
+              let x: int = 41;
+              let f: async () => int = async function(): int { return await base() + x; };
+              x = 100;
+              return await f();
+            }
+            """, "asyncexprawait");
+        check(exprAwaitRun.exitCode() == 0,
+            "awaiting async function expression executes: exit 0: "
+                + exprAwaitRun.output());
+        check(exprAwaitRun.output().contains("105"),
+            "the wrapper observes the reassigned cell (105 = 5 + 100): "
+                + exprAwaitRun.output());
+
+        // Block-level async function declarations (ISSUE-0304 D2/D3): a
+        // block-level async function declares like the block-level sync
+        // form — fresh cell plus anonymous wrapper instance at the
+        // declaration's source position — with the async descriptor;
+        // captured bindings cell-ify so the enclosing async function
+        // observes the writes; an `await g();` statement evaluates the
+        // call exactly once with the completion check and discards the
+        // value.
+        ExecResult block = compileAndRunJvm("""
+            export async function f(): int {
+              let completionState: int = 0;
+              let completionCount: int = 0;
+              async function g(): int {
+                let result: int = 42;
+                completionState = result;
+                completionCount = completionCount + 1;
+                return result;
+              }
+              await g();
+              if (completionState !== 42 || completionCount !== 1) {
+                throw { code: "TEST_FAIL", message: "block-level async" };
+              }
+              return 0;
+            }
+            """, "asyncblock");
+        check(block.exitCode() == 0,
+            "block-level async declaration executes: exit 0: "
+                + block.output());
+        check(block.output().contains("0"),
+            "enclosing async function observes g's captured writes: "
+                + block.output());
 
         // ISSUE-0301 shared carrier: array/nullable/class signature
         // shapes are representable in async ANNOTATIONS too — the
