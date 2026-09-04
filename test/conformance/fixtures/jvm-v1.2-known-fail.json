@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "description": "DEAL v1.2 promotion gate (ISSUE-0107): intentionally unsupported v1.2 cases for the JVM backend-runtime gate. Every case names its tracked follow-up issue in 'knownFail'; when the tracked issue lands and the case passes, the runner fails with a promotion instruction. ISSUE-0106 promoted jvm-unicode-scalar-string-length; the A5 profile-selection merge promoted jvm-int32-literal-out-of-range and jvm-int32-add-overflow (the retained v1.2 JVM route now raises E1036/E8004 \u2014 their passing pins stay in place as JVM-only coverage; the backend-runtime int-add-overflow case re-homed to the two-backend slice surface).",
+  "description": "DEAL v1.2 promotion gate (ISSUE-0107): intentionally unsupported v1.2 cases for the JVM backend-runtime gate. Every case names its tracked follow-up issue in 'knownFail'; when the tracked issue lands and the case passes, the runner fails with a promotion instruction. ISSUE-0106 promoted jvm-unicode-scalar-string-length. ISSUE-0378 re-pinned jvm-int32-literal-out-of-range and jvm-int32-add-overflow back to tracked known-fails: the LegacyProfileRegressionCatalog routes both cases LEGACY_REGRESSION + LEGACY_SAFE_INT under the untouched legacy harness, where the \u00b1(2^53\u22121) long carriers keep 2147483648 in range (the expected E8004 never fires) and the legacy parse contract admits the out-of-range literal (the expected E1036 never fires) \u2014 the two cases keep failing and stay tracked with no stale gate. Dropping these markers is the later sanctioned promotion owned by jvm-v12-int32-bytes D6 (ISSUE-0381); the restored backend-runtime int-add-overflow known-fail fixture and the two-backend slice re-home (jvm-int32-slice.json#int32-add-overflow) carry the activated-route E8004 coverage.",
   "tests": [
     {
       "name": "jvm-int32-literal-out-of-range",
@@ -9,7 +9,8 @@
       "expectedCompileError": "E1036",
       "backends": [
         "jvm"
-      ]
+      ],
+      "knownFail": "ISSUE-0111"
     },
     {
       "name": "jvm-int32-add-overflow",
@@ -18,7 +19,8 @@
       "expectedError": "E8004",
       "backends": [
         "jvm"
-      ]
+      ],
+      "knownFail": "ISSUE-0111"
     },
     {
       "name": "jvm-bytes-buffer-ops",
