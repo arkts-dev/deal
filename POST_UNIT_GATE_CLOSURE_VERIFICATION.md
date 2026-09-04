@@ -51,7 +51,9 @@ strict gate (`runGateClosureCheck`/`runStrictModeGate`/
 `isSanctionedPreUnitPair`) re-lands in `deal.test.ConformanceTest`'s
 summary/exit path with the approved three-mode registry-shape key and
 the pinned reports (luajit-gate-closure D2/D5), the re-introduction
-exercise was re-executed on the final tree with the actually observed
+exercise was re-executed on the rebased tree at the change-set commit
+`122023c6beeb9ab5bff54f30051d97ef24c9c18c` (the record's finalization
+commit that follows changes only this file) with the actually observed
 output and exit code re-recorded (section 3), and a committed regression
 suite (`deal.test.GateClosureStrictGateTest`, launched by
 `run_tests.sh`) pins all three modes plus the strict-mode residual
