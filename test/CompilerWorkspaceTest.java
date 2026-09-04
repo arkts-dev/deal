@@ -21,9 +21,44 @@ public final class CompilerWorkspaceTest {
         protocolJsonIsDeterministicAndUnicodeSafe();
         protocolJsonSupportsDesugaredRecordShape();
         declarationsCanBeAddedAndRemovedAtomically();
+        declarationReplacementIsAtomicAndDoesNotConsumeItsNeighbor();
         semanticQueriesExposeScopedOperations();
         checkedChangesRequireQueriedTargetFingerprint();
         System.out.println("CompilerWorkspaceTest: all tests passed");
+    }
+
+    private static void declarationReplacementIsAtomicAndDoesNotConsumeItsNeighbor() {
+        String source = "export class AppState { title: string = \"\"; }\n"
+                + "export function initialState(): AppState { return {title: \"\"}; }\n";
+        var inspection = DealCompilerWorkspace.inspect(source, "app.deal");
+        var state = inspection.symbols().stream()
+                .filter(value -> value.name().equals("AppState")).findFirst().orElseThrow();
+        var slice = DealCompilerWorkspace.querySymbol(source, "app.deal", state.id());
+        var descriptor = slice.allowedOperations().stream()
+                .filter(value -> value.operation().equals(DealCompilerWorkspace.REPLACE_DECLARATION))
+                .findFirst().orElseThrow();
+        var result = DealCompilerWorkspace.applyChecked(
+                source,
+                "app.deal",
+                new CompilerProtocol.ChangeSetPrecondition(
+                        inspection.sourceDigest(), Map.of(state.id().value(), descriptor.targetFingerprint())),
+                List.of(new DealCompilerWorkspace.ReplaceDeclaration(
+                        state.id(), "export class AppState { count: int = 0; }")));
+        check(!result.accepted(), "incompatible neighboring function must reject the full transaction");
+        check(result.source().equals(source), "rejected declaration replacement must roll back exactly");
+
+        var paired = DealCompilerWorkspace.apply(
+                source,
+                "app.deal",
+                inspection.sourceDigest(),
+                List.of(
+                        new DealCompilerWorkspace.ReplaceDeclaration(
+                                state.id(), "export class AppState { count: int = 0; }"),
+                        new DealCompilerWorkspace.ReplaceFunctionBody(
+                                inspection.nodes().get(0).id(), "return {count: 0};")));
+        check(paired.accepted(), "compatible declaration and body replacement must commit: " + paired.diagnostics());
+        check(paired.source().contains("export function initialState"),
+                "replacing one declaration must not consume the next export token");
     }
 
     private static void deterministicInspectionAndRelationships() {

@@ -94,9 +94,11 @@ public final class DealCompilerWorkspace {
     public static final String REPLACE_BLOCK_BODY = "replaceBlockBody";
     public static final String ADD_DECLARATION = "addDeclaration";
     public static final String REMOVE_DECLARATION = "removeDeclaration";
+    public static final String REPLACE_DECLARATION = "replaceDeclaration";
     private static final List<String> ALLOWED_OPERATIONS = List.of(
             ADD_DECLARATION,
             REMOVE_DECLARATION,
+            REPLACE_DECLARATION,
             REPLACE_FUNCTION_BODY,
             REPLACE_BLOCK_BODY);
     private static final Pattern CAPABILITY = Pattern.compile(
@@ -126,13 +128,15 @@ public final class DealCompilerWorkspace {
         String parserSource(String source);
     }
 
-    public sealed interface Operation permits AddDeclaration, RemoveDeclaration, ReplaceFunctionBody, ReplaceBlockBody {
+    public sealed interface Operation permits AddDeclaration, RemoveDeclaration, ReplaceDeclaration, ReplaceFunctionBody, ReplaceBlockBody {
         SemanticId targetId();
     }
 
     public record AddDeclaration(SemanticId targetId, String declaration) implements Operation {}
 
     public record RemoveDeclaration(SemanticId targetId) implements Operation {}
+
+    public record ReplaceDeclaration(SemanticId targetId, String declaration) implements Operation {}
 
     public record ReplaceFunctionBody(SemanticId targetId, String body) implements Operation {}
 
@@ -385,6 +389,17 @@ public final class DealCompilerWorkspace {
                     replacements.add(new Replacement(target.start(), target.end(), "", false));
                     changedSymbols.add(target.ownerId());
                 }
+                case ReplaceDeclaration value -> {
+                    if (!target.kind().equals("declaration")) {
+                        return wrongKind(base, operation, target, "declaration");
+                    }
+                    if (value.declaration() == null || value.declaration().isBlank()) {
+                        return nullSource(base, operation, target, "DEAL declaration");
+                    }
+                    replacements.add(new Replacement(
+                            target.start(), target.end(), value.declaration().strip(), false));
+                    changedSymbols.add(target.ownerId());
+                }
                 case ReplaceFunctionBody value -> {
                     if (!target.kind().equals("function-body")) {
                         return wrongKind(base, operation, target, "function-body");
@@ -522,7 +537,7 @@ public final class DealCompilerWorkspace {
         for (StatementNode statement : parsed.program().statements()) {
             boolean exported = statement instanceof ExportDeclaration;
             StatementNode declaration = exported ? ((ExportDeclaration) statement).declaration() : statement;
-            Span declarationSpan = statement.span();
+            Span declarationSpan = declarationSpan(statement, declaration);
             if (declaration instanceof FunctionDeclaration function) {
                 SemanticId id = symbolId(modulePath, "function", function.name());
                 functionsByName.put(function.name(), new FunctionInfo(id, function, declarationSpan, exported));
@@ -972,6 +987,16 @@ public final class DealCompilerWorkspace {
                 value.file(), value.startLine(), value.startColumn(), value.endLine(), value.endColumn());
     }
 
+    private static Span declarationSpan(StatementNode statement, StatementNode declaration) {
+        if (!(statement instanceof ExportDeclaration)) return statement.span();
+        Span outer = statement.span();
+        Span inner = declaration.span();
+        return new Span(
+                outer.file(), outer.startLine(), outer.startColumn(),
+                inner.endLine(), inner.endColumn(),
+                outer.startScalarOffset(), inner.endScalarOffset());
+    }
+
     private static SemanticId symbolId(String modulePath, String kind, String name) {
         return new SemanticId("deal:" + modulePath + ":" + kind + ":" + name);
     }
@@ -984,6 +1009,7 @@ public final class DealCompilerWorkspace {
         return switch (operation) {
             case AddDeclaration ignored -> ADD_DECLARATION;
             case RemoveDeclaration ignored -> REMOVE_DECLARATION;
+            case ReplaceDeclaration ignored -> REPLACE_DECLARATION;
             case ReplaceFunctionBody ignored -> REPLACE_FUNCTION_BODY;
             case ReplaceBlockBody ignored -> REPLACE_BLOCK_BODY;
         };
@@ -1004,7 +1030,12 @@ public final class DealCompilerWorkspace {
             Analysis analysis, SemanticId symbolId, List<NodeSnapshot> nodes) {
         List<OperationDescriptor> result = new ArrayList<>();
         Target declaration = analysis.targets().get(symbolId);
-        if (declaration != null) result.add(descriptor(analysis, declaration));
+        if (declaration != null) {
+            result.add(descriptor(analysis, declaration));
+            result.add(new OperationDescriptor(
+                    REPLACE_DECLARATION, declaration.id(), declaration.kind(),
+                    targetFingerprint(analysis, declaration.id()), List.of("declaration")));
+        }
         for (NodeSnapshot node : nodes) {
             Target target = analysis.targets().get(node.id());
             if (target != null) result.add(descriptor(analysis, target));
