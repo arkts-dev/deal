@@ -152,7 +152,7 @@ under /tmp, discarded; every temporary fixture-header flip reverted):
 
 | Input | Result |
 |---|---|
-| Executed pre-unit `./run_tests.sh` log at this HEAD (428/428; 305/306, staged 1) | exit 1 — criteria named: summary/phase non-zero counters, both follow-up blocks, and the time-fixture criterion (the displaced `STAGED-FAIL (...)` line on the line after the fixture's prefix line); verdict `closure pending`; no criterion-4 PASS is reported |
+| Executed pre-unit `./run_tests.sh` logs at this HEAD (428/428; 305/306, staged 1) — two captures, one with the displaced `STAGED-FAIL (...)` on the line after the fixture's prefix line, one with it eight lines after | exit 1 — criteria named: summary/phase non-zero counters, both follow-up blocks, and the time-fixture criterion (the window-wide `STAGED-FAIL` scan; the one-line capture additionally via the next-line check); verdict `closure pending`; no criterion-4 PASS is reported on either capture |
 | Post-unit branch-1 unsplit log in the real executed line format (fixture line `  [backend-runtime/stdlib-edge/time-now-millis-positive.deal] LEGACY-AUTHORITY (legacy-regression; zero v1.2 credit) OK (found DEAL_ERROR_CODE: E8004)`; 429/429; 306/306; four zeros; pin `Passed: 37, Failed: 0`; exit marker) with the fixture header temporarily flipped to `runtime-error E8004` (reverted) | exit 0 — all seven criteria PASS (direct: the prefix line records the branch-1 result) |
 | Post-unit branch-1 spliced log — the review's false-rejection shape: the fixture's prefix write alone on its line, one interleaved foreign displaced result line `OK (found DEAL_ERROR_CODE: E8001)`, then the fixture's own displaced `OK (found DEAL_ERROR_CODE: E8004)`; four zeros; flipped fixture | exit 0 — the indirect proof (prefix presence + no failure result + four zeros) accepts the correct closure |
 | Post-unit branch-2 unsplit log (fixture line `... credit) OK`; 429/429; 306/306; four zeros) against the on-disk `runtime-ok` fixture — unsplit and spliced (foreign displaced line + own bare `OK`) forms | exit 0 — all seven criteria PASS |
@@ -160,6 +160,8 @@ under /tmp, discarded; every temporary fixture-header flip reverted):
 | Duplicate log: two identical CT-lane fixture PASS lines inside the CT window | exit 1 — `found 2 such line(s)` for the prefix write |
 | Failure-result shapes on the fixture's prefix line: `FAIL (...)`, `STAGED-FAIL (...)`, `ERROR: ...`, `SKIP (...)`, `KNOWN-FAIL (...)` | each exits 1 naming the failure-result line |
 | Split pre-unit shape inside a four-zeros log: fixture prefix alone + displaced `STAGED-FAIL (...)` on the immediately following line | exit 1 — displaced failure result named (the pre-unit closure shape is rejected) |
+| Split pre-unit shape inside a four-zeros log: fixture prefix alone + foreign lines + displaced `STAGED-FAIL (...)` three lines after the prefix | exit 1 — the window-wide `STAGED-FAIL` scan names the failure (the next-line check cannot see it; the scan is sound because no other fixture prints STAGED-FAIL) |
+| Four-zeros log without the four-zero premise: prefix present, no failure line, but summary/phase counters non-zero | exit 1 — criterion 4 cannot be asserted without the four-zero premise, naming it (the proof-premise gate) |
 | Mismatched visible pairs: bare `OK` against the flipped `runtime-error E8004` fixture; `OK (found DEAL_ERROR_CODE: E8004)` against the on-disk `runtime-ok` fixture; `OK (found DEAL_ERROR_CODE: E8001)` against the flipped fixture | each exits 1 — mismatched pair named (expectation != landed behavior) |
 | Invalid on-disk expectation: fixture temporarily set to `@expected: compile-ok` (reverted) with an otherwise four-zeros log | exit 1 — expectation is neither disposition pair |
 | Missing prefix line: four-zeros log without any fixture line | exit 1 — `found 0 such line(s)` |
@@ -268,12 +270,19 @@ recorded in §3 item 4:
    carries no result — the prefix and result are two separate writes
    that concurrent output can splice apart — the line immediately
    following the prefix line must not be a failure-result line. The
-   immediately-following-line bound is exact: the CT's result print is
-   its next write after the prefix, and a foreign write between the
-   two ends the prefix line with its own newline, pushing the CT
-   result onto the following line (the captured 883/884 shape).
-   Results displaced for other fixtures and foreign lines beyond that
-   one line are never attributed to the time fixture.
+   one-line check covers the single-splice shape; the executed
+   captures at this HEAD also show the displaced result landing eight
+   lines after the prefix (several background-suite lines print
+   between the CT's two writes), which two sound mechanisms cover:
+   a window-wide scan for pathless `STAGED-FAIL (` lines — the time
+   fixture is the CT's only staged fixture in every sanctioned
+   registry state and the registry is empty post-unit, so no other
+   fixture can print that line at any displacement distance — and the
+   four-zero premise gate (item 5): a displaced `FAIL (`/`SKIP (`/
+   `ERROR:`/`KNOWN-FAIL (` line for ANY fixture implies its counter is
+   non-zero, so the PASS cannot be asserted while criteria 1–2 are
+   unmet. Results displaced for other fixtures beyond the next line
+   are never attributed to the time fixture.
 4. **On-disk @expected cross-check retained and tightened.** The
    fixture's on-disk expectation must be exactly one of the two
    dispositions (`runtime-error E8004` or `runtime-ok`); anything else
@@ -281,19 +290,22 @@ recorded in §3 item 4:
    line it must match the on-disk expectation (branch 1
    `OK (found DEAL_ERROR_CODE: E8004)`, branch 2 bare `OK`) — the
    mismatched-pair detection is preserved.
-5. **The completed proof.** Combined with the four zeros on both
-   surfaces (a FAIL increments `failed`, a SKIP increments `skipped`,
-   a staged result prints and increments `stagedFailures`, a
-   known-fail increments the known-fail counter) and the
-   no-`GATE FAILURE` criterion, prefix presence plus the absence of
-   failure results proves the fixture recorded PASS through the
-   standard dispatch — `expectation(fixture) == landed nowMillis
-   behavior` — without depending on where concurrent output spliced
-   the result text.
+5. **The completed proof, with the four zeros as an explicit
+   premise.** The PASS is asserted only when the summary and phase
+   four zeros hold (every non-PASS outcome increments a counter those
+   criteria pin to zero: FAIL → `failed`, SKIP → `skipped`, staged →
+   `stagedFailures`, known-fail → the known-fail counter), together
+   with the no-`GATE FAILURE` criterion. Under that premise, prefix
+   presence plus the absence of failure results proves the fixture
+   recorded PASS through the standard dispatch —
+   `expectation(fixture) == landed nowMillis behavior` — without
+   depending on where concurrent output spliced the result text, and
+   the criterion cannot report PASS when the premise is unmet.
 
 The round-2 matrix rows in §5 exercise both review scenarios plus the
 duplicate, failure-shape, mismatched-pair, invalid-expectation,
-missing-prefix, and JVM-infix-interleaved variants; the real executed
-pre-unit log now fails the criterion by naming the displaced
-`STAGED-FAIL (...)` line, and both correct spliced closure shapes exit
-0.
+missing-prefix, JVM-infix-interleaved, far-displaced-staged, and
+missing-premise variants; both real executed pre-unit captures now fail
+the criterion by naming the displaced `STAGED-FAIL (...)` line (at one
+line and at eight lines of displacement), and both correct spliced
+closure shapes exit 0.

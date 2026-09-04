@@ -38,26 +38,32 @@
 #          trailing space, so the JVM lane's identical copy can never
 #          match wherever its concurrent line lands; (b) no infix-keyed
 #          FAIL/ERROR/STAGED-FAIL/SKIP/KNOWN-FAIL line for the fixture
-#          prints, and when the prefix line carries no result (the
-#          prefix and result are two separate writes that concurrent
+#          prints; when the prefix line carries no result (the prefix
+#          and result are two separate writes that concurrent
 #          background-suite output can splice apart), the line
-#          immediately following it is not a failure-result line; (c)
-#          the fixture's on-disk @expected is exactly one of the two
+#          immediately following it is not a failure-result line, and
+#          no pathless STAGED-FAIL line prints anywhere in the window
+#          (the time fixture is the CT's only staged fixture in every
+#          sanctioned registry state and the registry is empty
+#          post-unit, so that line is its recorded failure at any
+#          displacement distance); (c) the fixture's on-disk @expected
+#          is exactly one of the two
 #          dispositions (`runtime-error E8004` — branch 1 — or
 #          `runtime-ok` — branch 2), and when the result text is
 #          visible on the prefix line it must match the on-disk
-#          expectation. Combined with the four zeros (criteria 1-2: a
-#          FAIL increments failed, a SKIP increments skipped, a staged
-#          result prints and increments stagedFailures, a known-fail
-#          increments the known-fail counter) and criterion 5, prefix
-#          presence plus absence of failure results proves the fixture
-#          recorded PASS — expectation(fixture) == landed nowMillis
-#          behavior — without depending on where concurrent output
-#          spliced the result text. The first-pathless-result
-#          attribution of review round 1 is removed entirely: it
-#          falsely satisfied the criterion from another fixture's
-#          spliced OK and falsely rejected a correct spliced post-unit
-#          closure log;
+#          expectation. The PASS fires only when the four zeros of
+#          criteria 1-2 hold — the proof premise: every non-PASS
+#          outcome increments a counter those criteria pin to zero
+#          (FAIL -> failed, SKIP -> skipped, a staged result ->
+#          stagedFailures, a known-fail -> the known-fail counter) —
+#          and with criterion 5, prefix presence plus absence of
+#          failure results proves the fixture recorded PASS —
+#          expectation(fixture) == landed nowMillis behavior —
+#          without depending on where concurrent output spliced the
+#          result text. The first-pathless-result attribution of
+#          review round 1 is removed entirely: it falsely satisfied
+#          the criterion from another fixture's spliced OK and falsely
+#          rejected a correct spliced post-unit closure log;
 #   5. No `GATE FAILURE` line anywhere in the run;
 #   6. Pin-test section `=== std/time.nowMillis Pre-Activation Pin
 #      (ISSUE-0369) ===` with a `Passed: <K>, Failed: 0` verdict
@@ -89,6 +95,8 @@ FIXTURE="$REPO/test/conformance/backend-runtime/stdlib-edge/time-now-millis-posi
 FIXTURE_REL="backend-runtime/stdlib-edge/time-now-millis-positive.deal"
 N="-"
 M="-"
+SUMMARY_OK=0
+PHASE_OK=0
 
 FAILED=0
 fail() {
@@ -122,6 +130,7 @@ else
         || [ "${BASH_REMATCH[5]}" != "0" ] || [ "${BASH_REMATCH[6]}" != "0" ]; then
       fail "summary four zeros — non-zero counter in: $SUMMARY"
     else
+      SUMMARY_OK=1
       pass "summary four zeros — recorded at execution time: $SUMMARY"
     fi
   else
@@ -142,6 +151,7 @@ else
         || [ "${BASH_REMATCH[5]}" != "0" ] || [ "${BASH_REMATCH[6]}" != "0" ]; then
       fail "phase four zeros — non-zero counter in: $PHASE"
     else
+      PHASE_OK=1
       pass "phase four zeros — recorded at execution time: $PHASE"
     fi
   else
@@ -188,16 +198,30 @@ FAIL_GREP="$PFX_GREP(FAIL \(|ERROR:|STAGED-FAIL \(|SKIP \(|KNOWN-FAIL \()"
 PREFIX_COUNT="$(printf '%s\n' "$CT_SECTION" | grep -cE "$PFX_GREP")"
 FAIL_LINES="$(printf '%s\n' "$CT_SECTION" | grep -E "$FAIL_GREP" | head -3)"
 
+# A pathless `STAGED-FAIL (` line anywhere in the window is the time
+# fixture's recorded failure: the staged-failure registry carries
+# exactly one entry (this fixture) in every sanctioned pre-unit state
+# and is empty post-unit, and any other registry shape hard-fails the
+# strict gate (criterion 5). Unlike FAIL/SKIP results — which other
+# fixtures can displace — no other fixture can print STAGED-FAIL, so
+# this scan is sound at any displacement distance (the executed
+# capture at this HEAD shows the result landing up to 8 lines after
+# the prefix line, beyond the one-line next-line check).
+STAGED_WINDOW="$(printf '%s\n' "$CT_SECTION" | grep -E '^STAGED-FAIL \(' | head -1)"
+
 # Classify the fixture's prefix line: either its result is visible on
 # the same line (the CT's next write after the prefix is its result
 # print — the CT is single-threaded, and a foreign write between the
-# two always ends with its own newline, pushing the CT result to the
-# following line), or the prefix carries no result and the result was
-# displaced onto the immediately following line. Only that one
-# following line is inspected: results displaced for OTHER fixtures
-# and other foreign lines beyond it are never attributed to the time
-# fixture (review round 2: the first-pathless-result-anywhere
-# attribution was unsound in both directions and is removed).
+# two always ends with its own newline, pushing the CT result off the
+# prefix line), or the prefix carries no result and the result was
+# displaced. The one-line next-line check below covers the
+# single-foreign-line splice; the executed capture at this HEAD also
+# shows the displaced result landing several lines later, which the
+# window-wide STAGED-FAIL scan and the four-zero premise gate cover
+# (results displaced for OTHER fixtures beyond the next line are never
+# attributed to the time fixture — review round 2: the
+# first-pathless-result-anywhere attribution was unsound in both
+# directions and is removed).
 DISPLACED="$(printf '%s\n' "$CT_SECTION" | awk -v pf="$PFX_RAW" '
     !done {
         if (index($0, pf) != 1) next
@@ -233,6 +257,10 @@ if [ -n "$FAIL_LINES" ]; then
 fi
 if [[ "$NEXT_LINE" =~ ^(FAIL\ \(|ERROR:|STAGED-FAIL\ \(|SKIP\ \(|KNOWN-FAIL\ \() ]]; then
   fail "time-fixture PASS — displaced failure result on the line immediately following the fixture's prefix line: $NEXT_LINE"
+  CRIT4_FAILED=1
+fi
+if [ -n "$STAGED_WINDOW" ]; then
+  fail "time-fixture PASS — the CT window records a STAGED-FAIL line for the time fixture (the CT's only staged fixture): $STAGED_WINDOW"
   CRIT4_FAILED=1
 fi
 
@@ -278,10 +306,19 @@ if [ "$CRIT4_FAILED" = "0" ] && [ -n "$ONLINE" ]; then
   esac
 fi
 if [ "$CRIT4_FAILED" = "0" ]; then
-  if [ -n "$ONLINE" ]; then
-    pass "time-fixture PASS — branch $BRANCH (direct): the prefix line records '$ONLINE', fixture @expected $EXPECTED"
+  if [ "$SUMMARY_OK" = "1" ] && [ "$PHASE_OK" = "1" ]; then
+    if [ -n "$ONLINE" ]; then
+      pass "time-fixture PASS — branch $BRANCH (direct): the prefix line records '$ONLINE', fixture @expected $EXPECTED"
+    else
+      pass "time-fixture PASS — branch $BRANCH (indirect): CT-lane prefix line present exactly once, no failure result for the fixture, four zeros on both surfaces; fixture @expected $EXPECTED"
+    fi
   else
-    pass "time-fixture PASS — branch $BRANCH (indirect): CT-lane prefix line present exactly once, no failure result for the fixture, four zeros on both surfaces; fixture @expected $EXPECTED"
+    # The proof premise: every non-PASS outcome increments a counter
+    # that criteria 1-2 pin to zero (FAIL -> failed, SKIP -> skipped,
+    # a staged result -> stagedFailures, a known-fail -> the known-fail
+    # counter), so with non-zero counters the prefix-plus-absence proof
+    # cannot assert the fixture's PASS.
+    fail "time-fixture PASS — cannot be asserted: the four-zero counters (criteria 1-2) are unmet, so the prefix-presence-plus-absence-of-failure-results proof has no premise; closure pending"
   fi
 fi
 
