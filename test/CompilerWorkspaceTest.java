@@ -15,6 +15,7 @@ public final class CompilerWorkspaceTest {
         deterministicInspectionAndRelationships();
         staleDigestRejectsWithoutMutation();
         functionReplacementIsAtomic();
+        completeFunctionCannotMasqueradeAsBody();
         blockReplacementUsesRevisionScopedIdentity();
         schemaChangeRequiresStateReset();
         protocolJsonIsDeterministicAndUnicodeSafe();
@@ -78,6 +79,28 @@ public final class CompilerWorkspaceTest {
         check(accepted.accepted(), "valid replacement must commit");
         check(!accepted.sourceDigest().equals(inspection.sourceDigest()), "accepted source gets a new revision");
         check(accepted.impact().changedSymbols().equals(List.of(update.id())), "impact identifies exact symbol");
+    }
+
+    private static void completeFunctionCannotMasqueradeAsBody() {
+        String source = source();
+        var inspection = DealCompilerWorkspace.inspect(source, "app.deal");
+        var update = inspection.symbols().stream().filter(value -> value.name().equals("update")).findFirst().orElseThrow();
+        var body = inspection.nodes().stream()
+                .filter(value -> value.ownerId().equals(update.id()) && value.kind().equals("function-body"))
+                .findFirst().orElseThrow();
+        var rejected = DealCompilerWorkspace.apply(
+                source,
+                "app.deal",
+                inspection.sourceDigest(),
+                List.of(new DealCompilerWorkspace.ReplaceFunctionBody(
+                        body.id(),
+                        "export function update(state: AppState, action: IncrementAction): AppState { return state; }")));
+        check(!rejected.accepted(), "complete declaration must not be accepted as a function body");
+        check(rejected.source().equals(source), "mis-shaped body edit must be atomic");
+        check(rejected.diagnostics().get(0).code().equals("CP1007"),
+                "mis-shaped body edit must have a stable diagnostic");
+        check(rejected.diagnostics().get(0).repairScopes().get(0).ownerId().equals(body.id()),
+                "repair must remain scoped to the requested body");
     }
 
     private static void blockReplacementUsesRevisionScopedIdentity() {

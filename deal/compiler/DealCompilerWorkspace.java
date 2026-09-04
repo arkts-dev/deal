@@ -96,6 +96,8 @@ public final class DealCompilerWorkspace {
             REPLACE_BLOCK_BODY);
     private static final Pattern CAPABILITY = Pattern.compile(
             "(?m)^\\s*//\\s*generated-capability:\\s*([a-z][a-z0-9.]*)\\s*$");
+    private static final Pattern COMPLETE_FUNCTION_DECLARATION = Pattern.compile(
+            "(?s)^\\s*(?:export\\s+)?(?:async\\s+)?function\\s+[A-Za-z_$][A-Za-z0-9_$]*\\s*\\(.*\\}\\s*$");
 
     private DealCompilerWorkspace() {}
 
@@ -239,6 +241,9 @@ public final class DealCompilerWorkspace {
                         return wrongKind(base, operation, target, "function-body");
                     }
                     if (value.body() == null) return nullSource(base, operation, target, "DEAL statements");
+                    if (looksLikeCompleteFunctionDeclaration(value.body())) {
+                        return rejected(base, bodyStatementsOnly(operation, target));
+                    }
                     replacements.add(new Replacement(
                             target.contentStart(), target.contentEnd(), value.body().trim(), true));
                     changedSymbols.add(target.ownerId());
@@ -249,6 +254,9 @@ public final class DealCompilerWorkspace {
                         return wrongKind(base, operation, target, "block");
                     }
                     if (value.body() == null) return nullSource(base, operation, target, "DEAL statements");
+                    if (looksLikeCompleteFunctionDeclaration(value.body())) {
+                        return rejected(base, bodyStatementsOnly(operation, target));
+                    }
                     replacements.add(new Replacement(
                             target.contentStart(), target.contentEnd(), value.body().trim(), true));
                     changedSymbols.add(target.ownerId());
@@ -734,6 +742,22 @@ public final class DealCompilerWorkspace {
                 "null or blank",
                 List.of(new RepairScope(operationName(operation), operation.targetId())),
                 "queryDealNode"));
+    }
+
+    private static boolean looksLikeCompleteFunctionDeclaration(String source) {
+        return COMPLETE_FUNCTION_DECLARATION.matcher(source).matches();
+    }
+
+    private static StructuredDiagnostic bodyStatementsOnly(Operation operation, Target target) {
+        return diagnostic(
+                "CP1007",
+                "Body replacement accepts only statements inside the existing body; omit the function declaration and outer braces",
+                operation.targetId(),
+                target.range(),
+                "statement list, for example: return state;",
+                "complete function declaration",
+                List.of(new RepairScope(operationName(operation), operation.targetId())),
+                "queryDealNode(" + operation.targetId().value() + ")");
     }
 
     private static ImpactReport emptyImpact(Analysis base) {
