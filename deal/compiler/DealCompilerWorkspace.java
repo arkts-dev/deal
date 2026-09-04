@@ -1019,7 +1019,9 @@ public final class DealCompilerWorkspace {
     }
 
     private static String singleDeclarationIdentity(String source, String modulePath) {
-        LexResult lexed = new Lexer(source, modulePath).tokenize();
+        String identitySource = source.replaceAll(
+                "(?m)^\\s*//\\s*@[^\\r\\n]*(?:\\R|$)", "");
+        LexResult lexed = new Lexer(identitySource, modulePath).tokenize();
         ParseResult parsed = new Parser(lexed.tokens(), modulePath).parse();
         if (lexed.diagnostics().stream().anyMatch(value -> value.severity().equals("error"))
                 || parsed.diagnostics().stream().anyMatch(value -> value.severity().equals("error"))

@@ -22,6 +22,7 @@ public final class CompilerWorkspaceTest {
         protocolJsonSupportsDesugaredRecordShape();
         declarationsCanBeAddedAndRemovedAtomically();
         addingMultipleDeclarationsIsRejectedAtomically();
+        annotatedHandlerCountsAsOneDeclaration();
         declarationReplacementIsAtomicAndDoesNotConsumeItsNeighbor();
         semanticQueriesExposeScopedOperations();
         checkedChangesRequireQueriedTargetFingerprint();
@@ -247,6 +248,20 @@ public final class CompilerWorkspaceTest {
         check(result.source().equals(source), "multi-declaration add rejection must preserve source");
         check(result.diagnostics().stream().anyMatch(value -> value.code().equals("CP1013")),
                 "multi-declaration add must expose stable CP1013");
+    }
+
+    private static void annotatedHandlerCountsAsOneDeclaration() {
+        String source = source();
+        var inspection = DealCompilerWorkspace.inspect(source, "app.deal");
+        var result = DealCompilerWorkspace.apply(
+                source,
+                "app.deal",
+                inspection.sourceDigest(),
+                List.of(new DealCompilerWorkspace.AddDeclaration(
+                        inspection.moduleId(),
+                        "// @ui-update\nexport function secondUpdate(state: AppState, action: IncrementAction): AppState { return state; }")));
+        check(result.diagnostics().stream().noneMatch(value -> value.code().equals("CP1013")),
+                "a framework directive plus its declaration must pass declaration cardinality");
     }
 
     private static void semanticQueriesExposeScopedOperations() {
