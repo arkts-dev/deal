@@ -182,12 +182,12 @@ public class SidecarCorpusValidationTest {
     /**
      * The exact runtime-error population (ISSUE-0350 completeness, plus
      * the int32 E8004 fixtures ISSUE-0332 promoted/added: the
-     * promoted int-add-overflow — ISSUE-0378 restored the
-     * backend-runtime fixture with its canonical known-fail header,
-     * so this population excludes it (a known-fail-classified
-     * fixture counts in neither population; the activated-route
-     * E8004 coverage stays on the two-backend slice surface) —
-     * and the new int-sub-overflow,
+     * restored int-add-overflow — ISSUE-0378 restored the
+     * backend-runtime fixture byte-exactly with its canonical
+     * known-fail header and its three-backend runtime-error sidecar,
+     * and the gate-closure promotion dropped the known-fail marker,
+     * so the fixture now counts in this population as a real
+     * runtime-error fixture — and the new int-sub-overflow,
      * int-mul-overflow,
      * int-conversion-out-of-range, and source-location/int32-overflow-source
      * fixtures each land their sidecar in the same change as their
@@ -211,6 +211,7 @@ public class SidecarCorpusValidationTest {
      * with its sidecar in the same change; plus the stdlib/table
      * keys-nontable-error E8001 fixture ISSUE-0341 added with its
 
+
          * sidecar in the same change). ISSUE-0380 (the
      * disposition-application unit) adds two members to this population
      * with their sidecars: the flipped time fixture
@@ -220,6 +221,7 @@ public class SidecarCorpusValidationTest {
      * dropped, E8004 sidecar unchanged): 81 -> 83.
  */
     private static final int RUNTIME_ERROR_COUNT = 83;
+
 
 
     /**
@@ -933,9 +935,12 @@ public class SidecarCorpusValidationTest {
 
         // The exact sidecar paths the corpus may carry: one per runtime-ok
         // fixture, one per runtime-error fixture, one per known-fail
-        // runtime fixture (the restored int-add-overflow), plus the two
-        // Diagnostics-bullet Compile Expectation Sidecars (the two
-        // ISSUE-0501 gap fixtures extend the closed set to four).
+        // runtime fixture (none today: the gate-closure promotion
+        // dropped the restored int-add-overflow marker, so every
+        // runtime-classified fixture is a real runtime-ok or
+        // runtime-error fixture), plus the two Diagnostics-bullet
+        // Compile Expectation Sidecars (the two ISSUE-0501 gap
+        // fixtures extend the closed set to four).
         Set<String> allowedSidecars = new HashSet<>();
         int runtimeOk = 0;
         int runtimeError = 0;
@@ -964,13 +969,14 @@ public class SidecarCorpusValidationTest {
             } else if (fixture.expectedTag().startsWith("known-fail ")
                     && fixture.expectedTag().substring(
                         "known-fail ".length()).startsWith("runtime")) {
-                // The restored known-fail runtime fixture
-                // (ISSUE-0378 D3) carries its three-backend sidecar:
-                // the differential gate's presence rule (ISSUE-0353)
-                // requires a valid sidecar for every runtime-classified
-                // fixture — including a known-fail whose underlying
-                // mode is a runtime mode — and the gate has no
-                // silent default.
+                // A known-fail whose underlying mode is a runtime mode
+                // carries its three-backend sidecar: the differential
+                // gate's presence rule (ISSUE-0353) requires a valid
+                // sidecar for every runtime-classified fixture — the
+                // gate has no silent default. The gate-closure
+                // promotion dropped the restored int-add-overflow
+                // marker, so this branch is dormant today; it stays
+                // as the presence rule's defense in depth.
                 allowedSidecars.add(sidecarPath.toString());
                 check(Files.exists(sidecarPath), fixture.corpusPath()
                     + ": the known-fail runtime fixture must carry its "
@@ -997,6 +1003,7 @@ public class SidecarCorpusValidationTest {
             + "exactly " + RUNTIME_ERROR_COUNT + " runtime-error fixtures "
             + "with sidecars, found " + runtimeError);
 
+
         // The tracked backend-runtime known-fail population is empty
         // post-unit (ISSUE-0380, the disposition-application unit): the
         // restored known-fail fixture
@@ -1005,6 +1012,7 @@ public class SidecarCorpusValidationTest {
         // now counts in the runtime-error population with its unchanged
         // three-backend sidecar (the differential gate's presence rule,
         // ISSUE-0353), and the stale-known-fail gate no longer names it.
+
         Set<String> knownFail = new TreeSet<>();
         for (Fixture fixture : fixtures) {
             if (fixture.corpusPath().startsWith("backend-runtime/")
@@ -1014,8 +1022,10 @@ public class SidecarCorpusValidationTest {
         }
         Set<String> expectedKnownFail = new TreeSet<>();
         check(knownFail.equals(expectedKnownFail),
+
             "the tracked backend-runtime known-fail population must be "
                 + "empty post-unit, got " + knownFail);
+
 
         // No stray sidecar anywhere in the corpus.
         try (Stream<Path> stream = Files.walk(CORPUS_ROOT)) {

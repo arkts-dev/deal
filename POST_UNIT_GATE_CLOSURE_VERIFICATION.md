@@ -12,9 +12,11 @@ refs: `luajit-gate-closure` D1-D6 and the gate-closure assertion contract;
 `luajit-v1.2-stdlib-contracts` D6; `luajit-v1.2-conformance-retirement-and-gate`
 D3).
 
-Canonical revision: `e6c2f9ce8615db5387571695851ead3d52bbbe5b` (the
-engine-imported canonical HEAD; the mandated rebase replays this record's
-commits onto it). The prior acceptance review (canonical `5a6997c`) found
+Canonical revision: `e0013e89c094793dcaa36d39d8518ccf6413ba24` (Merge
+MR-0363 — the activated JVM corpus lane realization and the exact staged
+lane failure-set pins, ISSUE-0476/ISSUE-0378; the mandated rebase replays
+this record's commits onto it). The prior acceptance review (canonical
+`5a6997c`) found
 the unit not landed — fixture still `// @expected: runtime-ok`, the
 sanctioned staged entry still registered, the pin test still pinning the
 pre-activation header — so the strict gate was dormant, the summary could
@@ -60,6 +62,71 @@ suite (`deal.test.GateClosureStrictGateTest`, launched by
 report; (2) major — the record's prior §2/§3 claims of an active,
 exercised shape check were unproducible on the delivered runner; they
 are corrected to the re-executed output in this section 3.
+
+## 0. Rebase onto the canonical JVM-lane realization (MR-0363) and the
+merged-state reconciliation
+
+The engine's merge of this change set onto the canonical line failed on
+the conflict with MR-0363 (ISSUE-0476/ISSUE-0378 — the activated JVM
+corpus lane, its exact staged lane failure-set pins, and the restored
+backend-runtime known-fail fixture). The mandated rebase replayed the
+five commits onto `e0013e89` and the conflicts were resolved to the
+post-unit state — every canonical assumption that still carried the
+pre-unit tree was re-pinned to the landed reality, and nothing below
+was weakened:
+
+- **The restored known-fail fixture promotes.** MR-0363 restored
+  `test/conformance/backend-runtime/arithmetic/int-add-overflow.deal`
+  byte-exactly with its canonical known-fail header and its three-backend
+  runtime-error sidecar (ISSUE-0378 D3), counting it as the JVM lane's
+  sanctioned stale-known-fail staged failure. The strict gate's
+  summary-level known-fail zero cannot hold while that marker is on
+  disk, so the gate-closure promotion drops the known-fail prefix and
+  the `@issue` tag in the same merged change (exactly the retirement
+  page D1 promotion and the runner's promotion instruction): the fixture
+  is now a real `runtime-error E8004` fixture whose probe passes on the
+  activated LuaJIT and JVM lanes (`OK (found DEAL_ERROR_CODE: E8004)` on
+  both) and whose three-backend sidecar stays.
+- **The differential-gate corpus pins follow the promotions.** The
+  corpus now discovers 465 fixtures: 92 compile-error (the promoted FFI
+  manifest pin), 218 runtime-ok (the flipped time fixture), 83
+  runtime-error (the time fixture plus the promoted
+  int-add-overflow), and zero known-fail — `deal.test.conformance.
+  DifferentialGateCorpusTest` 281/0 and
+  `deal.test.conformance.SidecarCorpusValidationTest` 2055/0 with the
+  empty known-fail population pin.
+- **The JVM lane-state pin test re-pins the post-unit green state.**
+  `test/JvmLaneStatePinTest.java` (ISSUE-0378 D5, the anti-hollow
+  evidence owner that now runs both real lanes inside it) pinned the
+  unmerged tree's two gate failures, the stale-known-fail promotion
+  line, exit 1, and the absence of the `Gates PASSED` banner. Its pins
+  were re-captured from the merged tree's real lane runs: the JVM lane
+  exits 0 with the green `Gates PASSED` banner (denominator 301, passed
+  254, failed 0, skipped 47, known-fail 0 — the two formerly staged
+  cases now record `OK (found DEAL_ERROR_CODE: E8004)` and the only
+  `] FAIL (` lines are the two pre-existing host-prewrapped skip-probe
+  exceptions), and the LuaJIT lane exits 0 with the four-zero summary
+  (`Total: 431, Passed: 431, ...`), the `307/307` backend-runtime phase
+  line, zero `GATE FAILURE` lines, and no STAGED-FAIL line — the strict
+  gate green under the empty registry. `JvmLaneStatePinTest` 26/0.
+- **The production E2010 is scoped to manifest-authored contexts.**
+  MR-0363's FFI orchestrator tests compile extern-C declaration imports
+  through the test-only isolated-phase constructors, whose synthesized
+  externals entries cannot carry `nativeLibrary` (parent D10: those
+  APIs may omit `ProjectContext`). The manifest policy's
+  `nativeLibrary` authoring rule (docs/spec-v1.2.md:1891) now applies
+  exactly to manifest-authored contexts — the production
+  `ProjectContext` path — while an isolated-phase harness entry counts
+  as backed; an import with no entry at all remains the rejection on
+  every path (section 5). `deal.test.FfiDeclarationValidatorTest`
+  188/0.
+- **The legacy catalog, the span-less oracle, the strict gate, and the
+  pin test carry over unchanged** — the time-fixture legacy row stays
+  removed, the sanctioned span-less sidecar and its lane/schema closure
+  are untouched, the three-mode registry-shape gate and
+  `deal.test.GateClosureStrictGateTest` (18/0) are byte-identical in
+  behavior, and `deal.test.StdlibTimePreActivationPinTest` still passes
+  37/37 on the post-activation header.
 
 ## 1. The landed disposition pair (branch 1) and the unit's change set
 
@@ -163,14 +230,14 @@ Command: `./run_tests.sh` — exit code `0`; final banner
 `deal.test.ConformanceTest` summary (LuaJIT lane, real LuaJIT execution):
 
 ```text
-Total: 430, Passed: 430, Failed: 0, Skipped: 0, KnownFailures (tracked): 0, StagedFailures (tracked): 0
+Total: 431, Passed: 431, Failed: 0, Skipped: 0, KnownFailures (tracked): 0, StagedFailures (tracked): 0
 ```
 
 Promotion-gate phase lines:
 
 ```text
   Frontend conformance (v1.2 grammar and semantics): 124/124 passed, 0 failed, 0 skipped, 0 known-fail (tracked), 0 staged-fail (tracked)
-  LuaJIT backend-runtime conformance (v1.2): 306/306 passed, 0 failed, 0 skipped, 0 known-fail (tracked), 0 staged-fail (tracked)
+  LuaJIT backend-runtime conformance (v1.2): 307/307 passed, 0 failed, 0 skipped, 0 known-fail (tracked), 0 staged-fail (tracked)
   Tracked v1.2 follow-up issues: none — full v1.2 conformance
 ```
 
@@ -182,6 +249,14 @@ landed nowMillis behavior`):
 ```text
   [backend-runtime/stdlib-edge/time-now-millis-positive.deal] OK (found DEAL_ERROR_CODE: E8004)   (deal.test.ConformanceTest)
   [backend-runtime/stdlib-edge/time-now-millis-positive.deal] OK (found DEAL_ERROR_CODE: E8004)   (deal.test.JvmConformanceTest)
+```
+
+The promoted restored int-add-overflow fixture passes its exact E8004
+code on both lanes too (the merged promotion, section 0):
+
+```text
+  [backend-runtime/arithmetic/int-add-overflow.deal] OK (found DEAL_ERROR_CODE: E8004)   (deal.test.ConformanceTest)
+  [backend-runtime/arithmetic/int-add-overflow.deal] OK (found DEAL_ERROR_CODE: E8004)   (deal.test.JvmConformanceTest)
 ```
 
 The promoted FFI pin passes its exact code on the frontend lane:
@@ -227,7 +302,7 @@ produced on the final working tree, observed, and reverted:
 
   ```text
     [backend-runtime/stdlib-edge/time-now-millis-positive.deal] STAGED-FAIL (E8004 locked artifact; tracked by ISSUE-0237: re-introduction exercise: locked E8004 artifact)
-  Total: 429, Passed: 429, Failed: 0, Skipped: 0, KnownFailures (tracked): 0, StagedFailures (tracked): 1
+  Total: 430, Passed: 430, Failed: 0, Skipped: 0, KnownFailures (tracked): 0, StagedFailures (tracked): 1
   GATE FAILURE: staged-failure registry is neither the sanctioned pre-unit ISSUE-0237 pair nor empty — backend-runtime/stdlib-edge/time-now-millis-positive.deal (tracked by ISSUE-0237)
   promotion instruction: remove the registry entry (or entries)
   ```
@@ -306,7 +381,7 @@ Exercised by execution (final rebased commit):
   match, unpinned-group emission mismatch, pinned-group suppression
   mismatch, partial-group canonical violation).
 - `deal.test.conformance.SidecarCorpusValidationTest` —
-  `Passed: 2044, Failed: 0` — the sanctioned span-less sidecar
+  `Passed: 2055, Failed: 0` — the sanctioned span-less sidecar
   validates clean, its transcript byte-equals the code/message-only
   canonical snapshot, and its span-group absence is the closed shape.
 
@@ -322,7 +397,14 @@ entry declares with `nativeLibrary` — file-keyed via the target's
 entry at all throws
 `ModuleResolver.CffiImportWithoutNativeLibraryException` and
 `deal/checker/NameResolver` maps it to E2010 at the import span
-(docs/spec-v1.2.md:1891). Production executions:
+(docs/spec-v1.2.md:1891). The policy's `nativeLibrary` authoring rule
+applies exactly to manifest-authored contexts: the test-only
+isolated-phase constructors synthesize their externals entries from the
+harness's declarations map, which cannot carry `nativeLibrary`, and
+there the harness's explicit entry counts as backed — an import with no
+declaring entry at all is the rejection on every path (the merged
+MR-0363 FFI orchestrator tests exercise the isolated-phase channel;
+`deal.test.FfiDeclarationValidatorTest` 188/0). Production executions:
 
 - The exact fixture case (`deal.json` `{"languageVersion": "1.2"}`,
   entry importing `./ffi_math`, `ffi_math.d.deal` carrying
@@ -349,7 +431,8 @@ entry at all throws
 ## 6. Closure checklist (epic objective criteria)
 
 - Phase line and summary show zero failed, zero skipped, zero
-  known-fail, zero staged — section 2.
+  known-fail, zero staged — section 2 (Total 431; backend-runtime
+  307/307 after the merged int-add-overflow promotion).
 - The time fixture records PASS under the landed branch on the LuaJIT
   lane — section 2; `expectation(fixture) == landed nowMillis
   behavior` holds (retained `()->int` route deterministically raises

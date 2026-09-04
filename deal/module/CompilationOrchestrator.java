@@ -108,6 +108,23 @@ public final class CompilationOrchestrator {
     private final ProjectContext context;
 
     /**
+     * True when the compilation's context was authored from a
+     * {@code deal.json} manifest (the production
+     * {@link ProjectContext}-taking constructor — CLI, the production
+     * orchestrator path, and project-level conformance); false for the
+     * test-only isolated-phase constructors whose context is
+     * synthesized from the harness's own declarations map (parent D10:
+     * those APIs may omit {@code ProjectContext}, and their externals
+     * map cannot carry {@code nativeLibrary}). The v1.2 C FFI manifest
+     * policy's {@code nativeLibrary} authoring rule
+     * (docs/spec-v1.2.md:1891 — "a C FFI entry must include
+     * nativeLibrary") is enforced exactly on manifest-authored
+     * contexts; the synthesized test-only entries are the harness's
+     * authority channel and count as manifest-backed.
+     */
+    private final boolean manifestAuthoredContext;
+
+    /**
      * The T6 source resolver over {@link #context}: every import — and
      * the entry file via {@link SourceModuleResolver#resolveEntryFile} —
      * resolves through its pinned rules (importer-relative first,
@@ -336,6 +353,7 @@ public final class CompilationOrchestrator {
         this.invocation = java.util.Objects.requireNonNull(invocation,
             "invocation must not be null");
         this.context = java.util.Objects.requireNonNull(context, "context");
+        this.manifestAuthoredContext = true;
         this.backend = backendOf(context.backend());
         this.entryFile = entryFile.toAbsolutePath().normalize();
         this.outputRoot = Path.of(context.outputPath().absoluteNormalizedPath());
@@ -440,6 +458,7 @@ public final class CompilationOrchestrator {
             "invocation must not be null");
         this.context = synthesizeContext(entryFile, outputRoot, backend,
             externalsDeclarations, moduleRoots, stdlibDir);
+        this.manifestAuthoredContext = false;
         this.backend = backend;
         this.entryFile = entryFile.toAbsolutePath().normalize();
         this.outputRoot = outputRoot.toAbsolutePath().normalize();
@@ -3385,10 +3404,15 @@ public final class CompilationOrchestrator {
          * target's module classification is
          * {@code ExternalModule(rawImportSpecifier)} exactly when an
          * externals entry declares the file (file-keyed,
-         * {@code ModuleIdentityResolver} D6 rule (2)); an entry without
-         * {@code nativeLibrary}, or no entry at all, is the
-         * invalid-manifest-policy rejection the checker maps to E2010 at
-         * the import span ({@code deal/checker/NameResolver.java},
+         * {@code ModuleIdentityResolver} D6 rule (2)); no entry at all
+         * is always the invalid-manifest-policy rejection, and a
+         * manifest-authored entry without {@code nativeLibrary} is the
+         * rejection too (the test-only isolated-phase constructors
+         * synthesize their entries from the harness's declarations map,
+         * which cannot carry {@code nativeLibrary}, and their entries
+         * count as backed — see {@link #cffiManifestBacked(ModuleInfo)}).
+         * The checker maps the exception to E2010 at the import span
+         * ({@code deal/checker/NameResolver.java},
          * {@code processImport}) — the production emission site behind
          * the promoted conformance pin.
          */
@@ -3406,9 +3430,20 @@ public final class CompilationOrchestrator {
 
         /**
          * True when the externals entry that declares the target
-         * (file-keyed classification) carries a classified
-         * {@code nativeLibrary}; false when no entry declares the file
-         * or the declaring entry omits {@code nativeLibrary}.
+         * (file-keyed classification) satisfies the v1.2 C FFI manifest
+         * policy; false when no entry declares the file, or when a
+         * manifest-authored entry omits {@code nativeLibrary}.
+         *
+         * <p>The {@code nativeLibrary} authoring rule
+         * (docs/spec-v1.2.md:1891 — "a C FFI entry must include
+         * nativeLibrary") applies to manifest-authored contexts: the
+         * production locator path parses the entry's classified
+         * {@code nativeLibrary}, and an entry that omits it is the
+         * E2010 invalid-manifest-policy rejection. The test-only
+         * isolated-phase constructors synthesize their externals
+         * entries from the harness's declarations map, which cannot
+         * carry {@code nativeLibrary}; there the harness's explicit
+         * entry is the authority channel and counts as backed.</p>
          */
         private boolean cffiManifestBacked(ModuleInfo target) {
             CanonicalModuleIdentity classification = target.location == null
@@ -3419,7 +3454,12 @@ public final class CompilationOrchestrator {
             }
             ExternalEntry entry = context.externals().get(
                 ext.rawImportSpecifier());
-            return entry != null && entry.nativeLibrary() != null;
+            if (entry == null) {
+                return false;
+            }
+            return manifestAuthoredContext
+                ? entry.nativeLibrary() != null
+                : true;
         }
 
         /**

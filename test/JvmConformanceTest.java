@@ -61,27 +61,21 @@ import java.util.concurrent.atomic.AtomicInteger;
  * {@code deal.test.BackendConformanceTest} (this lane only validates
  * the catalog at startup; it never routes a fixture through it).
  *
- * <h2>Sanctioned pinned staged state (ISSUE-0378 D2/D3)</h2>
+ * <h2>Post-unit green state (the disposition landed; the pinned
+ * staged state closed)</h2>
  *
- * <p>On the unmerged tree the lane fails in exactly the pinned ways and
- * nothing else — the activation-liveness proof, never papered:
- * <ul>
- *   <li>the unflipped stdlib-edge epoch-millisecond fixture raises
- *       E8004 at the declared {@code int} boundary against its
- *       {@code runtime-ok} expectation — one applicable failure;
- *       the expectation flip is ISSUE-0372's single edit, and this
- *       lane never names or skips the fixture;</li>
- *   <li>the restored corpus known-fail fixture
- *       {@code backend-runtime/arithmetic/int-add-overflow.deal} passes
- *       its {@code runtime-error E8004} probe under the activated
- *       {@code intAdd} and fires the stale-known-fail gate with the
- *       promotion instruction (set {@code @expected: runtime-error
- *       E8004}, drop the {@code @issue} tag) — that promotion is
- *       jvm-v12-int32-bytes D6's later sanctioned edit
- *       (ISSUE-0381).</li>
- * </ul>
- * No skip entry, legacy fallback, or lane-side papering hides either
- * failure; both are real gate failures and the runner exits 1. The
+ * <p>The disposition-application unit landed: the stdlib-edge
+ * epoch-millisecond fixture now carries the branch-1 expectation
+ * {@code runtime-error E8004} (the retained {@code nowMillis}
+ * {@code ()->int} route raises E8004 at the declared {@code int}
+ * boundary), so the lane records it as PASS — the lane never names or
+ * skips it. The restored corpus fixture
+ * {@code backend-runtime/arithmetic/int-add-overflow.deal} promoted to
+ * {@code runtime-error E8004} (the gate-closure promotion dropped its
+ * known-fail marker, ISSUE-0378 D3's pinned promotion instruction),
+ * and its probe passes under the activated {@code intAdd}. Both former
+ * sanctioned staged failures are gone; the lane's only remaining
+ * non-passing lines are the classified skip entries (below). The
  * anti-hollow evidence owner is {@code test/JvmLaneStatePinTest.java}:
  * it runs this lane and the real LuaJIT lane as subprocesses and
  * asserts the captured failure sets field-exactly on every gate run
@@ -108,11 +102,10 @@ import java.util.concurrent.atomic.AtomicInteger;
  *       records a non-fatal tracked KNOWN-FAIL while the case still
  *       fails; when it starts passing, the gate FAILS with a promotion
  *       instruction (drop the marker) — promotion is forced. The
- *       restored {@code arithmetic/int-add-overflow.deal} now passes
- *       its probe under the activated invocation, so its
- *       stale-known-fail gate fires with the pinned promotion
- *       instruction — the sanctioned staged failure; the promotion
- *       itself is ISSUE-0381's later sanctioned edit.</li>
+ *       restored {@code arithmetic/int-add-overflow.deal} promoted in
+ *       the gate-closure change (its probe passes under the activated
+ *       invocation), so the corpus carries zero known-fail markers on
+ *       the JVM lane today.</li>
  *   <li><b>Backend-runtime tests</b> ({@code runtime-ok} /
  *       {@code runtime-error CODE}): JVM-applicable and must pass
  *       through the whole pipeline UNLESS the explicit skip registry
@@ -188,9 +181,9 @@ import java.util.concurrent.atomic.AtomicInteger;
  *       {@code runtimeDenominator()} count — 301 with the restored
  *       known-fail fixture) pass through the frontend →
  *       CompilationOrchestrator → JVM codegen → javac → JVM
- *       pipeline — on the unmerged tree the sanctioned pinned staged
- *       state (one applicable failure plus one stale known-fail
- *       marker) fails exactly these two gates and nothing else, and
+ *       pipeline — on the post-unit tree the lane passes the two
+ *       former staged cases (the flipped time fixture and the promoted
+ *       int-add-overflow fixture) and fails exactly nothing, and
  *       {@code test/JvmLaneStatePinTest.java} asserts that captured
  *       set field-exactly on every gate run;</li>
  *   <li>zero unclassified skips (by construction — the classifier has
@@ -299,12 +292,12 @@ public class JvmConformanceTest {
         // so the activated lane-wide invocation raises E8004 for the
         // arithmetic/conversion/negation cases — those entries became
         // stale under the A5 seam and were removed with the promotions.
-        // The corpus known-fail fixture arithmetic/int-add-overflow.deal
-        // is restored (ISSUE-0378 D3): its runtime-error E8004 probe now
-        // passes under the activated intAdd, so the stale-known-fail
-        // gate fires with the promotion instruction (set '@expected:
-        // runtime-error E8004', drop the '@issue' tag) — the
-        // sanctioned pinned staged failure, never a skip entry. The
+        // The restored corpus fixture arithmetic/int-add-overflow.deal
+        // promoted in the gate-closure change (ISSUE-0378 D3's pinned
+        // promotion instruction: set '@expected: runtime-error E8004',
+        // drop the '@issue' tag): its runtime-error E8004 probe passes
+        // under the activated intAdd, so it records PASS and the
+        // stale-known-fail gate is silent — never a skip entry. The
         // final entry — the std/math.absInt(-2147483648) residual —
         // was resolved by ISSUE-0397 I6: the emitted int32 absInt arm
         // now promotes the int-carrier operand to long before
