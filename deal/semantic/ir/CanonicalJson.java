@@ -139,6 +139,15 @@ public final class CanonicalJson {
     // =========================================================================
 
     /** The canonical JSON {@code null} value. */
+    /**
+     * The unique canonical hex-float spelling of an IEEE-754 number
+     * ({@code Double.toHexString}; the single renderer of hex floats in
+     * deal/semantic).
+     */
+    public static String numberHex(double value) {
+        return Double.toHexString(value);
+    }
+
     public static Null nullValue() {
         return Null.INSTANCE;
     }
@@ -215,7 +224,7 @@ public final class CanonicalJson {
             case Null ignored -> sb.append("null");
             case Bool b -> sb.append(b.value() ? "true" : "false");
             case Int i -> sb.append(Integer.toString(i.value()));
-            case Num n -> sb.append(Double.toHexString(n.value()));
+            case Num n -> sb.append(numberHex(n.value()));
             case Str s -> appendString(sb, s.value());
             case Arr a -> {
                 sb.append('[');
