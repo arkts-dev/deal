@@ -378,6 +378,17 @@ public final class DealCompilerWorkspace {
                     if (value.declaration() == null || value.declaration().isBlank()) {
                         return nullSource(base, operation, target, "DEAL declaration");
                     }
+                    String addedIdentity = singleDeclarationIdentity(value.declaration(), modulePath);
+                    if (addedIdentity.equals("invalid-or-multiple-declarations")
+                            || addedIdentity.equals("unsupported-declaration")) {
+                        return rejected(base, diagnostic(
+                                "CP1013",
+                                "addDeclaration accepts exactly one complete top-level class or function",
+                                target.id(), target.range(), "one class or function declaration",
+                                addedIdentity,
+                                List.of(new RepairScope(ADD_DECLARATION, target.id())),
+                                "queryDealModule"));
+                    }
                     String separator = source.isEmpty() || source.endsWith("\n") ? "" : "\n";
                     replacements.add(new Replacement(
                             target.end(), target.end(), separator + value.declaration().strip() + "\n", false));

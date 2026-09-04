@@ -21,6 +21,7 @@ public final class CompilerWorkspaceTest {
         protocolJsonIsDeterministicAndUnicodeSafe();
         protocolJsonSupportsDesugaredRecordShape();
         declarationsCanBeAddedAndRemovedAtomically();
+        addingMultipleDeclarationsIsRejectedAtomically();
         declarationReplacementIsAtomicAndDoesNotConsumeItsNeighbor();
         semanticQueriesExposeScopedOperations();
         checkedChangesRequireQueriedTargetFingerprint();
@@ -230,6 +231,22 @@ public final class CompilerWorkspaceTest {
         check(removed.accepted(), "unreferenced declaration must be removable: " + removed.diagnostics());
         check(removed.inspection().symbols().stream().noneMatch(value -> value.name().equals("scoreBonus")),
                 "removed declaration must disappear from inspection");
+    }
+
+    private static void addingMultipleDeclarationsIsRejectedAtomically() {
+        String source = source();
+        var inspection = DealCompilerWorkspace.inspect(source, "app.deal");
+        var result = DealCompilerWorkspace.apply(
+                source,
+                "app.deal",
+                inspection.sourceDigest(),
+                List.of(new DealCompilerWorkspace.AddDeclaration(
+                        inspection.moduleId(),
+                        "export class FirstAction {}\nexport class SecondAction {}")));
+        check(!result.accepted(), "one add operation must not smuggle multiple declarations");
+        check(result.source().equals(source), "multi-declaration add rejection must preserve source");
+        check(result.diagnostics().stream().anyMatch(value -> value.code().equals("CP1013")),
+                "multi-declaration add must expose stable CP1013");
     }
 
     private static void semanticQueriesExposeScopedOperations() {
