@@ -534,6 +534,14 @@ public class ParserTest {
             check(vd.typeAnnotation().isEmpty(), "no type annotation");
             check(vd.initializer() instanceof LiteralExpr, "init is literal");
         }
+
+        r = parse("let from: int = 0;");
+        CompilerDiagnostic reserved = diagOf(r, "E1007");
+        check(reserved != null, "reserved local name produces E1007");
+        if (reserved != null) {
+            check(reserved.message().contains("'from' is a reserved keyword"),
+                "reserved local diagnostic names the rejected keyword: " + reserved.message());
+        }
     }
 
     static void testFunctionDeclaration() {

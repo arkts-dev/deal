@@ -586,7 +586,14 @@ public final class Parser {
     // -- VariableDeclaration --
     private StatementNode parseVariableDeclaration() {
         Token letToken = advance();
-        Token nameToken = expect(TokenType.IDENTIFIER, DiagnosticCode.E1007, "Expected variable name after 'let'");
+        Token candidate = peek();
+        String expectedNameMessage = "Expected variable name after 'let'";
+        if (candidate.type() != TokenType.IDENTIFIER
+                && candidate.lexeme().matches("[A-Za-z_][A-Za-z0-9_]*")) {
+            expectedNameMessage += "; '" + candidate.lexeme()
+                    + "' is a reserved keyword and cannot be used as an identifier";
+        }
+        Token nameToken = expect(TokenType.IDENTIFIER, DiagnosticCode.E1007, expectedNameMessage);
         if (nameToken == null) { synchronize(); return null; }
 
         Optional<TypeNode> typeAnnotation = Optional.empty();
