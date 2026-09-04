@@ -733,6 +733,79 @@ public class JvmAsyncExportInvokerTest {
             c.invoke("oracle", "null"));
     }
 
+    @Test
+    public void noCallFunctionValueOracleFailsWithItsOwnDealError()
+            throws Exception {
+        assumeTrue(jvmAvailable);
+        // The no-call mutation control: the oracle assigns and
+        // containerizes the first-class async handler but never invokes
+        // it, so the call-observed mutation never happens and the
+        // oracle's own guard throws TEST_FAIL — the production scenario
+        // can never complete null by skipping the call, and the invoker
+        // propagates the oracle's exact DEAL error.
+        Path out = tmp.resolve("fnval-nocall-out");
+        Compiled c = compileJvmEntry(tmp.resolve("fnval-nocall-src"),
+            "oracle_entry.deal", """
+                async function inc(x: int): int {
+                  return x + 1;
+                }
+                export function main(): null { return null; }
+                export async function oracle(): null {
+                  let handlers: (async (x: int) => int)[] = [inc];
+                  let cell: int[] = [40];
+                  if (cell[0] !== 41) {
+                    throw { code: "TEST_FAIL",
+                      message: "async function value was never invoked" };
+                  }
+                  return null;
+                }
+                """, null, out, null);
+        assertEquals(new Result.DealError("TEST_FAIL",
+            "async function value was never invoked", null, null, null),
+            c.invoke("oracle", "null"));
+    }
+
+    @Test
+    public void jvmBytesOracleIsRejectedWithE6000UntilTheBytesLaneLands()
+            throws IOException {
+        assumeTrue(jvmAvailable);
+        // The E8 boundary pin: the parent's bytes-bearing oracle half on
+        // JVM depends on the JVM recursive bytes closure (ISSUE-0160, the
+        // int32-bytes lane — E6000 at every bytes site today, pinned by
+        // JvmConformanceTest). Until that lane lands, the backend must
+        // reject the bytes signature with E6000 — never silently
+        // miscompile — while the production scenario above exercises the
+        // JVM-supported async function-value shape; the bytes-bearing
+        // variant runs on LuaJIT (LuaJitAsyncExportInvokerTest).
+        Path out = tmp.resolve("fnval-bytes-out");
+        Path srcRoot = Files.createDirectories(tmp.resolve("fnval-bytes-src")
+            .resolve("src"));
+        Path entrySource = srcRoot.resolve("oracle_entry.deal");
+        Files.writeString(entrySource, """
+            async function echo(b: bytes): bytes {
+              return b;
+            }
+            export function main(): null { return null; }
+            export async function oracle(): null {
+              let handlers: (async (b: bytes) => bytes)[] = [echo];
+              let buf: bytes = bytes(3);
+              let through: bytes = await handlers[0](buf);
+              return null;
+            }
+            """);
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entrySource.toAbsolutePath(), out, false, false, false, false,
+            Backend.JVM, null, List.of(srcRoot.toAbsolutePath()),
+            Path.of("").toAbsolutePath(), null, invocation);
+        boolean ok = orchestrator.compile();
+        assertFalse("the bytes-bearing JVM oracle must not compile until"
+            + " the bytes lane lands", ok);
+        assertTrue("the E6000 bytes rejection names the unlanded lane",
+            orchestrator.diagnostics().stream()
+                .anyMatch(d -> d.code().equals("E6000")
+                    && d.message().contains("bytes")));
+    }
+
     // =========================================================================
     // Value-representation and interleaving behavior
     // =========================================================================

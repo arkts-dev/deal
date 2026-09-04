@@ -752,6 +752,48 @@ public class LuaJitAsyncExportInvokerTest {
                 && error.file().endsWith("oracle_entry.deal"));
     }
 
+    @Test
+    public void noCallBytesOracleFailsWithItsOwnDealError()
+            throws Exception {
+        assumeTrue(luajitAvailable);
+        // The no-call mutation control: the oracle assigns and
+        // containerizes the first-class async bytes handler but never
+        // invokes it, so the call-observed mutation never happens and the
+        // oracle's own guard throws TEST_FAIL — the production scenario
+        // can never complete null by skipping the call, and the invoker
+        // propagates the oracle's exact DEAL error.
+        Path out = tmp.resolve("bytes-oracle-nocall-out");
+        compileProductionEntry(tmp.resolve("bytes-oracle-nocall-src"),
+            "oracle_entry.deal", """
+                async function fill(b: bytes): bytes {
+                  b[1] = 200;
+                  return b;
+                }
+                export function main(): null {
+                  return null;
+                }
+                export async function oracle(): null {
+                  let handlers: (async (b: bytes) => bytes)[] = [fill];
+                  let buf: bytes = bytes(3);
+                  if (buf[1] !== 200) {
+                    throw { code: "TEST_FAIL",
+                      message: "async bytes function was never invoked" };
+                  }
+                  return null;
+                }
+                """, null, out);
+        Result result = invoke(entryArtifactOf(out), "oracle", "null");
+        assertTrue("the no-call guard propagates: " + result,
+            result instanceof Result.DealError);
+        Result.DealError error = (Result.DealError) result;
+        assertEquals("TEST_FAIL", error.code());
+        assertEquals("async bytes function was never invoked",
+            error.message());
+        assertTrue("the raise location propagates from source",
+            error.file() != null
+                && error.file().endsWith("oracle_entry.deal"));
+    }
+
     /**
      * Compiles a fixture expected to fail with the given diagnostic code
      * (the mutation-control compilation gate): a clean compile fails the
