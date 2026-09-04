@@ -6,36 +6,36 @@ import java.nio.file.Path;
 import java.util.List;
 
 /**
- * std/time.nowMillis pre-activation branch-1 state pin (ISSUE-0369).
+ * std/time.nowMillis branch-1 state pin (ISSUE-0369; header flip applied
+ * by the disposition-application unit ISSUE-0380).
  *
- * <p>Pins the repository's exact pre-activation state selected by branch 1
- * (std-time-nowmillis-resolution-and-disposition D1/D2): the retained
+ * <p>Pins the repository's branch-1 state selected by
+ * std-time-nowmillis-resolution-and-disposition D1/D2: the retained
  * {@code ()->int} implementations on all three backends, the shared corpus
- * fixture still declaring {@code // @expected: runtime-ok} with the
- * positive-timestamp description, the runtime seam shape (no time-related
- * member, no JS-only legacy-range member, {@code checkInt} the single int
- * range seam), the fixture's absence from the JVM skip registry, and the
- * two legacy slice pins ({@code jvm-std-time-nowmillis},
- * {@code js-stdlib-time-structural}) with unchanged source and expected
- * result.
+ * fixture carrying the canonical flipped {@code runtime-error E8004}
+ * header (D2, applied exactly once by the unit), the runtime seam shape
+ * (no time-related member, no JS-only legacy-range member,
+ * {@code checkInt} the single int range seam), the fixture's absence from
+ * the JVM skip registry, and the two legacy slice pins
+ * ({@code jvm-std-time-nowmillis}, {@code js-stdlib-time-structural}) with
+ * unchanged source and expected result.
  *
- * <p>The behavioral half of the pre-activation state — the fixture passing
- * {@code runtime-ok} on the LuaJIT lane ({@code deal.test.ConformanceTest})
- * and the JVM lane ({@code deal.test.JvmConformanceTest}), the direct
- * suites ({@code luajit test_stdlib.lua}, {@code node test_stdlib_js.js})
- * green with their nowMillis cases, and the slice pins green
+ * <p>The behavioral half — the fixture passing {@code runtime-error E8004}
+ * on the LuaJIT lane ({@code deal.test.ConformanceTest}) and the JVM lane
+ * ({@code deal.test.JvmConformanceTest}), the direct suites
+ * ({@code luajit test_stdlib.lua}, {@code node test_stdlib_js.js}) green
+ * with their nowMillis cases, and the slice pins green
  * ({@code deal.test.BackendConformanceTest}) — is exercised on every gate
  * run by {@code run_tests.sh}. The JS lane has no corpus runner at this
  * state: {@code test/JsConformanceTest.java} is compiled but never launched
- * by {@code run_tests.sh} — a recorded pre-activation fact
+ * by {@code run_tests.sh} — a recorded fact
  * (js-v12-completion-architecture D5), not a failure.
  *
- * <p>Lifecycle: the fixture-header assertions pin the pre-activation value
- * of the surface the disposition-application unit (ISSUE-0237) is
- * authorized to flip — {@code @expected: runtime-ok} — and are retired in
- * that single unit together with the canonical {@code runtime-error E8004}
- * header flip, which must keep {@code ./run_tests.sh} green at every
- * landing (D4/D5). The runtime-seam assertions pin the parameterized seam
+ * <p>Lifecycle: the disposition-application unit (ISSUE-0380) flipped the
+ * fixture header once to the canonical {@code runtime-error E8004}
+ * header (std-time-nowmillis-resolution-and-disposition D2); the
+ * fixture-header assertions below now pin that landed header. The
+ * runtime-seam assertions pin the parameterized seam
  * the JS int32 gate activation (ISSUE-0321, js-v12-int32-bytes D1/D2)
  * landed: {@code checkInt}'s single profile-gated range arm (the
  * module-private {@code $int32} flag and the idempotent
@@ -163,18 +163,23 @@ public class StdlibTimePreActivationPinTest {
         if (ls.size() >= 4) {
             check("// @spec: Standard library declarations — std/time".equals(ls.get(0)),
                 "the fixture keeps the canonical @spec line");
-            check("// @description: std/time.nowMillis returns a positive int-like timestamp"
-                    .equals(ls.get(1)),
-                "the fixture keeps the positive-timestamp @description");
-            check("// @expected: runtime-ok".equals(ls.get(2)),
-                "the fixture still declares @expected: runtime-ok");
-            check("// @features: stdlib, time".equals(ls.get(3)),
-                "the fixture keeps the @features line");
+            check(("// @description: std/time.nowMillis under the v1.2 signed-int32 "
+                    + "gate — the retained ()->int route raises E8004 for "
+                    + "contemporary epoch milliseconds (locked TIME_NOW_MILLIS "
+                    + "artifact)").equals(ls.get(1)),
+                "the fixture carries the canonical landed @description");
+            check("// @expected: runtime-error E8004".equals(ls.get(2)),
+                "the fixture declares the landed @expected: runtime-error E8004");
+            check("// @features: stdlib, time, runtime-errors".equals(ls.get(3)),
+                "the fixture carries the canonical landed @features line");
         }
         String text = Files.readString(fixture);
-        check(!text.contains("runtime-error"),
-            "the fixture contains no runtime-error expectation "
-                + "(no disposition flip applied)");
+        check(!text.contains("runtime-ok"),
+            "the fixture contains no runtime-ok expectation "
+                + "(the canonical disposition flip landed once)");
+        check(count(text, "runtime-error E8004") == 1,
+            "the fixture's runtime-error E8004 expectation appears exactly "
+                + "once (single @expected line)");
         check(count(text, "@expected") == 1,
             "the fixture has exactly one @expected line");
     }

@@ -1,7 +1,7 @@
 // @spec: Standard library declarations — std/time
-// @description: std/time.nowMillis returns a positive int-like timestamp
-// @expected: runtime-ok
-// @features: stdlib, time
+// @description: std/time.nowMillis under the v1.2 signed-int32 gate — the retained ()->int route raises E8004 for contemporary epoch milliseconds (locked TIME_NOW_MILLIS artifact)
+// @expected: runtime-error E8004
+// @features: stdlib, time, runtime-errors
 
 import * as time from "std/time"
 

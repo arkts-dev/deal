@@ -75,31 +75,30 @@ import java.util.stream.Stream;
  *       {@code code, message, sourceFile, line, column, expected,
  *       actual, frames, cause}, minimal RFC 8259 §7 escaping, raw UTF-8,
  *       canonical decimal integers, no whitespace between tokens.</li>
- *   <li>The backend-runtime known-fail population is exactly the one
- *       restored known-fail fixture
- *       ({@code arithmetic/int-add-overflow.deal}, ISSUE-0378 D3:
- *       restored byte-exactly with its canonical known-fail header, so
- *       its stale-known-fail gate fires on the activated lanes; a
- *       known-fail-classified fixture counts in neither the
- *       runtime-ok nor the runtime-error population). Because its
- *       underlying mode is a runtime mode, the restored fixture
- *       carries its three-backend runtime sidecar like every other
- *       runtime-classified fixture (the differential gate's presence
- *       rule, ISSUE-0353: a runtime-classified fixture — including
- *       a known-fail whose underlying mode is runtime — requires a
- *       valid three-backend sidecar; the gate has no silent default).
- *       The uniform E8004 sidecar pins the fixture's declared
- *       underlying mode: the LuaJIT and JVM legs raise E8004 today,
- *       and the JS leg (the legacy safe-int range still admits
- *       2147483648) is consumed by the known-fail tracking at lane
- *       dispatch until JS v1.2 int32 lands. The A5 profile-selection
- *       merge had removed the fixture with its runtime-error sidecar
- *       and re-homed the coverage to the two-backend slice surface
- *       ({@code jvm-int32-slice.json#int32-add-overflow}), which
- *       stays. ISSUE-0339 promoted the last previously tracked
- *       fixture ({@code bytes-buffer-ops.deal}, which received its
- *       runtime-ok sidecar in the same change that dropped its
- *       known-fail marker).</li>
+ *   <li>The backend-runtime known-fail population is empty post-unit
+ *       (ISSUE-0380, the disposition-application unit): the restored
+ *       {@code arithmetic/int-add-overflow.deal} fixture
+ *       (ISSUE-0378 D3) was promoted in the unit's landing change —
+ *       its {@code known-fail runtime-error E8004} marker and
+ *       {@code @issue} tag dropped, {@code @expected: runtime-error
+ *       E8004} set — so it counts in the runtime-error population
+ *       with its three-backend runtime sidecar unchanged (the
+ *       differential gate's presence rule, ISSUE-0353: a
+ *       runtime-classified fixture requires a valid three-backend
+ *       sidecar; the gate has no silent default). The same unit
+ *       flipped the shared time fixture
+ *       {@code stdlib-edge/time-now-millis-positive.deal} to its
+ *       canonical {@code runtime-error E8004} header
+ *       (std-time-nowmillis-resolution-and-disposition D2) and
+ *       re-authored its sidecar as the uniform three-backend E8004
+ *       sidecar — the retained {@code ()->int} route raises E8004 at
+ *       the declared int boundary on every lane under its activated
+ *       gate. The two-backend slice surface
+ *       ({@code jvm-int32-slice.json#int32-add-overflow}) stays.
+ *       ISSUE-0339 promoted the last previously tracked bytes fixture
+ *       ({@code bytes-buffer-ops.deal}, which received its runtime-ok
+ *       sidecar in the same change that dropped its known-fail
+ *       marker).</li>
  *   <li>All other fixtures ({@code compile-ok}, {@code compile-error},
  *       {@code companion}, frontend fixtures) carry no sidecar except
  *       the Diagnostics-bullet fixtures.</li>
@@ -165,8 +164,12 @@ public class SidecarCorpusValidationTest {
      * same change; plus the jsonable-fromjson-nested-depth3 fixture
      * the ISSUE-0340 review fix added with its sidecar in the same
      * change, pinning the depth >= 3 nested compiler-class fromJson
-     * decode). */
-    private static final int RUNTIME_OK_COUNT = 219;
+         * decode). ISSUE-0380 (the disposition-application unit) flips the
+     * shared time fixture
+     * {@code stdlib-edge/time-now-millis-positive.deal} to its canonical
+     * {@code runtime-error E8004} header, moving it out of this
+     * population: 219 -> 218. */
+    private static final int RUNTIME_OK_COUNT = 218;
 
     /**
      * The exact runtime-error population (ISSUE-0350 completeness, plus
@@ -199,9 +202,15 @@ public class SidecarCorpusValidationTest {
      * plus the host-class-extra-field E8007 fixture ISSUE-0334 added
      * with its sidecar in the same change; plus the stdlib/table
      * keys-nontable-error E8001 fixture ISSUE-0341 added with its
-     * sidecar in the same change).
-     */
-    private static final int RUNTIME_ERROR_COUNT = 81;
+         * sidecar in the same change). ISSUE-0380 (the
+     * disposition-application unit) adds two members to this population
+     * with their sidecars: the flipped time fixture
+     * {@code stdlib-edge/time-now-millis-positive.deal} (E8004 at the
+     * declared int boundary, sidecar re-authored in the same change) and
+     * the promoted {@code arithmetic/int-add-overflow.deal} (marker
+     * dropped, E8004 sidecar unchanged): 81 -> 83.
+ */
+    private static final int RUNTIME_ERROR_COUNT = 83;
 
     /**
      * ISSUE-0397 count-pin criterion record (MR-0305 review cycles 1
@@ -942,17 +951,14 @@ public class SidecarCorpusValidationTest {
             + "exactly " + RUNTIME_ERROR_COUNT + " runtime-error fixtures "
             + "with sidecars, found " + runtimeError);
 
-        // The tracked known-fail population is exactly the one restored
-        // known-fail fixture (ISSUE-0378 D3): the corpus
-        // arithmetic/int-add-overflow.deal restored byte-exactly with
-        // its canonical known-fail header — its runtime-error E8004
-        // probe passes on the activated lanes and fires the
-        // stale-known-fail gate with the promotion instruction. A
-        // known-fail-classified fixture counts in neither the runtime-ok
-        // nor the runtime-error population; because its underlying mode
-        // is a runtime mode it carries its three-backend sidecar (the
-        // differential gate's presence rule, ISSUE-0353), which the
-        // allowed-sidecar set admits above.
+        // The tracked backend-runtime known-fail population is empty
+        // post-unit (ISSUE-0380, the disposition-application unit): the
+        // restored known-fail fixture
+        // arithmetic/int-add-overflow.deal (ISSUE-0378 D3) was promoted
+        // in the unit's landing change — its runtime-error E8004 probe
+        // now counts in the runtime-error population with its unchanged
+        // three-backend sidecar (the differential gate's presence rule,
+        // ISSUE-0353), and the stale-known-fail gate no longer names it.
         Set<String> knownFail = new TreeSet<>();
         for (Fixture fixture : fixtures) {
             if (fixture.corpusPath().startsWith("backend-runtime/")
@@ -961,11 +967,9 @@ public class SidecarCorpusValidationTest {
             }
         }
         Set<String> expectedKnownFail = new TreeSet<>();
-        expectedKnownFail.add(
-            "backend-runtime/arithmetic/int-add-overflow.deal");
         check(knownFail.equals(expectedKnownFail),
-            "the tracked known-fail population must be exactly "
-                + expectedKnownFail + ", got " + knownFail);
+            "the tracked backend-runtime known-fail population must be "
+                + "empty post-unit, got " + knownFail);
 
         // No stray sidecar anywhere in the corpus.
         try (Stream<Path> stream = Files.walk(CORPUS_ROOT)) {

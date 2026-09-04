@@ -39,17 +39,23 @@ public class DifferentialGateCorpusTest {
      * backend-runtime fixture, +1 known-fail, +1 runtime-error sidecar
      * (its underlying runtime-error E8004 mode carries the mandatory
      * three-backend sidecar like every other runtime-classified
-     * fixture). */
+     * fixture). ISSUE-0380 (the disposition-application unit) flips
+     * {@code backend-runtime/stdlib-edge/time-now-millis-positive.deal}
+     * to {@code runtime-error E8004} (runtime-ok 219 -> 218, sidecar
+     * re-authored) and promotes the restored int-add-overflow fixture
+     * (runtime-error 81 -> 83, its sidecar unchanged; known-fail
+     * 2 -> 1: only the FFI manifest frontend pin stays tracked; the
+     * runtime-error-sidecar population 82 -> 83). */
     private static final int TOTAL_FIXTURES = 465;
     private static final int FRONTEND_FIXTURES = 130;
     private static final int BACKEND_RUNTIME_FIXTURES = 335;
     private static final int COMPILE_OK = 38;
     private static final int COMPILE_ERROR = 91;
-    private static final int RUNTIME_OK = 219;
-    private static final int RUNTIME_ERROR = 81;
-    private static final int RUNTIME_ERROR_SIDECARS = 82;
+    private static final int RUNTIME_OK = 218;
+    private static final int RUNTIME_ERROR = 83;
+    private static final int RUNTIME_ERROR_SIDECARS = 83;
     private static final int COMPANIONS = 34;
-    private static final int KNOWN_FAIL = 2;
+    private static final int KNOWN_FAIL = 1;
     private static final int COMPILE_PINS = 2;
 
     public static void main(String[] args) throws Exception {
@@ -172,11 +178,10 @@ public class DifferentialGateCorpusTest {
             .sorted()
             .toList();
         check(knownFailPaths.equals(List.of(
-                "backend-runtime/arithmetic/int-add-overflow.deal",
                 "frontend/modules/ffi-manifest-missing-native-library-rejected.deal")),
             "the tracked known-fail fixtures are exactly the FFI manifest "
-                + "pin and the restored int-add-overflow fixture, got "
-                + knownFailPaths);
+                + "pin (ISSUE-0380 promoted the restored int-add-overflow "
+                + "fixture to runtime-error E8004), got " + knownFailPaths);
         check(run.fixtures().stream()
                 .filter(f -> f.classification() != null
                     && f.classification().kind()

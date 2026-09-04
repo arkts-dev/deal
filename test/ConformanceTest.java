@@ -164,31 +164,20 @@ public class ConformanceTest {
      * run, and an entry that becomes stale fails the gate with a
      * promotion instruction).
      *
-     * <p>The single entry is the locked {@code TIME_NOW_MILLIS} artifact
-     * (luajit-v1.2-stdlib-contracts D6, luajit-v1.2-conformance-retirement-and-gate
-     * D3): the retained {@code std/time.nowMillis ()->int} route computes
-     * {@code os.time() * 1000} (≈1.7e12 for contemporary epoch
-     * milliseconds), which deterministically raises E8004 under the
-     * signed-int32 gate landed by ISSUE-0332, while the shared corpus
-     * fixture keeps its {@code runtime-ok} expectation and {@code
-     * std/time.lua} stays frozen until the delegated time-selector child
-     * (ISSUE-0237) lands its disposition pair. This runner records the
-     * staged state without touching the fixture or the stdlib module.</p>
+     * <p>The registry is empty post-unit (ISSUE-0380, the
+     * disposition-application unit): the disposition pair landed
+     * (std-time-nowmillis-resolution-and-disposition D1/D2 — the
+     * retained {@code std/time.nowMillis ()->int} route plus the shared
+     * fixture's canonical {@code runtime-error E8004} header), so the
+     * former {@code TIME_NOW_MILLIS} staged entry is removed and the
+     * fixture runs under its landed expectation — it passes as
+     * {@code runtime-error E8004} under the legacy-authority catalog row
+     * (zero v1.2 credit). The machinery stays: any future
+     * design-sanctioned interim state registers here, and a stale entry
+     * still fails the gate with the promotion instruction.</p>
      */
     private static final Map<String, StagedEntry> STAGED_FAILURES =
         new LinkedHashMap<>();
-    static {
-        stagedFailure("backend-runtime/stdlib-edge/time-now-millis-positive.deal",
-            "runtime-ok",
-            "E8004",
-            "ISSUE-0237",
-            "the retained std/time.nowMillis ()->int route raises E8004 "
-                + "for contemporary epoch milliseconds under the "
-                + "signed-int32 gate (locked TIME_NOW_MILLIS artifact); "
-                + "the fixture's runtime-ok expectation and std/time.lua "
-                + "are frozen until the delegated time-selector child "
-                + "lands its disposition pair");
-    }
 
     private static void stagedFailure(String path, String pinnedExpectation,
             String artifactCode, String issue, String reason) {

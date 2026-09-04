@@ -16,7 +16,9 @@ import java.util.List;
 
 /**
  * JVM lane-state pin test (ISSUE-0378 D5) — the anti-hollow evidence
- * owner for the activated JVM corpus lane's sanctioned staged state.
+ * owner for the activated JVM corpus lane, re-pinned by the
+ * disposition-application unit (ISSUE-0380) to the post-unit green
+ * lane state.
  *
  * <p>The test owns two pin families:
  * <ul>
@@ -33,36 +35,34 @@ import java.util.List;
  *       test/conformance/}) and the real LuaJIT lane
  *       ({@code java -ea -cp build deal.test.ConformanceTest
  *       test/conformance/}) as subprocesses and asserts the captured
- *       failure sets field-exactly: both exit codes, the verbatim
- *       fixture names, the verbatim promotion instruction, the exact
- *       GATE FAILURE set, the exact {@code ] FAIL (} line set, no
- *       STAGED-FAIL line on the JVM lane, the LuaJIT staged entry
- *       intact, and the pinned summary numbers. Every assertion
- *       matches captured real-run output text — never a paraphrase.</li>
+ *       outputs field-exactly: both exit codes, the verbatim
+ *       passing-fixture lines, the exact {@code ] FAIL (} line set
+ *       (post-unit: only the two pre-existing host-prewrapped
+ *       skip-probe exception lines on the JVM lane), zero GATE
+ *       FAILURE lines, no STAGED-FAIL line on either lane, the green
+ *       {@code Gates PASSED} banner on the JVM lane, and the pinned
+ *       summary numbers. Every assertion matches captured real-run
+ *       output text — never a paraphrase.</li>
  * </ul>
  *
- * <p>The sanctioned pinned JVM lane state (the unmerged tree): exit
- * code 1; exactly two gate failures — the unflipped stdlib-edge
- * epoch-millisecond fixture raising E8004 at the declared {@code int}
- * boundary against its {@code runtime-ok} expectation (one applicable
- * failure), and the restored corpus known-fail fixture
- * {@code backend-runtime/arithmetic/int-add-overflow.deal} firing the
- * stale-known-fail gate with the promotion instruction (set
- * {@code @expected: runtime-error E8004}, drop the {@code @issue} tag)
- * — plus the two pre-existing host-prewrapped skip-probe exception
- * lines and nothing else. ISSUE-0304 retired
- * {@code JVM-GAP-ASYNC-FNEXPR}: its two skip entries
- * ({@code async-fn-expr.deal}, {@code async-await-statement.deal})
- * now pass the real pipeline, so the summary moved from
- * {@code passed 252, skipped 47} to {@code passed 254, skipped 45}
- * with the pass rate 83.7% → 84.4% (re-pinned here, the same summary
- * re-pin precedent as ISSUE-0476). The LuaJIT lane (consequence,
- * pinned): exit code 1 with the same stale known-fail and its single
- * tracked staged time entry (ISSUE-0237) intact; its summary
- * additionally records the frontend known-fail fixture
- * {@code frontend/modules/ffi-manifest-missing-native-library-rejected.deal}
- * (compile-error E2010 tracked by ISSUE-0111), so the lane's summary
- * totals are 429 with exactly one tracked known-fail.
+ * <p>The post-unit JVM lane state: exit code 0 — the shared time
+ * fixture flipped to {@code runtime-error E8004} passes under the
+ * activated profile with {@code OK (found DEAL_ERROR_CODE: E8004)},
+ * and the promoted
+ * {@code backend-runtime/arithmetic/int-add-overflow.deal} passes the
+ * same way, so the stale-known-fail gate no longer names it; only the
+ * two host-prewrapped skip-probe exception lines remain in the
+ * {@code ] FAIL (} set, and the summary moved from
+ * {@code passed 254, failed 1 ... pass rate 84.4%} to
+ * {@code passed 256, failed 0 ... pass rate 85.0%}. The LuaJIT lane
+ * (consequence, pinned): exit code 0 — the flipped time fixture
+ * passes as {@code runtime-error E8004} under its legacy-authority
+ * catalog row (zero v1.2 credit), the staged registry entry is
+ * removed (no STAGED-FAIL line), the promoted int-add-overflow
+ * passes, and the summary reads {@code Total: 430, Passed: 430}
+ * with exactly one tracked known-fail (the frontend FFI-manifest
+ * fixture, compile-error E2010 tracked by ISSUE-0111) and zero
+ * staged failures.
  *
  * <p>The test runs from the repository root (the {@code run_tests.sh}
  * contract, like {@code ConformanceTest}); {@code run_tests.sh}
@@ -76,20 +76,16 @@ public class JvmLaneStatePinTest {
     private static int failed = 0;
 
     // =========================================================================
-    // The pinned JVM lane failure set (exact captured output text)
+    // The pinned JVM lane output set (exact captured output text)
     // =========================================================================
 
-    private static final String JVM_TIME_FAIL =
+    private static final String JVM_TIME_OK =
         "  [backend-runtime/stdlib-edge/time-now-millis-positive.deal] "
-            + "FAIL (runtime-ok test exited 1): DEAL_ERROR_CODE: E8004 "
-            + "int out of safe range";
+            + "OK (found DEAL_ERROR_CODE: E8004)";
 
-    private static final String JVM_STALE_KNOWN_FAIL =
-        "  [backend-runtime/arithmetic/int-add-overflow.deal] FAIL "
-            + "(STALE known-fail: the v1.2 requirement tracked by "
-            + "ISSUE-0111 now passes on JVM \u2014 promote the fixture: set "
-            + "'@expected: runtime-error E8004' and drop the @issue "
-            + "tag)";
+    private static final String JVM_ADD_OVERFLOW_OK =
+        "  [backend-runtime/arithmetic/int-add-overflow.deal] OK "
+            + "(found DEAL_ERROR_CODE: E8004)";
 
     private static final String JVM_PREWRAPPED_OK =
         "  [backend-runtime/host-abi/host-prewrapped-ok.deal] FAIL "
@@ -101,22 +97,21 @@ public class JvmLaneStatePinTest {
             + "(execution exception): no JVM host implementation for "
             + "prewrapped_bad";
 
-    private static final String JVM_GATE_STALE =
-        "GATE FAILURE: 1 stale known-fail marker(s) \u2014 promote the "
-            + "fixture(s)";
+    private static final String JVM_GATES_PASSED =
+        "Gates PASSED: frontend 100%; backend-runtime zero applicable "
+            + "failures AND >= 80% pass rate over the unchanged 301-test "
+            + "denominator; zero unclassified skips; zero stale skips; "
+            + "zero stale known-fail markers; zero probe runner "
+            + "exceptions.";
 
-    private static final String JVM_GATE_APPLICABLE =
-        "GATE FAILURE: 1 applicable backend-runtime test(s) failed \u2014 "
-            + "zero applicable failures required";
-
-    // ISSUE-0304 retired JVM-GAP-ASYNC-FNEXPR (the two async-expression
-    // skip entries became passing fixtures), so the summary moved from
-    // "passed 252, skipped 47 ... pass rate 83.7%" to the re-pinned
-    // numbers below.
+    // ISSUE-0380 (the disposition-application unit) flipped the time
+    // fixture to runtime-error E8004 and promoted int-add-overflow, so
+    // the summary moved from "passed 254, failed 1 ... pass rate 84.4%"
+    // to the re-pinned numbers below.
     private static final String JVM_SUMMARY =
         "Backend-runtime on JVM: denominator 301 (every on-disk runtime "
-            + "test, unchanged), passed 254, failed 1, skipped 45 "
-            + "(classified), known-fail 0 (tracked) \u2014 pass rate 84.4%";
+            + "test, unchanged), passed 256, failed 0, skipped 45 "
+            + "(classified), known-fail 0 (tracked) \u2014 pass rate 85.0%";
 
     private static final String JVM_PROFILE_AUTHORITY =
         "Profile-authority accounting: 0 legacy-authority fixture(s) "
@@ -127,27 +122,32 @@ public class JvmLaneStatePinTest {
     // The pinned LuaJIT lane consequence (exact captured output text)
     // =========================================================================
 
-    private static final String LUA_STALE_KNOWN_FAIL =
-        "  [backend-runtime/arithmetic/int-add-overflow.deal] FAIL "
-            + "(STALE known-fail: the v1.2 requirement tracked by "
-            + "ISSUE-0111 now passes \u2014 promote the fixture: set "
-            + "'@expected: runtime-error E8004' and drop the @issue "
-            + "tag)";
-
-    private static final String LUA_STAGED_TIME =
+    private static final String LUA_TIME_OK =
         "  [backend-runtime/stdlib-edge/time-now-millis-positive.deal] "
             + "LEGACY-AUTHORITY (legacy-regression; zero v1.2 credit) "
-            + "STAGED-FAIL (E8004 locked artifact; tracked by "
-            + "ISSUE-0237: the retained std/time.nowMillis ()->int route "
-            + "raises E8004 for contemporary epoch milliseconds under "
-            + "the signed-int32 gate (locked TIME_NOW_MILLIS artifact); "
-            + "the fixture's runtime-ok expectation and std/time.lua are "
-            + "frozen until the delegated time-selector child lands its "
-            + "disposition pair)";
+            + "OK (found DEAL_ERROR_CODE: E8004)";
+
+    private static final String LUA_ADD_OVERFLOW_OK =
+        "  [backend-runtime/arithmetic/int-add-overflow.deal] OK "
+            + "(found DEAL_ERROR_CODE: E8004)";
 
     private static final String LUA_SUMMARY =
-        "Total: 429, Passed: 428, Failed: 1, Skipped: 0, "
-            + "KnownFailures (tracked): 1, StagedFailures (tracked): 1";
+        "Total: 430, Passed: 430, Failed: 0, Skipped: 0, "
+            + "KnownFailures (tracked): 1, StagedFailures (tracked): 0";
+
+    private static final String LUA_PHASE =
+        "  LuaJIT backend-runtime conformance (v1.2): 307/307 passed, "
+            + "0 failed, 0 skipped, 0 known-fail (tracked), 0 "
+            + "staged-fail (tracked)";
+
+    private static final String LUA_FOLLOW_UP =
+        "    ISSUE-0111: 1 known-fail fixture(s)";
+
+    private static final String LUA_PROFILE_AUTHORITY =
+        "Profile-authority accounting: 2 legacy-authority result(s) "
+            + "(LEGACY_REGRESSION + LEGACY_SAFE_INT \u2014 zero "
+            + "v1.2/promotion credit; 2 passed, 0 failed), 463 v1.2-credit "
+            + "result(s) (COMMON_SHADOW + DEAL_V1_2_INT32)";
 
     // =========================================================================
     // Assertion helpers
@@ -294,23 +294,24 @@ public class JvmLaneStatePinTest {
             + "run) --");
         RunResult run = runLane("deal.test.JvmConformanceTest",
             "test/conformance/");
-        check(run.exitCode() == 1,
-            "the JVM lane must exit 1 on the sanctioned pinned staged "
-                + "state, got " + run.exitCode());
+        check(run.exitCode() == 0,
+            "the JVM lane must exit 0 post-unit (the flipped time "
+                + "fixture and the promoted int-add-overflow pass under "
+                + "the activated profile), got " + run.exitCode());
         String out = run.output();
         checkFailLineSet(out, List.of(
-            JVM_TIME_FAIL, JVM_STALE_KNOWN_FAIL,
             JVM_PREWRAPPED_OK, JVM_PREWRAPPED_BAD), "JVM lane");
-        checkGateLineSet(out,
-            List.of(JVM_GATE_STALE, JVM_GATE_APPLICABLE), "JVM lane");
+        checkGateLineSet(out, List.of(), "JVM lane");
+        checkContains(out, JVM_TIME_OK, "JVM lane");
+        checkContains(out, JVM_ADD_OVERFLOW_OK, "JVM lane");
         checkContains(out, JVM_SUMMARY, "JVM lane");
         checkContains(out, JVM_PROFILE_AUTHORITY, "JVM lane");
+        checkContains(out, JVM_GATES_PASSED, "JVM lane");
         check(!out.contains("STAGED-FAIL"),
             "the JVM lane carries no staged-failure registry: its output "
                 + "must contain no STAGED-FAIL line");
-        check(!out.contains("Gates PASSED"),
-            "the JVM lane must not print the green Gates PASSED banner "
-                + "on the sanctioned pinned staged state");
+        check(!out.contains("GATE FAILURE"),
+            "the JVM lane must print no GATE FAILURE line post-unit");
     }
 
     // =========================================================================
@@ -323,14 +324,24 @@ public class JvmLaneStatePinTest {
             + "subprocess run) --");
         RunResult run = runLane("deal.test.ConformanceTest",
             "test/conformance/");
-        check(run.exitCode() == 1,
-            "the LuaJIT lane must exit 1 with the stale known-fail, got "
-                + run.exitCode());
+        check(run.exitCode() == 0,
+            "the LuaJIT lane must exit 0 post-unit (the flipped time "
+                + "fixture passes as runtime-error E8004 under its "
+                + "legacy-authority catalog row and the promoted "
+                + "int-add-overflow passes; the staged registry entry "
+                + "is removed), got " + run.exitCode());
         String out = run.output();
-        checkFailLineSet(out, List.of(LUA_STALE_KNOWN_FAIL), "LuaJIT lane");
+        checkFailLineSet(out, List.of(), "LuaJIT lane");
         checkGateLineSet(out, List.of(), "LuaJIT lane");
-        checkContains(out, LUA_STAGED_TIME, "LuaJIT lane");
+        checkContains(out, LUA_TIME_OK, "LuaJIT lane");
+        checkContains(out, LUA_ADD_OVERFLOW_OK, "LuaJIT lane");
         checkContains(out, LUA_SUMMARY, "LuaJIT lane");
+        checkContains(out, LUA_PHASE, "LuaJIT lane");
+        checkContains(out, LUA_FOLLOW_UP, "LuaJIT lane");
+        checkContains(out, LUA_PROFILE_AUTHORITY, "LuaJIT lane");
+        check(!out.contains("STAGED-FAIL"),
+            "the LuaJIT lane must carry no STAGED-FAIL line post-unit "
+                + "(the staged registry entry was removed by the unit)");
     }
 
     // =========================================================================
