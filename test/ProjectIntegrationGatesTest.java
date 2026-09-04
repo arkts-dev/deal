@@ -376,6 +376,72 @@ public class ProjectIntegrationGatesTest {
     }
 
     // =========================================================================
+    // Extern-c hold gate (ISSUE-0345 review cycle 1 remediation): until
+    // ISSUE-0157 lands the frontend's FfiModuleDescriptor, the LuaJIT arm
+    // must not activate emitter D6 (epic open blocker: "nothing on the
+    // LuaJIT side can activate before they land"). An // @extern-c
+    // declaration import therefore keeps the pre-D6 route — the
+    // load_host declared-map emission — and the generated chunk carries
+    // no __rt.load_ffi loader call and no ffi.C access. This gate pins
+    // the held state so a premature D6 activation fails it; the
+    // ISSUE-0345 D6 landing (consuming FfiModuleDescriptor) replaces this
+    // gate with the load_ffi generated-content gates.
+    // =========================================================================
+
+    private static void testExternCImportPreD6Hold() throws Exception {
+        System.out.println("-- Extern-c hold gate: the pre-D6 route stays"
+            + " until ISSUE-0157 lands --");
+        Path base = Files.createTempDirectory("deal_gate_ffi_hold_");
+        try {
+            Path proj = base.resolve("proj");
+            write(proj, "ffi_math.d.deal",
+                "// @extern-c\n"
+                    + "export function add(a: int, b: int): int;\n");
+            write(proj, "deal.json",
+                "{\n  \"languageVersion\": \"1.2\",\n"
+                    + "  \"moduleRoots\": [\"src\"],\n"
+                    + "  \"output\": \"build/lua\",\n"
+                    + "  \"backend\": \"luajit\",\n"
+                    + "  \"externals\": {\n"
+                    + "    \"ffi_math\": {\n"
+                    + "      \"declaration\": \"ffi_math.d.deal\",\n"
+                    + "      \"nativeLibrary\": \"libffi_math.so\"\n"
+                    + "    }\n  }\n}\n");
+            write(proj, "src/main.deal",
+                "import * as ffi from \"ffi_math\"\n"
+                    + "export function main(): null {\n"
+                    + "  return null;\n"
+                    + "}\n");
+            Path entry = proj.resolve("src/main.deal").toAbsolutePath();
+
+            String[] lua = runCliCapturingErr(new String[]{
+                "compile", entry.toString()});
+            check("0".equals(lua[0]),
+                "the extern-c import compiles on the held LuaJIT arm: "
+                    + lua[1]);
+            check(!lua[1].contains("ERROR"),
+                "the extern-c compile emits no diagnostics: " + lua[1]);
+            Path luaDir = proj.resolve("build/lua");
+            check(Files.exists(luaDir.resolve("main.lua")),
+                "the LuaJIT entry artifact exists");
+
+            String mainLua = Files.readString(luaDir.resolve("main.lua"));
+            check(mainLua.contains(
+                    "local ffi = __rt.load_host(\"ffi_math\", {"),
+                "the extern-c import keeps the pre-D6 host route pending"
+                    + " ISSUE-0157");
+            check(!mainLua.contains("__rt.load_ffi"),
+                "the held arm emits no load_ffi loader call");
+            check(!mainLua.contains("ffi.C"),
+                "the held arm emits no ffi.C access");
+            check(!mainLua.contains("FFI_UNSUPPORTED_BACKEND"),
+                "the held arm raises no FFI_UNSUPPORTED_BACKEND");
+        } finally {
+            deleteRecursively(base);
+        }
+    }
+
+    // =========================================================================
     // Gate 1. Integration fixture 1: a class-free out-of-root project
     //         compiles and runs on both backends through the production
     //         pipeline, with importer-relative resolution outside every
@@ -1165,6 +1231,7 @@ public class ProjectIntegrationGatesTest {
         System.out.println("=== Project Integration Gates Test (ISSUE-0270) ===\n");
 
         testClassFreeOutOfRootBothBackends();
+        testExternCImportPreD6Hold();
         testOutOfRootClassBothBackends();
         testDeclarationClassGates();
         testImportResolutionErrorGates();
