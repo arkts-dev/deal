@@ -2,6 +2,7 @@ package deal.test;
 
 import deal.ast.BinaryExpr;
 import deal.ast.BinaryOp;
+import deal.ast.ProgramNode;
 import deal.ast.FunctionDeclaration;
 import deal.ast.StatementNode;
 import deal.ast.VariableDeclaration;
@@ -1285,60 +1286,56 @@ public class EvaluationOrderIntegrationTest {
     }
 
     // =========================================================================
-    // 5b. The bytes-comparison gate (E3019) — frontend, before lowering
+    // 5b. Bytes equality admission (ISSUE-0158 gate lift) — frontend,
+    // before lowering
     // =========================================================================
 
     /**
-     * The E3019 gate lives in {@code checkBinary} and fires on the checked
-     * operand types. The v1.2 frontend cannot produce a bytes-typed
-     * expression from source (bytes value semantics are
-     * ISSUE-0111/ISSUE-0158's), so the gate's admission path is driven
-     * exactly like CheckerTest's pinned seam: a resolved parameter's
-     * declared type is replaced with a synthetic bytes-involving type
-     * before type checking runs. The gate fires in the checker — phase 3,
-     * before routing and before any lowering op exists — which is why the
-     * E6005 COMPARISON_SELECTOR producer guard is unreachable for user
-     * programs.
+     * ISSUE-0158 lifted the E3019 gate: equal bytes-containing pairs and
+     * nullable-bytes-vs-null (both directions) are admitted as
+     * {@code Type.Boolean} in {@code checkBinary} (spec-v1.2
+     * reference-identity equality), and {@code DiagnosticCode.E3019} was
+     * deleted. The admission path is driven from real v1.2 source —
+     * {@code bytes(2)} is now a production intrinsic — with no synthetic
+     * parameter retyping. Mixed pairs keep E3006, bytes relationals keep
+     * E3007, and the E6005 COMPARISON_SELECTOR producer guard now sits
+     * behind the no-row relational pairs (section 7).
      */
-    private static List<CompilerDiagnostic> checkProgramWithParamRetyped(String source,
-            String functionName, String paramName, Type replacementType) {
+    private record CheckedSource(CheckResult result, ProgramNode program) {}
+
+    private static CheckedSource checkSource(String source) {
         LexResult lex = new Lexer(source, SOURCE_ID).tokenize();
-        ParseResult parse = new Parser(lex.tokens(), SOURCE_ID).parse();
-        if (parse.hasErrors()) {
-            return parse.diagnostics();
-        }
+        ParseResult parse = new Parser(lex.tokens(), SOURCE_ID,
+            lex.directiveEvents()).parse();
+        check(!parse.hasErrors(), "fixture program parses cleanly: "
+            + parse.diagnostics());
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver(SOURCE_ID, resolver);
         SymbolTable symTable = nr.resolve(parse.program());
-        boolean retyped = false;
-        for (StatementNode stmt : parse.program().statements()) {
-            if (stmt instanceof FunctionDeclaration fd && fd.name().equals(functionName)) {
-                SymbolTable scope = nr.scopeMap().get(fd);
-                if (scope == null) {
-                    continue;
-                }
-                Symbol sym = scope.resolveLocal(paramName);
-                if (sym instanceof Symbol.VariableSymbol vs) {
-                    scope.remove(paramName);
-                    scope.define(paramName,
-                        new Symbol.VariableSymbol(paramName, replacementType,
-                            vs.isParameter()));
-                    retyped = true;
-                }
-            }
-        }
-        check(retyped, "parameter '" + paramName + "' of function '" + functionName
-            + "' was retyped to " + replacementType);
         List<CompilerDiagnostic> diags = new ArrayList<>(nr.diagnostics());
+        CheckResult result;
         if (diags.isEmpty()) {
-            CheckResult result = TypeChecker.check(SOURCE_ID, symTable, nr,
-                parse.program());
+            result = TypeChecker.check(SOURCE_ID, symTable, nr, parse.program());
             diags.addAll(result.diagnostics());
+        } else {
+            result = new CheckResult(Map.of(), symTable, diags);
         }
-        return diags;
+        return new CheckedSource(result, parse.program());
     }
 
-    private static BinaryExpr firstBinaryExpr(deal.ast.ProgramNode program) {
+    private static void assertNoDiagnostics(CheckedSource checked, String context) {
+        check(checked.result().diagnostics().isEmpty(),
+            context + " has zero diagnostics: " + checked.result().diagnostics());
+    }
+
+    private static void assertDiagnostic(CheckedSource checked, String code,
+            String context) {
+        check(checked.result().diagnostics().stream()
+                .anyMatch(d -> code.equals(d.code())),
+            context + " carries " + code + ": " + checked.result().diagnostics());
+    }
+
+    private static BinaryExpr firstBinaryExpr(ProgramNode program) {
         for (StatementNode stmt : program.statements()) {
             if (stmt instanceof FunctionDeclaration fd) {
                 for (StatementNode bodyStmt : fd.body().statements()) {
@@ -1353,63 +1350,83 @@ public class EvaluationOrderIntegrationTest {
         return null;
     }
 
-    static void testBytesComparisonGateE3019() {
-        System.out.println("-- Bytes comparison gate (E3019): frontend, pre-routing, "
-            + "pre-lowering --");
+    static void testBytesComparisonAdmission() {
+        System.out.println("-- Bytes equality admission (ISSUE-0158 gate lift): "
+            + "frontend, before lowering --");
 
-        // bytes === bytes and bytes[] === bytes[] — rejected at the
-        // comparison span before lowering (the guard behind the gate stays
-        // unreachable for user programs).
-        for (Type replacement : new Type[] {
-            Type.Bytes.INSTANCE, Types.array(Type.Bytes.INSTANCE)}) {
-            String source = "function f(b: int): null {\n"
-                + "  let c: boolean = b === b;\n"
-                + "  return null;\n"
-                + "}";
-            LexResult lex = new Lexer(source, SOURCE_ID).tokenize();
-            ParseResult parse = new Parser(lex.tokens(), SOURCE_ID).parse();
-            BinaryExpr bin = firstBinaryExpr(parse.program());
-            List<CompilerDiagnostic> diags = checkProgramWithParamRetyped(source, "f", "b",
-                replacement);
-            check(diags.stream().anyMatch(d -> "E3019".equals(d.code())),
-                "an admitted bytes-involving pair (" + replacement + ") is rejected with "
-                    + "E3019: " + diags);
-            check(diags.stream().filter(d -> "E3019".equals(d.code()))
-                    .anyMatch(d -> bin != null && d.line() == bin.span().startLine()
-                        && d.column() == bin.span().startColumn()),
-                "E3019 is reported at the comparison expression's span");
-        }
+        // bytes === bytes / bytes !== bytes: boolean-typed, zero
+        // diagnostics, and E3019 no longer exists.
+        CheckedSource out = checkSource(
+            "function f(): null {\n"
+            + "  let a: bytes = bytes(2);\n"
+            + "  let b: bytes = a;\n"
+            + "  let c: boolean = a === b;\n"
+            + "  let d: boolean = a !== bytes(2);\n"
+            + "  return null;\n"
+            + "}"
+        );
+        assertNoDiagnostics(out, "bytes ===/!== bytes admitted");
+        BinaryExpr bin = firstBinaryExpr(out.program());
+        Type comparisonType = out.result().typeMap().get(bin);
+        check(comparisonType == Type.Boolean.INSTANCE,
+            "bytes === bytes is typed boolean, got " + comparisonType);
 
-        // bytes|null === null and null === bytes|null (both directions).
-        for (Type replacement : new Type[] {Types.nullable(Type.Bytes.INSTANCE)}) {
-            for (String source : new String[] {
-                "function f(b: int): null {\n"
-                    + "  let c: boolean = b === null;\n"
-                    + "  return null;\n"
-                    + "}",
-                "function f(b: int): null {\n"
-                    + "  let c: boolean = null === b;\n"
-                    + "  return null;\n"
-                    + "}"}) {
-                List<CompilerDiagnostic> diags = checkProgramWithParamRetyped(source, "f",
-                    "b", replacement);
-                check(diags.stream().anyMatch(d -> "E3019".equals(d.code())),
-                    "nullable-bytes vs null is rejected with E3019 in both directions: "
-                        + diags);
-            }
-        }
+        // bytes[] === bytes[] (equal reference shapes containing bytes).
+        out = checkSource(
+            "function f(): null {\n"
+            + "  let xs: bytes[] = [bytes(1)];\n"
+            + "  let ys: bytes[] = xs;\n"
+            + "  let c: boolean = xs === ys;\n"
+            + "  return null;\n"
+            + "}"
+        );
+        assertNoDiagnostics(out, "bytes[] === bytes[] admitted");
 
-        // A non-admitted mixed pair keeps its existing E3006 rejection —
-        // the gate does not widen admission.
-        List<CompilerDiagnostic> mixed = checkProgramWithParamRetyped(
-            "function f(b: int): null {\n"
+        // bytes|null === bytes|null (equal nullable bytes pairs).
+        out = checkSource(
+            "function f(): null {\n"
+            + "  let a: bytes | null = bytes(1);\n"
+            + "  let b: bytes | null = a;\n"
+            + "  let c: boolean = a === b;\n"
+            + "  return null;\n"
+            + "}"
+        );
+        assertNoDiagnostics(out, "bytes|null === bytes|null admitted");
+
+        // bytes|null === null / null === bytes|null (both directions).
+        out = checkSource(
+            "function f(): null {\n"
+            + "  let a: bytes | null = bytes(1);\n"
+            + "  let c: boolean = a === null;\n"
+            + "  let e: boolean = null === a;\n"
+            + "  let g: boolean = a !== null;\n"
+            + "  return null;\n"
+            + "}"
+        );
+        assertNoDiagnostics(out, "bytes|null vs null admitted in both directions");
+
+        // A non-admitted mixed pair keeps E3006 — admission did not widen.
+        out = checkSource(
+            "function f(): null {\n"
+            + "  let b: bytes = bytes(1);\n"
             + "  let c: boolean = b === 1;\n"
             + "  return null;\n"
-            + "}", "f", "b", Type.Bytes.INSTANCE);
-        check(mixed.stream().anyMatch(d -> "E3006".equals(d.code()))
-                && mixed.stream().noneMatch(d -> "E3019".equals(d.code())),
-            "a non-admitted mixed pair keeps E3006 (the gate fires only on admitted "
-                + "pairs): " + mixed);
+            + "}"
+        );
+        assertDiagnostic(out, "E3006", "bytes === number keeps E3006");
+        check(out.result().diagnostics().stream()
+                .noneMatch(d -> "E3019".equals(d.code())),
+            "no E3019 diagnostic exists anymore: " + out.result().diagnostics());
+
+        // Bytes relationals keep E3007 (relationals stay int/number/string).
+        out = checkSource(
+            "function f(): null {\n"
+            + "  let b: bytes = bytes(1);\n"
+            + "  let c: boolean = b < b;\n"
+            + "  return null;\n"
+            + "}"
+        );
+        assertDiagnostic(out, "E3007", "bytes relational keeps E3007");
     }
 
     // =========================================================================
@@ -1836,24 +1853,42 @@ public class EvaluationOrderIntegrationTest {
     }
 
     // =========================================================================
-    // 7. The unreachable E6005 COMPARISON_SELECTOR producer-defect guard
+    // 7. The E6005 COMPARISON_SELECTOR producer-defect guard (no-row pairs)
     // =========================================================================
 
     static void testComparisonSelectorGuard() {
         System.out.println("-- COMPARISON_SELECTOR: the E6005 producer-defect guard --");
 
-        // A bytes-involving pair has no row (the E3019 frontend gate blocks
-        // the only admission path in phase 3, before routing) — the
-        // producer guard is the defensive layer behind the gate.
+        // ISSUE-0158 lifted the E3019 gate and added the BYTES_EQ/NE row:
+        // bytes === bytes is a closed row now — it lowers to BYTES_EQ and
+        // never reaches the defect carrier.
         SemanticIdAllocator allocator = SemanticIdAllocator.over(List.of(MODULE));
         ValueId left = allocator.nextValueId(MODULE, 0, 0);
         ValueId right = allocator.nextValueId(MODULE, 1, 0);
         AnchorId anchor = allocator.nextAnchorId(MODULE, 2, 0);
         SourceOrigin origin = new SourceOrigin(SOURCE_ID,
             SourceSpan.synthetic(SOURCE_ID), SourceOriginKind.USER, anchor, null);
+        boolean bytesEqDefective = false;
+        SemanticOp bytesEqOp = null;
+        try {
+            bytesEqOp = ComparisonSelectorLowering.produce(MODULE, BinaryOp.EQ,
+                Type.Bytes.INSTANCE, Type.Bytes.INSTANCE, left, right, origin,
+                allocator, 3, 0);
+        } catch (ComparisonSelectorLowering.Defect defect) {
+            bytesEqDefective = true;
+        }
+        check(!bytesEqDefective && bytesEqOp != null
+                && bytesEqOp.payload() instanceof KindPayload.BinaryPayload bp
+                && bp.selector() == BinarySelector.BYTES_EQ,
+            "bytes === bytes lowers to the closed BYTES_EQ row (ISSUE-0158), "
+                + "never a COMPARISON_SELECTOR defect");
+
+        // A bytes relational pair has no row (relationals stay
+        // int/number/string only — E3007 in the checker) — the producer
+        // guard is the defensive layer behind the gate.
         boolean defective = false;
         try {
-            ComparisonSelectorLowering.produce(MODULE, BinaryOp.EQ, Type.Bytes.INSTANCE,
+            ComparisonSelectorLowering.produce(MODULE, BinaryOp.LT, Type.Bytes.INSTANCE,
                 Type.Bytes.INSTANCE, left, right, origin, allocator, 3, 0);
         } catch (ComparisonSelectorLowering.Defect defect) {
             defective = true;
@@ -1861,15 +1896,16 @@ public class EvaluationOrderIntegrationTest {
                 ComparisonSelectorLowering.e6005(MODULE, defect);
             check("E6005".equals(diagnostic.code())
                     && diagnostic.diagnosticCode() == DiagnosticCode.E6005,
-                "the bytes pair raises the E6005 carrier");
+                "the bytes relational raises the E6005 carrier");
             check(diagnostic.message().contains("COMPARISON_SELECTOR"),
                 "the E6005 message names COMPARISON_SELECTOR: " + diagnostic.message());
             check(diagnostic.message().contains("capability EVALUATION_ORDER"),
                 "the E6005 message names capability EVALUATION_ORDER");
         }
-        check(defective, "a no-row pair (bytes === bytes) is a producer defect "
-            + "COMPARISON_SELECTOR — unreachable for user programs because the E3019 "
-            + "gate rejects the pair in phase 3 before routing and lowering");
+        check(defective, "a no-row pair (bytes < bytes) is a producer defect "
+            + "COMPARISON_SELECTOR — unreachable for user programs because the "
+            + "E3007 checker gate rejects bytes relationals in phase 3 before "
+            + "routing and lowering");
 
         // Mixed and non-orderable relational pairs are no-row pairs too.
         for (Type[] pair : new Type[][] {
@@ -2487,7 +2523,7 @@ public class EvaluationOrderIntegrationTest {
         testChainFailureProjections();
         testChainSingleEvaluationAndRetainedShapeDetection();
         testFrontendGates();
-        testBytesComparisonGateE3019();
+        testBytesComparisonAdmission();
         testComparisonExecutorMatrix();
         testComparisonProductionMatrix();
         testComparisonSelectorGuard();
