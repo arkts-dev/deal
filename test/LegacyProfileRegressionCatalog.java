@@ -163,17 +163,25 @@ public final class LegacyProfileRegressionCatalog {
             "jvm-int32-slice.json#int32-table-read-boundary"),
         row("jvm-host-abi-slice.json#jvm-host-int-out-of-range-return",
             "jvm-int32-slice.json#int32-host-int-return"),
-        // jvm-v1.2-known-fail.json mirrors — re-pinned tracked known-fails
-        // (ISSUE-0378 D4): the untouched legacy harness routes both cases
-        // LEGACY_REGRESSION + LEGACY_SAFE_INT, where the ±(2^53−1)
-        // long carriers keep 2147483648 in range (E8004 never fires) and
-        // the legacy parse contract admits the out-of-range literal
-        // (E1036 never fires) — both cases keep failing and stay
-        // tracked with no stale gate. Dropping the markers is
-        // jvm-v12-int32-bytes D6's later sanctioned edit (ISSUE-0381);
-        // the two-backend slice re-home (jvm-int32-slice.json) carries
-        // the activated-route coverage.
-        row("jvm-v1.2-known-fail.json#jvm-int32-add-overflow", null),
+        // jvm-v1.2-known-fail.json mirrors — the tracked known-fails.
+        // jvm-int32-add-overflow was promoted by ISSUE-0381
+        // (jvm-v12-int32-bytes D6): its knownFail marker dropped and its
+        // catalog row removed, so the A5 seam routes the case
+        // COMMON_SHADOW + DEAL_V1_2_INT32, where the activated intAdd
+        // raises E8004 for 2147483647 + 1 — the passing pin stays in
+        // place as JVM-only activated-route coverage (the two-backend
+        // slice re-home jvm-int32-slice.json#int32-add-overflow carries
+        // the same coverage). jvm-int32-literal-out-of-range stays
+        // tracked: the untouched legacy harness routes the case
+        // LEGACY_REGRESSION + LEGACY_SAFE_INT, where the legacy parse
+        // contract admits the out-of-range literal (the expected E1036
+        // never fires) — the frontend-owned case keeps failing and stays
+        // tracked with no stale gate; dropping its marker is the
+        // frontend E1036 landing's separate promotion. jvm-bytes-buffer-ops
+        // is not catalogued: it already runs COMMON_SHADOW +
+        // DEAL_V1_2_INT32 and stays tracked while the JVM bytes core is
+        // absent (E6000 at bytes sites, ISSUE-0277) — its promotion is
+        // gated on the bytes core (D6).
         row("jvm-v1.2-known-fail.json#jvm-int32-literal-out-of-range", null),
         // JS retained lane (profile-agnostic; JS v1.2 excluded)
         row("js-skeleton.json#js-int-safe-range-e8004", null),

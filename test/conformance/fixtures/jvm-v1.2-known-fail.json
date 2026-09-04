@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "description": "DEAL v1.2 promotion gate (ISSUE-0107): intentionally unsupported v1.2 cases for the JVM backend-runtime gate. Every case names its tracked follow-up issue in 'knownFail'; when the tracked issue lands and the case passes, the runner fails with a promotion instruction. ISSUE-0106 promoted jvm-unicode-scalar-string-length. ISSUE-0378 re-pinned jvm-int32-literal-out-of-range and jvm-int32-add-overflow back to tracked known-fails: the LegacyProfileRegressionCatalog routes both cases LEGACY_REGRESSION + LEGACY_SAFE_INT under the untouched legacy harness, where the \u00b1(2^53\u22121) long carriers keep 2147483648 in range (the expected E8004 never fires) and the legacy parse contract admits the out-of-range literal (the expected E1036 never fires) \u2014 the two cases keep failing and stay tracked with no stale gate. Dropping these markers is the later sanctioned promotion owned by jvm-v12-int32-bytes D6 (ISSUE-0381); the restored backend-runtime int-add-overflow known-fail fixture and the two-backend slice re-home (jvm-int32-slice.json#int32-add-overflow) carry the activated-route E8004 coverage.",
+  "description": "DEAL v1.2 promotion gate (ISSUE-0107): intentionally unsupported v1.2 cases for the JVM backend-runtime gate. Every case names its tracked follow-up issue in 'knownFail'; when the tracked issue lands and the case passes, the runner fails with a promotion instruction. ISSUE-0106 promoted jvm-unicode-scalar-string-length. ISSUE-0381 (jvm-v12-int32-bytes D6) promoted jvm-int32-add-overflow: its knownFail marker is dropped and its LegacyProfileRegressionCatalog row removed, so the A5 seam routes the case COMMON_SHADOW + DEAL_V1_2_INT32, where the activated intAdd raises E8004 for 2147483647 + 1 \u2014 the passing pin stays in place as JVM-only activated-route coverage, alongside the corpus fixture promoted by the disposition-application unit (ISSUE-0380) and the two-backend slice re-home (jvm-int32-slice.json#int32-add-overflow). jvm-int32-literal-out-of-range stays tracked (the frontend-owned E1036 case \u2014 the stale gate forces that promotion separately). jvm-bytes-buffer-ops stays tracked: the JVM bytes core has not landed (E6000 at every bytes site, ISSUE-0277), so the bytes promotions stay gated on the bytes core (D6).",
   "tests": [
     {
       "name": "jvm-int32-literal-out-of-range",
@@ -19,8 +19,7 @@
       "expectedError": "E8004",
       "backends": [
         "jvm"
-      ],
-      "knownFail": "ISSUE-0111"
+      ]
     },
     {
       "name": "jvm-bytes-buffer-ops",
