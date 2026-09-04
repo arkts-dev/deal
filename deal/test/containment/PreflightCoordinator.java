@@ -9,17 +9,26 @@ import java.util.List;
  *
  * <p>It connects to the inherited authenticated outer broker
  * ({@code DEALPG4_BROKER_PATH}/{@code DEALPG4_NONCE}), verifies the
- * {@code HELLO_OK} version and the full capability bitmask before any
- * {@code FEATURE_READY} (a missing capability bit or a wrong version
- * exits nonzero without ever sending {@code FEATURE_READY} — the outer
- * then fails {@code READINESS_TIMEOUT} and the gate is nonzero), sends
+ * {@code HELLO_OK} version and every expected capability bit
+ * ({@link ContainedProcessBroker#EXPECTED_CAPABILITY_MASK}, the stage
+ * bitmask the live outer advertises) before any {@code FEATURE_READY}
+ * (a missing capability bit or a wrong version exits nonzero without
+ * ever sending {@code FEATURE_READY} — the outer then fails
+ * {@code READINESS_TIMEOUT} and the gate is nonzero), sends
  * {@code FEATURE_READY <nonce>}, waits for {@code READY_ACK}, then
  * performs bounded round-trip nested invocations of benign commands
  * through {@link ContainedProcessBroker#run(String, String, List,
  * String, Limits)} ({@code luajit -v}, {@code /bin/true}), asserts each
  * {@link ContainedProcessBroker.ProcessResult} is clean (target exit 0,
- * containment-clean {@code REPORT} with {@code failureToken "-"}), sends
- * {@code BYE}, and exits 0.
+ * containment-clean {@code REPORT} with {@code failureToken "-"}),
+ * closes the broker connection, and exits 0. The session ends without
+ * {@code BYE}: the canonical frame pins {@code DONE -> BYE}, and the
+ * outer emits {@code DONE} only at its INVOKE acceptance cutoff
+ * (14:40), which the short preflight run never reaches — a coordinator
+ * that exits 0 with every record terminal at broker EOF is the
+ * outer's documented clean exit (outer-coordinator-and-broker
+ * Verification 2, {@code BYE}-less), and the outer then runs its final
+ * proof and exits 0.
  *
  * <p>Every request goes through the inherited broker: this class never
  * spawns the launcher, an outer, or any nested supervisor (D7), and it
@@ -63,7 +72,13 @@ public final class PreflightCoordinator {
             broker.featureReady();
             roundTrip(broker, "luajit-version", Arrays.asList("luajit", "-v"));
             roundTrip(broker, "bin-true", Arrays.asList("/bin/true"));
-            broker.bye();
+            /* Short-run clean session end: close without BYE. The
+             * outer's frame pin is DONE -> BYE, and DONE is emitted
+             * only at the 14:40 INVOKE cutoff; the outer's clean-exit
+             * discrimination (Verification 2) accepts a coordinator
+             * reaped with status 0 and every record terminal at
+             * broker EOF. The try-with-resources close below delivers
+             * the EOF. */
             return 0;
         }
     }
