@@ -627,9 +627,21 @@ public class JvmAsyncExportInvokerTest {
     }
 
     // =========================================================================
-    // Production async function-value oracle (the JVM-side D9 scenario;
-    // the bytes-bearing variant is the LuaJIT scenario — the JVM bytes
-    // lane is ISSUE-0160's unlanded scope)
+    // Production async function-value oracle (the JVM-side D9 scenario).
+    // The bytes-bearing oracle half is the parent's criterion-3 shape;
+    // on JVM it is recorded BLOCKED on the JVM recursive bytes closure
+    // (ISSUE-0160, E8 — unlanded): the suite pins the E6000 rejection
+    // below and the flip requirement is recorded in
+    // ISSUE_UPDATE_ISSUE-0161.md. Until that issue lands, this
+    // string/int async function-value oracle is the interim JVM-lane
+    // production scenario — it is not a substitute for the bytes half,
+    // which stays unmet while the blocker is open. The LuaJIT lane
+    // executes the exact bytes-bearing oracle
+    // (LuaJitAsyncExportInvokerTest) and the REGISTRY boundary
+    // (RegistryAsyncExportBoundaryTest), and the JVM lane of the same
+    // boundary executes the committed D12 record projects through the
+    // production orchestrator + production invoker
+    // (JvmRegistryAsyncExportBoundaryTest).
     // =========================================================================
 
     @Test
@@ -769,14 +781,20 @@ public class JvmAsyncExportInvokerTest {
     public void jvmBytesOracleIsRejectedWithE6000UntilTheBytesLaneLands()
             throws IOException {
         assumeTrue(jvmAvailable);
-        // The E8 boundary pin: the parent's bytes-bearing oracle half on
-        // JVM depends on the JVM recursive bytes closure (ISSUE-0160, the
-        // int32-bytes lane — E6000 at every bytes site today, pinned by
-        // JvmConformanceTest). Until that lane lands, the backend must
+        // The recorded E8 blocker pin (ISSUE-0160, the JVM recursive
+        // bytes closure — E6000 at every bytes site today, pinned by
+        // JvmConformanceTest): until that issue lands, the backend must
         // reject the bytes signature with E6000 — never silently
-        // miscompile — while the production scenario above exercises the
-        // JVM-supported async function-value shape; the bytes-bearing
-        // variant runs on LuaJIT (LuaJitAsyncExportInvokerTest).
+        // miscompile — and the parent's criterion-3 JVM half stays
+        // unmet. Flip requirement (recorded in
+        // ISSUE_UPDATE_ISSUE-0161.md): when ISSUE-0160 lands, this pin
+        // becomes the production assertion mirroring the LuaJIT lane —
+        // the exact bytes-bearing oracle (assign/containerize first-class
+        // async(bytes)->bytes values, invoke and await one, check bytes
+        // identity/content in source, complete null) compiled through
+        // this same production path and invoked with the byte-exact
+        // canonical descriptor, asserting
+        // Result.Value("null", "null").
         Path out = tmp.resolve("fnval-bytes-out");
         Path srcRoot = Files.createDirectories(tmp.resolve("fnval-bytes-src")
             .resolve("src"));

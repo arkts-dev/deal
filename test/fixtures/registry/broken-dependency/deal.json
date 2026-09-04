@@ -1,0 +1,6 @@
+{
+  "languageVersion": "1.2",
+  "moduleRoots": ["src"],
+  "output": "out",
+  "backend": "luajit"
+}
