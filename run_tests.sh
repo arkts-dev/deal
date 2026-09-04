@@ -103,6 +103,24 @@ TEST_SOURCES+=(
 )
 TEST_MAINS+=(
   'fg|=== Running Historical / Legacy-Profile / Legacy-Capability Catalog Tests (ISSUE-0488) ===|java -ea -cp build deal.test.HistoricalRegressionCatalogTest'
+
+# ISSUE-0477 (ISSUE-0402 acceptance remediation): the gate-closure strict
+# gate regression suite — the three registry-shape modes of the re-landed
+# in-runner strict gate and the strict-mode residual report, each
+# executed through a compiled scratch copy of the ConformanceTest runner
+# over a single-fixture scratch corpus root (the runner source, the
+# fixture, and the repository are never modified). Joined here at the
+# gate-script level, like the ISSUE-0474/0475 suites, so the single
+# compile/test-list authority file (tools/gate-manifest.sh) stays
+# untouched.
+# =========================================================================
+TEST_SOURCES+=(
+  'test/GateClosureStrictGateTest.java'
+)
+TEST_MAINS+=(
+  'fg|=== Running Gate Closure Strict Gate Tests (ISSUE-0477) ===|java -ea -cp build deal.test.GateClosureStrictGateTest'
+
+
 )
 
 # =========================================================================

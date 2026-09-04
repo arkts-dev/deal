@@ -36,6 +36,29 @@ the sidecar now omits the whole span group and the lane/schema sanctions
 exactly that span-less shape (section 4); (3) the duplicated Javadoc
 fragment in `test/LegacyProfileRegressionCatalog.java` is removed.
 
+Review cycle 2 (BOT-3045) found two defects; the remediation in this
+change set corrects each at its root cause and re-executes the exercise
+on the final tree: (1) critical — the in-runner strict gate was absent
+from the delivered runner (removed by the ISSUE-0478 merge-gate
+enforcement commit `b77fc29d` and never re-landed), so a re-added staged
+entry recorded a tracked STAGED-FAIL and exited 0 — reproduced on the
+delivered tree before the fix (a scratch runner with the re-added entry
+run over a single-fixture corpus: `[backend-runtime/stdlib-edge/
+time-now-millis-positive.deal] STAGED-FAIL (E8004 locked artifact; ...)`,
+`Total: 0, Passed: 0, Failed: 0, Skipped: 0, KnownFailures (tracked): 0,
+StagedFailures (tracked): 1`, no `GATE FAILURE` line, exit 0). The
+strict gate (`runGateClosureCheck`/`runStrictModeGate`/
+`isSanctionedPreUnitPair`) re-lands in `deal.test.ConformanceTest`'s
+summary/exit path with the approved three-mode registry-shape key and
+the pinned reports (luajit-gate-closure D2/D5), the re-introduction
+exercise was re-executed on the final tree with the actually observed
+output and exit code re-recorded (section 3), and a committed regression
+suite (`deal.test.GateClosureStrictGateTest`, launched by
+`run_tests.sh`) pins all three modes plus the strict-mode residual
+report; (2) major — the record's prior §2/§3 claims of an active,
+exercised shape check were unproducible on the delivered runner; they
+are corrected to the re-executed output in this section 3.
+
 ## 1. The landed disposition pair (branch 1) and the unit's change set
 
 The ISSUE-0237 resolution's selected branch 1 is applied exactly once:
@@ -54,10 +77,27 @@ the shared fixture carries the canonical disposition header.
   this fixture is removed in the same change; the registry is empty (the
   strict-mode activation key, `luajit-gate-closure` D2). The registry
   machinery — the `StagedEntry` record, the `stagedFailure` helper, the
-  corpus validation loop, the stale-entry rules, and the three-mode
-  shape check — is preserved as the runner's classification
-  infrastructure; the sanctioned pre-unit pair remains the dormant-mode
-  reference of the shape check.
+  corpus validation loop, and the stale-entry rules — is preserved as
+  the runner's classification infrastructure; the sanctioned pre-unit
+  pair remains the dormant-mode reference of the shape check.
+- `test/ConformanceTest.java` — the gate-closure strict gate re-lands in
+  this change (cycle-2 remediation; it had been removed by the ISSUE-0478
+  merge-gate enforcement and was never re-landed before): the
+  `runGateClosureCheck()` call in the summary/exit path plus the
+  `runGateClosureCheck`/`runStrictModeGate`/`isSanctionedPreUnitPair`
+  section. The activation key is the staged-failure registry shape,
+  compared field-exact on path, pinned expectation, artifact code, and
+  issue: dormant under the exact sanctioned pre-unit ISSUE-0237 pair
+  (no assertion, no extra output — the closure is pending and never
+  asserted), strict under the empty registry (zero residuals on the
+  backend-runtime phase counters and the global known-fail counter,
+  enumerated from `specGroups` with the pinned `GATE FAILURE` reports),
+  and a hard failure naming each entry with the removal instruction for
+  every other registry shape — regardless of the counters.
+- `test/GateClosureStrictGateTest.java` (new) — the committed regression
+  suite pinning the three-mode key end to end through compiled scratch
+  copies of the runner over single-fixture scratch corpus roots
+  (section 3); launched by `run_tests.sh`.
 - `test/StdlibTimePreActivationPinTest.java` — the fixture-header
   assertions (`testFixtureHeader`) updated to the post-activation
   header in the same unit (the pin test's lifecycle note); the seam
@@ -155,9 +195,11 @@ Pin test (launched at `run_tests.sh`; post-activation header pin):
 Passed: 37, Failed: 0
 ```
 
-The strict gate is active (empty registry): no `GATE FAILURE` line is
-printed, the four counters are zero on the phase line and in the
-summary, and the process exits 0.
+The strict gate is active under the empty registry (re-landed in this
+change — cycle-2 remediation; the re-landed `runGateClosureCheck()` call
+sits in the summary/exit path after the coverage report): the full gate
+run prints no `GATE FAILURE` line, the four counters are zero on the
+phase line and in the summary, and the process exits 0.
 
 ## 3. Pin-layer re-introduction exercise (executed, then reverted)
 
@@ -172,18 +214,45 @@ produced on the final working tree, observed, and reverted:
   checks) and exited 1 — the post-unit header pin closes the one
   registry state the shape check cannot distinguish
   (`luajit-gate-closure` D4). Reverted to the canonical header.
-- **Re-added staged registry entry**: a staged entry for the time
-  fixture pinned to the flipped header (`runtime-error E8004`, artifact
-  `E8004`, issue `ISSUE-0237`) was temporarily re-added. The dispatch
-  recorded the tracked non-fatal `STAGED-FAIL` first, then the shape
-  check hard-failed regardless of the counters:
-  `GATE FAILURE: staged-failure registry is neither the sanctioned
-  pre-unit ISSUE-0237 pair nor empty — backend-runtime/stdlib-edge/
-  time-now-millis-positive.deal (tracked by ISSUE-0237)` plus
-  `promotion instruction: remove the registry entry (or entries)`; exit
-  1 — the vacuousness hole (a re-added matching entry recording a
+- **Re-added staged registry entry (re-executed on the final tree,
+  observed output re-recorded)**: a staged entry for the time fixture
+  pinned to the flipped header (`runtime-error E8004`, artifact `E8004`,
+  issue `ISSUE-0237`) was re-added to a scratch copy of the runner,
+  compiled against the delivered classes, and run over the delivered
+  corpus. The dispatch recorded the tracked non-fatal `STAGED-FAIL`
+  first, then the shape check hard-failed regardless of the counters —
+  the actually observed output and exit code (final rebased commit):
+
+  ```text
+    [backend-runtime/stdlib-edge/time-now-millis-positive.deal] STAGED-FAIL (E8004 locked artifact; tracked by ISSUE-0237: re-introduction exercise: locked E8004 artifact)
+  Total: 429, Passed: 429, Failed: 0, Skipped: 0, KnownFailures (tracked): 0, StagedFailures (tracked): 1
+  GATE FAILURE: staged-failure registry is neither the sanctioned pre-unit ISSUE-0237 pair nor empty — backend-runtime/stdlib-edge/time-now-millis-positive.deal (tracked by ISSUE-0237)
+  promotion instruction: remove the registry entry (or entries)
+  ```
+
+  exit 1 — the vacuousness hole (a re-added matching entry recording a
   tracked STAGED-FAIL with exit 0) is closed (`luajit-gate-closure`
-  D2). Reverted; the registry is empty again.
+  D2). The same scratch trigger on the pre-fix tree (the gate absent)
+  exited 0 with no `GATE FAILURE` line — the reproduced defect this
+  re-landing closes. Reverted; the registry is empty again.
+
+  The committed regression suite `deal.test.GateClosureStrictGateTest`
+  pins the same trigger plus the other two modes without touching the
+  repository — `Passed: 18, Failed: 0` on the final rebased commit:
+  (a) empty registry + the flipped fixture → PASS
+  (`OK (found DEAL_ERROR_CODE: E8004)`), the four zeros, no
+  `GATE FAILURE` line, exit 0; (b) the exact sanctioned pre-unit pair +
+  a `runtime-ok` clone → dormant — the tracked STAGED-FAIL recorded,
+  no `GATE FAILURE` line, exit 0; (c) the re-added entry pinned to the
+  flipped header → the two shape reports above, exit 1; (d) empty
+  registry + a fixture failing its own expectation →
+  `GATE FAILURE: 1 failed — backend-runtime/stdlib-edge/
+  time-now-millis-positive.deal — expected DEAL_ERROR_CODE: E9999`,
+  exit 1 (the strict-mode residual report; the environmental skip
+  report is pinned for the luajit-absent probe branch). Every probe
+  runs a compiled scratch copy of the runner over a single-fixture
+  scratch corpus root; every scratch tree is deleted and the runner
+  source, the fixture, and the repository are never modified.
 
 ## 4. The producible span-less time-fixture oracle (finding-2 remediation)
 
@@ -287,9 +356,15 @@ entry at all throws
 - The pin test passes on the post-activation header — section 2; a
   re-flipped pre-unit pair fails it — section 3.
 - `./run_tests.sh` exits 0 — section 2.
+- The strict gate is present, active under the empty registry, and
+  exercised: the re-introduction exercise reproduces the pinned shape
+  reports and exit 1, and `deal.test.GateClosureStrictGateTest` pins
+  all three modes plus the strict-mode residual report (18/0) —
+  section 3.
 - The strict gate changes no pre-unit outcome: under the sanctioned
   pre-unit pair the shape check stays dormant (the sanctioned pair
-  remains its dormant-mode reference); the strict mode activates only
+  remains its dormant-mode reference — pinned by the regression
+  suite's dormant probe, section 3); the strict mode activates only
   with the unit's landing artifact (the empty registry).
 - One-edit discipline: the fixture's `@expected` line is edited exactly
   once in this change; `std/time.lua`, `deal/runtime.lua`, and the two

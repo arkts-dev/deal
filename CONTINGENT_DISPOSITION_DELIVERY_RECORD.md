@@ -75,25 +75,22 @@ pinned pre-unit staged state (`PRE_UNIT_STAGED_STATE_PIN.md`):
   (`:157-158`), the `stagedFailure` helper (`:193-197`), and the registry
   validation loop (`:243-248`) intact.
 - Runner dispatch: the staged entry is consulted before any expectation
-  evaluation (`:503-505`); the stale expectation-changed branch fails the
+  evaluation (`:657-659`); the stale expectation-changed branch fails the
   gate with the promotion instruction naming the entry removal
-  (`:506-518`, println `:511-516`); the stale passing branch is the
-  analogous rule for a fixture passing its own expectation (`:690-694`,
-  println `:691-694`).
-- Gate-closure strict gate (ISSUE-0420): **not present at this HEAD.** The
-  ISSUE-0402 acceptance remediation removed the premature edit —
-  `runGateClosureCheck()` (call and section) plus its
-  `runStrictModeGate`/`isSanctionedPreUnitPair` helpers are absent from
-  `test/ConformanceTest.java`, whose summary/exit path is again the
-  pre-ISSUE-0420 `failed > 0` exit only. The ISSUE-0420/MR-0286 landing
-  bypassed the ISSUE-0419 merge gate and `luajit-gate-closure` D6 (the
-  strict gate lands with or after the disposition-application unit and
-  after the five known-fail promotions), putting the closure edit into
-  the pre-unit repository; the remediation re-enforces the merge gate by
-  removing it. The gate re-lands only after ISSUE-0419 completes on the
-  post-unit, post-promotions state. No +160-line insertion shift applies
-  to the runner sites cited above (the removal restores the
-  pre-insertion offsets).
+  (`:660-673`, println `:665-670`); the stale passing branch is the
+  analogous rule for a fixture passing its own expectation (`:843-848`,
+  println `:845-847`).
+- Gate-closure strict gate (ISSUE-0420): **present at this HEAD** — the
+  ISSUE-0402 acceptance remediation removed the premature edit (the
+  `runGateClosureCheck()` call and section), and the ISSUE-0477 cycle-2
+  remediation re-landed it on the post-unit, post-promotions state per
+  `luajit-gate-closure` D6 and epic Sequencing step 5: the call sits in
+  the summary/exit path (`:289`) and the
+  `runGateClosureCheck`/`runStrictModeGate`/`isSanctionedPreUnitPair`
+  section spans `:342-445`. The +160-line insertion shifts every runner
+  site below it (the dispatch and stale-rule citations above are the
+  re-landed offsets). The exercise record is
+  `POST_UNIT_GATE_CLOSURE_VERIFICATION.md` §3.
 - Landed precondition — int32 gate: `deal/runtime.lua` `check_int` carries
   the range check `if v < -2147483648 or v > 2147483647` at `:83` and
   raises E8004 `"int out of range"` at `:84` (ISSUE-0332, MR-0244 —
@@ -409,14 +406,27 @@ plus the T2 script's two stale-promotion comment citations to the
 post-removal sites — enforcing the ISSUE-0419 merge gate and
 `luajit-gate-closure` D6 until the post-unit, post-promotions re-landing.
 
+The ISSUE-0477 cycle-2 remediation then re-landed the strict gate
+(+160 lines: the `runGateClosureCheck()` call at `:289` and the
+`runGateClosureCheck`/`runStrictModeGate`/`isSanctionedPreUnitPair`
+section at `:342-445`) on the post-unit, post-promotions state — the
+sanctioned re-landing point (`luajit-gate-closure` D6, epic Sequencing
+step 5) — and re-anchored this record's section 2/5/6 gate rows plus the
+T2 script's two stale-promotion comment citations to the post-re-landing
+sites. The three-mode registry-shape key is active: dormant under the
+exact sanctioned pre-unit pair, strict under the empty registry, and a
+hard failure with the removal instruction for every other shape; the
+re-introduction exercise output and exit code are recorded in
+`POST_UNIT_GATE_CLOSURE_VERIFICATION.md` §3.
+
 ## 6. Locator register (task citations vs the canonical HEAD)
 
 | Site | Task citation | Canonical HEAD | Note |
 |---|---|---|---|
-| Staged registration | `test/ConformanceTest.java:150-159` | call `:181-190`, block `:180-191` | task window starts one line above the call at the design checkout; content identical |
-| Stale expectation-changed rule | `:440-451` | `:506-518` (println `:511-516`) | the ISSUE-0402 remediation removed the ISSUE-0420 strict gate (−160 lines); no gate-insertion shift applies |
-| Stale passing rule | `:609-615` | `:690-694` (println `:691-694`) | same |
-| Gate-closure strict gate (ISSUE-0420) | — (removed) | no `runGateClosureCheck` call or section; the summary/exit path is the pre-ISSUE-0420 `failed > 0` exit only | ISSUE-0402 remediation; re-lands only after ISSUE-0419 completes on the post-unit, post-promotions state (`luajit-gate-closure` D6) |
+| Staged registration | `test/ConformanceTest.java:150-159` | call `:181-190`, block `:180-191` | task window starts one line above the call at the design checkout; content identical (the entry was later removed by the disposition-application unit) |
+| Stale expectation-changed rule | `:440-451` | `:665-670` (branch `:660-673`) | the ISSUE-0402 remediation removed the ISSUE-0420 strict gate (−160 lines); the ISSUE-0477 cycle-2 remediation re-landed it (+160 lines) — the post-re-landing offsets |
+| Stale passing rule | `:609-615` | `:845-847` (branch `:843-848`) | same |
+| Gate-closure strict gate (ISSUE-0420) | — (removed at the pre-unit anchor) | call `:289`, section `:342-445` | re-landed by the ISSUE-0477 cycle-2 remediation on the post-unit, post-promotions state (`luajit-gate-closure` D6); the three-mode registry-shape key is active |
 | Pin-test `testRetainedLuaImplementation` | `:93-107` | `:95-109` | ISSUE-0321 seam-pin edits |
 | Pin-test `testRuntimeSeam` | `:123-149` | `:125-150` | same |
 | Pin-test `testFixtureHeader` | `:150-179` | `:156-180` | same |
