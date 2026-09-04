@@ -2154,8 +2154,10 @@ public final class JvmBackend {
      */
     /**
      * Emitted runtime-helper signatures under {@code LEGACY_SAFE_INT} —
-     * the pre-tree byte-identical base table (ISSUE-0375 keeps this arm
-     * untouched). A DEAL function whose translated name and mapped
+     * the pre-tree base table plus the ISSUE-0158 bytes helpers, whose
+     * carriers match the legacy backend-wide long int mode (the
+     * long-parameter bytesGet/bytesSet arms and the long bytesLength
+     * result). A DEAL function whose translated name and mapped
      * parameter types match a helper exactly would emit a duplicate Java
      * method; such declarations are rejected with E6000 instead.
      */
@@ -2178,10 +2180,17 @@ public final class JvmBackend {
         Map.entry("intFromNullable", List.of("java.lang.Long")),
         Map.entry("numberFromNullable", List.of("java.lang.Double")),
         Map.entry("checkSig", List.of("java.lang.String", "java.lang.String")),
+        // ISSUE-0158 bytes helpers (profile-matched carriers): under
+        // LEGACY_SAFE_INT the backend-wide int carrier is long, so the
+        // emitted bytesGet/bytesSet helpers take long index/value
+        // parameters (with the E8012/E8013 gates before the narrowing)
+        // and bytesLength returns long — matching every emitted bytes
+        // call site exactly, never a javac-rejected long-into-int
+        // argument.
         Map.entry("bytesNew", List.of("long")),
         Map.entry("bytesLength", List.of("$DealRt.Bytes")),
-        Map.entry("bytesGet", List.of("$DealRt.Bytes", "int")),
-        Map.entry("bytesSet", List.of("$DealRt.Bytes", "int", "int")));
+        Map.entry("bytesGet", List.of("$DealRt.Bytes", "long")),
+        Map.entry("bytesSet", List.of("$DealRt.Bytes", "long", "long")));
 
     /**
      * Emitted runtime-helper signatures under {@code DEAL_V1_2_INT32}
@@ -4321,12 +4330,27 @@ public final class JvmBackend {
         emitLine("    catch (java.lang.OutOfMemoryError e) { throw new DealError(\"E8001\", \"bytes allocation failed\"); }");
         emitLine("}");
         emitLine("// The immutable signed-int32 logical allocation length of a bytes buffer.");
-        emitLine("static int bytesLength($DealRt.Bytes b) { if (b == null) throw new DealError(\"E8001\", \"expected bytes, got null\"); return b.data.length; }");
+        emitLine("// The helpers' int carriers match the backend-wide int mode exactly");
+        emitLine("// (ISSUE-0375 carrier switch): primitive int under DEAL_V1_2_INT32 and");
+        emitLine("// the legacy long carrier under LEGACY_SAFE_INT. Every emitted bytes");
+        emitLine("// call site already produces the profile's int carrier for the index,");
+        emitLine("// the value, and the int result, so the helper parameters follow it —");
+        emitLine("// a v1.2 bytes program compiled through the default (legacy) production");
+        emitLine("// invocation must never produce an artifact javac rejects. The E8012");
+        emitLine("// index and E8013 value gates always run BEFORE the narrowing inside the");
+        emitLine("// long-parameter legacy arms, so the (int) casts are never silent.");
+        emitLine(int32Mode
+            ? "static int bytesLength($DealRt.Bytes b) { if (b == null) throw new DealError(\"E8001\", \"expected bytes, got null\"); return b.data.length; }"
+            : "static long bytesLength($DealRt.Bytes b) { if (b == null) throw new DealError(\"E8001\", \"expected bytes, got null\"); return b.data.length; }");
         emitLine("// The unsigned byte (0..255) at index i, 0 <= i < b.length (E8012 otherwise).");
-        emitLine("static int bytesGet($DealRt.Bytes b, int i) { if (b == null) throw new DealError(\"E8001\", \"expected bytes, got null\"); if (i < 0 || i >= b.data.length) throw new DealError(\"E8012\", \"bytes index out of bounds\"); return b.data[i] & 0xFF; }");
+        emitLine(int32Mode
+            ? "static int bytesGet($DealRt.Bytes b, int i) { if (b == null) throw new DealError(\"E8001\", \"expected bytes, got null\"); if (i < 0 || i >= b.data.length) throw new DealError(\"E8012\", \"bytes index out of bounds\"); return b.data[i] & 0xFF; }"
+            : "static long bytesGet($DealRt.Bytes b, long i) { if (b == null) throw new DealError(\"E8001\", \"expected bytes, got null\"); if (i < 0 || i >= b.data.length) throw new DealError(\"E8012\", \"bytes index out of bounds\"); return b.data[(int) i] & 0xFF; }");
         emitLine("// Write byte value v (0..255) at index i and return the written value.");
         emitLine("// A failed write (E8012 index, E8013 value range) changes no storage.");
-        emitLine("static int bytesSet($DealRt.Bytes b, int i, int v) { if (b == null) throw new DealError(\"E8001\", \"expected bytes, got null\"); if (i < 0 || i >= b.data.length) throw new DealError(\"E8012\", \"bytes index out of bounds\"); if (v < 0 || v > 255) throw new DealError(\"E8013\", \"bytes value out of range\"); b.data[i] = (byte) v; return v; }");
+        emitLine(int32Mode
+            ? "static int bytesSet($DealRt.Bytes b, int i, int v) { if (b == null) throw new DealError(\"E8001\", \"expected bytes, got null\"); if (i < 0 || i >= b.data.length) throw new DealError(\"E8012\", \"bytes index out of bounds\"); if (v < 0 || v > 255) throw new DealError(\"E8013\", \"bytes value out of range\"); b.data[i] = (byte) v; return v; }"
+            : "static long bytesSet($DealRt.Bytes b, long i, long v) { if (b == null) throw new DealError(\"E8001\", \"expected bytes, got null\"); if (i < 0 || i >= b.data.length) throw new DealError(\"E8012\", \"bytes index out of bounds\"); if (v < 0 || v > 255) throw new DealError(\"E8013\", \"bytes value out of range\"); b.data[(int) i] = (byte) v; return v; }");
         emitLine("// string ordering: Unicode scalar-value order. LuaJIT orders bytewise in");
         emitLine("// UTF-8, which is scalar-value order — including supplementary characters");
         emitLine("// (String.compareTo's UTF-16 code-unit order diverges there).");

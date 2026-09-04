@@ -9842,6 +9842,11 @@ public class JvmBackendTest {
      * range, reference aliasing/identity, per-instance class-field
      * isolation, and receiver/index/RHS single-evaluation order with
      * validation after the RHS and no storage change on a failed write.
+     * The default (legacy) invocation compiles the same lane with the
+     * profile-matched long index/value/result carriers (the E8012/E8013
+     * gates before the narrowing) and must produce a javac-compiling,
+     * correctly executing artifact too — never a long-into-int javac
+     * rejection.
      */
     private static void testBytesRuntimeLane() throws Exception {
         System.out.println("-- v1.2 bytes runtime lane (ISSUE-0158) --");
@@ -10064,6 +10069,108 @@ public class JvmBackendTest {
                     pin.name() + " computes the pinned value "
                         + pin.expected() + ": " + r.output());
             }
+        }
+
+        // ---- Legacy-profile pin (LEGACY_SAFE_INT long carriers) ----
+        // The default production invocation (PRE_ACTIVATION →
+        // LEGACY_SAFE_INT) compiles v1.2 bytes programs with the legacy
+        // long int carrier. The emitted bytes helpers must follow the
+        // same carrier — long index/value parameters with the E8012/E8013
+        // gates before the narrowing, and long results — so the artifact
+        // compiles under javac and executes the pinned bytes semantics,
+        // never the pre-fix long-into-int "possible lossy conversion"
+        // artifact the review found.
+        String legacyJava = legacyArtifact("""
+            export function main(): null { return null; }
+            export function run(): int {
+              let b: bytes = bytes(1);
+              return b.length;
+            }
+            """, "bytes_helpers_legacy_artifact");
+        check(legacyJava.contains("static long bytesLength($DealRt.Bytes b)"),
+            "legacy artifact emits the long-carrier bytesLength");
+        check(legacyJava.contains(
+                "static long bytesGet($DealRt.Bytes b, long i)"),
+            "legacy artifact emits the long-carrier bytesGet");
+        check(legacyJava.contains(
+                "static long bytesSet($DealRt.Bytes b, long i, long v)"),
+            "legacy artifact emits the long-carrier bytesSet");
+        check(legacyJava.contains("b.data[(int) i]"),
+            "legacy bytesGet/bytesSet narrow the index only after the "
+                + "E8012 bounds gate");
+
+        // The real default-invocation pipeline (orchestrator →
+        // JvmBackend → javac → java): runLegacyProject compiles every
+        // emitted artifact with javac and throws on any javac error, so
+        // a green run is also a javac-compiling-artifact pin.
+        ExecResult legacyRun = runLegacyProject("""
+            export function main(): null { return null; }
+            export function test(): int {
+              let b: bytes = bytes(3);
+              b[0] = 255;
+              b[1] = 128;
+              let alias: bytes = b;
+              alias[2] = 7;
+              if (b.length !== 3) { throw { code: "TEST_FAIL", message: "length" }; }
+              if (b[0] !== 255 || b[1] !== 128 || b[2] !== 7) { throw { code: "TEST_FAIL", message: "roundtrip" }; }
+              if (!(alias === b)) { throw { code: "TEST_FAIL", message: "identity" }; }
+              return b[0] + b[1] + b[2];
+            }
+            """, "bytes_legacy_full");
+        check(legacyRun.exitCode() == 0,
+            "legacy bytes program compiles under javac and runs green: "
+                + legacyRun.output());
+        check(legacyRun.output().contains("390"),
+            "legacy bytes program computes 255 + 128 + 7 = 390 with "
+                + "unsigned reads through the long carriers: "
+                + legacyRun.output());
+        ExecResult legacyValue = runLegacyProject("""
+            export function main(): null { return null; }
+            export function test(): int {
+              let b: bytes = bytes(1);
+              b[0] = 300;
+              return 0;
+            }
+            """, "bytes_legacy_e8013");
+        check(legacyValue.exitCode() == 1
+                && legacyValue.output().contains("DEAL_ERROR_CODE: E8013"),
+            "legacy bytes value-range gate raises exactly E8013: "
+                + legacyValue.output());
+        ExecResult legacyBounds = runLegacyProject("""
+            export function main(): null { return null; }
+            export function test(): int { return bytes(1)[1]; }
+            """, "bytes_legacy_e8012");
+        check(legacyBounds.exitCode() == 1
+                && legacyBounds.output().contains("DEAL_ERROR_CODE: E8012"),
+            "legacy bytes bounds gate raises exactly E8012: "
+                + legacyBounds.output());
+
+        // The legacy collision table registers the long-carrier helper
+        // signatures: a user function named bytesGet whose legacy-mapped
+        // parameters equal the emitted legacy helper is rejected with
+        // E6000 before emission — never a duplicate Java method.
+        Frontend legacyCollision = compileFrontend("""
+            function bytesGet(b: bytes, i: int): int { return b[i]; }
+            export function main(): null { return null; }
+            export function test(): int { return bytesGet(bytes(1), 0); }
+            """, "jvmtest-bytesget-legacy-collision.deal");
+        check(legacyCollision.errors().isEmpty(),
+            "legacy bytesGet collision frontend clean: "
+                + legacyCollision.errors());
+        if (legacyCollision.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult collisionRes = JvmBackend.generate(
+                legacyCollision.program(), legacyCollision.checkResult(),
+                "jvmtest-bytesget-legacy-collision.deal", "main",
+                Map.of(), Map.of(), Map.of(), true,
+                SemanticProfile.LEGACY_SAFE_INT);
+            check(collisionRes.hasErrors() && collisionRes.diagnostics()
+                    .stream().anyMatch(d -> "E6000".equals(d.code())
+                        && d.message().contains("collides with the emitted "
+                            + "runtime helper 'bytesGet'")),
+                "legacy bytesGet-named function collides with the "
+                    + "long-carrier legacy helper (E6000, never a "
+                    + "duplicate Java method): "
+                    + collisionRes.diagnostics());
         }
     }
 
