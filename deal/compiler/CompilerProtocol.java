@@ -6,7 +6,8 @@ import java.util.Objects;
 
 /** Transport-neutral records shared by DEAL compiler frontends. */
 public final class CompilerProtocol {
-    public static final String VERSION = "compiler-protocol-v1";
+    public static final String VERSION = "compiler-protocol-v2";
+    public static final String AGENT_SURFACE_VERSION = "agent-surface-v2";
 
     private CompilerProtocol() {}
 
@@ -25,6 +26,39 @@ public final class CompilerProtocol {
         public SemanticId {
             Objects.requireNonNull(value, "value");
             if (value.isBlank()) throw new IllegalArgumentException("Semantic id cannot be blank");
+        }
+    }
+
+    public record ProtocolHandshake(
+            String protocolVersion,
+            String languageVersion,
+            List<String> features) {
+        public ProtocolHandshake {
+            Objects.requireNonNull(protocolVersion, "protocolVersion");
+            Objects.requireNonNull(languageVersion, "languageVersion");
+            features = List.copyOf(features);
+        }
+    }
+
+    public record RevisionRef(String protocolVersion, String sourceDigest) {
+        public RevisionRef {
+            Objects.requireNonNull(protocolVersion, "protocolVersion");
+            Objects.requireNonNull(sourceDigest, "sourceDigest");
+        }
+    }
+
+    public record OperationDescriptor(
+            String operation,
+            SemanticId targetId,
+            String targetKind,
+            String targetFingerprint,
+            List<String> requiredFields) {
+        public OperationDescriptor {
+            Objects.requireNonNull(operation, "operation");
+            Objects.requireNonNull(targetId, "targetId");
+            Objects.requireNonNull(targetKind, "targetKind");
+            Objects.requireNonNull(targetFingerprint, "targetFingerprint");
+            requiredFields = List.copyOf(requiredFields);
         }
     }
 
@@ -101,6 +135,48 @@ public final class CompilerProtocol {
             String kind,
             SourceRange range,
             String fingerprint) {}
+
+    public record SemanticSlice(
+            RevisionRef revision,
+            SemanticId ownerId,
+            String kind,
+            String source,
+            List<SymbolSnapshot> symbols,
+            List<NodeSnapshot> nodes,
+            List<SemanticId> dependencies,
+            List<OperationDescriptor> allowedOperations) {
+        public SemanticSlice {
+            Objects.requireNonNull(revision, "revision");
+            Objects.requireNonNull(ownerId, "ownerId");
+            Objects.requireNonNull(kind, "kind");
+            Objects.requireNonNull(source, "source");
+            symbols = List.copyOf(symbols);
+            nodes = List.copyOf(nodes);
+            dependencies = List.copyOf(dependencies);
+            allowedOperations = List.copyOf(allowedOperations);
+        }
+    }
+
+    public record ChangeSetPrecondition(
+            String baseDigest,
+            Map<String, String> expectedTargetFingerprints) {
+        public ChangeSetPrecondition {
+            Objects.requireNonNull(baseDigest, "baseDigest");
+            expectedTargetFingerprints = Map.copyOf(expectedTargetFingerprints);
+        }
+    }
+
+    public record RepairContract(
+            SemanticId ownerId,
+            SemanticSlice minimumContext,
+            List<OperationDescriptor> allowedOperations,
+            String rejectedCandidateFingerprint) {
+        public RepairContract {
+            Objects.requireNonNull(ownerId, "ownerId");
+            allowedOperations = List.copyOf(allowedOperations);
+            Objects.requireNonNull(rejectedCandidateFingerprint, "rejectedCandidateFingerprint");
+        }
+    }
 
     public record ImpactReport(
             List<SemanticId> changedSymbols,

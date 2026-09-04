@@ -49,13 +49,18 @@ import deal.checker.SymbolTable;
 import deal.checker.TypeChecker;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.compiler.CompilerProtocol.AppInterfaceSnapshot;
+import deal.compiler.CompilerProtocol.ChangeSetPrecondition;
 import deal.compiler.CompilerProtocol.ChangeResult;
 import deal.compiler.CompilerProtocol.FieldSnapshot;
 import deal.compiler.CompilerProtocol.ImpactReport;
 import deal.compiler.CompilerProtocol.Inspection;
 import deal.compiler.CompilerProtocol.NodeSnapshot;
+import deal.compiler.CompilerProtocol.OperationDescriptor;
+import deal.compiler.CompilerProtocol.ProtocolHandshake;
 import deal.compiler.CompilerProtocol.RepairScope;
 import deal.compiler.CompilerProtocol.SemanticId;
+import deal.compiler.CompilerProtocol.SemanticSlice;
+import deal.compiler.CompilerProtocol.RevisionRef;
 import deal.compiler.CompilerProtocol.SourceRange;
 import deal.compiler.CompilerProtocol.StructuredDiagnostic;
 import deal.compiler.CompilerProtocol.SymbolSnapshot;
@@ -101,6 +106,18 @@ public final class DealCompilerWorkspace {
 
     private DealCompilerWorkspace() {}
 
+    public static ProtocolHandshake handshake() {
+        return new ProtocolHandshake(
+                CompilerProtocol.VERSION,
+                "DEAL 1.2",
+                List.of(
+                        "semantic-inspection",
+                        "semantic-slices",
+                        "fingerprint-preconditions",
+                        "atomic-change-sets",
+                        "app-interface-fingerprints"));
+    }
+
     @FunctionalInterface
     public interface SourceAdapter {
         SourceAdapter IDENTITY = source -> source;
@@ -136,6 +153,138 @@ public final class DealCompilerWorkspace {
     public static Inspection inspect(
             String source, String modulePath, ModuleResolver resolver, SourceAdapter adapter) {
         return analyze(source, modulePath, resolver, adapter).inspection();
+    }
+
+    public static SemanticSlice querySymbol(String source, String modulePath, SemanticId symbolId) {
+        return querySymbol(source, modulePath, symbolId, rejectingResolver(), SourceAdapter.IDENTITY);
+    }
+
+    public static SemanticSlice queryModule(String source, String modulePath) {
+        return queryModule(source, modulePath, rejectingResolver(), SourceAdapter.IDENTITY);
+    }
+
+    public static SemanticSlice queryModule(
+            String source,
+            String modulePath,
+            ModuleResolver resolver,
+            SourceAdapter adapter) {
+        Analysis analysis = analyze(source, modulePath, resolver, adapter);
+        Target target = analysis.targets().get(analysis.moduleId());
+        return new SemanticSlice(
+                revision(analysis),
+                analysis.moduleId(),
+                "module",
+                "",
+                analysis.inspection().symbols(),
+                List.of(),
+                List.of(),
+                List.of(descriptor(analysis, target)));
+    }
+
+    public static SemanticSlice querySymbol(
+            String source,
+            String modulePath,
+            SemanticId symbolId,
+            ModuleResolver resolver,
+            SourceAdapter adapter) {
+        Analysis analysis = analyze(source, modulePath, resolver, adapter);
+        SymbolSnapshot symbol = analysis.symbolsById().get(symbolId);
+        Target target = analysis.targets().get(symbolId);
+        if (symbol == null || target == null || !target.kind().equals("declaration")) {
+            throw new IllegalArgumentException("Unknown DEAL symbol " + symbolId.value());
+        }
+        List<NodeSnapshot> ownedNodes = analysis.inspection().nodes().stream()
+                .filter(value -> value.ownerId().equals(symbolId))
+                .toList();
+        Set<SemanticId> dependencies = new LinkedHashSet<>();
+        dependencies.addAll(symbol.callers());
+        dependencies.addAll(symbol.callees());
+        dependencies.addAll(symbol.references());
+        return new SemanticSlice(
+                revision(analysis),
+                symbolId,
+                "symbol",
+                analysis.source().substring(target.start(), target.end()),
+                List.of(symbol),
+                ownedNodes,
+                List.copyOf(dependencies),
+                descriptorsFor(analysis, symbolId, ownedNodes));
+    }
+
+    public static SemanticSlice queryNode(String source, String modulePath, SemanticId nodeId) {
+        return queryNode(source, modulePath, nodeId, rejectingResolver(), SourceAdapter.IDENTITY);
+    }
+
+    public static SemanticSlice queryNode(
+            String source,
+            String modulePath,
+            SemanticId nodeId,
+            ModuleResolver resolver,
+            SourceAdapter adapter) {
+        Analysis analysis = analyze(source, modulePath, resolver, adapter);
+        Target target = analysis.targets().get(nodeId);
+        NodeSnapshot node = analysis.inspection().nodes().stream()
+                .filter(value -> value.id().equals(nodeId))
+                .findFirst()
+                .orElse(null);
+        if (target == null || node == null) {
+            throw new IllegalArgumentException("Unknown DEAL node " + nodeId.value());
+        }
+        SymbolSnapshot owner = analysis.symbolsById().get(node.ownerId());
+        List<SemanticId> dependencies = owner == null
+                ? List.of()
+                : unique(owner.callers(), owner.callees(), owner.references());
+        return new SemanticSlice(
+                revision(analysis),
+                nodeId,
+                node.kind(),
+                analysis.source().substring(target.start(), target.end()),
+                owner == null ? List.of() : List.of(owner),
+                List.of(node),
+                dependencies,
+                List.of(descriptor(analysis, target)));
+    }
+
+    public static ChangeResult applyChecked(
+            String source,
+            String modulePath,
+            ChangeSetPrecondition precondition,
+            List<? extends Operation> operations) {
+        return applyChecked(
+                source, modulePath, precondition, operations, rejectingResolver(), SourceAdapter.IDENTITY);
+    }
+
+    public static ChangeResult applyChecked(
+            String source,
+            String modulePath,
+            ChangeSetPrecondition precondition,
+            List<? extends Operation> operations,
+            ModuleResolver resolver,
+            SourceAdapter adapter) {
+        Objects.requireNonNull(precondition, "precondition");
+        Analysis base = analyze(source, modulePath, resolver, adapter);
+        if (!base.inspection().sourceDigest().equals(precondition.baseDigest())) {
+            return rejected(base, diagnostic(
+                    "CP1001", "Stale source digest; inspect the current source before editing",
+                    base.moduleId(), null, base.inspection().sourceDigest(), precondition.baseDigest(),
+                    List.of(), "inspectCanonicalApp"));
+        }
+        for (Operation operation : operations) {
+            String expected = precondition.expectedTargetFingerprints().get(operation.targetId().value());
+            if (expected == null) {
+                return rejected(base, diagnostic(
+                        "CP1010", "Missing target fingerprint precondition",
+                        operation.targetId(), null, targetFingerprint(base, operation.targetId()), "missing",
+                        List.of(), "queryDealNode"));
+            }
+            String actual = targetFingerprint(base, operation.targetId());
+            if (!expected.equals(actual)) {
+                return rejected(base, diagnostic(
+                        "CP1011", "Stale target fingerprint; query the target again before editing",
+                        operation.targetId(), null, actual, expected, List.of(), "queryDealNode"));
+            }
+        }
+        return apply(source, modulePath, precondition.baseDigest(), operations, resolver, adapter);
     }
 
     public static ChangeResult apply(
@@ -838,6 +987,59 @@ public final class DealCompilerWorkspace {
             case ReplaceFunctionBody ignored -> REPLACE_FUNCTION_BODY;
             case ReplaceBlockBody ignored -> REPLACE_BLOCK_BODY;
         };
+    }
+
+    private static RevisionRef revision(Analysis analysis) {
+        return new RevisionRef(CompilerProtocol.VERSION, analysis.inspection().sourceDigest());
+    }
+
+    @SafeVarargs
+    private static List<SemanticId> unique(List<SemanticId>... values) {
+        Set<SemanticId> result = new LinkedHashSet<>();
+        for (List<SemanticId> value : values) result.addAll(value);
+        return List.copyOf(result);
+    }
+
+    private static List<OperationDescriptor> descriptorsFor(
+            Analysis analysis, SemanticId symbolId, List<NodeSnapshot> nodes) {
+        List<OperationDescriptor> result = new ArrayList<>();
+        Target declaration = analysis.targets().get(symbolId);
+        if (declaration != null) result.add(descriptor(analysis, declaration));
+        for (NodeSnapshot node : nodes) {
+            Target target = analysis.targets().get(node.id());
+            if (target != null) result.add(descriptor(analysis, target));
+        }
+        return List.copyOf(result);
+    }
+
+    private static OperationDescriptor descriptor(Analysis analysis, Target target) {
+        if (target == null) throw new IllegalArgumentException("Missing semantic target");
+        return switch (target.kind()) {
+            case "module" -> new OperationDescriptor(
+                    ADD_DECLARATION, target.id(), target.kind(), targetFingerprint(analysis, target.id()),
+                    List.of("declaration"));
+            case "declaration" -> new OperationDescriptor(
+                    REMOVE_DECLARATION, target.id(), target.kind(), targetFingerprint(analysis, target.id()),
+                    List.of());
+            case "function-body" -> new OperationDescriptor(
+                    REPLACE_FUNCTION_BODY, target.id(), target.kind(), targetFingerprint(analysis, target.id()),
+                    List.of("body"));
+            case "block" -> new OperationDescriptor(
+                    REPLACE_BLOCK_BODY, target.id(), target.kind(), targetFingerprint(analysis, target.id()),
+                    List.of("body"));
+            default -> throw new IllegalArgumentException("Unsupported semantic target kind " + target.kind());
+        };
+    }
+
+    private static String targetFingerprint(Analysis analysis, SemanticId targetId) {
+        if (targetId.equals(analysis.moduleId())) return analysis.inspection().sourceDigest();
+        SymbolSnapshot symbol = analysis.symbolsById().get(targetId);
+        if (symbol != null) return symbol.fingerprint();
+        return analysis.inspection().nodes().stream()
+                .filter(value -> value.id().equals(targetId))
+                .map(NodeSnapshot::fingerprint)
+                .findFirst()
+                .orElse("");
     }
 
     private static SymbolSnapshot emptySymbol(SemanticId id) {

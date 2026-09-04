@@ -21,6 +21,8 @@ public final class CompilerWorkspaceTest {
         protocolJsonIsDeterministicAndUnicodeSafe();
         protocolJsonSupportsDesugaredRecordShape();
         declarationsCanBeAddedAndRemovedAtomically();
+        semanticQueriesExposeScopedOperations();
+        checkedChangesRequireQueriedTargetFingerprint();
         System.out.println("CompilerWorkspaceTest: all tests passed");
     }
 
@@ -193,6 +195,71 @@ public final class CompilerWorkspaceTest {
         check(removed.accepted(), "unreferenced declaration must be removable: " + removed.diagnostics());
         check(removed.inspection().symbols().stream().noneMatch(value -> value.name().equals("scoreBonus")),
                 "removed declaration must disappear from inspection");
+    }
+
+    private static void semanticQueriesExposeScopedOperations() {
+        String source = source();
+        var inspection = DealCompilerWorkspace.inspect(source, "app.deal");
+        var update = inspection.symbols().stream()
+                .filter(value -> value.name().equals("update"))
+                .findFirst().orElseThrow();
+        var symbolSlice = DealCompilerWorkspace.querySymbol(source, "app.deal", update.id());
+        check(symbolSlice.revision().sourceDigest().equals(inspection.sourceDigest()),
+                "query must bind its context to the current source revision");
+        check(symbolSlice.source().contains("function update"), "symbol query must return only owned source");
+        check(symbolSlice.allowedOperations().stream()
+                        .anyMatch(value -> value.operation().equals(DealCompilerWorkspace.REPLACE_FUNCTION_BODY)),
+                "function query must expose its compiler-owned body operation");
+        check(symbolSlice.allowedOperations().stream()
+                        .noneMatch(value -> value.operation().equals(DealCompilerWorkspace.ADD_DECLARATION)),
+                "symbol query must not authorize unrelated module edits");
+
+        var moduleSlice = DealCompilerWorkspace.queryModule(source, "app.deal");
+        check(moduleSlice.source().isEmpty(), "module query must not disclose the complete source");
+        check(moduleSlice.allowedOperations().size() == 1
+                        && moduleSlice.allowedOperations().get(0).operation()
+                                .equals(DealCompilerWorkspace.ADD_DECLARATION),
+                "module query must authorize only declaration insertion");
+    }
+
+    private static void checkedChangesRequireQueriedTargetFingerprint() {
+        String source = source();
+        var inspection = DealCompilerWorkspace.inspect(source, "app.deal");
+        var update = inspection.symbols().stream()
+                .filter(value -> value.name().equals("update"))
+                .findFirst().orElseThrow();
+        var body = inspection.nodes().stream()
+                .filter(value -> value.ownerId().equals(update.id()) && value.kind().equals("function-body"))
+                .findFirst().orElseThrow();
+        var slice = DealCompilerWorkspace.queryNode(source, "app.deal", body.id());
+        var descriptor = slice.allowedOperations().get(0);
+        var operation = new DealCompilerWorkspace.ReplaceFunctionBody(body.id(), "return increment(state);");
+
+        var missing = DealCompilerWorkspace.applyChecked(
+                source,
+                "app.deal",
+                new CompilerProtocol.ChangeSetPrecondition(inspection.sourceDigest(), Map.of()),
+                List.of(operation));
+        check(!missing.accepted() && missing.diagnostics().get(0).code().equals("CP1010"),
+                "unqueried targets must not be writable");
+
+        var stale = DealCompilerWorkspace.applyChecked(
+                source,
+                "app.deal",
+                new CompilerProtocol.ChangeSetPrecondition(
+                        inspection.sourceDigest(), Map.of(body.id().value(), "stale")),
+                List.of(operation));
+        check(!stale.accepted() && stale.diagnostics().get(0).code().equals("CP1011"),
+                "stale target fingerprints must reject atomically");
+
+        var accepted = DealCompilerWorkspace.applyChecked(
+                source,
+                "app.deal",
+                new CompilerProtocol.ChangeSetPrecondition(
+                        inspection.sourceDigest(),
+                        Map.of(body.id().value(), descriptor.targetFingerprint())),
+                List.of(operation));
+        check(accepted.accepted(), "queried current target must be writable: " + accepted.diagnostics());
     }
 
     private static String source() {
