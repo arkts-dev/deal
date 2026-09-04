@@ -214,6 +214,7 @@ public class CheckerTest {
         testArrayLengthAssignmentRejected();
         testArrayLengthDeleteRejected();
         testArrayAppendIdiomCompiles();
+        testArrayMethodDiagnosticSuggestsAppendIdiom();
         testTableLengthWriteUnaffected();
         testClassFieldLengthWriteUnaffected();
 
@@ -1167,6 +1168,18 @@ public class CheckerTest {
             "xs[xs.length] = 4;"
         );
         assertNoErrors(out, "append idiom xs[xs.length] = v");
+    }
+
+    static void testArrayMethodDiagnosticSuggestsAppendIdiom() {
+        System.out.println("-- Array Method Diagnostic Suggests DEAL Append Idiom --");
+        CheckerOutput out = checkProgram(
+            "let xs: int[] = [];\n" +
+            "xs.push(4);"
+        );
+        boolean actionable = out.result.diagnostics().stream()
+            .filter(d -> d.code().equals("E3003"))
+            .anyMatch(d -> d.message().contains("items[items.length] = value"));
+        check(actionable, "E3003 for array methods must identify the supported append idiom");
     }
 
     // Table .length and class fields named length are untouched.
