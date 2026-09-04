@@ -18,6 +18,7 @@ public final class CompilerWorkspaceTest {
         blockReplacementUsesRevisionScopedIdentity();
         schemaChangeRequiresStateReset();
         protocolJsonIsDeterministicAndUnicodeSafe();
+        protocolJsonSupportsDesugaredRecordShape();
         declarationsCanBeAddedAndRemovedAtomically();
         System.out.println("CompilerWorkspaceTest: all tests passed");
     }
@@ -115,6 +116,26 @@ public final class CompilerWorkspaceTest {
         check(CompilerProtocolJson.decode(first) != null, "protocol JSON must round trip");
         check(CompilerProtocolJson.encode(Map.of("status", "Готово")).contains("Готово"),
                 "protocol JSON must preserve Unicode scalars");
+    }
+
+    private static void protocolJsonSupportsDesugaredRecordShape() {
+        String encoded = CompilerProtocolJson.encode(new DesugaredRecordShape("ok", 7));
+        check(encoded.equals("{\"count\":7,\"status\":\"ok\"}"),
+                "desugared records must use deterministic named accessors: " + encoded);
+    }
+
+    public static final class DesugaredRecordShape {
+        private final String status;
+        private final int count;
+
+        private DesugaredRecordShape(String status, int count) {
+            this.status = status;
+            this.count = count;
+        }
+
+        public String status() { return status; }
+
+        public int count() { return count; }
     }
 
     private static void declarationsCanBeAddedAndRemovedAtomically() {

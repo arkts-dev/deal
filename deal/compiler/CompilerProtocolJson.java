@@ -3,6 +3,7 @@ package deal.compiler;
 import deal.semantic.ir.CanonicalJson;
 
 import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Modifier;
 import java.lang.reflect.RecordComponent;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -51,6 +52,8 @@ public final class CompilerProtocolJson {
             return CanonicalJson.obj(entries);
         }
         if (value.getClass().isRecord()) return recordValue(value);
+        CanonicalJson.Obj desugaredRecord = desugaredRecordValue(value);
+        if (desugaredRecord != null) return desugaredRecord;
         throw new IllegalArgumentException("Unsupported protocol JSON value: " + value.getClass().getName());
     }
 
@@ -93,6 +96,31 @@ public final class CompilerProtocolJson {
                 throw new IllegalStateException("Cannot access protocol record " + component.getName(), failure);
             } catch (InvocationTargetException failure) {
                 throw new IllegalStateException("Protocol record accessor failed " + component.getName(), failure.getCause());
+            }
+        }
+        return CanonicalJson.obj(entries);
+    }
+
+    /** Android D8 lowers records to final fields plus same-named accessors. */
+    private static CanonicalJson.Obj desugaredRecordValue(Object value) {
+        List<java.lang.reflect.Field> fields = List.of(value.getClass().getDeclaredFields()).stream()
+                .filter(field -> !field.isSynthetic())
+                .filter(field -> !Modifier.isStatic(field.getModifiers()))
+                .filter(field -> Modifier.isFinal(field.getModifiers()))
+                .sorted(Comparator.comparing(java.lang.reflect.Field::getName))
+                .toList();
+        if (fields.isEmpty()) return null;
+        List<CanonicalJson.Entry> entries = new ArrayList<>();
+        for (java.lang.reflect.Field field : fields) {
+            try {
+                var accessor = value.getClass().getMethod(field.getName());
+                if (accessor.getParameterCount() != 0) return null;
+                entries.add(CanonicalJson.e(field.getName(), toValue(accessor.invoke(value))));
+            } catch (NoSuchMethodException | IllegalAccessException failure) {
+                return null;
+            } catch (InvocationTargetException failure) {
+                throw new IllegalStateException(
+                        "Protocol accessor failed " + field.getName(), failure.getCause());
             }
         }
         return CanonicalJson.obj(entries);
