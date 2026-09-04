@@ -396,6 +396,16 @@ public final class DealCompilerWorkspace {
                     if (value.declaration() == null || value.declaration().isBlank()) {
                         return nullSource(base, operation, target, "DEAL declaration");
                     }
+                    String replacementIdentity = singleDeclarationIdentity(
+                            value.declaration(), modulePath);
+                    if (!target.id().value().equals(replacementIdentity)) {
+                        return rejected(base, diagnostic(
+                                "CP1012",
+                                "Declaration replacement must contain exactly one declaration with the same identity",
+                                target.id(), target.range(), target.id().value(), replacementIdentity,
+                                List.of(new RepairScope(REPLACE_DECLARATION, target.id())),
+                                "queryDealSymbol"));
+                    }
                     replacements.add(new Replacement(
                             target.start(), target.end(), value.declaration().strip(), false));
                     changedSymbols.add(target.ownerId());
@@ -995,6 +1005,26 @@ public final class DealCompilerWorkspace {
                 outer.file(), outer.startLine(), outer.startColumn(),
                 inner.endLine(), inner.endColumn(),
                 outer.startScalarOffset(), inner.endScalarOffset());
+    }
+
+    private static String singleDeclarationIdentity(String source, String modulePath) {
+        LexResult lexed = new Lexer(source, modulePath).tokenize();
+        ParseResult parsed = new Parser(lexed.tokens(), modulePath).parse();
+        if (lexed.diagnostics().stream().anyMatch(value -> value.severity().equals("error"))
+                || parsed.diagnostics().stream().anyMatch(value -> value.severity().equals("error"))
+                || parsed.program().statements().size() != 1) {
+            return "invalid-or-multiple-declarations";
+        }
+        StatementNode statement = parsed.program().statements().get(0);
+        StatementNode declaration = statement instanceof ExportDeclaration exported
+                ? exported.declaration() : statement;
+        if (declaration instanceof ClassDeclaration value) {
+            return symbolId(modulePath, "class", value.name()).value();
+        }
+        if (declaration instanceof FunctionDeclaration value) {
+            return symbolId(modulePath, "function", value.name()).value();
+        }
+        return "unsupported-declaration";
     }
 
     private static SemanticId symbolId(String modulePath, String kind, String name) {
