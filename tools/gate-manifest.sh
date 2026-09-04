@@ -127,6 +127,10 @@ TEST_SOURCES=(
   'test/LuaAbiTest.java'
   'test/LuaAbiBackendTest.java'
   'test/LuaJitAsyncExportInvokerTest.java'
+  # ISSUE-0346 registration: the REGISTRY delegated-boundary
+  # consumption test — D12-shaped async-export record projects
+  # through the production orchestrator + production invoker.
+  'test/RegistryAsyncExportBoundaryTest.java'
   'test/CrossModuleTypingTest.java'
   'test/ProtectedPathOpsTest.java'
   'test/CanonicalIdentityTest.java'
@@ -235,6 +239,7 @@ TEST_MAINS=(
   'fg|=== Running Project Integration Gates (ISSUE-0270 T9: out-of-root both-backend gates) ===|java -ea -cp build deal.test.ProjectIntegrationGatesTest'
   'fg|=== Running Source Module Resolver Tests (ISSUE-0267 T6) ===|java -ea -cp build deal.module.SourceModuleResolverTest'
   'fg|=== Running LuaJIT Async Export Invoker Tests (ISSUE-0417 component, ISSUE-0418 verification matrix) ===|java -ea -cp build:/usr/share/java/junit4.jar:/usr/share/java/hamcrest-core.jar org.junit.runner.JUnitCore deal.test.LuaJitAsyncExportInvokerTest'
+'fg|=== Running Registry Async-Export Boundary Tests (ISSUE-0346 REGISTRY) ===|java -ea -cp build:/usr/share/java/junit4.jar:/usr/share/java/hamcrest-core.jar org.junit.runner.JUnitCore deal.test.RegistryAsyncExportBoundaryTest'
   'fg|=== Running Stdlib .d.deal Parse Tests ===|java -ea -cp build deal.test.StdlibDeclParseTest'
   'fg|=== Running Source Map Tests ===|java -ea -cp build deal.test.SourceMapTest'
   'fg|=== Running Runtime Source Location Tests ===|java -ea -cp build deal.test.RuntimeSourceLocationTest'
