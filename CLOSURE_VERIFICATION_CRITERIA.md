@@ -93,10 +93,16 @@ delegated-row boundary; epic objective ISSUE-0402):
    ConformanceTest.java:493-497 prints before the result — appears
    exactly once; (b) no infix-keyed
    `FAIL (`/`ERROR:`/`STAGED-FAIL (`/`SKIP (`/`KNOWN-FAIL (` line for
-   the fixture prints, and when the prefix line carries no result
-   (the prefix and the result are two separate writes that concurrent
+   the fixture prints; when the prefix line carries no result (the
+   prefix and the result are two separate writes that concurrent
    background-suite output can splice apart), the line immediately
-   following it is not a failure-result line; (c) the fixture's
+   following it is not a failure-result line; and no pathless
+   `STAGED-FAIL (` line prints anywhere in the window — the time
+   fixture is the CT's only staged fixture in every sanctioned
+   registry state and the registry is empty post-unit, so any such
+   line is this fixture's recorded failure at any displacement
+   distance (unlike FAIL/SKIP results, which other fixtures can
+   displace); (c) the fixture's
    on-disk `@expected` is exactly one of the two dispositions —
    `runtime-error E8004` (branch 1) or `runtime-ok` (branch 2) — and
    when the result text is visible on the prefix line it must match
@@ -109,12 +115,14 @@ delegated-row boundary; epic objective ISSUE-0402):
    BackendConformanceTest.java:1069 prints infix lines only for JSON
    case names — so the JVM lane's identical infix line can never
    inflate the exact-once count wherever its concurrent line lands.
-   Combined with the four zeros (criteria 1–2: a FAIL increments
-   `failed`, a SKIP increments `skipped`, a staged result prints and
-   increments `stagedFailures`, a known-fail increments the known-fail
-   counter) and the no-`GATE FAILURE` criterion, prefix presence plus
-   the absence of failure results proves the fixture recorded PASS
-   through the standard dispatch —
+   The PASS fires only when the four zeros of criteria 1–2 hold — the
+   proof premise: every non-PASS outcome increments a counter those
+   criteria pin to zero (a FAIL increments `failed`, a SKIP increments
+   `skipped`, a staged result prints and increments `stagedFailures`,
+   a known-fail increments the known-fail counter) — and with the
+   no-`GATE FAILURE` criterion, prefix presence plus the absence of
+   failure results proves the fixture recorded PASS through the
+   standard dispatch —
    `expectation(fixture) == landed nowMillis behavior` holds (D3; the
    closure adds no header-comparison assertion and no validity code).
 5. **No `GATE FAILURE` line** anywhere in the run (strict mode under
@@ -152,7 +160,7 @@ under /tmp, discarded; every temporary fixture-header flip reverted):
 
 | Input | Result |
 |---|---|
-| Executed pre-unit `./run_tests.sh` logs at this HEAD (428/428; 305/306, staged 1) — two captures, one with the displaced `STAGED-FAIL (...)` on the line after the fixture's prefix line, one with it eight lines after | exit 1 — criteria named: summary/phase non-zero counters, both follow-up blocks, and the time-fixture criterion (the window-wide `STAGED-FAIL` scan; the one-line capture additionally via the next-line check); verdict `closure pending`; no criterion-4 PASS is reported on either capture |
+| Executed pre-unit `./run_tests.sh` logs at this HEAD (428/428; 305/306, staged 1) — three captures covering the observed result shapes: the fixture's `STAGED-FAIL (...)` unsplit on its prefix line, displaced one line after the prefix, and displaced eight lines after | exit 1 — criteria named: summary/phase non-zero counters, both follow-up blocks, and the time-fixture criterion (the infix-keyed failure-line pattern, the next-line check, and the window-wide `STAGED-FAIL` scan respectively); verdict `closure pending`; no criterion-4 PASS is reported on any capture |
 | Post-unit branch-1 unsplit log in the real executed line format (fixture line `  [backend-runtime/stdlib-edge/time-now-millis-positive.deal] LEGACY-AUTHORITY (legacy-regression; zero v1.2 credit) OK (found DEAL_ERROR_CODE: E8004)`; 429/429; 306/306; four zeros; pin `Passed: 37, Failed: 0`; exit marker) with the fixture header temporarily flipped to `runtime-error E8004` (reverted) | exit 0 — all seven criteria PASS (direct: the prefix line records the branch-1 result) |
 | Post-unit branch-1 spliced log — the review's false-rejection shape: the fixture's prefix write alone on its line, one interleaved foreign displaced result line `OK (found DEAL_ERROR_CODE: E8001)`, then the fixture's own displaced `OK (found DEAL_ERROR_CODE: E8004)`; four zeros; flipped fixture | exit 0 — the indirect proof (prefix presence + no failure result + four zeros) accepts the correct closure |
 | Post-unit branch-2 unsplit log (fixture line `... credit) OK`; 429/429; 306/306; four zeros) against the on-disk `runtime-ok` fixture — unsplit and spliced (foreign displaced line + own bare `OK`) forms | exit 0 — all seven criteria PASS |
