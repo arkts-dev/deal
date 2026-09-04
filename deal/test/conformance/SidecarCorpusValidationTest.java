@@ -78,20 +78,28 @@ import java.util.stream.Stream;
  *   <li>The backend-runtime known-fail population is exactly the one
  *       restored known-fail fixture
  *       ({@code arithmetic/int-add-overflow.deal}, ISSUE-0378 D3:
- *       restored byte-exactly with its canonical known-fail header and
- *       no sidecar, so its stale-known-fail gate fires on the activated
- *       lanes; a known-fail-classified fixture counts in neither the
- *       runtime-ok nor the runtime-error population). The A5
- *       profile-selection merge had removed the fixture with its
- *       runtime-error sidecar — the JS lane's legacy range gate
- *       makes a uniform three-backend E8004 sidecar impossible until JS
- *       v1.2 int32 lands — and re-homed the coverage to the
- *       two-backend slice surface
- *       ({@code jvm-int32-slice.json#int32-add-overflow}), which stays.
- *       ISSUE-0339 promoted the last previously tracked fixture
- *       ({@code bytes-buffer-ops.deal}, which received its runtime-ok
- *       sidecar in the same change that dropped its known-fail
- *       marker).</li>
+ *       restored byte-exactly with its canonical known-fail header, so
+ *       its stale-known-fail gate fires on the activated lanes; a
+ *       known-fail-classified fixture counts in neither the
+ *       runtime-ok nor the runtime-error population). Because its
+ *       underlying mode is a runtime mode, the restored fixture
+ *       carries its three-backend runtime sidecar like every other
+ *       runtime-classified fixture (the differential gate's presence
+ *       rule, ISSUE-0353: a runtime-classified fixture — including
+ *       a known-fail whose underlying mode is runtime — requires a
+ *       valid three-backend sidecar; the gate has no silent default).
+ *       The uniform E8004 sidecar pins the fixture's declared
+ *       underlying mode: the LuaJIT and JVM legs raise E8004 today,
+ *       and the JS leg (the legacy safe-int range still admits
+ *       2147483648) is consumed by the known-fail tracking at lane
+ *       dispatch until JS v1.2 int32 lands. The A5 profile-selection
+ *       merge had removed the fixture with its runtime-error sidecar
+ *       and re-homed the coverage to the two-backend slice surface
+ *       ({@code jvm-int32-slice.json#int32-add-overflow}), which
+ *       stays. ISSUE-0339 promoted the last previously tracked
+ *       fixture ({@code bytes-buffer-ops.deal}, which received its
+ *       runtime-ok sidecar in the same change that dropped its
+ *       known-fail marker).</li>
  *   <li>All other fixtures ({@code compile-ok}, {@code compile-error},
  *       {@code companion}, frontend fixtures) carry no sidecar except
  *       the Diagnostics-bullet fixtures.</li>
@@ -164,11 +172,11 @@ public class SidecarCorpusValidationTest {
      * The exact runtime-error population (ISSUE-0350 completeness, plus
      * the int32 E8004 fixtures ISSUE-0332 promoted/added: the
      * promoted int-add-overflow — ISSUE-0378 restored the
-     * backend-runtime fixture with its canonical known-fail header
-     * and no sidecar, so this population excludes it (a
-     * known-fail-classified fixture counts in neither population;
-     * the activated-route E8004 coverage stays on the two-backend
-     * slice surface) — and the new int-sub-overflow,
+     * backend-runtime fixture with its canonical known-fail header,
+     * so this population excludes it (a known-fail-classified
+     * fixture counts in neither population; the activated-route
+     * E8004 coverage stays on the two-backend slice surface) —
+     * and the new int-sub-overflow,
      * int-mul-overflow,
      * int-conversion-out-of-range, and source-location/int32-overflow-source
      * fixtures each land their sidecar in the same change as their
@@ -872,7 +880,8 @@ public class SidecarCorpusValidationTest {
         }
 
         // The exact sidecar paths the corpus may carry: one per runtime-ok
-        // fixture, one per runtime-error fixture, plus the two
+        // fixture, one per runtime-error fixture, one per known-fail
+        // runtime fixture (the restored int-add-overflow), plus the two
         // Diagnostics-bullet Compile Expectation Sidecars.
         Set<String> allowedSidecars = new HashSet<>();
         int runtimeOk = 0;
@@ -897,13 +906,29 @@ public class SidecarCorpusValidationTest {
             } else if (isDiagnosticsPin) {
                 allowedSidecars.add(sidecarPath.toString());
                 validateCompileSidecarFixture(fixture, sidecarPath, corpusIndex);
+            } else if (fixture.expectedTag().startsWith("known-fail ")
+                    && fixture.expectedTag().substring(
+                        "known-fail ".length()).startsWith("runtime")) {
+                // The restored known-fail runtime fixture
+                // (ISSUE-0378 D3) carries its three-backend sidecar:
+                // the differential gate's presence rule (ISSUE-0353)
+                // requires a valid sidecar for every runtime-classified
+                // fixture — including a known-fail whose underlying
+                // mode is a runtime mode — and the gate has no
+                // silent default.
+                allowedSidecars.add(sidecarPath.toString());
+                check(Files.exists(sidecarPath), fixture.corpusPath()
+                    + ": the known-fail runtime fixture must carry its "
+                    + "three-backend sidecar (the differential gate's "
+                    + "presence rule), missing "
+                    + sidecarPath.getFileName());
             } else {
                 check(!Files.exists(sidecarPath), fixture.corpusPath()
-                    + ": no sidecar is authored for this classification yet "
-                    + "(" + fixture.expectedTag() + " — known-fail sidecars "
-                    + "land at the zero-skip flip; compile/companion/frontend "
-                    + "fixtures carry none except the Diagnostics-bullet "
-                    + "fixtures), found "
+                    + ": no sidecar is authored for this classification "
+                    + "(" + fixture.expectedTag() + " — compile/"
+                    + "companion/frontend fixtures carry none except the "
+                    + "Diagnostics-bullet fixtures; a known-fail compile "
+                    + "fixture carries none), found "
                     + sidecarPath.getFileName());
             }
         }
@@ -920,12 +945,14 @@ public class SidecarCorpusValidationTest {
         // The tracked known-fail population is exactly the one restored
         // known-fail fixture (ISSUE-0378 D3): the corpus
         // arithmetic/int-add-overflow.deal restored byte-exactly with
-        // its canonical known-fail header and no sidecar — its
-        // runtime-error E8004 probe passes on the activated lanes and
-        // fires the stale-known-fail gate with the promotion
-        // instruction. A known-fail-classified fixture counts in neither
-        // the runtime-ok nor the runtime-error population; its sidecar
-        // lands only at the zero-skip flip.
+        // its canonical known-fail header — its runtime-error E8004
+        // probe passes on the activated lanes and fires the
+        // stale-known-fail gate with the promotion instruction. A
+        // known-fail-classified fixture counts in neither the runtime-ok
+        // nor the runtime-error population; because its underlying mode
+        // is a runtime mode it carries its three-backend sidecar (the
+        // differential gate's presence rule, ISSUE-0353), which the
+        // allowed-sidecar set admits above.
         Set<String> knownFail = new TreeSet<>();
         for (Fixture fixture : fixtures) {
             if (fixture.corpusPath().startsWith("backend-runtime/")
@@ -949,8 +976,9 @@ public class SidecarCorpusValidationTest {
                 check(allowedSidecars.contains(sidecar.toString()),
                     "stray sidecar file " + CORPUS_ROOT.relativize(sidecar)
                         + " — a sidecar may exist only next to a runtime-ok "
-                        + "fixture, a runtime-error fixture, or the "
-                        + "Diagnostics-bullet fixtures");
+                        + "fixture, a runtime-error fixture, a known-fail "
+                        + "runtime fixture, or the Diagnostics-bullet "
+                        + "fixtures");
             }
         }
 

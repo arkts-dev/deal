@@ -32,16 +32,24 @@ public class DifferentialGateCorpusTest {
 
     private static final Path CORPUS_ROOT = Path.of("test", "conformance");
 
-    /** The pinned corpus population (the T2/T3 sidecar population pins). */
-    private static final int TOTAL_FIXTURES = 464;
+    /** The pinned corpus population (the T2/T3 sidecar population pins).
+     * ISSUE-0378 adds the restored known-fail fixture
+     * {@code backend-runtime/arithmetic/int-add-overflow.deal} (canonical
+     * known-fail header, byte-exact restoration): +1 total fixture, +1
+     * backend-runtime fixture, +1 known-fail, +1 runtime-error sidecar
+     * (its underlying runtime-error E8004 mode carries the mandatory
+     * three-backend sidecar like every other runtime-classified
+     * fixture). */
+    private static final int TOTAL_FIXTURES = 465;
     private static final int FRONTEND_FIXTURES = 130;
-    private static final int BACKEND_RUNTIME_FIXTURES = 334;
+    private static final int BACKEND_RUNTIME_FIXTURES = 335;
     private static final int COMPILE_OK = 38;
     private static final int COMPILE_ERROR = 91;
     private static final int RUNTIME_OK = 219;
     private static final int RUNTIME_ERROR = 81;
+    private static final int RUNTIME_ERROR_SIDECARS = 82;
     private static final int COMPANIONS = 34;
-    private static final int KNOWN_FAIL = 1;
+    private static final int KNOWN_FAIL = 2;
     private static final int COMPILE_PINS = 2;
 
     public static void main(String[] args) throws Exception {
@@ -121,10 +129,10 @@ public class DifferentialGateCorpusTest {
             "every discovered fixture carries a load result");
         long runtimeLoaded = run.loadedFixtures().stream()
             .filter(f -> f.load().runtime().isPresent()).count();
-        check(runtimeLoaded == RUNTIME_OK + RUNTIME_ERROR,
+        check(runtimeLoaded == RUNTIME_OK + RUNTIME_ERROR_SIDECARS,
             "every runtime-classified fixture's sidecar loads and validates "
                 + "under T1 with its compilation set: " + (RUNTIME_OK
-                + RUNTIME_ERROR) + " loaded, got " + runtimeLoaded);
+                + RUNTIME_ERROR_SIDECARS) + " loaded, got " + runtimeLoaded);
         long runtimeOkLoaded = run.loadedFixtures().stream()
             .filter(f -> f.load().runtime().isPresent()
                 && "runtime-ok".equals(f.fixture().classification()
@@ -157,22 +165,30 @@ public class DifferentialGateCorpusTest {
                 + " non-fatal, got " + run.knownFailuresTracked());
         check(run.skipped() == 0,
             "the pre-flip Skipped counter stays zero");
-        CorpusDiscovery.Fixture knownFail = run.fixtures().stream()
+        List<String> knownFailPaths = run.fixtures().stream()
             .filter(f -> f.classification() != null
                 && f.classification().kind() == CorpusDiscovery.Kind.KNOWN_FAIL)
-            .findFirst().orElseThrow();
-        check(knownFail.corpusPath().equals(
-                "frontend/modules/ffi-manifest-missing-native-library-rejected.deal"),
-            "the tracked known-fail fixture is the FFI manifest pin, got "
-                + knownFail.corpusPath());
-        check(knownFail.issue().equals("ISSUE-0111"),
-            "the known-fail fixture tracks ISSUE-0111");
+            .map(CorpusDiscovery.Fixture::corpusPath)
+            .sorted()
+            .toList();
+        check(knownFailPaths.equals(List.of(
+                "backend-runtime/arithmetic/int-add-overflow.deal",
+                "frontend/modules/ffi-manifest-missing-native-library-rejected.deal")),
+            "the tracked known-fail fixtures are exactly the FFI manifest "
+                + "pin and the restored int-add-overflow fixture, got "
+                + knownFailPaths);
+        check(run.fixtures().stream()
+                .filter(f -> f.classification() != null
+                    && f.classification().kind()
+                        == CorpusDiscovery.Kind.KNOWN_FAIL)
+                .allMatch(f -> "ISSUE-0111".equals(f.issue())),
+            "every known-fail fixture tracks ISSUE-0111");
     }
 
     private static void dispatchDeferral(DifferentialGate.GateRun run) {
-        check(run.runtimeCasesDeferred() == RUNTIME_OK + RUNTIME_ERROR,
+        check(run.runtimeCasesDeferred() == RUNTIME_OK + RUNTIME_ERROR_SIDECARS,
             "the runtime dispatch defers exactly the " + (RUNTIME_OK
-                + RUNTIME_ERROR) + " runtime cases in this child (no lane "
+                + RUNTIME_ERROR_SIDECARS) + " runtime cases in this child (no lane "
                 + "implementations land before T7-T9), got "
                 + run.runtimeCasesDeferred());
         check(run.runtimeCasesDispatched() == 0,
@@ -283,8 +299,8 @@ public class DifferentialGateCorpusTest {
                         + "Error Expectation field-exactly");
             }
         }
-        check(checked == RUNTIME_ERROR,
-            "the canonical-consistency check covers all " + RUNTIME_ERROR
+        check(checked == RUNTIME_ERROR_SIDECARS,
+            "the canonical-consistency check covers all " + RUNTIME_ERROR_SIDECARS
                 + " runtime-error sidecars, got " + checked);
     }
 }

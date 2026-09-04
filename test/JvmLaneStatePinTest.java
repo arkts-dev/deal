@@ -105,8 +105,8 @@ public class JvmLaneStatePinTest {
 
     private static final String JVM_SUMMARY =
         "Backend-runtime on JVM: denominator 301 (every on-disk runtime "
-            + "test, unchanged), passed 246, failed 1, skipped 53 "
-            + "(classified), known-fail 0 (tracked) \u2014 pass rate 81.7%";
+            + "test, unchanged), passed 252, failed 1, skipped 47 "
+            + "(classified), known-fail 0 (tracked) \u2014 pass rate 83.7%";
 
     private static final String JVM_PROFILE_AUTHORITY =
         "Profile-authority accounting: 0 legacy-authority fixture(s) "
