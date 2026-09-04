@@ -240,35 +240,6 @@ done
 TEST_MAINS=( "${REBUILT_MAINS[@]}" )
 
 # =========================================================================
-# DEALPG4 fail-closed toolchain preflight (ISSUE-0183,
-# fail-closed-toolchain-preflight D1/D2/D5): one ordered, fail-closed
-# phase sequence P0-P5 shared verbatim with coverage.sh via
-# tools/preflight-lib.sh. P0 (launcher integrity), P1 (probe identity +
-# LIMITS cross-check), P2 (native selftest), and P3 (fail-closed tool
-# presence) run here, before any GCC/Javac/Java probe; P4 (bounded
-# standalone javac under launcher run) replaces the raw compile below;
-# P5 (outer feature supervisor + PreflightCoordinator) runs after the
-# compile and before the legacy phases (P6, unchanged). No phase is
-# skipped, downgraded, or retried; every failure prints its named token
-# on stderr and exits nonzero immediately. No Java process in this
-# script spawns the launcher or an outer (D7).
-# =========================================================================
-source tools/preflight-lib.sh
-# PROD_SOURCES is expanded unquoted so the manifest's quoted globs are
-# expanded here exactly as they were when the list lived inline (the
-# identical expanded file list javac has always received).
-DEALPG4_PREFLIGHT_JAVAC_ARGS=(
-  javac --release 25 -proc:none -d build \
-  -cp /usr/share/java/junit4.jar:/usr/share/java/hamcrest-core.jar \
-  # shellcheck disable=SC2206
-  ${PROD_SOURCES[@]} "${TEST_SOURCES[@]}"
-)
-DEALPG4_PREFLIGHT_COORD_ARGS=(
-  java -ea -cp build deal.test.containment.PreflightCoordinator
-)
-dealpg4_preflight_run
-
-# =========================================================================
 # ISSUE-0157 (strict v1.2 feature catalog and backend matrix): the three
 # reusable catalog components — the strict schema-v1 feature-record
 # metadata parser, the architecture-owned backend matrix, and the
@@ -297,6 +268,35 @@ TEST_MAINS+=(
   'fg|=== Running V12 Feature Catalog Tests (ISSUE-0157) ===|java -ea -cp build deal.test.conformance.V12FeatureCatalogTest'
   'fg|=== Running V12 Feature Catalog Corpus Tests (ISSUE-0157) ===|java -ea -cp build deal.test.conformance.V12FeatureCatalogCorpusTest'
 )
+
+# =========================================================================
+# DEALPG4 fail-closed toolchain preflight (ISSUE-0183,
+# fail-closed-toolchain-preflight D1/D2/D5): one ordered, fail-closed
+# phase sequence P0-P5 shared verbatim with coverage.sh via
+# tools/preflight-lib.sh. P0 (launcher integrity), P1 (probe identity +
+# LIMITS cross-check), P2 (native selftest), and P3 (fail-closed tool
+# presence) run here, before any GCC/Javac/Java probe; P4 (bounded
+# standalone javac under launcher run) replaces the raw compile below;
+# P5 (outer feature supervisor + PreflightCoordinator) runs after the
+# compile and before the legacy phases (P6, unchanged). No phase is
+# skipped, downgraded, or retried; every failure prints its named token
+# on stderr and exits nonzero immediately. No Java process in this
+# script spawns the launcher or an outer (D7).
+# =========================================================================
+source tools/preflight-lib.sh
+# PROD_SOURCES is expanded unquoted so the manifest's quoted globs are
+# expanded here exactly as they were when the list lived inline (the
+# identical expanded file list javac has always received).
+DEALPG4_PREFLIGHT_JAVAC_ARGS=(
+  javac --release 25 -proc:none -d build \
+  -cp /usr/share/java/junit4.jar:/usr/share/java/hamcrest-core.jar \
+  # shellcheck disable=SC2206
+  ${PROD_SOURCES[@]} "${TEST_SOURCES[@]}"
+)
+DEALPG4_PREFLIGHT_COORD_ARGS=(
+  java -ea -cp build deal.test.containment.PreflightCoordinator
+)
+dealpg4_preflight_run
 
 # =========================================================================
 # Single compilation step: compile all source and test files at once.
