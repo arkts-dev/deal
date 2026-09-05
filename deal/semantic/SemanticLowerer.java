@@ -6977,7 +6977,15 @@ public final class SemanticLowerer {
          * The carrier's call-site dispatch: the pinned conversion
          * intrinsics, the console stdlib, and direct user calls — every
          * other call shape (indirect callees, host/external calls,
-         * async) is E7's and stays rejected.
+         * async) is E7's and stays rejected. The stdlib branch runs the
+         * closed checked-fact recognition predicate
+         * ({@code StdlibCallRecognition} over the checker's
+         * {@code ModuleSymbol} fact and the {@link
+         * StdlibFunctionCatalog}): a recognized console id lowers to the
+         * console {@code STDLIB_CALL} arm, any other cataloged id is
+         * the E7 {@code STDLIB_CALL} arm's and stays rejected, and no
+         * module/name pair is interpreted as a stdlib algorithm here
+         * (D1).
          */
         private ValueId lowerCallSite(CallExpr call, ValueId slot) {
             try {
@@ -6985,15 +6993,19 @@ public final class SemanticLowerer {
             } catch (ConstructUnlowered notIntrinsic) {
                 // Fall through: the classifier threw before any emission.
             }
-            if (call.callee() instanceof MemberAccessExpr access
-                    && access.object() instanceof IdentifierExpr identifier) {
-                ResolvedImport importFact = importByAlias(identifier.name());
-                if (importFact != null
-                        && "std/console".equals(importFact.resolvedModuleId().path())
-                        && ("log".equals(access.field())
-                            || "error".equals(access.field()))) {
-                    return lowerStdlibConsoleCall(call, slot, access.field());
+            Optional<StdlibFunctionCatalog.Entry> stdlibEntry =
+                StdlibCallRecognition.recognize(call.callee(), currentCheckerScope(),
+                    moduleImports);
+            if (stdlibEntry.isPresent()) {
+                StdlibFunctionCatalog.Entry entry = stdlibEntry.get();
+                if (entry.function() == StdlibFunctionId.CONSOLE_LOG
+                        || entry.function() == StdlibFunctionId.CONSOLE_ERROR) {
+                    return lowerStdlibConsoleCall(call, slot, entry);
                 }
+                throw new ConstructUnlowered("stdlib call " + entry.function()
+                    + " (" + entry.modulePath() + "." + entry.exportName() + ") is the "
+                    + "E7 STDLIB_CALL lowering arm's; the carrier slice realizes console "
+                    + "STDLIB_CALLs only");
             }
             return lowerUserCall(call, slot);
         }
@@ -7007,9 +7019,11 @@ public final class SemanticLowerer {
          * {@code STDLIB_RETURN} boundary validates the declared null
          * result — all children parented to the {@code STDLIB_CALL} op.
          */
-        private ValueId lowerStdlibConsoleCall(CallExpr call, ValueId slot, String field) {
-            StdlibFunctionId function = "log".equals(field)
-                ? StdlibFunctionId.CONSOLE_LOG : StdlibFunctionId.CONSOLE_ERROR;
+        private ValueId lowerStdlibConsoleCall(CallExpr call, ValueId slot,
+                                               StdlibFunctionCatalog.Entry entry) {
+            StdlibFunctionId function = entry.function();
+            String field = entry.exportName();
+            ModuleId stdlibModule = new ModuleId(entry.modulePath());
             // The member access's checked export read (the MEMBER_ACCESS
             // construct's pinned form for a module member): one
             // EXPORT_READ of the std/console export before the
@@ -7024,7 +7038,7 @@ public final class SemanticLowerer {
                 toSourceSpan(call.callee().span()), SourceOriginKind.USER, exportAnchor,
                 currentParent());
             emit(buildOp(exportOpId, SemanticOpKind.EXPORT_READ,
-                new KindPayload.ExportReadPayload(new ModuleId("std/console"), field,
+                new KindPayload.ExportReadPayload(stdlibModule, field,
                     exportDescriptor, exportValue),
                 exportValue, exportDescriptor, List.of(), List.of(),
                 FailurePolicyId.NO_DEAL_FAILURE, exportOrigin));
@@ -7035,10 +7049,10 @@ public final class SemanticLowerer {
             // registers through).
             registry.registerHostOrExternalImport(
                 new FunctionAllocationIdentity(exportValue.id()),
-                new KindPayload.ExportReadPayload(new ModuleId("std/console"), field,
+                new KindPayload.ExportReadPayload(stdlibModule, field,
                     exportDescriptor, exportValue),
                 new FunctionBindingRegistry.FunctionValueImportFacts(
-                    new ModuleId("std/console"), null, field, exportDescriptor),
+                    stdlibModule, null, field, exportDescriptor),
                 null);
             List<ValueId> args = new ArrayList<>();
             List<RuntimeDescriptor> argTypes = new ArrayList<>();

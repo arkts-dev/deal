@@ -164,8 +164,22 @@ public class RuntimeIntegrationMatrixTest {
         List<ResolvedImport> imports = new ArrayList<>();
         for (deal.ast.StatementNode stmt : program.statements()) {
             if (stmt instanceof deal.ast.ImportDeclaration imp) {
+                // Production-faithful resolved ids (the checked-project
+                // builder records the resolved target's dotted module id,
+                // e.g. std/console → std.console, never the raw import
+                // specifier): the closed StdlibFunctionCatalog keys on
+                // the resolved dotted form.
+                String resolved = switch (imp.modulePath()) {
+                    case "std/console" -> "std.console";
+                    case "std/string" -> "std.string";
+                    case "std/table" -> "std.table";
+                    case "std/json" -> "std.json";
+                    case "std/math" -> "std.math";
+                    case "std/time" -> "std.time";
+                    default -> imp.modulePath();
+                };
                 imports.add(new ResolvedImport(imp.alias(), imp.modulePath(),
-                    new ModuleId(imp.modulePath()),
+                    new ModuleId(resolved),
                     deal.semantic.ir.ExternalModuleKind.STDLIB));
             }
         }

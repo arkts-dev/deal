@@ -154,6 +154,12 @@ TEST_SOURCES=(
   # purge, crash recovery, concurrency, IR dumps, out-of-checkout
   # copies, and the publish I/O failure path).
   'test/PublicationStagerTest.java'
+  # ISSUE-0493 registration: the closed StdlibFunctionCatalog (the 20
+  # declared stdlib exports with declared descriptors) and the
+  # checked-fact stdlib recognition predicate battery (enumeration,
+  # negative lookups, recognition over real checked projects, and the
+  # anti-hollow spelling control).
+  'test/StdlibFunctionCatalogTest.java'
   # ISSUE-0162 registration: the C FFI declaration validation and
   # forward binding generation battery.
   'test/FfiDeclarationValidatorTest.java'
@@ -275,4 +281,8 @@ WARNING: luajit not found, skipping async nesting stress tests'
   # ISSUE-0458 registration: the transactional publication contract
   # suite (whole-project-artifact-publication Verification 1-7).
   'fg|=== Running Publication Stager Tests (ISSUE-0458) ===|java -ea -cp build deal.test.PublicationStagerTest'
+  # ISSUE-0493 registration: the closed stdlib catalog and the
+  # checked-fact recognition predicate (stdlib-operations-and-time-lock
+  # D1, sequencing item 1).
+  'fg|=== Running Stdlib Function Catalog / Checked-Fact Recognition Tests (ISSUE-0493) ===|java -ea -cp build deal.test.StdlibFunctionCatalogTest'
 )
