@@ -176,6 +176,16 @@ TEST_SOURCES=(
   # stdlib-export value-read disposition battery
   # (stdlib-operations-and-time-lock D3/D8/D9, Verification 4 and 5).
   'test/StdlibClaimingTimeLockTest.java'
+  # ISSUE-0498 registration: the target-helper equivalence battery —
+  # every retained helper candidate (Lua std/*.lua, JS std/*.js, the
+  # JVM backend's emitted stdlib helpers) compared against
+  # SharedStdlibSemantics plus the projection wiring on the full
+  # declared input domain, with the known divergent verdicts detected
+  # by the comparison, the trim candidates, the wiring admission rule,
+  # and the promotion-evidence registry
+  # (stdlib-operations-and-time-lock D7, Verification 6; sequencing
+  # item 6).
+  'test/StdlibEquivalenceBatteryTest.java'
   # ISSUE-0162 registration: the C FFI declaration validation and
   # forward binding generation battery.
   'test/FfiDeclarationValidatorTest.java'
@@ -325,4 +335,12 @@ WARNING: luajit not found, skipping async nesting stress tests'
   # disposition (stdlib-operations-and-time-lock D3/D8/D9,
   # Verification 4 and 5; sequencing item 5).
   'fg|=== Running Stdlib Claiming / Time-Lock Tests (ISSUE-0497) ===|java -ea -cp build deal.test.StdlibClaimingTimeLockTest'
+  # ISSUE-0498 registration: the target-helper equivalence battery —
+  # the retained Lua/JS/JVM helper candidates actually run against the
+  # common algorithm plus the projection wiring, the known divergent
+  # verdicts detected by the comparison, the wiring admission rule,
+  # and the STDLIB_SEMANTICS promotion-evidence registry
+  # (stdlib-operations-and-time-lock D7, Verification 6; sequencing
+  # item 6).
+  'fg|=== Running Stdlib Target-Helper Equivalence Battery (ISSUE-0498) ===|java -ea -cp build deal.test.StdlibEquivalenceBatteryTest'
 )
