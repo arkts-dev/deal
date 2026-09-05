@@ -54,16 +54,26 @@ public class DifferentialGateCorpusTest {
      * frontend 130 -> 193, compile-ok 38 -> 58, compile-error
      * 91 -> 128, companions 34 -> 40, compile pins 2 -> 4; the
      * runtime populations (218/83) and the known-fail population
-     * (the one FFI manifest frontend pin) are unchanged. */
-    private static final int TOTAL_FIXTURES = 528;
-    private static final int FRONTEND_FIXTURES = 193;
+     * (the one FFI manifest frontend pin) are unchanged.
+     * ISSUE-0500 (v12-gap-suite-integration E1/E2 co-landing) adds the
+     * preserved gap resolution subtree
+     * {@code frontend/modules/resolution/} (six compile-classified root
+     * fixtures + {@code nested/relative-parent} + nine discovery
+     * companions) and the transformed direct declaration fixture
+     * {@code frontend/modules/declaration-expression-statement-rejected.d.deal}
+     * (compile-error E7001): total 528 -> 545, frontend 193 -> 210,
+     * compile-ok 58 -> 64, compile-error 128 -> 130, companions
+     * 40 -> 49; the runtime populations (218/83), the known-fail
+     * population, and the compile pins (4) are unchanged. */
+    private static final int TOTAL_FIXTURES = 545;
+    private static final int FRONTEND_FIXTURES = 210;
     private static final int BACKEND_RUNTIME_FIXTURES = 335;
-    private static final int COMPILE_OK = 58;
-    private static final int COMPILE_ERROR = 128;
+    private static final int COMPILE_OK = 64;
+    private static final int COMPILE_ERROR = 130;
     private static final int RUNTIME_OK = 218;
     private static final int RUNTIME_ERROR = 83;
     private static final int RUNTIME_ERROR_SIDECARS = 83;
-    private static final int COMPANIONS = 40;
+    private static final int COMPANIONS = 49;
     private static final int KNOWN_FAIL = 1;
     private static final int COMPILE_PINS = 4;
 

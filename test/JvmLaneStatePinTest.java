@@ -59,11 +59,15 @@ import java.util.List;
  * passes as {@code runtime-error E8004} under its legacy-authority
  * catalog row (zero v1.2 credit), the staged registry entry is
  * removed (no STAGED-FAIL line), the promoted int-add-overflow
- * passes, and the summary reads {@code Total: 487, Passed: 487}
+ * passes, and the summary reads {@code Total: 495, Passed: 495}
  * (ISSUE-0501 lands the 63 compile-classified gap fixtures under
  * {@code frontend/}: 57 classified cases passing plus 6 companions
  * — 430 + 57 = 487, companions 34 -> 40, v1.2-credit results
- * 463 -> 526) with exactly one tracked known-fail (the frontend
+ * 463 -> 526; ISSUE-0500 then co-lands the preserved gap resolution
+ * subtree and the transformed direct declaration fixture: 545
+ * discovered, 49 companions, 495 recorded results — 487 + 8
+ * classified cases = 495, companions 40 -> 49, v1.2-credit results
+ * 526 -> 543) with exactly one tracked known-fail (the frontend
  * FFI-manifest fixture, compile-error E2010 tracked by ISSUE-0111)
  * and zero staged failures.
  *
@@ -134,8 +138,14 @@ public class JvmLaneStatePinTest {
         "  [backend-runtime/arithmetic/int-add-overflow.deal] OK "
             + "(found DEAL_ERROR_CODE: E8004)";
 
+    // ISSUE-0500 (v12-gap-suite-integration E1/E2 co-landing): the
+    // LuaJIT lane discovers 545 fixtures after the ISSUE-0501 landing
+    // (528 + 17 frontend fixtures: the preserved resolution subtree
+    // with its nine companions and the transformed direct declaration
+    // fixture), so the summary moves from 487 to 495 recorded results
+    // (545 - 49 companions - 1 tracked known-fail).
     private static final String LUA_SUMMARY =
-        "Total: 487, Passed: 487, Failed: 0, Skipped: 0, "
+        "Total: 495, Passed: 495, Failed: 0, Skipped: 0, "
             + "KnownFailures (tracked): 1, StagedFailures (tracked): 0";
 
     private static final String LUA_PHASE =
@@ -149,7 +159,7 @@ public class JvmLaneStatePinTest {
     private static final String LUA_PROFILE_AUTHORITY =
         "Profile-authority accounting: 2 legacy-authority result(s) "
             + "(LEGACY_REGRESSION + LEGACY_SAFE_INT \u2014 zero "
-            + "v1.2/promotion credit; 2 passed, 0 failed), 526 v1.2-credit "
+            + "v1.2/promotion credit; 2 passed, 0 failed), 543 v1.2-credit "
             + "result(s) (COMMON_SHADOW + DEAL_V1_2_INT32)";
 
     // =========================================================================

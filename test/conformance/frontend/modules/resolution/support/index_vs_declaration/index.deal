@@ -1,0 +1,6 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: Module-resolution support module classified as a discovery companion
+// @expected: companion
+// @features: companion, modules, resolution
+
+export function indexOnly(): int { return 3; }
