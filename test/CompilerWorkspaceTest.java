@@ -26,7 +26,127 @@ public final class CompilerWorkspaceTest {
         declarationReplacementIsAtomicAndDoesNotConsumeItsNeighbor();
         semanticQueriesExposeScopedOperations();
         checkedChangesRequireQueriedTargetFingerprint();
+        inspectChangeBuildsCompilerOwnedDependencyCone();
+        repairWorkspacePreservesAndPatchesSlots();
+        dependentRepairSlotsCommitAsOneGroup();
         System.out.println("CompilerWorkspaceTest: all tests passed");
+    }
+
+    private static void dependentRepairSlotsCommitAsOneGroup() {
+        String source = source();
+        var inspection = DealCompilerWorkspace.inspect(source, "app.deal");
+        var descriptor = DealCompilerWorkspace.queryModule(source, "app.deal")
+                .allowedOperations().get(0);
+        var precondition = new CompilerProtocol.ChangeSetPrecondition(
+                inspection.sourceDigest(), Map.of(
+                        inspection.moduleId().value(), descriptor.targetFingerprint()));
+        var changeInspection = DealCompilerWorkspace.inspectChange(
+                source, "app.deal", inspection.sourceDigest(), List.of(inspection.moduleId()),
+                List.of(DealCompilerWorkspace.ADD_DECLARATION));
+        var staged = DealCompilerWorkspace.stageChange(
+                source, "app.deal", precondition, changeInspection, List.of(
+                        new DealCompilerWorkspace.AddDeclaration(
+                                inspection.moduleId(), "export class RunAction {}"),
+                        new DealCompilerWorkspace.AddDeclaration(
+                                inspection.moduleId(),
+                                "export function run(state: AppState, action: MissingAction): AppState { return state; }")));
+        check(!staged.accepted(), "a missing type must reject the dependent declaration group");
+        check(staged.workspace().groups().size() == 1
+                        && staged.workspace().groups().get(0).slotIds().size() == 2,
+                "operations sharing a semantic module target must form one dependency group");
+        var rejected = staged.workspace().slots().stream()
+                .filter(value -> value.status() == CompilerProtocol.RepairSlotStatus.REJECTED)
+                .findFirst().orElseThrow();
+        var repaired = DealCompilerWorkspace.patchRepairWorkspace(
+                source, "app.deal", staged.workspace(), List.of(new CompilerProtocol.SlotPatch(
+                        rejected.slotId(), Map.of("declaration",
+                                "export function run(state: AppState, action: RunAction): AppState { return state; }"))));
+        check(repaired.accepted(), "dependent slots must compile together after a narrow patch");
+        check(repaired.source().contains("class RunAction") && repaired.source().contains("function run"),
+                "the repaired group must retain both declarations");
+    }
+
+    private static void inspectChangeBuildsCompilerOwnedDependencyCone() {
+        String source = source();
+        var inspection = DealCompilerWorkspace.inspect(source, "app.deal");
+        var update = inspection.symbols().stream()
+                .filter(value -> value.name().equals("update")).findFirst().orElseThrow();
+        var increment = inspection.symbols().stream()
+                .filter(value -> value.name().equals("increment")).findFirst().orElseThrow();
+        var change = DealCompilerWorkspace.inspectChange(
+                source, "app.deal", inspection.sourceDigest(), List.of(update.id()),
+                List.of(DealCompilerWorkspace.REPLACE_DECLARATION));
+        check(change.diagnostics().isEmpty(), "change inspection must accept a current semantic anchor");
+        check(change.dependencyCone().members().stream().anyMatch(value ->
+                        value.id().equals(update.id()) && value.exposure().equals("EDIT_BODY")),
+                "the selected symbol must be editable");
+        check(change.dependencyCone().members().stream().anyMatch(value ->
+                        value.id().equals(increment.id()) && value.exposure().equals("SIGNATURE_ONLY")),
+                "the compiler must publish the selected symbol's callee dependency");
+        check(change.dependencyCone().edges().stream().anyMatch(value ->
+                        value.from().equals(update.id()) && value.to().equals(increment.id())
+                                && value.kind().equals("CALLS")),
+                "the dependency cone must retain a typed call edge");
+    }
+
+    private static void repairWorkspacePreservesAndPatchesSlots() {
+        String source = source();
+        var inspection = DealCompilerWorkspace.inspect(source, "app.deal");
+        var update = inspection.symbols().stream()
+                .filter(value -> value.name().equals("update")).findFirst().orElseThrow();
+        var updateBody = inspection.nodes().stream()
+                .filter(value -> value.ownerId().equals(update.id()) && value.kind().equals("function-body"))
+                .findFirst().orElseThrow();
+        var initial = inspection.symbols().stream()
+                .filter(value -> value.name().equals("initialState")).findFirst().orElseThrow();
+        var initialBody = inspection.nodes().stream()
+                .filter(value -> value.ownerId().equals(initial.id()) && value.kind().equals("function-body"))
+                .findFirst().orElseThrow();
+        var updateDescriptor = DealCompilerWorkspace.queryNode(source, "app.deal", updateBody.id())
+                .allowedOperations().get(0);
+        var initialDescriptor = DealCompilerWorkspace.queryNode(source, "app.deal", initialBody.id())
+                .allowedOperations().get(0);
+        var precondition = new CompilerProtocol.ChangeSetPrecondition(
+                inspection.sourceDigest(), Map.of(
+                        updateBody.id().value(), updateDescriptor.targetFingerprint(),
+                        initialBody.id().value(), initialDescriptor.targetFingerprint()));
+        var changeInspection = DealCompilerWorkspace.inspectChange(
+                source, "app.deal", inspection.sourceDigest(), List.of(updateBody.id(), initialBody.id()),
+                List.of(DealCompilerWorkspace.REPLACE_FUNCTION_BODY));
+        var staged = DealCompilerWorkspace.stageChange(
+                source, "app.deal", precondition, changeInspection, List.of(
+                        new DealCompilerWorkspace.ReplaceFunctionBody(updateBody.id(), "return missing;"),
+                        new DealCompilerWorkspace.ReplaceFunctionBody(initialBody.id(),
+                                "return {count: 7};")));
+        check(!staged.accepted(), "one invalid slot must keep the candidate staged");
+        var rejected = staged.workspace().slots().stream()
+                .filter(value -> value.status() == CompilerProtocol.RepairSlotStatus.REJECTED)
+                .findFirst().orElseThrow();
+        var preserved = staged.workspace().slots().stream()
+                .filter(value -> !value.slotId().equals(rejected.slotId())).findFirst().orElseThrow();
+        check(preserved.status() == CompilerProtocol.RepairSlotStatus.SEALED,
+                "an independent valid sibling must be sealed");
+        String preservedPayload = preserved.payload().get("body");
+        var snapshot = staged.workspace();
+        var tampered = new CompilerProtocol.RepairWorkspaceSnapshot(
+                snapshot.workspaceId(), "tampered", snapshot.baseRevision(), snapshot.inspectionDigest(),
+                snapshot.precondition(), snapshot.slots(), snapshot.groups(), snapshot.repairRound());
+        var rejectedTamper = DealCompilerWorkspace.patchRepairWorkspace(
+                source, "app.deal", tampered, List.of(new CompilerProtocol.SlotPatch(
+                        rejected.slotId(), Map.of("body", "return increment(state);"))));
+        check(rejectedTamper.diagnostics().get(0).code().equals("CP1022"),
+                "a tampered stateless workspace must reject before applying a patch");
+        var repaired = DealCompilerWorkspace.patchRepairWorkspace(
+                source, "app.deal", staged.workspace(), List.of(new CompilerProtocol.SlotPatch(
+                        rejected.slotId(), Map.of("body", "return increment(state);"))));
+        check(repaired.accepted(), "patching only the rejected slot must commit the full candidate: "
+                + repaired.diagnostics());
+        check(repaired.source().contains("return {count: 7};"),
+                "the sealed sibling payload must reach committed source");
+        check(repaired.workspace().slots().stream()
+                        .filter(value -> value.slotId().equals(preserved.slotId()))
+                        .allMatch(value -> value.payload().get("body").equals(preservedPayload)),
+                "repair must preserve the sibling payload byte-for-byte");
     }
 
     private static void declarationReplacementIsAtomicAndDoesNotConsumeItsNeighbor() {

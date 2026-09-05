@@ -7,7 +7,7 @@ import java.util.Objects;
 /** Transport-neutral records shared by DEAL compiler frontends. */
 public final class CompilerProtocol {
     public static final String VERSION = "compiler-protocol-v2";
-    public static final String AGENT_SURFACE_VERSION = "agent-surface-v2";
+    public static final String AGENT_SURFACE_VERSION = "agent-surface-v3";
 
     private CompilerProtocol() {}
 
@@ -66,6 +66,142 @@ public final class CompilerProtocol {
         public RepairScope {
             Objects.requireNonNull(operation, "operation");
             Objects.requireNonNull(ownerId, "ownerId");
+        }
+    }
+
+    public record DependencyMember(
+            SemanticId id,
+            String kind,
+            String exposure,
+            String fingerprint) {
+        public DependencyMember {
+            Objects.requireNonNull(id, "id");
+            Objects.requireNonNull(kind, "kind");
+            Objects.requireNonNull(exposure, "exposure");
+            Objects.requireNonNull(fingerprint, "fingerprint");
+        }
+    }
+
+    public record DependencyEdge(SemanticId from, SemanticId to, String kind) {
+        public DependencyEdge {
+            Objects.requireNonNull(from, "from");
+            Objects.requireNonNull(to, "to");
+            Objects.requireNonNull(kind, "kind");
+        }
+    }
+
+    public record DependencyCone(
+            String fingerprint,
+            List<SemanticId> anchors,
+            List<DependencyMember> members,
+            List<DependencyEdge> edges) {
+        public DependencyCone {
+            Objects.requireNonNull(fingerprint, "fingerprint");
+            anchors = List.copyOf(anchors);
+            members = List.copyOf(members);
+            edges = List.copyOf(edges);
+        }
+    }
+
+    public record ChangeInspection(
+            RevisionRef revision,
+            String inspectionDigest,
+            DependencyCone dependencyCone,
+            List<SemanticSlice> editSlices,
+            List<OperationDescriptor> allowedOperations,
+            List<StructuredDiagnostic> diagnostics) {
+        public ChangeInspection {
+            Objects.requireNonNull(revision, "revision");
+            Objects.requireNonNull(inspectionDigest, "inspectionDigest");
+            Objects.requireNonNull(dependencyCone, "dependencyCone");
+            editSlices = List.copyOf(editSlices);
+            allowedOperations = List.copyOf(allowedOperations);
+            diagnostics = List.copyOf(diagnostics);
+        }
+    }
+
+    public enum RepairSlotStatus {
+        SEALED,
+        STAGED,
+        REJECTED,
+        BLOCKED,
+        COMMIT_READY
+    }
+
+    public record RepairSlot(
+            String slotId,
+            String operation,
+            SemanticId targetId,
+            String targetFingerprint,
+            Map<String, String> payload,
+            String payloadFingerprint,
+            RepairSlotStatus status,
+            String dependencyGroupId,
+            List<StructuredDiagnostic> diagnostics) {
+        public RepairSlot {
+            Objects.requireNonNull(slotId, "slotId");
+            Objects.requireNonNull(operation, "operation");
+            Objects.requireNonNull(targetId, "targetId");
+            Objects.requireNonNull(targetFingerprint, "targetFingerprint");
+            payload = Map.copyOf(payload);
+            Objects.requireNonNull(payloadFingerprint, "payloadFingerprint");
+            Objects.requireNonNull(status, "status");
+            Objects.requireNonNull(dependencyGroupId, "dependencyGroupId");
+            diagnostics = List.copyOf(diagnostics);
+        }
+    }
+
+    public record DependencyGroup(
+            String groupId,
+            List<String> slotIds,
+            List<String> dependsOn,
+            String status) {
+        public DependencyGroup {
+            Objects.requireNonNull(groupId, "groupId");
+            slotIds = List.copyOf(slotIds);
+            dependsOn = List.copyOf(dependsOn);
+            Objects.requireNonNull(status, "status");
+        }
+    }
+
+    public record RepairWorkspaceSnapshot(
+            String workspaceId,
+            String workspaceDigest,
+            RevisionRef baseRevision,
+            String inspectionDigest,
+            ChangeSetPrecondition precondition,
+            List<RepairSlot> slots,
+            List<DependencyGroup> groups,
+            int repairRound) {
+        public RepairWorkspaceSnapshot {
+            Objects.requireNonNull(workspaceId, "workspaceId");
+            Objects.requireNonNull(workspaceDigest, "workspaceDigest");
+            Objects.requireNonNull(baseRevision, "baseRevision");
+            Objects.requireNonNull(inspectionDigest, "inspectionDigest");
+            Objects.requireNonNull(precondition, "precondition");
+            slots = List.copyOf(slots);
+            groups = List.copyOf(groups);
+        }
+    }
+
+    public record SlotPatch(String slotId, Map<String, String> payload) {
+        public SlotPatch {
+            Objects.requireNonNull(slotId, "slotId");
+            payload = Map.copyOf(payload);
+        }
+    }
+
+    public record RepairWorkspaceResult(
+            boolean accepted,
+            String source,
+            String sourceDigest,
+            RepairWorkspaceSnapshot workspace,
+            Object change,
+            List<StructuredDiagnostic> diagnostics) {
+        public RepairWorkspaceResult {
+            Objects.requireNonNull(source, "source");
+            Objects.requireNonNull(sourceDigest, "sourceDigest");
+            diagnostics = List.copyOf(diagnostics);
         }
     }
 

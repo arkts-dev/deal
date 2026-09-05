@@ -34,6 +34,7 @@ import deal.ast.Span;
 import deal.ast.StatementNode;
 import deal.ast.TemplateLiteralExpr;
 import deal.ast.ThrowStatement;
+import deal.ast.TokenType;
 import deal.ast.TryStatement;
 import deal.ast.TypeNode;
 import deal.ast.UnaryExpr;
@@ -51,6 +52,11 @@ import deal.diagnostics.CompilerDiagnostic;
 import deal.compiler.CompilerProtocol.AppInterfaceSnapshot;
 import deal.compiler.CompilerProtocol.ChangeSetPrecondition;
 import deal.compiler.CompilerProtocol.ChangeResult;
+import deal.compiler.CompilerProtocol.ChangeInspection;
+import deal.compiler.CompilerProtocol.DependencyCone;
+import deal.compiler.CompilerProtocol.DependencyEdge;
+import deal.compiler.CompilerProtocol.DependencyGroup;
+import deal.compiler.CompilerProtocol.DependencyMember;
 import deal.compiler.CompilerProtocol.FieldSnapshot;
 import deal.compiler.CompilerProtocol.ImpactReport;
 import deal.compiler.CompilerProtocol.Inspection;
@@ -58,11 +64,16 @@ import deal.compiler.CompilerProtocol.NodeSnapshot;
 import deal.compiler.CompilerProtocol.OperationDescriptor;
 import deal.compiler.CompilerProtocol.ProtocolHandshake;
 import deal.compiler.CompilerProtocol.RepairScope;
+import deal.compiler.CompilerProtocol.RepairSlot;
+import deal.compiler.CompilerProtocol.RepairSlotStatus;
+import deal.compiler.CompilerProtocol.RepairWorkspaceResult;
+import deal.compiler.CompilerProtocol.RepairWorkspaceSnapshot;
 import deal.compiler.CompilerProtocol.SemanticId;
 import deal.compiler.CompilerProtocol.SemanticSlice;
 import deal.compiler.CompilerProtocol.RevisionRef;
 import deal.compiler.CompilerProtocol.SourceRange;
 import deal.compiler.CompilerProtocol.StructuredDiagnostic;
+import deal.compiler.CompilerProtocol.SlotPatch;
 import deal.compiler.CompilerProtocol.SymbolSnapshot;
 import deal.compiler.CompilerProtocol.TypeSnapshot;
 import deal.lexer.LexResult;
@@ -117,7 +128,9 @@ public final class DealCompilerWorkspace {
                         "semantic-slices",
                         "fingerprint-preconditions",
                         "atomic-change-sets",
-                        "app-interface-fingerprints"));
+                        "app-interface-fingerprints",
+                        "dependency-cones",
+                        "repair-workspace-slots"));
     }
 
     @FunctionalInterface
@@ -141,6 +154,90 @@ public final class DealCompilerWorkspace {
     public record ReplaceFunctionBody(SemanticId targetId, String body) implements Operation {}
 
     public record ReplaceBlockBody(SemanticId targetId, String body) implements Operation {}
+
+    public static ChangeInspection inspectChange(
+            String source,
+            String modulePath,
+            String baseDigest,
+            List<SemanticId> anchors,
+            List<String> requestedOperations) {
+        return inspectChange(source, modulePath, baseDigest, anchors, requestedOperations,
+                rejectingResolver(), SourceAdapter.IDENTITY);
+    }
+
+    public static ChangeInspection inspectChange(
+            String source,
+            String modulePath,
+            String baseDigest,
+            List<SemanticId> anchors,
+            List<String> requestedOperations,
+            ModuleResolver resolver,
+            SourceAdapter adapter) {
+        Analysis analysis = analyze(source, modulePath, resolver, adapter);
+        if (!analysis.inspection().sourceDigest().equals(baseDigest)) {
+            StructuredDiagnostic diagnostic = diagnostic(
+                    "CP1001", "Stale source digest; inspect the current source before editing",
+                    analysis.moduleId(), null, analysis.inspection().sourceDigest(), baseDigest,
+                    List.of(), "inspectCanonicalApp");
+            DependencyCone empty = new DependencyCone(digest("empty"), List.of(), List.of(), List.of());
+            return new ChangeInspection(revision(analysis), digest(baseDigest + "\u0000stale"),
+                    empty, List.of(), List.of(), List.of(diagnostic));
+        }
+        LinkedHashSet<SemanticId> selected = new LinkedHashSet<>(anchors);
+        if (selected.isEmpty()) selected.add(analysis.moduleId());
+        List<SemanticSlice> slices = new ArrayList<>();
+        LinkedHashMap<SemanticId, DependencyMember> members = new LinkedHashMap<>();
+        LinkedHashSet<DependencyEdge> edges = new LinkedHashSet<>();
+        LinkedHashMap<String, OperationDescriptor> operations = new LinkedHashMap<>();
+        for (SemanticId anchor : selected) {
+            Target target = analysis.targets().get(anchor);
+            if (target == null) {
+                StructuredDiagnostic diagnostic = diagnostic(
+                        "CP1020", "Unknown change anchor", anchor, null,
+                        "target issued for " + baseDigest, "missing", List.of(), "inspectCanonicalApp");
+                DependencyCone empty = new DependencyCone(digest("empty"), List.copyOf(selected), List.of(), List.of());
+                return new ChangeInspection(revision(analysis), digest(baseDigest + "\u0000unknown"),
+                        empty, List.of(), List.of(), List.of(diagnostic));
+            }
+            SemanticSlice slice = target.kind().equals("module")
+                    ? queryModule(source, modulePath, resolver, adapter)
+                    : target.kind().equals("declaration")
+                            ? querySymbol(source, modulePath, anchor, resolver, adapter)
+                            : queryNode(source, modulePath, anchor, resolver, adapter);
+            slices.add(slice);
+            members.put(anchor, new DependencyMember(
+                    anchor, target.kind(), "EDIT_BODY", targetFingerprint(analysis, anchor)));
+            slice.allowedOperations().stream()
+                    .filter(value -> requestedOperations.isEmpty() || requestedOperations.contains(value.operation()))
+                    .forEach(value -> operations.put(value.operation() + "\u0000" + value.targetId().value(), value));
+            SymbolSnapshot owner = target.kind().equals("declaration")
+                    ? analysis.symbolsById().get(anchor)
+                    : analysis.symbolsById().get(target.ownerId());
+            if (owner == null) continue;
+            for (SemanticId callee : owner.callees()) {
+                addDependencyMember(analysis, members, callee, "SIGNATURE_ONLY");
+                edges.add(new DependencyEdge(owner.id(), callee, "CALLS"));
+            }
+            for (SemanticId reference : owner.references()) {
+                addDependencyMember(analysis, members, reference, "SIGNATURE_ONLY");
+                edges.add(new DependencyEdge(owner.id(), reference, "REFERENCES"));
+            }
+            for (SemanticId caller : owner.callers()) {
+                addDependencyMember(analysis, members, caller, "IMPACT_ONLY");
+                edges.add(new DependencyEdge(caller, owner.id(), "CALLS"));
+            }
+        }
+        List<DependencyMember> memberList = List.copyOf(members.values());
+        List<DependencyEdge> edgeList = List.copyOf(edges);
+        String coneFingerprint = digest(CompilerProtocolJson.encode(List.of(
+                List.copyOf(selected), memberList, edgeList)));
+        DependencyCone cone = new DependencyCone(
+                coneFingerprint, List.copyOf(selected), memberList, edgeList);
+        String inspectionDigest = digest(CompilerProtocolJson.encode(List.of(
+                baseDigest, coneFingerprint, List.copyOf(operations.values()))));
+        return new ChangeInspection(revision(analysis), inspectionDigest, cone, slices,
+                List.copyOf(operations.values()), List.of());
+    }
 
     public static Inspection inspect(String source, String modulePath) {
         return inspect(source, modulePath, rejectingResolver(), SourceAdapter.IDENTITY);
@@ -291,12 +388,303 @@ public final class DealCompilerWorkspace {
         return apply(source, modulePath, precondition.baseDigest(), operations, resolver, adapter);
     }
 
+    public static RepairWorkspaceResult stageChange(
+            String source,
+            String modulePath,
+            ChangeSetPrecondition precondition,
+            ChangeInspection changeInspection,
+            List<? extends Operation> operations) {
+        return stageChange(source, modulePath, precondition, changeInspection, operations,
+                rejectingResolver(), SourceAdapter.IDENTITY);
+    }
+
+    public static RepairWorkspaceResult stageChange(
+            String source,
+            String modulePath,
+            ChangeSetPrecondition precondition,
+            ChangeInspection changeInspection,
+            List<? extends Operation> operations,
+            ModuleResolver resolver,
+            SourceAdapter adapter) {
+        Objects.requireNonNull(changeInspection, "changeInspection");
+        ChangeResult change = applyChecked(source, modulePath, precondition, operations, resolver, adapter);
+        if (change.accepted()) {
+            RepairWorkspaceSnapshot workspace = workspace(
+                    source, modulePath, precondition, changeInspection, operations, change, 0, List.of(), resolver, adapter);
+            return new RepairWorkspaceResult(
+                    true, change.source(), change.sourceDigest(), workspace, change, List.of());
+        }
+        RepairWorkspaceSnapshot workspace = workspace(
+                source, modulePath, precondition, changeInspection, operations, change, 0, List.of(), resolver, adapter);
+        return new RepairWorkspaceResult(
+                false, source, digest(source), workspace, change, change.diagnostics());
+    }
+
+    public static RepairWorkspaceResult patchRepairWorkspace(
+            String source,
+            String modulePath,
+            RepairWorkspaceSnapshot workspace,
+            List<SlotPatch> patches) {
+        return patchRepairWorkspace(source, modulePath, workspace, patches,
+                rejectingResolver(), SourceAdapter.IDENTITY);
+    }
+
+    public static RepairWorkspaceResult patchRepairWorkspace(
+            String source,
+            String modulePath,
+            RepairWorkspaceSnapshot workspace,
+            List<SlotPatch> patches,
+            ModuleResolver resolver,
+            SourceAdapter adapter) {
+        Objects.requireNonNull(workspace, "workspace");
+        if (!digest(source).equals(workspace.baseRevision().sourceDigest())) {
+            return rejectedWorkspace(source, workspace, "CP1021", "Repair workspace base source is stale");
+        }
+        if (!workspaceDigest(workspace).equals(workspace.workspaceDigest())) {
+            return rejectedWorkspace(source, workspace, "CP1022", "Repair workspace digest is invalid");
+        }
+        Map<String, SlotPatch> bySlot = new LinkedHashMap<>();
+        for (SlotPatch patch : patches) {
+            if (bySlot.put(patch.slotId(), patch) != null) {
+                return rejectedWorkspace(source, workspace, "CP1023", "Repair slot was patched more than once");
+            }
+        }
+        List<Operation> operations = new ArrayList<>();
+        for (RepairSlot slot : workspace.slots()) {
+            SlotPatch patch = bySlot.remove(slot.slotId());
+            if (patch != null && slot.status() != RepairSlotStatus.REJECTED) {
+                return rejectedWorkspace(source, workspace, "CP1024", "Only rejected repair slots are writable");
+            }
+            Map<String, String> payload = new LinkedHashMap<>(slot.payload());
+            if (patch != null) {
+                if (!payload.keySet().equals(patch.payload().keySet())) {
+                    return rejectedWorkspace(source, workspace, "CP1025", "Repair patch fields do not match the slot contract");
+                }
+                payload.putAll(patch.payload());
+            }
+            operations.add(operation(slot.operation(), slot.targetId(), payload));
+        }
+        if (!bySlot.isEmpty()) {
+            return rejectedWorkspace(source, workspace, "CP1026", "Unknown repair slot " + bySlot.keySet().iterator().next());
+        }
+        ChangeInspection inspection = inspectChange(
+                source, modulePath, workspace.baseRevision().sourceDigest(),
+                workspace.slots().stream().map(RepairSlot::targetId).distinct().toList(),
+                workspace.slots().stream().map(RepairSlot::operation).distinct().toList(), resolver, adapter);
+        ChangeResult change = applyChecked(source, modulePath, workspace.precondition(), operations, resolver, adapter);
+        RepairWorkspaceSnapshot next = workspace(
+                source, modulePath, workspace.precondition(), inspection, operations, change,
+                workspace.repairRound() + 1, workspace.slots(), resolver, adapter);
+        return new RepairWorkspaceResult(
+                change.accepted(), change.accepted() ? change.source() : source,
+                change.accepted() ? change.sourceDigest() : digest(source),
+                next, change, change.diagnostics());
+    }
+
     public static ChangeResult apply(
             String source,
             String modulePath,
             String baseDigest,
             List<? extends Operation> operations) {
         return apply(source, modulePath, baseDigest, operations, rejectingResolver());
+    }
+
+    private static void addDependencyMember(
+            Analysis analysis,
+            Map<SemanticId, DependencyMember> members,
+            SemanticId id,
+            String exposure) {
+        SymbolSnapshot symbol = analysis.symbolsById().get(id);
+        if (symbol == null) return;
+        DependencyMember existing = members.get(id);
+        if (existing != null && exposureRank(existing.exposure()) >= exposureRank(exposure)) return;
+        members.put(id, new DependencyMember(id, symbol.kind(), exposure, symbol.fingerprint()));
+    }
+
+    private static int exposureRank(String value) {
+        return switch (value) {
+            case "EDIT_BODY" -> 3;
+            case "SIGNATURE_ONLY" -> 2;
+            default -> 1;
+        };
+    }
+
+    private static RepairWorkspaceSnapshot workspace(
+            String source,
+            String modulePath,
+            ChangeSetPrecondition precondition,
+            ChangeInspection inspection,
+            List<? extends Operation> operations,
+            ChangeResult change,
+            int round,
+            List<RepairSlot> previousSlots,
+            ModuleResolver resolver,
+            SourceAdapter adapter) {
+        List<String> introduced = operations.stream()
+                .filter(AddDeclaration.class::isInstance)
+                .map(AddDeclaration.class::cast)
+                .map(AddDeclaration::declaration)
+                .map(value -> singleDeclarationIdentity(value, modulePath))
+                .filter(value -> !value.startsWith("invalid") && !value.equals("unsupported-declaration"))
+                .toList();
+        List<Set<Integer>> adjacency = new ArrayList<>();
+        for (int index = 0; index < operations.size(); index++) adjacency.add(new LinkedHashSet<>());
+        for (int left = 0; left < operations.size(); left++) {
+            for (int right = left + 1; right < operations.size(); right++) {
+                if (operationsDependent(operations.get(left), operations.get(right), introduced)) {
+                    adjacency.get(left).add(right);
+                    adjacency.get(right).add(left);
+                }
+            }
+        }
+        int[] groupIndexes = connectedComponents(adjacency);
+        List<StructuredDiagnostic> diagnostics = change.diagnostics();
+        List<ChangeResult> isolated = operations.stream()
+                .map(operation -> applyChecked(source, modulePath, precondition, List.of(operation), resolver, adapter))
+                .toList();
+        Set<Integer> directlyRejected = new LinkedHashSet<>();
+        for (int index = 0; index < isolated.size(); index++) {
+            if (!isolated.get(index).accepted()) directlyRejected.add(index);
+        }
+        if (directlyRejected.isEmpty()) directlyRejected.addAll(rejectedSlots(operations, diagnostics));
+        List<RepairSlot> slots = new ArrayList<>();
+        for (int index = 0; index < operations.size(); index++) {
+            int slotIndex = index;
+            Operation operation = operations.get(index);
+            String slotId = "R" + (index + 1);
+            String groupId = "G" + (groupIndexes[index] + 1);
+            Map<String, String> payload = payload(operation);
+            List<StructuredDiagnostic> owned = isolated.get(index).accepted()
+                    ? diagnostics.stream().filter(value -> diagnosticMatches(operation, value)).toList()
+                    : isolated.get(index).diagnostics();
+            boolean rejected = directlyRejected.contains(index);
+            boolean blocked = !rejected && directlyRejected.stream()
+                    .anyMatch(other -> groupIndexes[other] == groupIndexes[slotIndex]);
+            RepairSlotStatus status = change.accepted()
+                    ? RepairSlotStatus.COMMIT_READY
+                    : rejected ? RepairSlotStatus.REJECTED
+                    : blocked ? RepairSlotStatus.BLOCKED
+                    : RepairSlotStatus.SEALED;
+            String targetFingerprint = precondition.expectedTargetFingerprints()
+                    .getOrDefault(operation.targetId().value(), "");
+            slots.add(new RepairSlot(
+                    slotId, operationName(operation), operation.targetId(), targetFingerprint,
+                    payload, digest(CompilerProtocolJson.encode(payload)), status, groupId, owned));
+        }
+        List<DependencyGroup> groups = new ArrayList<>();
+        int groupCount = java.util.Arrays.stream(groupIndexes).max().orElse(-1) + 1;
+        for (int group = 0; group < groupCount; group++) {
+            int selectedGroup = group;
+            List<RepairSlot> members = slots.stream()
+                    .filter(value -> value.dependencyGroupId().equals("G" + (selectedGroup + 1))).toList();
+            String status = members.stream().anyMatch(value -> value.status() == RepairSlotStatus.REJECTED)
+                    ? "REPAIR_REQUIRED"
+                    : members.stream().allMatch(value -> value.status() == RepairSlotStatus.COMMIT_READY)
+                            ? "COMMIT_READY" : "SEALED";
+            groups.add(new DependencyGroup(
+                    "G" + (group + 1), members.stream().map(RepairSlot::slotId).toList(), List.of(), status));
+        }
+        String workspaceId = digest(precondition.baseDigest() + "\u0000" + inspection.inspectionDigest()
+                + "\u0000" + CompilerProtocolJson.encode(operations.stream().map(DealCompilerWorkspace::payload).toList()));
+        RepairWorkspaceSnapshot draft = new RepairWorkspaceSnapshot(
+                workspaceId, "", new RevisionRef(CompilerProtocol.VERSION, digest(source)),
+                inspection.inspectionDigest(), precondition, slots, groups, round);
+        return new RepairWorkspaceSnapshot(
+                workspaceId, workspaceDigest(draft), draft.baseRevision(), draft.inspectionDigest(),
+                draft.precondition(), draft.slots(), draft.groups(), draft.repairRound());
+    }
+
+    private static Set<Integer> rejectedSlots(
+            List<? extends Operation> operations, List<StructuredDiagnostic> diagnostics) {
+        Set<Integer> result = new LinkedHashSet<>();
+        for (int index = 0; index < operations.size(); index++) {
+            Operation operation = operations.get(index);
+            if (diagnostics.stream().anyMatch(value -> diagnosticMatches(operation, value))) result.add(index);
+        }
+        if (result.isEmpty() && !diagnostics.isEmpty()) result.add(0);
+        return result;
+    }
+
+    private static boolean diagnosticMatches(Operation operation, StructuredDiagnostic diagnostic) {
+        if (operation.targetId().equals(diagnostic.ownerId())) return true;
+        if (diagnostic.relatedIds().contains(operation.targetId())) return true;
+        return diagnostic.repairScopes().stream().anyMatch(scope ->
+                scope.ownerId().equals(operation.targetId())
+                        && scope.operation().equals(operationName(operation)));
+    }
+
+    private static int[] connectedComponents(List<Set<Integer>> adjacency) {
+        int[] groups = new int[adjacency.size()];
+        java.util.Arrays.fill(groups, -1);
+        int group = 0;
+        for (int start = 0; start < adjacency.size(); start++) {
+            if (groups[start] >= 0) continue;
+            java.util.ArrayDeque<Integer> pending = new java.util.ArrayDeque<>();
+            pending.add(start);
+            groups[start] = group;
+            while (!pending.isEmpty()) {
+                int current = pending.removeFirst();
+                for (int next : adjacency.get(current)) {
+                    if (groups[next] >= 0) continue;
+                    groups[next] = group;
+                    pending.add(next);
+                }
+            }
+            group++;
+        }
+        return groups;
+    }
+
+    private static boolean operationsDependent(Operation left, Operation right, List<String> introduced) {
+        if (left.targetId().equals(right.targetId())) return true;
+        String leftSource = String.join("\n", payload(left).values());
+        String rightSource = String.join("\n", payload(right).values());
+        for (String identity : introduced) {
+            String name = identity.substring(identity.lastIndexOf(':') + 1);
+            if (containsIdentifier(leftSource, name) && containsIdentifier(rightSource, name)) return true;
+        }
+        return false;
+    }
+
+    private static boolean containsIdentifier(String source, String identifier) {
+        return new Lexer(source, "/generated/repair-slot.deal").tokenize().tokens().stream()
+                .anyMatch(token -> token.type() == TokenType.IDENTIFIER && token.lexeme().equals(identifier));
+    }
+
+    private static Map<String, String> payload(Operation operation) {
+        return switch (operation) {
+            case AddDeclaration value -> Map.of("declaration", value.declaration());
+            case ReplaceDeclaration value -> Map.of("declaration", value.declaration());
+            case ReplaceFunctionBody value -> Map.of("body", value.body());
+            case ReplaceBlockBody value -> Map.of("body", value.body());
+            case RemoveDeclaration ignored -> Map.of();
+        };
+    }
+
+    private static Operation operation(String name, SemanticId target, Map<String, String> payload) {
+        return switch (name) {
+            case ADD_DECLARATION -> new AddDeclaration(target, payload.get("declaration"));
+            case REMOVE_DECLARATION -> new RemoveDeclaration(target);
+            case REPLACE_DECLARATION -> new ReplaceDeclaration(target, payload.get("declaration"));
+            case REPLACE_FUNCTION_BODY -> new ReplaceFunctionBody(target, payload.get("body"));
+            case REPLACE_BLOCK_BODY -> new ReplaceBlockBody(target, payload.get("body"));
+            default -> throw new IllegalArgumentException("Unknown DEAL repair operation " + name);
+        };
+    }
+
+    private static String workspaceDigest(RepairWorkspaceSnapshot workspace) {
+        return digest(CompilerProtocolJson.encode(List.of(
+                workspace.workspaceId(), workspace.baseRevision(), workspace.inspectionDigest(),
+                workspace.precondition(), workspace.slots(), workspace.groups(), workspace.repairRound())));
+    }
+
+    private static RepairWorkspaceResult rejectedWorkspace(
+            String source, RepairWorkspaceSnapshot workspace, String code, String message) {
+        StructuredDiagnostic diagnostic = new StructuredDiagnostic(
+                code, "error", message, null, workspace.slots().isEmpty()
+                        ? new SemanticId("deal:module:app.deal") : workspace.slots().get(0).targetId(),
+                "valid repair workspace", "invalid repair request", List.of(), List.of(), "inspectChange");
+        return new RepairWorkspaceResult(false, source, digest(source), workspace, null, List.of(diagnostic));
     }
 
     public static ChangeResult apply(
