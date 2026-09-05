@@ -186,6 +186,11 @@ TEST_SOURCES=(
   # (stdlib-operations-and-time-lock D7, Verification 6; sequencing
   # item 6).
   'test/StdlibEquivalenceBatteryTest.java'
+  # ISSUE-0499 registration: the epic's decomposition tail — the
+  # end-to-end stdlib and time-lock integration verification
+  # (stdlib-operations-and-time-lock Contracts §Integration verification
+  # task, Verification 7-8; sequencing item 7, the last task).
+  'test/StdlibIntegrationTest.java'
   # ISSUE-0162 registration: the C FFI declaration validation and
   # forward binding generation battery.
   'test/FfiDeclarationValidatorTest.java'
@@ -343,4 +348,12 @@ WARNING: luajit not found, skipping async nesting stress tests'
   # (stdlib-operations-and-time-lock D7, Verification 6; sequencing
   # item 6).
   'fg|=== Running Stdlib Target-Helper Equivalence Battery (ISSUE-0498) ===|java -ea -cp build deal.test.StdlibEquivalenceBatteryTest'
+  # ISSUE-0499 registration: the epic's decomposition tail — one
+  # pipeline drives T1-T6 end-to-end (catalog, lowering, the shared
+  # algorithms, the exact projections, the claiming seam plus the time
+  # lock and the D3 disposition, and the equivalence-battery verdicts),
+  # and the injected-fault variants prove the all-constituents contract
+  # (stdlib-operations-and-time-lock Contracts §Integration verification
+  # task, Verification 7-8; sequencing item 7, the last task).
+  'fg|=== Running Stdlib Integration Verification (ISSUE-0499, decomposition tail) ===|java -ea -cp build deal.test.StdlibIntegrationTest'
 )
