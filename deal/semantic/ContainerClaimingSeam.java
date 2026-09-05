@@ -47,6 +47,10 @@ import java.util.Set;
  *       producer under this shared mechanism — the three evidence
  *       families of the catalog row; {@code BREAK}/{@code CONTINUE}/
  *       {@code TRY_CATCH}/{@code THROW} carry no home row).</li>
+ *   <li>{@code STDLIB_CALL} → {@code STDLIB_SEMANTICS} (the stdlib
+ *       epic's home row, {@code stdlib-operations-and-time-lock} D9: a
+ *       single-family {@code {STDLIB_CALL}} catalog row, so one produced
+ *       stdlib call fully evidences the row).</li>
  * </ul>
  *
  * <p>Every other op kind and every other boundary kind has no home row in
@@ -336,6 +340,7 @@ public final class ContainerClaimingSeam {
             };
             case BINDING_LOAD -> List.of(SemanticCapability.BINDINGS);
             case BRANCH, LOOP, DISCARD -> List.of(SemanticCapability.EVALUATION_ORDER);
+            case STDLIB_CALL -> List.of(SemanticCapability.STDLIB_SEMANTICS);
             default -> List.of();
         };
     }

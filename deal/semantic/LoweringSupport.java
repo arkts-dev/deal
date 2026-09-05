@@ -104,6 +104,19 @@ import java.util.Objects;
  * {@code ConstructKind} set and the S4 capability catalog are untouched —
  * only the construct→capability derivation rows extend.</p>
  *
+ * <p>The stdlib epic's plan-time arm ({@code stdlib-operations-and-time-lock}
+ * D9): a module whose checked source contains a cataloged stdlib call
+ * claims {@code STDLIB_SEMANTICS} — selected by the closed checked-fact
+ * recognition predicate ({@link StdlibCallRecognition}: a
+ * {@code ModuleSymbol} on a {@code STDLIB}-classified import plus the
+ * closed {@link StdlibFunctionCatalog}, never a module/name pair) — so
+ * F4 route rule 4's promotion gate covers stdlib-using modules before
+ * lowering. A module without a cataloged call never claims it, and a
+ * stdlib-export value read (a non-callee position) claims no stdlib
+ * capability from the read and adds no route rule (D3). The claim is
+ * derived from the checked source only — identical under every
+ * invocation purpose.</p>
+ *
  * <p><b>The remainder of the closed claims.</b></p>
  * <ul>
  *   <li><b>Arm A — direct module-object access:</b> a
@@ -362,6 +375,14 @@ public final class LoweringSupport {
             // module.
             if (scans.get(module.moduleId()).signedInt32) {
                 capabilities.add(SemanticCapability.SIGNED_INT32);
+            }
+            // The plan-time STDLIB_SEMANTICS arm (stdlib epic T5, D9): a
+            // module whose checked source contains a cataloged stdlib call
+            // claims STDLIB_SEMANTICS before lowering; a module without a
+            // cataloged call never claims it, and a stdlib-export value
+            // read claims nothing from the read (D3 — no route rule).
+            if (scans.get(module.moduleId()).stdlibCall) {
+                capabilities.add(SemanticCapability.STDLIB_SEMANTICS);
             }
             SemanticRequirementManifest manifest = new SemanticRequirementManifest(
                 module.moduleId(), capabilities, scans.get(module.moduleId()).coverage);
@@ -647,6 +668,12 @@ public final class LoweringSupport {
          * {@code UNARY(INT32_NEG)}, {@code BINARY(INT32_*)}, or
          * {@code INTRINSIC_CALL(INT_CONVERT)}. */
         boolean signedInt32;
+
+        /** The plan-time {@code STDLIB_SEMANTICS} trigger: a call whose
+         *  callee the closed checked-fact recognition predicate maps to a
+         *  catalog entry (D1) — the only common stdlib form (D3); a
+         *  stdlib-export value read never sets it. */
+        boolean stdlibCall;
         final Map<ConstructKind, List<SemanticOpKind>> coverage =
             new EnumMap<>(ConstructKind.class);
 
@@ -836,6 +863,12 @@ public final class LoweringSupport {
                 // module/name pair.
                 boolean stdlibCall = StdlibCallRecognition.recognize(callExpr.callee(),
                     module.checks().symbolTable(), module.imports()).isPresent();
+                if (stdlibCall) {
+                    // The plan-time STDLIB_SEMANTICS arm (D9): a cataloged
+                    // stdlib call claims STDLIB_SEMANTICS before lowering,
+                    // so route rule 4's promotion gate covers the module.
+                    scan.stdlibCall = true;
+                }
                 boolean crossModule = !stdlibCall
                     && callExpr.callee() instanceof MemberAccessExpr member
                     && member.object() instanceof IdentifierExpr identifier
