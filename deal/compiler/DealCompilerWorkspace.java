@@ -1147,7 +1147,8 @@ public final class DealCompilerWorkspace {
                 }
             }
         }
-        replacements.sort(Comparator.comparingInt(Replacement::start));
+        replacements.sort(Comparator.comparingInt(Replacement::start)
+                .thenComparingInt(Replacement::end));
         for (int index = 1; index < replacements.size(); index++) {
             if (replacements.get(index - 1).end() > replacements.get(index).start()) {
                 return rejected(base, diagnostic(
