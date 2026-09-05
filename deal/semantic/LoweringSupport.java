@@ -825,7 +825,19 @@ public final class LoweringSupport {
                 walkExpression(unaryExpr.expr(), module, scan);
             }
             case CallExpr callExpr -> {
-                boolean crossModule = callExpr.callee() instanceof MemberAccessExpr member
+                // A cataloged stdlib call is the closed CALL row's
+                // STDLIB_CALL form — never CROSS_MODULE_CALL: the row's
+                // mapped op kinds are {CALL, CALLBACK_INVOKE,
+                // INTRINSIC_CALL, STDLIB_CALL, ASYNC_START, AWAIT}, the
+                // exact production of the lowerer's stdlib branch. The
+                // classification runs the closed checked-fact
+                // recognition predicate (D1 — ModuleSymbol on a
+                // STDLIB-classified import plus the catalog), never a
+                // module/name pair.
+                boolean stdlibCall = StdlibCallRecognition.recognize(callExpr.callee(),
+                    module.checks().symbolTable(), module.imports()).isPresent();
+                boolean crossModule = !stdlibCall
+                    && callExpr.callee() instanceof MemberAccessExpr member
                     && member.object() instanceof IdentifierExpr identifier
                     && module.checks().symbolTable().resolve(identifier.name())
                         instanceof Symbol.ModuleSymbol;

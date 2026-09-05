@@ -160,6 +160,9 @@ TEST_SOURCES=(
   # negative lookups, recognition over real checked projects, and the
   # anti-hollow spelling control).
   'test/StdlibFunctionCatalogTest.java'
+  # ISSUE-0494 registration: the STDLIB_CALL lowering battery (D2,
+  # Verification 4).
+  'test/StdlibCallLoweringTest.java'
   # ISSUE-0162 registration: the C FFI declaration validation and
   # forward binding generation battery.
   'test/FfiDeclarationValidatorTest.java'
@@ -285,4 +288,10 @@ WARNING: luajit not found, skipping async nesting stress tests'
   # checked-fact recognition predicate (stdlib-operations-and-time-lock
   # D1, sequencing item 1).
   'fg|=== Running Stdlib Function Catalog / Checked-Fact Recognition Tests (ISSUE-0493) ===|java -ea -cp build deal.test.StdlibFunctionCatalogTest'
+  # ISSUE-0494 registration: the STDLIB_CALL lowering arm — the
+  # 20-id battery, argument operand completion, descriptor-kind-rule
+  # boundaries, single-source policy stamping, dump determinism, the
+  # validator negative, and the time lock (stdlib-operations-and-time-lock
+  # D2, Verification 4; sequencing item 2).
+  'fg|=== Running Stdlib STDLIB_CALL Lowering Tests (ISSUE-0494) ===|java -ea -cp build deal.test.StdlibCallLoweringTest'
 )
