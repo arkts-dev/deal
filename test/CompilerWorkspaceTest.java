@@ -400,8 +400,11 @@ public final class CompilerWorkspaceTest {
                 List.of(new DealCompilerWorkspace.ReplaceFunctionBody(body.id(), "return missing;")));
         check(!rejected.accepted(), "invalid replacement must reject");
         check(rejected.source().equals(source), "invalid replacement must roll back");
-        check(rejected.diagnostics().stream().allMatch(value -> value.ownerId().equals(body.id())),
-                "repair must be scoped to rejected node");
+        check(rejected.diagnostics().stream().allMatch(value ->
+                        value.ownerId().equals(update.id())
+                                && value.repairScopes().contains(new CompilerProtocol.RepairScope(
+                                        DealCompilerWorkspace.REPLACE_FUNCTION_BODY, body.id()))),
+                "diagnostic ownership must retain the symbol while repair remains scoped to the rejected node");
 
         var accepted = DealCompilerWorkspace.apply(
                 source,

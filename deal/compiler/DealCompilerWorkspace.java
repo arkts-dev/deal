@@ -1111,7 +1111,7 @@ public final class DealCompilerWorkspace {
         Analysis checked = analyze(candidate, modulePath, resolver, adapter);
         if (hasErrors(checked.inspection().diagnostics())) {
             List<StructuredDiagnostic> scoped = checked.inspection().diagnostics().stream()
-                    .map(value -> scopeDiagnostic(value, requestedOperations))
+                    .map(value -> scopeDiagnostic(value, requestedOperations, base))
                     .toList();
             return new ChangeResult(
                     false,
@@ -1528,15 +1528,33 @@ public final class DealCompilerWorkspace {
 
     private static StructuredDiagnostic scopeDiagnostic(
             StructuredDiagnostic diagnostic,
-            List<? extends Operation> operations) {
-        List<RepairScope> scopes = operations.stream()
+            List<? extends Operation> operations,
+            Analysis base) {
+        List<Operation> ownedOperations = operations.stream()
+                .filter(operation -> operationOwner(operation, base).equals(diagnostic.ownerId()))
+                .map(Operation.class::cast)
+                .toList();
+        List<RepairScope> scopes = ownedOperations.stream()
                 .map(operation -> new RepairScope(operationName(operation), operation.targetId()))
                 .toList();
         return new StructuredDiagnostic(
                 diagnostic.code(), diagnostic.severity(), diagnostic.message(), diagnostic.range(),
-                operations.get(0).targetId(), diagnostic.expected(), diagnostic.actual(),
-                operations.stream().map(Operation::targetId).toList(), scopes,
-                "queryDealNode(" + operations.get(0).targetId().value() + ")");
+                diagnostic.ownerId(), diagnostic.expected(), diagnostic.actual(),
+                ownedOperations.stream().map(Operation::targetId).toList(), scopes,
+                diagnostic.contextQuery());
+    }
+
+    private static SemanticId operationOwner(Operation operation, Analysis base) {
+        if (operation instanceof AddDeclaration value) {
+            String modulePrefix = "deal:module:";
+            String modulePath = base.moduleId().value().startsWith(modulePrefix)
+                    ? base.moduleId().value().substring(modulePrefix.length())
+                    : base.moduleId().value();
+            SemanticId produced = declarationSemanticId(value.declaration(), modulePath);
+            return produced == null ? base.moduleId() : produced;
+        }
+        Target target = base.targets().get(operation.targetId());
+        return target == null ? operation.targetId() : target.ownerId();
     }
 
     private static ChangeResult rejected(Analysis base, StructuredDiagnostic diagnostic) {
