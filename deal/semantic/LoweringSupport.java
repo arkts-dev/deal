@@ -42,6 +42,7 @@ import deal.ast.VariableDeclaration;
 import deal.ast.WhileStatement;
 import deal.checker.CheckResult;
 import deal.checker.Symbol;
+import deal.checker.SymbolTable;
 import deal.semantic.ir.ConstructKind;
 import deal.semantic.ir.ExternalModuleInterface;
 import deal.semantic.ir.ExternalModuleKind;
@@ -684,86 +685,114 @@ public final class LoweringSupport {
 
     private static ModuleScan scanModule(CheckedModuleInput module) throws FactDefect {
         ModuleScan scan = new ModuleScan();
-        walkStatements(module.ast().statements(), module, scan);
+        // The checker's module root table is the site scope at module
+        // level; nested scopes are entered per walked statement below
+        // (mirroring TypeChecker.walkStatement).
+        walkStatements(module.ast().statements(), module, scan,
+            module.checks().symbolTable());
         return scan;
     }
 
     private static void walkStatements(List<StatementNode> statements,
-                                       CheckedModuleInput module, ModuleScan scan)
+                                       CheckedModuleInput module, ModuleScan scan,
+                                       SymbolTable checkerScope)
             throws FactDefect {
         for (StatementNode statement : statements) {
-            walkStatement(statement, module, scan);
+            walkStatement(statement, module, scan, checkerScope);
         }
     }
 
+    /**
+     * Walks one statement under the checker's site scope — exactly the
+     * scope the checker resolved the statement's identifiers in, never
+     * the module root table alone. Mirrors
+     * {@code TypeChecker.walkStatement}: when pass-1 recorded a
+     * per-scope symbol table for the statement
+     * ({@code CheckResult.scopeMap()}), that table is the scope for the
+     * statement's whole subtree ({@link SymbolTable#resolve} walks the
+     * chain to the module root, so a nested binding shadows a
+     * module-level import alias exactly like the checker resolves it).
+     * The scope is threaded as a parameter, so sibling statements
+     * automatically keep the enclosing scope.
+     */
     private static void walkStatement(StatementNode statement, CheckedModuleInput module,
-                                      ModuleScan scan) throws FactDefect {
+                                      ModuleScan scan, SymbolTable checkerScope)
+            throws FactDefect {
+        SymbolTable stmtScope = module.checks().scopeMap().get(statement);
+        if (stmtScope != null) {
+            checkerScope = stmtScope;
+        }
         switch (statement) {
             case ImportDeclaration ignored -> scan.cover(ConstructKind.IMPORT_EXPORT_ENTRY);
             case ExportDeclaration exportDeclaration -> {
                 scan.cover(ConstructKind.IMPORT_EXPORT_ENTRY);
-                walkStatement(exportDeclaration.declaration(), module, scan);
+                walkStatement(exportDeclaration.declaration(), module, scan, checkerScope);
             }
             case ClassDeclaration classDeclaration -> {
                 scan.cover(ConstructKind.CLASS_DECLARATION);
                 for (ClassField field : classDeclaration.fields()) {
                     if (field.defaultExpr().isPresent()) {
-                        walkExpression(field.defaultExpr().get(), module, scan);
+                        walkExpression(field.defaultExpr().get(), module, scan,
+                            checkerScope);
                     }
                 }
             }
             case FunctionDeclaration functionDeclaration -> {
                 scan.cover(ConstructKind.FUNCTION_DECLARATION_EXPRESSION);
                 if (functionDeclaration.body() != null) {
-                    walkStatement(functionDeclaration.body(), module, scan);
+                    walkStatement(functionDeclaration.body(), module, scan, checkerScope);
                 }
             }
             case VariableDeclaration variableDeclaration -> {
                 scan.cover(ConstructKind.VARIABLE_DECLARATION);
-                walkExpression(variableDeclaration.initializer(), module, scan);
+                walkExpression(variableDeclaration.initializer(), module, scan,
+                    checkerScope);
             }
             case ReturnStatement returnStatement -> {
                 scan.cover(ConstructKind.RETURN_EXPRESSION_STATEMENT);
                 if (returnStatement.expr().isPresent()) {
-                    walkExpression(returnStatement.expr().get(), module, scan);
+                    walkExpression(returnStatement.expr().get(), module, scan,
+                        checkerScope);
                 }
             }
             case IfStatement ifStatement -> {
                 scan.cover(ConstructKind.IF_WHILE_FOR_FOR_OF);
-                walkExpression(ifStatement.condition(), module, scan);
-                walkStatement(ifStatement.thenBlock(), module, scan);
+                walkExpression(ifStatement.condition(), module, scan, checkerScope);
+                walkStatement(ifStatement.thenBlock(), module, scan, checkerScope);
                 if (ifStatement.elseBranch().isPresent()) {
-                    walkEither(ifStatement.elseBranch().get(), module, scan);
+                    walkEither(ifStatement.elseBranch().get(), module, scan, checkerScope);
                 }
             }
             case WhileStatement whileStatement -> {
                 scan.cover(ConstructKind.IF_WHILE_FOR_FOR_OF);
-                walkExpression(whileStatement.condition(), module, scan);
-                walkStatement(whileStatement.body(), module, scan);
+                walkExpression(whileStatement.condition(), module, scan, checkerScope);
+                walkStatement(whileStatement.body(), module, scan, checkerScope);
             }
             case ForStatement forStatement -> {
                 scan.cover(ConstructKind.IF_WHILE_FOR_FOR_OF);
                 if (forStatement.init().isPresent()) {
-                    walkForInit(forStatement.init().get(), module, scan);
+                    walkForInit(forStatement.init().get(), module, scan, checkerScope);
                 }
                 if (forStatement.condition().isPresent()) {
-                    walkExpression(forStatement.condition().get(), module, scan);
+                    walkExpression(forStatement.condition().get(), module, scan,
+                        checkerScope);
                 }
                 if (forStatement.update().isPresent()) {
-                    walkExpression(forStatement.update().get(), module, scan);
+                    walkExpression(forStatement.update().get(), module, scan,
+                        checkerScope);
                 }
-                walkStatement(forStatement.body(), module, scan);
+                walkStatement(forStatement.body(), module, scan, checkerScope);
             }
             case ForOfStatement forOfStatement -> {
                 scan.cover(ConstructKind.IF_WHILE_FOR_FOR_OF);
-                walkExpression(forOfStatement.iterable(), module, scan);
-                walkStatement(forOfStatement.body(), module, scan);
+                walkExpression(forOfStatement.iterable(), module, scan, checkerScope);
+                walkStatement(forOfStatement.body(), module, scan, checkerScope);
             }
             case BreakStatement ignored -> scan.cover(ConstructKind.BREAK_CONTINUE);
             case ContinueStatement ignored -> scan.cover(ConstructKind.BREAK_CONTINUE);
             case ExpressionStatement expressionStatement -> {
                 scan.cover(ConstructKind.RETURN_EXPRESSION_STATEMENT);
-                walkExpression(expressionStatement.expr(), module, scan);
+                walkExpression(expressionStatement.expr(), module, scan, checkerScope);
             }
             case DeleteStatement deleteStatement -> {
                 scan.cover(ConstructKind.DELETE);
@@ -771,42 +800,48 @@ public final class LoweringSupport {
                 // position of the delete chain (D14) — the commit ops are
                 // MEMBER_DELETE/INDEX_DELETE, named by the DELETE row,
                 // never by the read rows; its receiver/key walk normally.
-                walkWriteTarget(deleteStatement.target(), module, scan);
+                walkWriteTarget(deleteStatement.target(), module, scan, checkerScope);
             }
             case TryStatement tryStatement -> {
                 scan.cover(ConstructKind.TRY_CATCH_THROW);
-                walkStatement(tryStatement.tryBlock(), module, scan);
-                walkStatement(tryStatement.catchBlock(), module, scan);
+                walkStatement(tryStatement.tryBlock(), module, scan, checkerScope);
+                walkStatement(tryStatement.catchBlock(), module, scan, checkerScope);
             }
             case ThrowStatement throwStatement -> {
                 scan.cover(ConstructKind.TRY_CATCH_THROW);
-                walkExpression(throwStatement.expr(), module, scan);
+                walkExpression(throwStatement.expr(), module, scan, checkerScope);
             }
-            case Block block -> walkStatements(block.statements(), module, scan);
+            case Block block ->
+                walkStatements(block.statements(), module, scan, checkerScope);
         }
     }
 
     private static void walkEither(Either<IfStatement, Block> branch,
-                                   CheckedModuleInput module, ModuleScan scan)
+                                   CheckedModuleInput module, ModuleScan scan,
+                                   SymbolTable checkerScope)
             throws FactDefect {
         switch (branch) {
             case Either.Left<IfStatement, Block> left ->
-                walkStatement(left.value(), module, scan);
+                walkStatement(left.value(), module, scan, checkerScope);
             case Either.Right<IfStatement, Block> right ->
-                walkStatement(right.value(), module, scan);
+                walkStatement(right.value(), module, scan, checkerScope);
         }
     }
 
-    private static void walkForInit(ForInit init, CheckedModuleInput module, ModuleScan scan)
+    private static void walkForInit(ForInit init, CheckedModuleInput module,
+                                    ModuleScan scan, SymbolTable checkerScope)
             throws FactDefect {
         switch (init) {
-            case ForInit.VarDecl varDecl -> walkStatement(varDecl.decl(), module, scan);
-            case ForInit.AssignExpr assignExpr -> walkExpression(assignExpr.expr(), module, scan);
+            case ForInit.VarDecl varDecl ->
+                walkStatement(varDecl.decl(), module, scan, checkerScope);
+            case ForInit.AssignExpr assignExpr ->
+                walkExpression(assignExpr.expr(), module, scan, checkerScope);
         }
     }
 
     private static void walkExpression(ExpressionNode expression, CheckedModuleInput module,
-                                       ModuleScan scan) throws FactDefect {
+                                       ModuleScan scan, SymbolTable checkerScope)
+            throws FactDefect {
         switch (expression) {
             case LiteralExpr literalExpr -> {
                 scan.cover(ConstructKind.SCALAR_LITERAL);
@@ -837,8 +872,8 @@ public final class LoweringSupport {
                         scan.signedInt32 = true;
                     }
                 }
-                walkExpression(binaryExpr.left(), module, scan);
-                walkExpression(binaryExpr.right(), module, scan);
+                walkExpression(binaryExpr.left(), module, scan, checkerScope);
+                walkExpression(binaryExpr.right(), module, scan, checkerScope);
             }
             case UnaryExpr unaryExpr -> {
                 scan.cover(ConstructKind.UNARY_ARITHMETIC_COMPARISON);
@@ -849,7 +884,7 @@ public final class LoweringSupport {
                             == Type.Int.INSTANCE) {
                     scan.signedInt32 = true;
                 }
-                walkExpression(unaryExpr.expr(), module, scan);
+                walkExpression(unaryExpr.expr(), module, scan, checkerScope);
             }
             case CallExpr callExpr -> {
                 // A cataloged stdlib call is the closed CALL row's
@@ -860,9 +895,16 @@ public final class LoweringSupport {
                 // classification runs the closed checked-fact
                 // recognition predicate (D1 — ModuleSymbol on a
                 // STDLIB-classified import plus the catalog), never a
-                // module/name pair.
+                // module/name pair — against the checker's site scope:
+                // the innermost per-scope symbol table of the walk (the
+                // module root only at module level), exactly the scope
+                // the checker resolved the callee identifier in. A
+                // nested-scope binding shadowing a stdlib import alias
+                // therefore never claims (D1's shadowed-binding
+                // negative: the checker resolved the call to the local
+                // binding, not the import).
                 boolean stdlibCall = StdlibCallRecognition.recognize(callExpr.callee(),
-                    module.checks().symbolTable(), module.imports()).isPresent();
+                    checkerScope, module.imports()).isPresent();
                 if (stdlibCall) {
                     // The plan-time STDLIB_SEMANTICS arm (D9): a cataloged
                     // stdlib call claims STDLIB_SEMANTICS before lowering,
@@ -872,7 +914,7 @@ public final class LoweringSupport {
                 boolean crossModule = !stdlibCall
                     && callExpr.callee() instanceof MemberAccessExpr member
                     && member.object() instanceof IdentifierExpr identifier
-                    && module.checks().symbolTable().resolve(identifier.name())
+                    && checkerScope.resolve(identifier.name())
                         instanceof Symbol.ModuleSymbol;
                 scan.cover(crossModule
                     ? ConstructKind.CROSS_MODULE_CALL
@@ -882,33 +924,32 @@ public final class LoweringSupport {
                 // row every manifest carries by construction) and never
                 // SIGNED_INT32.
                 if (callExpr.callee() instanceof IdentifierExpr identifier) {
-                    Symbol symbol = module.checks().symbolTable()
-                        .resolve(identifier.name());
+                    Symbol symbol = checkerScope.resolve(identifier.name());
                     if (symbol instanceof Symbol.IntrinsicSymbol intrinsic
                             && "int".equals(intrinsic.name())) {
                         scan.signedInt32 = true;
                     }
                 }
-                walkExpression(callExpr.callee(), module, scan);
+                walkExpression(callExpr.callee(), module, scan, checkerScope);
                 for (ExpressionNode argument : callExpr.args()) {
-                    walkExpression(argument, module, scan);
+                    walkExpression(argument, module, scan, checkerScope);
                 }
             }
             case MemberAccessExpr memberAccessExpr -> {
                 scan.cover(ConstructKind.MEMBER_ACCESS);
-                walkExpression(memberAccessExpr.object(), module, scan);
+                walkExpression(memberAccessExpr.object(), module, scan, checkerScope);
                 if ("nowMillis".equals(memberAccessExpr.field())) {
-                    checkNowMillisAccess(memberAccessExpr, module, scan);
+                    checkNowMillisAccess(memberAccessExpr, module, scan, checkerScope);
                 }
             }
             case IndexExpr indexExpr -> {
                 scan.cover(ConstructKind.INDEX_ACCESS);
-                walkExpression(indexExpr.array(), module, scan);
-                walkExpression(indexExpr.index(), module, scan);
+                walkExpression(indexExpr.array(), module, scan, checkerScope);
+                walkExpression(indexExpr.index(), module, scan, checkerScope);
             }
             case ArrayLiteralExpr arrayLiteralExpr -> {
                 scan.cover(ConstructKind.ARRAY_OBJECT_LITERAL);
-                walkElements(arrayLiteralExpr.elements(), module, scan);
+                walkElements(arrayLiteralExpr.elements(), module, scan, checkerScope);
             }
             case ObjectLiteralExpr objectLiteralExpr -> {
                 // A class-typed object literal constructs a class
@@ -919,16 +960,16 @@ public final class LoweringSupport {
                     ? ConstructKind.CLASS_OBJECT_LITERAL
                     : ConstructKind.ARRAY_OBJECT_LITERAL);
                 for (Property property : objectLiteralExpr.properties()) {
-                    walkExpression(property.value(), module, scan);
+                    walkExpression(property.value(), module, scan, checkerScope);
                 }
             }
             case FunctionExpr functionExpr -> {
                 scan.cover(ConstructKind.FUNCTION_DECLARATION_EXPRESSION);
-                walkStatement(functionExpr.body(), module, scan);
+                walkStatement(functionExpr.body(), module, scan, checkerScope);
             }
             case HasExpr hasExpr -> {
                 scan.cover(ConstructKind.HAS);
-                walkExpression(hasExpr.object(), module, scan);
+                walkExpression(hasExpr.object(), module, scan, checkerScope);
             }
             case AssignmentExpr assignmentExpr -> {
                 scan.cover(ConstructKind.ASSIGNMENT);
@@ -938,24 +979,25 @@ public final class LoweringSupport {
                 // so it records no MEMBER_ACCESS/INDEX_ACCESS row; its
                 // receiver and key sub-expressions are ordinary reads and
                 // walk normally.
-                walkWriteTarget(assignmentExpr.target(), module, scan);
-                walkExpression(assignmentExpr.value(), module, scan);
+                walkWriteTarget(assignmentExpr.target(), module, scan, checkerScope);
+                walkExpression(assignmentExpr.value(), module, scan, checkerScope);
             }
             case TemplateLiteralExpr templateLiteralExpr -> {
                 scan.cover(ConstructKind.STRING_CONCAT_TEMPLATE);
-                walkElements(templateLiteralExpr.parts(), module, scan);
+                walkElements(templateLiteralExpr.parts(), module, scan, checkerScope);
             }
             case AwaitExpression awaitExpression -> {
                 scan.cover(ConstructKind.AWAIT_ASYNC_CALL);
-                walkExpression(awaitExpression.callee(), module, scan);
+                walkExpression(awaitExpression.callee(), module, scan, checkerScope);
             }
         }
     }
 
     private static void walkElements(List<ExpressionNode> elements, CheckedModuleInput module,
-                                     ModuleScan scan) throws FactDefect {
+                                     ModuleScan scan, SymbolTable checkerScope)
+            throws FactDefect {
         for (ExpressionNode element : elements) {
-            walkExpression(element, module, scan);
+            walkExpression(element, module, scan, checkerScope);
         }
     }
 
@@ -972,15 +1014,16 @@ public final class LoweringSupport {
      * A non-member/index target (an identifier) walks normally.
      */
     private static void walkWriteTarget(ExpressionNode target, CheckedModuleInput module,
-                                        ModuleScan scan) throws FactDefect {
+                                        ModuleScan scan, SymbolTable checkerScope)
+            throws FactDefect {
         switch (target) {
             case MemberAccessExpr member ->
-                walkExpression(member.object(), module, scan);
+                walkExpression(member.object(), module, scan, checkerScope);
             case IndexExpr index -> {
-                walkExpression(index.array(), module, scan);
-                walkExpression(index.index(), module, scan);
+                walkExpression(index.array(), module, scan, checkerScope);
+                walkExpression(index.index(), module, scan, checkerScope);
             }
-            default -> walkExpression(target, module, scan);
+            default -> walkExpression(target, module, scan, checkerScope);
         }
     }
 
@@ -988,13 +1031,18 @@ public final class LoweringSupport {
      * The {@code nowMillis} member-access trigger: Arm A (module-object
      * access plus the alias→module-path join) and the Table-typed-object
      * candidate for Arms B/C. The trigger is the member access itself in
-     * call or any value position — never only a direct call site.
+     * call or any value position — never only a direct call site. The
+     * module-object resolution uses the checker's site scope (the same
+     * scope the checker resolved the object identifier in): a nested
+     * binding shadowing the import alias is the checker's local
+     * resolution, never a {@code std/time} module-object access.
      */
     private static void checkNowMillisAccess(MemberAccessExpr memberAccess,
-                                             CheckedModuleInput module, ModuleScan scan)
+                                             CheckedModuleInput module, ModuleScan scan,
+                                             SymbolTable checkerScope)
             throws FactDefect {
         if (memberAccess.object() instanceof IdentifierExpr identifier) {
-            Symbol symbol = module.checks().symbolTable().resolve(identifier.name());
+            Symbol symbol = checkerScope.resolve(identifier.name());
             if (symbol instanceof Symbol.ModuleSymbol moduleSymbol
                     && aliasJoinHitsStdTime(module, moduleSymbol.name())) {
                 scan.armA = true;

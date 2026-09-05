@@ -762,6 +762,60 @@ public class StdlibClaimingTimeLockTest {
                             + (lib == null ? "no manifest" : lib.capabilities()));
                 }
             }
+
+            // (e) The shadowed-binding negative (D1): a nested-scope
+            // binding shadowing a stdlib import alias with a catalog-key
+            // member call never claims STDLIB_SEMANTICS. The checker
+            // resolves the callee identifier at the call site to the
+            // local class instance — the int argument is accepted only
+            // because the local field type is (x: int) => null, while
+            // the std/console export is (string) => null — so the plan-
+            // time arm must resolve the same site scope and classify
+            // the call as the ordinary CALL form, never a cataloged
+            // stdlib call.
+            CheckedProjectBuildResult shadowedChecked = compileProject(tmp, Map.of(
+                "main.deal", """
+                    import * as lib from "./lib"
+
+                    export function main(): null {
+                      return null
+                    }
+                    """,
+                "lib.deal", """
+                    import * as console from "std/console"
+
+                    class C {
+                      log: (x: int) => null
+                    }
+
+                    function run(): null {
+                      let console: C = { log: function(x: int): null { return null } }
+                      console.log(1)
+                      return null
+                    }
+
+                    function main(): null {
+                      run()
+                      return null
+                    }
+                    """), "main.deal");
+            if (shadowedChecked == null) {
+                return;
+            }
+            {
+                RequirementManifestResult manifests =
+                    manifestsOf(shadowedChecked, invocation());
+                if (manifests != null && !manifests.hasErrors()) {
+                    SemanticRequirementManifest lib = manifestOf(manifests,
+                        moduleOf(shadowedChecked.input(), "lib").moduleId());
+                    check(lib != null && !lib.capabilities().contains(
+                            deal.semantic.ir.SemanticCapability.STDLIB_SEMANTICS),
+                        "a nested-scope binding shadowing a stdlib import alias never "
+                            + "claims STDLIB_SEMANTICS (the checker resolved the call "
+                            + "site to the local binding, not the import): "
+                            + (lib == null ? "no manifest" : lib.capabilities()));
+                }
+            }
         } finally {
             deleteRecursively(tmp);
         }
