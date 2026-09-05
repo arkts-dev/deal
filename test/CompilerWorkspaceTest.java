@@ -30,7 +30,19 @@ public final class CompilerWorkspaceTest {
         repairWorkspacePreservesAndPatchesSlots();
         dependentRepairSlotsCommitAsOneGroup();
         fullCandidateDiagnosticsOwnDependentRepairSlots();
+        numericStringDiagnosticPublishesRepairContract();
         System.out.println("CompilerWorkspaceTest: all tests passed");
+    }
+
+    private static void numericStringDiagnosticPublishesRepairContract() {
+        String source = "export class AppState { label: string = \"\"; count: int = 0; }\n"
+                + "export function initialState(): AppState { "
+                + "return {label: \"Count: \" + 1, count: 1}; }\n";
+        var diagnostic = DealCompilerWorkspace.inspect(source, "app.deal").diagnostics().stream()
+                .filter(value -> value.code().equals("E3010"))
+                .findFirst().orElseThrow();
+        check(diagnostic.expected().contains("no implicit coercion"),
+                "numeric/string '+' must publish a machine-readable repair constraint: " + diagnostic);
     }
 
     private static void fullCandidateDiagnosticsOwnDependentRepairSlots() {

@@ -1417,6 +1417,9 @@ public final class DealCompilerWorkspace {
                 ? List.of()
                 : List.of(new RepairScope(REPLACE_FUNCTION_BODY, owner.id()));
         var compilerRange = value.range();
+        String expected = value.code().equals("E3010")
+                ? "Both '+' operands must be numeric, or both must be string; DEAL has no implicit coercion"
+                : "";
         return new StructuredDiagnostic(
                 value.code(),
                 value.severity(),
@@ -1428,7 +1431,7 @@ public final class DealCompilerWorkspace {
                         compilerRange.endLine(),
                         compilerRange.endColumn()),
                 ownerId,
-                "",
+                expected,
                 "",
                 List.of(),
                 scopes,
