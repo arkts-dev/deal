@@ -199,6 +199,8 @@ public class ConformanceTest {
      */
     private static final Map<String, StagedEntry> STAGED_FAILURES =
         new LinkedHashMap<>();
+    static {
+    }
 
     private static void stagedFailure(String path, String pinnedExpectation,
             String artifactCode, String issue, String reason) {
