@@ -18,6 +18,10 @@ complete source, an expected source digest and compiler-issued revision-scoped h
 - Never persist node ids in source comments or require clients to infer ids from source text.
 - Candidate edits use copy, validate, project semantics. A rejected edit returns the original source.
 - Public DTOs and diagnostics are platform-neutral Java records with a versioned canonical JSON form.
+- Repair workspaces preserve valid payloads as sealed slots. Directed declaration references form a
+  dependency DAG; mutually dependent operations form one strongly connected group.
+- A frontend may attach a deterministic candidate validator, but it must run inside the same atomic
+  stage/patch lifecycle rather than creating a second repair path.
 
 ## Language And Framework Separation
 

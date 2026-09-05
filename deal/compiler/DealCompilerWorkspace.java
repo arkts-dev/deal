@@ -101,6 +101,16 @@ import java.util.regex.Pattern;
 
 /** Stateless semantic inspection and checked source edits for one DEAL module. */
 public final class DealCompilerWorkspace {
+    @FunctionalInterface
+    public interface CandidateValidator {
+        List<StructuredDiagnostic> validate(
+                String candidateSource,
+                Inspection candidateInspection,
+                List<? extends Operation> operations);
+    }
+
+    private static final CandidateValidator NO_ADDITIONAL_VALIDATION =
+            (candidateSource, candidateInspection, operations) -> List.of();
     public static final String REPLACE_FUNCTION_BODY = "replaceFunctionBody";
     public static final String REPLACE_BLOCK_BODY = "replaceBlockBody";
     public static final String ADD_DECLARATION = "addDeclaration";
@@ -388,6 +398,30 @@ public final class DealCompilerWorkspace {
         return apply(source, modulePath, precondition.baseDigest(), operations, resolver, adapter);
     }
 
+    private static ChangeResult applyCheckedAndValidate(
+            String source,
+            String modulePath,
+            ChangeSetPrecondition precondition,
+            List<? extends Operation> operations,
+            ModuleResolver resolver,
+            SourceAdapter adapter,
+            CandidateValidator validator) {
+        ChangeResult changed = applyChecked(
+                source, modulePath, precondition, operations, resolver, adapter);
+        if (!changed.accepted()) return changed;
+        List<StructuredDiagnostic> diagnostics = List.copyOf(
+                validator.validate(changed.source(), changed.inspection(), operations));
+        if (diagnostics.isEmpty()) return changed;
+        Analysis base = analyze(source, modulePath, resolver, adapter);
+        return new ChangeResult(
+                false,
+                source,
+                base.inspection().sourceDigest(),
+                base.inspection(),
+                changed.impact(),
+                diagnostics);
+    }
+
     public static RepairWorkspaceResult stageChange(
             String source,
             String modulePath,
@@ -395,7 +429,7 @@ public final class DealCompilerWorkspace {
             ChangeInspection changeInspection,
             List<? extends Operation> operations) {
         return stageChange(source, modulePath, precondition, changeInspection, operations,
-                rejectingResolver(), SourceAdapter.IDENTITY);
+                rejectingResolver(), SourceAdapter.IDENTITY, NO_ADDITIONAL_VALIDATION);
     }
 
     public static RepairWorkspaceResult stageChange(
@@ -406,16 +440,33 @@ public final class DealCompilerWorkspace {
             List<? extends Operation> operations,
             ModuleResolver resolver,
             SourceAdapter adapter) {
+        return stageChange(source, modulePath, precondition, changeInspection, operations,
+                resolver, adapter, NO_ADDITIONAL_VALIDATION);
+    }
+
+    public static RepairWorkspaceResult stageChange(
+            String source,
+            String modulePath,
+            ChangeSetPrecondition precondition,
+            ChangeInspection changeInspection,
+            List<? extends Operation> operations,
+            ModuleResolver resolver,
+            SourceAdapter adapter,
+            CandidateValidator validator) {
         Objects.requireNonNull(changeInspection, "changeInspection");
-        ChangeResult change = applyChecked(source, modulePath, precondition, operations, resolver, adapter);
+        Objects.requireNonNull(validator, "validator");
+        ChangeResult change = applyCheckedAndValidate(
+                source, modulePath, precondition, operations, resolver, adapter, validator);
         if (change.accepted()) {
             RepairWorkspaceSnapshot workspace = workspace(
-                    source, modulePath, precondition, changeInspection, operations, change, 0, List.of(), resolver, adapter);
+                    source, modulePath, precondition, changeInspection, operations, change, 0,
+                    resolver, adapter, validator);
             return new RepairWorkspaceResult(
                     true, change.source(), change.sourceDigest(), workspace, change, List.of());
         }
         RepairWorkspaceSnapshot workspace = workspace(
-                source, modulePath, precondition, changeInspection, operations, change, 0, List.of(), resolver, adapter);
+                source, modulePath, precondition, changeInspection, operations, change, 0,
+                resolver, adapter, validator);
         return new RepairWorkspaceResult(
                 false, source, digest(source), workspace, change, change.diagnostics());
     }
@@ -426,7 +477,7 @@ public final class DealCompilerWorkspace {
             RepairWorkspaceSnapshot workspace,
             List<SlotPatch> patches) {
         return patchRepairWorkspace(source, modulePath, workspace, patches,
-                rejectingResolver(), SourceAdapter.IDENTITY);
+                rejectingResolver(), SourceAdapter.IDENTITY, NO_ADDITIONAL_VALIDATION);
     }
 
     public static RepairWorkspaceResult patchRepairWorkspace(
@@ -436,7 +487,20 @@ public final class DealCompilerWorkspace {
             List<SlotPatch> patches,
             ModuleResolver resolver,
             SourceAdapter adapter) {
+        return patchRepairWorkspace(source, modulePath, workspace, patches,
+                resolver, adapter, NO_ADDITIONAL_VALIDATION);
+    }
+
+    public static RepairWorkspaceResult patchRepairWorkspace(
+            String source,
+            String modulePath,
+            RepairWorkspaceSnapshot workspace,
+            List<SlotPatch> patches,
+            ModuleResolver resolver,
+            SourceAdapter adapter,
+            CandidateValidator validator) {
         Objects.requireNonNull(workspace, "workspace");
+        Objects.requireNonNull(validator, "validator");
         if (!digest(source).equals(workspace.baseRevision().sourceDigest())) {
             return rejectedWorkspace(source, workspace, "CP1021", "Repair workspace base source is stale");
         }
@@ -471,10 +535,11 @@ public final class DealCompilerWorkspace {
                 source, modulePath, workspace.baseRevision().sourceDigest(),
                 workspace.slots().stream().map(RepairSlot::targetId).distinct().toList(),
                 workspace.slots().stream().map(RepairSlot::operation).distinct().toList(), resolver, adapter);
-        ChangeResult change = applyChecked(source, modulePath, workspace.precondition(), operations, resolver, adapter);
+        ChangeResult change = applyCheckedAndValidate(
+                source, modulePath, workspace.precondition(), operations, resolver, adapter, validator);
         RepairWorkspaceSnapshot next = workspace(
                 source, modulePath, workspace.precondition(), inspection, operations, change,
-                workspace.repairRound() + 1, workspace.slots(), resolver, adapter);
+                workspace.repairRound() + 1, resolver, adapter, validator);
         return new RepairWorkspaceResult(
                 change.accepted(), change.accepted() ? change.source() : source,
                 change.accepted() ? change.sourceDigest() : digest(source),
@@ -517,30 +582,23 @@ public final class DealCompilerWorkspace {
             List<? extends Operation> operations,
             ChangeResult change,
             int round,
-            List<RepairSlot> previousSlots,
             ModuleResolver resolver,
-            SourceAdapter adapter) {
-        List<String> introduced = operations.stream()
-                .filter(AddDeclaration.class::isInstance)
-                .map(AddDeclaration.class::cast)
-                .map(AddDeclaration::declaration)
-                .map(value -> singleDeclarationIdentity(value, modulePath))
-                .filter(value -> !value.startsWith("invalid") && !value.equals("unsupported-declaration"))
+            SourceAdapter adapter,
+            CandidateValidator validator) {
+        List<SemanticId> produced = operations.stream()
+                .map(operation -> operation instanceof AddDeclaration value
+                        ? declarationSemanticId(value.declaration(), modulePath) : null)
                 .toList();
-        List<Set<Integer>> adjacency = new ArrayList<>();
-        for (int index = 0; index < operations.size(); index++) adjacency.add(new LinkedHashSet<>());
-        for (int left = 0; left < operations.size(); left++) {
-            for (int right = left + 1; right < operations.size(); right++) {
-                if (operationsDependent(operations.get(left), operations.get(right), introduced)) {
-                    adjacency.get(left).add(right);
-                    adjacency.get(right).add(left);
-                }
-            }
-        }
-        int[] groupIndexes = connectedComponents(adjacency);
+        List<Set<Integer>> dependencies = operationDependencies(operations, produced);
+        SccResult dependencyGroups = stronglyConnectedComponents(dependencies);
+        int[] groupIndexes = dependencyGroups.groupByNode();
         List<StructuredDiagnostic> diagnostics = change.diagnostics();
         List<ChangeResult> isolated = operations.stream()
-                .map(operation -> applyChecked(source, modulePath, precondition, List.of(operation), resolver, adapter))
+                // Framework validators may require sibling declarations (for example an action
+                // and its handler). Isolated checks therefore establish only core-language
+                // validity; full-candidate diagnostics select the rejected slot below.
+                .map(operation -> applyChecked(
+                        source, modulePath, precondition, List.of(operation), resolver, adapter))
                 .toList();
         Set<Integer> directlyRejected = new LinkedHashSet<>();
         for (int index = 0; index < isolated.size(); index++) {
@@ -558,8 +616,10 @@ public final class DealCompilerWorkspace {
                     ? diagnostics.stream().filter(value -> diagnosticMatches(operation, value)).toList()
                     : isolated.get(index).diagnostics();
             boolean rejected = directlyRejected.contains(index);
-            boolean blocked = !rejected && directlyRejected.stream()
-                    .anyMatch(other -> groupIndexes[other] == groupIndexes[slotIndex]);
+            boolean blocked = !rejected && directlyRejected.stream().anyMatch(other ->
+                    groupIndexes[other] == groupIndexes[slotIndex]
+                            || groupDependsOn(groupIndexes[slotIndex], groupIndexes[other],
+                                    dependencyGroups.groupDependencies()));
             RepairSlotStatus status = change.accepted()
                     ? RepairSlotStatus.COMMIT_READY
                     : rejected ? RepairSlotStatus.REJECTED
@@ -582,7 +642,10 @@ public final class DealCompilerWorkspace {
                     : members.stream().allMatch(value -> value.status() == RepairSlotStatus.COMMIT_READY)
                             ? "COMMIT_READY" : "SEALED";
             groups.add(new DependencyGroup(
-                    "G" + (group + 1), members.stream().map(RepairSlot::slotId).toList(), List.of(), status));
+                    "G" + (group + 1), members.stream().map(RepairSlot::slotId).toList(),
+                    dependencyGroups.groupDependencies().get(group).stream()
+                            .sorted().map(value -> "G" + (value + 1)).toList(),
+                    status));
         }
         String workspaceId = digest(precondition.baseDigest() + "\u0000" + inspection.inspectionDigest()
                 + "\u0000" + CompilerProtocolJson.encode(operations.stream().map(DealCompilerWorkspace::payload).toList()));
@@ -608,43 +671,129 @@ public final class DealCompilerWorkspace {
     private static boolean diagnosticMatches(Operation operation, StructuredDiagnostic diagnostic) {
         if (operation.targetId().equals(diagnostic.ownerId())) return true;
         if (diagnostic.relatedIds().contains(operation.targetId())) return true;
+        if (operation instanceof AddDeclaration value) {
+            SemanticId produced = declarationSemanticId(value.declaration(), "/generated/app.deal");
+            if (produced != null && (produced.equals(diagnostic.ownerId())
+                    || diagnostic.relatedIds().contains(produced))) return true;
+            if (produced != null && diagnostic.repairScopes().stream()
+                    .anyMatch(scope -> scope.ownerId().equals(produced)
+                            && scope.operation().equals(ADD_DECLARATION))) return true;
+        }
         return diagnostic.repairScopes().stream().anyMatch(scope ->
                 scope.ownerId().equals(operation.targetId())
                         && scope.operation().equals(operationName(operation)));
     }
 
-    private static int[] connectedComponents(List<Set<Integer>> adjacency) {
-        int[] groups = new int[adjacency.size()];
-        java.util.Arrays.fill(groups, -1);
-        int group = 0;
-        for (int start = 0; start < adjacency.size(); start++) {
-            if (groups[start] >= 0) continue;
-            java.util.ArrayDeque<Integer> pending = new java.util.ArrayDeque<>();
-            pending.add(start);
-            groups[start] = group;
-            while (!pending.isEmpty()) {
-                int current = pending.removeFirst();
-                for (int next : adjacency.get(current)) {
-                    if (groups[next] >= 0) continue;
-                    groups[next] = group;
-                    pending.add(next);
-                }
-            }
-            group++;
-        }
-        return groups;
+    /** Returns the compiler-owned identity produced by one complete declaration, if valid. */
+    public static SemanticId declarationSemanticId(String declaration, String modulePath) {
+        String identity = singleDeclarationIdentity(declaration, modulePath);
+        return identity.equals("invalid-or-multiple-declarations")
+                        || identity.equals("unsupported-declaration")
+                ? null : new SemanticId(identity);
     }
 
-    private static boolean operationsDependent(Operation left, Operation right, List<String> introduced) {
-        if (left.targetId().equals(right.targetId())) return true;
-        String leftSource = String.join("\n", payload(left).values());
-        String rightSource = String.join("\n", payload(right).values());
-        for (String identity : introduced) {
-            String name = identity.substring(identity.lastIndexOf(':') + 1);
-            if (containsIdentifier(leftSource, name) && containsIdentifier(rightSource, name)) return true;
+    private static List<Set<Integer>> operationDependencies(
+            List<? extends Operation> operations,
+            List<SemanticId> produced) {
+        List<Set<Integer>> result = new ArrayList<>();
+        for (int index = 0; index < operations.size(); index++) result.add(new LinkedHashSet<>());
+        for (int consumer = 0; consumer < operations.size(); consumer++) {
+            Operation operation = operations.get(consumer);
+            String source = String.join("\n", payload(operation).values());
+            for (int provider = 0; provider < produced.size(); provider++) {
+                SemanticId id = produced.get(provider);
+                if (consumer == provider || id == null) continue;
+                String name = id.value().substring(id.value().lastIndexOf(':') + 1);
+                if (containsIdentifier(source, name)) result.get(consumer).add(provider);
+            }
+            for (int other = 0; other < operations.size(); other++) {
+                if (consumer == other || operation instanceof AddDeclaration
+                        || operations.get(other) instanceof AddDeclaration) continue;
+                if (operation.targetId().equals(operations.get(other).targetId())) {
+                    result.get(consumer).add(other);
+                }
+            }
+        }
+        return result;
+    }
+
+    private static SccResult stronglyConnectedComponents(List<Set<Integer>> dependencies) {
+        int size = dependencies.size();
+        int[] index = new int[size];
+        int[] low = new int[size];
+        int[] groupByNode = new int[size];
+        boolean[] onStack = new boolean[size];
+        java.util.Arrays.fill(index, -1);
+        java.util.Arrays.fill(groupByNode, -1);
+        java.util.ArrayDeque<Integer> stack = new java.util.ArrayDeque<>();
+        int[] nextIndex = {0};
+        int[] nextGroup = {0};
+        for (int node = 0; node < size; node++) {
+            if (index[node] < 0) strongConnect(
+                    node, dependencies, index, low, groupByNode, onStack, stack, nextIndex, nextGroup);
+        }
+        List<Set<Integer>> groupDependencies = new ArrayList<>();
+        for (int group = 0; group < nextGroup[0]; group++) groupDependencies.add(new LinkedHashSet<>());
+        for (int node = 0; node < size; node++) {
+            for (int dependency : dependencies.get(node)) {
+                int from = groupByNode[node];
+                int to = groupByNode[dependency];
+                if (from != to) groupDependencies.get(from).add(to);
+            }
+        }
+        return new SccResult(groupByNode, groupDependencies);
+    }
+
+    private static void strongConnect(
+            int node,
+            List<Set<Integer>> dependencies,
+            int[] index,
+            int[] low,
+            int[] groupByNode,
+            boolean[] onStack,
+            java.util.ArrayDeque<Integer> stack,
+            int[] nextIndex,
+            int[] nextGroup) {
+        index[node] = nextIndex[0];
+        low[node] = nextIndex[0]++;
+        stack.push(node);
+        onStack[node] = true;
+        for (int dependency : dependencies.get(node)) {
+            if (index[dependency] < 0) {
+                strongConnect(dependency, dependencies, index, low, groupByNode,
+                        onStack, stack, nextIndex, nextGroup);
+                low[node] = Math.min(low[node], low[dependency]);
+            } else if (onStack[dependency]) {
+                low[node] = Math.min(low[node], index[dependency]);
+            }
+        }
+        if (low[node] != index[node]) return;
+        while (true) {
+            int member = stack.pop();
+            onStack[member] = false;
+            groupByNode[member] = nextGroup[0];
+            if (member == node) break;
+        }
+        nextGroup[0]++;
+    }
+
+    private static boolean groupDependsOn(
+            int group,
+            int target,
+            List<Set<Integer>> dependencies) {
+        if (group == target) return true;
+        Set<Integer> visited = new LinkedHashSet<>();
+        java.util.ArrayDeque<Integer> pending = new java.util.ArrayDeque<>(dependencies.get(group));
+        while (!pending.isEmpty()) {
+            int current = pending.removeFirst();
+            if (!visited.add(current)) continue;
+            if (current == target) return true;
+            pending.addAll(dependencies.get(current));
         }
         return false;
     }
+
+    private record SccResult(int[] groupByNode, List<Set<Integer>> groupDependencies) {}
 
     private static boolean containsIdentifier(String source, String identifier) {
         return new Lexer(source, "/generated/repair-slot.deal").tokenize().tokens().stream()

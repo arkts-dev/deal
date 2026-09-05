@@ -49,14 +49,18 @@ public final class CompilerWorkspaceTest {
                                 inspection.moduleId(), "export class RunAction {}"),
                         new DealCompilerWorkspace.AddDeclaration(
                                 inspection.moduleId(),
-                                "export function run(state: AppState, action: MissingAction): AppState { return state; }")));
-        check(!staged.accepted(), "a missing type must reject the dependent declaration group");
-        check(staged.workspace().groups().size() == 1
-                        && staged.workspace().groups().get(0).slotIds().size() == 2,
-                "operations sharing a semantic module target must form one dependency group");
+                                "export function run(state: AppState, action: RunAction): AppState { return missing; }")));
+        check(!staged.accepted(), "an invalid handler must reject its dependent declaration group");
+        check(staged.workspace().groups().size() == 2,
+                "independent declarations must not be grouped merely because both target the module");
         var rejected = staged.workspace().slots().stream()
                 .filter(value -> value.status() == CompilerProtocol.RepairSlotStatus.REJECTED)
                 .findFirst().orElseThrow();
+        var rejectedGroup = staged.workspace().groups().stream()
+                .filter(value -> value.groupId().equals(rejected.dependencyGroupId()))
+                .findFirst().orElseThrow();
+        check(rejectedGroup.dependsOn().size() == 1,
+                "the handler repair group must explicitly depend on its action declaration group");
         var repaired = DealCompilerWorkspace.patchRepairWorkspace(
                 source, "app.deal", staged.workspace(), List.of(new CompilerProtocol.SlotPatch(
                         rejected.slotId(), Map.of("declaration",
