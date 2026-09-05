@@ -31,6 +31,7 @@ public final class CompilerWorkspaceTest {
         repairWorkspaceCanDropAnIndependentRejectedDeclaration();
         dependentRepairSlotsCommitAsOneGroup();
         dependentValidationRejectsOnlyTheFaultyHandler();
+        frameworkDiagnosticKeepsRelatedActionStaged();
         fullCandidateDiagnosticsOwnDependentRepairSlots();
         numericStringDiagnosticPublishesRepairContract();
         System.out.println("CompilerWorkspaceTest: all tests passed");
@@ -70,7 +71,7 @@ public final class CompilerWorkspaceTest {
         check(!staged.accepted(), "invalid optional declaration must open repair workspace");
         check(staged.workspace().slots().get(0).status() == CompilerProtocol.RepairSlotStatus.REJECTED
                         && staged.workspace().slots().get(1).status() == CompilerProtocol.RepairSlotStatus.STAGED,
-                "independent valid declaration must remain staged");
+                "independent valid declaration must remain staged: " + staged.workspace().slots());
         var dropped = DealCompilerWorkspace.patchRepairWorkspace(
                 source, "app.deal", staged.workspace(), List.of(CompilerProtocol.SlotPatch.drop("R1")));
         check(dropped.accepted(), "dropping an independent rejected declaration must commit staged siblings");
@@ -201,6 +202,42 @@ public final class CompilerWorkspaceTest {
                 "a valid handler must stay staged with its required action declaration");
     }
 
+    private static void frameworkDiagnosticKeepsRelatedActionStaged() {
+        String source = source();
+        var inspection = DealCompilerWorkspace.inspect(source, "app.deal");
+        var descriptor = DealCompilerWorkspace.queryModule(source, "app.deal")
+                .allowedOperations().get(0);
+        var precondition = new CompilerProtocol.ChangeSetPrecondition(
+                inspection.sourceDigest(), Map.of(
+                        inspection.moduleId().value(), descriptor.targetFingerprint()));
+        String action = "export class DoneAction { setId: int = 0; }";
+        String handler = "export function done(state: AppState, action: DoneAction): AppState { return state; }";
+        var operations = List.<DealCompilerWorkspace.Operation>of(
+                new DealCompilerWorkspace.AddDeclaration(inspection.moduleId(), action),
+                new DealCompilerWorkspace.AddDeclaration(inspection.moduleId(), handler));
+        var changeInspection = DealCompilerWorkspace.inspectChange(
+                source, "app.deal", inspection.sourceDigest(), List.of(inspection.moduleId()),
+                List.of(DealCompilerWorkspace.ADD_DECLARATION));
+        var actionId = DealCompilerWorkspace.declarationSemanticId(action, "app.deal");
+        var handlerId = DealCompilerWorkspace.declarationSemanticId(handler, "app.deal");
+        var staged = DealCompilerWorkspace.stageChange(
+                source, "app.deal", precondition, changeInspection, operations,
+                (candidateSource, candidateInspection, candidateOperations) -> List.of(
+                        new CompilerProtocol.StructuredDiagnostic(
+                                "UI2050", "error", "borrowed state mutation", null, handlerId,
+                                "immutable borrowed state", "write through alias", List.of(actionId),
+                                List.of(new CompilerProtocol.RepairScope(
+                                        DealCompilerWorkspace.ADD_DECLARATION, handlerId)),
+                                "queryDealSymbol(" + handlerId.value() + ")")));
+        var rejected = staged.workspace().slots().stream()
+                .filter(value -> value.status() == CompilerProtocol.RepairSlotStatus.REJECTED).toList();
+        check(rejected.size() == 1 && rejected.get(0).payload().get("declaration").contains("function done"),
+                "a framework diagnostic must reject its owning handler, not its related action type: "
+                        + staged.workspace().slots());
+        check(staged.workspace().slots().get(0).status() == CompilerProtocol.RepairSlotStatus.STAGED,
+                "the related action declaration must stay staged");
+    }
+
     private static void inspectChangeBuildsCompilerOwnedDependencyCone() {
         String source = source();
         var inspection = DealCompilerWorkspace.inspect(source, "app.deal");
@@ -260,7 +297,8 @@ public final class CompilerWorkspaceTest {
         var preserved = staged.workspace().slots().stream()
                 .filter(value -> !value.slotId().equals(rejected.slotId())).findFirst().orElseThrow();
         check(preserved.status() == CompilerProtocol.RepairSlotStatus.STAGED,
-                "an independent valid sibling must be staged and unavailable to repair");
+                "an independent valid sibling must be staged and unavailable to repair: "
+                        + staged.workspace().slots());
         String preservedPayload = preserved.payload().get("body");
         var snapshot = staged.workspace();
         var tampered = new CompilerProtocol.RepairWorkspaceSnapshot(

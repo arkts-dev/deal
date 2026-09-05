@@ -438,6 +438,17 @@ public final class DealCompilerWorkspace {
             ChangeSetPrecondition precondition,
             ChangeInspection changeInspection,
             List<? extends Operation> operations,
+            CandidateValidator validator) {
+        return stageChange(source, modulePath, precondition, changeInspection, operations,
+                rejectingResolver(), SourceAdapter.IDENTITY, validator);
+    }
+
+    public static RepairWorkspaceResult stageChange(
+            String source,
+            String modulePath,
+            ChangeSetPrecondition precondition,
+            ChangeInspection changeInspection,
+            List<? extends Operation> operations,
             ModuleResolver resolver,
             SourceAdapter adapter) {
         return stageChange(source, modulePath, precondition, changeInspection, operations,
@@ -619,9 +630,11 @@ public final class DealCompilerWorkspace {
                 .filter(DealCompilerWorkspace::isOperationContractDiagnostic).toList();
         Set<Integer> directlyRejected = rejectedSlots(operations, operationContractDiagnostics);
         if (operationContractDiagnostics.isEmpty()) {
-            directlyRejected.clear();
-            for (int index = 0; index < isolated.size(); index++) {
-                if (!isolated.get(index).accepted()) directlyRejected.add(index);
+            directlyRejected = directlyOwnedSlots(operations, diagnostics, modulePath);
+            if (directlyRejected.isEmpty()) {
+                for (int index = 0; index < isolated.size(); index++) {
+                    if (!isolated.get(index).accepted()) directlyRejected.add(index);
+                }
             }
             if (directlyRejected.isEmpty()) directlyRejected.addAll(rejectedSlots(operations, diagnostics));
         }
@@ -692,6 +705,41 @@ public final class DealCompilerWorkspace {
             if (diagnostics.stream().anyMatch(value -> diagnosticMatches(operation, value))) result.add(index);
         }
         if (result.isEmpty() && !diagnostics.isEmpty()) result.add(0);
+        return result;
+    }
+
+    private static Set<Integer> directlyOwnedSlots(
+            List<? extends Operation> operations,
+            List<StructuredDiagnostic> diagnostics,
+            String modulePath) {
+        Set<Integer> result = new LinkedHashSet<>();
+        for (StructuredDiagnostic diagnostic : diagnostics) {
+            for (int index = 0; index < operations.size(); index++) {
+                Operation operation = operations.get(index);
+                SemanticId produced = operation instanceof AddDeclaration value
+                        ? declarationSemanticId(value.declaration(), modulePath) : null;
+                boolean ownsDiagnostic = operation instanceof AddDeclaration
+                        ? produced != null && !produced.equals(operation.targetId())
+                                && produced.equals(diagnostic.ownerId())
+                        : operation.targetId().equals(diagnostic.ownerId());
+                if (ownsDiagnostic) result.add(index);
+            }
+        }
+        if (!result.isEmpty()) return result;
+        for (StructuredDiagnostic diagnostic : diagnostics) {
+            for (int index = 0; index < operations.size(); index++) {
+                Operation operation = operations.get(index);
+                SemanticId produced = operation instanceof AddDeclaration value
+                        ? declarationSemanticId(value.declaration(), modulePath) : null;
+                boolean ownsRepairScope = diagnostic.repairScopes().stream().anyMatch(scope ->
+                        (operation instanceof AddDeclaration
+                                ? produced != null && !produced.equals(operation.targetId())
+                                        && scope.ownerId().equals(produced)
+                                : scope.ownerId().equals(operation.targetId()))
+                                && scope.operation().equals(operationName(operation)));
+                if (ownsRepairScope) result.add(index);
+            }
+        }
         return result;
     }
 
