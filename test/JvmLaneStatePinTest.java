@@ -55,6 +55,7 @@ import java.util.List;
  * {@code backend-runtime/arithmetic/int-add-overflow.deal} passes the
  * same way, so the stale-known-fail gate no longer names it; only the
  * two host-prewrapped skip-probe exception lines remain in the
+<<<<<<< HEAD
  * {@code ] FAIL (} set, and the summary moved from
  * {@code passed 254, failed 1 ... pass rate 84.4%} to
  * {@code passed 256, failed 0 ... pass rate 85.0%}. ISSUE-0158
@@ -68,17 +69,14 @@ import java.util.List;
  * passes as {@code runtime-error E8004} under its legacy-authority
  * catalog row (zero v1.2 credit), the staged registry entry is
  * removed (no STAGED-FAIL line), the promoted int-add-overflow
- * passes, and the summary reads {@code Total: 495, Passed: 495}
+ * passes, and the summary reads {@code Total: 496, Passed: 496}
  * (ISSUE-0501 lands the 63 compile-classified gap fixtures under
- * {@code frontend/}: 57 classified cases passing plus 6 companions
- * — 430 + 57 = 487, companions 34 -> 40, v1.2-credit results
- * 463 -> 526; ISSUE-0500 then co-lands the preserved gap resolution
- * subtree and the transformed direct declaration fixture: 545
- * discovered, 49 companions, 495 recorded results — 487 + 8
- * classified cases = 495, companions 40 -> 49, v1.2-credit results
- * 526 -> 543) with exactly one tracked known-fail (the frontend
- * FFI-manifest fixture, compile-error E2010 tracked by ISSUE-0111)
- * and zero staged failures.
+ * {@code frontend/}; ISSUE-0500 then co-lands the preserved gap
+ * resolution subtree and the transformed direct declaration fixture:
+ * 545 discovered, 49 companions, 496 recorded results; this tree
+ * promotes the last known-fail — the frontend FFI-manifest fixture —
+ * to compile-error E2010, so zero known-fail remains tracked) and
+ * zero staged failures.
 
  *
  * <p>The test runs from the repository root (the {@code run_tests.sh}
@@ -150,8 +148,6 @@ public class JvmLaneStatePinTest {
 
     private static final String LUA_TIME_OK =
         "  [backend-runtime/stdlib-edge/time-now-millis-positive.deal] "
-
-            + "LEGACY-AUTHORITY (legacy-regression; zero v1.2 credit) "
             + "OK (found DEAL_ERROR_CODE: E8004)";
 
 
@@ -163,12 +159,13 @@ public class JvmLaneStatePinTest {
     // LuaJIT lane discovers 545 fixtures after the ISSUE-0501 landing
     // (528 + 17 frontend fixtures: the preserved resolution subtree
     // with its nine companions and the transformed direct declaration
-    // fixture), so the summary moves from 487 to 495 recorded results
-    // (545 - 49 companions - 1 tracked known-fail).
+    // fixture), so the summary reads 496 recorded results
+    // (545 - 49 companions, zero tracked known-fail: this tree
+    // promoted the FFI-manifest frontend pin to compile-error E2010).
     private static final String LUA_SUMMARY =
 
-        "Total: 495, Passed: 495, Failed: 0, Skipped: 0, "
-            + "KnownFailures (tracked): 1, StagedFailures (tracked): 0";
+        "Total: 496, Passed: 496, Failed: 0, Skipped: 0, "
+            + "KnownFailures (tracked): 0, StagedFailures (tracked): 0";
 
     private static final String LUA_PHASE =
         "  LuaJIT backend-runtime conformance (v1.2): 307/307 passed, "
@@ -176,12 +173,13 @@ public class JvmLaneStatePinTest {
             + "staged-fail (tracked)";
 
     private static final String LUA_FOLLOW_UP =
-        "    ISSUE-0111: 1 known-fail fixture(s)";
+        "  Tracked v1.2 follow-up issues: none \u2014 full v1.2 "
+            + "conformance";
 
     private static final String LUA_PROFILE_AUTHORITY =
-        "Profile-authority accounting: 2 legacy-authority result(s) "
+        "Profile-authority accounting: 1 legacy-authority result(s) "
             + "(LEGACY_REGRESSION + LEGACY_SAFE_INT \u2014 zero "
-            + "v1.2/promotion credit; 2 passed, 0 failed), 543 v1.2-credit "
+            + "v1.2/promotion credit; 1 passed, 0 failed), 544 v1.2-credit "
             + "result(s) (COMMON_SHADOW + DEAL_V1_2_INT32)";
 
 

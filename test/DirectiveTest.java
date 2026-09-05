@@ -760,24 +760,34 @@ public class DirectiveTest {
                     + backed.diagnostics());
 
             // Case 3: an externals entry that declares the file without
-            // nativeLibrary is the invalid-manifest-policy rejection
-            // (a C FFI entry must include nativeLibrary).
+            // nativeLibrary is the invalid-manifest-policy rejection —
+            // rejected at locate time by ProjectLocator step 4(b)
+            // (ISSUE-0508): exactly one E2010 at the externals entry's
+            // manifest value range naming the nativeLibrary policy, and
+            // no context is published (a C FFI entry must include
+            // nativeLibrary, docs/spec-v1.2.md:1891).
             Files.writeString(tmp.resolve("deal.json"),
                 "{\"languageVersion\": \"1.2\", \"moduleRoots\": [\".\"],"
                     + " \"externals\": {\"ffi\": {\"declaration\":"
                     + " \"ffi_math.d.deal\"}}}\n");
-            CompilationOrchestrator unbacked = locateOrchestrator(entry);
-            if (unbacked == null) {
-                return;
+            ProjectLocator.LocateResult unbacked = ProjectLocator.locate(
+                entry.toString(), null);
+            check(unbacked.e2010() != null,
+                "the nativeLibrary-less externals entry is rejected at "
+                    + "locate time with an E2010");
+            check(unbacked.cliDiagnostic() == null
+                    && unbacked.context() == null,
+                "the nativeLibrary-less externals entry publishes exactly "
+                    + "the E2010 (no cliDiagnostic, no context)");
+            if (unbacked.e2010() != null) {
+                check("E2010".equals(unbacked.e2010().code()),
+                    "the locate-time rejection code is exactly E2010: "
+                        + unbacked.e2010().code());
+                check(unbacked.e2010().message().contains(
+                        "without a nativeLibrary"),
+                    "the locate-time E2010 names the nativeLibrary policy: "
+                        + unbacked.e2010().message());
             }
-            boolean unbackedOk = unbacked.compile();
-            check(!unbackedOk,
-                "the nativeLibrary-less externals entry fails the production compile");
-            long unbackedE2010 = unbacked.diagnostics().stream()
-                .filter(d -> "E2010".equals(d.code())).count();
-            check(unbackedE2010 == 1,
-                "the nativeLibrary-less externals entry emits exactly one E2010, got "
-                    + unbackedE2010 + ": " + unbacked.diagnostics());
         } finally {
             try {
                 Files.walk(tmp).sorted(Comparator.reverseOrder())
