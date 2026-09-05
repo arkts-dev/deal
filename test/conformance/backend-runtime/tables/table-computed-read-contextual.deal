@@ -1,0 +1,12 @@
+// @spec: Tables
+// @description: A table field read is contextually checked against an existing variable on assignment.
+// @expected: runtime-ok
+// @features: tables, assignment, contextual-typing
+
+export function main(): null {
+  let t: table = { answer: 42 };
+  let value: int = 0;
+  value = t.answer;
+  if (value !== 42) { throw { code: "TEST_FAIL", message: "assignment context mismatch" }; }
+  return null;
+}

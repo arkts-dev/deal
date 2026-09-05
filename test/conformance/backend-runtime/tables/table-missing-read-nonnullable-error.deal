@@ -1,0 +1,10 @@
+// @spec: Tables
+// @description: A missing table field fails a non-nullable contextual target at runtime.
+// @expected: runtime-error E8001
+// @features: tables, missing-fields, contextual-typing
+
+export function main(): null {
+  let t: table = {};
+  let value: int = t.missing;
+  return null;
+}

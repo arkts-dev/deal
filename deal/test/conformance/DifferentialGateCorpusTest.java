@@ -79,22 +79,31 @@ public class DifferentialGateCorpusTest {
      * checker's E2010 at the import span), so the promoted fixture
      * records {@code frontend OK (found E2010)} through the real
      * pipeline, never a manufactured pin. ISSUE-0547 (the ISSUE-0160
- * container step) adds the two bytes-container fixtures
- * {@code backend-runtime/bytes/bytes-array-container-ops.deal} and
- * {@code backend-runtime/bytes/bytes-nested-arrays.deal} with their
- * three-backend runtime-ok sidecars in the same change: total
- * 545 -> 547, backend-runtime 335 -> 337, runtime-ok 218 -> 220;
- * the runtime-error population (83), the known-fail population, and
- * the compile pins (4) are unchanged. */
-    private static final int TOTAL_FIXTURES = 547;
+     * container step) adds the two bytes-container fixtures
+     * {@code backend-runtime/bytes/bytes-array-container-ops.deal} and
+     * {@code backend-runtime/bytes/bytes-nested-arrays.deal} with their
+     * three-backend runtime-ok sidecars in the same change: total
+     * 545 -> 547, backend-runtime 335 -> 337, runtime-ok 218 -> 220;
+     * the runtime-error population (83), the known-fail population, and
+     * the compile pins (4) are unchanged. ISSUE-0502 (the gap-suite
+     * runtime population landing) adds forty-one fixtures on top of the
+     * 547: +30 runtime-ok (the promoted gap bytes-boundary-order
+     * included — its retained-known-fail marker was forced off by the
+     * zero-skip promotion gate after ISSUE-0158 lifted the E3019
+     * bytes-equality gate), +10 runtime-error, +1 companion
+     * (integration_state_lib.deal): runtime-ok 220 -> 250,
+     * runtime-error 83 -> 93, companions 49 -> 50, known-fail stays 0
+     * (ISSUE-0477 already promoted the FFI-manifest pin), total
+     * 547 -> 588, backend-runtime 337 -> 378. */
+    private static final int TOTAL_FIXTURES = 588;
     private static final int FRONTEND_FIXTURES = 210;
-    private static final int BACKEND_RUNTIME_FIXTURES = 337;
+    private static final int BACKEND_RUNTIME_FIXTURES = 378;
     private static final int COMPILE_OK = 64;
     private static final int COMPILE_ERROR = 131;
-    private static final int RUNTIME_OK = 220;
-    private static final int RUNTIME_ERROR = 83;
-    private static final int RUNTIME_ERROR_SIDECARS = 83;
-    private static final int COMPANIONS = 49;
+    private static final int RUNTIME_OK = 250;
+    private static final int RUNTIME_ERROR = 93;
+    private static final int RUNTIME_ERROR_SIDECARS = 93;
+    private static final int COMPANIONS = 50;
     private static final int KNOWN_FAIL = 0;
     private static final int COMPILE_PINS = 4;
 
@@ -242,6 +251,18 @@ public class DifferentialGateCorpusTest {
             "the restored int-add-overflow known-fail fixture now "
                 + "classifies as a real runtime-error fixture, got "
                 + promotedOverflow.classification());
+        CorpusDiscovery.Fixture promotedBytes = run.fixtures().stream()
+            .filter(f -> f.corpusPath().equals(
+                "backend-runtime/bytes/bytes-boundary-order.deal"))
+            .findFirst().orElseThrow();
+        check(promotedBytes.classification() != null
+                && promotedBytes.classification().kind()
+                    == CorpusDiscovery.Kind.RUNTIME_OK,
+            "the ISSUE-0502 gap bytes-boundary-order fixture passes "
+                + "every lane after ISSUE-0158 lifted the E3019 "
+                + "bytes-equality gate and classifies as a real "
+                + "runtime-ok fixture, got "
+                + promotedBytes.classification());
     }
 
     private static void dispatchDeferral(DifferentialGate.GateRun run) {

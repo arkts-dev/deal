@@ -1,0 +1,20 @@
+// @spec: Classes
+// @description: A function-call class default is re-executed for each construction
+// @expected: runtime-ok
+// @features: classes, defaults, function-calls
+
+function freshValues(): int[] {
+  return [];
+}
+
+class Counter {
+  values: int[] = freshValues();
+}
+
+export function main(): null {
+  let first: Counter = {};
+  let second: Counter = {};
+  first.values[0] = 41;
+  if (second.values.length !== 0) { throw { code: "TEST_FAIL", message: "function default call was cached" }; }
+  return null;
+}

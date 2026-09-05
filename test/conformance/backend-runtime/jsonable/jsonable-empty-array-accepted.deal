@@ -1,0 +1,16 @@
+// @spec: Classes
+// @description: An explicit empty JSON array replaces a non-empty declared field default.
+// @expected: runtime-ok
+// @features: jsonable, arrays, fromJson
+
+// @jsonable
+export class Values { xs: int[] = [4]; }
+
+export function main(): null {
+  let values: Values | null = Values$fromJson("{\"xs\":[]}");
+  if (values !== null) {
+    if (values.xs.length !== 0) { throw { code: "TEST_FAIL", message: "empty array not preserved" }; }
+    return null;
+  }
+  throw { code: "TEST_FAIL", message: "empty array rejected" };
+}

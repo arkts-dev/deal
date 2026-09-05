@@ -1,0 +1,10 @@
+// @spec: Tables
+// @description: A table field read is contextually checked as boolean in an if condition.
+// @expected: runtime-ok
+// @features: tables, conditions, contextual-typing
+
+export function main(): null {
+  let t: table = { enabled: true };
+  if (t.enabled) { return null; }
+  throw { code: "TEST_FAIL", message: "boolean table field was false" };
+}

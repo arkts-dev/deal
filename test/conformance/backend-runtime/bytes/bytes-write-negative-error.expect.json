@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "backends": ["luajit", "jvm", "js"],
+  "expected": {
+    "mode": "runtime-error",
+    "transcript": {
+      "stdout": "DEAL_ERROR_CODE: E8013\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8013\",\"message\":\"bytes value out of range\",\"sourceFile\":\"backend-runtime/bytes/bytes-write-negative-error.deal\",\"line\":8,\"column\":3}\n",
+      "stderr": ""
+    },
+    "exitCode": 1,
+    "error": {
+      "code": "E8013",
+      "message": "bytes value out of range",
+      "sourceFile": "backend-runtime/bytes/bytes-write-negative-error.deal",
+      "line": 8,
+      "column": 3
+    }
+  }
+}

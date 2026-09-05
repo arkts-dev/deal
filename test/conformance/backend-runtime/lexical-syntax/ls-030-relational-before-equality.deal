@@ -1,0 +1,14 @@
+// @spec: Lexical elements
+// @description: Relational comparison binds more tightly than equality
+// @expected: runtime-ok
+// @features: parser, precedence, relational, equality, v1.2
+
+export function test_relational_before_equality(): null {
+  let value: boolean = 3 < 2 === false;
+  if (value !== true) {
+    throw { code: "TEST_FAIL", message: "relational comparison did not bind before equality" };
+  }
+  return null;
+}
+
+export function main(): null { return test_relational_before_equality(); }

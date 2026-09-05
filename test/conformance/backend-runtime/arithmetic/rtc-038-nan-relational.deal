@@ -1,0 +1,12 @@
+// @spec: Lexical elements
+// @description: NaN < a finite number returns false
+// @expected: runtime-ok
+// @features: arithmetic, number, nan, comparison
+
+export function test_nan_relational_false(): null {
+  let value: number = 0.0 / 0.0;
+  if (value < 1.0) { throw { code: "TEST_FAIL", message: "NaN < finite number returned true" }; }
+  return null;
+}
+
+export function main(): null { return test_nan_relational_false(); }

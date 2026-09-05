@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "backends": ["luajit", "jvm", "js"],
+  "expected": {
+    "mode": "runtime-error",
+    "transcript": {
+      "stdout": "DEAL_ERROR_CODE: E8005\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8005\",\"message\":\"integer division by zero\",\"sourceFile\":\"backend-runtime/runtime-errors/rtc-035-remainder-zero-error.deal\",\"line\":7,\"column\":10}\n",
+      "stderr": ""
+    },
+    "exitCode": 1,
+    "error": {
+      "code": "E8005",
+      "message": "integer division by zero",
+      "sourceFile": "backend-runtime/runtime-errors/rtc-035-remainder-zero-error.deal",
+      "line": 7,
+      "column": 10
+    }
+  }
+}

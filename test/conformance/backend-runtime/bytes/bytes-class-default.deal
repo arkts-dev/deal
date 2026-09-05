@@ -1,0 +1,12 @@
+// @spec: Bytes
+// @description: A class field may use bytes and receive a bytes default value.
+// @expected: runtime-ok
+// @features: bytes, classes, defaults
+
+class Packet { payload: bytes = bytes(2); }
+
+export function main(): null {
+  let packet: Packet = {};
+  if (packet.payload.length !== 2) { throw { code: "TEST_FAIL", message: "bytes class default mismatch" }; }
+  return null;
+}

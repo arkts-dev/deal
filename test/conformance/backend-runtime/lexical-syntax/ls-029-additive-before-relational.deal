@@ -1,0 +1,14 @@
+// @spec: Lexical elements
+// @description: Additive expressions bind more tightly than relational comparison
+// @expected: runtime-ok
+// @features: parser, precedence, additive, relational, v1.2
+
+export function test_additive_before_relational(): null {
+  let value: boolean = 1 + 2 < 4;
+  if (value !== true) {
+    throw { code: "TEST_FAIL", message: "addition did not bind before comparison" };
+  }
+  return null;
+}
+
+export function main(): null { return test_additive_before_relational(); }

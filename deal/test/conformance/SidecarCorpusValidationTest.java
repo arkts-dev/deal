@@ -96,7 +96,19 @@ import java.util.stream.Stream;
  *       ISSUE-0339 promoted the last previously tracked fixture
  *       ({@code bytes-buffer-ops.deal}, which received its runtime-ok
  *       sidecar in the same change that dropped its known-fail
- *       marker).</li>
+ *       marker). ISSUE-0502 (the gap-suite runtime population
+ *       landing) adds the gap bytes fixture
+ *       {@code backend-runtime/bytes/bytes-boundary-order.deal}
+ *       <b>promoted</b> — the issue's retained-known-fail candidate
+ *       ({@code known-fail runtime-ok}, {@code @issue: ISSUE-0111})
+ *       was probed on the real lanes this run and passes on both
+ *       (ISSUE-0158 lifted the E3019 bytes-equality gate with the
+ *       BYTES_EQ/NE comparison row, so bytes compare by reference
+ *       identity today), and the zero-skip promotion gate forces the
+ *       stale marker off — it counts in the runtime-ok population
+ *       with its empty-transcript three-backend runtime-ok sidecar
+ *       (the presence rule, ISSUE-0353). The backend-runtime
+ *       known-fail population therefore stays empty.</li>
 
  *   <li>All other fixtures ({@code compile-ok}, {@code compile-error},
  *       {@code companion}, frontend fixtures) carry no sidecar except
@@ -180,9 +192,27 @@ public class SidecarCorpusValidationTest {
      * {@code backend-runtime/bytes/bytes-array-container-ops.deal} and
      * {@code backend-runtime/bytes/bytes-nested-arrays.deal} — with
      * their three-backend runtime-ok sidecars in the same change:
-     * 218 -> 220. */
+     * 218 -> 220. ISSUE-0502 (the gap-suite runtime population
+     * landing) adds twenty-nine runtime-ok fixtures with their
+     * empty-transcript three-backend sidecars in the same change:
+     * gap runtime/ +5 (reference-identity-composite,
+     * int32-div-rem-boundaries — promoted, await-effects-and-catch-order,
+     * cross-module-shared-state-closure, and the re-authored
+     * fromjson-failure-no-partial-object; the sixth, aggregate-call-order,
+     * lands with the destination-resolution epic EA), data-model +10
+     * (the three promoted bytes fixtures bytes-class-default,
+     * bytes-write-zero, bytes-zero-length; the two classes fixtures;
+     * the three jsonable fixtures; the two tables fixtures),
+     * lexical-syntax +8 (ls-008/009/017/025/029/030/031/032), and
+     * runtime-control +6 (rtc-004, rtc-008, rtc-015, rtc-033,
+     * rtc-036, rtc-038): 220 -> 249; plus the promoted gap
+     * bytes-boundary-order fixture — the issue's retained-known-fail
+     * candidate passes both lanes after ISSUE-0158 lifted the E3019
+     * bytes-equality gate, so the zero-skip promotion gate forces
+     * the marker off and the fixture lands runtime-ok with its
+     * sidecar: 220 -> 250. */
 
-    private static final int RUNTIME_OK_COUNT = 220;
+    private static final int RUNTIME_OK_COUNT = 250;
 
     /**
      * The exact runtime-error population (ISSUE-0350 completeness, plus
@@ -224,8 +254,21 @@ public class SidecarCorpusValidationTest {
      * declared int boundary, sidecar re-authored in the same change) and
      * the promoted {@code arithmetic/int-add-overflow.deal} (marker
      * dropped, E8004 sidecar unchanged): 81 -> 83.
+     *
+     * ISSUE-0502 (the gap-suite runtime population landing) adds ten
+     * runtime-error fixtures with their field-exact canonical-framing
+     * sidecars in the same change: data-model +6 (the five promoted
+     * bytes fixtures at the verified emitted codes E8012 x4 —
+     * bytes-negative-length-error, bytes-negative-read-error,
+     * bytes-read-at-length-error, bytes-write-at-length-error — and
+     * E8013 x1 — bytes-write-negative-error — plus
+     * table-missing-read-nonnullable-error E8001), runtime-control +1
+     * (rtc-035-remainder-zero-error re-pinned to the emitted E8005),
+     * and source-location +3 (036-runtime-source-array-oob re-pinned
+     * to the emitted E8001, 037-runtime-source-div-zero E8005,
+     * 038-runtime-source-throw PINNED_THROW): 83 -> 93.
  */
-    private static final int RUNTIME_ERROR_COUNT = 83;
+    private static final int RUNTIME_ERROR_COUNT = 93;
 
 
 
@@ -285,6 +328,58 @@ public class SidecarCorpusValidationTest {
      * move 218 -> 219). The known-fail population stays empty. The
      * pins below carry those ISSUE-0334, ISSUE-0341, and ISSUE-0340
      * deltas.
+     *
+     * ISSUE-0502 count-pin amendment record (the MR-0305 record
+     * shape): the issue criterion pins the movement as
+     * {@code RUNTIME_OK_COUNT 219 -> 248} and
+     * {@code RUNTIME_ERROR_COUNT 81 -> 91} with the tracked known-fail
+     * pin moving from the empty set to
+     * {@code {backend-runtime/bytes/bytes-boundary-order.deal}}. Those
+     * absolute values were authored against the earlier design
+     * baseline (workdir HEAD b23e66f, pins 219/81). This tree's
+     * canonical revision (92f8af83, the required rebase target;
+     * between the 8c97bc44 base and this revision the canonical
+     * landed the zero-skip flip precondition record, the fail-closed
+     * release gates with node preflight, the LuaJIT backend-runtime
+     * gate closure, the JS corpus completion gate closure, the JVM
+     * bytes typed-position/container layers, and the ISSUE-0477
+     * promotion of the FFI-manifest known-fail pin) carries the
+     * evolved post-unit corpus — ISSUE-0380 flipped
+     * {@code stdlib-edge/time-now-millis-positive.deal} to its
+     * canonical {@code runtime-error E8004} header and promoted the
+     * restored {@code arithmetic/int-add-overflow.deal} (ISSUE-0378
+     * D3), and ISSUE-0547 added the two bytes-container runtime-ok
+     * fixtures, moving the merge-base pins to 220/83 — so the
+     * written baseline values are unattainable here. The written
+     * deltas are the binding criterion and this tree applies them
+     * exactly: +29 runtime-ok (gap runtime/ +5 — the sixth,
+     * aggregate-call-order, lands with the destination-resolution
+     * epic EA; data-model +10; lexical-syntax +8; runtime-control +6)
+     * plus the promoted bytes-boundary-order fixture, landing the
+     * pins at 220 + 29 + 1 = 250, and +10 runtime-error (data-model
+     * +6; runtime-control +1; source-location +3) landing the pins at
+     * 83 + 10 = 93. The issue's known-fail pin
+     * {@code {} -> {backend-runtime/bytes/bytes-boundary-order.deal}}
+     * is unattainable in this tree and the pin therefore stays at
+     * the empty set: the criterion's premise (both-lane E3019
+     * probe-fail) no longer holds — ISSUE-0158 lifted the E3019
+     * bytes-equality gate (the closed BYTES_EQ/BYTES_NE comparison
+     * row admits bytes by reference identity, and
+     * {@code deal/checker/TypeChecker.java} no longer rejects bytes
+     * EQ/NEQ), the fixture passes both real lanes (verified this
+     * run), and the zero-skip promotion gate fails a retained marker
+     * deterministically (both lanes emit the promotion instruction).
+     * The fixture therefore lands promoted as {@code runtime-ok}
+     * with its empty-transcript three-backend sidecar, which makes
+     * the landed absolute runtime-ok pin (250) the evolved-base
+     * application of the written delta. The issue-tracker update to
+     * the amended wording is flagged on this MR for the issue
+     * authority (the implementer's tooling cannot amend the issue
+     * record). The amended values are the only pin set that keeps
+     * the corpus honest and every gate green: the landed corpus
+     * carries 250/93 with the known-fail population empty, so pins
+     * at the written 248/91 with a non-empty known-fail set would
+     * deterministically fail the completeness checks.
      */
 
     /** The G4.6 lane error framing prefixes. */
@@ -940,10 +1035,13 @@ public class SidecarCorpusValidationTest {
 
         // The exact sidecar paths the corpus may carry: one per runtime-ok
         // fixture, one per runtime-error fixture, one per known-fail
-        // runtime fixture (none today: the gate-closure promotion
-        // dropped the restored int-add-overflow marker, so every
-        // runtime-classified fixture is a real runtime-ok or
-        // runtime-error fixture), plus the two Diagnostics-bullet
+        // runtime fixture (the differential gate's presence rule,
+        // ISSUE-0353 — none is tracked today: the gate-closure
+        // promotion dropped the restored int-add-overflow marker and
+        // the ISSUE-0502 retained candidate bytes-boundary-order.deal
+        // was promoted after ISSUE-0158 lifted the E3019 gate, so
+        // every runtime-classified fixture is a real runtime-ok or
+        // runtime-error fixture), plus the Diagnostics-bullet
         // Compile Expectation Sidecars (the two ISSUE-0501 gap
         // fixtures extend the closed set to four).
         Set<String> allowedSidecars = new HashSet<>();
@@ -975,13 +1073,16 @@ public class SidecarCorpusValidationTest {
                     && fixture.expectedTag().substring(
                         "known-fail ".length()).startsWith("runtime")) {
                 // A known-fail whose underlying mode is a runtime mode
-                // carries its three-backend sidecar: the differential
-                // gate's presence rule (ISSUE-0353) requires a valid
-                // sidecar for every runtime-classified fixture — the
-                // gate has no silent default. The gate-closure
-                // promotion dropped the restored int-add-overflow
-                // marker, so this branch is dormant today; it stays
-                // as the presence rule's defense in depth.
+                // A runtime-mode known-fail fixture (none is tracked
+                // today — the ISSUE-0502 retained candidate
+                // bytes-boundary-order.deal passed both lanes after
+                // ISSUE-0158 lifted the E3019 gate and was promoted)
+                // would carry its three-backend sidecar: the
+                // differential gate's presence rule (ISSUE-0353)
+                // requires a valid sidecar for every runtime-classified
+                // fixture — including a known-fail whose underlying
+                // mode is a runtime mode — and the gate has no
+                // silent default.
                 allowedSidecars.add(sidecarPath.toString());
                 check(Files.exists(sidecarPath), fixture.corpusPath()
                     + ": the known-fail runtime fixture must carry its "
@@ -1009,15 +1110,21 @@ public class SidecarCorpusValidationTest {
             + "with sidecars, found " + runtimeError);
 
 
-        // The tracked backend-runtime known-fail population is empty
-        // post-unit (ISSUE-0380, the disposition-application unit): the
-        // restored known-fail fixture
-        // arithmetic/int-add-overflow.deal (ISSUE-0378 D3) was promoted
-        // in the unit's landing change — its runtime-error E8004 probe
-        // now counts in the runtime-error population with its unchanged
-        // three-backend sidecar (the differential gate's presence rule,
-        // ISSUE-0353), and the stale-known-fail gate no longer names it.
-
+        // The tracked backend-runtime known-fail population is
+        // empty (ISSUE-0502, the gap-suite runtime population
+        // landing): the issue's retained-known-fail candidate
+        // backend-runtime/bytes/bytes-boundary-order.deal passes both
+        // real lanes in this tree — ISSUE-0158 lifted the E3019
+        // bytes-equality gate (bytes EQ/NEQ admitted by reference
+        // identity), so the criterion's both-lane probe-fail premise
+        // no longer holds and the zero-skip promotion gate forces
+        // the stale marker off. The fixture lands promoted as
+        // runtime-ok with its empty-transcript three-backend sidecar
+        // (the differential gate's presence rule, ISSUE-0353). The
+        // ISSUE-0380 promotion of the restored int-add-overflow
+        // fixture and the ISSUE-0477 promotion of the FFI-manifest
+        // frontend pin leave the backend-runtime known-fail
+        // population empty.
         Set<String> knownFail = new TreeSet<>();
         for (Fixture fixture : fixtures) {
             if (fixture.corpusPath().startsWith("backend-runtime/")

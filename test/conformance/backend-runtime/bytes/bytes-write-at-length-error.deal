@@ -1,0 +1,10 @@
+// @spec: Bytes
+// @description: A byte write at index equal to length is rejected rather than appended.
+// @expected: runtime-error E8012
+// @features: bytes, writes, bounds
+
+export function main(): null {
+  let b: bytes = bytes(1);
+  b[1] = 7;
+  return null;
+}

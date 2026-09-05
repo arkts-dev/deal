@@ -137,7 +137,11 @@ import java.util.concurrent.atomic.AtomicInteger;
  *       value surface (ISSUE-0301): the four cross-module function-value
  *       fixtures pass the real pipeline on the shared $DealRt wrapper
  *       carriers, and the stale-skip gate forced the registry entries
- *       out.</li>
+ *       out. The gap-suite fixture
+ *       {@code modules/cross-module-shared-state-closure.deal}
+ *       (ISSUE-0502) passes the real pipeline on the same carrier
+ *       surface, so it carries no entry (a skip entry would be stale
+ *       and fail the gate deterministically).</li>
  *   <li><b>JVM-GAP-XMOD-ARRAY</b> — RETIRED with the shared runtime
  *       value surface (ISSUE-0301): await-returning-array-indexed
  *       passes the real pipeline on the shared $DealRt array carriers,
@@ -178,7 +182,19 @@ import java.util.concurrent.atomic.AtomicInteger;
  *       remaining fixture pins the recursive bytes-bearing FUNCTION
  *       wrapper closure ((bytes)->bytes signature positions), which
  *       stays E6000 at the function-type-annotation gate until the
- *       later ISSUE-0160 function steps land.</li>
+ *       later ISSUE-0160 function steps land. ISSUE-0502 (the
+ *       gap-suite runtime population) lands the eight promoted gap
+ *       bytes fixtures <b>without entries</b>: every one passes the
+ *       real JVM pipeline on the ISSUE-0158 direct bytes lane
+ *       (verified this run — a skip entry would be stale and fail
+ *       the gate deterministically), so no entry lands.</li>
+ *   <li><b>JVM-GAP-ERROR-LITERAL-DEFAULTS</b> (1 entry) — the Error
+ *       literal default-filling lane (ISSUE-0502, new gap id):
+ *       JvmBackend raises E6000 on an Error literal without both code
+ *       and message fields (probed this run: the fixture still fails
+ *       on the real JVM pipeline, so the entry is live), so
+ *       {@code error-handling/rtc-015-error-default-code.deal} passes
+ *       only on LuaJIT (and Node at the T14 flip).</li>
  * </ul>
  *
  * <h2>Gates</h2>
@@ -186,8 +202,9 @@ import java.util.concurrent.atomic.AtomicInteger;
  *   <li>frontend-classified files: 100% pass (zero failed);</li>
  *   <li>backend-runtime: zero applicable failures AND at least 80% of
  *       the on-disk backend-runtime tests (the per-run
- *       {@code runtimeDenominator()} count — 303 with the restored
- *       known-fail fixture and the two ISSUE-0547 bytes-container
+ *       {@code runtimeDenominator()} count — 343 with the restored
+ *       known-fail fixture, the two ISSUE-0547 bytes-container
+ *       fixtures, and the forty ISSUE-0502 gap-suite runtime
  *       fixtures) pass through the frontend →
  *       CompilationOrchestrator → JVM codegen → javac → JVM
  *       pipeline — on the post-unit tree the lane passes the two
@@ -340,6 +357,28 @@ public class JvmConformanceTest {
                 + "function wrapper closure (the ISSUE-0160 function "
                 + "steps); JvmBackend raises E6000 at the function-type-"
                 + "annotation bytes gate.", "JVM-GAP-BYTES");
+
+        // ---- JVM-GAP-BYTES: the gap-suite runtime population
+        // (ISSUE-0502) ----
+        // The eight promoted gap bytes fixtures carry NO entries: the
+        // ISSUE-0158 direct bytes lane passes every one on the real
+        // JVM pipeline (bytes-class-default, bytes-write-zero,
+        // bytes-zero-length, bytes-negative-length-error,
+        // bytes-negative-read-error, bytes-read-at-length-error,
+        // bytes-write-at-length-error, bytes-write-negative-error —
+        // verified this run), so skip entries would be stale and fail
+        // the gate deterministically.
+
+        // ---- JVM-GAP-ERROR-LITERAL-DEFAULTS: the LuaJIT-owned Error
+        // literal default filling (ISSUE-0502, new gap id) ----
+        // rtc-015-error-default-code pins the Error literal without a
+        // code field defaulting to the empty string; JvmBackend rejects
+        // the literal shape with E6000, so the fixture passes only on
+        // LuaJIT (and Node at T14).
+        skip("backend-runtime/error-handling/rtc-015-error-default-code.deal",
+            "E6000: JvmBackend does not support an Error literal without "
+                + "both code and message fields (LuaJIT-owned default "
+                + "filling).", "JVM-GAP-ERROR-LITERAL-DEFAULTS");
 
         // ---- JVM-GAP-JSONABLE-RESIDUAL: residual @jsonable JVM defects ----
         // The two error-typed member-access/NEQ entries retired with
@@ -516,7 +555,11 @@ public class JvmConformanceTest {
             + "non-literal defaults evaluate in the declaring module's "
             + "scope under LuaJIT (E6000 on the JVM imported-class "
             + "slice) and the phase-order Error-catch probe is outside "
-            + "the JVM slice (ISSUE-0340 is the LuaJIT emitter cutover)"
+            + "the JVM slice (ISSUE-0340 is the LuaJIT emitter cutover)",
+        "JVM-GAP-ERROR-LITERAL-DEFAULTS", "Error literal default "
+            + "filling — JvmBackend raises E6000 on an Error literal "
+            + "without both code and message fields (LuaJIT-owned "
+            + "default filling)"
     );
 
     // =========================================================================

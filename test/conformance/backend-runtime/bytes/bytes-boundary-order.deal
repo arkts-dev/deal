@@ -1,0 +1,33 @@
+// @spec: Bytes — indexing, byte-value checks, and reference semantics
+// @description: Bytes are zero-filled references and failed writes evaluate operands then leave the buffer unchanged
+// @expected: known-fail runtime-ok
+// @issue: ISSUE-0111
+// @features: bytes, int32, aliasing, evaluation-order, runtime-errors
+
+export function main(): null {
+  let b: bytes = bytes(2);
+  let alias: bytes = b;
+  if (b.length !== 2 || b[0] !== 0 || b[1] !== 0 || b !== alias) {
+    throw { code: "TEST_FAIL", message: "bytes allocation or identity mismatch" };
+  }
+  alias[0] = 255;
+  if (b[0] !== 255) {
+    throw { code: "TEST_FAIL", message: "bytes alias mutation mismatch" };
+  }
+
+  let trace: string = "";
+  function target(): bytes { trace = trace + "T"; return b; }
+  function index(): int { trace = trace + "I"; return 1; }
+  function value(): int { trace = trace + "V"; return 256; }
+
+  try {
+    target()[index()] = value();
+    trace = trace + "X";
+  } catch (e) {
+    trace = trace + "C";
+  }
+  if (trace !== "TIVC" || b[1] !== 0) {
+    throw { code: "TEST_FAIL", message: "failed byte write behavior: " + trace };
+  }
+  return null;
+}

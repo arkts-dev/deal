@@ -1,0 +1,11 @@
+// @spec: Bytes
+// @description: A byte write accepts the lower endpoint value zero.
+// @expected: runtime-ok
+// @features: bytes, writes, boundaries
+
+export function main(): null {
+  let b: bytes = bytes(1);
+  b[0] = 0;
+  if (b[0] !== 0) { throw { code: "TEST_FAIL", message: "zero byte mismatch" }; }
+  return null;
+}

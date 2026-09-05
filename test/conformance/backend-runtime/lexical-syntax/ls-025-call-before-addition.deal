@@ -1,0 +1,16 @@
+// @spec: Lexical elements
+// @description: A postfix call binds more tightly than binary addition
+// @expected: runtime-ok
+// @features: parser, precedence, call, additive, v1.2
+
+function add(left: int, right: int): int { return left + right; }
+
+export function test_call_before_addition(): null {
+  let value: int = add(1, 2) + 4;
+  if (value !== 7) {
+    throw { code: "TEST_FAIL", message: "call did not bind before addition" };
+  }
+  return null;
+}
+
+export function main(): null { return test_call_before_addition(); }

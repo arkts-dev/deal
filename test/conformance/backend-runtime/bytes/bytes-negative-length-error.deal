@@ -1,0 +1,9 @@
+// @spec: Bytes
+// @description: bytes(length) rejects a negative allocation length
+// @expected: runtime-error E8012
+// @features: bytes, construction, bounds
+
+export function main(): null {
+  let value: bytes = bytes(-1);
+  return null;
+}

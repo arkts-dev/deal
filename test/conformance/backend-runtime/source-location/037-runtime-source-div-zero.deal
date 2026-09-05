@@ -1,0 +1,10 @@
+// @spec: Diagnostics
+// @description: Integer division by zero reports E8005 at the original DEAL expression
+// @expected: runtime-error E8005
+// @features: diagnostics, runtime-location, arithmetic
+
+export function main(): null {
+  let zero: int = 0;
+  let value: int = 7 / zero;
+  return null;
+}

@@ -82,6 +82,15 @@ import java.util.List;
  * to compile-error E2010, so zero known-fail remains tracked;
  * ISSUE-0547 then adds the two bytes-container fixtures: 547
  * discovered, 498 recorded results) and zero staged failures.
+ * ISSUE-0502 (the gap-suite runtime population landing) then adds
+ * forty-one fixtures on top — 30 runtime-ok (the promoted gap
+ * bytes-boundary-order included, its retained-known-fail marker
+ * forced off by the zero-skip promotion gate after ISSUE-0158 lifted
+ * the E3019 bytes-equality gate), 10 runtime-error, and 1 companion —
+ * so the JVM summary moved to {@code passed 301, failed 0, skipped 42
+ * ... pass rate 87.8%} over the 343-fixture denominator and the LuaJIT
+ * summary reads {@code Total: 538, Passed: 538} with zero tracked
+ * known-fails and zero staged failures.
 
  *
  * <p>The test runs from the repository root (the {@code run_tests.sh}
@@ -122,7 +131,7 @@ public class JvmLaneStatePinTest {
     private static final String JVM_GATES_PASSED =
         "Gates PASSED: frontend 100%; backend-runtime zero applicable "
 
-            + "failures AND >= 80% pass rate over the unchanged 303-test "
+            + "failures AND >= 80% pass rate over the unchanged 343-test "
             + "denominator; zero unclassified skips; zero stale skips; "
             + "zero stale known-fail markers; zero probe runner "
             + "exceptions.";
@@ -138,12 +147,19 @@ public class JvmLaneStatePinTest {
     // denominator 301 ... pass rate 88.0%". ISSUE-0547 (the ISSUE-0160
     // container step) adds the two bytes-container fixtures, which pass
     // the real pipeline, so the summary moved again to the re-pinned
-    // numbers below (denominator 303, pass rate 88.1%).
+    // numbers below (denominator 303, pass rate 88.1%). ISSUE-0502
+    // (the gap-suite runtime population landing) adds forty runtime
+    // fixtures on top (30 runtime-ok — the promoted gap
+    // bytes-boundary-order included — and 10 runtime-error; the one
+    // companion is never counted) and six more classified skips (the
+    // five E8012/E8013 gap bytes fixtures whose JVM error snapshot
+    // carries no column field, and the rtc-015 Error-literal-defaults
+    // probe), so the summary moved to the re-pinned numbers below
+    // (denominator 343, pass rate 87.8%).
     private static final String JVM_SUMMARY =
-        "Backend-runtime on JVM: denominator 303 (every on-disk runtime "
-            + "test, unchanged), passed 267, failed 0, skipped 36 "
-            + "(classified), known-fail 0 (tracked) \u2014 pass rate 88.1%";
-
+        "Backend-runtime on JVM: denominator 343 (every on-disk runtime "
+            + "test, unchanged), passed 301, failed 0, skipped 42 "
+            + "(classified), known-fail 0 (tracked) \u2014 pass rate 87.8%";
 
     private static final String JVM_PROFILE_AUTHORITY =
         "Profile-authority accounting: 0 legacy-authority fixture(s) "
@@ -172,14 +188,23 @@ public class JvmLaneStatePinTest {
     // promoted the FFI-manifest frontend pin to compile-error E2010).
     // ISSUE-0547 (the ISSUE-0160 container step) adds the two
     // bytes-container fixtures, so the summary reads 498 recorded
-    // results (547 discovered - 49 companions).
+    // results (547 discovered - 49 companions). ISSUE-0502 (the
+    // gap-suite runtime population landing) then adds forty-one
+    // fixtures — 30 runtime-ok (the promoted gap
+    // bytes-boundary-order included, its retained-known-fail marker
+    // forced off by the zero-skip promotion gate after ISSUE-0158
+    // lifted the E3019 bytes-equality gate), 10 runtime-error, and 1
+    // companion — so the summary reads 538 recorded results
+    // (588 discovered - 50 companions, zero tracked known-fail: this
+    // tree promoted the FFI-manifest frontend pin to compile-error
+    // E2010 and the promoted bytes-boundary-order fixture counts as a
+    // real runtime-ok fixture).
     private static final String LUA_SUMMARY =
-
-        "Total: 498, Passed: 498, Failed: 0, Skipped: 0, "
+        "Total: 538, Passed: 538, Failed: 0, Skipped: 0, "
             + "KnownFailures (tracked): 0, StagedFailures (tracked): 0";
 
     private static final String LUA_PHASE =
-        "  LuaJIT backend-runtime conformance (v1.2): 309/309 passed, "
+        "  LuaJIT backend-runtime conformance (v1.2): 349/349 passed, "
             + "0 failed, 0 skipped, 0 known-fail (tracked), 0 "
             + "staged-fail (tracked)";
 
@@ -190,7 +215,7 @@ public class JvmLaneStatePinTest {
     private static final String LUA_PROFILE_AUTHORITY =
         "Profile-authority accounting: 1 legacy-authority result(s) "
             + "(LEGACY_REGRESSION + LEGACY_SAFE_INT \u2014 zero "
-            + "v1.2/promotion credit; 1 passed, 0 failed), 546 v1.2-credit "
+            + "v1.2/promotion credit; 1 passed, 0 failed), 586 v1.2-credit "
             + "result(s) (COMMON_SHADOW + DEAL_V1_2_INT32)";
 
 

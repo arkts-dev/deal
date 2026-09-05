@@ -1,0 +1,14 @@
+// @spec: Lexical elements
+// @description: A double-backslash escape decodes to exactly one backslash scalar
+// @expected: runtime-ok
+// @features: lexer, string, escape, v1.2
+
+export function test_double_quoted_backslash(): null {
+  let value: string = "a\\b";
+  if (value !== 'a\\b') {
+    throw { code: "TEST_FAIL", message: "double-backslash escape decoded incorrectly" };
+  }
+  return null;
+}
+
+export function main(): null { return test_double_quoted_backslash(); }
