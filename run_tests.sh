@@ -118,6 +118,22 @@ TEST_MAINS+=(
   'fg|=== Running Differential Gate Corpus Tests (ISSUE-0353) ===|java -ea -cp build deal.test.conformance.DifferentialGateCorpusTest'
 )
 
+# =========================================================================
+# ISSUE-0485 (CapabilityRegistry.withState transition surface): the
+# single release-owned promotion/demotion transition surface and its D3
+# invariant battery join the compile list and the unconditional run
+# phase here, next to the FoundationIntegrationTest coverage it extends.
+# The suite proves the six D3 invariants over every closed
+# (capability x target x state) transition: totality, null rejection,
+# source immutability incl. the release default, exactly-one-entry
+# change, closed shape and pinned ordering, digest recomputation,
+# no-op idempotence, and policy-freeness.
+# =========================================================================
+TEST_SOURCES+=( 'test/CapabilityRegistryTransitionTest.java' )
+TEST_MAINS+=(
+  'fg|=== Running Capability Registry Transition Surface Tests (ISSUE-0485) ===|java -ea -cp build deal.test.CapabilityRegistryTransitionTest'
+)
+
 # ISSUE-0378 D5 (JvmLaneStatePinTest substitution): the pin test owns
 # both raw lane runs. It launches the real LuaJIT lane and the real JVM
 # lane as subprocesses and asserts their captured failure sets
