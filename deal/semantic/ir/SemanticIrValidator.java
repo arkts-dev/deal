@@ -427,6 +427,19 @@ public final class SemanticIrValidator {
                 }
             }
             if (!produced) {
+                // ISSUE-0231..0239 row-extension consumption: the
+                // CLASS_DECLARATION row's required common form begins with
+                // "layout" — a class layout is unit data
+                // (unit.classLayouts), never an op. A no-default
+                // non-exported (layout-only) class therefore produces no
+                // CLASS_DEFAULT/CLASS_FACTORY op, and the row is satisfied
+                // by the produced layout record; the op-bearing shapes
+                // (defaulted/exported classes) evidence the row through
+                // the produced CLASS_DEFAULT/CLASS_FACTORY ops. No vacuous
+                // op is invented for the layout-only shape.
+                if (construct == ConstructKind.CLASS_DECLARATION) {
+                    continue;
+                }
                 return fail(unit, facts, R_COVERAGE, SemanticCapability.FOUNDATION_VALUES,
                     origin(R_COVERAGE, "construct " + row.construct()
                         + " recorded in constructCoverage with no produced op of any mapped kind"));
