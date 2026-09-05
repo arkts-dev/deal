@@ -559,6 +559,19 @@ public final class DealCompilerWorkspace {
                 workspace.slots().stream().map(RepairSlot::operation).distinct().toList(), resolver, adapter);
         ChangeResult change = applyCheckedAndValidate(
                 source, modulePath, workspace.precondition(), operations, resolver, adapter, validator);
+        if (change.accepted() && change.sourceDigest().equals(digest(source))) {
+            RepairSlot owner = workspace.slots().stream()
+                    .filter(slot -> patches.stream().anyMatch(patch -> patch.slotId().equals(slot.slotId())))
+                    .findFirst().orElse(workspace.slots().get(0));
+            StructuredDiagnostic diagnostic = new StructuredDiagnostic(
+                    "CP1029", "error",
+                    "Repair patch is valid but makes no canonical source progress",
+                    null, owner.targetId(), "a source-changing repair payload", "unchanged canonical source",
+                    List.of(), List.of(new RepairScope(owner.operation(), owner.targetId())),
+                    "inspectChange");
+            change = new ChangeResult(
+                    false, source, digest(source), change.inspection(), change.impact(), List.of(diagnostic));
+        }
         RepairWorkspaceSnapshot next = workspace(
                 source, modulePath, workspace.precondition(), inspection, operations, change,
                 workspace.repairRound() + 1, workspace.slots(), resolver, adapter, validator);

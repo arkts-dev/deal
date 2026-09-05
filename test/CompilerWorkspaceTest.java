@@ -28,6 +28,7 @@ public final class CompilerWorkspaceTest {
         checkedChangesRequireQueriedTargetFingerprint();
         inspectChangeBuildsCompilerOwnedDependencyCone();
         repairWorkspacePreservesAndPatchesSlots();
+        repairWorkspaceRejectsCanonicalNoOpPatch();
         repairWorkspaceCanDropAnIndependentRejectedDeclaration();
         dependentRepairSlotsCommitAsOneGroup();
         dependentValidationRejectsOnlyTheFaultyHandler();
@@ -77,6 +78,53 @@ public final class CompilerWorkspaceTest {
         check(dropped.accepted(), "dropping an independent rejected declaration must commit staged siblings");
         check(!dropped.source().contains("placeholder") && dropped.source().contains("class Marker"),
                 "drop must remove only the rejected operation");
+    }
+
+    private static void repairWorkspaceRejectsCanonicalNoOpPatch() {
+        String seed = "export class AppState { count: int = 0; }\n"
+                + "export class IncrementAction {}\n"
+                + "export function initialState(): AppState { return {count: 0}; }\n"
+                + "export function update(state: AppState, action: IncrementAction): AppState { return state; }\n";
+        var seedInspection = DealCompilerWorkspace.inspect(seed, "app.deal");
+        var seedUpdate = seedInspection.symbols().stream()
+                .filter(value -> value.name().equals("update")).findFirst().orElseThrow();
+        var seedBody = seedInspection.nodes().stream()
+                .filter(value -> value.ownerId().equals(seedUpdate.id()) && value.kind().equals("function-body"))
+                .findFirst().orElseThrow();
+        String source = DealCompilerWorkspace.apply(
+                seed, "app.deal", seedInspection.sourceDigest(),
+                List.of(new DealCompilerWorkspace.ReplaceFunctionBody(seedBody.id(), "return state;"))).source();
+        var inspection = DealCompilerWorkspace.inspect(source, "app.deal");
+        var update = inspection.symbols().stream()
+                .filter(value -> value.name().equals("update")).findFirst().orElseThrow();
+        var body = inspection.nodes().stream()
+                .filter(value -> value.ownerId().equals(update.id()) && value.kind().equals("function-body"))
+                .findFirst().orElseThrow();
+        var descriptor = DealCompilerWorkspace.queryNode(source, "app.deal", body.id())
+                .allowedOperations().get(0);
+        var precondition = new CompilerProtocol.ChangeSetPrecondition(
+                inspection.sourceDigest(), Map.of(body.id().value(), descriptor.targetFingerprint()));
+        var changeInspection = DealCompilerWorkspace.inspectChange(
+                source, "app.deal", inspection.sourceDigest(), List.of(body.id()),
+                List.of(DealCompilerWorkspace.REPLACE_FUNCTION_BODY));
+        var staged = DealCompilerWorkspace.stageChange(
+                source, "app.deal", precondition, changeInspection,
+                List.of(new DealCompilerWorkspace.ReplaceFunctionBody(body.id(), "return missing;")));
+        check(!staged.accepted(), "invalid body must create a repair workspace");
+        String rejectedSlot = staged.workspace().slots().stream()
+                .filter(value -> value.status() == CompilerProtocol.RepairSlotStatus.REJECTED)
+                .map(CompilerProtocol.RepairSlot::slotId).findFirst().orElseThrow();
+        var repaired = DealCompilerWorkspace.patchRepairWorkspace(
+                source, "app.deal", staged.workspace(), List.of(new CompilerProtocol.SlotPatch(
+                        rejectedSlot, Map.of("body", "return state;"))));
+        check(!repaired.accepted(), "repair that restores the unchanged canonical source must not commit: "
+                + repaired.source().replace("\n", "\\n"));
+        check(repaired.diagnostics().stream().anyMatch(value -> value.code().equals("CP1029")),
+                "canonical no-op repair must publish stable CP1029");
+        check(repaired.workspace().slots().stream().anyMatch(value ->
+                        value.slotId().equals(rejectedSlot)
+                                && value.status() == CompilerProtocol.RepairSlotStatus.REJECTED),
+                "the no-op repair slot must remain writable");
     }
 
     private static void fullCandidateDiagnosticsOwnDependentRepairSlots() {
