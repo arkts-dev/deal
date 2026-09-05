@@ -103,6 +103,7 @@ TEST_SOURCES+=(
 )
 TEST_MAINS+=(
   'fg|=== Running Historical / Legacy-Profile / Legacy-Capability Catalog Tests (ISSUE-0488) ===|java -ea -cp build deal.test.HistoricalRegressionCatalogTest'
+)
 
 # ISSUE-0477 (ISSUE-0402 acceptance remediation): the gate-closure strict
 # gate regression suite — the three registry-shape modes of the re-landed
