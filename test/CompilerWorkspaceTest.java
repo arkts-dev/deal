@@ -29,7 +29,59 @@ public final class CompilerWorkspaceTest {
         inspectChangeBuildsCompilerOwnedDependencyCone();
         repairWorkspacePreservesAndPatchesSlots();
         dependentRepairSlotsCommitAsOneGroup();
+        fullCandidateDiagnosticsOwnDependentRepairSlots();
         System.out.println("CompilerWorkspaceTest: all tests passed");
+    }
+
+    private static void fullCandidateDiagnosticsOwnDependentRepairSlots() {
+        String source = "export class AppState { title: string = \"\"; }\n"
+                + "export function initialState(): AppState { return {title: \"\"}; }\n";
+        var inspection = DealCompilerWorkspace.inspect(source, "app.deal");
+        var appState = inspection.symbols().stream()
+                .filter(value -> value.name().equals("AppState")).findFirst().orElseThrow();
+        var initialState = inspection.symbols().stream()
+                .filter(value -> value.name().equals("initialState")).findFirst().orElseThrow();
+        var initialBody = inspection.nodes().stream()
+                .filter(value -> value.ownerId().equals(initialState.id()) && value.kind().equals("function-body"))
+                .findFirst().orElseThrow();
+        var moduleOperation = DealCompilerWorkspace.queryModule(source, "app.deal").allowedOperations().stream()
+                .filter(value -> value.operation().equals(DealCompilerWorkspace.ADD_DECLARATION))
+                .findFirst().orElseThrow();
+        var stateOperation = DealCompilerWorkspace.querySymbol(source, "app.deal", appState.id()).allowedOperations().stream()
+                .filter(value -> value.operation().equals(DealCompilerWorkspace.REPLACE_DECLARATION))
+                .findFirst().orElseThrow();
+        var initialOperation = DealCompilerWorkspace.queryNode(source, "app.deal", initialBody.id()).allowedOperations().stream()
+                .filter(value -> value.operation().equals(DealCompilerWorkspace.REPLACE_FUNCTION_BODY))
+                .findFirst().orElseThrow();
+        var precondition = new CompilerProtocol.ChangeSetPrecondition(
+                inspection.sourceDigest(), Map.of(
+                        inspection.moduleId().value(), moduleOperation.targetFingerprint(),
+                        appState.id().value(), stateOperation.targetFingerprint(),
+                        initialBody.id().value(), initialOperation.targetFingerprint()));
+        var operations = List.<DealCompilerWorkspace.Operation>of(
+                new DealCompilerWorkspace.AddDeclaration(
+                        inspection.moduleId(), "export class ChartBar { id: int = 0; value: int = 0; }"),
+                new DealCompilerWorkspace.ReplaceDeclaration(
+                        appState.id(), "export class ChartBar { id: int = 0; value: int = 0; }"),
+                new DealCompilerWorkspace.ReplaceFunctionBody(initialBody.id(), "return {items: []};"));
+        var changeInspection = DealCompilerWorkspace.inspectChange(
+                source, "app.deal", inspection.sourceDigest(),
+                List.of(inspection.moduleId(), appState.id(), initialBody.id()),
+                List.of(DealCompilerWorkspace.ADD_DECLARATION, DealCompilerWorkspace.REPLACE_DECLARATION,
+                        DealCompilerWorkspace.REPLACE_FUNCTION_BODY));
+        var staged = DealCompilerWorkspace.stageChange(
+                source, "app.deal", precondition, changeInspection, operations);
+        var rejected = staged.workspace().slots().stream()
+                .filter(value -> value.status() == CompilerProtocol.RepairSlotStatus.REJECTED).toList();
+        check(rejected.size() == 1 && rejected.get(0).operation().equals(DealCompilerWorkspace.REPLACE_DECLARATION),
+                "full-candidate diagnostics must select the owned slot even when dependent operations fail alone: "
+                        + staged.workspace().slots());
+        var repaired = DealCompilerWorkspace.patchRepairWorkspace(
+                source, "app.deal", staged.workspace(), List.of(new CompilerProtocol.SlotPatch(
+                        rejected.get(0).slotId(), Map.of(
+                                "declaration", "export class AppState { items: ChartBar[] = []; }"))));
+        check(repaired.accepted(), "repairing the compiler-owned slot must commit dependent staged operations: "
+                + repaired.diagnostics());
     }
 
     private static void dependentRepairSlotsCommitAsOneGroup() {

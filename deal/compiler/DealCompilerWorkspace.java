@@ -601,11 +601,16 @@ public final class DealCompilerWorkspace {
                 .map(operation -> applyChecked(
                         source, modulePath, precondition, List.of(operation), resolver, adapter))
                 .toList();
-        Set<Integer> directlyRejected = new LinkedHashSet<>();
-        for (int index = 0; index < isolated.size(); index++) {
-            if (!isolated.get(index).accepted()) directlyRejected.add(index);
+        List<StructuredDiagnostic> operationContractDiagnostics = diagnostics.stream()
+                .filter(DealCompilerWorkspace::isOperationContractDiagnostic).toList();
+        Set<Integer> directlyRejected = rejectedSlots(operations, operationContractDiagnostics);
+        if (operationContractDiagnostics.isEmpty()) {
+            directlyRejected.clear();
+            for (int index = 0; index < isolated.size(); index++) {
+                if (!isolated.get(index).accepted()) directlyRejected.add(index);
+            }
+            if (directlyRejected.isEmpty()) directlyRejected.addAll(rejectedSlots(operations, diagnostics));
         }
-        if (directlyRejected.isEmpty()) directlyRejected.addAll(rejectedSlots(operations, diagnostics));
         List<RepairSlot> slots = new ArrayList<>();
         for (int index = 0; index < operations.size(); index++) {
             int slotIndex = index;
@@ -674,6 +679,13 @@ public final class DealCompilerWorkspace {
         }
         if (result.isEmpty() && !diagnostics.isEmpty()) result.add(0);
         return result;
+    }
+
+    private static boolean isOperationContractDiagnostic(StructuredDiagnostic diagnostic) {
+        return switch (diagnostic.code()) {
+            case "CP1004", "CP1005", "CP1007", "CP1012", "CP1013" -> true;
+            default -> false;
+        };
     }
 
     private static boolean previouslyStaged(
