@@ -1,0 +1,3 @@
+
+import * as Host from "host/math";
+export function main(): null { return null; }
