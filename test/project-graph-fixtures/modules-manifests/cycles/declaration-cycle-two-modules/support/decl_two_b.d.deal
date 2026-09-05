@@ -1,0 +1,4 @@
+
+import * as A from "./decl_two_a";
+export class B { value: int = 2; }
+export function accept(x: A.A): A.A;

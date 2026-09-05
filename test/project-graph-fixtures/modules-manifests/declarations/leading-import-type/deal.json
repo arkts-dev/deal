@@ -1,0 +1,10 @@
+{
+  "languageVersion": "1.2",
+  "output": "build/lua",
+  "backend": "luajit",
+  "externals": {
+    "model": {
+      "declaration": "support/model.d.deal"
+    }
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "languageVersion": "1.2",
+  "externals": {
+    "host/math": {
+      "declaration": "bindings/host-math.d.deal"
+    }
+  }
+}

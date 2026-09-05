@@ -1,0 +1,6 @@
+{
+  "languageVersion": "1.2",
+  "moduleRoots": ["support"],
+  "output": "build/lua",
+  "backend": "luajit"
+}
