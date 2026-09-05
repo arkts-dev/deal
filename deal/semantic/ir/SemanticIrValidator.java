@@ -1129,8 +1129,22 @@ public final class SemanticIrValidator {
             ? FailurePolicyId.INT_CONVERSION : FailurePolicyId.NUMBER_CONVERSION;
     }
 
-    /** The closed stdlib algorithm→policy table (parent "Standard-library operation table"). */
-    private static FailurePolicyId stdlibPolicy(StdlibFunctionId function) {
+    /**
+     * The closed stdlib algorithm→policy table for {@code STDLIB_CALL}
+     * (parent "Standard-library operation table"):
+     * {@code CONSOLE_LOG}/{@code CONSOLE_ERROR} →
+     * {@code INFRASTRUCTURE_ONLY}; {@code STRING_LENGTH} →
+     * {@code INT32_RESULT}; {@code JSON_PARSE} →
+     * {@code JSON_PARSE_SYNTAX}; {@code JSON_STRINGIFY} →
+     * {@code JSON_TO_ERROR}; {@code MATH_SQRT} →
+     * {@code SQRT_NEGATIVE}; {@code MATH_ABS_INT} →
+     * {@code INT32_RESULT}; every other id → {@code NO_DEAL_FAILURE}.
+     * This method is the single source of the assignment: the lowerer's
+     * {@code STDLIB_CALL} policy stamping reads this table (never a
+     * copy) — exactly like the landed {@code unaryPolicy}/
+     * {@code binaryPolicy}/{@code intrinsicPolicy} accessors.
+     */
+    public static FailurePolicyId stdlibPolicy(StdlibFunctionId function) {
         return switch (function) {
             case CONSOLE_LOG, CONSOLE_ERROR -> FailurePolicyId.INFRASTRUCTURE_ONLY;
             case STRING_LENGTH -> FailurePolicyId.INT32_RESULT;

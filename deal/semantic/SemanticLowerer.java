@@ -6975,17 +6975,15 @@ public final class SemanticLowerer {
 
         /**
          * The carrier's call-site dispatch: the pinned conversion
-         * intrinsics, the console stdlib, and direct user calls — every
-         * other call shape (indirect callees, host/external calls,
+         * intrinsics, the cataloged stdlib calls, and direct user calls —
+         * every other call shape (indirect callees, host/external calls,
          * async) is E7's and stays rejected. The stdlib branch runs the
          * closed checked-fact recognition predicate
          * ({@code StdlibCallRecognition} over the checker's
          * {@code ModuleSymbol} fact and the {@link
-         * StdlibFunctionCatalog}): a recognized console id lowers to the
-         * console {@code STDLIB_CALL} arm, any other cataloged id is
-         * the E7 {@code STDLIB_CALL} arm's and stays rejected, and no
-         * module/name pair is interpreted as a stdlib algorithm here
-         * (D1).
+         * StdlibFunctionCatalog}): every recognized cataloged id lowers
+         * through the single {@code STDLIB_CALL} arm, and no module/name
+         * pair is interpreted as a stdlib algorithm here (D1).
          */
         private ValueId lowerCallSite(CallExpr call, ValueId slot) {
             try {
@@ -6997,37 +6995,39 @@ public final class SemanticLowerer {
                 StdlibCallRecognition.recognize(call.callee(), currentCheckerScope(),
                     moduleImports);
             if (stdlibEntry.isPresent()) {
-                StdlibFunctionCatalog.Entry entry = stdlibEntry.get();
-                if (entry.function() == StdlibFunctionId.CONSOLE_LOG
-                        || entry.function() == StdlibFunctionId.CONSOLE_ERROR) {
-                    return lowerStdlibConsoleCall(call, slot, entry);
-                }
-                throw new ConstructUnlowered("stdlib call " + entry.function()
-                    + " (" + entry.modulePath() + "." + entry.exportName() + ") is the "
-                    + "E7 STDLIB_CALL lowering arm's; the carrier slice realizes console "
-                    + "STDLIB_CALLs only");
+                return lowerStdlibCall(call, slot, stdlibEntry.get());
             }
             return lowerUserCall(call, slot);
         }
 
         /**
-         * {@code STDLIB_CALL(CONSOLE_LOG|CONSOLE_ERROR)} — the console
-         * carrier arm: arguments complete left-to-right, one
-         * {@code STDLIB_PARAMETER} boundary per argument in order
-         * (descriptor-kind rule), the algorithm appends the exact scalar
-         * text as one ordered console effect, and the single
-         * {@code STDLIB_RETURN} boundary validates the declared null
-         * result — all children parented to the {@code STDLIB_CALL} op.
+         * {@code STDLIB_CALL} — the carrier arm for every cataloged
+         * stdlib id (D2): the checked member access's export read
+         * precedes the call; the argument operands complete
+         * left-to-right before the {@code STDLIB_CALL} START; the
+         * payload carries {@code {function, args, effectCapability}}
+         * with {@code args} in the same left-to-right order and
+         * {@code effectCapability} = {@code STDLIB_SEMANTICS}; the
+         * operand descriptors are the catalog entry's declared
+         * parameter descriptors in order; one {@code STDLIB_PARAMETER}
+         * boundary child per declared parameter in one-based order
+         * (declared descriptor, descriptor-kind rule) and the single
+         * {@code STDLIB_RETURN} boundary (declared return descriptor,
+         * descriptor-kind rule) run by the call op itself after the
+         * algorithm result — all children parented to the
+         * {@code STDLIB_CALL} op. The op's {@code failurePolicy} is
+         * stamped from {@link SemanticIrValidator#stdlibPolicy} — the
+         * single closed algorithm→policy table, never a lowerer-local
+         * copy.
          */
-        private ValueId lowerStdlibConsoleCall(CallExpr call, ValueId slot,
-                                               StdlibFunctionCatalog.Entry entry) {
+        private ValueId lowerStdlibCall(CallExpr call, ValueId slot,
+                                        StdlibFunctionCatalog.Entry entry) {
             StdlibFunctionId function = entry.function();
             String field = entry.exportName();
             ModuleId stdlibModule = new ModuleId(entry.modulePath());
             // The member access's checked export read (the MEMBER_ACCESS
             // construct's pinned form for a module member): one
-            // EXPORT_READ of the std/console export before the
-            // STDLIB_CALL.
+            // EXPORT_READ of the stdlib export before the STDLIB_CALL.
             RuntimeDescriptor.Func exportDescriptor =
                 (RuntimeDescriptor.Func) ContainerPayloadDescriptors
                     .resultDescriptorOf(checkedType(call.callee()));
@@ -7043,10 +7043,10 @@ public final class SemanticLowerer {
                 exportValue, exportDescriptor, List.of(), List.of(),
                 FailurePolicyId.NO_DEAL_FAILURE, exportOrigin));
             // The export value's execution binding (R-FUNCTION-BINDING):
-            // the std/console module's log/error host function identity,
-            // recorded through the registry child's host-export seam
-            // (B5 — the same seam every function-typed host export read
-            // registers through).
+            // the stdlib module's export host function identity, recorded
+            // through the registry child's host-export seam (B5 — the
+            // same seam every function-typed host export read registers
+            // through).
             registry.registerHostOrExternalImport(
                 new FunctionAllocationIdentity(exportValue.id()),
                 new KindPayload.ExportReadPayload(stdlibModule, field,
@@ -7054,15 +7054,23 @@ public final class SemanticLowerer {
                 new FunctionBindingRegistry.FunctionValueImportFacts(
                     stdlibModule, null, field, exportDescriptor),
                 null);
+            // The argument operands complete left-to-right before the
+            // STDLIB_CALL START (parent D13 step 1); their descriptors
+            // are the catalog entry's declared parameter descriptors in
+            // order — the declared signature is the single authority for
+            // operand and boundary descriptors alike.
             List<ValueId> args = new ArrayList<>();
-            List<RuntimeDescriptor> argTypes = new ArrayList<>();
             for (ExpressionNode argument : call.args()) {
                 args.add(lowerExpression(argument));
-                argTypes.add(ContainerPayloadDescriptors.resultDescriptorOf(
-                    checkedType(argument)));
             }
-            RuntimeDescriptor resultType =
-                ContainerPayloadDescriptors.resultDescriptorOf(Type.Null.INSTANCE);
+            List<RuntimeDescriptor> parameterDescriptors = entry.parameterDescriptors();
+            if (args.size() != parameterDescriptors.size()) {
+                throw new ConstructUnlowered("stdlib call " + function + " ("
+                    + entry.modulePath() + "." + field + ") with " + args.size()
+                    + " arguments for " + parameterDescriptors.size()
+                    + " declared parameters (the checker admits exact arity only)");
+            }
+            RuntimeDescriptor resultType = entry.returnDescriptor();
             ValueId result = slot != null ? slot : ids.nextValueId(module, nextOrdinal++, 0);
             AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
             OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
@@ -7071,11 +7079,11 @@ public final class SemanticLowerer {
             emit(buildOp(opId, SemanticOpKind.STDLIB_CALL,
                 new KindPayload.StdlibCallPayload(function, args,
                     SemanticCapability.STDLIB_SEMANTICS),
-                result, resultType, args, argTypes,
-                FailurePolicyId.INFRASTRUCTURE_ONLY, origin));
+                result, resultType, args, parameterDescriptors,
+                SemanticIrValidator.stdlibPolicy(function), origin));
             for (int i = 0; i < args.size(); i++) {
-                emitChildBoundary(BoundaryKind.STDLIB_PARAMETER, argTypes.get(i), args.get(i),
-                    call.span(), opId);
+                emitChildBoundary(BoundaryKind.STDLIB_PARAMETER,
+                    parameterDescriptors.get(i), args.get(i), call.span(), opId);
             }
             emitChildBoundary(BoundaryKind.STDLIB_RETURN, resultType, result, call.span(),
                 opId);
