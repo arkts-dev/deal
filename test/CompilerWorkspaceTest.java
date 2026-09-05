@@ -128,8 +128,8 @@ public final class CompilerWorkspaceTest {
                 .findFirst().orElseThrow();
         var preserved = staged.workspace().slots().stream()
                 .filter(value -> !value.slotId().equals(rejected.slotId())).findFirst().orElseThrow();
-        check(preserved.status() == CompilerProtocol.RepairSlotStatus.SEALED,
-                "an independent valid sibling must be sealed");
+        check(preserved.status() == CompilerProtocol.RepairSlotStatus.STAGED,
+                "an independent valid sibling must be staged and unavailable to repair");
         String preservedPayload = preserved.payload().get("body");
         var snapshot = staged.workspace();
         var tampered = new CompilerProtocol.RepairWorkspaceSnapshot(

@@ -460,13 +460,13 @@ public final class DealCompilerWorkspace {
         if (change.accepted()) {
             RepairWorkspaceSnapshot workspace = workspace(
                     source, modulePath, precondition, changeInspection, operations, change, 0,
-                    resolver, adapter, validator);
+                    List.of(), resolver, adapter, validator);
             return new RepairWorkspaceResult(
                     true, change.source(), change.sourceDigest(), workspace, change, List.of());
         }
         RepairWorkspaceSnapshot workspace = workspace(
                 source, modulePath, precondition, changeInspection, operations, change, 0,
-                resolver, adapter, validator);
+                List.of(), resolver, adapter, validator);
         return new RepairWorkspaceResult(
                 false, source, digest(source), workspace, change, change.diagnostics());
     }
@@ -539,7 +539,7 @@ public final class DealCompilerWorkspace {
                 source, modulePath, workspace.precondition(), operations, resolver, adapter, validator);
         RepairWorkspaceSnapshot next = workspace(
                 source, modulePath, workspace.precondition(), inspection, operations, change,
-                workspace.repairRound() + 1, resolver, adapter, validator);
+                workspace.repairRound() + 1, workspace.slots(), resolver, adapter, validator);
         return new RepairWorkspaceResult(
                 change.accepted(), change.accepted() ? change.source() : source,
                 change.accepted() ? change.sourceDigest() : digest(source),
@@ -582,6 +582,7 @@ public final class DealCompilerWorkspace {
             List<? extends Operation> operations,
             ChangeResult change,
             int round,
+            List<RepairSlot> previousSlots,
             ModuleResolver resolver,
             SourceAdapter adapter,
             CandidateValidator validator) {
@@ -624,7 +625,8 @@ public final class DealCompilerWorkspace {
                     ? RepairSlotStatus.COMMIT_READY
                     : rejected ? RepairSlotStatus.REJECTED
                     : blocked ? RepairSlotStatus.BLOCKED
-                    : RepairSlotStatus.SEALED;
+                    : previouslyStaged(previousSlots, slotId, payload)
+                            ? RepairSlotStatus.SEALED : RepairSlotStatus.STAGED;
             String targetFingerprint = precondition.expectedTargetFingerprints()
                     .getOrDefault(operation.targetId().value(), "");
             slots.add(new RepairSlot(
@@ -639,8 +641,12 @@ public final class DealCompilerWorkspace {
                     .filter(value -> value.dependencyGroupId().equals("G" + (selectedGroup + 1))).toList();
             String status = members.stream().anyMatch(value -> value.status() == RepairSlotStatus.REJECTED)
                     ? "REPAIR_REQUIRED"
+                    : members.stream().anyMatch(value -> value.status() == RepairSlotStatus.BLOCKED)
+                            ? "BLOCKED"
                     : members.stream().allMatch(value -> value.status() == RepairSlotStatus.COMMIT_READY)
-                            ? "COMMIT_READY" : "SEALED";
+                            ? "COMMIT_READY"
+                    : members.stream().anyMatch(value -> value.status() == RepairSlotStatus.STAGED)
+                            ? "STAGED" : "SEALED";
             groups.add(new DependencyGroup(
                     "G" + (group + 1), members.stream().map(RepairSlot::slotId).toList(),
                     dependencyGroups.groupDependencies().get(group).stream()
@@ -666,6 +672,18 @@ public final class DealCompilerWorkspace {
         }
         if (result.isEmpty() && !diagnostics.isEmpty()) result.add(0);
         return result;
+    }
+
+    private static boolean previouslyStaged(
+            List<RepairSlot> previousSlots,
+            String slotId,
+            Map<String, String> payload) {
+        String fingerprint = digest(CompilerProtocolJson.encode(payload));
+        return previousSlots.stream().anyMatch(previous ->
+                previous.slotId().equals(slotId)
+                        && previous.payloadFingerprint().equals(fingerprint)
+                        && (previous.status() == RepairSlotStatus.STAGED
+                                || previous.status() == RepairSlotStatus.SEALED));
     }
 
     private static boolean diagnosticMatches(Operation operation, StructuredDiagnostic diagnostic) {
