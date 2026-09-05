@@ -262,9 +262,61 @@ public class ConformanceTest {
             System.exit(1);
         }
 
+        // HistoricalRegressionCatalog / LegacyCapabilityCatalog startup
+        // validation (ISSUE-0488 H1/H4): every code-contract pin resolves
+        // in-tree with its pinned baseline unchanged and every
+        // release-owned legacy-capability code-locator row resolves,
+        // before any fixture executes. A violation is a harness defect —
+        // the gate fails naming it, never silently weakening a pin. The
+        // fixture-case rows are validated by the JSON-slice runner
+        // (BackendConformanceTest), which owns the parsed fixture index
+        // (the LegacyProfileRegressionCatalog split precedent).
+        List<String> historicalSourceViolations =
+            HistoricalRegressionCatalog.validateSourceRows(Path.of("."));
+        List<String> capabilitySourceViolations =
+            LegacyCapabilityCatalog.validateCodeRows(Path.of("."));
+        if (!historicalSourceViolations.isEmpty()
+                || !capabilitySourceViolations.isEmpty()) {
+            System.out.println("CATALOG FAILURE: HistoricalRegressionCatalog "
+                + "/ LegacyCapabilityCatalog validation failed:");
+            for (String violation : historicalSourceViolations) {
+                System.out.println("  " + violation);
+            }
+            for (String violation : capabilitySourceViolations) {
+                System.out.println("  " + violation);
+            }
+            System.exit(1);
+        }
+
         // Run each test
         for (TestFile test : tests) {
             runTest(test);
+        }
+
+        // Historical executed evidence (ISSUE-0488 H3 consumption): this
+        // runner executes the .deal additive v1.2 replacements it
+        // discovered; every recorded exact outcome must have passed and
+        // a global failure voids the evidence (the slice rows' evidence
+        // is recorded by the JSON-slice runner).
+        List<String> expectedReplacements = new ArrayList<>();
+        for (String replacement
+                : HistoricalRegressionCatalog.signedInt32ReplacementRows()) {
+            if ((replacement.startsWith("backend-runtime/")
+                    || replacement.startsWith("frontend/"))
+                    && discovered.contains(replacement)) {
+                expectedReplacements.add(replacement);
+            }
+        }
+        List<String> evidenceViolations = HistoricalRegressionCatalog
+            .executedEvidenceViolations(List.of(), expectedReplacements,
+                failed > 0);
+        if (!evidenceViolations.isEmpty()) {
+            System.out.println("HISTORICAL EVIDENCE FAILURE: the "
+                + "signed-int32 historical executed evidence is not green:");
+            for (String violation : evidenceViolations) {
+                System.out.println("  " + violation);
+            }
+            System.exit(1);
         }
 
         // Print summary
@@ -535,6 +587,24 @@ public class ConformanceTest {
             if (failed > failedSnapshot) legacyAuthorityFailed++;
         } else {
             v12CreditResults++;
+        }
+        // Historical executed evidence (ISSUE-0488 H3 consumption): this
+        // single-threaded runner attributes each case's outcome exactly,
+        // so the signed-int32 rows it executes record their exact
+        // pass/fail verdict (skips record nothing — a skipped execution
+        // is no evidence).
+        boolean executedPassed = passed > passedSnapshot
+            && failed == failedSnapshot;
+        boolean executedFailed = failed > failedSnapshot;
+        if (executedPassed || executedFailed) {
+            String locator = test.relativePath();
+            if (HistoricalRegressionCatalog.isSignedInt32LegacyLocator(
+                    locator)
+                    || HistoricalRegressionCatalog
+                        .isSignedInt32ReplacementLocator(locator)) {
+                HistoricalRegressionCatalog.recordExactOutcome(locator,
+                    !executedFailed);
+            }
         }
     }
 

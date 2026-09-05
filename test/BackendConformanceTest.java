@@ -441,6 +441,8 @@ public class BackendConformanceTest {
         // even when the host runs other work concurrently.
         List<Object[]> caseTasks = new ArrayList<>();
         Map<String, Set<String>> sliceCases = new LinkedHashMap<>();
+        Map<String, Map<String, Map<String, Object>>> sliceCaseMaps =
+            new LinkedHashMap<>();
         for (Path file : fixtureFiles) {
             log("--- Fixture: " + file.getFileName() + " ---");
             try {
@@ -467,6 +469,8 @@ public class BackendConformanceTest {
                     String caseName = jsonString(test, "name", "<unnamed>");
                     sliceCases.computeIfAbsent(fixtureFileName,
                         k -> new TreeSet<>()).add(caseName);
+                    sliceCaseMaps.computeIfAbsent(fixtureFileName,
+                        k -> new LinkedHashMap<>()).put(caseName, test);
                     // A4 completeness scan over every case source and
                     // every multi-module module source.
                     String caseSource = jsonString(test, "source", null);
@@ -515,6 +519,29 @@ public class BackendConformanceTest {
             System.exit(1);
         }
 
+        // HistoricalRegressionCatalog / LegacyCapabilityCatalog startup
+        // validation (ISSUE-0488 H1/H4): every fixture-case pin resolves
+        // in the parsed index and executes with its pinned baseline
+        // unchanged, every code-contract pin resolves in-tree with its
+        // exact-text anchors and pinned digest, and every release-owned
+        // legacy-capability evidence locator resolves — before any
+        // fixture executes. A violation is a harness defect: the gate
+        // fails naming it, never silently weakening a pin.
+        List<String> historicalViolations =
+            HistoricalRegressionCatalog.validateFixtureRows(sliceCaseMaps);
+        historicalViolations.addAll(HistoricalRegressionCatalog
+            .validateSourceRows(Path.of(".")));
+        historicalViolations.addAll(LegacyCapabilityCatalog.validateRows(
+            Path.of("."), sliceCaseMaps));
+        if (!historicalViolations.isEmpty()) {
+            log("CATALOG FAILURE: HistoricalRegressionCatalog / "
+                + "LegacyCapabilityCatalog validation failed:");
+            for (String violation : historicalViolations) {
+                log("  " + violation);
+            }
+            System.exit(1);
+        }
+
         int workers = Math.max(1, Math.min(
             Integer.getInteger("deal.test.jobs", DEFAULT_JOBS),
             caseTasks.size()));
@@ -547,6 +574,32 @@ public class BackendConformanceTest {
             for (Object[] kf : knownCases) {
                 runKnownFailCase((String) kf[0], (Map<String, Object>) kf[1]);
             }
+        }
+
+        // Historical executed evidence (ISSUE-0488 H3 consumption): every
+        // signed-int32 safe-int row and JSON-slice replacement this
+        // runner dispatched must be green — a global failure voids the
+        // evidence (every dispatched row's execution fact is recorded,
+        // and the parsed-index presence of every row is validated at
+        // startup, so a failing or dropped row cannot pass silently).
+        List<String> sliceReplacements = new ArrayList<>();
+        for (String replacement
+                : HistoricalRegressionCatalog.signedInt32ReplacementRows()) {
+            if (replacement.contains("#")) {
+                sliceReplacements.add(replacement);
+            }
+        }
+        List<String> evidenceViolations = HistoricalRegressionCatalog
+            .executedEvidenceViolations(
+                HistoricalRegressionCatalog.signedInt32LegacyRows(),
+                sliceReplacements, failed.get() > 0);
+        if (!evidenceViolations.isEmpty()) {
+            System.out.println("HISTORICAL EVIDENCE FAILURE: the "
+                + "signed-int32 historical executed evidence is not green:");
+            for (String violation : evidenceViolations) {
+                System.out.println("  " + violation);
+            }
+            System.exit(1);
         }
 
         System.out.println();
@@ -1072,6 +1125,19 @@ public class BackendConformanceTest {
                 + "zero v1.2 credit)");
         } else {
             v12CreditResults.incrementAndGet();
+        }
+        // Historical executed evidence (ISSUE-0488 H3 consumption): a
+        // set-once execution fact per dispatched signed-int32 row — the
+        // runner's own gate verdict supplies the outcome (parallel
+        // workers make per-case counter attribution racy, so this runner
+        // records the dispatch, never a delta-derived outcome).
+        String caseLocator = fixtureName + "#" + name;
+        if (HistoricalRegressionCatalog.isSignedInt32LegacyLocator(
+                caseLocator)) {
+            HistoricalRegressionCatalog.recordLegacyExecution(caseLocator);
+        } else if (HistoricalRegressionCatalog
+                .isSignedInt32ReplacementLocator(caseLocator)) {
+            HistoricalRegressionCatalog.recordV12Execution(caseLocator);
         }
         // Parallel workers mutate the global counters concurrently, so a
         // delta snapshot here can absorb other cases' increments; the
