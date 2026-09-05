@@ -512,6 +512,129 @@ public class ClassDeclarationLoweringTest {
     }
 
     // =========================================================================
+    // Omitted optional-with-default fields: no default wiring (K-D4 step 5)
+    // =========================================================================
+
+    private static void testOptionalWithDefaultNeverWired() {
+        System.out.println("-- omitted optional-with-default: no CLASS_DEFAULT_FIELD boundary, "
+            + "no default op id; the factory payload excludes optional defaulted fields --");
+
+        // (1) The CLASS_NEW arm: `let h: H = {}` omits the optional defaulted
+        // field y — y contributes no boundary and no classDefaultOpIds entry,
+        // so its default never runs at construction and the field stays
+        // missing (K-D4 step 5: "Omitted optional fields get no boundary and
+        // stay missing").
+        SemanticLowerer.ClassDeclarationCoreResult result = lowerModule("""
+            class H { y?: int = 5; }
+            let h: H = {}
+            """);
+        check(result != null && result.lowering() != null
+                && !result.lowering().hasErrors() && result.lowering().unit() != null,
+            "the optional-with-default literal slice lowers: "
+                + (result == null || result.lowering() == null ? "null"
+                    : result.lowering().diagnostics()));
+        if (result == null || result.lowering() == null
+                || result.lowering().hasErrors() || result.lowering().unit() == null) {
+            return;
+        }
+        LoweredModuleUnit unit = result.lowering().unit();
+        List<SemanticOp> classNews = new ArrayList<>();
+        for (SemanticOp op : unit.ops()) {
+            if (op.kind() == SemanticOpKind.CLASS_NEW) {
+                classNews.add(op);
+            }
+        }
+        check(classNews.size() == 1, "one CLASS_NEW op; got " + classNews.size());
+        if (classNews.size() != 1) {
+            return;
+        }
+        KindPayload.ClassNewPayload payload = classNewPayload(classNews.get(0));
+        check(payload.classId().equals(new ClassId("main", "H")),
+            "the literal constructs H; got " + payload.classId());
+        check(payload.providedFields().isEmpty(),
+            "the empty literal provides no fields; got " + payload.providedFields());
+        check(payload.classDefaultOpIds().isEmpty(),
+            "the omitted optional-with-default field contributes no CLASS_DEFAULT op id; got "
+                + payload.classDefaultOpIds());
+        check(payload.fieldBoundaries().isEmpty(),
+            "the omitted optional-with-default field gets no CLASS_DEFAULT_FIELD boundary; got "
+                + payload.fieldBoundaries());
+        boolean defaultFieldBoundary = false;
+        for (SemanticOp op : unit.ops()) {
+            if (op.kind() == SemanticOpKind.BOUNDARY
+                    && op.payload() instanceof KindPayload.BoundaryPayload boundary
+                    && boundary.kind() == BoundaryKind.CLASS_DEFAULT_FIELD) {
+                defaultFieldBoundary = true;
+            }
+        }
+        check(!defaultFieldBoundary, "no CLASS_DEFAULT_FIELD boundary op exists in the unit");
+        check(ofKind(unit.ops(), SemanticOpKind.CLASS_DEFAULT).size() == 1,
+            "the CLASS_DEFAULT op for y is still emitted (one per defaulted field)");
+
+        // (2) The factory arm: the payload lists only required-present
+        // defaulted fields' CLASS_DEFAULT op ids in declaration order — an
+        // optional-with-default field's op id never enters the payload.
+        SemanticLowerer.ClassDeclarationCoreResult exported = lowerModule("""
+            export class H { y?: int = 5; x: int = 3; }
+            """);
+        check(exported != null && exported.lowering() != null
+                && !exported.lowering().hasErrors() && exported.lowering().unit() != null,
+            "the exported optional-with-default slice lowers: "
+                + (exported == null || exported.lowering() == null ? "null"
+                    : exported.lowering().diagnostics()));
+        if (exported == null || exported.lowering() == null
+                || exported.lowering().hasErrors() || exported.lowering().unit() == null) {
+            return;
+        }
+        LoweredModuleUnit exportedUnit = exported.lowering().unit();
+        List<SemanticOp> factories = ofKind(exportedUnit.ops(), SemanticOpKind.CLASS_FACTORY);
+        check(factories.size() == 1, "one factory; got " + factories.size());
+        if (factories.size() != 1) {
+            return;
+        }
+        List<SemanticOp> defaults = ofKind(exportedUnit.ops(), SemanticOpKind.CLASS_DEFAULT);
+        check(defaults.size() == 2, "two CLASS_DEFAULT ops (y and x); got " + defaults.size());
+        if (defaults.size() != 2) {
+            return;
+        }
+        SemanticOp yDefault = defaultPayload(defaults.get(0)).field().equals("y")
+            ? defaults.get(0) : defaults.get(1);
+        SemanticOp xDefault = defaultPayload(defaults.get(0)).field().equals("x")
+            ? defaults.get(0) : defaults.get(1);
+        check(defaultPayload(yDefault).field().equals("y")
+                && defaultPayload(xDefault).field().equals("x"),
+            "the CLASS_DEFAULT ops name fields y and x");
+        check(factoryPayload(factories.get(0)).classDefaultOpIds()
+                .equals(List.of(xDefault.opId())),
+            "the factory payload excludes the optional-with-default field y and lists only "
+                + "the required-present x default op id; got "
+                + factoryPayload(factories.get(0)).classDefaultOpIds());
+
+        // (3) An exported class whose only defaulted field is optional: the
+        // factory payload is empty (no required-present defaulted field).
+        SemanticLowerer.ClassDeclarationCoreResult onlyOptional = lowerModule("""
+            export class H { y?: int = 5; }
+            """);
+        check(onlyOptional != null && onlyOptional.lowering() != null
+                && !onlyOptional.lowering().hasErrors()
+                && onlyOptional.lowering().unit() != null,
+            "the only-optional-defaulted exported slice lowers: "
+                + (onlyOptional == null || onlyOptional.lowering() == null ? "null"
+                    : onlyOptional.lowering().diagnostics()));
+        if (onlyOptional != null && onlyOptional.lowering() != null
+                && !onlyOptional.lowering().hasErrors()
+                && onlyOptional.lowering().unit() != null) {
+            List<SemanticOp> emptyFactories = ofKind(onlyOptional.lowering().unit().ops(),
+                SemanticOpKind.CLASS_FACTORY);
+            check(emptyFactories.size() == 1
+                    && factoryPayload(emptyFactories.get(0)).classDefaultOpIds().isEmpty(),
+                "the factory payload is empty when only optional fields are defaulted; got "
+                    + (emptyFactories.isEmpty() ? "[]"
+                        : factoryPayload(emptyFactories.get(0)).classDefaultOpIds()));
+        }
+    }
+
+    // =========================================================================
     // (d) non-exported no-default class (layout only)
     // =========================================================================
 
@@ -973,6 +1096,7 @@ public class ClassDeclarationLoweringTest {
         testExportedClassWithDefaults();
         testExportedClassWithoutDefaults();
         testNonExportedDefaultedClass();
+        testOptionalWithDefaultNeverWired();
         testNonExportedNoDefaultClass();
         testMultipleClassesDeclarationOrder();
         testAdmissionPositives();

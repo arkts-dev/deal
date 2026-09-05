@@ -2593,8 +2593,8 @@ public final class SemanticLowerer {
      * <p>The default-block walk routes class-typed object literals of
      * locally declared classes through the {@code CLASS_NEW} arm (K-D4's
      * closed LOCAL payload shape — provided values in literal order,
-     * {@code classDefaultOpIds} for omitted defaulted fields in
-     * declaration order, field boundaries in declaration order with the
+     * {@code classDefaultOpIds} for omitted required-present defaulted
+     * fields in declaration order, field boundaries in declaration order with the
      * pinned input wiring, {@code CLASS_CONSTRUCTION}, tag-last result) —
      * the same arm any class-typed literal of the walk uses; a literal of
      * an imported class (no local layout) fails closed.</p>
@@ -3026,7 +3026,9 @@ public final class SemanticLowerer {
          * then field name in declaration order (class-core mode): the
          * surface the {@code CLASS_NEW} arm consults for
          * {@code classDefaultOpIds} and {@code CLASS_DEFAULT_FIELD}
-         * boundary inputs.
+         * boundary inputs — gated on required-present at the use site
+         * (K-D4 step 2/step 5: an optional-with-default field's fact is
+         * recorded but never wired).
          */
         private final java.util.LinkedHashMap<ClassId,
             java.util.LinkedHashMap<String, ClassDefaultFact>> classDefaults =
@@ -4360,7 +4362,15 @@ public final class SemanticLowerer {
          * {@code ClassInterface.constructionEntry} id in the produced
          * {@link deal.semantic.ir.ClassFactoryRegistry} (K-D2);
          * non-exported classes get a layout but never a factory and never
-         * a {@code ClassFactoryId}.
+         * a {@code ClassFactoryId}. Default application is gated on
+         * required-present (K-D4 step 2: "applies defaults for omitted
+         * required-present fields"): the factory payload's
+         * {@code classDefaultOpIds} lists only required-present defaulted
+         * fields' {@code CLASS_DEFAULT} op ids in declaration order — an
+         * omitted optional-with-default field stays missing and its
+         * default never runs, so its op id never enters the factory
+         * payload (the {@code CLASS_DEFAULT} op itself is still emitted,
+         * one per defaulted field per class).
          *
          * @param declaration the checked class declaration; non-null
          * @param exported    whether the declaration is module-level
@@ -4444,7 +4454,9 @@ public final class SemanticLowerer {
                     popBlockParent();
                     popBlock();
                 }
-                classDefaultOpIds.add(opId);
+                if (!field.optional()) {
+                    classDefaultOpIds.add(opId);
+                }
                 defaults.put(field.name(), new ClassDefaultFact(opId, result));
             }
             classDefaults.put(classId, defaults);
@@ -4491,13 +4503,17 @@ public final class SemanticLowerer {
          * class walk (K-D4's closed LOCAL payload shape; ISSUE-0511): the
          * provided-value operands complete in literal order before the op,
          * the payload records {@code providedFields} in literal order,
-         * {@code classDefaultOpIds} for omitted defaulted fields in
-         * declaration order (LOCAL default application), and
-         * {@code fieldBoundaries} in declaration order —
-         * {@code CLASS_LITERAL_FIELD} per provided field with input = the
-         * provided value, {@code CLASS_DEFAULT_FIELD} per omitted defaulted
-         * field with input = the field's {@code CLASS_DEFAULT} child result
-         * (K-D4 input wiring); omitted optional fields get no boundary.
+         * {@code classDefaultOpIds} for omitted required-present
+         * defaulted fields in declaration order (LOCAL default
+         * application, K-D4 step 2), and {@code fieldBoundaries} in
+         * declaration order — {@code CLASS_LITERAL_FIELD} per provided
+         * field with input = the provided value,
+         * {@code CLASS_DEFAULT_FIELD} per omitted required-present
+         * defaulted field with input = the field's {@code CLASS_DEFAULT}
+         * child result (K-D4 input wiring); omitted optional fields get no
+         * boundary and no default op id, defaulted or not — an
+         * optional-with-default field's default never runs at construction
+         * and the field stays missing.
          * The op carries policy {@code CLASS_CONSTRUCTION} and publishes a
          * fresh tagged-instance value ({@code class:<ClassId>}); the
          * boundary children record the {@code CLASS_NEW} op as
@@ -4558,7 +4574,7 @@ public final class SemanticLowerer {
                     continue;
                 }
                 ClassDefaultFact fact = facts == null ? null : facts.get(field.name());
-                if (fact != null) {
+                if (fact != null && field.required()) {
                     SemanticOp child = buildFieldBoundary(BoundaryKind.CLASS_DEFAULT_FIELD,
                         field.descriptor(), fact.result(), literal.span(), opId);
                     classDefaultOpIds.add(fact.opId());
