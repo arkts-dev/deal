@@ -24,8 +24,10 @@ import deal.semantic.ir.NormalizedSlot;
 import deal.semantic.ir.OpId;
 import deal.semantic.ir.RuntimeDescriptor;
 import deal.semantic.ir.ScalarValue;
+import deal.semantic.ir.SemanticArray;
 import deal.semantic.ir.SemanticOp;
 import deal.semantic.ir.SemanticOpKind;
+import deal.semantic.ir.SemanticTable;
 import deal.semantic.ir.SourceOrigin;
 import deal.semantic.ir.SourceSpan;
 import deal.semantic.ir.StdlibFunctionId;
@@ -33,6 +35,7 @@ import deal.semantic.ir.StructuredBodyTable;
 import deal.semantic.ir.UnicodeScalars;
 import deal.semantic.ir.ValueId;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -64,8 +67,14 @@ import java.util.Objects;
  * events. Completed operands' atoms are the START inputs; the produced
  * value atom is the SUCCESS output; a DEAL failure publishes the exact
  * error snapshot (code, canonical message, origin, attained
- * expected/actual, active frames innermost-first, nested cause). Console
- * stdlib calls record one ordered {@link SemanticRuntimeModel.EffectEvent}
+ * expected/actual, active frames innermost-first, nested cause).
+ * {@code STDLIB_CALL} executes through {@link SharedStdlibSemantics} —
+ * the single stdlib algorithm executor — with the pinned precedence:
+ * {@code STDLIB_PARAMETER} boundaries in one-based order, then the
+ * algorithm (a failure resolves the primitive's registry-row projection
+ * with the row's pinned origin and the active frames), then the single
+ * {@code STDLIB_RETURN} boundary run by the call op. Console stdlib
+ * calls record one ordered {@link SemanticRuntimeModel.EffectEvent}
  * per terminal. A DEAL failure escaping the module-init block is the
  * run's {@link SemanticRuntimeModel.Terminal.DealFailure}; otherwise the
  * run succeeds with the entry result atom.</p>
@@ -972,7 +981,12 @@ public final class SemanticOracle {
                 case Value.BoolValue bool -> BoundaryValueView.of(ActualKind.BOOLEAN);
                 case Value.IntValue intValue -> BoundaryValueView.ofInt(intValue.value());
                 case Value.NumValue num -> BoundaryValueView.ofNumber(num.value());
-                case Value.StrValue str -> BoundaryValueView.of(ActualKind.STRING);
+                case Value.StrValue str -> {
+                    UnicodeScalars.ScalarString scalar = UnicodeScalars.validate(str.value());
+                    yield scalar instanceof UnicodeScalars.Valid
+                        ? BoundaryValueView.of(ActualKind.STRING)
+                        : BoundaryValueView.of(ActualKind.INVALID_UNICODE);
+                }
                 case Value.TableValue table -> BoundaryValueView.of(ActualKind.TABLE);
                 case Value.ErrorValue error -> BoundaryValueView.ofClass("@builtin/Error");
                 case Value.FuncValue func -> BoundaryValueView.ofFunction(func.signature());
@@ -1367,46 +1381,62 @@ public final class SemanticOracle {
         private String executeStdlib(SemanticOp op) {
             KindPayload.StdlibCallPayload payload =
                 (KindPayload.StdlibCallPayload) op.payload();
-            if (payload.function() == StdlibFunctionId.CONSOLE_LOG
-                    || payload.function() == StdlibFunctionId.CONSOLE_ERROR) {
-                // STDLIB_PARAMETER boundaries in order (descriptor-kind rule).
-                List<Value> checked = new ArrayList<>();
-                for (ValueId arg : payload.args()) {
-                    Value value = values.get(arg);
-                    SemanticOp boundary = parameterBoundaryOf(op, value, checked.size());
-                    if (boundary != null) {
-                        value = runBoundaryChild(boundary, value,
-                            BoundaryContext.parameter(checked.size() + 1));
-                    }
-                    checked.add(value);
+            // Step 1 — precedence (parent D13 step 3 / closed
+            // STDLIB_CALL cell): every STDLIB_PARAMETER boundary runs in
+            // one-based order before any algorithm executes; the first
+            // failing parameter boundary wins (descriptor-kind rule,
+            // including E8001 "expected string, got invalid Unicode
+            // scalar encoding" at the boundary origin).
+            List<Value> checked = new ArrayList<>();
+            for (int i = 0; i < payload.args().size(); i++) {
+                Value value = values.get(payload.args().get(i));
+                SemanticOp boundary = parameterBoundaryOf(op, i);
+                if (boundary != null) {
+                    value = runBoundaryChild(boundary, value,
+                        BoundaryContext.parameter(i + 1));
                 }
-                StringBuilder text = new StringBuilder();
-                for (int i = 0; i < checked.size(); i++) {
-                    if (checked.get(i) instanceof Value.StrValue str) {
-                        if (i > 0) {
-                            text.append(' ');
-                        }
-                        text.append(str.value());
-                    }
-                }
-                effects.add(new SemanticRuntimeModel.EffectEvent(
-                    SemanticRuntimeModel.EffectEvent.Kind.CONSOLE_WRITE, text.toString()));
-                Value result = Value.NullValue.INSTANCE;
-                // STDLIB_RETURN boundary (declared return descriptor).
-                SemanticOp returnBoundary = returnBoundaryOf(op);
-                if (returnBoundary != null) {
-                    result = runBoundaryChild(returnBoundary, result, BoundaryContext.none());
-                }
-                return publish(op, result);
+                checked.add(value);
             }
-            throw new IllegalStateException("stdlib " + payload.function()
-                + " has no decomposition-tail oracle execution (the tail's stdlib slice "
-                + "executes CONSOLE_LOG/CONSOLE_ERROR; the full table is the stdlib "
-                + "epic's)");
+            // Step 2 — the shared algorithm: SharedStdlibSemantics is the
+            // single executor of the 20 named operations
+            // (stdlib-operations-and-time-lock D4) over the
+            // boundary-admitted carriers; a failure is the primitive's
+            // registry-row projection resolved with the row's pinned
+            // origin (the STDLIB_CALL call origin) and the active DEAL
+            // frames.
+            List<SharedStdlibSemantics.Value> argv = new ArrayList<>();
+            for (Value value : checked) {
+                argv.add(stdlibCarrierOf(value));
+            }
+            SharedStdlibSemantics.ConsoleSink sink = consoleSinkFor(payload.function());
+            SharedStdlibSemantics.Outcome<SharedStdlibSemantics.Value> outcome =
+                SharedStdlibSemantics.execute(op, argv, sink);
+            return switch (outcome) {
+                case SharedStdlibSemantics.Outcome.Success<SharedStdlibSemantics.Value>
+                        success -> {
+                    Value result = stdlibResultOf(success.value());
+                    // Step 3 — the single STDLIB_RETURN boundary run by
+                    // the call op after the algorithm result
+                    // (descriptor-kind rule); a successful parse whose
+                    // top-level value is not a table fails here.
+                    SemanticOp returnBoundary = returnBoundaryOf(op);
+                    if (returnBoundary != null) {
+                        result = runBoundaryChild(returnBoundary, result,
+                            BoundaryContext.none());
+                    }
+                    yield publish(op, result);
+                }
+                case SharedStdlibSemantics.Outcome.Failure<SharedStdlibSemantics.Value>
+                        failure -> {
+                    SharedStdlibSemantics.StdlibFailure stdlibFailure = failure.failure();
+                    throw DealFailure.of(stdlibFailure.failure(), stdlibFailure.origin(),
+                        List.copyOf(frames));
+                }
+            };
         }
 
         /** The STDLIB_PARAMETER child for the i-th argument, or null. */
-        private SemanticOp parameterBoundaryOf(SemanticOp op, Value arg, int index) {
+        private SemanticOp parameterBoundaryOf(SemanticOp op, int index) {
             List<SemanticOp> children = childrenByParent.get(op.opId());
             if (children == null) {
                 return null;
@@ -1425,6 +1455,184 @@ public final class SemanticOracle {
                 }
             }
             return null;
+        }
+
+        // =========================================================================
+        // Stdlib carrier conversion (oracle value model <-> SharedStdlibSemantics)
+        // =========================================================================
+
+        /**
+         * The oracle runtime value → the closed stdlib carrier
+         * ({@link SharedStdlibSemantics.Value}): the same closed value
+         * view the oracle heap realizes, converted recursively for table
+         * and array members (JSON data shapes). Values outside the
+         * boundary-admitted set fail closed — the parameter boundaries
+         * already passed, so such a carrier is a producer defect, never
+         * a DEAL projection.
+         */
+        private SharedStdlibSemantics.Value stdlibCarrierOf(Value value) {
+            return switch (value) {
+                case Value.NullValue ignored ->
+                    SharedStdlibSemantics.Value.Null.INSTANCE;
+                case Value.BoolValue bool ->
+                    new SharedStdlibSemantics.Value.Bool(bool.value());
+                case Value.IntValue intValue -> {
+                    long v = intValue.value();
+                    if (v < Integer.MIN_VALUE || v > Integer.MAX_VALUE) {
+                        throw new IllegalStateException(
+                            "a stdlib int carrier must be signed32; got " + v
+                                + " (the int parameter boundary's admission set)");
+                    }
+                    yield new SharedStdlibSemantics.Value.Int((int) v);
+                }
+                case Value.NumValue num ->
+                    new SharedStdlibSemantics.Value.Number(num.value());
+                case Value.StrValue str ->
+                    SharedStdlibSemantics.Value.string(str.value());
+                case Value.TableValue table -> new SharedStdlibSemantics.Value.Table(
+                    stdlibTableCarrierOf(table));
+                case Value.ArrayValue array -> stdlibArrayCarrierOf(array);
+                case Value.FuncValue ignored ->
+                    new SharedStdlibSemantics.Value.Other(ActualKind.FUNCTION, null);
+                case Value.IntrinsicValue ignored ->
+                    new SharedStdlibSemantics.Value.Other(ActualKind.FUNCTION, null);
+                case Value.ErrorValue ignored -> new SharedStdlibSemantics.Value.Other(
+                    ActualKind.CLASS, "@builtin/Error");
+                case Value.MissingValue ignored ->
+                    new SharedStdlibSemantics.Value.Other(ActualKind.MISSING, null);
+                case Value.SlotValue ignored -> throw new IllegalStateException(
+                    "a slot value is never a stdlib argument carrier");
+            };
+        }
+
+        /** One oracle table → the closed stdlib table carrier (first-insertion order). */
+        private SemanticTable<SharedStdlibSemantics.Value> stdlibTableCarrierOf(
+                Value.TableValue table) {
+            SemanticTable<SharedStdlibSemantics.Value> carrier = new SemanticTable<>();
+            for (Map.Entry<String, Value> entry : table.entries().entrySet()) {
+                carrier.put(entry.getKey(), stdlibCarrierOf(entry.getValue()));
+            }
+            return carrier;
+        }
+
+        /** One oracle array → the closed stdlib array carrier (index order). */
+        private SharedStdlibSemantics.Value.Array stdlibArrayCarrierOf(
+                Value.ArrayValue array) {
+            List<SharedStdlibSemantics.Value> elements = new ArrayList<>();
+            for (Value element : array.elements()) {
+                elements.add(stdlibCarrierOf(element));
+            }
+            return (SharedStdlibSemantics.Value.Array)
+                SharedStdlibSemantics.Value.array(elements);
+        }
+
+        /**
+         * The shared algorithm result → the oracle runtime value
+         * (recursive for the JSON data shapes the stringify/parse
+         * algorithms publish: null/boolean/int/number/string leaves,
+         * first-insertion-order tables, index-order arrays).
+         */
+        private Value stdlibResultOf(SharedStdlibSemantics.Value value) {
+            return switch (value) {
+                case SharedStdlibSemantics.Value.Null ignored ->
+                    Value.NullValue.INSTANCE;
+                case SharedStdlibSemantics.Value.Bool bool ->
+                    new Value.BoolValue(bool.value());
+                case SharedStdlibSemantics.Value.Int intValue ->
+                    new Value.IntValue(intValue.value());
+                case SharedStdlibSemantics.Value.Number number ->
+                    new Value.NumValue(number.value());
+                case SharedStdlibSemantics.Value.String string -> {
+                    if (!(string.scalar() instanceof UnicodeScalars.Valid valid)) {
+                        throw new IllegalStateException(
+                            "a stdlib string result is always scalar-valid");
+                    }
+                    yield new Value.StrValue(valid.carrier());
+                }
+                case SharedStdlibSemantics.Value.Table table ->
+                    stdlibResultTableOf(table.table());
+                case SharedStdlibSemantics.Value.Array array ->
+                    stdlibResultArrayOf(array.elements());
+                case SharedStdlibSemantics.Value.Other other ->
+                    throw new IllegalStateException(
+                        "a stdlib algorithm result never carries an unsupported value: "
+                            + other.kind());
+            };
+        }
+
+        /** One closed stdlib table → the oracle table value (first-insertion order). */
+        private Value.TableValue stdlibResultTableOf(
+                SemanticTable<SharedStdlibSemantics.Value> table) {
+            LinkedHashMap<String, Value> entries = new LinkedHashMap<>();
+            for (String key : table.keys()) {
+                SemanticTable.Lookup<SharedStdlibSemantics.Value> lookup = table.get(key);
+                if (!(lookup
+                        instanceof SemanticTable.Lookup.Present<SharedStdlibSemantics.Value>
+                        present)) {
+                    throw new IllegalStateException(
+                        "a table key returned by keys() is always present");
+                }
+                entries.put(key, stdlibResultOf(present.value()));
+            }
+            return new Value.TableValue(entries);
+        }
+
+        /** One closed stdlib array → the oracle array value (index order). */
+        private Value.ArrayValue stdlibResultArrayOf(
+                SemanticArray<SharedStdlibSemantics.Value> elements) {
+            List<Value> result = new ArrayList<>();
+            for (int i = 0; i < elements.size(); i++) {
+                result.add(stdlibResultOf(elements.elementAt(i)));
+            }
+            return new Value.ArrayValue(result, JSON_CARRIER_ELEMENT_DESCRIPTOR);
+        }
+
+        /**
+         * The element descriptor of a JSON-parsed array carrier: untyped
+         * JSON data has no declared element descriptor in the closed set,
+         * and the field is never consulted on the stdlib result path (the
+         * STDLIB_RETURN boundary checks only the declared top-level
+         * descriptor). The value only completes the oracle array record.
+         */
+        private static final RuntimeDescriptor JSON_CARRIER_ELEMENT_DESCRIPTOR =
+            new RuntimeDescriptor.Nullable(RuntimeDescriptor.Table.INSTANCE);
+
+        /**
+         * The injected console sink of a {@code CONSOLE_LOG}/
+         * {@code CONSOLE_ERROR} call (D5), or null for every other id:
+         * {@code write} receives the argument's exact scalar UTF-8 bytes
+         * plus one ordered {@code \n}, and the oracle records one
+         * ordered effect — the protocol effect text is the scalar text
+         * (the shared emitters' {@code F|CONSOLE_WRITE} convention; the
+         * ordered newline is the byte-level contract's, not part of the
+         * recorded text). A sink failure is infrastructure
+         * ({@code INFRASTRUCTURE_ONLY}): the primitive never converts it
+         * to a DEAL failure and the exception propagates.
+         */
+        private SharedStdlibSemantics.ConsoleSink consoleSinkFor(
+                StdlibFunctionId function) {
+            if (function != StdlibFunctionId.CONSOLE_LOG
+                    && function != StdlibFunctionId.CONSOLE_ERROR) {
+                return null;
+            }
+            SharedStdlibSemantics.Channel channel =
+                function == StdlibFunctionId.CONSOLE_LOG
+                    ? SharedStdlibSemantics.Channel.STDOUT
+                    : SharedStdlibSemantics.Channel.STDERR;
+            return new SharedStdlibSemantics.ConsoleSink() {
+                @Override
+                public SharedStdlibSemantics.Channel channel() {
+                    return channel;
+                }
+
+                @Override
+                public void write(byte[] bytes) {
+                    String text = new String(bytes, 0, bytes.length - 1,
+                        StandardCharsets.UTF_8);
+                    effects.add(new SemanticRuntimeModel.EffectEvent(
+                        SemanticRuntimeModel.EffectEvent.Kind.CONSOLE_WRITE, text));
+                }
+            };
         }
 
         /** The STDLIB_RETURN child, or null. */

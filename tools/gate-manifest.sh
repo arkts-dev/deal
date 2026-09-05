@@ -166,6 +166,9 @@ TEST_SOURCES=(
   # ISSUE-0495 registration: the SharedStdlibSemantics executor
   # battery (D4/D5, Verification 1 and 3; the combined T2/T1 drive).
   'test/SharedStdlibSemanticsTest.java'
+  # ISSUE-0496 registration: the stdlib failure-projection wiring and
+  # boundary realization reporting battery (D6, Verification 2 and 4).
+  'test/StdlibFailureProjectionTest.java'
   # ISSUE-0162 registration: the C FFI declaration validation and
   # forward binding generation battery.
   'test/FfiDeclarationValidatorTest.java'
@@ -303,4 +306,10 @@ WARNING: luajit not found, skipping async nesting stress tests'
   # (stdlib-operations-and-time-lock D4/D5, Verification 1 and 3;
   # sequencing item 3).
   'fg|=== Running Shared Stdlib Semantics Tests (ISSUE-0495) ===|java -ea -cp build deal.test.SharedStdlibSemanticsTest'
+  # ISSUE-0496 registration: the stdlib failure-projection wiring and
+  # boundary realization reporting — exact projections, precedence,
+  # realization reports, and the validator stdlibCell negative
+  # (stdlib-operations-and-time-lock D6, Verification 2 and 4;
+  # sequencing item 4).
+  'fg|=== Running Stdlib Failure Projection / Boundary Realization Tests (ISSUE-0496) ===|java -ea -cp build deal.test.StdlibFailureProjectionTest'
 )
