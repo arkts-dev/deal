@@ -18,6 +18,7 @@ public final class CompilerWorkspaceTest {
         completeFunctionCannotMasqueradeAsBody();
         blockReplacementUsesRevisionScopedIdentity();
         schemaChangeRequiresStateReset();
+        capabilitiesChangeAtomicallyWithProgramState();
         protocolJsonIsDeterministicAndUnicodeSafe();
         protocolJsonSupportsDesugaredRecordShape();
         declarationsCanBeAddedAndRemovedAtomically();
@@ -47,6 +48,37 @@ public final class CompilerWorkspaceTest {
                 .findFirst().orElseThrow();
         check(diagnostic.expected().contains("no implicit coercion"),
                 "numeric/string '+' must publish a machine-readable repair constraint: " + diagnostic);
+    }
+
+    private static void capabilitiesChangeAtomicallyWithProgramState() {
+        String source = source();
+        var inspection = DealCompilerWorkspace.inspect(source, "app.deal");
+        var moduleSlice = DealCompilerWorkspace.queryModule(source, "app.deal");
+        var descriptor = moduleSlice.allowedOperations().stream()
+                .filter(value -> value.operation().equals(DealCompilerWorkspace.SET_CAPABILITIES))
+                .findFirst().orElseThrow();
+        var changed = DealCompilerWorkspace.applyChecked(
+                source,
+                "app.deal",
+                new CompilerProtocol.ChangeSetPrecondition(
+                        inspection.sourceDigest(),
+                        Map.of(inspection.moduleId().value(), descriptor.targetFingerprint())),
+                List.of(new DealCompilerWorkspace.SetCapabilities(
+                        inspection.moduleId(), List.of("pointer", "clock.frame", "clock.frame"))));
+        check(changed.accepted(), "capability replacement must be a checked compiler operation");
+        check(changed.inspection().appInterface().capabilities().equals(List.of("clock.frame", "pointer")),
+                "capabilities must be unique and canonical: " + changed.inspection().appInterface().capabilities());
+        check(changed.source().startsWith("// generated-capability: clock.frame\n"
+                        + "// generated-capability: pointer\n"),
+                "compiler must own the source projection of capabilities");
+
+        var invalid = DealCompilerWorkspace.apply(
+                changed.source(), "app.deal", changed.sourceDigest(),
+                List.of(new DealCompilerWorkspace.SetCapabilities(
+                        changed.inspection().moduleId(), List.of("Clock Frame"))));
+        check(!invalid.accepted() && invalid.source().equals(changed.source())
+                        && invalid.diagnostics().get(0).code().equals("CP1030"),
+                "invalid capability replacement must roll back atomically");
     }
 
     private static void repairWorkspaceCanDropAnIndependentRejectedDeclaration() {
@@ -627,10 +659,12 @@ public final class CompilerWorkspaceTest {
 
         var moduleSlice = DealCompilerWorkspace.queryModule(source, "app.deal");
         check(moduleSlice.source().isEmpty(), "module query must not disclose the complete source");
-        check(moduleSlice.allowedOperations().size() == 1
-                        && moduleSlice.allowedOperations().get(0).operation()
-                                .equals(DealCompilerWorkspace.ADD_DECLARATION),
-                "module query must authorize only declaration insertion");
+        check(moduleSlice.allowedOperations().stream().map(CompilerProtocol.OperationDescriptor::operation)
+                        .collect(java.util.stream.Collectors.toSet())
+                        .equals(java.util.Set.of(
+                                DealCompilerWorkspace.ADD_DECLARATION,
+                                DealCompilerWorkspace.SET_CAPABILITIES)),
+                "module query must authorize declaration insertion and capability replacement");
     }
 
     private static void checkedChangesRequireQueriedTargetFingerprint() {

@@ -116,12 +116,14 @@ public final class DealCompilerWorkspace {
     public static final String ADD_DECLARATION = "addDeclaration";
     public static final String REMOVE_DECLARATION = "removeDeclaration";
     public static final String REPLACE_DECLARATION = "replaceDeclaration";
+    public static final String SET_CAPABILITIES = "setCapabilities";
     private static final List<String> ALLOWED_OPERATIONS = List.of(
             ADD_DECLARATION,
             REMOVE_DECLARATION,
             REPLACE_DECLARATION,
             REPLACE_FUNCTION_BODY,
-            REPLACE_BLOCK_BODY);
+            REPLACE_BLOCK_BODY,
+            SET_CAPABILITIES);
     private static final Pattern CAPABILITY = Pattern.compile(
             "(?m)^\\s*//\\s*generated-capability:\\s*([a-z][a-z0-9.]*)\\s*$");
     private static final Pattern COMPLETE_FUNCTION_DECLARATION = Pattern.compile(
@@ -151,7 +153,7 @@ public final class DealCompilerWorkspace {
         String parserSource(String source);
     }
 
-    public sealed interface Operation permits AddDeclaration, RemoveDeclaration, ReplaceDeclaration, ReplaceFunctionBody, ReplaceBlockBody {
+    public sealed interface Operation permits AddDeclaration, RemoveDeclaration, ReplaceDeclaration, ReplaceFunctionBody, ReplaceBlockBody, SetCapabilities {
         SemanticId targetId();
     }
 
@@ -164,6 +166,13 @@ public final class DealCompilerWorkspace {
     public record ReplaceFunctionBody(SemanticId targetId, String body) implements Operation {}
 
     public record ReplaceBlockBody(SemanticId targetId, String body) implements Operation {}
+
+    /** Replaces the complete canonical host-capability declaration set for this module. */
+    public record SetCapabilities(SemanticId targetId, List<String> capabilities) implements Operation {
+        public SetCapabilities {
+            capabilities = List.copyOf(capabilities);
+        }
+    }
 
     public static ChangeInspection inspectChange(
             String source,
@@ -289,7 +298,7 @@ public final class DealCompilerWorkspace {
                 analysis.inspection().symbols(),
                 List.of(),
                 List.of(),
-                List.of(descriptor(analysis, target)));
+                moduleDescriptors(analysis, target));
     }
 
     public static SemanticSlice querySymbol(
@@ -925,6 +934,8 @@ public final class DealCompilerWorkspace {
             case ReplaceDeclaration value -> Map.of("declaration", value.declaration());
             case ReplaceFunctionBody value -> Map.of("body", value.body());
             case ReplaceBlockBody value -> Map.of("body", value.body());
+            case SetCapabilities value -> Map.of(
+                    "capabilities", String.join("\n", canonicalCapabilities(value.capabilities())));
             case RemoveDeclaration ignored -> Map.of();
         };
     }
@@ -936,6 +947,10 @@ public final class DealCompilerWorkspace {
             case REPLACE_DECLARATION -> new ReplaceDeclaration(target, payload.get("declaration"));
             case REPLACE_FUNCTION_BODY -> new ReplaceFunctionBody(target, payload.get("body"));
             case REPLACE_BLOCK_BODY -> new ReplaceBlockBody(target, payload.get("body"));
+            case SET_CAPABILITIES -> new SetCapabilities(
+                    target,
+                    payload.getOrDefault("capabilities", "").lines()
+                            .filter(value -> !value.isBlank()).toList());
             default -> throw new IllegalArgumentException("Unknown DEAL repair operation " + name);
         };
     }
@@ -1102,6 +1117,33 @@ public final class DealCompilerWorkspace {
                             target.contentStart(), target.contentEnd(), value.body().trim(), true));
                     changedSymbols.add(target.ownerId());
                     changedNodes.add(target.id());
+                }
+                case SetCapabilities value -> {
+                    if (!target.kind().equals("module")) {
+                        return wrongKind(base, operation, target, "module");
+                    }
+                    List<String> capabilities;
+                    try {
+                        capabilities = canonicalCapabilities(value.capabilities());
+                    } catch (IllegalArgumentException invalid) {
+                        return rejected(base, diagnostic(
+                                "CP1030",
+                                invalid.getMessage(),
+                                target.id(), target.range(),
+                                "unique lowercase dotted capability identifiers",
+                                String.valueOf(value.capabilities()),
+                                List.of(new RepairScope(SET_CAPABILITIES, target.id())),
+                                "queryDealModule"));
+                    }
+                    Matcher matcher = CAPABILITY.matcher(source);
+                    while (matcher.find()) {
+                        replacements.add(new Replacement(matcher.start(), matcher.end(), "", false));
+                    }
+                    String header = capabilities.stream()
+                            .map(capability -> "// generated-capability: " + capability + "\n")
+                            .collect(java.util.stream.Collectors.joining());
+                    if (!header.isEmpty()) replacements.add(new Replacement(0, 0, header, false));
+                    changedSymbols.add(target.id());
                 }
             }
         }
@@ -1732,6 +1774,7 @@ public final class DealCompilerWorkspace {
             case ReplaceDeclaration ignored -> REPLACE_DECLARATION;
             case ReplaceFunctionBody ignored -> REPLACE_FUNCTION_BODY;
             case ReplaceBlockBody ignored -> REPLACE_BLOCK_BODY;
+            case SetCapabilities ignored -> SET_CAPABILITIES;
         };
     }
 
@@ -1780,6 +1823,29 @@ public final class DealCompilerWorkspace {
                     List.of("body"));
             default -> throw new IllegalArgumentException("Unsupported semantic target kind " + target.kind());
         };
+    }
+
+    private static List<OperationDescriptor> moduleDescriptors(Analysis analysis, Target target) {
+        return List.of(
+                descriptor(analysis, target),
+                new OperationDescriptor(
+                        SET_CAPABILITIES,
+                        target.id(),
+                        target.kind(),
+                        targetFingerprint(analysis, target.id()),
+                        List.of("capabilities")));
+    }
+
+    private static List<String> canonicalCapabilities(List<String> capabilities) {
+        Objects.requireNonNull(capabilities, "capabilities");
+        LinkedHashSet<String> unique = new LinkedHashSet<>();
+        for (String capability : capabilities) {
+            if (capability == null || !capability.matches("[a-z][a-z0-9]*(?:\\.[a-z0-9]+)*")) {
+                throw new IllegalArgumentException("Invalid host capability identifier: " + capability);
+            }
+            unique.add(capability);
+        }
+        return unique.stream().sorted().toList();
     }
 
     private static String targetFingerprint(Analysis analysis, SemanticId targetId) {
