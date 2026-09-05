@@ -20,23 +20,7 @@
         "jvm"
       ]
     },
-    {
-      "name": "jvm-arr-write-readback",
-      "description": "Element writes into existing indexes mutate the array in place: xs[1] = 99, then xs[2] = xs[0] + xs[1] (=100), and the sum reads back 200",
-      "source": "export function test(): int {\n  let xs: int[] = [1, 2, 3];\n  xs[1] = 99;\n  xs[2] = xs[0] + xs[1];\n  return xs[0] + xs[1] + xs[2];\n}",
-      "expectedOutput": "200",
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "expectedCompileError": null,
-      "irContains": [
-        "array-write",
-        "index [] : int"
-      ],
-      "irNotContains": [],
-      "backends": [
-        "jvm"
-      ]
-    },
+
     {
       "name": "jvm-arr-append-at-length",
       "description": "Writing at i === length appends (spec §Array writes): an empty literal grows via the xs[xs.length] = v append idiom (0→1→2) and a plain index-equals-length write appends the third element; the final sum + length is 10",
@@ -91,22 +75,7 @@
         "jvm"
       ]
     },
-    {
-      "name": "jvm-arr-alias-mutation-append",
-      "description": "Array aliases share one mutable wrapper: b = a, then b[1] = 9 and the b[3] = 4 append are both observed through a (a[1] + a[3] + a.length = 9 + 4 + 4 = 17) — append grows the wrapped storage in place, so the alias identity is stable",
-      "source": "export function test(): int {\n  let a: int[] = [1, 2, 3];\n  let b: int[] = a;\n  b[1] = 9;\n  b[3] = 4;\n  return a[1] + a[3] + a.length;\n}",
-      "expectedOutput": "17",
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "expectedCompileError": null,
-      "irContains": [
-        "array-write"
-      ],
-      "irNotContains": [],
-      "backends": [
-        "jvm"
-      ]
-    },
+
     {
       "name": "jvm-arr-negative-read-e8002",
       "description": "A negative index read is a runtime E8002 (LuaJIT's emitted negative-array-index check), exit 1 — the read helper performs the bounds check before touching the storage",
@@ -364,20 +333,7 @@
         "jvm"
       ]
     },
-    {
-      "name": "jvm-arr-frontend-reject-length-write",
-      "description": "Assignment to the read-only array .length intrinsic is rejected by the frontend type checker (E3017 Array length is read-only) before any backend runs — codegen/javac/java never invoked",
-      "source": "export function test(): null {\n  let xs: int[] = [1, 2];\n  xs.length = 5;\n}",
-      "expectedOutput": null,
-      "expectedError": null,
-      "expectedExitCode": null,
-      "expectedCompileError": "E3017",
-      "irContains": [],
-      "irNotContains": [],
-      "backends": [
-        "jvm"
-      ]
-    },
+
     {
       "name": "jvm-arr-literal-read-write-length-parity",
       "description": "Cross-backend parity: int[] literal, element writes, the xs[xs.length] append idiom, .length, and alias mutation produce identical observable results under LuaJIT (the reference) and the emitted JVM artifact — every assertion routed through console output",

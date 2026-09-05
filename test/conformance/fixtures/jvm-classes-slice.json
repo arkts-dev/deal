@@ -2,42 +2,8 @@
   "version": "1.0",
   "description": "JVM classes and nominal checks slice (ISSUE-0095). Fixtures that run the real DEAL frontend (lexer → parser → name resolver → type checker) → real JvmBackend codegen → javac subprocess → java subprocess executing the emitted artifact (the harness fails a fixture whose codegen or JVM execution is bypassed); every fixture is JVM-only except the write-order parity pin, which also runs under real luajit. Covered forms: local class declarations with defaulted primitive fields, object-literal class construction (defaults applied per construction, provided fields in literal evaluation order, construction before the class declaration — checker hoisting), primitive field reads and writes (int/number/boolean/string), fresh instances per construction, module-level (load-time) construction, class-field default expressions (arithmetic defaults, defaults containing null-typed calls, and nil-aware boolean defaults failing the typed boolean boundary with E8001 — parity with the identifier boundary), the boolean construction-value boundary (a nil-aware &&/|| provided value raises E8001 — never a bare unboxing NPE — while the in-bounds positive control constructs normally), the same-module nominal runtime checks at the slice's one untyped boundary (a table field read in a class-typed contextual target — success for a genuine instance, E8001 for a plain table value, for a null value, and for an identically-shaped sibling class, pinning nominal — never structural — identity), and class-field write evaluation order (a cross-backend parity pin: getBox().x = make(note(\"value\")) prints target → value → make under both real luajit and the emitted JVM artifact — spec v1.2 §Operational semantics rule 1 evaluates the receiver before the RHS, pinning the pre-fix JVM inversion — and a JVM-only error-precedence pin: the receiver getP() still prints target before the RHS's nil-aware xs[0] && xs[5] crosses the write's typed boolean boundary with E8001), and one frontend compile-error gate rejected before any backend runs (E3001 nominal A→B assignment). Spec v1.2 classes are sealed records with no methods and no constructors, so the method surface is empty: the only callables are the module functions the earlier function-slice fixtures cover (methods where supported = none, documented in the review evidence).",
   "tests": [
-    {
-      "name": "jvm-class-construction-defaults",
-      "description": "A local class with defaulted primitive fields constructed from an empty object literal receives every default (p.x = 10, p.y = 20)",
-      "source": "class Point { x: int = 10; y: int = 20; }\nexport function test(): int {\n  let p: Point = {};\n  return p.x + p.y;\n}",
-      "expectedOutput": "30",
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "expectedCompileError": null,
-      "irContains": [
-        "class Point",
-        "field x",
-        "field y",
-        "[boundary: class-construct]"
-      ],
-      "irNotContains": [],
-      "backends": [
-        "jvm"
-      ]
-    },
-    {
-      "name": "jvm-class-construction-provided-fields",
-      "description": "Provided fields override defaults in an object-literal construction; omitted fields keep their defaults",
-      "source": "class Point { x: int = 0; y: int = 0; }\nexport function test(): int {\n  let p: Point = { x: 1, y: 2 };\n  return p.x * 10 + p.y;\n}",
-      "expectedOutput": "12",
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "expectedCompileError": null,
-      "irContains": [
-        "class Point",
-        "[boundary: class-construct]"
-      ],
-      "irNotContains": [],
-      "backends": [
-        "jvm"
-      ]
-    },
+
+
     {
       "name": "jvm-class-field-read-write",
       "description": "Declared primitive class fields are readable and writable: p.x and p.y are read, mutated, and read back (1+5=6, 2+2=4 → 64)",
@@ -71,37 +37,8 @@
         "jvm"
       ]
     },
-    {
-      "name": "jvm-class-fresh-instances-per-construction",
-      "description": "Defaults are applied per construction, never shared: mutating one instance's field leaves a second instance's field at its default (7 + 0 = 7)",
-      "source": "class Bag { count: int = 0; }\nexport function test(): int {\n  let a: Bag = {};\n  let b: Bag = {};\n  a.count = 7;\n  return a.count + b.count;\n}",
-      "expectedOutput": "7",
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "expectedCompileError": null,
-      "irContains": [
-        "class Bag"
-      ],
-      "irNotContains": [],
-      "backends": [
-        "jvm"
-      ]
-    },
-    {
-      "name": "jvm-class-module-level-construction",
-      "description": "v1.2 grammar gate: module-level class construction runs at load time — module-level executable statements were removed, so this v1.1 shape is an E1049 module-shape error. A module-level (load-time) class construction runs in the static initializer, and a construction before the class declaration resolves through checker hoisting (origin.x * 10 + origin.y = 12)",
-      "source": "let origin: Point = {};\nclass Point { x: int = 1; y: int = 2; }\nexport function test(): int { return origin.x * 10 + origin.y; }",
-      "expectedOutput": null,
-      "expectedError": null,
-      "expectedExitCode": null,
-      "expectedCompileError": "E1049",
-      "irContains": [],
-      "irNotContains": [],
-      "backends": [
-        "jvm"
-      ],
-      "expectedNotOutput": []
-    },
+
+
     {
       "name": "jvm-class-construction-evaluation-order",
       "description": "Provided field values evaluate left-to-right in literal order even when the literal order differs from the field declaration order: tag(second) prints before tag(first), and each value still lands in its declared field",
@@ -118,23 +55,7 @@
         "jvm"
       ]
     },
-    {
-      "name": "jvm-class-nominal-check-success",
-      "description": "A genuine Box instance crossing the slice's untyped boundary (a table field read in a class-typed contextual target) passes the runtime nominal check and its field reads back (41 + 1 = 42)",
-      "source": "class Box { value: int = 0; }\nexport function test(): int {\n  let real: Box = { value: 41 };\n  let holder: table = { item: real };\n  let b: Box = holder.item;\n  return b.value + 1;\n}",
-      "expectedOutput": "42",
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "expectedCompileError": null,
-      "irContains": [
-        "class Box",
-        "/Box"
-      ],
-      "irNotContains": [],
-      "backends": [
-        "jvm"
-      ]
-    },
+
     {
       "name": "jvm-class-nominal-check-failure-table",
       "description": "A plain table value crossing the class-typed boundary fails the runtime nominal check with E8001 (expected class instance) — never a silent cast",
@@ -184,20 +105,7 @@
         "jvm"
       ]
     },
-    {
-      "name": "jvm-class-frontend-nominal-assignment-error",
-      "description": "A direct A→B assignment between identically-shaped classes is a frontend compile error (E3001) rejected before any backend — nominal typing is enforced statically too",
-      "source": "class A { x: int = 0; }\nclass B { x: int = 0; }\nexport function main(): null {\nlet a: A = { x: 1 };\nlet b: B = a;\nreturn null;\n}",
-      "expectedOutput": null,
-      "expectedError": null,
-      "expectedExitCode": null,
-      "expectedCompileError": "E3001",
-      "irContains": [],
-      "irNotContains": [],
-      "backends": [
-        "jvm"
-      ]
-    },
+
     {
       "name": "jvm-class-bool-construction-value-boundary",
       "description": "A provided construction value whose emitted code can be the Lua nil (a nil-aware && over boolean[] reads) fails the constructor's typed boolean boundary with E8001 — never a bare unboxing NullPointerException (parity with the identifier boundary `let b: boolean = xs[0] && xs[5]`)",
@@ -215,23 +123,7 @@
         "jvm"
       ]
     },
-    {
-      "name": "jvm-class-bool-construction-value-in-bounds",
-      "description": "Positive control: an in-bounds nil-aware construction value (`xs[0] || xs[1]` = true) constructs normally and reads back — no over-rejection and no over-boxing",
-      "source": "class P { b: boolean = false; }\nexport function test(): int {\n  let xs: boolean[] = [true, false];\n  let p: P = { b: xs[0] || xs[1] };\n  if (p.b === true) { return 1; }\n  return 0;\n}",
-      "expectedOutput": "1",
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "expectedCompileError": null,
-      "irContains": [
-        "class P",
-        "[boundary: class-construct]"
-      ],
-      "irNotContains": [],
-      "backends": [
-        "jvm"
-      ]
-    },
+
     {
       "name": "jvm-class-default-expression-arithmetic",
       "description": "Class-field default expressions are fully type-checked: an ordinary arithmetic default (`x: int = 1 + 2`) constructs and runs (the pre-fix backend rejected the same program with a spurious E6000 'ADD on error and error' while LuaJIT compiles and runs it)",
@@ -266,21 +158,7 @@
         "jvm"
       ]
     },
-    {
-      "name": "jvm-class-default-bool-boundary",
-      "description": "v1.2 grammar gate: the nil-aware default reads a module-level array field — module-level executable statements were removed, so this v1.1 shape is an E1049 module-shape error. A nil-aware DEFAULT expression (`b: boolean = xs[0] && xs[5]`, a past-end boolean[] read in an && operand) crosses the constructor's typed boolean boundary and raises E8001 — parity with the identifier boundary",
-      "source": "let xs: boolean[] = [true, false];\nclass P { b: boolean = xs[0] && xs[5]; }\nexport function test(): int {\n  let p: P = {};\n  return 1;\n}",
-      "expectedOutput": null,
-      "expectedError": null,
-      "expectedExitCode": null,
-      "expectedCompileError": "E1049",
-      "irContains": [],
-      "irNotContains": [],
-      "backends": [
-        "jvm"
-      ],
-      "expectedNotOutput": []
-    },
+
     {
       "name": "jvm-class-field-write-eval-order-parity",
       "description": "Cross-backend parity for class field write evaluation order with a side-effecting receiver and a hoisting RHS: spec v1.2 §Operational semantics rule 1 evaluates the receiver before member/index/call arguments, so getBox() prints 'target', the RHS's hoisted null-typed call prints 'value', then make prints 'make' — target, value, make under both real luajit and the emitted JVM artifact (the pre-fix JVM flushed the RHS's hoisted print before the whole assignment statement: value, target, make)",

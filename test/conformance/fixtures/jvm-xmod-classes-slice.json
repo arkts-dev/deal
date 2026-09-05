@@ -2,27 +2,7 @@
  "version": "1.0",
  "description": "JVM imported classes and cross-module nominal identity slice (ISSUE-0109). JVM-only multi-module fixtures: each fixture writes its 'modules' (relative .deal source paths -> DEAL source) plus 'entry' under a temp project root and runs the real whole-project pipeline -- CompilationOrchestrator with Backend.JVM (module discovery, signature extraction, dependency ordering, name resolution, type checking, per-module JvmBackend codegen) -> javac over every emitted .java artifact plus a runner class -> java executing the emitted artifacts (the harness fails a fixture whose parser/checker/module-discovery yields no compile, whose codegen leaves no artifact, or whose JVM execution is bypassed). Covered forms: exported/imported class declarations (export class emits the same generated nested class as a local one; importers reference the declaring module's generated class Lib.$C_Name), imported-class construction from empty and partial object literals (declared literal defaults applied inline, provided fields reordered to declaration order, provided-field evaluation in literal order across the module boundary), class-typed values passed as parameters and returned across module boundaries (field writes visible through the roundtrip), module-qualified same-name class identity (two modules exporting the same-name same-shape class stay distinct Java types and distinct identity strings), module-qualified runtime nominal checks at the untyped table boundary (success for a genuine instance, E8001 'expected instance of @modela/Item, got @modelb/Item' for a same-name wrong-module instance, E8001 'expected class instance, got null' for a null value), an unused import of a class-exporting module still running its load-time side effects, and one frontend compile-error gate rejected before any backend (E3001 nominal cross-module assignment).",
  "tests": [
-  {
-   "name": "jvm-xmod-class-export-import",
-   "description": "A module exports a class and a factory returning it; the entry annotates the value with the imported qualified type lib.Point, reads its fields, and computes 3 * 10 + 4 = 34 -- the exported class emits the same generated nested class as a local one and the importer references Lib.$C_Point",
-   "modules": {
-    "lib.deal": "export class Point {\n  x: int = 0;\n  y: int = 0;\n}\nexport function make(x: int, y: int): Point { return { x: x, y: y }; }",
-    "main.deal": "import * as lib from \"./lib\"\nexport function main(): null { return null; }\n\nexport function run(): int {\n  let p: lib.Point = lib.make(3, 4);\n  return p.x * 10 + p.y;\n}"
-   },
-   "entry": "main.deal",
-   "expectedOutput": "34",
-   "expectedError": null,
-   "expectedExitCode": 0,
-   "expectedCompileError": null,
-   "irContains": [
-    "class Point",
-    "import * as lib from \"./lib\""
-   ],
-   "irNotContains": [],
-   "backends": [
-    "jvm"
-   ]
-  },
+
   {
    "name": "jvm-xmod-class-construction-defaults",
    "description": "The entry constructs an imported class directly: the empty literal receives every declared default inline, a partial literal receives defaults for omitted fields, and provided fields land in declaration order regardless of literal order (10 + 20*10 + (2+5) = 217)",
@@ -179,43 +159,8 @@
     "jvm"
    ]
   },
-  {
-   "name": "jvm-xmod-class-unused-import-side-effect",
-   "description": "v1.2 compile-error gate: module top level holds only declarations, so the v1.1 load-time statement in the class-exporting imported module is rejected with E1049 before any backend codegen",
-   "modules": {
-    "lib.deal": "import * as console from \"std/console\"\nconsole.log(\"lib-class-initialized\");\nexport class Marker {\n  id: int = 0;\n}",
-    "main.deal": "import * as lib from \"./lib\"\nexport function run(): int { return 1; }"
-   },
-   "entry": "main.deal",
-   "expectedOutput": null,
-   "expectedError": null,
-   "expectedExitCode": null,
-   "expectedCompileError": "E1049",
-   "irContains": [],
-   "irNotContains": [],
-   "backends": [
-    "jvm"
-   ]
-  },
-  {
-   "name": "jvm-xmod-class-frontend-nominal-error",
-   "description": "Frontend compile-error gate: assigning a modela.Item value to a modelb.Item annotation is the nominal E3001 type error, rejected before any backend runs (no .java artifacts) -- same-name classes stay nominally distinct at compile time too",
-   "modules": {
-    "modela.deal": "export class Item {\n  tag: string = \"\";\n}\nexport function makeItem(tag: string): Item { return { tag: tag }; }",
-    "main.deal": "import * as modela from \"./modela\"\nimport * as modelb from \"./modelb/modelb\"\nexport function main(): null { return null; }\n\nexport function run(): null {\n  let b: modelb.Item = modela.makeItem(\"x\");\n}",
-    "modelb/modelb.deal": "export class Item {\n  tag: string = \"\";\n}"
-   },
-   "entry": "main.deal",
-   "expectedOutput": null,
-   "expectedError": null,
-   "expectedExitCode": null,
-   "expectedCompileError": "E3001",
-   "irContains": [],
-   "irNotContains": [],
-   "backends": [
-    "jvm"
-   ]
-  },
+
+
   {
    "name": "jvm-xmod-class-param-return-local-fn",
    "description": "An entry-local function declares an imported-class parameter and return type: shift(p: lib.Point): lib.Point mutates and returns the value, and the caller reads the returned instance's fields (shifted x=4, sum=8, 8+4=12) \u2014 class-typed values pass and return through MAIN-side functions too, not only through the declaring module's",

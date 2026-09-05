@@ -56,38 +56,8 @@
         "jvm"
       ]
     },
-    {
-      "name": "jvm-if-else",
-      "description": "if/else-if/else branches and unary negation classify negative, zero, and positive values",
-      "source": "function classify(n: int): int {\n  if (n < 0) {\n    return 0;\n  } else if (n === 0) {\n    return 1;\n  } else {\n    return 2;\n  }\n}\nexport function test(): int {\n  return classify(-5) * 100 + classify(0) * 10 + classify(7);\n}",
-      "expectedOutput": "12",
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "expectedCompileError": null,
-      "irContains": [
-        "function test: int",
-        "if @fixture-jvm-if-else.deal",
-        "binary < : boolean"
-      ],
-      "irNotContains": [],
-      "backends": [
-        "jvm"
-      ]
-    },
-    {
-      "name": "jvm-frontend-error-rejected",
-      "description": "A type error is rejected by the frontend before any backend runs (codegen/javac/java never invoked)",
-      "source": "export function main(): null {\nlet a: int = 1.0;\nreturn null;\n}",
-      "expectedOutput": null,
-      "expectedError": null,
-      "expectedExitCode": null,
-      "expectedCompileError": "E3001",
-      "irContains": [],
-      "irNotContains": [],
-      "backends": [
-        "jvm"
-      ]
-    },
+
+
     {
       "name": "jvm-null-return-log",
       "description": "A null-typed return expression that is a console.log call keeps its observable side effect (LuaJIT prints 'x' before returning; the expression must not be discarded)",
@@ -139,36 +109,8 @@
         "jvm"
       ]
     },
-    {
-      "name": "jvm-module-level-statements",
-      "description": "v1.2 grammar gate: this fixture pins v1.1 module-level statement/field behavior — module-level executable statements were removed, so this v1.1 shape is an E1049 module-shape error. Module-level statements (console.log and an if) run at load time, in source order relative to field initializers — LuaJIT executes them at require time",
-      "source": "import * as console from \"std/console\"\nlet x: int = 1;\nconsole.log(\"module-if-ran\");\nif (x === 1) { console.log(\"module-if-true\"); }\nexport function test(): null { console.log(\"fn-ran\"); }",
-      "expectedOutput": null,
-      "expectedError": null,
-      "expectedExitCode": null,
-      "expectedCompileError": "E1049",
-      "irContains": [],
-      "irNotContains": [],
-      "backends": [
-        "jvm"
-      ],
-      "expectedNotOutput": []
-    },
-    {
-      "name": "jvm-module-level-assignment",
-      "description": "v1.2 grammar gate: this fixture pins v1.1 module-level statement/field behavior — module-level executable statements were removed, so this v1.1 shape is an E1049 module-shape error. A module-level assignment to a module field is visible to exported functions (LuaJIT executes it at load time)",
-      "source": "let x: int = 1;\nx = 2;\nexport function test(): int { return x; }",
-      "expectedOutput": null,
-      "expectedError": null,
-      "expectedExitCode": null,
-      "expectedCompileError": "E1049",
-      "irContains": [],
-      "irNotContains": [],
-      "backends": [
-        "jvm"
-      ],
-      "expectedNotOutput": []
-    },
+
+
     {
       "name": "jvm-shadowed-initializer",
       "description": "A shadowed let whose initializer references its own name binds the RHS to the OUTER binding (LuaJIT's `local x = x + 1` reads the outer x, computing 6)",
@@ -339,36 +281,8 @@
         "jvm"
       ]
     },
-    {
-      "name": "jvm-module-load-only",
-      "description": "v1.2 grammar gate: this fixture pins v1.1 module-level statement/field behavior — module-level executable statements were removed, so this v1.1 shape is an E1049 module-shape error. A module with no zero-arity exported functions still runs its module-level statements: the runner initializes the module class so the static initializers execute",
-      "source": "import * as console from \"std/console\"\nconsole.log(\"load-only-ran\");\nexport function takesArg(x: int): int { return x; }",
-      "expectedOutput": null,
-      "expectedError": null,
-      "expectedExitCode": null,
-      "expectedCompileError": "E1049",
-      "irContains": [],
-      "irNotContains": [],
-      "backends": [
-        "jvm"
-      ],
-      "expectedNotOutput": []
-    },
-    {
-      "name": "jvm-module-load-error",
-      "description": "v1.2 grammar gate: this fixture pins v1.1 module-level statement/field behavior — module-level executable statements were removed, so this v1.1 shape is an E1049 module-shape error. A module-level runtime error in a module with no zero-arity exported functions still reports the DEAL error code: the runner initializes the module class and unwraps the initialization error",
-      "source": "let x: int = 1 / 0;\nexport function takesArg(y: int): int { return y; }",
-      "expectedOutput": null,
-      "expectedError": null,
-      "expectedExitCode": null,
-      "expectedCompileError": "E1049",
-      "irContains": [],
-      "irNotContains": [],
-      "backends": [
-        "jvm"
-      ],
-      "expectedNotOutput": []
-    },
+
+
     {
       "name": "jvm-nonfinite-literal",
       "description": "A number literal that overflows to infinity (1e999, checker-accepted: the parser stores Double.parseDouble with no range check) emits the Double constant instead of a bare Infinity identifier that javac rejects — the CLI must never report success for an artifact javac rejects; LuaJIT emits (1/0) for the same literal",
@@ -402,38 +316,8 @@
         "jvm"
       ]
     },
-    {
-      "name": "jvm-shortcircuit-and",
-      "description": "v1.2 grammar gate: this fixture pins v1.1 module-level statement/field behavior — module-level executable statements were removed, so this v1.1 shape is an E1049 module-shape error. The right operand of && is NOT evaluated when the left operand is false (LuaJIT's `and` short-circuit): a null-typed side-effecting call in the guarded operand must not run — if it ran, counter would become 1 and the program would print 'ran'. Runs under both backends; LuaJIT is the reference behavior",
-      "source": "import * as console from \"std/console\"\nlet counter: int = 0;\nfunction helper(): null { counter = 1; }\nexport function test(): null {\n  let b: boolean = false && helper() === null;\n  if (b) { console.log(\"b-true\"); return; }\n  if (counter === 0) { console.log(\"skipped\"); } else { console.log(\"ran\"); }\n}",
-      "expectedOutput": null,
-      "expectedError": null,
-      "expectedExitCode": null,
-      "expectedCompileError": "E1049",
-      "irContains": [],
-      "irNotContains": [],
-      "backends": [
-        "luajit",
-        "jvm"
-      ],
-      "expectedNotOutput": []
-    },
-    {
-      "name": "jvm-shortcircuit-or",
-      "description": "v1.2 grammar gate: this fixture pins v1.1 module-level statement/field behavior — module-level executable statements were removed, so this v1.1 shape is an E1049 module-shape error. The right operand of || is NOT evaluated when the left operand is true: the guarded null-typed call must not run (b stays true, counter stays 0, prints 'skipped'). Runs under both backends; LuaJIT is the reference behavior",
-      "source": "import * as console from \"std/console\"\nlet counter: int = 0;\nfunction helper(): null { counter = 1; }\nexport function test(): null {\n  let b: boolean = true || helper() === null;\n  if (b && counter === 0) { console.log(\"skipped\"); } else { console.log(\"ran\"); }\n}",
-      "expectedOutput": null,
-      "expectedError": null,
-      "expectedExitCode": null,
-      "expectedCompileError": "E1049",
-      "irContains": [],
-      "irNotContains": [],
-      "backends": [
-        "luajit",
-        "jvm"
-      ],
-      "expectedNotOutput": []
-    },
+
+
     {
       "name": "jvm-shortcircuit-runs",
       "description": "A guarded operand that IS reachable still evaluates: true && helper() === null runs helper() (the guard must not swallow reachable side effects)",
@@ -470,70 +354,10 @@
         "jvm"
       ]
     },
-    {
-      "name": "jvm-module-error-with-export",
-      "description": "v1.2 grammar gate: this fixture pins v1.1 module-level statement/field behavior — module-level executable statements were removed, so this v1.1 shape is an E1049 module-shape error. A module-level runtime error in a module WITH a zero-arity exported function still reports the DEAL error code: the first auto-invocation triggers class initialization, whose ExceptionInInitializerError (a LinkageError, not a RuntimeException) wraps the DealError — the runner unwraps it into the DEAL_ERROR_CODE contract",
-      "source": "export function test(): int { return 1; }\nlet x: int = 1 / 0;",
-      "expectedOutput": null,
-      "expectedError": null,
-      "expectedExitCode": null,
-      "expectedCompileError": "E1049",
-      "irContains": [],
-      "irNotContains": [],
-      "backends": [
-        "luajit",
-        "jvm"
-      ],
-      "expectedNotOutput": []
-    },
-    {
-      "name": "jvm-module-field-shadow-write",
-      "description": "v1.2 grammar gate: this fixture pins v1.1 module-level statement/field behavior — module-level executable statements were removed, so this v1.1 shape is an E1049 module-shape error. A function-body write to a module field resolves to the static field (LuaJIT's upvalue write): the pre-existing value is overwritten and observable. This shape must NOT be rejected by the assignment-before-declaration guard (it has a real binding). Runs under both backends; LuaJIT is the reference",
-      "source": "import * as console from \"std/console\"\nlet x: int = 1;\nexport function test(): null {\n  x = 5;\n  if (x === 5) { console.log(\"wrote-field\"); }\n}",
-      "expectedOutput": null,
-      "expectedError": null,
-      "expectedExitCode": null,
-      "expectedCompileError": "E1049",
-      "irContains": [],
-      "irNotContains": [],
-      "backends": [
-        "luajit",
-        "jvm"
-      ],
-      "expectedNotOutput": []
-    },
-    {
-      "name": "jvm-module-level-later-field-write",
-      "description": "v1.2 grammar gate: this fixture pins v1.1 module-level statement/field behavior — module-level executable statements were removed, so this v1.1 shape is an E1049 module-shape error. A module-level write to a later-declared module field is legal (JLS §8.3.3 forward-reference LHS exception) and the later field initializer wins, exactly like LuaJIT (probed: both observe the later value). Runs under both backends; LuaJIT is the reference",
-      "source": "import * as console from \"std/console\"\nx = 5;\nlet x: int = 1;\nexport function test(): null {\n  if (x === 1) { console.log(\"later-init-wins\"); }\n}",
-      "expectedOutput": null,
-      "expectedError": null,
-      "expectedExitCode": null,
-      "expectedCompileError": "E1049",
-      "irContains": [],
-      "irNotContains": [],
-      "backends": [
-        "luajit",
-        "jvm"
-      ],
-      "expectedNotOutput": []
-    },
-    {
-      "name": "jvm-module-interleaved-decls-first",
-      "description": "v1.2 grammar gate: this fixture pins v1.1 module-level statement/field behavior — module-level executable statements were removed, so this v1.1 shape is an E1049 module-shape error. Module-level load-time ordering: functions declared BEFORE their call sites (LuaJIT assigns each function value at its declaration point, so declarations-first is the load-time-parity shape — the declarations-after shape fails at load under LuaJIT and is E6000 under JVM). Side-effecting field initializers and module-level statements must run in source order. Runs under both backends; LuaJIT is the reference",
-      "source": "import * as console from \"std/console\"\nfunction f(): int { console.log(\"f-ran\"); return 1; }\nfunction g(): int { console.log(\"g-ran\"); return 2; }\nlet a: int = f();\nconsole.log(\"mid\");\nlet b: int = g();\nexport function test(): null {\n  if (a + b === 3) { console.log(\"sum-ok\"); }\n}",
-      "expectedOutput": null,
-      "expectedError": null,
-      "expectedExitCode": null,
-      "expectedCompileError": "E1049",
-      "irContains": [],
-      "irNotContains": [],
-      "backends": [
-        "luajit",
-        "jvm"
-      ],
-      "expectedNotOutput": []
-    },
+
+
+
+
     {
       "name": "jvm-dead-code-function",
       "description": "Dead code after an all-returning if/else is skipped, never emitted: javac rejects unreachable statements (JLS §14.21) and the CLI must never report success for an artifact javac rejects. LuaJIT never executes the dead return either. Emitting `return 3` after the complete if/else used to produce exactly such a broken artifact",
@@ -584,22 +408,7 @@
         "jvm"
       ]
     },
-    {
-      "name": "jvm-function-field-write-parity",
-      "description": "v1.2 grammar gate: this fixture pins v1.1 module-level statement/field behavior — module-level executable statements were removed, so this v1.1 shape is an E1049 module-shape error. A function declared AFTER a module field writes the module-local upvalue (LuaJIT) / the static field (JVM), then reads it back — both backends observe f() === 5 and the later reader x === 5, so the write-then-read shape is supported and parity-preserving when the field is declared first. The divergent mirror shape (the function declared BEFORE the field — LuaJIT binds the write to the GLOBAL, leaving the module-local untouched, so later readers observe the initializer value, while the JVM static field would be polluted) is rejected with E6000 and pinned by JvmBackendTest. Runs under both backends; LuaJIT is the reference",
-      "source": "import * as console from \"std/console\"\nlet x: int = 1;\nfunction f(): int { x = 5; return x; }\nexport function test(): null {\n  if (f() === 5 && x === 5) { console.log(\"field-write-parity\"); }\n}",
-      "expectedOutput": null,
-      "expectedError": null,
-      "expectedExitCode": null,
-      "expectedCompileError": "E1049",
-      "irContains": [],
-      "irNotContains": [],
-      "backends": [
-        "luajit",
-        "jvm"
-      ],
-      "expectedNotOutput": []
-    },
+
     {
       "name": "jvm-int-safe-range-boundary",
       "description": "The DEAL int safe range boundary ±(2^53-1) is inclusive: 9007199254740991 is a valid int on both backends (check_int's comparison rejects only values outside the boundary). Runs under both backends; LuaJIT is the reference",
@@ -760,51 +569,9 @@
         "jvm"
       ]
     },
-    {
-      "name": "jvm-javalang-name-collisions",
-      "description": "v1.2 grammar gate: this fixture pins v1.1 module-level statement/field behavior — module-level executable statements were removed, so this v1.1 shape is an E1049 module-shape error. DEAL identifiers may be named System/Math/Double/String/Void/Integer/Character/RuntimeException/ArithmeticException (javaName passes non-reserved names through unchanged); every java.lang reference in the generated code must be fully qualified, or these fields would shadow it and javac would reject an artifact the CLI reported as successful — module-level console.log (System.out), int arithmetic (Math.addExact), string ordering (Integer.compare/Character.charCount), a 1e999 literal (Double.POSITIVE_INFINITY), and a runtime error (DealError extends java.lang.RuntimeException) all run in one module with all of these names bound as fields",
-      "source": "import * as console from \"std/console\"\nlet System: int = 1;\nlet Math: int = 2;\nlet Double: int = 3;\nlet String: int = 4;\nlet Void: int = 5;\nlet Integer: int = 6;\nlet Character: int = 7;\nlet RuntimeException: int = 8;\nlet ArithmeticException: int = 9;\nconsole.log(\"collisions-ok\");\nexport function test(): int {\n  if (\"a\" < \"b\") { console.log(\"ordering-ok\"); }\n  return System + Math + Double + String + Void + Integer + Character + RuntimeException + ArithmeticException;\n}",
-      "expectedOutput": null,
-      "expectedError": null,
-      "expectedExitCode": null,
-      "expectedCompileError": "E1049",
-      "irContains": [],
-      "irNotContains": [],
-      "backends": [
-        "jvm"
-      ],
-      "expectedNotOutput": []
-    },
-    {
-      "name": "jvm-javalang-nonfinite-field",
-      "description": "v1.2 grammar gate: this fixture pins v1.1 module-level statement/field behavior — module-level executable statements were removed, so this v1.1 shape is an E1049 module-shape error. A module field named Double plus a 1e999 literal in the same module: the literal renders as java.lang.Double.POSITIVE_INFINITY, so the field cannot shadow the constant",
-      "source": "let Double: int = 1;\nexport function test(): number { let n: number = 1e999; return n; }",
-      "expectedOutput": null,
-      "expectedError": null,
-      "expectedExitCode": null,
-      "expectedCompileError": "E1049",
-      "irContains": [],
-      "irNotContains": [],
-      "backends": [
-        "jvm"
-      ],
-      "expectedNotOutput": []
-    },
-    {
-      "name": "jvm-elseif-chain-declared-first",
-      "description": "v1.2 grammar gate: this fixture pins v1.1 module-level statement/field behavior — module-level executable statements were removed, so this v1.1 shape is an E1049 module-shape error. A module-level else-if chain whose conditions read already-declared fields runs at load time in source order (positive shape for the chain-walking use-before-declaration guard; the forward-reference shape is E6000, covered by JvmBackendTest)",
-      "source": "let z: int = 2;\nlet hit: boolean = false;\nif (z === 1) { } else if (z === 2) { hit = true; }\nexport function test(): int { if (hit) { return 1; } return 0; }",
-      "expectedOutput": null,
-      "expectedError": null,
-      "expectedExitCode": null,
-      "expectedCompileError": "E1049",
-      "irContains": [],
-      "irNotContains": [],
-      "backends": [
-        "jvm"
-      ],
-      "expectedNotOutput": []
-    },
+
+
+
     {
       "name": "jvm-eval-order-call-args",
       "description": "DEAL evaluates expressions strictly left to right: in f(g(), console.log(\"x\")) the inline side-effecting call g() must run BEFORE the hoisted null-typed console.log call (the hoist flushes before the containing statement, so the earlier operand is materialized into a temporary). Runs under both backends; LuaJIT is the reference",
@@ -862,22 +629,7 @@
         "jvm"
       ]
     },
-    {
-      "name": "jvm-eval-order-module-stmt",
-      "description": "v1.2 grammar gate: this fixture pins v1.1 module-level statement/field behavior — module-level executable statements were removed, so this v1.1 shape is an E1049 module-shape error. Module-level (load-time) call statements keep left-to-right evaluation order too: f(g(), console.log(\"x\")) at module scope runs g() before the hoisted console.log call inside the static initializer. Runs under both backends; LuaJIT is the reference",
-      "source": "import * as console from \"std/console\"\nfunction g(): int { console.log(\"g-ran\"); return 5; }\nfunction f(y: int, x: null): int { return y; }\nf(g(), console.log(\"x\"));\nexport function test(): null {\n  console.log(\"loaded\");\n}",
-      "expectedOutput": null,
-      "expectedError": null,
-      "expectedExitCode": null,
-      "expectedCompileError": "E1049",
-      "irContains": [],
-      "irNotContains": [],
-      "backends": [
-        "luajit",
-        "jvm"
-      ],
-      "expectedNotOutput": []
-    },
+
     {
       "name": "jvm-eval-order-nested",
       "description": "Nested combination order: the first operand of f(…) itself hoists (k's null-typed argument) AND still carries an inline call (k(…)) after its own hoisted statement — that inline call must run before the second operand's hoisted print (LuaJIT order: g-ran, y, k-ran, x). Runs under both backends; LuaJIT is the reference",

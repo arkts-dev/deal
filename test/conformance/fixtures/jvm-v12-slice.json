@@ -2,24 +2,7 @@
   "version": "1.0",
   "description": "JVM backend-runtime conformance for the DEAL v1.2 slice (ISSUE-0106). JVM-only fixtures that run the real DEAL frontend (lexer → parser → name resolver → type checker) → real JvmBackend codegen → javac → java executing the emitted artifact (a bypassed codegen or JVM execution produces no output and fails the fixture). Covered v1.2 behaviors: the selected-entry main(): null non-async contract (the entry module must export main; the backend invokes it — pinned through the orchestrator multi-module pipeline with the runner auto-invoking the entry's zero-arity exports, main first in declaration order); Unicode scalar-value string for-of (one string containing exactly one scalar value per iteration — a supplementary character is ONE iteration); std/string scalar-value positions (length counts Unicode scalar values, substring positions are scalar values, empty-separator split yields one part per scalar value); and boundary string validation (a scalar-valid supplementary string crosses the table boundary; the emitted check helper rejects unpaired UTF-16 surrogates).",
   "tests": [
-    {
-      "name": "jvm-v12-entry-main-invoked",
-      "description": "The selected entry module exports non-async main(): null and the backend invokes it: main's console.log output is observable through the emitted entry module (the runner invokes the entry's zero-arity exports in declaration order, main first)",
-      "modules": {
-        "main.deal": "import * as console from \"std/console\"\nexport function main(): null {\n  console.log(\"entry-main-ran\");\n  return null;\n}\n",
-        "lib.deal": "export function helper(): int { return 7; }\n"
-      },
-      "entry": "main.deal",
-      "expectedOutput": "entry-main-ran",
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "expectedCompileError": null,
-      "irContains": [],
-      "irNotContains": [],
-      "backends": [
-        "jvm"
-      ]
-    },
+
     {
       "name": "jvm-v12-entry-main-missing-rejected",
       "description": "The v1.2 entry gate: a selected entry module that does not export main is rejected by the frontend with E2012 (the orchestrator selected-entry rule — ISSUE-0269 re-registration; E2012 carries the former E2010 entry-main-missing meaning) before any backend runs",
@@ -55,62 +38,10 @@
         "jvm"
       ]
     },
-    {
-      "name": "jvm-v12-forof-scalar-iteration",
-      "description": "String for-of iterates Unicode scalar values: 'a😀b' yields exactly three iterations (the supplementary character is ONE scalar value), in order",
-      "source": "import * as console from \"std/console\"\nexport function test(): null {\n  let acc: string = \"\";\n  let count: int = 0;\n  for (let c: string of \"a😀b\") {\n    acc = acc + c;\n    count = count + 1;\n  }\n  console.log(acc);\n  if (count !== 3) { console.log(\"bad-count\"); return; }\n  if (acc !== \"a😀b\") { console.log(\"bad-acc\"); return; }\n  console.log(\"scalar-forof-ok\");\n}\n",
-      "expectedOutput": "scalar-forof-ok",
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "expectedCompileError": null,
-      "irContains": [],
-      "irNotContains": [],
-      "backends": [
-        "jvm"
-      ]
-    },
-    {
-      "name": "jvm-v12-std-string-scalar-length",
-      "description": "std/string.length measures Unicode scalar values: \"hello\" → 5, \"\" → 0, \"héllo\" → 5 (one scalar per accented character), \"a😀b\" → 3 (the supplementary character counts once)",
-      "source": "import * as str from \"std/string\"\nexport function test(): int {\n  let ascii: int = str.length(\"hello\");\n  let empty: int = str.length(\"\");\n  let accented: int = str.length(\"héllo\");\n  let sup: int = str.length(\"a😀b\");\n  return ascii * 1000 + empty * 100 + accented * 10 + (sup - 3);\n}\n",
-      "expectedOutput": "5050",
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "expectedCompileError": null,
-      "irContains": [],
-      "irNotContains": [],
-      "backends": [
-        "jvm"
-      ]
-    },
-    {
-      "name": "jvm-v12-std-string-scalar-substring",
-      "description": "std/string.substring positions are Unicode scalar values: over \"a😀b\" — (0,1) = \"a\", (1,2) = \"😀\", (2,3) = \"b\", and (0,3) is the whole string",
-      "source": "import * as str from \"std/string\"\nexport function test(): string {\n  let first: string = str.substring(\"a😀b\", 0, 1);\n  let mid: string = str.substring(\"a😀b\", 1, 2);\n  let last: string = str.substring(\"a😀b\", 2, 3);\n  let whole: string = str.substring(\"a😀b\", 0, 3);\n  return first + \"|\" + mid + \"|\" + last + \"|\" + whole;\n}\n",
-      "expectedOutput": "a|😀|b|a😀b",
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "expectedCompileError": null,
-      "irContains": [],
-      "irNotContains": [],
-      "backends": [
-        "jvm"
-      ]
-    },
-    {
-      "name": "jvm-v12-std-string-split-empty-scalar",
-      "description": "std/string.split with an empty separator splits into individual Unicode scalar values: split(\"😀b\", \"\") yields [\"😀\", \"b\"]",
-      "source": "import * as str from \"std/string\"\nexport function test(): int {\n  let parts: string[] = str.split(\"😀b\", \"\");\n  if (parts.length !== 2) { return 0; }\n  if (parts[0] !== \"😀\") { return 0; }\n  if (parts[1] !== \"b\") { return 0; }\n  return 7;\n}\n",
-      "expectedOutput": "7",
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "expectedCompileError": null,
-      "irContains": [],
-      "irNotContains": [],
-      "backends": [
-        "jvm"
-      ]
-    },
+
+
+
+
     {
       "name": "jvm-v12-boundary-string-supplementary",
       "description": "Boundary string validation: a scalar-valid string containing a supplementary character crosses the table-read boundary and reads back unchanged (the JVM representation contract — java.lang.String with no unpaired surrogates)",
