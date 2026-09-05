@@ -4,12 +4,23 @@ import deal.ast.*;
 import deal.checker.*;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.identity.CanonicalClassIdentity;
+import deal.diagnostics.DiagnosticNote;
+import deal.diagnostics.DiagnosticOrder;
+import deal.diagnostics.DiagnosticRange;
+import deal.diagnostics.RangeOrigin;
 import deal.lexer.*;
 import deal.parser.*;
 import deal.types.Type;
 import deal.types.Types;
+import deal.Main;
 import deal.test.IdentityTestFixtures;
 
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.*;
 
 /**
@@ -403,6 +414,12 @@ public class CheckerTest {
         // storage pin and definition-order alias selection
         testSymbolTableSymbolsInsertionOrder();
         testSymbolTableAliasSelectionDefinitionOrder();
+
+        // D1 canonical report-time diagnostic ordering
+        // (deterministic-diagnostics): helper-order assertions plus the
+        // both-surfaces assertion over a real Main.run compile.
+        testDiagnosticOrderHelper();
+        testDiagnosticOrderBothSurfaces();
 
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
@@ -3171,4 +3188,253 @@ public class CheckerTest {
         return null;
     }
 
+    // D1 canonical report-time diagnostic ordering (deterministic-diagnostics)
+    // =========================================================================
+
+    /**
+     * Builds one D9-normalized test diagnostic over a valid SOURCE range
+     * with full control of the D1 key fields. Notes are empty.
+     */
+    private static CompilerDiagnostic orderDiag(String file, int line,
+            int column, int scalarOffset, String code, String message,
+            String severity) {
+        return new CompilerDiagnostic(code, severity, message,
+            new DiagnosticRange(file, line, column, line, column + 1,
+                scalarOffset, scalarOffset + 1, 1, RangeOrigin.SOURCE),
+            null, null);
+    }
+
+    /** The file field of one E5003 main line (the text before the first ':'). */
+    private static String fileFieldOf(String line) {
+        int colon = line.indexOf(':');
+        return colon < 0 ? "" : line.substring(0, colon);
+    }
+
+    /**
+     * D1 helper-order assertions over a constructed diagnostic list whose
+     * input order differs from D1 order: file, scalar-offset, line/column,
+     * code, message, and severity ordering; stability for equal keys;
+     * input-list non-mutation; null yields the empty list.
+     */
+    static void testDiagnosticOrderHelper() {
+        System.out.println("-- D1 helper: canonical diagnostic ordering --");
+
+        // File ordering: file path byte order (String.compareTo).
+        CompilerDiagnostic fileB = orderDiag(
+            "b.deal", 1, 1, 0, "E0001", "m", "error");
+        CompilerDiagnostic fileA = orderDiag(
+            "a.deal", 1, 1, 0, "E0001", "m", "error");
+        List<CompilerDiagnostic> byFile = DiagnosticOrder.canonical(
+            List.of(fileB, fileA));
+        check(byFile.size() == 2 && byFile.get(0) == fileA
+                && byFile.get(1) == fileB,
+            "D1 helper: file ordering (a.deal before b.deal)");
+
+        // Scalar-offset ordering: ascending startScalarOffset.
+        CompilerDiagnostic offHigh = orderDiag(
+            "f.deal", 1, 1, 20, "E0001", "m", "error");
+        CompilerDiagnostic offLow = orderDiag(
+            "f.deal", 1, 1, 5, "E0001", "m", "error");
+        List<CompilerDiagnostic> byOffset = DiagnosticOrder.canonical(
+            List.of(offHigh, offLow));
+        check(byOffset.size() == 2 && byOffset.get(0) == offLow
+                && byOffset.get(1) == offHigh,
+            "D1 helper: scalar-offset ordering (5 before 20)");
+
+        // Line ordering: after file and scalar offset.
+        CompilerDiagnostic lineHigh = orderDiag(
+            "f.deal", 3, 1, 7, "E0001", "m", "error");
+        CompilerDiagnostic lineLow = orderDiag(
+            "f.deal", 1, 1, 7, "E0001", "m", "error");
+        List<CompilerDiagnostic> byLine = DiagnosticOrder.canonical(
+            List.of(lineHigh, lineLow));
+        check(byLine.size() == 2 && byLine.get(0) == lineLow
+                && byLine.get(1) == lineHigh,
+            "D1 helper: line ordering (1 before 3)");
+
+        // Column ordering: after file, scalar offset, and line.
+        CompilerDiagnostic colHigh = orderDiag(
+            "f.deal", 1, 5, 7, "E0001", "m", "error");
+        CompilerDiagnostic colLow = orderDiag(
+            "f.deal", 1, 2, 7, "E0001", "m", "error");
+        List<CompilerDiagnostic> byColumn = DiagnosticOrder.canonical(
+            List.of(colHigh, colLow));
+        check(byColumn.size() == 2 && byColumn.get(0) == colLow
+                && byColumn.get(1) == colHigh,
+            "D1 helper: column ordering (2 before 5)");
+
+        // Code ordering.
+        CompilerDiagnostic codeHigh = orderDiag(
+            "f.deal", 1, 1, 7, "E2000", "m", "error");
+        CompilerDiagnostic codeLow = orderDiag(
+            "f.deal", 1, 1, 7, "E1000", "m", "error");
+        List<CompilerDiagnostic> byCode = DiagnosticOrder.canonical(
+            List.of(codeHigh, codeLow));
+        check(byCode.size() == 2 && byCode.get(0) == codeLow
+                && byCode.get(1) == codeHigh,
+            "D1 helper: code ordering (E1000 before E2000)");
+
+        // Message ordering.
+        CompilerDiagnostic msgHigh = orderDiag(
+            "f.deal", 1, 1, 7, "E1000", "zebra", "error");
+        CompilerDiagnostic msgLow = orderDiag(
+            "f.deal", 1, 1, 7, "E1000", "apple", "error");
+        List<CompilerDiagnostic> byMessage = DiagnosticOrder.canonical(
+            List.of(msgHigh, msgLow));
+        check(byMessage.size() == 2 && byMessage.get(0) == msgLow
+                && byMessage.get(1) == msgHigh,
+            "D1 helper: message ordering (apple before zebra)");
+
+        // Severity ordering: "error" before "warning".
+        CompilerDiagnostic sevWarning = orderDiag(
+            "f.deal", 1, 1, 7, "E1000", "apple", "warning");
+        CompilerDiagnostic sevError = orderDiag(
+            "f.deal", 1, 1, 7, "E1000", "apple", "error");
+        List<CompilerDiagnostic> bySeverity = DiagnosticOrder.canonical(
+            List.of(sevWarning, sevError));
+        check(bySeverity.size() == 2 && bySeverity.get(0) == sevError
+                && bySeverity.get(1) == sevWarning,
+            "D1 helper: severity ordering (error before warning)");
+
+        // Stability: equal keys keep their input relative order (the
+        // distinguishing note does not participate in the D1 key).
+        CompilerDiagnostic first = new CompilerDiagnostic(
+            "E1000", "error", "apple",
+            new DiagnosticRange("f.deal", 1, 1, 1, 2, 7, 8, 1,
+                RangeOrigin.SOURCE),
+            List.of(new DiagnosticNote("first note", null)), null);
+        CompilerDiagnostic second = new CompilerDiagnostic(
+            "E1000", "error", "apple",
+            new DiagnosticRange("f.deal", 1, 1, 1, 2, 7, 8, 1,
+                RangeOrigin.SOURCE),
+            List.of(new DiagnosticNote("second note", null)), null);
+        List<CompilerDiagnostic> stable = DiagnosticOrder.canonical(
+            List.of(first, second));
+        check(stable.size() == 2 && stable.get(0) == first
+                && stable.get(1) == second,
+            "D1 helper: stability for equal keys keeps input order");
+
+        // Input-list non-mutation and the fresh-list contract.
+        List<CompilerDiagnostic> input = new ArrayList<>(
+            List.of(fileB, fileA, offHigh, offLow));
+        List<CompilerDiagnostic> snapshot = new ArrayList<>(input);
+        List<CompilerDiagnostic> result = DiagnosticOrder.canonical(input);
+        check(result != input,
+            "D1 helper: canonical returns a new list, never the input");
+        check(input.equals(snapshot),
+            "D1 helper: the input list is not mutated");
+        check(input.get(0) == fileB && input.get(1) == fileA,
+            "D1 helper: the input list element order is unchanged");
+
+        // Null input yields the empty list.
+        check(DiagnosticOrder.canonical(null).isEmpty(),
+            "D1 helper: null input yields the empty list");
+    }
+
+    /**
+     * D1 both-surfaces assertion: a scratch temp project whose phase-3
+     * checker diagnostics are collected dependency-first ([z, a]) while
+     * the D1 file order is [a, z], so the assertion genuinely fails when
+     * DiagnosticOrder.canonical is unwired from either report site.
+     */
+    static void testDiagnosticOrderBothSurfaces() {
+        System.out.println("-- D1 both surfaces: stderr and "
+            + "--diagnostics-json emit the canonical order --");
+        Path root;
+        try {
+            root = Files.createTempDirectory("deal_d1_order_");
+        } catch (IOException e) {
+            fail("D1 both surfaces: cannot create temp directory: "
+                + e.getMessage());
+            return;
+        }
+        try {
+            Files.writeString(root.resolve("deal.json"),
+                "{\"languageVersion\":\"1.2\",\"backend\":\"luajit\","
+                    + "\"moduleRoots\":[\"src\"]}\n");
+            Files.createDirectories(root.resolve("src"));
+            // z is a's import dependency: buildCheckOrder is
+            // dependency-first, so the E5003 collection order is
+            // [z, a] while the D1 file order is [a, z].
+            Files.writeString(root.resolve("src/z.deal"),
+                "export function f(): int { return 1.0; }\n");
+            Files.writeString(root.resolve("src/a.deal"),
+                "import * as z from \"./z\"\n"
+                    + "export function main(): null { return null; }\n"
+                    + "function g(): int { return 1.0; }\n");
+            Path entry = root.resolve("src/a.deal").toAbsolutePath();
+            Path jsonPath = root.resolve("diagnostics.json");
+
+            ByteArrayOutputStream err = new ByteArrayOutputStream();
+            PrintStream originalErr = System.err;
+            int exitCode;
+            try {
+                System.setErr(new PrintStream(err, true,
+                    StandardCharsets.UTF_8));
+                exitCode = Main.run(new String[]{
+                    "compile", entry.toString(),
+                    "--diagnostics-json", jsonPath.toString()});
+                System.err.flush();
+            } finally {
+                System.setErr(originalErr);
+            }
+            String stderr = err.toString(StandardCharsets.UTF_8);
+
+            check(exitCode == 1, "D1 both surfaces: compile exits 1");
+            List<String> e5003Lines = stderr.lines()
+                .filter(l -> l.contains(": ERROR E5003: "))
+                .toList();
+            check(e5003Lines.size() == 2,
+                "D1 both surfaces: exactly two E5003 main lines, got "
+                    + e5003Lines.size());
+            if (e5003Lines.size() == 2) {
+                int aIndex = -1;
+                int zIndex = -1;
+                for (int i = 0; i < e5003Lines.size(); i++) {
+                    String file = fileFieldOf(e5003Lines.get(i));
+                    if (file.endsWith("src/a.deal")) aIndex = i;
+                    if (file.endsWith("src/z.deal")) zIndex = i;
+                }
+                check(aIndex == 0 && zIndex == 1,
+                    "D1 both surfaces: stderr E5003 file order is "
+                        + "src/a.deal then src/z.deal (aIndex=" + aIndex
+                        + ", zIndex=" + zIndex + ")");
+            }
+            check(stderr.lines().anyMatch(
+                    l -> l.equals("2 error(s), 0 warning(s)")),
+                "D1 both surfaces: summary line is "
+                    + "'2 error(s), 0 warning(s)'");
+
+            String json = Files.readString(jsonPath);
+            check(json.contains("\"version\": 1"),
+                "D1 both surfaces: JSON document stays version 1");
+            int arrayStart = json.indexOf("\"diagnostics\": [");
+            check(arrayStart >= 0,
+                "D1 both surfaces: JSON document has the diagnostics array");
+            int aFile = json.indexOf("src/a.deal", arrayStart);
+            int zFile = json.indexOf("src/z.deal", arrayStart);
+            check(aFile >= 0 && zFile >= 0 && aFile < zFile,
+                "D1 both surfaces: JSON diagnostics array lists src/a.deal "
+                    + "before src/z.deal");
+        } catch (IOException e) {
+            fail("D1 both surfaces: I/O failure: " + e.getMessage());
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    /** Deletes a scratch temp tree (best effort, recursion-safe). */
+    private static void deleteRecursively(Path dir) {
+        try {
+            if (dir == null || !Files.exists(dir)) return;
+            Files.walk(dir).sorted(Comparator.reverseOrder())
+                .forEach(f -> {
+                    try {
+                        Files.deleteIfExists(f);
+                    } catch (Exception ignored) {
+                    }
+                });
+        } catch (Exception ignored) {
+        }
+    }
 }

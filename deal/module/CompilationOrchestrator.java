@@ -23,6 +23,7 @@ import deal.project.NativeLibraryRef;
 import deal.project.ProtectedPathOps;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticFormatter;
+import deal.diagnostics.DiagnosticOrder;
 import deal.diagnostics.DiagnosticRange;
 import deal.diagnostics.DiagnosticStructuredOutput;
 import deal.descriptors.CanonicalRuntimeTypeDescriptor;
@@ -778,8 +779,12 @@ public final class CompilationOrchestrator {
         // discipline).
         if (diagnosticsJsonPath != null) {
             try {
+                // D1 (deterministic-diagnostics): the document receives
+                // the canonical report-ordered list; the internal
+                // emission-order collection is unchanged.
                 Files.writeString(diagnosticsJsonPath,
-                    DiagnosticStructuredOutput.toJson(diagnostics));
+                    DiagnosticStructuredOutput.toJson(
+                        DiagnosticOrder.canonical(diagnostics)));
             } catch (IOException e) {
                 System.err.println("deal: cannot write diagnostics JSON to '"
                     + diagnosticsJsonPath + "': " + e.getMessage());
@@ -3286,11 +3291,14 @@ public final class CompilationOrchestrator {
     }
 
     /**
-     * Delegates printing to the canonical formatter (D8); the
-     * error/warning summary counts are unchanged.
+     * Delegates printing to the canonical formatter (D8) over the D1
+     * canonical report order (deterministic-diagnostics): the stderr
+     * diagnostic blocks appear in the canonical total order while the
+     * internal collection order is unchanged; the error/warning summary
+     * counts are computed over the internal list exactly as before.
      */
     private void printDiagnostics() {
-        for (CompilerDiagnostic d : diagnostics) {
+        for (CompilerDiagnostic d : DiagnosticOrder.canonical(diagnostics)) {
             System.err.println(DiagnosticFormatter.format(d));
         }
         long errorCount = diagnostics.stream()
