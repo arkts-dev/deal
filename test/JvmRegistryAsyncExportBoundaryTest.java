@@ -81,12 +81,13 @@ import java.util.stream.Stream;
  *       JVM sibling, so the D12 {@code BYTES_ASYNC_FUNCTION} matrix
  *       family has a committed execution lane on both matrix-required
  *       backends.</li>
- *   <li>The bytes-bearing record half on JVM depends on the JVM
- *       recursive bytes closure (ISSUE-0160, E8 — unlanded); its
- *       JVM-lane outcome is pinned BLOCKED with an E6000 until that
- *       issue lands, and the flip requirement is recorded in
- *       {@code ISSUE_UPDATE_ISSUE-0161.md}. A backend lane with no
- *       recorded outcome (backend omission) fails the family gate
+ *   <li>The bytes-bearing record half executes on the JVM lane too:
+ *       the JVM recursive bytes closure (ISSUE-0160, E8) is landed in
+ *       this tree, the exact bytes-bearing oracle completes
+ *       {@code Result.Value("null","null")} through the production
+ *       invoker, and both matrix-required lanes record SUCCESS. A
+ *       backend lane with no recorded outcome (backend omission) fails
+ *       the family gate
  *       ({@link #omittingARequiredBackendFailsTheRecordFamilyGate}).
  *       </li>
  * </ul>
@@ -435,56 +436,45 @@ public class JvmRegistryAsyncExportBoundaryTest {
     }
 
     // =========================================================================
-    // Acceptance criterion 3/4 (JVM lane, E8 dependency): the bytes-
-    // bearing record half on JVM depends on the JVM recursive bytes
-    // closure (ISSUE-0160). Until that issue lands the backend must
-    // reject the bytes signature with E6000 — never silently miscompile —
-    // and the JVM-lane outcome is recorded BLOCKED: the criterion-3 JVM
-    // half and the criterion-4 E8 consumption stay unmet while the
-    // blocker is open (ISSUE_UPDATE_ISSUE-0161.md).
+    // Acceptance criterion 3/4 (JVM lane): the bytes-bearing record half
+    // executes on the JVM lane through the production invoker — the
+    // recorded ISSUE-0160 flip, executed with the JVM recursive bytes
+    // closure (E8) landed in this tree. The JVM lane outcome of the D12
+    // BYTES_ASYNC_FUNCTION record is SUCCESS (mirroring the LuaJIT lane,
+    // RegistryAsyncExportBoundaryTest) and the exact bytes-bearing
+    // oracle asserts Result.Value("null", "null") with the same
+    // identity/content checks the LuaJIT lane pins.
     // =========================================================================
 
     @Test
-    public void jvmLaneAsyncBytesRecordIsPinnedE6000UntilTheBytesClosureLands()
-            throws IOException {
+    public void jvmLaneAsyncBytesRecordExecutesThroughTheProductionInvokerCompletingNull()
+            throws Exception {
         assumeTrue(jvmAvailable);
 
-        // The recorded E8 blocker pin: the D12 BYTES_ASYNC_FUNCTION
-        // record (async bytes oracle) compiled for the JVM lane fails
-        // with E6000 at the bytes sites until ISSUE-0160's JVM recursive
-        // bytes closure lands, and no entry artifact is published.
-        // Flip requirement (recorded in ISSUE_UPDATE_ISSUE-0161.md):
-        // when ISSUE-0160 lands, this pin becomes the production
-        // assertion — invoke(entryClass, "oracle", "null") equals
-        // Result.Value("null", "null") with the identity/content checks
-        // of the LuaJIT lane — and the BLOCKED lane outcome below flips
-        // to SUCCESS.
-        Path projectDir = Files.createTempDirectory(tmp,
-            "jvm-proj-bytes-oracle-");
-        copyTree(FIXTURES.resolve("async-bytes-oracle"), projectDir);
+        // The recorded ISSUE-0160 flip: the D12 BYTES_ASYNC_FUNCTION
+        // record (async-bytes-oracle — the exact bytes-bearing oracle
+        // that assigns and containerizes first-class async(bytes)->bytes
+        // values, invokes and awaits one, checks bytes identity/content
+        // in source, and completes null) compiles for the JVM lane with
+        // no E6000, publishes its entry artifact, and executes through
+        // the production JvmAsyncExportInvoker with the byte-exact
+        // canonical return descriptor "null".
+        CompiledJvmRecord record = compileJvmRecordProject(
+            "async-bytes-oracle", "oracle.deal", "oracle");
 
-        Path entrySource = projectDir.resolve("src").resolve("oracle.deal")
-            .toAbsolutePath().normalize();
-        ProjectLocator.LocateResult located = ProjectLocator.locate(
-            entrySource.toString(), new CliOverrides("jvm", null));
-        assertNull(located.e2010());
-        assertNotNull(located.context());
+        Result result = record.invoke("oracle", "null");
+        assertEquals("the exact bytes-bearing oracle executes on the"
+            + " JVM lane with the identity/content checks and completes"
+            + " null",
+            new Result.Value("null", "null"), result);
 
-        Path outputRoot = Path.of(
-            located.context().outputPath().absoluteNormalizedPath());
-        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
-            located.context(), entrySource, false, false, false, false,
-            null, invocation);
-        boolean ok = orchestrator.compile();
-        assertFalse("the bytes-bearing JVM record must not compile until"
-            + " the JVM recursive bytes closure (ISSUE-0160) lands: "
-            + orchestrator.diagnostics(), ok);
-        assertTrue("the E6000 bytes rejection names the unlanded lane",
-            orchestrator.diagnostics().stream()
-                .anyMatch(d -> d.code().equals("E6000")
-                    && d.message().contains("bytes")));
-        assertFalse("a rejected record publishes no entry artifact",
-            Files.exists(outputRoot.resolve("oracle.java")));
+        String generated = Files.readString(
+            record.entryClass().getParent()
+                .resolve(record.entryClass().getFileName().toString()
+                    .replace(".class", ".java")));
+        assertTrue("the record artifact publishes the canonical async"
+            + " bytes wrapper sig",
+            generated.contains("\"async(bytes)->bytes\""));
     }
 
     // =========================================================================
@@ -578,19 +568,18 @@ public class JvmRegistryAsyncExportBoundaryTest {
         assertTrue("both matrix-required lanes present satisfy the gate",
             recordFamilyGateSatisfied(both));
 
-        // The committed in-tree lane state is truthful about the E8
-        // blocker: the LuaJIT lane executes the bytes record
-        // (RegistryAsyncExportBoundaryTest pins Result.Value("null",
-        // "null")) and the JVM lane outcome is BLOCKED on ISSUE-0160
-        // (pinned by jvmLaneAsyncBytesRecordIsPinnedE6000UntilTheBytesClosureLands
-        // above) — a recorded blocked lane is present, not omitted, so
-        // the gate reports the recorded blocker instead of a silent
-        // omission; the criterion-3 JVM half stays unmet until the
-        // closure lands and the lane flips to SUCCESS.
+        // The committed in-tree lane state is truthful: both lanes
+        // execute the bytes record to SUCCESS — the LuaJIT lane pins
+        // Result.Value("null", "null") (RegistryAsyncExportBoundaryTest)
+        // and the JVM lane pins the same completion through the
+        // production invoker
+        // (jvmLaneAsyncBytesRecordExecutesThroughTheProductionInvokerCompletingNull
+        // above) — so the D12 BYTES_ASYNC_FUNCTION matrix family is
+        // green on both matrix-required backends.
         Map<String, String> committed = new LinkedHashMap<>();
         committed.put("luajit", "SUCCESS");
-        committed.put("jvm", "BLOCKED(ISSUE-0160)");
-        assertTrue("the committed state has both lanes present",
+        committed.put("jvm", "SUCCESS");
+        assertTrue("the committed state has both lanes successful",
             recordFamilyGateSatisfied(committed));
     }
 

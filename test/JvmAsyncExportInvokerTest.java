@@ -628,20 +628,16 @@ public class JvmAsyncExportInvokerTest {
 
     // =========================================================================
     // Production async function-value oracle (the JVM-side D9 scenario).
-    // The bytes-bearing oracle half is the parent's criterion-3 shape;
-    // on JVM it is recorded BLOCKED on the JVM recursive bytes closure
-    // (ISSUE-0160, E8 — unlanded): the suite pins the E6000 rejection
-    // below and the flip requirement is recorded in
-    // ISSUE_UPDATE_ISSUE-0161.md. Until that issue lands, this
-    // string/int async function-value oracle is the interim JVM-lane
-    // production scenario — it is not a substitute for the bytes half,
-    // which stays unmet while the blocker is open. The LuaJIT lane
-    // executes the exact bytes-bearing oracle
-    // (LuaJitAsyncExportInvokerTest) and the REGISTRY boundary
-    // (RegistryAsyncExportBoundaryTest), and the JVM lane of the same
-    // boundary executes the committed D12 record projects through the
-    // production orchestrator + production invoker
-    // (JvmRegistryAsyncExportBoundaryTest).
+    // Both halves of the parent's criterion-3 shape now execute on the
+    // JVM lane: the string/int async function-value oracle below and the
+    // exact bytes-bearing oracle
+    // (productionCompiledAsyncBytesOracleCompletesNull) — the recorded
+    // ISSUE-0160 flip executed with the JVM recursive bytes closure
+    // (E8) landed in this tree. The LuaJIT lane pins the same bytes
+    // shape (LuaJitAsyncExportInvokerTest) and the REGISTRY boundary
+    // executes the committed D12 record projects through the production
+    // orchestrator + production invoker on both lanes
+    // (RegistryAsyncExportBoundaryTest / JvmRegistryAsyncExportBoundaryTest).
     // =========================================================================
 
     @Test
@@ -778,26 +774,68 @@ public class JvmAsyncExportInvokerTest {
     }
 
     @Test
-    public void jvmBytesOracleIsRejectedWithE6000UntilTheBytesLaneLands()
+    public void productionCompiledAsyncBytesOracleCompletesNull()
+            throws Exception {
+        assumeTrue(jvmAvailable);
+
+        // Acceptance criterion 3 (JVM half): the exact bytes-bearing
+        // oracle of the parent D9 scenario — assign and containerize
+        // first-class async(bytes)->bytes values, invoke and await one,
+        // check bytes identity/content in source, and complete null —
+        // compiles through the same production path and executes through
+        // the production JvmAsyncExportInvoker with the byte-exact
+        // canonical descriptor "null" (the recorded ISSUE-0160 flip
+        // requirement; the LuaJIT lane pins the same shape in
+        // LuaJitAsyncExportInvokerTest#productionCompiledAsyncBytesOracleCompletesNull).
+        Path out = tmp.resolve("bytes-oracle-out");
+        Compiled c = compileJvmEntry(tmp.resolve("bytes-oracle-src"),
+            "oracle_entry.deal", """
+                async function echo(b: bytes): bytes {
+                  return b;
+                }
+                async function fill(b: bytes): bytes {
+                  b[1] = 200;
+                  return b;
+                }
+                export function main(): null { return null; }
+                export async function oracle(): null {
+                  let handlers: (async (b: bytes) => bytes)[] = [];
+                  handlers[handlers.length] = echo;
+                  handlers[handlers.length] = fill;
+                  let buf: bytes = bytes(3);
+                  buf[0] = 7;
+                  let through: bytes = await handlers[0](buf);
+                  through[2] = 9;
+                  if (buf[2] !== 9) {
+                    throw { code: "TEST_FAIL",
+                      message: "async bytes identity lost" };
+                  }
+                  let filled: bytes = await handlers[1](through);
+                  if (filled[0] !== 7 || filled[1] !== 200
+                      || filled.length !== 3) {
+                    throw { code: "TEST_FAIL",
+                      message: "async bytes content mismatch" };
+                  }
+                  return null;
+                }
+                """, null, out, null);
+        assertEquals("the oracle assigns and containerizes first-class"
+            + " async(bytes)->bytes values, invokes and awaits one, checks"
+            + " bytes identity and content in source, and completes null",
+            new Result.Value("null", "null"), c.invoke("oracle", "null"));
+    }
+
+    @Test
+    public void droppingTheAwaitBytesOracleFailsCompilationProvingTheAwaitIsReal()
             throws IOException {
         assumeTrue(jvmAvailable);
-        // The recorded E8 blocker pin (ISSUE-0160, the JVM recursive
-        // bytes closure — E6000 at every bytes site today, pinned by
-        // JvmConformanceTest): until that issue lands, the backend must
-        // reject the bytes signature with E6000 — never silently
-        // miscompile — and the parent's criterion-3 JVM half stays
-        // unmet. Flip requirement (recorded in
-        // ISSUE_UPDATE_ISSUE-0161.md): when ISSUE-0160 lands, this pin
-        // becomes the production assertion mirroring the LuaJIT lane —
-        // the exact bytes-bearing oracle (assign/containerize first-class
-        // async(bytes)->bytes values, invoke and await one, check bytes
-        // identity/content in source, complete null) compiled through
-        // this same production path and invoked with the byte-exact
-        // canonical descriptor, asserting
-        // Result.Value("null", "null").
-        Path out = tmp.resolve("fnval-bytes-out");
-        Path srcRoot = Files.createDirectories(tmp.resolve("fnval-bytes-src")
-            .resolve("src"));
+        // The no-await mutation control for the bytes oracle: removing
+        // await leaves an un-awaited async call, which the checker
+        // rejects (E3014) — the production scenario cannot pass by
+        // skipping the await.
+        Path out = tmp.resolve("bytes-oracle-noawait-out");
+        Path srcRoot = Files.createDirectories(
+            tmp.resolve("bytes-oracle-noawait-src").resolve("src"));
         Path entrySource = srcRoot.resolve("oracle_entry.deal");
         Files.writeString(entrySource, """
             async function echo(b: bytes): bytes {
@@ -806,8 +844,7 @@ public class JvmAsyncExportInvokerTest {
             export function main(): null { return null; }
             export async function oracle(): null {
               let handlers: (async (b: bytes) => bytes)[] = [echo];
-              let buf: bytes = bytes(3);
-              let through: bytes = await handlers[0](buf);
+              handlers[0](bytes(1));
               return null;
             }
             """);
@@ -816,12 +853,84 @@ public class JvmAsyncExportInvokerTest {
             Backend.JVM, null, List.of(srcRoot.toAbsolutePath()),
             Path.of("").toAbsolutePath(), null, invocation);
         boolean ok = orchestrator.compile();
-        assertFalse("the bytes-bearing JVM oracle must not compile until"
-            + " the bytes lane lands", ok);
-        assertTrue("the E6000 bytes rejection names the unlanded lane",
+        assertFalse("an un-awaited async bytes call must not compile",
+            ok);
+        assertTrue("the E3014 async-call-without-await diagnostic fires",
             orchestrator.diagnostics().stream()
-                .anyMatch(d -> d.code().equals("E6000")
-                    && d.message().contains("bytes")));
+                .anyMatch(d -> d.code().equals("E3014")));
+    }
+
+    @Test
+    public void incorrectBytesOutputMakesTheOracleFailWithItsOwnDealError()
+            throws Exception {
+        assumeTrue(jvmAvailable);
+        // The incorrect-bytes-output mutation control: the awaited
+        // handler writes different content, so the oracle's own
+        // assertion throws TEST_FAIL and the invoker propagates that
+        // exact DEAL error — a wrong bytes result can never become a
+        // successful value.
+        Path out = tmp.resolve("bytes-oracle-bad-out");
+        Compiled c = compileJvmEntry(tmp.resolve("bytes-oracle-bad-src"),
+            "oracle_entry.deal", """
+                async function echo(b: bytes): bytes {
+                  return b;
+                }
+                async function fill(b: bytes): bytes {
+                  b[1] = 201;
+                  return b;
+                }
+                export function main(): null { return null; }
+                export async function oracle(): null {
+                  let handlers: (async (b: bytes) => bytes)[] = [echo, fill];
+                  let buf: bytes = bytes(3);
+                  buf[0] = 7;
+                  let through: bytes = await handlers[0](buf);
+                  let filled: bytes = await handlers[1](through);
+                  if (filled[0] !== 7 || filled[1] !== 200
+                      || filled.length !== 3) {
+                    throw { code: "TEST_FAIL",
+                      message: "async bytes content mismatch" };
+                  }
+                  return null;
+                }
+                """, null, out, null);
+        assertEquals(new Result.DealError("TEST_FAIL",
+            "async bytes content mismatch", null, null, null),
+            c.invoke("oracle", "null"));
+    }
+
+    @Test
+    public void noCallBytesOracleFailsWithItsOwnDealError()
+            throws Exception {
+        assumeTrue(jvmAvailable);
+        // The no-call mutation control for the bytes oracle: the oracle
+        // assigns and containerizes the first-class async bytes handler
+        // but never invokes it, so the call-observed mutation never
+        // happens and the oracle's own guard throws TEST_FAIL — the
+        // production scenario can never complete null by skipping the
+        // call, and the invoker propagates the oracle's exact DEAL
+        // error.
+        Path out = tmp.resolve("bytes-oracle-nocall-out");
+        Compiled c = compileJvmEntry(tmp.resolve("bytes-oracle-nocall-src"),
+            "oracle_entry.deal", """
+                async function fill(b: bytes): bytes {
+                  b[0] = 41;
+                  return b;
+                }
+                export function main(): null { return null; }
+                export async function oracle(): null {
+                  let handlers: (async (b: bytes) => bytes)[] = [fill];
+                  let buf: bytes = bytes(1);
+                  if (buf[0] !== 41) {
+                    throw { code: "TEST_FAIL",
+                      message: "async bytes handler was never invoked" };
+                  }
+                  return null;
+                }
+                """, null, out, null);
+        assertEquals(new Result.DealError("TEST_FAIL",
+            "async bytes handler was never invoked", null, null, null),
+            c.invoke("oracle", "null"));
     }
 
     // =========================================================================

@@ -14,11 +14,11 @@ depends_on: []
 parent: ISSUE-0111
 workdir: WD-0900
 mr: MR-0387
-assignee: BOT-3104
-review_cycles: 1
+assignee: BOT-3227
+review_cycles: 2
 run_attempts: 0
 integration_attempts: 0
-total_runs: 4
+total_runs: 6
 depth: 1
 interventions: 0
 integration_fix: false
@@ -33,103 +33,98 @@ external_researched: true
 architecture_status: pending
 breakdown_candidate_id: null
 created: 2026-08-21T14:37:11Z
-updated: 2026-09-04T18:53:56Z
+updated: 2026-09-05T11:28:33Z
 ---
 
-## Update: recorded blockers for the E3/E8 lanes (review cycle 1 remediation)
+## Update: the JVM recursive bytes closure landed; the E8 flip executed (review cycle 2 remediation)
 
-This record updates the issue's `Blockers` section and the criterion-3/4
-tracking state per the MR-0387 review cycle 1 findings (BOT-3100,
-2026-09-04T18:53:43Z). The two findings were verified against the
-rebased canonical tree (`7946e265`): the JVM backend still rejects every
-bytes-bearing signature with E6000 (`JvmBackend.silentJavaLocalType`
-returns `null` for `Type.Bytes`), so the JVM half of the bytes-bearing
-oracle cannot compile until ISSUE-0160 lands; and the sidecar/authoring
-registry machinery is parent-owned, so this issue consumes the landed
-REGISTRY boundary (ISSUE-0346/MR-0384, LuaJIT lane) instead of authoring
-a catalog. The delivered remediation below wires the JVM lane of that
-boundary and records the remaining blockers; nothing is narrowed by a
-boundary note, and no criterion is marked met while its blocker is open.
+This record updates the issue's criterion-3/4 tracking state per the
+MR-0387 review cycle 2 finding (BOT-3221, 2026-09-05T11:28:09Z): the
+JVM half of acceptance criterion 3 and criterion 4's E8 consumption
+were the remaining Major deviation. The correction — land the JVM
+recursive bytes closure (ISSUE-0160's E8 scope) and execute the
+recorded flip requirements — is delivered in this MR: the JVM backend
+now maps every bytes-bearing signature through the shared
+`$DealRt.Bytes` carrier, the exact bytes-bearing oracle compiles and
+executes on the JVM lane, the E6000 pins flipped to production
+assertions, blocker 1 is removed, and criteria 3 (JVM half) and 4 (E8)
+are marked met.
 
-### Delivered in this MR (post-rebase)
+### Delivered in this MR
 
-1. **JVM lane of the REGISTRY boundary** — `test/JvmRegistryAsyncExportBoundaryTest.java`
-   (registered in `tools/gate-manifest.sh`): the same committed
-   D12-shaped `async-export` record projects under
-   `test/fixtures/registry/` execute through the production
-   `ProjectLocator` (valid CLI backend override `jvm`) +
-   `CompilationOrchestrator` (COMMON_SHADOW + DEAL_V1_2_INT32,
-   PRE_ACTIVATION) + the production `JvmAsyncExportInvoker`:
-   matcher-validated string completion (`Result.Value("string",
-   "\"x\"")`), E8004 `int out of safe range` propagation with the
-   JVM's absent location fields, and the pinned
-   `HostInvocationFailure` reasons for sync/parameterized/
-   descriptor-mismatched/missing exports — never a DEAL code and never
-   a satisfied runtime-error expectation.
-2. **Broken-dependency failure on both matrix-required backends** — the
-   committed record project `test/fixtures/registry/broken-dependency/`
-   (an oracle awaiting an imported async dependency that throws
-   `TEST_FAIL`) propagates the exact DEAL error through both the
-   production LuaJIT invoker (source location carried) and the
-   production JVM invoker (absent location); a different declared code
-   never satisfies the expectation.
-3. **Backend-omission failure at the consumption boundary** — the
-   mirrored D12 `BYTES_ASYNC_FUNCTION` matrix rule (the same semantic
-   record on LuaJIT and JVM with async-export): a lane set missing
-   either backend fails the family gate. The authoritative
-   catalog/matrix validation is parent-owned (below).
-4. **Honest E8 pins** — `test/JvmAsyncExportInvokerTest.java` and
-   `test/JvmRegistryAsyncExportBoundaryTest.java` pin the JVM bytes
-   record's E6000 rejection with the flip requirement below; the
-   string/int async function-value oracle is labelled the interim
-   JVM-lane production scenario, not a substitute for the bytes half.
+1. **JVM recursive bytes closure (E8) landed in `JvmBackend`** — the
+   E6 five-helper bytes core (`__bytesNew`/`__bytesLength`/`__bytesGet`/
+   `__bytesSet` with the pinned E8012/E8013 texts and the receiver/
+   index/RHS-before-validation write order), `bytes`/`?bytes` mapping
+   through `javaLocalType`/`nullableJavaType`/`silent*`/
+   `javaArrayElementType`, `bytes[]` and `(bytes | null)[]` element
+   helpers with the per-element-shape `$checkArray` rows, function
+   values (sync and async) with bytes-bearing signatures through the
+   shared `Fn..._Y_...` wrappers, bytes-typed class fields/defaults,
+   and the table-only remainder of the old annotation gate. All ten
+   `JVM-GAP-BYTES` skip entries were removed by the stale-skip gate
+   (the fixtures pass their modes through the real pipeline) and the
+   `jvm-bytes-buffer-ops` known-fail marker was promoted.
+2. **The exact bytes-bearing oracle on the JVM lane** —
+   `test/JvmAsyncExportInvokerTest.java`:
+   `productionCompiledAsyncBytesOracleCompletesNull` compiles the exact
+   criterion-3 oracle through the same production path and asserts
+   `Result.Value("null", "null")` through the production
+   `JvmAsyncExportInvoker`; the no-await (E3014), incorrect-output
+   (TEST_FAIL), and no-call (TEST_FAIL) mutation controls execute with
+   real bytes on the JVM lane.
+3. **The D12 async-bytes record on the JVM lane** —
+   `test/JvmRegistryAsyncExportBoundaryTest.java`:
+   `jvmLaneAsyncBytesRecordExecutesThroughTheProductionInvokerCompletingNull`
+   executes the committed `async-bytes-oracle` record through the
+   production ProjectLocator/orchestrator/invoker and asserts
+   `Result.Value("null", "null")`; the JVM lane outcome flips from
+   `BLOCKED(ISSUE-0160)` to `SUCCESS` and the committed lane set is
+   `{luajit: SUCCESS, jvm: SUCCESS}`.
+4. **Staged-state and catalog consequences re-pinned truthfully** —
+   `test/JvmLaneStatePinTest` (JVM lane summary `passed 266, failed 0,
+   skipped 35 ... 88.4%`), `test/JvmConformanceTest` (no JVM-GAP-BYTES
+   group), `test/HistoricalRegressionCatalog` (the array-delete pin
+   re-anchored to the post-merge spans with its re-derived baseline
+   digest), and `test/JvmBackendTest` (the for-of boundary pin now
+   names the table carrier and the bytes-signature for-of compiles and
+   runs).
 
-### Recorded blockers (the new `Blockers` section)
+### Recorded blockers
 
-1. **ISSUE-0160 (E8, JVM recursive bytes closure) — unlanded.** Blocks
-   criterion 3's JVM half (the production `async()->null` oracle that
-   assigns and containerizes legal first-class `async(bytes)->bytes`
-   values, invokes and awaits one, checks bytes identity/content in
-   source, and completes null through `JvmAsyncExportInvoker` with
-   `Result.Value("null","null")`) and criterion 4's E8 consumption.
-   Until it lands, the JVM bytes record stays E6000-pinned and the
-   criterion-3 JVM half stays **unmet** — it must not be marked met.
-2. **E3 record authoring, request supply, registry gating, and the
-   architecture-owned `FeatureBackendMatrix` — parent-owned
-   (ISSUE-0165 family; ISSUE-0346's boundary).** Blocks the catalog-side
-   "backend omission fails validation" enforcement; this issue consumes
-   the landed boundary on both lanes and mirrors the matrix rule at the
-   consumption boundary. Criterion 4's E3 half is met through the
-   committed record projects (LuaJIT lane: `RegistryAsyncExportBoundaryTest`;
-   JVM lane: `JvmRegistryAsyncExportBoundaryTest`).
-
-### Flip requirements (when ISSUE-0160 lands)
-
-1. `test/JvmAsyncExportInvokerTest.java#jvmBytesOracleIsRejectedWithE6000UntilTheBytesLaneLands`
-   becomes the production bytes-oracle test: the exact bytes-bearing
-   oracle compiled through the same production path and invoked with
-   the byte-exact canonical descriptor `"null"`, asserting
-   `Result.Value("null", "null")`.
-2. `test/JvmRegistryAsyncExportBoundaryTest.java#jvmLaneAsyncBytesRecordIsPinnedE6000UntilTheBytesClosureLands`
-   becomes the production invocation of the committed
-   `async-bytes-oracle` record on the JVM lane with
-   `Result.Value("null", "null")`; the lane outcome flips from
-   `BLOCKED(ISSUE-0160)` to `SUCCESS`.
-3. Blocker 1 is removed, and criteria 3 (JVM half) and 4 (E8
-   consumption) are marked met.
+- **None.** Blocker 1 (ISSUE-0160, E8) is removed: the JVM recursive
+  bytes closure is landed in this tree and the recorded flip
+  requirements executed. The E3 record authoring, request supply,
+  registry gating, and the architecture-owned `FeatureBackendMatrix`
+  remain parent-owned (ISSUE-0165 family; ISSUE-0346's boundary) and
+  this issue consumes the landed boundary on both lanes — no criterion
+  depends on them.
 
 ### Tracking state
 
-- Criterion 1 (both-backend init/main exactly once, single selection and
-  invocation, canonical E4 completion checking, sealed three-outcome
-  distinction): **met** (LuaJitAsyncExportInvokerTest,
+- Criterion 1 (both-backend init/main exactly once, single selection
+  and invocation, canonical E4 completion checking, sealed three-
+  outcome distinction): **met** (LuaJitAsyncExportInvokerTest,
   JvmAsyncExportInvokerTest).
 - Criterion 2 (every negative selection shape with byte-identical
   pinned reasons, no false runtime-error pass): **met** on both
   backends.
-- Criterion 3: **met on LuaJIT only** — the JVM half is blocked on
-  ISSUE-0160 (blocker 1) and must not be marked met.
-- Criterion 4: the E3 consumption (both lanes through the committed
-  record projects) and the broken-dependency/backend-omission failure
-  modes are demonstrated; the E8 consumption is blocked on ISSUE-0160
-  (blocker 1).
+- Criterion 3 (production `async()->null` oracle assigning and
+  containerizing legal first-class `async(bytes)->bytes` values,
+  invoking and awaiting one, checking bytes identity/content in
+  source, completing null): **met on LuaJIT and JVM** — the exact
+  bytes-bearing oracle executes through both production invokers with
+  `Result.Value("null", "null")` (LuaJitAsyncExportInvokerTest.
+  productionCompiledAsyncBytesOracleCompletesNull;
+  JvmAsyncExportInvokerTest.productionCompiledAsyncBytesOracleCompletesNull).
+- Criterion 4 (full production scenario consumes E3 metadata, E6
+  Lua/direct bytes behavior, and E8 JVM closure; fails for no-call,
+  no-await, incorrect bytes output, backend omission, or a broken
+  dependency): **met** — the committed E3 record projects execute
+  through the production locator/orchestrator/invoker on both lanes
+  (RegistryAsyncExportBoundaryTest; JvmRegistryAsyncExportBoundaryTest),
+  the bytes mutation controls (no-call/no-await/incorrect output)
+  fail on both backends with the exact expected signals, the
+  broken-dependency record propagates the exact DEAL error on both
+  backends, backend omission fails the mirrored family gate, and the
+  E8 closure executes the bytes-bearing oracle on the JVM lane.
