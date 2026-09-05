@@ -184,10 +184,18 @@ public final class CompilerProtocol {
         }
     }
 
-    public record SlotPatch(String slotId, Map<String, String> payload) {
+    public record SlotPatch(String slotId, Map<String, String> payload, boolean drop) {
         public SlotPatch {
             Objects.requireNonNull(slotId, "slotId");
             payload = Map.copyOf(payload);
+        }
+
+        public SlotPatch(String slotId, Map<String, String> payload) {
+            this(slotId, payload, false);
+        }
+
+        public static SlotPatch drop(String slotId) {
+            return new SlotPatch(slotId, Map.of(), true);
         }
     }
 

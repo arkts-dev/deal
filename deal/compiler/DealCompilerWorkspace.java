@@ -519,6 +519,17 @@ public final class DealCompilerWorkspace {
             if (patch != null && slot.status() != RepairSlotStatus.REJECTED) {
                 return rejectedWorkspace(source, workspace, "CP1024", "Only rejected repair slots are writable");
             }
+            if (patch != null && patch.drop()) {
+                if (!slot.operation().equals(ADD_DECLARATION)) {
+                    return rejectedWorkspace(source, workspace, "CP1027",
+                            "Only a rejected addDeclaration slot may be dropped");
+                }
+                if (!patch.payload().isEmpty()) {
+                    return rejectedWorkspace(source, workspace, "CP1028",
+                            "A dropped repair slot must not contain a replacement payload");
+                }
+                continue;
+            }
             Map<String, String> payload = new LinkedHashMap<>(slot.payload());
             if (patch != null) {
                 if (!payload.keySet().equals(patch.payload().keySet())) {

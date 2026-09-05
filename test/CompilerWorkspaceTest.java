@@ -28,6 +28,7 @@ public final class CompilerWorkspaceTest {
         checkedChangesRequireQueriedTargetFingerprint();
         inspectChangeBuildsCompilerOwnedDependencyCone();
         repairWorkspacePreservesAndPatchesSlots();
+        repairWorkspaceCanDropAnIndependentRejectedDeclaration();
         dependentRepairSlotsCommitAsOneGroup();
         dependentValidationRejectsOnlyTheFaultyHandler();
         fullCandidateDiagnosticsOwnDependentRepairSlots();
@@ -44,6 +45,37 @@ public final class CompilerWorkspaceTest {
                 .findFirst().orElseThrow();
         check(diagnostic.expected().contains("no implicit coercion"),
                 "numeric/string '+' must publish a machine-readable repair constraint: " + diagnostic);
+    }
+
+    private static void repairWorkspaceCanDropAnIndependentRejectedDeclaration() {
+        String source = "export class AppState { title: string = \"\"; }\n"
+                + "export function initialState(): AppState { return {title: \"Ready\"}; }\n";
+        var inspection = DealCompilerWorkspace.inspect(source, "app.deal");
+        var moduleOperation = DealCompilerWorkspace.queryModule(source, "app.deal").allowedOperations().stream()
+                .filter(value -> value.operation().equals(DealCompilerWorkspace.ADD_DECLARATION))
+                .findFirst().orElseThrow();
+        var precondition = new CompilerProtocol.ChangeSetPrecondition(
+                inspection.sourceDigest(), Map.of(
+                        inspection.moduleId().value(), moduleOperation.targetFingerprint()));
+        var operations = List.<DealCompilerWorkspace.Operation>of(
+                new DealCompilerWorkspace.AddDeclaration(
+                        inspection.moduleId(), "export function placeholder(state: AppState): void { return state; }"),
+                new DealCompilerWorkspace.AddDeclaration(
+                        inspection.moduleId(), "export class Marker { id: int = 0; }"));
+        var changeInspection = DealCompilerWorkspace.inspectChange(
+                source, "app.deal", inspection.sourceDigest(), List.of(inspection.moduleId()),
+                List.of(DealCompilerWorkspace.ADD_DECLARATION));
+        var staged = DealCompilerWorkspace.stageChange(
+                source, "app.deal", precondition, changeInspection, operations);
+        check(!staged.accepted(), "invalid optional declaration must open repair workspace");
+        check(staged.workspace().slots().get(0).status() == CompilerProtocol.RepairSlotStatus.REJECTED
+                        && staged.workspace().slots().get(1).status() == CompilerProtocol.RepairSlotStatus.STAGED,
+                "independent valid declaration must remain staged");
+        var dropped = DealCompilerWorkspace.patchRepairWorkspace(
+                source, "app.deal", staged.workspace(), List.of(CompilerProtocol.SlotPatch.drop("R1")));
+        check(dropped.accepted(), "dropping an independent rejected declaration must commit staged siblings");
+        check(!dropped.source().contains("placeholder") && dropped.source().contains("class Marker"),
+                "drop must remove only the rejected operation");
     }
 
     private static void fullCandidateDiagnosticsOwnDependentRepairSlots() {
