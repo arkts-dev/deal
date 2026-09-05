@@ -2737,7 +2737,18 @@ public final class LuaBackend implements Visitor<Void> {
      * and {@code mod2} export {@code class Result}), checking only the
      * class name would return the wrong alias and produce incorrect
      * defaults-table references (v1.2 identity carriage — imported
-     * classes carry the declaring source's identity).
+     * classes carry the declaring source's identity).</p>
+     *
+     * <p>The first match is selected over definition order
+     * (deterministic-diagnostics D2): {@code SymbolTable.symbols()}
+     * returns a defensive insertion-ordered copy of the insertion-ordered
+     * storage field, so iterating its entries yields the module aliases
+     * in {@code define()} insertion order.  The earliest-defined alias
+     * whose export carries this identity therefore wins, and the emitted
+     * defaults-table reference is byte-identical across JVM restarts and
+     * JDK versions.  Hash-bucket order is a JDK implementation artifact,
+     * not a resolution model; this method performs no re-sorting or
+     * re-selection of its own.</p>
      */
     private String findImportAliasForClass(String className,
                                            CanonicalClassIdentity identity) {

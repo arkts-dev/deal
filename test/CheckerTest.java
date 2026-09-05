@@ -3,6 +3,7 @@ package deal.test;
 import deal.ast.*;
 import deal.checker.*;
 import deal.diagnostics.CompilerDiagnostic;
+import deal.identity.CanonicalClassIdentity;
 import deal.lexer.*;
 import deal.parser.*;
 import deal.types.Type;
@@ -398,6 +399,10 @@ public class CheckerTest {
         testJsonableImportedClass_valid();
         testJsonableImportedClass_invalid();
 
+        // ISSUE-0519 (deterministic-diagnostics D2): SymbolTable
+        // storage pin and definition-order alias selection
+        testSymbolTableSymbolsInsertionOrder();
+        testSymbolTableAliasSelectionDefinitionOrder();
 
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
@@ -3069,6 +3074,101 @@ public class CheckerTest {
             "x narrowing should be null after invalidateAll");
         check(nn.narrowedVariableNames().isEmpty(),
             "narrowedVariableNames should be empty after invalidateAll");
+    }
+
+    // =========================================================================
+    // ISSUE-0519 (deterministic-diagnostics D2): SymbolTable storage pin
+    // =========================================================================
+
+    /**
+     * symbols() must iterate in define() insertion order: the storage
+     * field itself is a LinkedHashMap, so iteration is insertion order —
+     * never a JDK hash-bucket order.  The key pair "b" (hash bucket 2
+     * under HashMap's default 16-bucket table) then "aa" (bucket 0)
+     * inverts under hash-bucket iteration ([aa, b]) and stays [b, aa]
+     * under insertion iteration: a HashMap-backed field fails this
+     * assertion, a LinkedHashMap-backed field passes.  The returned map
+     * must also be a defensive copy.
+     */
+    static void testSymbolTableSymbolsInsertionOrder() {
+        System.out.println("-- SymbolTable: symbols() insertion order and defensive copy --");
+        SymbolTable table = new SymbolTable();
+        table.define("b", new Symbol.VariableSymbol("b", Type.Int.INSTANCE, false));
+        table.define("aa", new Symbol.VariableSymbol("aa", Type.Int.INSTANCE, false));
+
+        List<String> names = new ArrayList<>();
+        for (String key : table.symbols().keySet()) {
+            names.add(key);
+        }
+        check(names.equals(List.of("b", "aa")),
+            "symbols() iteration equals define() insertion order [b, aa], got " + names);
+
+        List<String> entryOrder = new ArrayList<>();
+        for (Map.Entry<String, Symbol> entry : table.symbols().entrySet()) {
+            entryOrder.add(entry.getKey());
+        }
+        check(entryOrder.equals(List.of("b", "aa")),
+            "symbols() entrySet iteration equals define() insertion order [b, aa], got "
+                + entryOrder);
+
+        Map<String, Symbol> copy = table.symbols();
+        copy.put("zz", new Symbol.VariableSymbol("zz", Type.Int.INSTANCE, false));
+        check(table.resolveLocal("zz") == null,
+            "symbols() returns a defensive copy: a put on the returned map does not affect the table");
+        copy.clear();
+        check(table.resolveLocal("b") != null && table.resolveLocal("aa") != null,
+            "symbols() returns a defensive copy: clearing the returned map does not affect the table");
+    }
+
+    /**
+     * The first-match alias scan findImportAliasForClass performs
+     * (symbols().entrySet() iteration; exports().get(name) instanceof
+     * Type.Class with canonical class-identity equality) must select the
+     * earliest-defined alias when two module aliases export a same-named
+     * class with the same module path.  Reversed definition order must
+     * reverse the winner: a HashMap-backed storage field iterates
+     * hash-bucket order ("a" lands in bucket 1, "b" in bucket 2 under
+     * the default 16-bucket table), so the reversed table would still
+     * yield "a" and this assertion fails — the insertion-ordered field
+     * is the definition-order guarantee.
+     */
+    static void testSymbolTableAliasSelectionDefinitionOrder() {
+        System.out.println("-- SymbolTable: alias selection follows definition order --");
+        Type.Class cType = IdentityTestFixtures.classType("C", "m");
+        Map<String, Type> exports = Map.of("C", cType);
+
+        SymbolTable forward = new SymbolTable();
+        forward.define("a", new Symbol.ModuleSymbol("a", exports, null));
+        forward.define("b", new Symbol.ModuleSymbol("b", exports, null));
+        check("a".equals(findImportAliasForClassScan(forward, "C", cType.identity())),
+            "first-match scan picks the earliest-defined alias (a)");
+
+        SymbolTable reversed = new SymbolTable();
+        reversed.define("b", new Symbol.ModuleSymbol("b", exports, null));
+        reversed.define("a", new Symbol.ModuleSymbol("a", exports, null));
+        check("b".equals(findImportAliasForClassScan(reversed, "C", cType.identity())),
+            "first-match scan follows definition order: reversed definition picks b");
+    }
+
+    /**
+     * The exact scan LuaBackend.findImportAliasForClass performs over the
+     * returned symbols() copy: entrySet() iteration, exports().get(name)
+     * instanceof Type.Class, canonical class-identity equality — first
+     * match wins.
+     */
+    private static String findImportAliasForClassScan(SymbolTable table,
+            String className, CanonicalClassIdentity identity) {
+        for (Map.Entry<String, Symbol> entry : table.symbols().entrySet()) {
+            Symbol sym = entry.getValue();
+            if (sym instanceof Symbol.ModuleSymbol ms) {
+                Type exportType = ms.exports().get(className);
+                if (exportType instanceof Type.Class tc
+                        && tc.identity().equals(identity)) {
+                    return entry.getKey();
+                }
+            }
+        }
+        return null;
     }
 
 }

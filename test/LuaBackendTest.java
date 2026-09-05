@@ -508,6 +508,12 @@ public class LuaBackendTest {
         testJsonableTopologicalSortWrappedType();
         testJsonableNoRegression();
 
+        // ISSUE-0519 (deterministic-diagnostics D2): import-alias
+        // selection fixtures — same-named classes across modules and
+        // earliest-defined-alias definition-order selection
+        testImportAliasSameNamedClassDisambiguation();
+        testImportAliasEarliestDefinedWins();
+
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
@@ -2608,5 +2614,136 @@ public class LuaBackendTest {
             "Plain_plan still emitted");
         assertContains(out.lua, "__deal[\"Plain_meta\"] = ", "Plain_meta still emitted");
         check(isValidLua(out.lua), "valid Lua");  // non-jsonable: no $ identifiers
+    }
+
+    // =========================================================================
+    // ISSUE-0519 (deterministic-diagnostics D2): import-alias selection
+    // =========================================================================
+
+    /**
+     * Compile DEAL source with the given stub module resolver and
+     * generate Lua through the host-module-aware entry point.  The
+     * declared maps also classify the imported classes as host-declared
+     * (host-module-abi D4/D7), so a class construction emits the
+     * preserved defaults-table reference
+     * {@code __rt.class_(..., alias.C_defaults, ...)} — the reference
+     * whose alias selection {@code findImportAliasForClass} decides.
+     */
+    private static CompileOutput compileImported(String source,
+            StubModuleResolver resolver,
+            Map<String, Map<String, Type>> hostModules) {
+        LexResult lex = new Lexer(source, "test.deal").tokenize();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal",
+            lex.directiveEvents()).parse();
+
+        NameResolver nr = new NameResolver("test.deal", resolver);
+        SymbolTable symTable = nr.resolve(parse.program());
+
+        List<CompilerDiagnostic> diags = new ArrayList<>(nr.diagnostics());
+        CheckResult result;
+        if (diags.stream().noneMatch(d -> "error".equals(d.severity()))) {
+            result = TypeChecker.check("test.deal", symTable, nr, parse.program());
+            diags.addAll(result.diagnostics());
+            if (diags.stream().anyMatch(d -> "error".equals(d.severity()))) {
+                return new CompileOutput(null, result, parse.program());
+            }
+        } else {
+            return new CompileOutput(null,
+                new CheckResult(Map.of(), symTable, diags), parse.program());
+        }
+
+        String lua = LuaBackend.generateWithImports(parse.program(), result,
+            "test.deal", "test.deal", Map.of(), hostModules);
+        return new CompileOutput(lua, result, parse.program());
+    }
+
+    /**
+     * Two imported modules exporting a same-named class must select the
+     * alias whose export carries the constructed class's module path:
+     * {@code m1.C} and {@code m2.C} both exist, but only alias {@code a}
+     * (importing {@code m1}) exports the {@code C} whose canonical class
+     * identity matches the constructed {@code a.C} — the emitted
+     * defaults-table reference is {@code a.C_defaults}, never
+     * {@code b.C_defaults} (the module-path-essential disambiguation).
+     */
+    static void testImportAliasSameNamedClassDisambiguation() {
+        System.out.println("-- Import alias: same-named class across modules (module-path disambiguation) --");
+        Map<String, Type> exports1 = new LinkedHashMap<>();
+        exports1.put("C", IdentityTestFixtures.classType("C", "m1"));
+        Map<String, Type> exports2 = new LinkedHashMap<>();
+        exports2.put("C", IdentityTestFixtures.classType("C", "m2"));
+        StubModuleResolver resolver = new StubModuleResolver();
+        resolver.register("m1", exports1);
+        resolver.register("m2", exports2);
+        resolver.registerClassSymbol("m1", new Symbol.ClassSymbol("C",
+            List.of(), "m1", IdentityTestFixtures.identityOf("m1", "C")));
+        resolver.registerClassSymbol("m2", new Symbol.ClassSymbol("C",
+            List.of(), "m2", IdentityTestFixtures.identityOf("m2", "C")));
+
+        Map<String, Map<String, Type>> hostModules = new LinkedHashMap<>();
+        hostModules.put("m1", exports1);
+        hostModules.put("m2", exports2);
+
+        CompileOutput out = compileImported(
+            "import * as a from \"m1\"\n" +
+            "import * as b from \"m2\"\n" +
+            "let x: a.C = { };", resolver, hostModules);
+        assertNoErrors(out, "same-named imported class construction");
+        assertContains(out.lua, "a.C_defaults",
+            "defaults-table reference is through alias a");
+        assertNotContains(out.lua, "b.C_defaults",
+            "no defaults-table reference through alias b");
+    }
+
+    /**
+     * Two aliases importing the same module (same export identity) must
+     * resolve first-match over definition order: with {@code a} defined
+     * before {@code b} the emitted defaults-table reference is
+     * {@code a.C_defaults}; with the import order reversed the winner
+     * follows definition order ({@code b.C_defaults}).  A HashMap-backed
+     * symbol storage field iterates hash-bucket order ("a" in bucket 1,
+     * "b" in bucket 2 under the default 16-bucket table), so the
+     * reversed-order assertion fails without the LinkedHashMap storage
+     * pin.  Generating the same input twice in-process yields
+     * byte-identical Lua.
+     */
+    static void testImportAliasEarliestDefinedWins() {
+        System.out.println("-- Import alias: earliest-defined alias wins --");
+        Map<String, Type> exports = new LinkedHashMap<>();
+        exports.put("C", IdentityTestFixtures.classType("C", "m"));
+        StubModuleResolver resolver = new StubModuleResolver();
+        resolver.register("m", exports);
+        resolver.registerClassSymbol("m", new Symbol.ClassSymbol("C",
+            List.of(), "m", IdentityTestFixtures.identityOf("m", "C")));
+
+        Map<String, Map<String, Type>> hostModules = Map.of("m", exports);
+
+        CompileOutput forward = compileImported(
+            "import * as a from \"m\"\n" +
+            "import * as b from \"m\"\n" +
+            "let x: a.C = { };", resolver, hostModules);
+        assertNoErrors(forward, "forward import order");
+        assertContains(forward.lua, "a.C_defaults",
+            "earliest-defined alias a wins the defaults-table reference");
+        assertNotContains(forward.lua, "b.C_defaults",
+            "later-defined alias b is not referenced");
+
+        String reversedSource =
+            "import * as b from \"m\"\n" +
+            "import * as a from \"m\"\n" +
+            "let x: a.C = { };";
+        CompileOutput reversed = compileImported(reversedSource, resolver,
+            hostModules);
+        assertNoErrors(reversed, "reversed import order");
+        assertContains(reversed.lua, "b.C_defaults",
+            "earliest-defined alias b wins the defaults-table reference");
+        assertNotContains(reversed.lua, "a.C_defaults",
+            "later-defined alias a is not referenced");
+
+        CompileOutput again = compileImported(reversedSource, resolver,
+            hostModules);
+        assertNoErrors(again, "repeated generation");
+        check(reversed.lua != null && reversed.lua.equals(again.lua),
+            "generating the same input twice in-process yields byte-identical Lua");
     }
 }
