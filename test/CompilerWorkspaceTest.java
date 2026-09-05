@@ -29,6 +29,7 @@ public final class CompilerWorkspaceTest {
         inspectChangeBuildsCompilerOwnedDependencyCone();
         repairWorkspacePreservesAndPatchesSlots();
         dependentRepairSlotsCommitAsOneGroup();
+        dependentValidationRejectsOnlyTheFaultyHandler();
         fullCandidateDiagnosticsOwnDependentRepairSlots();
         numericStringDiagnosticPublishesRepairContract();
         System.out.println("CompilerWorkspaceTest: all tests passed");
@@ -132,6 +133,40 @@ public final class CompilerWorkspaceTest {
         check(repaired.accepted(), "dependent slots must compile together after a narrow patch");
         check(repaired.source().contains("class RunAction") && repaired.source().contains("function run"),
                 "the repaired group must retain both declarations");
+    }
+
+    private static void dependentValidationRejectsOnlyTheFaultyHandler() {
+        String source = source();
+        var inspection = DealCompilerWorkspace.inspect(source, "app.deal");
+        var descriptor = DealCompilerWorkspace.queryModule(source, "app.deal")
+                .allowedOperations().get(0);
+        var precondition = new CompilerProtocol.ChangeSetPrecondition(
+                inspection.sourceDigest(), Map.of(
+                        inspection.moduleId().value(), descriptor.targetFingerprint()));
+        var changeInspection = DealCompilerWorkspace.inspectChange(
+                source, "app.deal", inspection.sourceDigest(), List.of(inspection.moduleId()),
+                List.of(DealCompilerWorkspace.ADD_DECLARATION));
+        var staged = DealCompilerWorkspace.stageChange(
+                source, "app.deal", precondition, changeInspection, List.of(
+                        new DealCompilerWorkspace.AddDeclaration(
+                                inspection.moduleId(), "export class FirstAction {}"),
+                        new DealCompilerWorkspace.AddDeclaration(
+                                inspection.moduleId(),
+                                "export function first(state: AppState, action: FirstAction): AppState { return state; }"),
+                        new DealCompilerWorkspace.AddDeclaration(
+                                inspection.moduleId(), "export class SecondAction {}"),
+                        new DealCompilerWorkspace.AddDeclaration(
+                                inspection.moduleId(),
+                                "export function second(state: AppState, action: SecondAction): AppState { return missing; }")));
+        var rejected = staged.workspace().slots().stream()
+                .filter(value -> value.status() == CompilerProtocol.RepairSlotStatus.REJECTED).toList();
+        check(rejected.size() == 1 && rejected.get(0).payload().get("declaration").contains("function second"),
+                "dependency-aware validation must expose only the actually invalid handler: "
+                        + staged.workspace().slots());
+        check(staged.workspace().slots().stream()
+                        .filter(value -> value.payload().get("declaration").contains("function first"))
+                        .allMatch(value -> value.status() == CompilerProtocol.RepairSlotStatus.STAGED),
+                "a valid handler must stay staged with its required action declaration");
     }
 
     private static void inspectChangeBuildsCompilerOwnedDependencyCone() {

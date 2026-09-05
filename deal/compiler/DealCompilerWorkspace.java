@@ -594,13 +594,16 @@ public final class DealCompilerWorkspace {
         SccResult dependencyGroups = stronglyConnectedComponents(dependencies);
         int[] groupIndexes = dependencyGroups.groupByNode();
         List<StructuredDiagnostic> diagnostics = change.diagnostics();
-        List<ChangeResult> isolated = operations.stream()
-                // Framework validators may require sibling declarations (for example an action
-                // and its handler). Isolated checks therefore establish only core-language
-                // validity; full-candidate diagnostics select the rejected slot below.
-                .map(operation -> applyChecked(
-                        source, modulePath, precondition, List.of(operation), resolver, adapter))
-                .toList();
+        List<ChangeResult> isolated = new ArrayList<>();
+        for (int index = 0; index < operations.size(); index++) {
+            Set<Integer> closure = dependencyClosure(index, dependencies);
+            List<Operation> candidate = new ArrayList<>();
+            for (int operationIndex = 0; operationIndex < operations.size(); operationIndex++) {
+                if (closure.contains(operationIndex)) candidate.add(operations.get(operationIndex));
+            }
+            isolated.add(applyChecked(
+                    source, modulePath, precondition, candidate, resolver, adapter));
+        }
         List<StructuredDiagnostic> operationContractDiagnostics = diagnostics.stream()
                 .filter(DealCompilerWorkspace::isOperationContractDiagnostic).toList();
         Set<Integer> directlyRejected = rejectedSlots(operations, operationContractDiagnostics);
@@ -745,6 +748,18 @@ public final class DealCompilerWorkspace {
                     result.get(consumer).add(other);
                 }
             }
+        }
+        return result;
+    }
+
+    private static Set<Integer> dependencyClosure(int operation, List<Set<Integer>> dependencies) {
+        Set<Integer> result = new LinkedHashSet<>();
+        java.util.ArrayDeque<Integer> pending = new java.util.ArrayDeque<>();
+        pending.add(operation);
+        while (!pending.isEmpty()) {
+            int current = pending.removeFirst();
+            if (!result.add(current)) continue;
+            pending.addAll(dependencies.get(current));
         }
         return result;
     }
