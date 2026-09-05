@@ -1,0 +1,8 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: The S/index.d.deal candidate resolves when the first three candidates are absent
+// @expected: compile-ok
+// @features: modules, resolution, declarations, index-declaration, v1.2
+
+import * as Lib from "./support/index_declaration";
+export function probe(): int { return Lib.value(); }
+export function main(): null { return null; }

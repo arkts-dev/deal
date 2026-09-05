@@ -1,0 +1,8 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: A relative parent-directory specifier resolves from the importing file directory
+// @expected: compile-ok
+// @features: modules, resolution, relative-paths, v1.2
+
+import * as Lib from "../support/parent_lib";
+export function probe(): int { return Lib.value(); }
+export function main(): null { return null; }

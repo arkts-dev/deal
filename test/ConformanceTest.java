@@ -1021,20 +1021,46 @@ public class ConformanceTest {
             return allDiags;
         }
 
-        // DEAL v1.2 module shape gate (spec-v1.2: Syntactic grammar —
-        // Statement/expression separation): imports must precede all
-        // top-level declarations (E1048), the module top level allows
-        // only imports/functions/classes/exports (E1049), imports and
-        // exports are not statements (E1050), and implementation files
-        // have no bodyless function declarations (E1051).  This mirrors
-        // the post-parse pass CompilationOrchestrator runs for every
-        // production module.
-        List<CompilerDiagnostic> shapeDiags =
-            ModuleShapeValidator.validate(
-                parseResult.program(), filename, false);
-        allDiags.addAll(shapeDiags);
-        if (shapeDiags.stream().anyMatch(d -> "error".equals(d.severity()))) {
-            return allDiags;
+        if (filename.endsWith(".d.deal")) {
+            // E2 (v12-gap-suite-integration D7): the declaration-file
+            // pipeline for .d.deal fixtures. Production runs the
+            // post-parse shape gate with isDeclarationFile=true (the
+            // E1049 top-level-statement branch is skipped for
+            // declaration files — deal/module/ModuleShapeValidator) and
+            // then the signature-extraction gate — the sole E7001
+            // emission site (deal/module/ExportExtractor). Return as
+            // soon as any error-severity diagnostic appears.
+            List<CompilerDiagnostic> declShapeDiags =
+                ModuleShapeValidator.validate(
+                    parseResult.program(), filename, true);
+            allDiags.addAll(declShapeDiags);
+            if (declShapeDiags.stream()
+                    .anyMatch(d -> "error".equals(d.severity()))) {
+                return allDiags;
+            }
+            ExportExtractor extractor = new ExportExtractor(filename, true);
+            extractor.extract(parseResult.program());
+            allDiags.addAll(extractor.diagnostics());
+            if (extractor.diagnostics().stream()
+                    .anyMatch(d -> "error".equals(d.severity()))) {
+                return allDiags;
+            }
+        } else {
+            // DEAL v1.2 module shape gate (spec-v1.2: Syntactic grammar —
+            // Statement/expression separation): imports must precede all
+            // top-level declarations (E1048), the module top level allows
+            // only imports/functions/classes/exports (E1049), imports and
+            // exports are not statements (E1050), and implementation files
+            // have no bodyless function declarations (E1051).  This mirrors
+            // the post-parse pass CompilationOrchestrator runs for every
+            // production module.
+            List<CompilerDiagnostic> shapeDiags =
+                ModuleShapeValidator.validate(
+                    parseResult.program(), filename, false);
+            allDiags.addAll(shapeDiags);
+            if (shapeDiags.stream().anyMatch(d -> "error".equals(d.severity()))) {
+                return allDiags;
+            }
         }
 
         // Identity-keyed ClassSymbol routing pre-pass (v1.2 identity
@@ -2232,16 +2258,36 @@ public class ConformanceTest {
 
         // ---- relative file imports ----
 
+        /**
+         * Resolve a relative import through the production candidate order
+         * (v12-gap-suite-integration D6/E1): the legacy exact-path branch
+         * first — accepted only when it is a regular readable file, never a
+         * directory — then the pinned four-candidate order {@code S.deal},
+         * {@code S/index.deal}, {@code S.d.deal}, {@code S/index.d.deal}
+         * mirroring {@code deal/module/SourceModuleResolver}'s candidate
+         * walk, each candidate accepted only when it is a regular readable
+         * file. Non-relative imports return {@code null}.
+         */
         private Path resolveRelativePath(String importPath) {
             if (!importPath.startsWith("./") && !importPath.startsWith("../")) {
                 return null;
             }
-            Path resolved = testFileDir.resolve(importPath).normalize();
-            if (Files.exists(resolved)) return resolved;
-            Path withExt = testFileDir.resolve(importPath + ".deal").normalize();
-            if (Files.exists(withExt)) return withExt;
-            Path withDeclExt = testFileDir.resolve(importPath + ".d.deal").normalize();
-            if (Files.exists(withDeclExt)) return withDeclExt;
+            Path base = testFileDir.resolve(importPath).normalize();
+            List<Path> candidates = new ArrayList<>();
+            // The legacy exact-path candidate: a regular file landing is
+            // accepted, a directory landing is not (production never
+            // publishes a directory module).
+            candidates.add(base);
+            String name = base.getFileName().toString();
+            candidates.add(base.resolveSibling(name + ".deal"));
+            candidates.add(base.resolve("index.deal"));
+            candidates.add(base.resolveSibling(name + ".d.deal"));
+            candidates.add(base.resolve("index.d.deal"));
+            for (Path candidate : candidates) {
+                if (Files.isRegularFile(candidate) && Files.isReadable(candidate)) {
+                    return candidate;
+                }
+            }
             return null;
         }
 
