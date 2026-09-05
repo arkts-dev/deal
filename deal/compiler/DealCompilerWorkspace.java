@@ -613,9 +613,11 @@ public final class DealCompilerWorkspace {
             String slotId = "R" + (index + 1);
             String groupId = "G" + (groupIndexes[index] + 1);
             Map<String, String> payload = payload(operation);
-            List<StructuredDiagnostic> owned = isolated.get(index).accepted()
-                    ? diagnostics.stream().filter(value -> diagnosticMatches(operation, value)).toList()
-                    : isolated.get(index).diagnostics();
+            List<StructuredDiagnostic> candidateDiagnostics = diagnostics.stream()
+                    .filter(value -> diagnosticMatches(operation, value)).toList();
+            List<StructuredDiagnostic> owned = !candidateDiagnostics.isEmpty()
+                    ? candidateDiagnostics
+                    : isolated.get(index).accepted() ? List.of() : isolated.get(index).diagnostics();
             boolean rejected = directlyRejected.contains(index);
             boolean blocked = !rejected && directlyRejected.stream().anyMatch(other ->
                     groupIndexes[other] == groupIndexes[slotIndex]
