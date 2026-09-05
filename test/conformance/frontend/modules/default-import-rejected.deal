@@ -1,0 +1,6 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: A default import is rejected because namespace import is required
+// @expected: compile-error E1019
+// @features: modules, imports, diagnostics, v1.2
+
+import Lib from "./support/export_function_lib";

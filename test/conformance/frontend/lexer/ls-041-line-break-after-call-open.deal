@@ -1,0 +1,14 @@
+// @spec: Lexical elements
+// @description: A line break after an opening call parenthesis does not terminate the argument list
+// @expected: compile-ok
+// @features: parser, semicolon, line-break, call, v1.2
+
+function identity(value: int): int {
+  return value;
+}
+
+export function main(): null {
+  let value: int = identity(
+    1);
+  return null;
+}

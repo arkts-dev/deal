@@ -1,0 +1,13 @@
+// @spec: Variables
+// @description: A statically known function call supplies the inferred type of a variable
+// @expected: compile-ok
+// @features: variables, inference, functions, calls, v1.2
+
+function produce(): int {
+  return 1;
+}
+
+export function main(): null {
+  let inferred = produce();
+  return null;
+}

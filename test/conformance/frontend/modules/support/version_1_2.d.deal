@@ -1,0 +1,8 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: Declaration-file support module classified as a discovery companion
+// @expected: companion
+// @features: companion, declarations
+
+// @deal-version 1.2
+
+export function value(): int;

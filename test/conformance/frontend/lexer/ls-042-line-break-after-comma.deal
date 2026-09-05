@@ -1,0 +1,14 @@
+// @spec: Lexical elements
+// @description: A line break after an argument separator does not terminate the call
+// @expected: compile-ok
+// @features: parser, semicolon, line-break, comma, v1.2
+
+function add(left: int, right: int): int {
+  return left + right;
+}
+
+export function main(): null {
+  let value: int = add(1,
+    2);
+  return null;
+}

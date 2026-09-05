@@ -1,0 +1,10 @@
+// @spec: Type system
+// @description: null on the left canonicalizes to the same nullable type as null on the right
+// @expected: compile-ok
+// @features: type-system, nullable, canonicalization, v1.2
+
+export function main(): null {
+  let left: null | int = 1;
+  let right: int | null = left;
+  return null;
+}

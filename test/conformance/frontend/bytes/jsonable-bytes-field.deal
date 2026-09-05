@@ -1,0 +1,13 @@
+// @spec: Classes — JSON serialization (@jsonable)
+// @description: bytes is absent from the jsonable field-type allowlist
+// @expected: compile-error E4007
+// @features: jsonable, bytes, classes, diagnostics, v1.2
+
+// @jsonable
+export class Blob {
+  data: bytes = bytes(0);
+}
+
+export function main(): null {
+  return null;
+}

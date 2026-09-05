@@ -1,0 +1,14 @@
+// @spec: Lexical elements — Comment semantics
+// @description: A non-directive comment terminates a declaration directive block
+// @expected: compile-ok
+// @features: lexer, directives, attachment, jsonable, v1.2
+
+// @jsonable
+// ordinary documentation
+export class Packet {
+  payload: bytes = bytes(0);
+}
+
+export function main(): null {
+  return null;
+}

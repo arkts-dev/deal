@@ -1,0 +1,9 @@
+// @spec: Lexical elements
+// @description: A parenthesized literal is not a valid assignment target
+// @expected: compile-error E1033
+// @features: parser, assignment-target, negative, v1.2
+
+export function main(): null {
+  (1) = 2;
+  return null;
+}

@@ -1,0 +1,12 @@
+// @spec: Lexical elements — Numeric overflow, NaN, and Infinity
+// @description: Unary minus exempts only the exact token 2147483648
+// @expected: compile-error E1036
+// @features: lexer, int, literals, unary-minus, diagnostics, v1.2
+
+export function value(): int {
+  return -2147483649;
+}
+
+export function main(): null {
+  return null;
+}

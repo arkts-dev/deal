@@ -59,10 +59,13 @@ import java.util.List;
  * passes as {@code runtime-error E8004} under its legacy-authority
  * catalog row (zero v1.2 credit), the staged registry entry is
  * removed (no STAGED-FAIL line), the promoted int-add-overflow
- * passes, and the summary reads {@code Total: 430, Passed: 430}
- * with exactly one tracked known-fail (the frontend FFI-manifest
- * fixture, compile-error E2010 tracked by ISSUE-0111) and zero
- * staged failures.
+ * passes, and the summary reads {@code Total: 487, Passed: 487}
+ * (ISSUE-0501 lands the 63 compile-classified gap fixtures under
+ * {@code frontend/}: 57 classified cases passing plus 6 companions
+ * — 430 + 57 = 487, companions 34 -> 40, v1.2-credit results
+ * 463 -> 526) with exactly one tracked known-fail (the frontend
+ * FFI-manifest fixture, compile-error E2010 tracked by ISSUE-0111)
+ * and zero staged failures.
  *
  * <p>The test runs from the repository root (the {@code run_tests.sh}
  * contract, like {@code ConformanceTest}); {@code run_tests.sh}
@@ -132,7 +135,7 @@ public class JvmLaneStatePinTest {
             + "(found DEAL_ERROR_CODE: E8004)";
 
     private static final String LUA_SUMMARY =
-        "Total: 430, Passed: 430, Failed: 0, Skipped: 0, "
+        "Total: 487, Passed: 487, Failed: 0, Skipped: 0, "
             + "KnownFailures (tracked): 1, StagedFailures (tracked): 0";
 
     private static final String LUA_PHASE =
@@ -146,7 +149,7 @@ public class JvmLaneStatePinTest {
     private static final String LUA_PROFILE_AUTHORITY =
         "Profile-authority accounting: 2 legacy-authority result(s) "
             + "(LEGACY_REGRESSION + LEGACY_SAFE_INT \u2014 zero "
-            + "v1.2/promotion credit; 2 passed, 0 failed), 463 v1.2-credit "
+            + "v1.2/promotion credit; 2 passed, 0 failed), 526 v1.2-credit "
             + "result(s) (COMMON_SHADOW + DEAL_V1_2_INT32)";
 
     // =========================================================================

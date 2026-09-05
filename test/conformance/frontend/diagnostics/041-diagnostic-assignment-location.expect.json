@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "mode": "compile-error",
+  "diagnostic": {
+    "code": "E3001",
+    "line": 8,
+    "column": 3,
+    "message": "Cannot assign boolean to int"
+  }
+}

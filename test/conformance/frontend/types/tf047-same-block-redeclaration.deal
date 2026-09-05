@@ -1,0 +1,12 @@
+// @spec: Variables
+// @description: Two parameters of one function may not share a name
+// @expected: compile-error E2002
+// @features: variables, scopes, parameters, diagnostics, v1.2
+
+function combine(value: int, value: int): int {
+  return value;
+}
+
+export function main(): null {
+  return null;
+}

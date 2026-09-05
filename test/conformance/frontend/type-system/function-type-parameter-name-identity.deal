@@ -1,0 +1,17 @@
+// @spec: Type system — Equality and comparison operand rules
+// @description: Function parameter names do not enter function type identity
+// @expected: compile-ok
+// @features: type-system, functions, type-identity, descriptors, v1.2
+
+function identity(value: int): int {
+  return value;
+}
+
+export function probe(): int {
+  let f: (renamed: int) => int = identity;
+  return f(3);
+}
+
+export function main(): null {
+  return null;
+}

@@ -1,0 +1,10 @@
+// @spec: Lexical elements
+// @description: Unary logical negation binds more tightly than equality
+// @expected: compile-ok
+// @features: parser, precedence, unary, equality, v1.2
+
+export function test_unary_not_before_equality(): boolean {
+  return !false === true;
+}
+
+export function main(): null { return null; }

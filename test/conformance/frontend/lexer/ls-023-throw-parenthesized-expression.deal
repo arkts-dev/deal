@@ -1,0 +1,11 @@
+// @spec: Lexical elements
+// @description: A throw statement accepts a parenthesized expression
+// @expected: compile-ok
+// @features: parser, throw, expression, v1.2
+
+export function main(): null {
+  if (false) {
+    throw ({ code: "X", message: "x" });
+  }
+  return null;
+}

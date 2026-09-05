@@ -45,18 +45,27 @@ public class DifferentialGateCorpusTest {
      * re-authored) and promotes the restored int-add-overflow fixture
      * (runtime-error 81 -> 83, its sidecar unchanged; known-fail
      * 2 -> 1: only the FFI manifest frontend pin stays tracked; the
-     * runtime-error-sidecar population 82 -> 83). */
-    private static final int TOTAL_FIXTURES = 465;
-    private static final int FRONTEND_FIXTURES = 130;
+     * runtime-error-sidecar population 82 -> 83). ISSUE-0501 (the
+     * compile-classified gap-fixture landing) adds the 63 gap fixtures
+     * under {@code frontend/} (type-system 2, lexer 21, modules 9,
+     * diagnostics 3, bytes 4, types 16, tables 2 — 57 classified
+     * cases: +20 compile-ok, +37 compile-error; +6 companions) and
+     * the two Diagnostics-bullet compile sidecars: total 465 -> 528,
+     * frontend 130 -> 193, compile-ok 38 -> 58, compile-error
+     * 91 -> 128, companions 34 -> 40, compile pins 2 -> 4; the
+     * runtime populations (218/83) and the known-fail population
+     * (the one FFI manifest frontend pin) are unchanged. */
+    private static final int TOTAL_FIXTURES = 528;
+    private static final int FRONTEND_FIXTURES = 193;
     private static final int BACKEND_RUNTIME_FIXTURES = 335;
-    private static final int COMPILE_OK = 38;
-    private static final int COMPILE_ERROR = 91;
+    private static final int COMPILE_OK = 58;
+    private static final int COMPILE_ERROR = 128;
     private static final int RUNTIME_OK = 218;
     private static final int RUNTIME_ERROR = 83;
     private static final int RUNTIME_ERROR_SIDECARS = 83;
-    private static final int COMPANIONS = 34;
+    private static final int COMPANIONS = 40;
     private static final int KNOWN_FAIL = 1;
-    private static final int COMPILE_PINS = 2;
+    private static final int COMPILE_PINS = 4;
 
     public static void main(String[] args) throws Exception {
         System.out.println("=== Differential Gate Corpus Tests (ISSUE-0353) ===\n");
@@ -154,7 +163,7 @@ public class DifferentialGateCorpusTest {
 
     private static void compileDiagnosticPins(DifferentialGate.GateRun run) {
         check(run.compileDiagnosticComparisons() == COMPILE_PINS,
-            "the two real Diagnostics-bullet fixtures are compared against "
+            "the four real Diagnostics-bullet fixtures are compared against "
                 + "the real frontend");
         check(run.failures().stream()
                 .noneMatch(f -> f.kind().equals("compile-diagnostic")),

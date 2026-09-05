@@ -1,0 +1,5 @@
+// @expected: companion
+// @spec: Modules, declarations, standard library, and host ABI — Declaration-file format
+// @description: Lower-priority declaration candidate with incompatible return type
+
+export function value(): string;

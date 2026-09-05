@@ -1,0 +1,13 @@
+// @spec: Lexical elements — Comment semantics
+// @description: Declaration directives other than @deal-version accept no argument
+// @expected: compile-error E1045
+// @features: lexer, directives, jsonable, diagnostics, v1.2
+
+// @jsonable unexpected
+export class Item {
+  value: int = 0;
+}
+
+export function main(): null {
+  return null;
+}

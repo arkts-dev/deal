@@ -1,0 +1,10 @@
+// @spec: Diagnostics
+// @description: An incompatible assignment diagnostic preserves the exact assignment span
+// @expected: compile-error E3001
+// @features: diagnostics, source-span, assignment
+
+export function main(): null {
+  let value: int = 1;
+  value = true;
+  return null;
+}

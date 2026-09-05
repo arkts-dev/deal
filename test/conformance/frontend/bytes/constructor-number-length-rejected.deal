@@ -1,0 +1,12 @@
+// @spec: Type system — Explicit conversions
+// @description: bytes(length) requires an int argument exactly
+// @expected: compile-error E5001
+// @features: bytes, intrinsics, invariance, diagnostics, v1.2
+
+export function allocate(): bytes {
+  return bytes(4.0);
+}
+
+export function main(): null {
+  return null;
+}

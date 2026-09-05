@@ -1,0 +1,7 @@
+// @expected: companion
+// @spec: Modules, declarations, standard library, and host ABI — Module resolution
+// @description: Implementation candidate selected before declaration candidate
+
+export function value(): int {
+  return 1;
+}

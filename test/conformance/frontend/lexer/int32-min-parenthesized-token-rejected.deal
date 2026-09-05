@@ -1,0 +1,12 @@
+// @spec: Lexical elements — Numeric overflow, NaN, and Infinity
+// @description: Parentheses break the immediate unary-minus exception for 2147483648
+// @expected: compile-error E1036
+// @features: lexer, int, literals, unary-minus, diagnostics, v1.2
+
+export function value(): int {
+  return -(2147483648);
+}
+
+export function main(): null {
+  return null;
+}

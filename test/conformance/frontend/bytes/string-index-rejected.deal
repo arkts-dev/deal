@@ -1,0 +1,13 @@
+// @spec: Bytes
+// @description: Byte-buffer indexing requires an int index exactly
+// @expected: compile-error E3007
+// @features: bytes, indexing, diagnostics, v1.2
+
+export function read(): int {
+  let b: bytes = bytes(1);
+  return b["0"];
+}
+
+export function main(): null {
+  return null;
+}

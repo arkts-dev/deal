@@ -102,9 +102,12 @@ import java.util.stream.Stream;
  *   <li>All other fixtures ({@code compile-ok}, {@code compile-error},
  *       {@code companion}, frontend fixtures) carry no sidecar except
  *       the Diagnostics-bullet fixtures.</li>
- *   <li>The two Diagnostics-bullet fixtures
+ *   <li>The four Diagnostics-bullet fixtures
  *       ({@code frontend/diagnostics/assignment-mismatch.deal},
- *       {@code frontend/diagnostics/return-mismatch.deal}) carry a
+ *       {@code frontend/diagnostics/return-mismatch.deal},
+ *       {@code frontend/diagnostics/039-diagnostic-exact-span.deal},
+ *       {@code frontend/diagnostics/041-diagnostic-assignment-location.deal})
+ *       carry a
  *       Compile Expectation Sidecar that validates clean, and its pin
  *       matches the real frontend diagnostic set field-exact: exactly one
  *       error diagnostic, equal {@code code}/{@code line}/{@code column}/
@@ -129,6 +132,10 @@ public class SidecarCorpusValidationTest {
         "frontend/diagnostics/assignment-mismatch.deal";
     private static final String DIAG_RETURN =
         "frontend/diagnostics/return-mismatch.deal";
+    private static final String DIAG_EXACT_SPAN =
+        "frontend/diagnostics/039-diagnostic-exact-span.deal";
+    private static final String DIAG_ASSIGNMENT_LOCATION =
+        "frontend/diagnostics/041-diagnostic-assignment-location.deal";
 
     /** The only runtime-ok fixture whose transcript carries stdout bytes. */
     private static final String CONSOLE_FIXTURE =
@@ -891,7 +898,8 @@ public class SidecarCorpusValidationTest {
         // The exact sidecar paths the corpus may carry: one per runtime-ok
         // fixture, one per runtime-error fixture, one per known-fail
         // runtime fixture (the restored int-add-overflow), plus the two
-        // Diagnostics-bullet Compile Expectation Sidecars.
+        // Diagnostics-bullet Compile Expectation Sidecars (the two
+        // ISSUE-0501 gap fixtures extend the closed set to four).
         Set<String> allowedSidecars = new HashSet<>();
         int runtimeOk = 0;
         int runtimeError = 0;
@@ -900,7 +908,9 @@ public class SidecarCorpusValidationTest {
             boolean isRuntimeError =
                 fixture.expectedTag().startsWith("runtime-error ");
             boolean isDiagnosticsPin = fixture.corpusPath().equals(DIAG_ASSIGNMENT)
-                || fixture.corpusPath().equals(DIAG_RETURN);
+                || fixture.corpusPath().equals(DIAG_RETURN)
+                || fixture.corpusPath().equals(DIAG_EXACT_SPAN)
+                || fixture.corpusPath().equals(DIAG_ASSIGNMENT_LOCATION);
             Path sidecarPath = sidecarFor(fixture.corpusPath());
 
             if (isRuntimeOk) {

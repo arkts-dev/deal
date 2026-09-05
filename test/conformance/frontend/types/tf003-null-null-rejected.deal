@@ -1,0 +1,9 @@
+// @spec: Type system
+// @description: null union null is not a valid nullable type
+// @expected: compile-error E3005
+// @features: type-system, nullable, diagnostics, v1.2
+
+export function main(): null {
+  let value: null | null = null;
+  return null;
+}

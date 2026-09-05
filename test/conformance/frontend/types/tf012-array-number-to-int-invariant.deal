@@ -1,0 +1,10 @@
+// @spec: Type system
+// @description: Arrays of number are not assignable to arrays of int
+// @expected: compile-error E3001
+// @features: type-system, arrays, invariance, diagnostics, v1.2
+
+export function main(): null {
+  let numbers: number[] = [1.0];
+  let integers: int[] = numbers;
+  return null;
+}

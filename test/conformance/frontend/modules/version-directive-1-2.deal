@@ -1,0 +1,7 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: A declaration file accepts an exact v1.2 deal-version directive
+// @expected: compile-ok
+// @features: modules, declarations, directives, v1.2
+
+import * as Api from "./support/version_1_2";
+export function main(): null { return null; }

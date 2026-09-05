@@ -1,0 +1,9 @@
+// @spec: Lexical elements
+// @description: A template literal accepts a string-valued parenthesized interpolation
+// @expected: compile-ok
+// @features: lexer, template-literal, interpolation, v1.2
+
+export function main(): null {
+  let value: string = `x${("y")}z`;
+  return null;
+}

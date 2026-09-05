@@ -1,0 +1,12 @@
+// @spec: Lexical elements — Numeric overflow, NaN, and Infinity
+// @description: Binary subtraction does not activate the unary-minus literal exception
+// @expected: compile-error E1036
+// @features: lexer, int, literals, subtraction, diagnostics, v1.2
+
+export function value(): int {
+  return 0 - 2147483648;
+}
+
+export function main(): null {
+  return null;
+}

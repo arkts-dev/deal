@@ -1,0 +1,14 @@
+// @spec: Modules, declarations, standard library, and host ABI — Module resolution
+// @description: S.deal is selected before S.d.deal when both candidates exist
+// @expected: compile-ok
+// @features: modules, resolution, declarations, precedence, v1.2
+
+import * as Lib from "./resolution_priority";
+
+export function probe(): int {
+  return Lib.value();
+}
+
+export function main(): null {
+  return null;
+}

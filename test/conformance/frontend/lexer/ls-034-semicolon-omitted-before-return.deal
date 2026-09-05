@@ -1,0 +1,9 @@
+// @spec: Lexical elements
+// @description: A variable declaration may omit its semicolon before return
+// @expected: compile-ok
+// @features: parser, semicolon, variable-declaration, return, v1.2
+
+export function main(): null {
+  let value: int = 1
+  return null;
+}
