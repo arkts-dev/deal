@@ -76,30 +76,7 @@
         "jvm"
       ]
     },
-    {
-      "name": "jvm-host-extra-export-ignored",
-      "description": "Extra host exports are structurally dropped: the host class supplies an undeclared extra() method and the load succeeds with the declared surface intact",
-      "modules": {
-        "bindings/log.d.deal": "export function value(): string;",
-        "entry.deal": "import * as log from \"host/log\"\nexport function main(): null { return null; }\nexport function run(): string { return log.value(); }"
-      },
-      "entry": "entry.deal",
-      "hosts": {
-        "host/log": {
-          "declaration": "bindings/log.d.deal",
-          "java": "public final class HostLog {\n    public static Object value() { return \"declared-value\"; }\n    public static Object extra() { return \"undeclared\"; }\n}\n"
-        }
-      },
-      "expectedOutput": "declared-value",
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "expectedCompileError": null,
-      "irContains": [],
-      "irNotContains": [],
-      "backends": [
-        "jvm"
-      ]
-    },
+
     {
       "name": "jvm-host-bad-return",
       "description": "A host function returning a value of the wrong runtime kind for its declared return type raises E8010 at the call boundary (Long for a declared string)",
@@ -172,30 +149,7 @@
         "jvm"
       ]
     },
-    {
-      "name": "jvm-host-nullable-return-ok",
-      "description": "A host function declared string | null returns Java null (the JVM DEAL null sentinel) and a string across calls; DEAL narrowing observes both",
-      "modules": {
-        "bindings/log.d.deal": "export function find(s: string): string | null;",
-        "entry.deal": "import * as console from \"std/console\"\nimport * as log from \"host/log\"\nexport function main(): null {\n  let a: string | null = log.find(\"hit\");\n  let b: string | null = log.find(\"miss\");\n  if (a !== null) { console.log(\"a-hit\"); } else { console.log(\"a-null\"); }\n  if (b === null) { console.log(\"b-null\"); } else { console.log(\"b-hit\"); }\n  return null;\n}"
-      },
-      "entry": "entry.deal",
-      "hosts": {
-        "host/log": {
-          "declaration": "bindings/log.d.deal",
-          "java": "public final class HostLog {\n    public static Object find(String s) { return \"hit\".equals(s) ? s : null; }\n}\n"
-        }
-      },
-      "expectedOutput": "a-hit\nb-null",
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "expectedCompileError": null,
-      "irContains": [],
-      "irNotContains": [],
-      "backends": [
-        "jvm"
-      ]
-    },
+
     {
       "name": "jvm-host-nullable-return-bad",
       "description": "A host function declared string | null returning a non-null non-string value raises E8010 (the nullable boundary checks the inner type)",
@@ -220,30 +174,7 @@
         "jvm"
       ]
     },
-    {
-      "name": "jvm-host-null-return-ok",
-      "description": "A host function declared ->null returning Java null passes the null boundary on both the module-level discard path and an in-function call",
-      "modules": {
-        "bindings/log.d.deal": "export function ping(): null;",
-        "entry.deal": "import * as console from \"std/console\"\nimport * as log from \"host/log\"\nexport function main(): null {\n  log.ping();\n  console.log(\"after\");\n  return null;\n}\nexport function run(): null { log.ping(); console.log(\"run\"); return null; }"
-      },
-      "entry": "entry.deal",
-      "hosts": {
-        "host/log": {
-          "declaration": "bindings/log.d.deal",
-          "java": "public final class HostLog {\n    public static Object ping() { return null; }\n}\n"
-        }
-      },
-      "expectedOutput": "after\nrun",
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "expectedCompileError": null,
-      "irContains": [],
-      "irNotContains": [],
-      "backends": [
-        "jvm"
-      ]
-    },
+
     {
       "name": "jvm-host-null-return-bad",
       "description": "A host function declared ->null returning a non-null value raises E8010 at the boundary (LuaJIT's sync ->null check, JVM null sentinel)",
@@ -292,30 +223,7 @@
         "jvm"
       ]
     },
-    {
-      "name": "jvm-host-async-ok",
-      "description": "A host function declared async returns a CompletableFuture (the backend async operation); await joins it and the completion value satisfies the declared return type — including a DEAL async function awaited through another",
-      "modules": {
-        "bindings/log.d.deal": "export async function fetch(id: int): string;",
-        "entry.deal": "import * as console from \"std/console\"\nimport * as log from \"host/log\"\nasync function load(): string {\n  let v: string = await log.fetch(9);\n  return v;\n}\nexport function main(): null { return null; }\nexport async function run(): null {\n  let v: string = await load();\n  console.log(v);\n  return null;\n}"
-      },
-      "entry": "entry.deal",
-      "hosts": {
-        "host/log": {
-          "declaration": "bindings/log.d.deal",
-          "java": "import java.util.concurrent.CompletableFuture;\npublic final class HostLog {\n    public static Object fetch(int id) { return CompletableFuture.completedFuture(\"data-\" + id); }\n}\n"
-        }
-      },
-      "expectedOutput": "data-9",
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "expectedCompileError": null,
-      "irContains": [],
-      "irNotContains": [],
-      "backends": [
-        "jvm"
-      ]
-    },
+
     {
       "name": "jvm-host-async-shape-bad",
       "description": "A host function declared async returning a non-operation raises E8010 (the async operation shape check, spec: the host must return a backend async operation accepted by the await lowering)",

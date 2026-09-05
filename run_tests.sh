@@ -178,6 +178,25 @@ TEST_MAINS+=(
   'fg|=== Running Differential Gate Lanes Corpus Tests (ISSUE-0357) ===|java -ea -cp build deal.test.conformance.DifferentialGateLanesCorpusTest'
 )
 
+
+# =========================================================================
+# ISSUE-0360 (JSON slice absorption — pin-before-delete): the two
+# dev-time evidence helpers join the COMPILE list only (not the run
+# phase). JsonAbsorptionGateLog runs the full three-lane differential
+# gate over the real corpus with the production lanes registered and
+# prints the per-fixture per-backend VERDICT log committed at
+# test/conformance/json-absorption/gate-pass-log.txt;
+# JsonAbsorptionNegativeControls runs the oracle-negative control
+# battery (Verification 4) over the absorbed destinations on scratch
+# copies with its committed log at
+# test/conformance/json-absorption/negative-control-log.txt. Both stay
+# dev-time (G5's temporary-coexistence window): the legacy runners keep
+# executing the corpus and the JSON path in run_tests.sh.
+# =========================================================================
+TEST_SOURCES+=(
+  'deal/test/conformance/JsonAbsorptionGateLog.java'
+  'deal/test/conformance/JsonAbsorptionNegativeControls.java'
+)
 # =========================================================================
 # ISSUE-0485 (CapabilityRegistry.withState transition surface): the
 # single release-owned promotion/demotion transition surface and its D3

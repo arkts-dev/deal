@@ -2,79 +2,10 @@
   "version": "1.0",
   "description": "JVM async/await slice (ISSUE-0099), rebased onto the v1.2 canonical: JVM-only fixtures that run the real DEAL frontend (lexer → parser → module-shape validation → name resolver → type checker) → real JvmBackend codegen → javac → java executing the emitted artifact (the harness fails a fixture whose codegen or JVM execution is bypassed). The slice uses spec-v1.2's permitted JVM blocking-call lowering: an async function compiles to a plain static method returning its declared type; `await E` evaluates the direct call and applies the declared-return-type completion check at the await site (int completions route through checkInt — E8004; number/string/boolean/null completions are proven by the emitted Java types, which §JVM backend contract permits). Async function values reuse the ISSUE-0098 wrapper machinery unchanged — the per-signature wrapper shape class and per-declaration wrapper field cover async markers, and awaited indirect calls dispatch through invoke. Covered forms: async returns, await in value positions (let initializers, return positions, nested call arguments, if conditions), await in discard positions, completion success (value paths, the int safe-range boundary, null completions) and completion failure (an awaited operation completing by raising E8005, propagating through one and two await levels), direct calls with primitive/string/boolean/null signatures, async function values (typed locals, callback parameters, reassigned local bindings), imported async direct calls through the orchestrator multi-module pipeline (the entry module exporting the v1.2 selected-entry non-async main(): null), and three frontend compile-error gates (E3012 await outside async, E3013 await on a sync call, E3014 async call without await) rejected before any backend runs. The JVM guard over reassigned async function-typed locals/parameters descends into awaited calls: an assignment hidden in an awaited call's argument list is a real reassignment, so the adapter over the binding is rejected with E6000 (never a silent snapshot) and the live-read semantics are pinned by one LuaJIT-only reference fixture (the retargeted async adapter computes 11; the async adapter returns the inner operation handle and the completion check stays at the await site). ISSUE-0304 lifts the async-expressions lane: async function expressions emit through the sync closure machinery with the async descriptor marker and blocking bodies, block-level async functions declare through the cell + anonymous-wrapper path, and an `await E;` statement evaluates exactly once with the await-site completion check and discards the value (the three jvm-async-fn-expr pins — typed local, callback, and returned first-class value — run with the completion check at every await).",
   "tests": [
-    {
-      "name": "jvm-async-direct-await",
-      "description": "An async function declaration returns its declared type directly and a direct await evaluates to the call's return value (42)",
-      "source": "async function g(): int { return 42; }\nexport async function test(): int { return await g(); }",
-      "expectedOutput": "42",
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "expectedCompileError": null,
-      "irContains": [
-        "async function g: int",
-        "await : int",
-        "[boundary: async-completion]"
-      ],
-      "irNotContains": [],
-      "backends": [
-        "jvm"
-      ]
-    },
-    {
-      "name": "jvm-async-value-positions",
-      "description": "Await in value positions — let initializers and a return position — with int, string, boolean, and number completion types flows through locals to 'hi-jvm' (an await-in-condition position is pinned by jvm-async-await-in-condition)",
-      "source": "async function add(a: int, b: int): int { return a + b; }\nasync function greet(name: string): string { return \"hi-\" + name; }\nasync function flag(): boolean { return true; }\nasync function half(n: number): number { return n / 2.0; }\nexport async function test(): string {\n  let x: int = await add(2, 3);\n  let y: int = await add(x, 5);\n  let b: boolean = await flag();\n  let h: number = await half(6.0);\n  if (y === 10 && b && h === 3.0) { return await greet(\"jvm\"); }\n  return \"bad\";\n}",
-      "expectedOutput": "hi-jvm",
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "expectedCompileError": null,
-      "irContains": [
-        "async function add: int",
-        "await : int",
-        "await : string",
-        "await : boolean",
-        "await : number"
-      ],
-      "irNotContains": [],
-      "backends": [
-        "jvm"
-      ]
-    },
-    {
-      "name": "jvm-async-discard-position",
-      "description": "Standalone await statements (discard positions) run the awaited calls for their side effects — each awaited tick logs its own marker and the runner's auto-invoked result is 3 (the v1.2 module shape has no top-level lets, so the counter field of the pre-rebase fixture becomes three distinct console markers)",
-      "source": "import * as console from \"std/console\"\nasync function tick(tag: string): int { console.log(tag); return 1; }\nexport async function test(): int {\n  await tick(\"first\");\n  await tick(\"second\");\n  await tick(\"third\");\n  return 3;\n}",
-      "expectedOutput": "first\nsecond\nthird",
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "expectedCompileError": null,
-      "irContains": [
-        "async function tick: int",
-        "await : int"
-      ],
-      "irNotContains": [],
-      "backends": [
-        "jvm"
-      ]
-    },
-    {
-      "name": "jvm-async-completion-success",
-      "description": "Completion success on the value and null paths: awaiting a null-returning async function yields the DEAL null and awaiting a boolean-returning one yields its value",
-      "source": "async function flag(): boolean { return true; }\nasync function noop(): null { return; }\nexport async function test(): boolean {\n  await noop();\n  let b: boolean = await flag();\n  return b;\n}",
-      "expectedOutput": "true",
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "expectedCompileError": null,
-      "irContains": [
-        "async function noop: null",
-        "await : null",
-        "await : boolean"
-      ],
-      "irNotContains": [],
-      "backends": [
-        "jvm"
-      ]
-    },
+
+
+
+
     {
       "name": "jvm-async-completion-int-boundary",
       "description": "The await-site int completion check runs the emitted checkInt boundary: the maximal safe-range int (2^53-1) passes through the await and back out",
@@ -128,41 +59,8 @@
         "jvm"
       ]
     },
-    {
-      "name": "jvm-async-nested-await-args",
-      "description": "Nested awaits in call-argument position evaluate innermost-first: await outer(await inner()) computes 8",
-      "source": "async function inner(): int { return 7; }\nasync function outer(x: int): int { return x + 1; }\nexport async function test(): int { return await outer(await inner()); }",
-      "expectedOutput": "8",
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "expectedCompileError": null,
-      "irContains": [
-        "async function inner: int",
-        "async function outer: int",
-        "await : int"
-      ],
-      "irNotContains": [],
-      "backends": [
-        "jvm"
-      ]
-    },
-    {
-      "name": "jvm-async-await-in-condition",
-      "description": "Await in an if-condition position: the awaited boolean completion decides the branch",
-      "source": "async function flag(): boolean { return true; }\nexport async function test(): int {\n  if (await flag()) { return 1; }\n  return 0;\n}",
-      "expectedOutput": "1",
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "expectedCompileError": null,
-      "irContains": [
-        "async function flag: boolean",
-        "await : boolean"
-      ],
-      "irNotContains": [],
-      "backends": [
-        "jvm"
-      ]
-    },
+
+
     {
       "name": "jvm-async-function-value",
       "description": "An async function used as a value: a typed local holds the declared function's wrapper and an awaited indirect call through the variable returns 6",
@@ -238,104 +136,12 @@
         "jvm"
       ]
     },
-    {
-      "name": "jvm-async-fn-expr-typed-local",
-      "description": "ISSUE-0304 D1: an async function expression assigned to a typed local emits an anonymous subclass of the signature's shared wrapper class (FnA0_R_I, descriptor async()->int); the awaited indirect call dispatches through invoke with the completion check at the await site (42)",
-      "source": "export async function test(): int {\n  let f: async () => int = async function(): int { return 42; };\n  let r: int = await f();\n  if (r !== 42) { throw { code: \"TEST_FAIL\", message: \"fn expr typed local\" }; }\n  return r;\n}",
-      "expectedOutput": "42",
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "expectedCompileError": null,
-      "irContains": [
-        "func-expr : async()->int",
-        "let f: async()->int",
-        "await : int",
-        "[boundary: async-completion]"
-      ],
-      "irNotContains": [],
-      "backends": [
-        "jvm"
-      ]
-    },
-    {
-      "name": "jvm-async-fn-expr-callback",
-      "description": "ISSUE-0304 D1: an async function expression passed as a callback flows through the shared carrier to the declared async callback parameter; the awaited indirect call dispatches through the parameter's wrapper with the completion check at the await site (7)",
-      "source": "async function apply(cb: async (x: int) => int, v: int): int { return await cb(v); }\nexport async function test(): int {\n  let r: int = await apply(async function(x: int): int { return x + 1; }, 6);\n  if (r !== 7) { throw { code: \"TEST_FAIL\", message: \"fn expr callback\" }; }\n  return r;\n}",
-      "expectedOutput": "7",
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "expectedCompileError": null,
-      "irContains": [
-        "func-expr : async(int)->int",
-        "await : int",
-        "[boundary: async-completion]"
-      ],
-      "irNotContains": [],
-      "backends": [
-        "jvm"
-      ]
-    },
-    {
-      "name": "jvm-async-fn-expr-returned",
-      "description": "ISSUE-0304 D1 + shared carrier: an async function expression returned from an async function crosses the await as a function-typed completion (proven by the emitted Java wrapper type); the returned first-class value dispatches through the shared $DealRt.FnValue carrier with the completion check at every await (42)",
-      "source": "async function pick(): async () => int { return async function(): int { return 42; }; }\nexport async function test(): int {\n  let f: async () => int = await pick();\n  let r: int = await f();\n  if (r !== 42) { throw { code: \"TEST_FAIL\", message: \"fn expr returned\" }; }\n  return r;\n}",
-      "expectedOutput": "42",
-      "expectedError": null,
-      "expectedExitCode": 0,
-      "expectedCompileError": null,
-      "irContains": [
-        "func-expr : async()->int",
-        "await : async()->int",
-        "await : int",
-        "[boundary: async-completion]"
-      ],
-      "irNotContains": [],
-      "backends": [
-        "jvm"
-      ]
-    },
-    {
-      "name": "jvm-async-frontend-await-outside-async",
-      "description": "A frontend gate: await outside an async function body is rejected by the checker (E3012) before any backend runs — codegen/javac/java never invoked",
-      "source": "async function g(): int { return 1; }\nexport function test(): int { return await g(); }",
-      "expectedOutput": null,
-      "expectedError": null,
-      "expectedExitCode": null,
-      "expectedCompileError": "E3012",
-      "irContains": [],
-      "irNotContains": [],
-      "backends": [
-        "jvm"
-      ]
-    },
-    {
-      "name": "jvm-async-frontend-await-sync-call",
-      "description": "A frontend gate: await applied to a non-async call is rejected by the checker (E3013) before any backend runs — codegen/javac/java never invoked",
-      "source": "function g(): int { return 1; }\nexport async function test(): int { return await g(); }",
-      "expectedOutput": null,
-      "expectedError": null,
-      "expectedExitCode": null,
-      "expectedCompileError": "E3013",
-      "irContains": [],
-      "irNotContains": [],
-      "backends": [
-        "jvm"
-      ]
-    },
-    {
-      "name": "jvm-async-frontend-unawaited-call",
-      "description": "A frontend gate: a direct async call without await is rejected by the checker (E3014) before any backend runs — codegen/javac/java never invoked",
-      "source": "async function g(): int { return 1; }\nexport function test(): int { return g(); }",
-      "expectedOutput": null,
-      "expectedError": null,
-      "expectedExitCode": null,
-      "expectedCompileError": "E3014",
-      "irContains": [],
-      "irNotContains": [],
-      "backends": [
-        "jvm"
-      ]
-    },
+
+
+
+
+
+
     {
       "name": "jvm-async-lua-ref-reassigned-adapter",
       "description": "LuaJIT reference semantics for the reassigned-local adapter shape hidden in an awaited call's argument list that the JVM slice conservatively rejects with E6000 (pinned in JvmBackendTest.testAsyncSlice): LuaJIT's adapter reads the binding live on every invoke, so g = two retargets the earlier async arity-extension adapter (await h(1, 2) = 11). The argument-hidden assignment form (apply(g = two, 1)) is not Lua-emittable — Lua has no assignment expressions in a call argument list — so the reference source uses the statement reassignment exactly like the sync sibling jvm-fv-lua-ref-reassigned-adapter, and the async adapter returns the inner operation handle with the completion check at the await site",

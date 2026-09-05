@@ -94,61 +94,9 @@
         "jvm"
       ]
     },
-    {
-      "name": "jvm-mod-import-load-time-order",
-      "description": "v1.2 compile-error gate: module top level holds only declarations, so the v1.1 load-time statements (console.log at module top level) are rejected with E1049 before any backend codegen",
-      "modules": {
-        "lib.deal": "import * as console from \"std/console\"\nconsole.log(\"lib-load\");\nexport function ping(): null { console.log(\"ping\"); }",
-        "main.deal": "import * as console from \"std/console\"\nimport * as lib from \"./lib\"\nconsole.log(\"main-load\");\nexport function run(): null { lib.ping(); }"
-      },
-      "entry": "main.deal",
-      "expectedOutput": null,
-      "expectedError": null,
-      "expectedExitCode": null,
-      "expectedCompileError": "E1049",
-      "irContains": [],
-      "irNotContains": [],
-      "backends": [
-        "jvm"
-      ]
-    },
-    {
-      "name": "jvm-mod-unused-import-side-effect",
-      "description": "v1.2 compile-error gate: module top level holds only declarations, so the v1.1 load-time statement in the imported lib is rejected with E1049 before any backend codegen",
-      "modules": {
-        "lib.deal": "import * as console from \"std/console\"\nconsole.log(\"lib-initialized\");\nexport function helper(): int { return 7; }",
-        "main.deal": "import * as lib from \"./lib\"\nexport function run(): int { return 1; }"
-      },
-      "entry": "main.deal",
-      "expectedOutput": null,
-      "expectedError": null,
-      "expectedExitCode": null,
-      "expectedCompileError": "E1049",
-      "irContains": [],
-      "irNotContains": [],
-      "backends": [
-        "jvm"
-      ]
-    },
-    {
-      "name": "jvm-mod-transitive-import",
-      "description": "v1.2 compile-error gate: module top level holds only declarations, so the v1.1 load-time statements in the transitive import chain are rejected with E1049 before any backend codegen",
-      "modules": {
-        "c.deal": "import * as console from \"std/console\"\nconsole.log(\"c-load\");\nexport function base(): int { return 10; }",
-        "b.deal": "import * as console from \"std/console\"\nimport * as c from \"./c\"\nconsole.log(\"b-load\");\nexport function plus(x: int): int { return c.base() + x; }",
-        "main.deal": "import * as console from \"std/console\"\nimport * as b from \"./b\"\nconsole.log(\"main-load\");\nexport function run(): int { return b.plus(5); }"
-      },
-      "entry": "main.deal",
-      "expectedOutput": null,
-      "expectedError": null,
-      "expectedExitCode": null,
-      "expectedCompileError": "E1049",
-      "irContains": [],
-      "irNotContains": [],
-      "backends": [
-        "jvm"
-      ]
-    },
+
+
+
     {
       "name": "jvm-mod-class-name-isolation",
       "description": "Two modules with the same basename in different directories derive isolated class names (a/calc → ACalc, b/calc → BCalc): each defines its own same-named export compute(), and the entry calls both through distinct aliases — aCalc.compute() * 10 + bCalc.compute() = 12",
@@ -168,24 +116,7 @@
         "jvm"
       ]
     },
-    {
-      "name": "jvm-mod-load-time-imported-call",
-      "description": "v1.2 compile-error gate: module top level holds only declarations, so the v1.1 module-level call feeding a module field initializer is rejected with E1049 before any backend codegen",
-      "modules": {
-        "lib.deal": "export function value(): int { return 40; }",
-        "main.deal": "import * as lib from \"./lib\"\nlet base: int = lib.value();\nexport function run(): int { return base + 2; }"
-      },
-      "entry": "main.deal",
-      "expectedOutput": null,
-      "expectedError": null,
-      "expectedExitCode": null,
-      "expectedCompileError": "E1049",
-      "irContains": [],
-      "irNotContains": [],
-      "backends": [
-        "jvm"
-      ]
-    },
+
     {
       "name": "jvm-mod-imported-strings-while",
       "description": "An imported exported function uses a while loop and string concatenation inside its own module: lib.repeat(\"ab\", 3) returns \"ababab\" through the module boundary",
@@ -241,24 +172,7 @@
         "jvm"
       ]
     },
-    {
-      "name": "jvm-mod-missing-export",
-      "description": "Frontend compile-error gate (E2004): the entry module calls lib.missing(), which the imported module does not export — the real orchestrator frontend rejects the project before any backend, and no .java artifact is written",
-      "modules": {
-        "lib.deal": "export function present(): int { return 1; }",
-        "main.deal": "import * as lib from \"./lib\"\nexport function main(): null { return null; }\n\nexport function run(): int { return lib.missing(1); }"
-      },
-      "entry": "main.deal",
-      "expectedOutput": null,
-      "expectedError": null,
-      "expectedExitCode": null,
-      "expectedCompileError": "E2004",
-      "irContains": [],
-      "irNotContains": [],
-      "backends": [
-        "jvm"
-      ]
-    },
+
     {
       "name": "jvm-mod-imported-arity-mismatch",
       "description": "Frontend compile-error gate (E3009): the entry module calls the imported two-parameter lib.add() with one argument — the real orchestrator frontend rejects the project before any backend, and no .java artifact is written",
@@ -271,24 +185,6 @@
       "expectedError": null,
       "expectedExitCode": null,
       "expectedCompileError": "E3009",
-      "irContains": [],
-      "irNotContains": [],
-      "backends": [
-        "jvm"
-      ]
-    },
-    {
-      "name": "jvm-mod-imported-type-error",
-      "description": "Frontend compile-error gate (E5003): the IMPORTED module itself has a return-type error (broken(): int returns a string) — the real orchestrator frontend type-checks lib.deal and rejects the project before any backend, and no .java artifact is written",
-      "modules": {
-        "lib.deal": "export function broken(): int { return \"not an int\"; }",
-        "main.deal": "import * as lib from \"./lib\"\nexport function main(): null { return null; }\n\nexport function run(): int { return lib.broken(); }"
-      },
-      "entry": "main.deal",
-      "expectedOutput": null,
-      "expectedError": null,
-      "expectedExitCode": null,
-      "expectedCompileError": "E5003",
       "irContains": [],
       "irNotContains": [],
       "backends": [
