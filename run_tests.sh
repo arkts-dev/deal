@@ -247,11 +247,13 @@ TEST_MAINS=( "${REBUILT_MAINS[@]}" )
 # // @spec: E1044 rejection, main/oracle source shapes) — plus their
 # unit batteries and the real-corpus gate join the compile list and the
 # unconditional run phase here. The change boundary is
-# deal/test/conformance/, test/features/ (the on-disk catalog corpus),
-# deal/diagnostics/DiagnosticCode.java (the E6006 FFI_UNSUPPORTED_BACKEND
-# registration the linked JVM record pins), and run_tests.sh; the single
-# compile/test-list authority file (tools/gate-manifest.sh) stays
-# untouched.
+# deal/test/conformance/ plus test/features/ (the on-disk catalog
+# corpus); the linked JVM C_FFI rejection record pins E6003 — the exact
+# code the production JVM pipeline emits at @extern-c
+# (deal/module/CompilationOrchestrator.java) — so
+# deal/diagnostics/DiagnosticCode.java stays untouched by this change;
+# the single compile/test-list authority file (tools/gate-manifest.sh)
+# stays untouched.
 # =========================================================================
 TEST_SOURCES+=(
   'deal/test/conformance/V12FeatureMetadata.java'

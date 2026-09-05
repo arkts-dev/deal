@@ -280,7 +280,7 @@ public class V12FeatureCatalogTest {
             List.of("c-ffi/add.d.deal"), "c-ffi/jvm"));
         write(root, "c-ffi/jvm.deal", FFI_RUNTIME);
         write(root, "c-ffi/jvm.feature.json", sidecar("C_FFI",
-            "compile-error E6006", "[\"jvm\"]", "compile-only", null,
+            "compile-error E6003", "[\"jvm\"]", "compile-only", null,
             List.of("c-ffi/add.d.deal"), null));
         write(root, "c-ffi-declaration-error/dup.d.deal", DUP_MARKER);
         write(root, "c-ffi-declaration-error/dup.feature.json", sidecar(
@@ -538,7 +538,7 @@ public class V12FeatureCatalogTest {
             "runs exactly on LuaJIT").isPresent(),
             "backend-addition failure: " + result.failures());
 
-        // 10. Missing linked E6006 record (link to a nonexistent id).
+        // 10. Missing linked E6003 record (link to a nonexistent id).
         Path missingLink = tempRoot.resolve("missing-link");
         buildValidCatalog(missingLink);
         write(missingLink, "c-ffi/luajit.feature.json", sidecar("C_FFI",

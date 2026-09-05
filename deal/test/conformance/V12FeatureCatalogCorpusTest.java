@@ -112,7 +112,7 @@ public class V12FeatureCatalogCorpusTest {
                 "async record requires the non-async main");
         }
 
-        // The C_FFI pair: LuaJIT runtime plus the linked JVM E6006 record.
+        // The C_FFI pair: LuaJIT runtime plus the linked JVM E6003 record.
         ValidatedRecord luajit = byId(records, "c-ffi/luajit-runtime");
         ValidatedRecord jvm = byId(records, "c-ffi/jvm-unsupported");
         check(luajit != null && jvm != null, "the C_FFI pair exists");

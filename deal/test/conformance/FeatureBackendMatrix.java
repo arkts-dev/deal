@@ -60,14 +60,17 @@ import java.util.Set;
  *       both pipelines.</li>
  * </ul>
  *
- * <p>The pinned FFI unsupported-backend code is
- * {@link #FFI_UNSUPPORTED_BACKEND_CODE} {@code E6006}
- * {@code FFI_UNSUPPORTED_BACKEND} — the code the landed C6 gate design
- * pins ({@link SidecarSchemaValidator#FFI_UNSUPPORTED_BACKEND_CODE});
- * {@code E6003} is already allocated in the registry
- * ({@code deal/diagnostics/DiagnosticCode.java}) to rest-parameter
- * rejection, so the epic-text {@code E6003} identifier resolves to this
- * code.</p>
+ * <p>The pinned FFI unsupported-backend code of the linked JVM
+ * rejection record is {@link #FFI_UNSUPPORTED_BACKEND_CODE}
+ * {@code E6003} {@code FFI_UNSUPPORTED_BACKEND} — the exact code the
+ * production JVM pipeline emits for {@code @extern-c} before any
+ * artifact write (design D8; epic criterion: JVM extern-C emits E6003
+ * before artifacts). The production emission site is
+ * {@code deal/module/CompilationOrchestrator.java} (the
+ * {@code E6003 FFI_UNSUPPORTED_BACKEND} arm at {@code @extern-c}),
+ * pinned by {@code ProjectIntegrationGatesTest} and
+ * {@code FfiDeclarationValidatorTest}. Any future renumbering of that
+ * emission belongs to the backend epic, not to this catalog.</p>
  *
  * <p>Catalog-level matrix rules ({@link #validateCatalog}):</p>
  * <ul>
@@ -87,10 +90,11 @@ public final class FeatureBackendMatrix {
 
     /**
      * The pinned FFI unsupported-backend diagnostic code of the linked
-     * JVM rejection record: {@code E6006 FFI_UNSUPPORTED_BACKEND} (the
-     * C6 code pinned by {@link SidecarSchemaValidator}).
+     * JVM rejection record: {@code E6003 FFI_UNSUPPORTED_BACKEND} — the
+     * exact code the production JVM pipeline emits at {@code @extern-c}
+     * before any artifact write (design D8; epic criterion).
      */
-    public static final String FFI_UNSUPPORTED_BACKEND_CODE = "E6006";
+    public static final String FFI_UNSUPPORTED_BACKEND_CODE = "E6003";
 
     private FeatureBackendMatrix() {
         // Static utility; no instances.

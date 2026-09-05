@@ -1,6 +1,6 @@
 // v1.2 feature fixture — C_FFI JVM rejection record (compile-only):
 // JVM does not support the C FFI contract, so the @extern-c import
-// emits FFI_UNSUPPORTED_BACKEND (E6006) on the JVM pipeline before any
+// emits FFI_UNSUPPORTED_BACKEND (E6003) on the JVM pipeline before any
 // artifact.
 import * as ffi from "./native-add"
 

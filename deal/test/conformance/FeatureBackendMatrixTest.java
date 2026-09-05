@@ -190,7 +190,7 @@ public class FeatureBackendMatrixTest {
             "runtime-ok", "synthetic-main", "[\"luajit\"]", "c-ffi/jvm")));
         checkOk("c-ffi/jvm-rejection", parse("""
             {"version": 1, "feature": "C_FFI", "spec": "x", "description": "y",
-             "expected": {"compile-error": "E6006"}, "backends": ["jvm"],
+             "expected": {"compile-error": "E6003"}, "backends": ["jvm"],
              "invocation": "compile-only", "support": []}
             """));
         checkFail("c-ffi/jvm-runtime", parse(runtimeRecord(FeatureId.C_FFI,
@@ -210,13 +210,13 @@ public class FeatureBackendMatrixTest {
             {"version": 1, "feature": "C_FFI", "spec": "x", "description": "y",
              "expected": {"compile-error": "E7002"}, "backends": ["jvm"],
              "invocation": "compile-only", "support": []}
-            """), "expected", "must pin exactly E6006");
+            """), "expected", "must pin exactly E6003");
         checkFail("c-ffi/compile-ok", parse(runtimeRecord(FeatureId.C_FFI,
             "compile-ok", "compile-only", "[\"jvm\"]", null)),
             "expected", "neither");
         checkFail("c-ffi/reject-linked", parse("""
             {"version": 1, "feature": "C_FFI", "spec": "x", "description": "y",
-             "expected": {"compile-error": "E6006"}, "backends": ["jvm"],
+             "expected": {"compile-error": "E6003"}, "backends": ["jvm"],
              "invocation": "compile-only", "support": [],
              "linkedRecord": "other"}
             """), "linkedRecord", "carries no linkedRecord of its own");
@@ -281,12 +281,12 @@ public class FeatureBackendMatrixTest {
             "runtime-ok", "direct-main", "[\"luajit\"]", "c-ffi/other")));
         unlinkedReject.put("c-ffi/other", parse("""
             {"version": 1, "feature": "C_FFI", "spec": "x", "description": "y",
-             "expected": {"compile-error": "E6006"}, "backends": ["jvm"],
+             "expected": {"compile-error": "E6003"}, "backends": ["jvm"],
              "invocation": "compile-only", "support": []}
             """));
         unlinkedReject.put("c-ffi/orphan", parse("""
             {"version": 1, "feature": "C_FFI", "spec": "x", "description": "y",
-             "expected": {"compile-error": "E6006"}, "backends": ["jvm"],
+             "expected": {"compile-error": "E6003"}, "backends": ["jvm"],
              "invocation": "compile-only", "support": []}
             """));
         List<MatrixFailure> unlinkedFailures =
@@ -316,7 +316,7 @@ public class FeatureBackendMatrixTest {
             "runtime-ok", "direct-main", "[\"luajit\"]", "c-ffi/jvm")));
         pair.put("c-ffi/jvm", parse("""
             {"version": 1, "feature": "C_FFI", "spec": "x", "description": "y",
-             "expected": {"compile-error": "E6006"}, "backends": ["jvm"],
+             "expected": {"compile-error": "E6003"}, "backends": ["jvm"],
              "invocation": "compile-only", "support": []}
             """));
         List<MatrixFailure> pairFailures =

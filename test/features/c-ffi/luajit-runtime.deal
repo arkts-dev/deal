@@ -1,6 +1,6 @@
 // v1.2 feature fixture — C_FFI LuaJIT runtime-ok record (direct-main):
 // the runtime record runs exactly on LuaJIT and links the JVM
-// compile-error E6006 rejection record.
+// compile-error E6003 rejection record.
 import * as ffi from "./native-add"
 
 export function main(): null {

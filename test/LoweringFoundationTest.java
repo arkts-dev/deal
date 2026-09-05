@@ -146,14 +146,12 @@ import java.util.Optional;
  *
  * <p>Tests:
  * <ol>
- *   <li>E6000..E6006 are the complete E6 code set, all
+ *   <li>E6000..E6005 are the complete E6 code set, all
  *       {@code BACKEND_LOWERING}, in declaration order, with E6005 directly
  *       beside E6000-E6004 and its message template exactly
- *       "Common semantic lowering failed"; E6006 is the C6
- *       FFI_UNSUPPORTED_BACKEND registration the ISSUE-0157 feature
- *       catalog's linked JVM C_FFI rejection record pins; E6000 remains the
- *       intentional retained-target rejection code and is never E6005; the
- *       E6000-E6004 and E6006 message templates are unchanged.</li>
+ *       "Common semantic lowering failed"; E6000 remains the intentional
+ *       retained-target rejection code and is never E6005; the E6000-E6004
+ *       message templates are unchanged.</li>
  *   <li>Reflection-based exhaustive enumeration of the four closed enums:
  *       exactly the pinned values in the pinned order; enum type, implicit
  *       finality, and constructor surface checked; no open/unknown fallback
@@ -222,8 +220,8 @@ public class LoweringFoundationTest {
             }
         }
         check(e6.equals(List.of("E6000", "E6001", "E6002", "E6003",
-                "E6004", "E6005", "E6006")),
-            "E6 codes are exactly E6000..E6006 in declaration order; got " + e6);
+                "E6004", "E6005")),
+            "E6 codes are exactly E6000..E6005 in declaration order; got " + e6);
 
         check(DiagnosticCode.E6005.phase() == DiagnosticCode.Phase.BACKEND_LOWERING,
             "E6005 is BACKEND_LOWERING");
@@ -235,9 +233,8 @@ public class LoweringFoundationTest {
         check(DiagnosticCode.isRegistered("E6005"), "E6005 is registered");
 
         check(DiagnosticCode.E6005.ordinal() == DiagnosticCode.E6004.ordinal() + 1
-                && DiagnosticCode.E6004.ordinal() == DiagnosticCode.E6003.ordinal() + 1
-                && DiagnosticCode.E6006.ordinal() == DiagnosticCode.E6005.ordinal() + 1,
-            "E6005/E6006 sit directly beside E6000-E6004 (ordinal adjacency)");
+                && DiagnosticCode.E6004.ordinal() == DiagnosticCode.E6003.ordinal() + 1,
+            "E6005 sits directly beside E6000-E6004 (ordinal adjacency)");
 
         // E6000 remains the intentional retained-target rejection code and is
         // never E6005 (parent D11).
@@ -247,16 +244,13 @@ public class LoweringFoundationTest {
             "E6000 remains BACKEND_LOWERING (retained-target rejection)");
 
         // No existing E6000-E6004 code was renamed or renumbered: pin the
-        // unchanged message templates. E6006 is the C6 FFI_UNSUPPORTED_BACKEND
-        // registration the ISSUE-0157 feature catalog's linked JVM C_FFI
-        // rejection record pins.
+        // unchanged message templates.
         Map<String, String> pinnedMessages = Map.of(
             "E6000", "Unsupported statement type",
             "E6001", "Continue outside loop",
             "E6002", "Cannot break/continue across try boundary",
             "E6003", "Rest parameters are not part of DEAL v1.2",
-            "E6004", "Entry module must export non-async main(): null",
-            "E6006", "C FFI unsupported on this backend");
+            "E6004", "Entry module must export non-async main(): null");
         for (var entry : pinnedMessages.entrySet()) {
             DiagnosticCode dc = DiagnosticCode.fromCode(entry.getKey());
             check(dc != null && entry.getValue().equals(dc.messageTemplate()),
