@@ -2355,9 +2355,9 @@ public final class StdlibEquivalenceBatteryTest {
             List<ExpectedLine> expectedStdout = jvmExpectedLines(laneCases, reference, false);
             List<ExpectedLine> expectedStderr = jvmExpectedLines(laneCases, reference, true);
             Map<String, List<String>> divergences = compareJvmStreams(
-                expectedStdout, run.stdout(), "stdout", unused -> { });
+                expectedStdout, run.stdout(), "stdout");
             Map<String, List<String>> stderrDivergences = compareJvmStreams(
-                expectedStderr, run.stderr(), "stderr", unused -> { });
+                expectedStderr, run.stderr(), "stderr");
             merge(stderrDivergences, divergences);
             return divergences;
         } finally {
@@ -2373,8 +2373,7 @@ public final class StdlibEquivalenceBatteryTest {
     }
 
     private static Map<String, List<String>> compareJvmStreams(List<ExpectedLine> expectedLines,
-            byte[] actualBytes, String channel,
-            java.util.function.Consumer<Map<String, List<String>>> ignored) {
+            byte[] actualBytes, String channel) {
         Map<String, List<String>> divergences = new LinkedHashMap<>();
         String expected = expectedLines.stream()
             .map(ExpectedLine::text)
@@ -2413,9 +2412,6 @@ public final class StdlibEquivalenceBatteryTest {
     // =========================================================================
     // Verdict aggregation and recording (never hardcoded — recorded from runs)
     // =========================================================================
-
-    /** One lane battery outcome: per-case divergence texts. */
-    record LaneBattery(Map<String, List<String>> divergences) { }
 
     /**
      * Records the per-candidate verdicts of one lane from the actually
