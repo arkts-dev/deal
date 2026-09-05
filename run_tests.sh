@@ -44,6 +44,26 @@ TEST_MAINS+=(
 )
 
 # =========================================================================
+# ISSUE-0488 (historical/legacy catalogs): HistoricalRegressionCatalog
+# (the closed historical pin authority with pinned expectation
+# baselines), LegacyCapabilityCatalog (the release-owned unsupported-
+# legacy-slice authority), and their gate-run verification battery join
+# the compile list and the run phase here — the gate-run conformance
+# files where the LegacyProfileRegressionCatalog precedent lives. The
+# two catalogs are test-harness data only (production code never depends
+# on them); the conformance runners validate them at startup and record
+# the signed-int32 historical executed evidence.
+# =========================================================================
+TEST_SOURCES+=(
+  'test/HistoricalRegressionCatalog.java'
+  'test/LegacyCapabilityCatalog.java'
+  'test/HistoricalRegressionCatalogTest.java'
+)
+TEST_MAINS+=(
+  'fg|=== Running Historical / Legacy-Profile / Legacy-Capability Catalog Tests (ISSUE-0488) ===|java -ea -cp build deal.test.HistoricalRegressionCatalogTest'
+)
+
+# =========================================================================
 # ISSUE-0354 (LuaJIT lane): the Lua lane of the differential gate plus its
 # lane suite join the compile list and the run phase here. The lane
 # implements the Shared Lane Contract (G4) over the absorbed
