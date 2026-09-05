@@ -1,6 +1,8 @@
 package deal.test.conformance;
 
 import deal.diagnostics.CompilerDiagnostic;
+import deal.semantic.ir.SemanticProfile;
+import deal.test.LegacyProfileRegressionCatalog;
 
 import java.io.IOException;
 import java.io.PrintStream;
@@ -21,10 +23,17 @@ import java.util.stream.Stream;
  * {@code v12-zero-skip-conformance-gate} G1): discovery + classification
  * with the pre-flip grammar, sidecar loading + schema validation wired
  * to T1's {@link SidecarSchemaValidator} with per-fixture compilation
- * sets, the Compile Diagnostic comparison over the real backend-neutral
- * frontend, the pre-flip known-fail forced-promotion probes, the lane
- * dispatch seam (G7 worker pool + harness-owned per-lane deadlines), and
- * the verdict/summary with the closed G6 mismatch classes.
+ * sets, the backend-neutral frontend corpus execution (ISSUE-0357 —
+ * every {@code compile-ok} fixture compiles clean and every
+ * {@code compile-error} fixture without a pin rejects with its exact
+ * pinned code through the real frontend with the per-case A5 profile
+ * and the corpus module resolver), the Compile Diagnostic comparison
+ * over the real backend-neutral frontend, the pre-flip known-fail
+ * forced-promotion probes, the lane dispatch seam (G7 worker pool +
+ * harness-owned per-lane deadlines), and the verdict/summary with the
+ * closed G6 mismatch classes. The {@link GateRun} carries the per-case
+ * {@link GateDispatcher.CaseVerdict} list so the lane integration suite
+ * (ISSUE-0357) asserts the exact pre-flip failure enumeration.
  *
  * <p>The lane children register the LuaJIT/JVM/JS lanes (ISSUE-0354/
  * 0355/0356). Pre-flip, the JVM lane additionally registers its
@@ -119,10 +128,12 @@ public final class DifferentialGate {
         List<CorpusDiscovery.Fixture> fixtures,
         List<LoadedFixture> loadedFixtures,
         List<GateFailure> failures,
+        int frontendCompiled,
         int compileDiagnosticComparisons,
         int knownFailuresTracked,
         int runtimeCasesDispatched,
         int runtimeCasesDeferred,
+        List<GateDispatcher.CaseVerdict> verdicts,
         Map<String, int[]> perBackend,
         int skipped,
         int skipRegistryTracked,
@@ -133,6 +144,7 @@ public final class DifferentialGate {
             fixtures = List.copyOf(fixtures);
             loadedFixtures = List.copyOf(loadedFixtures);
             failures = List.copyOf(failures);
+            verdicts = List.copyOf(verdicts);
             perBackend = Map.copyOf(perBackend);
         }
 
@@ -318,6 +330,80 @@ public final class DifferentialGate {
         out.println();
 
         // ---------------------------------------------------------------------
+        // Phase 2b: frontend corpus execution (G1, ISSUE-0357): every
+        // compile-ok fixture must compile clean and every compile-error
+        // fixture without a Compile Expectation Sidecar must reject with
+        // its exact pinned code, through the real backend-neutral frontend
+        // with the per-case A5 profile and the corpus module resolver
+        // (stdlib exports, relative corpus imports). No backend executes.
+        // ---------------------------------------------------------------------
+        int frontendCompiled = 0;
+        Set<String> pinFixturePaths = new java.util.HashSet<>();
+        for (LoadedFixture loadedFixture : pinLoaded) {
+            pinFixturePaths.add(loadedFixture.fixture().corpusPath());
+        }
+        for (CorpusDiscovery.Fixture fixture : discovery.fixtures()) {
+            CorpusDiscovery.Classification classification =
+                fixture.classification();
+            if (classification == null
+                    || classification.kind() == CorpusDiscovery.Kind.KNOWN_FAIL
+                    || classification.kind()
+                        == CorpusDiscovery.Kind.COMPANION) {
+                continue; // classification failure / tracked / support module
+            }
+            CorpusDiscovery.Kind kind = classification.kind();
+            if (kind != CorpusDiscovery.Kind.COMPILE_OK
+                    && kind != CorpusDiscovery.Kind.COMPILE_ERROR) {
+                continue;
+            }
+            if (kind == CorpusDiscovery.Kind.COMPILE_ERROR
+                    && pinFixturePaths.contains(fixture.corpusPath())) {
+                continue; // the Compile Diagnostic comparison owns the pin
+            }
+            frontendCompiled++;
+            SemanticProfile profile = LegacyProfileRegressionCatalog
+                .profileFor(fixture.corpusPath());
+            List<CompilerDiagnostic> errors = FrontendCompiler.errorDiagnostics(
+                fixture.source(), fixture.corpusPath(), profile,
+                new CorpusFrontendResolver(fixture.corpusPath(), root,
+                    corpusByPath, profile));
+            List<String> codes = errorCodes(errors);
+            if (kind == CorpusDiscovery.Kind.COMPILE_OK) {
+                if (errors.isEmpty()) {
+                    out.println("  [" + fixture.corpusPath()
+                        + "] frontend OK (compile-ok)");
+                } else {
+                    failures.add(new GateFailure("frontend-compile",
+                        fixture.corpusPath(),
+                        "the compile-ok fixture must compile clean, got: "
+                            + codes));
+                    out.println("  FRONTEND-COMPILE FAILURE: "
+                        + fixture.corpusPath() + " — unexpected compile "
+                        + "errors: " + codes);
+                }
+            } else {
+                String code = classification.code();
+                if (codes.contains(code)) {
+                    out.println("  [" + fixture.corpusPath()
+                        + "] frontend OK (found " + code + ")");
+                } else {
+                    failures.add(new GateFailure("frontend-compile",
+                        fixture.corpusPath(),
+                        "the compile-error fixture must produce " + code
+                            + ", got: " + codes));
+                    out.println("  FRONTEND-COMPILE FAILURE: "
+                        + fixture.corpusPath() + " — expected " + code
+                        + ", got: " + codes);
+                }
+            }
+        }
+        out.println("Frontend compiled: " + frontendCompiled + " fixture(s) ("
+            + failures.stream().filter(
+                f -> "frontend-compile".equals(f.kind())).count()
+            + " failure(s))");
+        out.println();
+
+        // ---------------------------------------------------------------------
         // Phase 3: Compile Diagnostic comparison (real frontend, no backend).
         // ---------------------------------------------------------------------
         int compileComparisons = 0;
@@ -394,6 +480,7 @@ public final class DifferentialGate {
         int dispatched = 0;
         int deferred = 0;
         int skipRegistryTracked = 0;
+        List<GateDispatcher.CaseVerdict> verdicts = List.of();
         if (lanes.isEmpty()) {
             // No lane implementation registered: the dispatch phase is
             // deferred explicitly — never silently — and the legacy runners
@@ -420,8 +507,8 @@ public final class DifferentialGate {
                 cases.add(new GateDispatcher.CaseInput(fixture.corpusPath(),
                     laneCases));
             }
-            List<GateDispatcher.CaseVerdict> verdicts = GateDispatcher.run(cases,
-                lanes, parallelism, laneDeadline);
+            verdicts = GateDispatcher.run(cases, lanes, parallelism,
+                laneDeadline);
             dispatched = verdicts.size();
             for (GateDispatcher.CaseVerdict verdict : verdicts) {
                 CorpusDiscovery.Fixture fixture = fixtureByPath(
@@ -539,12 +626,13 @@ public final class DifferentialGate {
         // ---------------------------------------------------------------------
         // Summary / verdict (pre-flip counters, closed classes).
         // ---------------------------------------------------------------------
-        printSummary(out, discovery, failures, compileComparisons,
-            knownFailures, dispatched, deferred, skipRegistryTracked,
-            perBackend);
-        return new GateRun(root, discovery.fixtures(), loaded, failures,
+        printSummary(out, discovery, failures, frontendCompiled,
             compileComparisons, knownFailures, dispatched, deferred,
-            perBackend, 0, skipRegistryTracked, failures.isEmpty());
+            skipRegistryTracked, perBackend);
+        return new GateRun(root, discovery.fixtures(), loaded, failures,
+            frontendCompiled, compileComparisons, knownFailures, dispatched,
+            deferred, verdicts, perBackend, 0, skipRegistryTracked,
+            failures.isEmpty());
     }
 
     /**
@@ -649,11 +737,14 @@ public final class DifferentialGate {
 
     private static void printSummary(PrintStream out,
             CorpusDiscovery.DiscoveryResult discovery,
-            List<GateFailure> failures, int compileComparisons,
-            int knownFailures, int dispatched, int deferred,
-            int skipRegistryTracked, Map<String, int[]> perBackend) {
+            List<GateFailure> failures, int frontendCompiled,
+            int compileComparisons, int knownFailures, int dispatched,
+            int deferred, int skipRegistryTracked, Map<String, int[]> perBackend) {
         out.println("=== Differential Gate Summary ===");
         out.println("Fixtures: " + discovery.fixtures().size());
+        out.println("Frontend compiled: " + frontendCompiled
+            + " (failures: " + failures.stream().filter(
+                f -> "frontend-compile".equals(f.kind())).count() + ")");
         out.println("Classification failures: "
             + failures.stream().filter(f -> "classification".equals(f.kind()))
                 .count());
@@ -688,9 +779,11 @@ public final class DifferentialGate {
 
     /**
      * The gate's own deal.test entry point. Exercises discovery,
-     * classification, sidecar validation, compile-diagnostic comparison,
-     * and the known-fail probes over the real on-disk corpus; the runtime
-     * dispatch phase defers until the lane children register the lanes.
+     * classification, sidecar validation, the frontend corpus execution,
+     * compile-diagnostic comparison, and the known-fail probes over the
+     * real on-disk corpus; the runtime dispatch phase defers (no lane
+     * registration in this entry point — the three-lane corpus execution
+     * lives in the ISSUE-0357 lane integration suite until the flip).
      * Not wired into {@code run_tests.sh} until the flip (G5's
      * temporary-coexistence window).
      */

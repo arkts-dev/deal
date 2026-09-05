@@ -159,6 +159,26 @@ TEST_MAINS+=(
 )
 
 # =========================================================================
+# ISSUE-0357 (gate integration — cluster integration verification for the
+# gate stage): the corpus-aware frontend resolver and the three-lane
+# integration suite join the compile list and the run phase here. The
+# suite runs the complete differential gate over the real corpus on all
+# three production lanes (real luajit / javac+java / node subprocesses),
+# pins the designated converged subset, the exact pre-flip failure set
+# (tracked non-fatal + enumerated differential failures, zero skips), and
+# the six controlled divergence experiments on scratch copies. The gate
+# stays dev-time: the legacy runners keep executing the runtime corpus
+# (G5 temporary-coexistence window) and run_tests.sh keeps exiting 0.
+# =========================================================================
+TEST_SOURCES+=(
+  'deal/test/conformance/CorpusFrontendResolver.java'
+  'deal/test/conformance/DifferentialGateLanesCorpusTest.java'
+)
+TEST_MAINS+=(
+  'fg|=== Running Differential Gate Lanes Corpus Tests (ISSUE-0357) ===|java -ea -cp build deal.test.conformance.DifferentialGateLanesCorpusTest'
+)
+
+# =========================================================================
 # ISSUE-0485 (CapabilityRegistry.withState transition surface): the
 # single release-owned promotion/demotion transition surface and its D3
 # invariant battery join the compile list and the unconditional run

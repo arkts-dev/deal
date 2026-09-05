@@ -518,14 +518,23 @@ public final class CorpusDiscovery {
         Path root = corpusRoot.toAbsolutePath().normalize();
         Path parent = Path.of(importer).getParent();
         Path base = parent == null ? root : root.resolve(parent);
-        for (Path candidate : new Path[] {
-                base.resolve(importPath).normalize(),
-                base.resolve(importPath + ".deal").normalize(),
-                base.resolve(importPath + ".d.deal").normalize() }) {
+        Path resolved = base.resolve(importPath).normalize();
+        String name = resolved.getFileName().toString();
+        // The legacy candidate order (ConformanceTest.resolveRelativePath):
+        // the exact path as a regular file (a directory landing is never a
+        // module), then <name>.deal, the directory index <name>/index.deal,
+        // <name>.d.deal, and the declaration index <name>/index.d.deal.
+        List<Path> candidates = new ArrayList<>(List.of(
+            resolved,
+            resolved.resolveSibling(name + ".deal"),
+            resolved.resolve("index.deal"),
+            resolved.resolveSibling(name + ".d.deal"),
+            resolved.resolve("index.d.deal")));
+        for (Path candidate : candidates) {
             if (!candidate.startsWith(root)) {
                 continue;
             }
-            if (Files.exists(candidate)) {
+            if (Files.isRegularFile(candidate)) {
                 return slash(root.relativize(candidate));
             }
         }

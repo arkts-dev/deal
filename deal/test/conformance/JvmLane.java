@@ -157,7 +157,8 @@ import java.util.concurrent.TimeUnit;
  *
  * <p>Pre-flip skip tolerance (G2/G8): the lane keeps the absorbed
  * {@code JvmConformanceTest} skip registry ({@link #skipRegistry()},
- * the capability-skip baseline with its gap ids) and validates it
+ * the capability-skip baseline with its gap ids, minus the entries the
+ * stale-skip gate promoted after the lane landed) and validates it
  * against the on-disk corpus at construction — a stale entry naming a
  * missing or non-runtime-classified fixture is recorded in
  * {@link #registryDefects()} with a promotion instruction. The gate
@@ -1772,11 +1773,11 @@ public class JvmLane implements Lane {
             "host class exports unsupported on JVM: E3004 \"Unknown "
                 + "class 'Config'\" (same root cause as "
                 + "host-export-presence).", "JVM-GAP-HOST-ABI-SHAPES");
-        skip("backend-runtime/host-abi/host-prewrapped-ok.deal",
-            "the Lua pre-wrapped export form (sig-annotated tables) is a "
-                + "LuaJIT host-loader mechanism with no JVM analog (no "
-                + "Java host implementation can express it).",
-            "JVM-GAP-HOST-ABI-SHAPES");
+        // host-prewrapped-ok.deal is deliberately NOT registered: the
+        // host triplet host-fixtures/prewrapped_ok.java landed, so the
+        // fixture passes the real pipeline and a skip entry would be
+        // stale and fail the stale-skip gate deterministically
+        // (promoted by the gate-integration child, ISSUE-0357).
         skip("backend-runtime/host-abi/host-prewrapped-bad.deal",
             "the Lua pre-wrapped export form; no JVM analog.",
             "JVM-GAP-HOST-ABI-SHAPES");
@@ -1830,13 +1831,17 @@ public class JvmLane implements Lane {
         // shared $DealRt array carriers and was removed with its
         // promotion; the stale-skip gate forced the removal.
 
-        // ---- JVM-GAP-ASYNC-FNEXPR: async function expressions ----
-        skip("backend-runtime/async-await/async-fn-expr.deal",
-            "E6000: async function expressions.", "JVM-GAP-ASYNC-FNEXPR");
-        skip("backend-runtime/async-await/async-await-statement.deal",
-            "E6000: block-level async functions and async function "
-                + "expressions (plus the forward-reference guard).",
-            "JVM-GAP-ASYNC-FNEXPR");
+        // ---- JVM-GAP-ASYNC-FNEXPR: RETIRED (ISSUE-0304) ----
+        // async-fn-expr.deal and async-await-statement.deal pass the
+        // real pipeline — async function expressions emit through the
+        // sync closure machinery with the async descriptor marker and
+        // blocking bodies, block-level async functions declare through
+        // the cell + anonymous-wrapper path, and the discard-position
+        // await statement evaluates exactly once with the completion
+        // check — so the registry entries were removed and the
+        // stale-skip gate forced the removal (the legacy runner removed
+        // them; the lane registry catches up in the gate-integration
+        // child, ISSUE-0357).
     }
 
     private static void skip(String path, String reason, String gapId) {

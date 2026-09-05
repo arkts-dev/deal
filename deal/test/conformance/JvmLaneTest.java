@@ -88,7 +88,12 @@ public class JvmLaneTest {
      * {@code JvmConformanceTest.SKIPS} registry on the canonical
      * revision; every promotion removes an entry and updates this pin
      * together with the absorbed registry). */
-    private static final int SKIP_REGISTRY_ENTRIES = 47;
+    // ISSUE-0357 (gate-integration child) promoted the three stale
+    // entries the lane's first corpus runs surfaced: async-fn-expr and
+    // async-await-statement (JVM-GAP-ASYNC-FNEXPR, retired on the
+    // legacy runner by ISSUE-0304) and host-prewrapped-ok (the
+    // host-fixtures/prewrapped_ok.java triplet landed).
+    private static final int SKIP_REGISTRY_ENTRIES = 44;
 
     public static void main(String[] args) throws Exception {
         System.out.println("=== JVM Lane Tests (ISSUE-0355) ===\n");
@@ -1232,9 +1237,8 @@ public class JvmLaneTest {
         }
         check(gapIds.containsAll(Set.of("JVM-GAP-STDJSON",
                 "JVM-GAP-JSONABLE-RESIDUAL", "JVM-GAP-HOST-ABI-SHAPES",
-                "JVM-GAP-BYTES", "JVM-GAP-DEFAULTS-PLANS",
-                "JVM-GAP-ASYNC-FNEXPR")),
-            "the absorbed registry spans the six live gap families, got: "
+                "JVM-GAP-BYTES", "JVM-GAP-DEFAULTS-PLANS")),
+            "the absorbed registry spans the five live gap families, got: "
                 + gapIds);
     }
 
