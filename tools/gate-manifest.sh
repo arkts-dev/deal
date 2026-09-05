@@ -163,6 +163,9 @@ TEST_SOURCES=(
   # ISSUE-0494 registration: the STDLIB_CALL lowering battery (D2,
   # Verification 4).
   'test/StdlibCallLoweringTest.java'
+  # ISSUE-0495 registration: the SharedStdlibSemantics executor
+  # battery (D4/D5, Verification 1 and 3; the combined T2/T1 drive).
+  'test/SharedStdlibSemanticsTest.java'
   # ISSUE-0162 registration: the C FFI declaration validation and
   # forward binding generation battery.
   'test/FfiDeclarationValidatorTest.java'
@@ -294,4 +297,10 @@ WARNING: luajit not found, skipping async nesting stress tests'
   # validator negative, and the time lock (stdlib-operations-and-time-lock
   # D2, Verification 4; sequencing item 2).
   'fg|=== Running Stdlib STDLIB_CALL Lowering Tests (ISSUE-0494) ===|java -ea -cp build deal.test.StdlibCallLoweringTest'
+  # ISSUE-0495 registration: the single stdlib algorithm executor —
+  # the 20-id family batteries, exact projections, the console effect
+  # contract, boundary precedence, and the combined T2/T1 drive
+  # (stdlib-operations-and-time-lock D4/D5, Verification 1 and 3;
+  # sequencing item 3).
+  'fg|=== Running Shared Stdlib Semantics Tests (ISSUE-0495) ===|java -ea -cp build deal.test.SharedStdlibSemanticsTest'
 )
