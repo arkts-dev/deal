@@ -2578,9 +2578,15 @@ public final class SemanticLowerer {
      * {@code CLASS_DEFAULT} op per defaulted field whose own default
      * block carries the lowered default expression (only the default
      * blocks enter the block-membership table; each {@code CLASS_DEFAULT}
-     * op is a member of exactly its own default block; module-level
-     * bindings resolve through the module-init block and an
-     * enclosing-region free reference fails E6005
+     * op is a member of exactly its own default block; the block's
+     * final producing op publishes the {@code CLASS_DEFAULT} op's
+     * result identity — a function-typed default's result is the
+     * closure identity of a function-literal default or the statically
+     * tracked function identity of a binding-referenced default, each
+     * already carrying its {@code FunctionExecutionBinding};
+     * module-level bindings resolve through the module-init block and
+     * an enclosing-region free reference — direct or through a nested
+     * closure's capture — fails E6005
      * {@code CLASS_DEFAULT_CAPTURE}), and one detached static
      * {@code CLASS_FACTORY} op per exported class registered under the
      * pre-allocated {@code ClassInterface.constructionEntry} id in the
@@ -3037,11 +3043,15 @@ public final class SemanticLowerer {
          * One open default-block walk's admission context (K-D3): the
          * default block itself, the blocks allocated inside the walk
          * (block-internal allocations), and the capture-collector depth
-         * at entry — a direct identifier reference of the walk admits
-         * only blocks in {@code internalBlocks} and the module-init
-         * block; a nested detached walk (a closure/thunk body inside the
-         * default) opens further collectors and is the closure walk's
-         * own business.
+         * at entry. Every reference of the walk — a direct identifier
+         * reference or a capture resolved by a nested detached walk (a
+         * closure body allocated inside the default) — admits only blocks
+         * in {@code internalBlocks} and the module-init block; the
+         * collector depth decides the dispatch (direct load versus the
+         * nested closure's capture registration), never the admission —
+         * a nested closure's capture resolving to an enclosing-region
+         * binding fails the same {@code CLASS_DEFAULT_CAPTURE} admission
+         * (K-D3's closed rule has no nested-closure bypass).
          */
         private record DefaultContext(BlockId block, Set<BlockId> internalBlocks,
                                       int entryCaptureDepth) {
@@ -4421,7 +4431,7 @@ public final class SemanticLowerer {
                 }
                 ExpressionNode defaultExpr = field.defaultExpr().get();
                 BlockId defaultBlock = allocateBlock();
-                ValueId result = ids.nextValueId(module, nextOrdinal++, 0);
+                ValueId slot = ids.nextValueId(module, nextOrdinal++, 0);
                 AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
                 OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
                 // The detached structural op (K-D12: SYNTHETIC; no static
@@ -4432,7 +4442,7 @@ public final class SemanticLowerer {
                     anchor, null);
                 SemanticOp op = buildOp(opId, SemanticOpKind.CLASS_DEFAULT,
                     new KindPayload.ClassDefaultPayload(classId, field.name(), defaultBlock),
-                    result, descriptors.get(field.name()), FailurePolicyId.NO_DEAL_FAILURE,
+                    slot, descriptors.get(field.name()), FailurePolicyId.NO_DEAL_FAILURE,
                     origin);
                 pushBlock(defaultBlock);
                 pushBlockParent(opId);
@@ -4441,14 +4451,41 @@ public final class SemanticLowerer {
                 DefaultContext context = new DefaultContext(defaultBlock, internalBlocks,
                     captureCollectors.size());
                 defaultContexts.push(context);
+                ValueId produced;
                 try {
                     emit(op);
                     // The default expression's final producing op publishes
                     // the CLASS_DEFAULT op's result slot (the slot-threaded
                     // production — one value identity re-produced per
                     // construction execution, the LOOP(FOR) condition
-                    // precedent).
-                    lowerExpression(defaultExpr, result);
+                    // precedent). A function-typed default whose final
+                    // producing op publishes the statically tracked
+                    // function identity instead of the threaded slot — a
+                    // function-typed binding reference's load — rebuilds
+                    // the CLASS_DEFAULT op with that identity as its
+                    // result, so R-FUNCTION-BINDING resolves the op's
+                    // result through the identity's own
+                    // FunctionExecutionBinding (K-D3:
+                    // binding-referenced defaults pass the referenced
+                    // value by reference; loads preserve allocation
+                    // identity). The function-literal default's
+                    // CLOSURE_NEW publishes the threaded slot itself, so
+                    // no rebuild fires there.
+                    produced = lowerExpression(defaultExpr, slot);
+                    if (!produced.equals(slot)) {
+                        op = buildOp(opId, SemanticOpKind.CLASS_DEFAULT,
+                            new KindPayload.ClassDefaultPayload(classId, field.name(),
+                                defaultBlock),
+                            produced, descriptors.get(field.name()),
+                            FailurePolicyId.NO_DEAL_FAILURE, origin);
+                        List<SemanticOp> target = emitTarget();
+                        for (int i = target.size() - 1; i >= 0; i--) {
+                            if (target.get(i).opId().equals(opId)) {
+                                target.set(i, op);
+                                break;
+                            }
+                        }
+                    }
                 } finally {
                     defaultContexts.pop();
                     popBlockParent();
@@ -4457,7 +4494,7 @@ public final class SemanticLowerer {
                 if (!field.optional()) {
                     classDefaultOpIds.add(opId);
                 }
-                defaults.put(field.name(), new ClassDefaultFact(opId, result));
+                defaults.put(field.name(), new ClassDefaultFact(opId, produced));
             }
             classDefaults.put(classId, defaults);
 
@@ -6557,7 +6594,7 @@ public final class SemanticLowerer {
                 case IdentifierExpr identifier -> lowerBindingLoad(identifier, slot);
                 case FunctionExpr functionExpr -> {
                     if (closureCore) {
-                        yield lowerClosureExpr(functionExpr);
+                        yield lowerClosureExpr(functionExpr, slot);
                     }
                     throw new ConstructUnlowered(describeExpression(expr));
                 }
@@ -8650,33 +8687,48 @@ public final class SemanticLowerer {
                 }
             }
             if (!defaultContexts.isEmpty()) {
-                // The default-block admission rule (K-D3, ISSUE-0511): a
-                // direct identifier reference of the open default walk
+                // The default-block admission rule (K-D3, ISSUE-0511):
+                // every reference of the open default walk — a direct
+                // identifier reference or a capture resolved by a nested
+                // detached walk (a closure body inside the default) —
                 // admits only block-internal allocations (blocks allocated
                 // inside the walk) and module-level bindings resolved
                 // through the module-init block; an enclosing-region
                 // (function-local) free reference is invalid — the closed
                 // ClassDefaultPayload records no captures — and fails
-                // E6005 CLASS_DEFAULT_CAPTURE, never a silent capture.
-                // A nested detached walk (a closure/thunk body inside the
-                // default) opens further capture collectors and its
-                // references are the closure walk's own business.
+                // E6005 CLASS_DEFAULT_CAPTURE, never a silent capture. A
+                // nested closure's capture collector is no bypass: its
+                // captures resolve against the same closed admission set.
                 DefaultContext context = defaultContexts.peek();
-                if (captureCollectors.size() <= context.entryCaptureDepth()) {
-                    FrameResolution resolution = resolveFrame(identifier.name());
-                    if (resolution == null) {
-                        throw new ConstructUnlowered("identifier '" + identifier.name()
-                            + "' is not a declared binding of the class walk's "
-                            + "environment (class/module members are E9's/E10's)");
-                    }
-                    BlockId producing = resolution.entry().incarnation().scope();
-                    if (!producing.equals(moduleInitBlock)
-                            && !producing.equals(context.block())
-                            && !context.internalBlocks().contains(producing)) {
-                        throw new ClassDefaultCapture(identifier.name());
-                    }
-                    return emitResolvedLoad(identifier, type, resolution.entry());
+                FrameResolution resolution = resolveFrame(identifier.name());
+                if (resolution == null) {
+                    throw new ConstructUnlowered("identifier '" + identifier.name()
+                        + "' is not a declared binding of the class walk's "
+                        + "environment (class/module members are E9's/E10's)");
                 }
+                BlockId producing = resolution.entry().incarnation().scope();
+                if (!producing.equals(moduleInitBlock)
+                        && !producing.equals(context.block())
+                        && !context.internalBlocks().contains(producing)) {
+                    throw new ClassDefaultCapture(identifier.name());
+                }
+                if (captureCollectors.size() <= context.entryCaptureDepth()) {
+                    // A direct reference of the walk: the load publishes
+                    // the threaded slot when one is threaded (the
+                    // slot-threaded production — the CLASS_DEFAULT op's
+                    // result identity, K-D3); a function-typed load
+                    // publishes the incarnation's statically tracked
+                    // function identity instead (loads preserve
+                    // allocation identity).
+                    return emitResolvedLoad(identifier, type, resolution.entry(), slot);
+                }
+                // A nested detached walk's reference (a closure body
+                // inside the default): the closure walk's own capture
+                // business (B3) under the admission set checked above;
+                // no slot is threaded below the default expression's
+                // top level.
+                maybeRegisterCapture(identifier.name(), resolution);
+                return emitResolvedLoad(identifier, type, resolution.entry(), null);
             }
             if (closureCore) {
                 FrameResolution resolution = resolveFrame(identifier.name());
@@ -8712,11 +8764,23 @@ public final class SemanticLowerer {
          * the payload names the dominant incarnation's
          * {@code {binding, generation}}; the result publishes the
          * incarnation's statically tracked function identity for
-         * function-typed loads (identity preservation) or a fresh
-         * {@code ValueId} otherwise.
+         * function-typed loads (identity preservation — a threaded slot
+         * never replaces the tracked identity, because the identity is
+         * the {@code ValueId} whose {@code FunctionExecutionBinding}
+         * resolves the load under R-FUNCTION-BINDING) or a fresh
+         * {@code ValueId} otherwise. A non-function load with a threaded
+         * slot ({@code slot} non-null) publishes the slot instead of
+         * allocating one — the slot-threaded production of the default
+         * walk's direct identifier reference (the {@code CLASS_DEFAULT}
+         * op's result identity, K-D3).
          */
         private ValueId emitResolvedLoad(IdentifierExpr identifier, Type type,
                                          FrameEntry entry) {
+            return emitResolvedLoad(identifier, type, entry, null);
+        }
+
+        private ValueId emitResolvedLoad(IdentifierExpr identifier, Type type,
+                                         FrameEntry entry, ValueId slot) {
             RuntimeDescriptor descriptor = ContainerPayloadDescriptors.resultDescriptorOf(type);
             ValueId result = null;
             if (descriptor instanceof RuntimeDescriptor.Func) {
@@ -8731,7 +8795,7 @@ public final class SemanticLowerer {
                 }
             }
             if (result == null) {
-                result = ids.nextValueId(module, nextOrdinal++, 0);
+                result = slot != null ? slot : ids.nextValueId(module, nextOrdinal++, 0);
             }
             AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
             OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
@@ -8753,9 +8817,18 @@ public final class SemanticLowerer {
          * buffered body walk — B3), and the {@code LoweredBody} binding.
          * The body ops flush after the {@code CLOSURE_NEW} op (the
          * buffered walk runs first so the captures are known when the
-         * payload is built).
+         * payload is built). A threaded result slot ({@code slot}
+         * non-null) becomes the {@code CLOSURE_NEW} result identity — the
+         * closure identity <em>is</em> the {@code CLASS_DEFAULT} op's
+         * result for a function-literal default (K-D3), and the
+         * {@code LoweredBody} binding registers under that identity so
+         * R-FUNCTION-BINDING resolves it.
          */
         private ValueId lowerClosureExpr(FunctionExpr functionExpr) {
+            return lowerClosureExpr(functionExpr, null);
+        }
+
+        private ValueId lowerClosureExpr(FunctionExpr functionExpr, ValueId slot) {
             BlockId bodyBlock = allocateBlock();
             FunctionId functionId = ids.nextFunctionId(module, nextOrdinal++, 0);
             Type checkedFunctionType = checkedType(functionExpr);
@@ -8800,7 +8873,7 @@ public final class SemanticLowerer {
             for (CapturedCell capture : captured) {
                 captureIds.add(capture.cell().id);
             }
-            ValueId result = ids.nextValueId(module, nextOrdinal++, 0);
+            ValueId result = slot != null ? slot : ids.nextValueId(module, nextOrdinal++, 0);
             emitClosureNew(functionId, result, signature, captureIds, bodyBlock,
                 functionExpr.span(), captured);
             emitTarget().addAll(bodyOps);

@@ -32,11 +32,15 @@ import deal.semantic.ir.ClassInterface;
 import deal.semantic.ir.ClassLayout;
 import deal.semantic.ir.ConstructKind;
 import deal.semantic.ir.DefaultOwner;
+import deal.semantic.ir.ExportPlan;
 import deal.semantic.ir.ExternalModuleInterface;
 import deal.semantic.ir.FailurePolicyId;
+import deal.semantic.ir.FunctionAllocationIdentity;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredModuleUnit;
+import deal.semantic.ir.LoweringContextHash;
 import deal.semantic.ir.ModuleId;
+import deal.semantic.ir.ModuleInitPlan;
 import deal.semantic.ir.OpId;
 import deal.semantic.ir.ReleaseState;
 import deal.semantic.ir.RuntimeDescriptor;
@@ -53,6 +57,8 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 
 /**
  * Verifies the ISSUE-0511 class-declaration lowering arm of
@@ -831,6 +837,131 @@ public class ClassDeclarationLoweringTest {
             "a nested class declaration with a literal-only default lowers: "
                 + (nested == null || nested.lowering() == null ? "null"
                     : nested.lowering().diagnostics()));
+
+        // The bare binding-reference default (the review pin): the block's
+        // BINDING_LOAD publishes the CLASS_DEFAULT op's result slot — the
+        // CLASS_DEFAULT result is produced by the block, and the CLASS_NEW
+        // arm's CLASS_DEFAULT_FIELD boundary wires that produced value.
+        SemanticLowerer.ClassDeclarationCoreResult bareRef = lowerModule("""
+            let base: int = 41;
+            class Holder { v: int = base; }
+            let h: Holder = {};
+            """);
+        check(bareRef != null && bareRef.lowering() != null
+                && !bareRef.lowering().hasErrors() && bareRef.lowering().unit() != null,
+            "the bare binding-reference default lowers: "
+                + (bareRef == null || bareRef.lowering() == null ? "null"
+                    : bareRef.lowering().diagnostics()));
+        if (bareRef != null && bareRef.lowering() != null
+                && !bareRef.lowering().hasErrors() && bareRef.lowering().unit() != null) {
+            LoweredModuleUnit bareUnit = bareRef.lowering().unit();
+            StructuredBodyTable bareTable = bareRef.lowering().table();
+            List<SemanticOp> bareDefaults =
+                ofKind(bareUnit.ops(), SemanticOpKind.CLASS_DEFAULT);
+            check(bareDefaults.size() == 1,
+                "one CLASS_DEFAULT op; got " + bareDefaults.size());
+            if (bareDefaults.size() == 1) {
+                SemanticOp def = bareDefaults.get(0);
+                BlockId block = defaultPayload(def).defaultBlock();
+                boolean loadPublishesResult = false;
+                for (OpId listed : bareTable.blockOps().getOrDefault(block, List.of())) {
+                    SemanticOp op = opById(bareUnit, listed);
+                    if (op != null && op.kind() == SemanticOpKind.BINDING_LOAD
+                            && op.result() != null && op.result().equals(def.result())) {
+                        loadPublishesResult = true;
+                    }
+                }
+                check(loadPublishesResult,
+                    "the bare binding-reference default's BINDING_LOAD publishes the "
+                        + "CLASS_DEFAULT result slot (result produced by the block)");
+                // The CLASS_NEW arm wires the produced value into the
+                // CLASS_DEFAULT_FIELD boundary input (K-D4 input wiring).
+                List<SemanticOp> news = ofKind(bareUnit.ops(), SemanticOpKind.CLASS_NEW);
+                check(news.size() == 1, "one CLASS_NEW op; got " + news.size());
+                if (news.size() == 1) {
+                    KindPayload.ClassNewPayload payload = classNewPayload(news.get(0));
+                    check(payload.classDefaultOpIds().size() == 1
+                            && payload.fieldBoundaries().size() == 1
+                            && payload.fieldBoundaries().get(0).kind()
+                                == BoundaryKind.CLASS_DEFAULT_FIELD,
+                        "the omitted defaulted field's CLASS_NEW payload names one "
+                            + "CLASS_DEFAULT op and one CLASS_DEFAULT_FIELD boundary");
+                    SemanticOp boundary = opById(bareUnit,
+                        payload.fieldBoundaries().get(0).boundaryOpId());
+                    check(boundary != null && boundary.payload()
+                                instanceof KindPayload.BoundaryPayload boundaryPayload
+                            && boundaryPayload.input().equals(def.result()),
+                        "the CLASS_DEFAULT_FIELD boundary input is the produced "
+                            + "CLASS_DEFAULT result");
+                }
+            }
+        }
+
+        // The function-literal default (the review pin): the CLOSURE_NEW
+        // publishes the CLASS_DEFAULT op's result slot, so the op's
+        // function-typed result is produced and resolves its
+        // FunctionExecutionBinding (R-FUNCTION-BINDING green).
+        SemanticLowerer.ClassDeclarationCoreResult fnLit = lowerModule("""
+            class F { f: () => null = function(): null { }; }
+            """);
+        check(fnLit != null && fnLit.lowering() != null && !fnLit.lowering().hasErrors()
+                && fnLit.lowering().unit() != null,
+            "the function-literal default lowers to a validated unit: "
+                + (fnLit == null || fnLit.lowering() == null ? "null"
+                    : fnLit.lowering().diagnostics()));
+        if (fnLit != null && fnLit.lowering() != null && !fnLit.lowering().hasErrors()
+                && fnLit.lowering().unit() != null) {
+            LoweredModuleUnit fnLitUnit = fnLit.lowering().unit();
+            List<SemanticOp> fnLitDefaults =
+                ofKind(fnLitUnit.ops(), SemanticOpKind.CLASS_DEFAULT);
+            List<SemanticOp> closures =
+                ofKind(fnLitUnit.ops(), SemanticOpKind.CLOSURE_NEW);
+            check(fnLitDefaults.size() == 1 && closures.size() == 1,
+                "one CLASS_DEFAULT and one CLOSURE_NEW op; got " + fnLitDefaults.size()
+                    + " defaults and " + closures.size() + " closures");
+            if (fnLitDefaults.size() == 1 && closures.size() == 1) {
+                check(fnLitDefaults.get(0).result().equals(closures.get(0).result()),
+                    "the function-literal default's CLOSURE_NEW publishes the "
+                        + "CLASS_DEFAULT result slot");
+                check(fnLitUnit.functionBindings().containsKey(new FunctionAllocationIdentity(
+                        ((deal.semantic.ir.ValueId) fnLitDefaults.get(0).result()).id())),
+                    "the function-literal default's result resolves its "
+                        + "FunctionExecutionBinding (R-FUNCTION-BINDING)");
+            }
+        }
+
+        // The function-typed binding-reference default: the CLASS_DEFAULT
+        // result is the binding's statically tracked function identity
+        // (loads preserve allocation identity), which already carries its
+        // FunctionExecutionBinding.
+        SemanticLowerer.ClassDeclarationCoreResult fnRef = lowerModule("""
+            let g: () => null = function(): null { };
+            class G { h: () => null = g; }
+            """);
+        check(fnRef != null && fnRef.lowering() != null && !fnRef.lowering().hasErrors()
+                && fnRef.lowering().unit() != null,
+            "the function-typed binding-reference default lowers: "
+                + (fnRef == null || fnRef.lowering() == null ? "null"
+                    : fnRef.lowering().diagnostics()));
+        if (fnRef != null && fnRef.lowering() != null && !fnRef.lowering().hasErrors()
+                && fnRef.lowering().unit() != null) {
+            LoweredModuleUnit fnRefUnit = fnRef.lowering().unit();
+            List<SemanticOp> fnRefDefaults =
+                ofKind(fnRefUnit.ops(), SemanticOpKind.CLASS_DEFAULT);
+            List<SemanticOp> loads = ofKind(fnRefUnit.ops(), SemanticOpKind.BINDING_LOAD);
+            check(fnRefDefaults.size() == 1 && loads.size() == 1,
+                "one CLASS_DEFAULT and one BINDING_LOAD op; got " + fnRefDefaults.size()
+                    + " defaults and " + loads.size() + " loads");
+            if (fnRefDefaults.size() == 1 && loads.size() == 1) {
+                check(fnRefDefaults.get(0).result().equals(loads.get(0).result()),
+                    "the function-typed binding-reference default's CLASS_DEFAULT "
+                        + "result is the load's statically tracked function identity");
+                check(fnRefUnit.functionBindings().containsKey(new FunctionAllocationIdentity(
+                        ((deal.semantic.ir.ValueId) fnRefDefaults.get(0).result()).id())),
+                    "the function-typed binding-reference default's result resolves "
+                        + "its FunctionExecutionBinding (R-FUNCTION-BINDING)");
+            }
+        }
     }
 
     // =========================================================================
@@ -878,6 +1009,75 @@ public class ClassDeclarationLoweringTest {
                 && letVariant.lowering().diagnostics().get(0).message()
                     .contains(SemanticLowerer.CLASS_DEFAULT_CAPTURE),
             "the function-local let variant fails with CLASS_DEFAULT_CAPTURE");
+
+        // The nested-closure variant (the review pin): a closure allocated
+        // inside the default whose capture resolves to an enclosing-region
+        // (function-local) binding must fail the same CLASS_DEFAULT_CAPTURE
+        // admission — the nested closure's capture collector is no bypass.
+        SemanticLowerer.ClassDeclarationCoreResult nestedClosure = lowerModule("""
+            function make(n: int): null {
+              class Inner { f: () => null = function(): null { let x: int = n; }; }
+            }
+            """);
+        check(nestedClosure != null && nestedClosure.lowering() != null
+                && nestedClosure.lowering().hasErrors()
+                && nestedClosure.lowering().unit() == null
+                && nestedClosure.lowering().diagnostics().get(0).message()
+                    .contains(SemanticLowerer.CLASS_DEFAULT_CAPTURE),
+            "the nested closure's enclosing-region capture fails with "
+                + "CLASS_DEFAULT_CAPTURE: "
+                + (nestedClosure == null || nestedClosure.lowering() == null ? "null"
+                    : nestedClosure.lowering().diagnostics()));
+    }
+
+    // =========================================================================
+    // R-COVERAGE layout tie (the cycle-2 review pin)
+    // =========================================================================
+
+    /**
+     * The {@code CLASS_DECLARATION} row's layout-only R-COVERAGE waiver is
+     * tied to the produced layout record: a unit recording the row with no
+     * op of the mapped kinds and no class layout record fails R-COVERAGE (a
+     * layout-only class must still have its layout); the same unit with one
+     * produced layout passes (the waiver is justified by the record).
+     */
+    private static void testLayoutTieCoverage() {
+        System.out.println("-- R-COVERAGE layout tie: the CLASS_DECLARATION row's waiver "
+            + "requires the layout record --");
+        Map<ConstructKind, List<SemanticOpKind>> coverage = Map.of(
+            ConstructKind.CLASS_DECLARATION, ConstructKind.CLASS_DECLARATION.mappedOpKinds());
+        SemanticIrValidator.ComparisonFacts facts = new SemanticIrValidator.ComparisonFacts(
+            "interface-digest-class-arm", SemanticProfile.DEAL_V1_2_INT32, REGISTRY_HASH);
+        LoweredModuleUnit withoutLayout = new LoweredModuleUnit(
+            LoweredModuleUnit.FORMAT_VERSION, SemanticProfile.DEAL_V1_2_INT32, MODULE,
+            "interface-digest-class-arm",
+            LoweringContextHash.of(SemanticProfile.DEAL_V1_2_INT32, REGISTRY_HASH),
+            Set.of(), coverage, Map.of(), Map.of(),
+            new ModuleInitPlan(List.of(), new BlockId(0)), ExportPlan.empty(), Map.of());
+        Optional<CompilerDiagnostic> rejected =
+            SemanticIrValidator.validate(withoutLayout, facts);
+        check(rejected.isPresent() && "E6005".equals(rejected.get().code())
+                && rejected.get().message().contains("R-COVERAGE")
+                && rejected.get().message().contains("no class layout record"),
+            "a CLASS_DECLARATION row with no mapped op and no layout record fails "
+                + "R-COVERAGE: " + (rejected.isPresent() ? rejected.get().message() : "pass"));
+
+        ClassId classId = new ClassId(MODULE.path(), "C");
+        ClassLayout layout = new ClassLayout(classId, List.of(
+            new ClassLayout.FieldLayout("x", RuntimeDescriptor.Int.INSTANCE, true,
+                DefaultOwner.LOCAL)));
+        LoweredModuleUnit withLayout = new LoweredModuleUnit(
+            LoweredModuleUnit.FORMAT_VERSION, SemanticProfile.DEAL_V1_2_INT32, MODULE,
+            "interface-digest-class-arm",
+            LoweringContextHash.of(SemanticProfile.DEAL_V1_2_INT32, REGISTRY_HASH),
+            Set.of(), coverage, Map.of(classId, layout), Map.of(),
+            new ModuleInitPlan(List.of(), new BlockId(0)), ExportPlan.empty(), Map.of());
+        Optional<CompilerDiagnostic> admitted =
+            SemanticIrValidator.validate(withLayout, facts);
+        check(admitted.isEmpty(),
+            "a CLASS_DECLARATION row with no mapped op but a produced layout record "
+                + "validates (the waiver is satisfied by the layout): "
+                + (admitted.isPresent() ? admitted.get().message() : "pass"));
     }
 
     // =========================================================================
@@ -1101,6 +1301,7 @@ public class ClassDeclarationLoweringTest {
         testMultipleClassesDeclarationOrder();
         testAdmissionPositives();
         testAdmissionNegative();
+        testLayoutTieCoverage();
         testDeterminism();
         testValidatorPassage();
         testUnchangedBoundaries();
