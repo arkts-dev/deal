@@ -479,3 +479,72 @@ their own canonical revisions, as do their companion exercise scripts
 `verify_contingent_delivery_gate.sh` (pre-unit gate-condition checks,
 not wired into `run_tests.sh`); the post-unit state this record pins
 supersedes their pending-resolution claims.
+
+## 7. Third merge remediation — the differential gate's real-frontend
+corpus phase now observes the promoted C FFI E2010 (7910680e base)
+
+The engine's merge of the approved MR onto the canonical line failed
+again, and the root gate command on the merged tree aborted inside the
+differential-gate suite: `deal.test.conformance.DifferentialGateCorpusTest`
+reported `GateFailure[kind=frontend-compile,
+subject=frontend/modules/ffi-manifest-missing-native-library-rejected.deal,
+detail=the compile-error fixture must produce E2010, got: []]` (the
+canonical line's ISSUE-0357 integration had since added the gate's
+real-frontend corpus execution — `DifferentialGate` Phase 2b — which
+compiles every frontend-classified fixture through
+`FrontendCompiler.errorDiagnostics` with `CorpusFrontendResolver`).
+
+Root cause: this change set promoted the FFI-manifest fixture from
+`known-fail compile-error E2010` to `compile-error E2010` in the same
+change that lands the production import-span E2010
+(`deal/module/CompilationOrchestrator.ModuleResolverImpl` →
+`deal/checker/NameResolver`), and the legacy runners' harness resolvers
+(`test/ConformanceTest.java`, `test/JvmConformanceTest.java`) mirror the
+manifest-policy rejection — but the canonical line's
+`CorpusFrontendResolver` (the gate's corpus-aware resolver) carried no
+manifest-policy check, so the gate's real-frontend phase compiled the
+import clean and saw no E2010.
+
+Fix (final rebased commit): `deal/test/conformance/CorpusFrontendResolver.resolveModule`
+now enforces the same v1.2 C FFI manifest policy for the gate's
+manifest-less corpus frontend: a resolved relative import whose target
+is a `.d.deal` file whose effective `// @extern-c` holds raises
+`ModuleResolver.CffiImportWithoutNativeLibraryException` (the checker's
+`processImport` maps it to E2010 at the import span — the production
+emission-site mapping). The corpus carries exactly one such import
+(`ffi-manifest-missing-native-library-rejected.deal` →
+`./ffi_math`), so the promotion is now observed by every executing
+frontend: the production `deal.Main compile` (section 5), the two
+legacy harness resolvers, and the differential gate's corpus phase.
+
+`deal/test/conformance/DifferentialGateLanesCorpusTest` pins followed
+the merged-tree reality (re-captured from a real three-lane run):
+`FRONTEND_COMPILED` 190 → 191 (the promoted fixture is now a real
+compile-error case), `KNOWN_FAILURES_TRACKED` 1 → 0, the luajit
+counters 268/33 → 269/32 (the time fixture now passes the luajit lane
+against the span-less sidecar), and the time-fixture rows of the pinned
+differential-failure enumeration: the luajit `PROCESS_FAILURE` entry is
+gone (the lane PASSes), and the jvm row is re-classed
+`TRANSCRIPT_MISMATCH` → `PROCESS_FAILURE` (the honest lane failure the
+JVM lane reports for the span-less pin — the JVM runtime error carries
+`file`/`line` but no `column`, and the lane never fabricates the
+canonical snapshot).
+
+Verification on the final rebased commit (mandated base
+`7910680e11c84679ea32660f11bdb1ecbb95421b`; the engine gate command
+`flock /tmp/igelhaus-deal-tests.lock ./run_tests.sh --jobs 1` exits 0
+with `=== All Tests Passed ===` and zero `GATE FAILURE` lines):
+`DifferentialGateCorpusTest` 282/0 (the promoted pin records
+`frontend OK (found E2010)` through the real corpus phase);
+`DifferentialGateLanesCorpusTest` 841/0 (full three-lane run: 301
+verdicts, 127 differential failures, 44 tracked non-fatal, zero skips,
+the pre-flip verdict FAIL unweakened); `JvmLaneStatePinTest` 35/0;
+`LuaLaneTest` 47/0; `JsLaneTest` 69/0; `JvmLaneTest` 70/0;
+`SidecarCorpusValidationTest` 2145/0; `GateClosureStrictGateTest` 18/0;
+`StdlibTimePreActivationPinTest` 37/0; `StructuredExpectationComparatorTest`
+139/0; `DirectiveTest` 146/0; `FfiDeclarationValidatorTest` 188/0;
+`JsBackendTest` 455/0; `SourceMapTest` 182/0. The three-mode registry-shape
+strict gate, the span-less time-fixture oracle, and the empty staged
+registry are unchanged by this remediation; `std/time.lua`,
+`deal/runtime.lua`, `deal/runtime.js`, and `std/time.js` remain
+byte-identical; the working tree is clean.

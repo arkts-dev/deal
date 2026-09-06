@@ -71,7 +71,14 @@ public class DifferentialGateCorpusTest {
      * — to a real compile-error fixture (compile-error 130 -> 131,
      * known-fail 1 -> 0) in the same change as its production E2010
      * emission site (deal/checker/NameResolver.java at the import span),
-     * so the corpus carries zero known-fail fixtures. */
+     * so the corpus carries zero known-fail fixtures. The gate's own
+     * real-frontend corpus phase observes the promotion too:
+     * {@code CorpusFrontendResolver} enforces the same v1.2 C FFI
+     * manifest policy (an import of an effective-{@code @extern-c}
+     * {@code .d.deal} corpus module without a manifest entry raises the
+     * checker's E2010 at the import span), so the promoted fixture
+     * records {@code frontend OK (found E2010)} through the real
+     * pipeline, never a manufactured pin. */
     private static final int TOTAL_FIXTURES = 545;
     private static final int FRONTEND_FIXTURES = 210;
     private static final int BACKEND_RUNTIME_FIXTURES = 335;

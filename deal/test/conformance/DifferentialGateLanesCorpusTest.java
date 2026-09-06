@@ -32,9 +32,9 @@ import java.util.Set;
  *       {@code stdlib/string/length-unicode.deal},
  *       {@code error-handling/try-catch.deal} plus two more converged
  *       cases) passes byte-exact on all three lanes;</li>
- *   <li>the failure set is exactly the tracked non-fatal set (the one
- *       known-fail fixture plus the 39 JVM registry entries) plus the
- *       enumerated differential failures — every one naming fixture,
+ *   <li>the failure set is exactly the tracked non-fatal set (the
+ *       39 JVM registry entries) plus the enumerated differential
+ *       failures — every one naming fixture,
  *       backend, and the closed mismatch class with the first differing
  *       byte/field detail;</li>
  *   <li>no {@code SKIP} verdict class appears anywhere (the gate has no
@@ -87,19 +87,24 @@ public class DifferentialGateLanesCorpusTest {
     /** The harness-owned deadline of the full run (G7). */
     private static final Duration FULL_RUN_DEADLINE = Duration.ofSeconds(120);
 
-    /** The pinned corpus population (the T2/T3/T5 pins, unchanged). */
+    /** The pinned corpus population (the T2/T3/T5 pins, unchanged; the
+     * frontend population counts the promoted FFI-manifest compile-error
+     * fixture — ISSUE-0477 dropped its known-fail marker). */
     private static final int TOTAL_FIXTURES = 545;
     private static final int RUNTIME_CASES = 301;
-    private static final int FRONTEND_COMPILED = 190;
+    private static final int FRONTEND_COMPILED = 191;
     private static final int COMPILE_PINS = 4;
 
-    /** Pre-flip accounting pins (G8). */
-    private static final int KNOWN_FAILURES_TRACKED = 1;
+    /** Pre-flip accounting pins (G8; the last on-disk known-fail
+     * marker was promoted by ISSUE-0477, so the counter is zero, and
+     * the JVM bytes core lane promoted the nine bytes registry
+     * entries, so the registry count is the landed 39). */
+    private static final int KNOWN_FAILURES_TRACKED = 0;
     private static final int SKIP_REGISTRY_ENTRIES = 39;
 
     /** The per-backend pass/fail counters of the full run. */
     private static final Map<String, int[]> PER_BACKEND = Map.of(
-        "luajit", new int[] {268, 33},
+        "luajit", new int[] {269, 32},
         "jvm", new int[] {199, 102},
         "js", new int[] {269, 32});
 
@@ -273,8 +278,7 @@ public class DifferentialGateLanesCorpusTest {
         "backend-runtime/stdlib-edge/table-keys-dynamic-nontable.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/stdlib-edge/table-keys-dynamic-nontable.deal | luajit | PROCESS_FAILURE",
         "backend-runtime/stdlib-edge/time-now-millis-positive.deal | js | TRANSCRIPT_MISMATCH",
-        "backend-runtime/stdlib-edge/time-now-millis-positive.deal | jvm | TRANSCRIPT_MISMATCH",
-        "backend-runtime/stdlib-edge/time-now-millis-positive.deal | luajit | PROCESS_FAILURE",
+        "backend-runtime/stdlib-edge/time-now-millis-positive.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/stdlib/json/json-stringify-bytes-error.deal | js | TRANSCRIPT_MISMATCH",
         "backend-runtime/stdlib/json/json-stringify-bytes-error.deal | luajit | PROCESS_FAILURE",
         "backend-runtime/stdlib/math/int-abs-min-overflow.deal | js | TRANSCRIPT_MISMATCH",
