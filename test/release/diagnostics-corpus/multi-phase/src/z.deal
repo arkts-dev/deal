@@ -1,0 +1,10 @@
+// Determinism corpus entry (deterministic-diagnostics D3): imports
+// ./a (the phase-3 checker diagnostic source) and deliberately exports
+// no main, so the entry-main validation raises E2012. Entry-main
+// validation runs before phase 3, so both diagnostics coexist in one
+// compile and the collection order (E2012 of z, then E3001 of a)
+// differs from the canonical D1 report order (file order a < z places
+// E3001 first) — the double-run byte comparison therefore also pins the
+// canonical-order application at the report sites.
+import * as a from "./a";
+export function helper(): int { return 1; }

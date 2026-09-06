@@ -1,0 +1,16 @@
+// Determinism artifact entry (deterministic-diagnostics D3/D2): the
+// two alias declarations are pinned so String.hashCode's HashMap bucket
+// order inverts definition order on every JDK — "b" (hash 98 -> bucket 2
+// in a default-capacity-16 HashMap) is defined before "aa" (hash 3104 ->
+// bucket 0). Constructing b.C feeds LuaBackend.findImportAliasForClass:
+// with the LinkedHashMap storage field the first match is the
+// earliest-defined alias b; with a HashMap-backed field the bucket-first
+// winner would be aa. The generated main.lua must therefore reference
+// b.C_plan and never aa.C_plan.
+import * as b from "./lib";
+import * as aa from "./lib";
+
+export function main(): null {
+  let v: b.C = { };
+  return null;
+}
