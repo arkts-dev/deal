@@ -373,6 +373,17 @@ public class BackendConformanceTest {
     private static final java.util.concurrent.ConcurrentLinkedQueue<Object[]>
         pendingKnownFail = new java.util.concurrent.ConcurrentLinkedQueue<>();
     private static boolean luajitAvailable;
+
+    /**
+     * Strict no-skip mode (release-r0-r3-strict-gate-mechanics S3;
+     * release-pipeline-strict-mode-and-evidence D2(c)): when the gate
+     * scripts export DEAL_STRICT=1, the runner JVM inherits it and the
+     * known-fail / toolchain-skip recording sites below are hard gate
+     * failures instead of tracked evidence. Dev mode leaves the flag
+     * unset and records exactly as before.
+     */
+    private static final boolean STRICT_MODE =
+        System.getenv("DEAL_STRICT") != null;
     private static boolean jvmAvailable;
     private static boolean nodeAvailable;
 
@@ -1103,6 +1114,14 @@ public class BackendConformanceTest {
                 + "passes — promote the fixture: drop 'knownFail')");
             failed.incrementAndGet();
         } else {
+            // The strict recording seam (S3): the first known-fail
+            // recording attempt terminates the runner before the
+            // KNOWN-FAIL line logs or knownFailures increments.
+            if (STRICT_MODE) {
+                System.err.println("STRICT_SKIP_DETECTED (" + name
+                    + ": known-fail tracked by " + issue + ")");
+                System.exit(1);
+            }
             log("  [" + name + "] KNOWN-FAIL (v1.2 not yet "
                 + "implemented; tracked by " + issue + ")");
             for (String line : capture.toString().split("\n")) {
@@ -1347,6 +1366,15 @@ public class BackendConformanceTest {
             }
 
             if (!ranAny) {
+                // The strict recording seam (S3): the toolchain skip
+                // terminates the runner before the SKIP line logs or
+                // skipped increments.
+                if (STRICT_MODE) {
+                    System.err.println("STRICT_SKIP_DETECTED (" + name
+                        + ": runtime test, no applicable backend "
+                        + "available)");
+                    System.exit(1);
+                }
                 log("  [" + name + "] SKIP (runtime test, "
                     + "no applicable backend available)");
                 skipped.incrementAndGet();

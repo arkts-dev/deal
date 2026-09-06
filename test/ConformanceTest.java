@@ -93,6 +93,17 @@ public class ConformanceTest {
     private static boolean luajitAvailable;
 
     /**
+     * Strict no-skip mode (release-r0-r3-strict-gate-mechanics S3;
+     * release-pipeline-strict-mode-and-evidence D2(c)): when the gate
+     * scripts export DEAL_STRICT=1, the runner JVM inherits it and every
+     * skip/known-fail recording is a hard gate failure instead of
+     * tracked evidence. Dev mode leaves the flag unset and records
+     * exactly as before.
+     */
+    private static final boolean STRICT_MODE =
+        System.getenv("DEAL_STRICT") != null;
+
+    /**
      * Profile-authority accounting (A4/A5): every legacy-authority
      * result is labelled distinctly and keeps its own denominator; a
      * legacy-profile pass contributes zero v1.2/promotion credit.
@@ -1424,6 +1435,18 @@ public class ConformanceTest {
     // =========================================================================
 
     private static void record(TestFile test, State state, String message) {
+        // The strict recording seam (S3): the shared funnel every
+        // environmental-skip site and every known-fail recording passes
+        // through. STRICT_SKIP_DETECTED fires before any counter,
+        // phase-stat, or spec-group update; the first recording attempt
+        // terminates the runner. State.STAGED_FAIL and the pass/fail
+        // states stay outside the conversion set.
+        if (STRICT_MODE
+                && (state == State.SKIP || state == State.KNOWN_FAIL)) {
+            System.err.println("STRICT_SKIP_DETECTED ("
+                + test.relativePath() + ": " + message + ")");
+            System.exit(1);
+        }
         switch (state) {
             case PASS -> passed++;
             case FAIL -> failed++;

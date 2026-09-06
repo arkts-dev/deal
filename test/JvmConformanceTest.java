@@ -703,6 +703,17 @@ public class JvmConformanceTest {
     private static final Object CONSOLE_LOCK = new Object();
 
     private static boolean jvmAvailable;
+
+    /**
+     * Strict no-skip mode (release-r0-r3-strict-gate-mechanics S3;
+     * release-pipeline-strict-mode-and-evidence D2(c)): when the gate
+     * scripts export DEAL_STRICT=1, the runner JVM inherits it and the
+     * skip/known-fail recording statements below are hard gate failures
+     * instead of tracked evidence. Dev mode leaves the flag unset and
+     * records exactly as before.
+     */
+    private static final boolean STRICT_MODE =
+        System.getenv("DEAL_STRICT") != null;
     private static Path conformanceRoot = Path.of("test/conformance/")
         .toAbsolutePath().normalize();
     private static Path hostFixturesRoot =
@@ -1399,6 +1410,15 @@ public class JvmConformanceTest {
             return new Outcome(test, classified, false,
                 "stale known-fail; promote fixture");
         }
+        // The strict recording seam (S3): the first known-fail recording
+        // attempt terminates the runner before knownFailTracked or
+        // knownFailByIssue is touched.
+        if (STRICT_MODE) {
+            System.err.println("STRICT_SKIP_DETECTED ("
+                + test.relativePath() + ": known-fail tracked by "
+                + test.issue() + ")");
+            System.exit(1);
+        }
         knownFailTracked.incrementAndGet();
         knownFailByIssue.merge(test.issue(), 1, Integer::sum);
         log("  [" + test.relativePath() + "] KNOWN-FAIL (" + mode
@@ -1433,6 +1453,16 @@ public class JvmConformanceTest {
                 + " now passes on JVM — remove the skip-registry entry)");
             return new Outcome(test, classified, false,
                 "stale skip; remove the skip-registry entry");
+        }
+        // The strict recording seam (S3): the first gap-cataloged skip
+        // recording attempt terminates the runner before
+        // applicableSkipped or skipGroupCounts is touched.
+        if (STRICT_MODE) {
+            System.err.println("STRICT_SKIP_DETECTED ("
+                + test.relativePath() + ": skip "
+                + classified.skipGapId() + " — "
+                + classified.skipReason() + ")");
+            System.exit(1);
         }
         applicableSkipped.incrementAndGet();
         skipGroupCounts.merge(classified.skipGapId(), 1, Integer::sum);
