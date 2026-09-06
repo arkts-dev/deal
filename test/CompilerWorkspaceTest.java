@@ -20,6 +20,7 @@ public final class CompilerWorkspaceTest {
         schemaChangeRequiresStateReset();
         capabilitiesChangeAtomicallyWithProgramState();
         invalidCapabilitiesRemainRepairable();
+        declarationRepairUsesExactOperation();
         duplicateClassDoesNotRejectCapabilities();
         protocolJsonIsDeterministicAndUnicodeSafe();
         protocolJsonSupportsDesugaredRecordShape();
@@ -120,6 +121,47 @@ public final class CompilerWorkspaceTest {
                 .filter(slot -> slot.status() == CompilerProtocol.RepairSlotStatus.REJECTED).toList();
         check(rejected.size() == 1 && rejected.get(0).operation().equals(DealCompilerWorkspace.ADD_DECLARATION),
                 "class diagnostic must target its declaration, not unrelated module capabilities: " + rejected);
+    }
+
+    private static void declarationRepairUsesExactOperation() {
+        for (boolean reverse : List.of(false, true)) {
+            for (boolean syntaxFailure : List.of(false, true)) {
+                String source = "export class State { paused: boolean = false; }\n";
+                String action = "export class Input { delta: int = 0; }";
+                String valid = "export function read(state: State, action: Input): int { if (!state.paused) { return 1; } return 0; }";
+                String bad = syntaxFailure ? valid.replace("!state.paused", "state.paused == false")
+                        : valid + "\nexport class Extra { value: int = 0; }";
+                var base = DealCompilerWorkspace.inspect(source, "app.deal");
+                var inspected = DealCompilerWorkspace.inspectChange(source, "app.deal", base.sourceDigest(),
+                        List.of(base.moduleId()), List.of(DealCompilerWorkspace.ADD_DECLARATION));
+                var precondition = new CompilerProtocol.ChangeSetPrecondition(base.sourceDigest(),
+                        Map.of(base.moduleId().value(), base.sourceDigest()));
+                var goodOp = new DealCompilerWorkspace.AddDeclaration(base.moduleId(), action);
+                var badOp = new DealCompilerWorkspace.AddDeclaration(base.moduleId(), bad);
+                var staged = DealCompilerWorkspace.stageChange(source, "app.deal", precondition, inspected,
+                        reverse ? List.of(badOp, goodOp) : List.of(goodOp, badOp));
+                int badIndex = reverse ? 0 : 1;
+                var rejected = staged.workspace().slots().stream()
+                        .filter(slot -> slot.status() == CompilerProtocol.RepairSlotStatus.REJECTED).toList();
+                check(rejected.size() == 1 && rejected.get(0).slotId().equals("R" + (badIndex + 1)),
+                        "only the failing operation is editable regardless of addition order: " + rejected);
+                check(staged.diagnostics().stream().allMatch(d -> d.operationIndex() == badIndex),
+                        "diagnostics must retain their transaction-local operation identity");
+                if (syntaxFailure) {
+                    check(rejected.get(0).diagnostics().stream().anyMatch(d -> d.code().equals("E1015")
+                                    && d.context().excerpt().contains("state.paused == false")
+                                    && d.notes().stream().anyMatch(n -> n.message().contains("EQ '=='"))),
+                            "parser token evidence must survive declaration validation and slot routing");
+                }
+                var untouched = staged.workspace().slots().get(reverse ? 1 : 0);
+                var repaired = DealCompilerWorkspace.patchRepairWorkspace(source, "app.deal", staged.workspace(),
+                        List.of(new CompilerProtocol.SlotPatch(rejected.get(0).slotId(), Map.of("declaration", valid))));
+                check(repaired.accepted(), "correcting only the failed declaration must commit: " + repaired.diagnostics());
+                check(repaired.workspace().slots().get(reverse ? 1 : 0).payloadFingerprint()
+                                .equals(untouched.payloadFingerprint()), "accepted sibling payload must not change");
+                check(staged.source().equals(source), "a rejected batch must preserve the committed source");
+            }
+        }
     }
 
     private static void invalidCapabilitiesRemainRepairable() {

@@ -651,7 +651,11 @@ public final class DealCompilerWorkspace {
         List<StructuredDiagnostic> operationContractDiagnostics = diagnostics.stream()
                 .filter(DealCompilerWorkspace::isOperationContractDiagnostic).toList();
         Set<Integer> directlyRejected = rejectedSlots(operations, operationContractDiagnostics);
-        if (operationContractDiagnostics.isEmpty()) {
+        Set<Integer> explicitRejected = diagnostics.stream().map(StructuredDiagnostic::operationIndex)
+                .filter(Objects::nonNull).collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+        if (!explicitRejected.isEmpty()) {
+            directlyRejected = explicitRejected;
+        } else if (operationContractDiagnostics.isEmpty()) {
             directlyRejected = directlyOwnedSlots(operations, diagnostics, modulePath);
             if (directlyRejected.isEmpty()) {
                 for (int index = 0; index < isolated.size(); index++) {
@@ -668,7 +672,8 @@ public final class DealCompilerWorkspace {
             String groupId = "G" + (groupIndexes[index] + 1);
             Map<String, String> payload = payload(operation);
             List<StructuredDiagnostic> candidateDiagnostics = diagnostics.stream()
-                    .filter(value -> diagnosticMatches(operation, value)).toList();
+                    .filter(value -> value.operationIndex() != null
+                            ? value.operationIndex() == slotIndex : diagnosticMatches(operation, value)).toList();
             List<StructuredDiagnostic> owned = !candidateDiagnostics.isEmpty()
                     ? candidateDiagnostics
                     : isolated.get(index).accepted() ? List.of() : isolated.get(index).diagnostics();
@@ -1028,7 +1033,8 @@ public final class DealCompilerWorkspace {
         List<Replacement> replacements = new ArrayList<>();
         Set<SemanticId> changedSymbols = new LinkedHashSet<>();
         Set<SemanticId> changedNodes = new LinkedHashSet<>();
-        for (Operation operation : requestedOperations) {
+        for (int operationIndex = 0; operationIndex < requestedOperations.size(); operationIndex++) {
+            Operation operation = requestedOperations.get(operationIndex);
             Target target = base.targets().get(operation.targetId());
             if (target == null) {
                 return rejected(base, diagnostic(
@@ -1049,6 +1055,9 @@ public final class DealCompilerWorkspace {
                     if (value.declaration() == null || value.declaration().isBlank()) {
                         return nullSource(base, operation, target, "DEAL declaration");
                     }
+                    var syntaxErrors = declarationSyntaxDiagnostics(value.declaration(), modulePath, operation, operationIndex);
+                    if (!syntaxErrors.isEmpty()) return new ChangeResult(false, source, baseDigest,
+                            base.inspection(), emptyImpact(base), syntaxErrors);
                     String addedIdentity = singleDeclarationIdentity(value.declaration(), modulePath);
                     if (addedIdentity.equals("invalid-or-multiple-declarations")
                             || addedIdentity.equals("unsupported-declaration")) {
@@ -1058,7 +1067,7 @@ public final class DealCompilerWorkspace {
                                 target.id(), target.range(), "one class or function declaration",
                                 addedIdentity,
                                 List.of(new RepairScope(ADD_DECLARATION, target.id())),
-                                "queryDealModule"));
+                                "queryDealModule").withOperationIndex(operationIndex));
                     }
                     String separator = source.isEmpty() || source.endsWith("\n") ? "" : "\n";
                     replacements.add(new Replacement(
@@ -1078,6 +1087,9 @@ public final class DealCompilerWorkspace {
                     if (value.declaration() == null || value.declaration().isBlank()) {
                         return nullSource(base, operation, target, "DEAL declaration");
                     }
+                    var syntaxErrors = declarationSyntaxDiagnostics(value.declaration(), modulePath, operation, operationIndex);
+                    if (!syntaxErrors.isEmpty()) return new ChangeResult(false, source, baseDigest,
+                            base.inspection(), emptyImpact(base), syntaxErrors);
                     String replacementIdentity = singleDeclarationIdentity(
                             value.declaration(), modulePath);
                     if (!target.id().value().equals(replacementIdentity)) {
@@ -1086,7 +1098,7 @@ public final class DealCompilerWorkspace {
                                 "Declaration replacement must contain exactly one declaration with the same identity",
                                 target.id(), target.range(), target.id().value(), replacementIdentity,
                                 List.of(new RepairScope(REPLACE_DECLARATION, target.id())),
-                                "queryDealSymbol"));
+                                "queryDealSymbol").withOperationIndex(operationIndex));
                     }
                     replacements.add(new Replacement(
                             target.start(), target.end(), value.declaration().strip(), false));
@@ -1773,6 +1785,24 @@ public final class DealCompilerWorkspace {
             return symbolId(modulePath, "function", value.name()).value();
         }
         return "unsupported-declaration";
+    }
+
+    private static List<StructuredDiagnostic> declarationSyntaxDiagnostics(
+            String source, String modulePath, Operation operation, int operationIndex) {
+        // Keep line coordinates while hiding framework annotations from the core parser.
+        String parserSource = source.replaceAll("(?m)^[ \\t]*//[ \\t]*@[^\\r\\n]*", "");
+        LexResult lexed = new Lexer(parserSource, modulePath).tokenize();
+        ParseResult parsed = new Parser(lexed.tokens(), modulePath).parse();
+        List<CompilerDiagnostic> errors = new ArrayList<>(lexed.diagnostics());
+        errors.addAll(parsed.diagnostics());
+        return errors.stream().filter(value -> value.severity().equals("error")).map(value -> {
+            var r = value.range();
+            return new StructuredDiagnostic(value.code(), value.severity(), value.message(),
+                    new SourceRange(modulePath, r.startLine(), r.startColumn(), r.endLine(), r.endColumn()),
+                    operation.targetId(), "", "", List.of(),
+                    List.of(new RepairScope(operationName(operation), operation.targetId())),
+                    "repairOperation", null, value.notes(), operationIndex).withSourceContext(source);
+        }).toList();
     }
 
     private static SemanticId symbolId(String modulePath, String kind, String name) {

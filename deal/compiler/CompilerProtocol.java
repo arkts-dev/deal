@@ -228,7 +228,21 @@ public final class CompilerProtocol {
             List<RepairScope> repairScopes,
             String contextQuery,
             DiagnosticContext context,
-            List<deal.diagnostics.DiagnosticNote> notes) {
+            List<deal.diagnostics.DiagnosticNote> notes,
+            Integer operationIndex) {
+        public StructuredDiagnostic(String code, String severity, String message, SourceRange range,
+                                    SemanticId ownerId, String expected, String actual,
+                                    List<SemanticId> relatedIds, List<RepairScope> repairScopes, String contextQuery,
+                                    DiagnosticContext context, List<deal.diagnostics.DiagnosticNote> notes) {
+            this(code, severity, message, range, ownerId, expected, actual, relatedIds, repairScopes,
+                    contextQuery, context, notes, null);
+        }
+
+        /** Index in this response's ChangeSet only; never a persisted semantic identity. */
+        public StructuredDiagnostic withOperationIndex(int index) {
+            return new StructuredDiagnostic(code, severity, message, range, ownerId, expected, actual,
+                    relatedIds, repairScopes, contextQuery, context, notes, index);
+        }
         public StructuredDiagnostic(String code, String severity, String message, SourceRange range,
                                     SemanticId ownerId, String expected, String actual,
                                     List<SemanticId> relatedIds, List<RepairScope> repairScopes, String contextQuery) {
@@ -267,7 +281,7 @@ public final class CompilerProtocol {
             return new StructuredDiagnostic(code, severity, message, range, ownerId, expected, actual,
                     relatedIds, repairScopes, contextQuery,
                     new DiagnosticContext("diagnostic-context-v1", DealCompilerWorkspace.digest(source),
-                            first, excerpt.toString(), truncated), notes);
+                            first, excerpt.toString(), truncated), notes, operationIndex);
         }
     }
 
