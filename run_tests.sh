@@ -88,19 +88,17 @@ TEST_MAINS+=(
 )
 
 # =========================================================================
-# ISSUE-0488 (historical/legacy catalogs): HistoricalRegressionCatalog
-# (the closed historical pin authority with pinned expectation
-# baselines), LegacyCapabilityCatalog (the release-owned unsupported-
-# legacy-slice authority), and their gate-run verification battery join
-# the compile list and the run phase here — the gate-run conformance
-# files where the LegacyProfileRegressionCatalog precedent lives. The
-# two catalogs are test-harness data only (production code never depends
-# on them); the conformance runners validate them at startup and record
+# ISSUE-0488 (historical/legacy catalogs): the gate-run verification
+# battery for the two catalogs joins the compile list and the run phase
+# here. The catalogs themselves are test-harness data only (production
+# code never depends on them); they compile from tools/gate-manifest.sh
+# TEST_SOURCES (the manifest is the single compile-list authority and
+# the strict full-set compile list), because the manifest-listed
+# BackendConformanceTest/ConformanceTest runners consume them at
+# startup. The conformance runners validate them at startup and record
 # the signed-int32 historical executed evidence.
 # =========================================================================
 TEST_SOURCES+=(
-  'test/HistoricalRegressionCatalog.java'
-  'test/LegacyCapabilityCatalog.java'
   'test/HistoricalRegressionCatalogTest.java'
 )
 TEST_MAINS+=(
@@ -115,13 +113,14 @@ TEST_MAINS+=(
 # shared canonical ErrorSnapshot serializer verbatim. The
 # LegacyProfileRegressionCatalog authority (the A5 per-case profile
 # selection) was extracted from test/ConformanceTest.java into its own
-# gate-compiled file so the lane can consume it; ConformanceTest keeps
-# running unchanged in run_tests.sh until the flip retires it.
+# file; it compiles from tools/gate-manifest.sh TEST_SOURCES (consumed
+# by the manifest-listed conformance runners, so the strict full-set
+# compile list is self-consistent). ConformanceTest keeps running
+# unchanged in run_tests.sh until the flip retires it.
 # =========================================================================
 TEST_SOURCES+=(
   'deal/test/conformance/LuaLane.java'
   'deal/test/conformance/LuaLaneTest.java'
-  'test/LegacyProfileRegressionCatalog.java'
 )
 TEST_MAINS+=(
   'fg|=== Running Lua Lane Tests (ISSUE-0354) ===|java -ea -cp build deal.test.conformance.LuaLaneTest'

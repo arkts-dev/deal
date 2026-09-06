@@ -127,6 +127,22 @@ TEST_SOURCES=(
   'test/ConformanceTest.java'
   'test/ConformanceHarnessMetadata.java'
   'test/ConformanceHarnessMetadataTest.java'
+  # ISSUE-0488 registration: the historical/legacy catalogs —
+  # HistoricalRegressionCatalog (the closed historical pin authority
+  # with pinned expectation baselines) and LegacyCapabilityCatalog (the
+  # release-owned unsupported-legacy-slice authority) — are gate-run
+  # conformance data consumed by the manifest-listed
+  # BackendConformanceTest/ConformanceTest runners at startup; they
+  # compile from the manifest so the strict full-set compile list (the
+  # manifest exactly) is self-consistent.
+  'test/HistoricalRegressionCatalog.java'
+  'test/LegacyCapabilityCatalog.java'
+  # ISSUE-0354 registration: the LegacyProfileRegressionCatalog A5
+  # per-case profile-selection authority (extracted from
+  # ConformanceTest) — consumed by the manifest-listed
+  # ConformanceTest/JvmConformanceTest/FoundationIntegrationTest
+  # runners.
+  'test/LegacyProfileRegressionCatalog.java'
   'test/JvmConformanceTest.java'
   'test/JsConformanceTest.java'
   'test/LuaAbiTest.java'
