@@ -443,11 +443,15 @@ for record in "${RUN_PHASE_MAINS[@]}"; do
       GOLDEN_FILE="test/goldens/stdlib-declarations.ir.txt"
       TEMP_FILE="/tmp/deal-stdlib-ir-cov-$$.txt"
       # Strict mode drops the dev-only stderr redirect (bounded-step-
-      # table-and-library D8); dev mode keeps the exact redirect.
+      # table-and-library D8); dev mode keeps the exact redirect. The
+      # invocation carries the main class explicitly (run_java's first
+      # argument is the step name, not the main class): the pinned
+      # step name and the main class are the same token here, so the
+      # java line must repeat it once as the wrapper tail's main.
       if [ -n "${DEAL_STRICT:-}" ]; then
-        run_java deal.test.GenerateStdlibGoldenIr "$TEMP_FILE"
+        run_step deal.test.GenerateStdlibGoldenIr -- java -ea "$AGENT" -cp "build:$JUNIT_CP" deal.test.GenerateStdlibGoldenIr "$TEMP_FILE"
       else
-        run_java deal.test.GenerateStdlibGoldenIr "$TEMP_FILE" 2>/dev/null
+        run_step deal.test.GenerateStdlibGoldenIr -- java -ea "$AGENT" -cp "build:$JUNIT_CP" deal.test.GenerateStdlibGoldenIr "$TEMP_FILE" 2>/dev/null
       fi
       if [ "${DEAL_UPDATE_GOLDENS}" = "true" ]; then
         cp "$TEMP_FILE" "$GOLDEN_FILE"
