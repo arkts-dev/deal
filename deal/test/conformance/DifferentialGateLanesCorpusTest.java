@@ -33,7 +33,7 @@ import java.util.Set;
  *       {@code error-handling/try-catch.deal} plus two more converged
  *       cases) passes byte-exact on all three lanes;</li>
  *   <li>the failure set is exactly the tracked non-fatal set (the one
- *       known-fail fixture plus the 44 JVM registry entries) plus the
+ *       known-fail fixture plus the 39 JVM registry entries) plus the
  *       enumerated differential failures — every one naming fixture,
  *       backend, and the closed mismatch class with the first differing
  *       byte/field detail;</li>
@@ -95,12 +95,12 @@ public class DifferentialGateLanesCorpusTest {
 
     /** Pre-flip accounting pins (G8). */
     private static final int KNOWN_FAILURES_TRACKED = 1;
-    private static final int SKIP_REGISTRY_ENTRIES = 44;
+    private static final int SKIP_REGISTRY_ENTRIES = 39;
 
     /** The per-backend pass/fail counters of the full run. */
     private static final Map<String, int[]> PER_BACKEND = Map.of(
         "luajit", new int[] {268, 33},
-        "jvm", new int[] {194, 107},
+        "jvm", new int[] {199, 102},
         "js", new int[] {269, 32});
 
     /** The designated converged subset (task criterion (a)): every lane
@@ -116,14 +116,9 @@ public class DifferentialGateLanesCorpusTest {
     /** The tracked non-fatal registry set (the live pre-flip JVM
      * registry entries, every one still failing on the jvm lane). */
     private static final Set<String> TRACKED_REGISTRY = Set.of(
-        "backend-runtime/bytes/bytes-buffer-ops.deal",
-        "backend-runtime/bytes/bytes-class-field-descriptor.deal",
         "backend-runtime/bytes/bytes-descriptor-boundary.deal",
         "backend-runtime/bytes/bytes-index-bounds.deal",
-        "backend-runtime/bytes/bytes-length.deal",
         "backend-runtime/bytes/bytes-write-range.deal",
-        "backend-runtime/bytes/bytes-write-single-evaluation.deal",
-        "backend-runtime/bytes/bytes-write-validation-order.deal",
         "backend-runtime/class-runtime-errors/dynamic-bad-class-array-element-e8001.deal",
         "backend-runtime/class-runtime-errors/dynamic-bad-class-param-e8001.deal",
         "backend-runtime/class-runtime-errors/dynamic-bad-class-return-e8001.deal",

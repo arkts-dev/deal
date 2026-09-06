@@ -1659,52 +1659,52 @@ public class JvmLane implements Lane {
         // promotions. The std/math.absInt residual was resolved by
         // ISSUE-0397 I6 and the stale skip was removed.
 
-        // ---- JVM-GAP-BYTES: the bytes runtime lane (ISSUE-0277) ----
-        // The v1.2 corpus pins the FFI-backed bytes carrier. The JVM
-        // backend has no bytes lane yet (E6000 at every bytes site), so
-        // the LuaJIT-owned bytes expectations below cannot pass on JVM.
-        // Once JVM bytes lands (ISSUE-0277), the probes start passing
-        // and the stale-skip gate forces these entries out.
-        skip("backend-runtime/bytes/bytes-buffer-ops.deal",
-            "the zero-filled bytes buffer, 0..255 byte writes, and "
-                + "reference-copy semantics require the bytes carrier; "
-                + "JvmBackend raises E6000 at bytes sites (ISSUE-0277).",
-            "JVM-GAP-BYTES");
+        // ---- JVM-GAP-BYTES: the bytes runtime lane (ISSUE-0158) ----
+        // The direct bytes lane landed with ISSUE-0158: bytes(n)
+        // allocation (zero-filled byte[]), b.length, unsigned reads,
+        // E8012 index bounds, E8013 value range, single-evaluation
+        // writes, reference aliasing, and bytes-typed class fields all
+        // pass the real pipeline — the five corresponding skip entries
+        // (bytes-buffer-ops, bytes-class-field-descriptor, bytes-length,
+        // bytes-write-single-evaluation,
+        // bytes-write-validation-order) became stale and the stale-skip
+        // gate forced them out with the promotion. The remaining
+        // entries stay tracked because their outcomes still cannot
+        // satisfy the canonical lane snapshot: the E8012/E8013 error
+        // fixtures raise a real JVM DEALRuntimeError whose snapshot
+        // carries no column field (ISSUE-0276 owns the backend
+        // convergence) and the lane never fabricates it, and
+        // bytes-descriptor-boundary pins the recursive bytes-bearing
+        // array/nullable/function wrapper closure (E6000 until
+        // ISSUE-0160).
         skip("backend-runtime/bytes/bytes-index-bounds.deal",
-            "E8012 on byte reads/writes outside [0, b.length) requires "
-                + "the bytes carrier; JvmBackend raises E6000 at bytes "
-                + "sites (ISSUE-0277).", "JVM-GAP-BYTES");
+            "the fixture raises E8012 on the JVM lane, but the JVM "
+                + "DEALRuntimeError snapshot carries no column field "
+                + "(ISSUE-0276 owns the backend convergence), so the "
+                + "lane cannot serialize the canonical error snapshot.",
+            "JVM-GAP-BYTES");
         skip("backend-runtime/bytes/bytes-write-range.deal",
-            "E8013 on byte values outside 0..255 requires the bytes "
-                + "carrier; JvmBackend raises E6000 at bytes sites "
-                + "(ISSUE-0277).", "JVM-GAP-BYTES");
-        skip("backend-runtime/bytes/bytes-length.deal",
-            "the compiler-resolved bytes .length requires the bytes "
-                + "carrier; JvmBackend raises E6000 at bytes sites "
-                + "(ISSUE-0277).", "JVM-GAP-BYTES");
+            "the fixture raises E8013 on the JVM lane, but the JVM "
+                + "DEALRuntimeError snapshot carries no column field "
+                + "(ISSUE-0276 owns the backend convergence), so the "
+                + "lane cannot serialize the canonical error snapshot.",
+            "JVM-GAP-BYTES");
         skip("backend-runtime/bytes/bytes-descriptor-boundary.deal",
-            "canonical [bytes]/?(bytes)/function bytes descriptors "
-                + "require the bytes carrier; JvmBackend raises E6000 at "
-                + "bytes sites (ISSUE-0277).", "JVM-GAP-BYTES");
-        skip("backend-runtime/bytes/bytes-class-field-descriptor.deal",
-            "class fields carrying real bytes buffers require the bytes "
-                + "carrier; JvmBackend raises E6000 at bytes sites "
-                + "(ISSUE-0277).", "JVM-GAP-BYTES");
-        skip("backend-runtime/bytes/bytes-write-single-evaluation.deal",
-            "the once-only receiver/index/RHS bytes write sequence "
-                + "requires the bytes carrier; JvmBackend raises E6000 at "
-                + "bytes sites (ISSUE-0277).", "JVM-GAP-BYTES");
-        skip("backend-runtime/bytes/bytes-write-validation-order.deal",
-            "validation-after-RHS bytes write ordering requires the "
-                + "bytes carrier; JvmBackend raises E6000 at bytes sites "
-                + "(ISSUE-0277).", "JVM-GAP-BYTES");
+            "canonical [bytes]/?(bytes)/(bytes)->bytes descriptors "
+                + "require the recursive bytes-bearing array/nullable/"
+                + "function wrapper carriers (ISSUE-0160); JvmBackend "
+                + "raises E6000 at those sites.", "JVM-GAP-BYTES");
         skip("backend-runtime/source-location/bytes-index-bounds-source.deal",
-            "the E8012 bytes bounds location requires the bytes carrier; "
-                + "JvmBackend raises E6000 at bytes sites (ISSUE-0277).",
+            "the fixture raises E8012 on the JVM lane, but the JVM "
+                + "DEALRuntimeError snapshot carries no column field "
+                + "(ISSUE-0276 owns the backend convergence), so the "
+                + "lane cannot serialize the canonical error snapshot.",
             "JVM-GAP-BYTES");
         skip("backend-runtime/source-location/bytes-write-range-source.deal",
-            "the E8013 bytes value location requires the bytes carrier; "
-                + "JvmBackend raises E6000 at bytes sites (ISSUE-0277).",
+            "the fixture raises E8013 on the JVM lane, but the JVM "
+                + "DEALRuntimeError snapshot carries no column field "
+                + "(ISSUE-0276 owns the backend convergence), so the "
+                + "lane cannot serialize the canonical error snapshot.",
             "JVM-GAP-BYTES");
 
         // ---- JVM-GAP-JSONABLE-RESIDUAL: residual @jsonable JVM defects ----
