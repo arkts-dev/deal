@@ -683,6 +683,50 @@
       "backends": [
         "jvm"
       ]
+    },
+    {
+      "name": "jvm-bytes-arr-past-end-null-parity",
+      "description": "Cross-backend parity for the bytes-array past-end nil shapes of the recursive bytes closure (ISSUE-0160 E8 D1): a (bytes | null)[] read past the end and a bytes[] read past the end consumed at a bytes | null target both yield the DEAL null (the nullable element/target accepts the LuaJIT nil with no boundary failure), and standalone discarded past-end reads of both shapes drop the nil silently — each probe call prints its marker only when the read crossed the bytes | null boundary without E8001, then discard-ok. Bytes comparison is E3019-gated, so the nullable boundary is exercised through the corpus pass-through shape. The JVM emits __bytesOrNullArrayRead with a past-end `return null` and routes the bytes[]-into-bytes|null target and the discards through the boxed __bytesArrayReadBoxed helper (null past the end) instead of the element-typed E8001, so both backends print value-ok, past-end-ok, value2-ok, past-end2-ok, discard-ok and exit 0",
+      "source": "import * as console from \"std/console\"\nfunction probe(b: bytes | null): int { return 7; }\nexport function test(): null {\n  let xs: bytes[] = [];\n  xs[0] = bytes(2);\n  let ys: (bytes | null)[] = [];\n  ys[0] = bytes(3);\n  let a: int = probe(xs[0]);\n  console.log(\"value-ok\");\n  let b: int = probe(xs[1]);\n  console.log(\"past-end-ok\");\n  let c: int = probe(ys[0]);\n  console.log(\"value2-ok\");\n  let d: int = probe(ys[1]);\n  console.log(\"past-end2-ok\");\n  if (a !== 7 || b !== 7 || c !== 7 || d !== 7) {\n    throw { code: \"TEST_FAIL\", message: \"probe\" };\n  }\n  xs[1];\n  ys[1];\n  console.log(\"discard-ok\");\n}",
+      "expectedOutput": "value-ok\npast-end-ok\nvalue2-ok\npast-end2-ok\ndiscard-ok",
+      "expectedNotOutput": [
+        "TEST_FAIL"
+      ],
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [
+        "array : [bytes]",
+        "array : [?bytes]",
+        "index [] : bytes",
+        "index [] : ?bytes"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-bytes-arr-negative-read-e8002",
+      "description": "Cross-backend parity for the negative-index gate on the bytes-array shapes: a bytes[] read at a bytes | null target (the boxed __bytesArrayReadBoxed route) and the read's negative index raise E8002 unconditionally at the read — LuaJIT raises its emitted negative-array-index check the same way, so both backends print only DEAL_ERROR_CODE: E8002 and exit 1, never 'unreachable'",
+      "source": "import * as console from \"std/console\"\nfunction probe(b: bytes | null): int { return 7; }\nexport function test(): null {\n  let xs: bytes[] = [];\n  let r: int = probe(xs[-1]);\n  console.log(\"unreachable\");\n}",
+      "expectedOutput": null,
+      "expectedNotOutput": [
+        "unreachable"
+      ],
+      "expectedError": "E8002",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [
+        "array : [bytes]",
+        "index [] : bytes"
+      ],
+      "irNotContains": [],
+      "backends": [
+        "luajit",
+        "jvm"
+      ]
     }
   ]
 }

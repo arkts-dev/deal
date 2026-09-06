@@ -402,6 +402,7 @@ public class JvmBackendTest {
             new TestCase("testArrayReadComparisonBothReadsOrder", () -> testArrayReadComparisonBothReadsOrder()),
             new TestCase("testArrayReadComparisonPlainLeftOperandOrder", () -> testArrayReadComparisonPlainLeftOperandOrder()),
             new TestCase("testArrayBoundaryLessReadPositions", () -> testArrayBoundaryLessReadPositions()),
+            new TestCase("testBytesArrayPastEndReadsYieldTheDealNull", () -> testBytesArrayPastEndReadsYieldTheDealNull()),
             new TestCase("testArrayUnsupportedElementTypesRejected", () -> testArrayUnsupportedElementTypesRejected()),
             new TestCase("testArrayUseBeforeDeclarationGuards", () -> testArrayUseBeforeDeclarationGuards()),
             new TestCase("testNullReturnSideEffects", () -> testNullReturnSideEffects()),
@@ -2495,6 +2496,202 @@ public class JvmBackendTest {
                     "no lambda emitted for the boundary-less shapes (spaced "
                     + "arrow; wrapper descriptor strings may carry the "
                     + "unspaced arrow glyph): " + java);
+            }
+        }
+    }
+
+    /** The bytes-array past-end nil shapes (the recursive bytes
+     * closure, ISSUE-0160 E8 D1; the cycle-3 parity finding): a
+     * {@code (bytes | null)[]} read past the end and a {@code bytes[]}
+     * read past the end consumed at a {@code bytes | null} target both
+     * yield the DEAL null — the nullable element/target accepts the
+     * LuaJIT nil with no boundary failure — exactly like the settled
+     * {@code __intOrNullArrayRead} convention, and standalone discarded
+     * past-end reads of both shapes drop the nil silently. The emitted
+     * {@code __bytesOrNullArrayRead} past-end branch returns null, the
+     * element-typed {@code __bytesArrayRead} keeps its E8001 raise for
+     * the non-nullable target, the nil-accepting positions route
+     * through the boxed {@code __bytesArrayReadBoxed} helper, and a
+     * negative index still raises E8002 on every helper (LuaJIT raises
+     * that unconditionally at the read). The LuaJIT lane pins the same
+     * shapes cross-backend in
+     * {@code test/conformance/fixtures/jvm-arrays-slice.json}
+     * ({@code jvm-bytes-arr-past-end-null-parity},
+     * {@code jvm-bytes-arr-negative-read-e8002}). */
+    private static void testBytesArrayPastEndReadsYieldTheDealNull()
+            throws Exception {
+        System.out.println("-- Bytes-array past-end nil reads (javac + java) --");
+
+        // Shape 1 — (bytes | null)[] past-end read into a bytes | null
+        // parameter: the nullable element accepts the LuaJIT nil, so the
+        // read yields the DEAL null and probe returns 7 (the pre-fix
+        // helper raised E8001 "expected bytes, got null" here).
+        ExecResult orNullShape = compileAndRunJvm("""
+            import * as console from "std/console"
+            function probe(b: bytes | null): int { return 7; }
+            export function test(): null {
+              let ys: (bytes | null)[] = [];
+              ys[0] = bytes(3);
+              let inb: int = probe(ys[0]);
+              console.log("value-ok");
+              let past: int = probe(ys[1]);
+              console.log("past-end-ok");
+              if (inb !== 7 || past !== 7) {
+                throw { code: "TEST_FAIL", message: "probe" };
+              }
+              ys[1];
+              console.log("discard-ok");
+            }
+            """, "bytesarrornullpastend");
+        check(orNullShape.exitCode() == 0,
+            "(bytes | null)[] past-end read yields the DEAL null (exit "
+                + "0): " + orNullShape.output());
+        check(orNullShape.output().contains(
+                "value-ok\npast-end-ok\ndiscard-ok"),
+            "the in-bounds and past-end reads both cross the bytes | null "
+                + "boundary (value-ok, past-end-ok) and the discarded "
+                + "past-end read drops the nil (discard-ok): "
+                + orNullShape.output());
+
+        // Shape 2 — bytes[] past-end read into a bytes | null parameter:
+        // the read site's contextual target accepts the nil, so the read
+        // routes through the boxed helper (the pre-fix code fell through
+        // to the element-typed __bytesArrayRead and raised E8001).
+        ExecResult boxedShape = compileAndRunJvm("""
+            import * as console from "std/console"
+            function probe(b: bytes | null): int { return 7; }
+            export function test(): null {
+              let xs: bytes[] = [];
+              xs[0] = bytes(2);
+              let inb: int = probe(xs[0]);
+              console.log("value-ok");
+              let past: int = probe(xs[1]);
+              console.log("past-end-ok");
+              if (inb !== 7 || past !== 7) {
+                throw { code: "TEST_FAIL", message: "probe" };
+              }
+              xs[1];
+              console.log("discard-ok");
+            }
+            """, "bytesarrboxedpastend");
+        check(boxedShape.exitCode() == 0,
+            "bytes[] past-end read at a bytes | null target yields the "
+                + "DEAL null (exit 0): " + boxedShape.output());
+        check(boxedShape.output().contains(
+                "value-ok\npast-end-ok\ndiscard-ok"),
+            "the boxed bytes[] past-end read crosses the bytes | null "
+                + "boundary (past-end-ok) and the discard drops the nil "
+                + "(value-ok, past-end-ok, discard-ok): "
+                + boxedShape.output());
+
+        // The element-typed read keeps the non-nullable boundary: a
+        // bytes[] past-end read at a bytes target still raises E8001
+        // (LuaJIT's check_bytes at the read site).
+        ExecResult nonNullTarget = compileAndRunJvm("""
+            export function test(): int {
+              let xs: bytes[] = [];
+              let b: bytes = xs[0];
+              return b.length;
+            }
+            """, "bytesarrnonnulltarget");
+        check(nonNullTarget.exitCode() == 1
+                && nonNullTarget.output().contains("DEAL_ERROR_CODE: E8001")
+                && nonNullTarget.output().contains("expected bytes, got null"),
+            "bytes[] past-end read at a bytes target still raises E8001 "
+                + "'expected bytes, got null': " + nonNullTarget.output());
+
+        // A negative index still raises E8002 on every helper route
+        // (LuaJIT raises that unconditionally at the read).
+        ExecResult negBoxed = compileAndRunJvm("""
+            import * as console from "std/console"
+            function probe(b: bytes | null): int { return 7; }
+            export function test(): null {
+              let xs: bytes[] = [];
+              let r: int = probe(xs[-1]);
+              console.log("unreachable");
+            }
+            """, "bytesarrnegboxed");
+        check(negBoxed.exitCode() == 1
+                && negBoxed.output().contains("DEAL_ERROR_CODE: E8002")
+                && !negBoxed.output().contains("unreachable"),
+            "the boxed bytes[] read's negative index still raises E8002: "
+                + negBoxed.output());
+        ExecResult negOrNull = compileAndRunJvm("""
+            import * as console from "std/console"
+            function probe(b: bytes | null): int { return 7; }
+            export function test(): null {
+              let ys: (bytes | null)[] = [];
+              let r: int = probe(ys[-1]);
+              console.log("unreachable");
+            }
+            """, "bytesarrnegororsnull");
+        check(negOrNull.exitCode() == 1
+                && negOrNull.output().contains("DEAL_ERROR_CODE: E8002")
+                && !negOrNull.output().contains("unreachable"),
+            "the (bytes | null)[] read's negative index still raises "
+                + "E8002: " + negOrNull.output());
+
+        // Emission shapes: the or-null helper returns null past the end
+        // (no raise), the element-typed helper keeps the E8001 raise,
+        // the boxed helper exists with its own null past-end branch, and
+        // the nil-accepting sites emit the boxed helper call.
+        Frontend f = compileFrontend("""
+            import * as console from "std/console"
+            function probe(b: bytes | null): int { return 7; }
+            export function test(): null {
+              let xs: bytes[] = [];
+              xs[0] = bytes(2);
+              let ys: (bytes | null)[] = [];
+              ys[0] = bytes(3);
+              let b: int = probe(xs[0]);
+              let c: int = probe(xs[1]);
+              let d: int = probe(ys[0]);
+              let e: int = probe(ys[1]);
+              if (b + c + d + e === 28) { console.log("x"); }
+              xs[1];
+              ys[1];
+              let g: bytes = xs[1];
+              g.length;
+            }
+            """, "jvmtest-bytesarrpastend-emission.deal");
+        check(f.errors().isEmpty(), "bytes-array past-end emission "
+            + "frontend clean: " + f.errors());
+        if (f.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                f.program(), f.checkResult(),
+                "jvmtest-bytesarrpastend-emission.deal", "main");
+            check(!res.hasErrors(), "bytes-array past-end emission codegen "
+                + "clean: " + res.diagnostics());
+            if (!res.hasErrors()) {
+                String java = res.source();
+                check(java.contains(
+                        "static $DealRt.Bytes __bytesOrNullArrayRead(")
+                        && java.contains(
+                        "if (i >= (long) a.data.length) return null;"),
+                    "the (bytes | null)[] read helper yields the DEAL "
+                        + "null past the end (return null branch): "
+                        + java);
+                check(java.contains(
+                        "static $DealRt.Bytes __bytesArrayRead(")
+                        && java.contains(
+                        "if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected bytes, got null\");"),
+                    "the element-typed bytes[] helper keeps the E8001 "
+                        + "past-end raise: " + java);
+                check(java.contains(
+                        "static $DealRt.Bytes __bytesArrayReadBoxed(")
+                        && java.contains("__bytesArrayReadBoxed(xs, 1L)"),
+                    "the boxed bytes[] read helper exists and the "
+                        + "bytes | null target site routes through it: "
+                        + java);
+                check(java.contains("__bytesArrayReadBoxed(xs, 1L)")
+                        && java.contains("__bytesOrNullArrayRead(ys, 1L)"),
+                    "both discarded past-end reads use the nil-yielding "
+                        + "helpers (no element-typed E8001 at a discard): "
+                        + java);
+                check(java.contains("__bytesArrayRead(xs, 1L)"),
+                    "the non-nullable bytes target keeps the "
+                        + "element-typed read helper (the boundary "
+                        + "failure shape): " + java);
             }
         }
     }

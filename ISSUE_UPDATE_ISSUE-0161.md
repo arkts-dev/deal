@@ -128,3 +128,42 @@ are marked met.
   broken-dependency record propagates the exact DEAL error on both
   backends, backend omission fails the mirrored family gate, and the
   E8 closure executes the bytes-bearing oracle on the JVM lane.
+
+## Update: bytes-array past-end nil parity (review cycle 3 remediation)
+
+This update addresses the MR-0387 review cycle 3 finding (BOT-3309,
+2026-09-06T04:33:39Z): the co-landed E8 bytes closure's array helpers
+diverged from LuaJIT on the past-end nil — `__bytesOrNullArrayRead`
+raised E8001 "expected bytes, got null" past the end where LuaJIT
+reads nil into the nullable `bytes | null` element with no boundary
+failure, and a `bytes[]` read at a `bytes | null` target fell through
+to the throwing element-typed helper instead of yielding the DEAL
+null (the reviewer's production-CLI reproduction: probe(xs[0]) runs
+on luajit but dies with E8001 on JVM). The correction, delivered in
+this MR:
+
+- `deal/codegen/jvm/JvmBackend.java` — `emitBytesRefArrayHelpers` now
+  emits the past-end branch conditionally: `return null` for the
+  `(bytes | null)[]` helper (the `__intOrNullArrayRead` convention)
+  and the pinned E8001 raise only for the non-nullable `bytes[]`
+  helper; a new `__bytesArrayReadBoxed` helper (null past the end,
+  unchanged E8002 negative gate and element proof) is emitted with the
+  `bytes[]` helper set and wired through `boxedArrayReadHelper`/
+  `arrayBoxedJavaType` (`$DealRt.Bytes`), so the `bytes[]`-into-
+  `bytes | null` target route and the discarded standalone read yield
+  the DEAL null exactly like the settled primitive-array convention.
+- Pins: `test/conformance/fixtures/jvm-arrays-slice.json`
+  `jvm-bytes-arr-past-end-null-parity` and
+  `jvm-bytes-arr-negative-read-e8002` execute both shapes on real
+  luajit and the emitted JVM artifact (in-bounds controls, both
+  past-end target shapes, both discards, and the unchanged E8002
+  negative-index gate); `test/JvmBackendTest.java`
+  `testBytesArrayPastEndReadsYieldTheDealNull` pins the same shapes,
+  the retained element-typed E8001 at a non-nullable `bytes` target,
+  and the exact emitted helper text; the array-delete catalog anchor
+  re-located to the post-merge spans with its re-derived baseline
+  digest (HistoricalRegressionCatalog).
+
+No acceptance criterion changed: the fix restores the epic's
+LuaJIT/JVM bytes equivalence on the bytes-array indexing shapes the
+E8 closure made compilable.
