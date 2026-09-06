@@ -36,7 +36,28 @@ public final class CompilerWorkspaceTest {
         frameworkDiagnosticKeepsRelatedActionStaged();
         fullCandidateDiagnosticsOwnDependentRepairSlots();
         numericStringDiagnosticPublishesRepairContract();
+        syntaxDiagnosticsCarryCandidateEvidence();
         System.out.println("CompilerWorkspaceTest: all tests passed");
+    }
+
+    private static void syntaxDiagnosticsCarryCandidateEvidence() {
+        String source = "// unicode \uD83D\uDE00\r\nexport function broken(): int { if (true false) { return 1; } return 0; }\r\n";
+        var diagnostic = DealCompilerWorkspace.inspect(source, "app.deal").diagnostics().stream()
+                .filter(value -> value.code().equals("E1015")).findFirst().orElseThrow();
+        check(diagnostic.context() != null && diagnostic.context().excerpt().contains("true false"),
+                "syntax diagnostics must show the rejected source");
+        check(diagnostic.context().sourceDigest().equals(DealCompilerWorkspace.digest(source)),
+                "evidence must identify the exact candidate");
+        check(diagnostic.context().firstLine() == 1 && diagnostic.range().startLine() == 2,
+                "CRLF lines must remain aligned");
+        check(diagnostic.notes().stream().anyMatch(note -> note.message().contains("Expected token")
+                        && note.message().contains("false")), "expected/found token note must survive protocol conversion");
+        String longSource = "\uD83D\uDE00".repeat(600);
+        var clipped = new CompilerProtocol.StructuredDiagnostic("TEST", "error", "test",
+                new CompilerProtocol.SourceRange("app.deal", 1, 590, 1, 591), diagnostic.ownerId(),
+                "", "", List.of(), List.of(), "").withSourceContext(longSource).context();
+        check(clipped.truncated() && clipped.excerpt().codePointCount(0, clipped.excerpt().length()) == 512,
+                "bounded evidence must not split supplementary Unicode characters");
     }
 
     private static void numericStringDiagnosticPublishesRepairContract() {

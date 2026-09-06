@@ -2223,7 +2223,18 @@ public final class Parser {
         if (peek().type() == type) {
             return advance();
         }
-        error(code, message, peek());
+        Token found = peek();
+        var diagnostic = fromTokenAnchor(code, "error", message, found);
+        var notes = new ArrayList<>(diagnostic.notes());
+        String lexeme = found.lexeme();
+        if (lexeme.codePointCount(0, lexeme.length()) > 80) {
+            lexeme = lexeme.substring(0, lexeme.offsetByCodePoints(0, 80)) + "...";
+        }
+        notes.add(new deal.diagnostics.DiagnosticNote(
+                "Expected token " + type + "; found " + found.type() + " '" + lexeme + "'",
+                diagnostic.range()));
+        diagnostics.add(new CompilerDiagnostic(diagnostic.code(), diagnostic.severity(),
+                diagnostic.message(), diagnostic.range(), notes, diagnostic.diagnosticCode()));
         return null;
     }
 

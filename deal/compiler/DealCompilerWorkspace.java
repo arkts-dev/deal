@@ -1324,7 +1324,11 @@ public final class DealCompilerWorkspace {
                 classesByName,
                 index);
         List<StructuredDiagnostic> diagnostics = rawDiagnostics.stream()
-                .map(value -> diagnostic(value, moduleId, functionsByName.values()))
+                .map(value -> {
+                    var result = diagnostic(value, moduleId, functionsByName.values());
+                    return value.range().origin() == deal.diagnostics.RangeOrigin.SOURCE
+                            ? result.withSourceContext(source) : result;
+                })
                 .toList();
         Inspection inspection = new Inspection(
                 CompilerProtocol.VERSION,
@@ -1565,7 +1569,8 @@ public final class DealCompilerWorkspace {
                 "",
                 List.of(),
                 scopes,
-                owner == null ? "inspectCanonicalApp" : "queryDealSymbol(" + owner.id().value() + ")");
+                owner == null ? "inspectCanonicalApp" : "queryDealSymbol(" + owner.id().value() + ")",
+                null, value.notes());
     }
 
     private static StructuredDiagnostic diagnostic(
@@ -1597,7 +1602,7 @@ public final class DealCompilerWorkspace {
                 diagnostic.code(), diagnostic.severity(), diagnostic.message(), diagnostic.range(),
                 diagnostic.ownerId(), diagnostic.expected(), diagnostic.actual(),
                 ownedOperations.stream().map(Operation::targetId).toList(), scopes,
-                diagnostic.contextQuery());
+                diagnostic.contextQuery(), diagnostic.context(), diagnostic.notes());
     }
 
     private static SemanticId operationOwner(Operation operation, Analysis base) {

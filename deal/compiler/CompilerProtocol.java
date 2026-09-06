@@ -213,6 +213,9 @@ public final class CompilerProtocol {
         }
     }
 
+    public record DiagnosticContext(String version, String sourceDigest, int firstLine,
+                                    String excerpt, boolean truncated) {}
+
     public record StructuredDiagnostic(
             String code,
             String severity,
@@ -223,13 +226,48 @@ public final class CompilerProtocol {
             String actual,
             List<SemanticId> relatedIds,
             List<RepairScope> repairScopes,
-            String contextQuery) {
+            String contextQuery,
+            DiagnosticContext context,
+            List<deal.diagnostics.DiagnosticNote> notes) {
+        public StructuredDiagnostic(String code, String severity, String message, SourceRange range,
+                                    SemanticId ownerId, String expected, String actual,
+                                    List<SemanticId> relatedIds, List<RepairScope> repairScopes, String contextQuery) {
+            this(code, severity, message, range, ownerId, expected, actual, relatedIds, repairScopes,
+                    contextQuery, null, List.of());
+        }
+
         public StructuredDiagnostic {
             Objects.requireNonNull(code, "code");
             Objects.requireNonNull(severity, "severity");
             Objects.requireNonNull(message, "message");
             relatedIds = List.copyOf(relatedIds);
             repairScopes = List.copyOf(repairScopes);
+            notes = List.copyOf(notes);
+        }
+
+        /** Candidate-owned evidence; coordinates remain in the original file, not the edited body. */
+        public StructuredDiagnostic withSourceContext(String source) {
+            if (range == null || range.startLine() < 1) return this;
+            String[] lines = source.split("\\r\\n|\\r|\\n", -1);
+            if (range.startLine() > lines.length) return this;
+            int first = Math.max(1, range.startLine() - 1);
+            int last = Math.min(lines.length, range.startLine() + 1);
+            boolean truncated = range.endLine() > last;
+            StringBuilder excerpt = new StringBuilder();
+            for (int line = first; line <= last; line++) {
+                if (line > first) excerpt.append('\n');
+                String text = lines[line - 1];
+                int scalars = text.codePointCount(0, text.length());
+                if (scalars > 512) {
+                    text = text.substring(0, text.offsetByCodePoints(0, 512));
+                    truncated = true;
+                }
+                excerpt.append(text);
+            }
+            return new StructuredDiagnostic(code, severity, message, range, ownerId, expected, actual,
+                    relatedIds, repairScopes, contextQuery,
+                    new DiagnosticContext("diagnostic-context-v1", DealCompilerWorkspace.digest(source),
+                            first, excerpt.toString(), truncated), notes);
         }
     }
 
