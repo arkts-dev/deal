@@ -33,7 +33,7 @@ import java.util.Set;
  *       {@code error-handling/try-catch.deal} plus two more converged
  *       cases) passes byte-exact on all three lanes;</li>
  *   <li>the failure set is exactly the tracked non-fatal set (the
- *       39 JVM registry entries) plus the enumerated differential
+ *       45 JVM registry entries) plus the enumerated differential
  *       failures — every one naming fixture,
  *       backend, and the closed mismatch class with the first differing
  *       byte/field detail;</li>
@@ -90,23 +90,32 @@ public class DifferentialGateLanesCorpusTest {
     /** The pinned corpus population (the T2/T3/T5 pins; the frontend
      * population counts the promoted FFI-manifest compile-error
      * fixture — ISSUE-0477 dropped its known-fail marker; ISSUE-0547
-     * adds the two bytes-container runtime fixtures, so the runtime
-     * case population grows by two). */
-    private static final int TOTAL_FIXTURES = 547;
-    private static final int RUNTIME_CASES = 303;
+     * adds the two bytes-container runtime fixtures; ISSUE-0502 adds
+     * the gap-suite runtime population: +30 runtime-ok — the promoted
+     * gap bytes-boundary-order included, its retained-known-fail
+     * marker forced off by the zero-skip promotion gate after
+     * ISSUE-0158 lifted the E3019 bytes-equality gate — +10
+     * runtime-error, +1 companion). */
+    private static final int TOTAL_FIXTURES = 588;
+    private static final int RUNTIME_CASES = 343;
     private static final int FRONTEND_COMPILED = 191;
     private static final int COMPILE_PINS = 4;
 
     /** Pre-flip accounting pins (G8; the last on-disk known-fail
-     * marker was promoted by ISSUE-0477, so the counter is zero, and
-     * the JVM bytes core lane promoted the nine bytes registry
-     * entries, so the registry count is the landed 39). */
+     * marker was promoted by ISSUE-0477, so the counter is zero — the
+     * ISSUE-0502 gap bytes-boundary-order fixture passes every lane
+     * and lands promoted as runtime-ok, contributing no known-fail
+     * counter and no differential triples — and the JVM bytes core
+     * lane promoted the nine bytes registry entries, so the registry
+     * count is the canonical 39 plus the six ISSUE-0502 additions). */
     private static final int KNOWN_FAILURES_TRACKED = 0;
-    private static final int SKIP_REGISTRY_ENTRIES = 39;
+    private static final int SKIP_REGISTRY_ENTRIES = 45;
 
     /** The per-backend pass/fail counters of the full run. */
     private static final Map<String, int[]> PER_BACKEND = Map.of(
-        "luajit", new int[] {271, 32},
+        "luajit", new int[] {311, 32},
+        "jvm", new int[] {230, 113},
+        "js", new int[] {313, 30});
         "jvm", new int[] {201, 102},
         "js", new int[] {273, 30});
 
@@ -161,7 +170,13 @@ public class DifferentialGateLanesCorpusTest {
         "backend-runtime/stdlib/json/json-stringify-bytes-error.deal",
         "backend-runtime/stdlib/json/json-stringify-roundtrip.deal",
         "backend-runtime/stdlib/table/keys-nonstring-exclusion.deal",
-        "backend-runtime/type-system/dynamic-array-element-e8003.deal");
+        "backend-runtime/type-system/dynamic-array-element-e8003.deal",
+        "backend-runtime/bytes/bytes-negative-length-error.deal",
+        "backend-runtime/bytes/bytes-negative-read-error.deal",
+        "backend-runtime/bytes/bytes-read-at-length-error.deal",
+        "backend-runtime/bytes/bytes-write-at-length-error.deal",
+        "backend-runtime/bytes/bytes-write-negative-error.deal",
+        "backend-runtime/error-handling/rtc-015-error-default-code.deal");
 
     /** The enumerated differential failures of the full run — every
      * non-tracked failing lane outcome as {@code fixture | backend |
@@ -248,6 +263,7 @@ public class DifferentialGateLanesCorpusTest {
         "backend-runtime/runtime-errors/rethrow-across-function-boundary.deal | luajit | PROCESS_FAILURE",
         "backend-runtime/runtime-errors/rethrow-preserves-code.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/runtime-errors/rethrow-preserves-code.deal | luajit | PROCESS_FAILURE",
+        "backend-runtime/runtime-errors/rtc-035-remainder-zero-error.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/runtime-errors/type-mismatch-e8001.deal | js | TRANSCRIPT_MISMATCH",
         "backend-runtime/runtime-errors/type-mismatch-e8001.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/runtime/int-convert-noninteger.deal | jvm | PROCESS_FAILURE",
@@ -255,6 +271,9 @@ public class DifferentialGateLanesCorpusTest {
         "backend-runtime/runtime/int-convert-range.deal | js | TRANSCRIPT_MISMATCH",
         "backend-runtime/runtime/int-convert-range.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/runtime/number-convert-null.deal | jvm | PROCESS_FAILURE",
+        "backend-runtime/source-location/036-runtime-source-array-oob.deal | jvm | PROCESS_FAILURE",
+        "backend-runtime/source-location/037-runtime-source-div-zero.deal | jvm | PROCESS_FAILURE",
+        "backend-runtime/source-location/038-runtime-source-throw.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/source-location/async-error-source.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/source-location/int32-overflow-source.deal | js | TRANSCRIPT_MISMATCH",
         "backend-runtime/source-location/int32-overflow-source.deal | jvm | PROCESS_FAILURE",
@@ -287,6 +306,7 @@ public class DifferentialGateLanesCorpusTest {
         "backend-runtime/stdlib/table/keys-nontable-error.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/stdlib/table/keys-nontable-error.deal | luajit | PROCESS_FAILURE",
         "backend-runtime/tables/table-dynamic-read-runtime-error.deal | jvm | PROCESS_FAILURE",
+        "backend-runtime/tables/table-missing-read-nonnullable-error.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/type-system/dynamic-array-element-e8003.deal | js | TRANSCRIPT_MISMATCH",
         "backend-runtime/type-system/dynamic-nonfunction-to-function-e8001.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/type-system/dynamic-return-e8001.deal | jvm | PROCESS_FAILURE",

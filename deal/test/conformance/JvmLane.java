@@ -1707,6 +1707,56 @@ public class JvmLane implements Lane {
                 + "lane cannot serialize the canonical error snapshot.",
             "JVM-GAP-BYTES");
 
+        // ---- JVM-GAP-BYTES: the gap-suite runtime population
+        // (ISSUE-0502) ----
+        // The eight promoted gap bytes fixtures carry the same lane
+        // reason: E6000 at every bytes site until JVM v1.2 bytes lands
+        // (ISSUE-0277); the LuaJIT-owned bytes expectations pass only
+        // on LuaJIT and Node.
+        skip("backend-runtime/bytes/bytes-class-default.deal",
+            "a bytes class-field default requires the bytes carrier; "
+                + "JvmBackend raises E6000 at bytes sites (ISSUE-0277).",
+            "JVM-GAP-BYTES");
+        skip("backend-runtime/bytes/bytes-write-zero.deal",
+            "the zero byte-value write requires the bytes carrier; "
+                + "JvmBackend raises E6000 at bytes sites (ISSUE-0277).",
+            "JVM-GAP-BYTES");
+        skip("backend-runtime/bytes/bytes-zero-length.deal",
+            "the bytes(0) empty buffer requires the bytes carrier; "
+                + "JvmBackend raises E6000 at bytes sites (ISSUE-0277).",
+            "JVM-GAP-BYTES");
+        skip("backend-runtime/bytes/bytes-negative-length-error.deal",
+            "the E8012 negative-allocation rejection requires the bytes "
+                + "carrier; JvmBackend raises E6000 at bytes sites "
+                + "(ISSUE-0277).", "JVM-GAP-BYTES");
+        skip("backend-runtime/bytes/bytes-negative-read-error.deal",
+            "the E8012 negative-index read rejection requires the bytes "
+                + "carrier; JvmBackend raises E6000 at bytes sites "
+                + "(ISSUE-0277).", "JVM-GAP-BYTES");
+        skip("backend-runtime/bytes/bytes-read-at-length-error.deal",
+            "the E8012 read-at-length rejection requires the bytes "
+                + "carrier; JvmBackend raises E6000 at bytes sites "
+                + "(ISSUE-0277).", "JVM-GAP-BYTES");
+        skip("backend-runtime/bytes/bytes-write-at-length-error.deal",
+            "the E8012 write-at-length rejection requires the bytes "
+                + "carrier; JvmBackend raises E6000 at bytes sites "
+                + "(ISSUE-0277).", "JVM-GAP-BYTES");
+        skip("backend-runtime/bytes/bytes-write-negative-error.deal",
+            "the E8013 below-zero byte-value write rejection requires "
+                + "the bytes carrier; JvmBackend raises E6000 at bytes "
+                + "sites (ISSUE-0277).", "JVM-GAP-BYTES");
+
+        // ---- JVM-GAP-ERROR-LITERAL-DEFAULTS: the LuaJIT-owned Error
+        // literal default filling (ISSUE-0502, new gap id) ----
+        // rtc-015-error-default-code pins the Error literal without a
+        // code field defaulting to the empty string; JvmBackend rejects
+        // the literal shape with E6000, so the fixture passes only on
+        // LuaJIT (and Node at T14).
+        skip("backend-runtime/error-handling/rtc-015-error-default-code.deal",
+            "E6000: JvmBackend does not support an Error literal without "
+                + "both code and message fields (LuaJIT-owned default "
+                + "filling).", "JVM-GAP-ERROR-LITERAL-DEFAULTS");
+
         // ---- JVM-GAP-JSONABLE-RESIDUAL: residual @jsonable JVM defects ----
         // The two error-typed member-access/NEQ entries retired with
         // the orchestrator's cross-module checked-fact resolution

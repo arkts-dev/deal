@@ -98,7 +98,11 @@ public class JvmLaneTest {
     // bytes-length, bytes-write-single-evaluation,
     // bytes-write-validation-order): the direct bytes surface passes
     // the real pipeline and the stale-skip gate forced them out.
-    private static final int SKIP_REGISTRY_ENTRIES = 39;
+    // ISSUE-0502 (the gap-suite runtime population) adds nine live
+    // entries for the landed population: the eight promoted bytes
+    // fixtures (JVM-GAP-BYTES) and rtc-015-error-default-code under the
+    // new gap id JVM-GAP-ERROR-LITERAL-DEFAULTS.
+    private static final int SKIP_REGISTRY_ENTRIES = 48;
 
     public static void main(String[] args) throws Exception {
         System.out.println("=== JVM Lane Tests (ISSUE-0355) ===\n");
@@ -1242,8 +1246,9 @@ public class JvmLaneTest {
         }
         check(gapIds.containsAll(Set.of("JVM-GAP-STDJSON",
                 "JVM-GAP-JSONABLE-RESIDUAL", "JVM-GAP-HOST-ABI-SHAPES",
-                "JVM-GAP-BYTES", "JVM-GAP-DEFAULTS-PLANS")),
-            "the absorbed registry spans the five live gap families, got: "
+                "JVM-GAP-BYTES", "JVM-GAP-DEFAULTS-PLANS",
+                "JVM-GAP-ERROR-LITERAL-DEFAULTS")),
+            "the absorbed registry spans the six live gap families, got: "
                 + gapIds);
     }
 
