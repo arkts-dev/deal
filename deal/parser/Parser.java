@@ -2233,6 +2233,11 @@ public final class Parser {
         notes.add(new deal.diagnostics.DiagnosticNote(
                 "Expected token " + type + "; found " + found.type() + " '" + lexeme + "'",
                 diagnostic.range()));
+        if (found.type() == TokenType.EQ || found.type() == TokenType.NEQ) {
+            notes.add(new deal.diagnostics.DiagnosticNote(
+                    "DEAL equality operators are === and !==; == and != are not supported."
+                            + " For boolean negation use !expression.", diagnostic.range()));
+        }
         diagnostics.add(new CompilerDiagnostic(diagnostic.code(), diagnostic.severity(),
                 diagnostic.message(), diagnostic.range(), notes, diagnostic.diagnosticCode()));
         return null;

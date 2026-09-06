@@ -1790,7 +1790,8 @@ public final class DealCompilerWorkspace {
     private static List<StructuredDiagnostic> declarationSyntaxDiagnostics(
             String source, String modulePath, Operation operation, int operationIndex) {
         // Keep line coordinates while hiding framework annotations from the core parser.
-        String parserSource = source.replaceAll("(?m)^[ \\t]*//[ \\t]*@[^\\r\\n]*", "");
+        String parserSource = java.util.regex.Pattern.compile("(?m)^[ \\t]*//[ \\t]*@[^\\r\\n]*")
+                .matcher(source).replaceAll(match -> " ".repeat(match.group().codePointCount(0, match.group().length())));
         LexResult lexed = new Lexer(parserSource, modulePath).tokenize();
         ParseResult parsed = new Parser(lexed.tokens(), modulePath).parse();
         List<CompilerDiagnostic> errors = new ArrayList<>(lexed.diagnostics());

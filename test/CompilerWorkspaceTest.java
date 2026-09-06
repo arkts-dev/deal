@@ -150,7 +150,8 @@ public final class CompilerWorkspaceTest {
                 if (syntaxFailure) {
                     check(rejected.get(0).diagnostics().stream().anyMatch(d -> d.code().equals("E1015")
                                     && d.context().excerpt().contains("state.paused == false")
-                                    && d.notes().stream().anyMatch(n -> n.message().contains("EQ '=='"))),
+                                    && d.notes().stream().anyMatch(n -> n.message().contains("EQ '=='"))
+                                    && d.notes().stream().anyMatch(n -> n.message().contains("=== and !=="))),
                             "parser token evidence must survive declaration validation and slot routing");
                 }
                 var untouched = staged.workspace().slots().get(reverse ? 1 : 0);

@@ -35,6 +35,18 @@ canonical source comments and must not be persisted as application data.
 
 ## Agent Boundary
 
+### Operation-Local Diagnostics
+
+Structured diagnostics may include a zero-based `operationIndex` identifying the failing operation
+in the response's ChangeSet. It is not a SymbolId, does not survive a reordered or new ChangeSet,
+and is never stored in canonical app metadata. Repair workspace routing prioritizes this ownership
+over shared module targets, since multiple declaration additions legitimately target one module.
+
+Declaration parse failures retain lexer/parser codes, token notes and source evidence. Their ranges
+and evidence refer to the submitted declaration payload, not the committed full module. CP1013 is
+reserved for the one-declaration contract when parsing succeeds; syntax failure is not reported as
+an unexplained declaration-count error. Accepted sibling payloads remain unchanged during repair.
+
 Compiler Protocol v2 is intentionally rich and is not an LLM prompt format. Streaming-compiler maps
 compiler ids to short, revision-local aliases and exposes only queried operation descriptors through
 Agent Surface v2. The generation engine, not a model or Studio client, supplies source and target
