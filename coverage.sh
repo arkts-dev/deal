@@ -21,6 +21,17 @@ set -e
 # coverage.sh mirrors run_tests.sh's compile list at --release 22 and
 # runs the same ordered run phase under the JaCoCo agent.
 source tools/gate-manifest.sh
+
+# =========================================================================
+# Strict full-set snapshot (release-r0-r3-strict-gate-mechanics S5(a)):
+# the strict compile list and the strict run phase are the manifest
+# exactly. The gate-script-level TEST_SOURCES/TEST_MAINS additions below
+# are dev-mode mirror content only -- they do not join the strict
+# compile and do not run in the strict run phase.
+# =========================================================================
+STRICT_TEST_SOURCES=( "${TEST_SOURCES[@]}" )
+STRICT_TEST_MAINS=( "${TEST_MAINS[@]}" )
+
 # The run_tests.sh script-local additions (ISSUE-0474/0475, ISSUE-0353)
 # join the mirror so both gates compile and run the identical set.
 TEST_SOURCES+=(
@@ -108,6 +119,17 @@ DEALPG4_PREFLIGHT_JAVAC_ARGS=(
   -cp "$JUNIT_CP" \
   # shellcheck disable=SC2206
   ${PROD_SOURCES[@]} "${TEST_SOURCES[@]}"
+)
+# Strict full-set compile list (S5(a)): the manifest exactly, at
+# --release 22. PROD_SOURCES is expanded unquoted so the manifest's
+# quoted globs expand here exactly as they always have for the dev list;
+# the strict list holds no gate-script-level addition (the additions
+# above join DEALPG4_PREFLIGHT_JAVAC_ARGS for dev mode only).
+STRICT_PREFLIGHT_JAVAC_ARGS=(
+  javac --release 22 -proc:none -d build \
+  -cp "$JUNIT_CP" \
+  # shellcheck disable=SC2206
+  ${PROD_SOURCES[@]} "${STRICT_TEST_SOURCES[@]}"
 )
 DEALPG4_PREFLIGHT_COORD_ARGS=(
   java -ea "$AGENT" -cp "build:$JUNIT_CP" deal.test.containment.PreflightCoordinator
@@ -243,6 +265,53 @@ if [ -n "${DEAL_STRICT:-}" ]; then
   exec >&5 2>&6
 fi
 
+# =========================================================================
+# Strict manifest self-check (release-r0-r3-strict-gate-mechanics
+# S5(b)): the enumerated production set is every *.java under deal/
+# excluding deal/test/** (find-enumerated, LC_ALL=C sorted); the
+# expanded set is the PROD_SOURCES globs expanded (compgen -G per entry)
+# plus the deal/Main.java literal; the two sets must be equal. An
+# enumerated-but-absent or present-but-unmatched file prints
+# MANIFEST_SELF_CHECK_FAILED with the differing paths to stderr and
+# exits 1. The check runs first in strict mode -- before the preflight,
+# the compile, and any suite -- so a production file outside
+# PROD_SOURCES (or a manifest entry matching nothing) can never be
+# compiled or measured silently. grep/awk-class trivial utilities only.
+# Dev mode runs no self-check.
+# =========================================================================
+manifest_self_check() {
+  local entry f differ
+  local -a enumerated=() expanded=()
+  while IFS= read -r f; do
+    enumerated+=("$f")
+  done < <(find deal -path 'deal/test' -prune -o -name '*.java' -print | LC_ALL=C sort)
+  for entry in "${PROD_SOURCES[@]}"; do
+    while IFS= read -r f; do
+      expanded+=("$f")
+    done < <(compgen -G "$entry" | LC_ALL=C sort)
+  done
+  # The pinned deal/Main.java literal joins the expanded set explicitly:
+  # compgen emits the literal only while the file exists, so a deleted
+  # Main.java (or any manifest entry matching nothing) surfaces as a
+  # difference; sort -u absorbs the duplicate when the file exists.
+  expanded+=("deal/Main.java")
+  differ="$(LC_ALL=C comm -3 \
+    <(printf '%s\n' "${enumerated[@]}" | LC_ALL=C sort -u) \
+    <(printf '%s\n' "${expanded[@]}" | LC_ALL=C sort -u))"
+  if [ -n "$differ" ]; then
+    echo "MANIFEST_SELF_CHECK_FAILED" >&2
+    printf '%s\n' "$differ" >&2
+    exit 1
+  fi
+  echo "  manifest self-check green: ${#enumerated[@]} enumerated production sources == PROD_SOURCES"
+}
+
+if [ -n "${DEAL_STRICT:-}" ]; then
+  echo ""
+  echo "=== Manifest self-check (enumerated deal/ production sources == PROD_SOURCES) ==="
+  manifest_self_check
+fi
+
 dealpg4_preflight_run
 
 # =========================================================================
@@ -252,10 +321,12 @@ dealpg4_preflight_run
 # =========================================================================
 echo "=== Compiling all DEAL sources and tests (--release 22) ==="
 # Strict mode routes the compile through the step library under the
-# compile-coverage table entry (S2(e)); dev mode keeps the preflight P4
-# launcher-bounded javac verbatim.
+# compile-coverage table entry (S2(e)) and compiles the manifest exactly
+# (S5(a)) -- PROD_SOURCES + TEST_SOURCES, no gate-script-level
+# addition; dev mode keeps the preflight P4 launcher-bounded javac over
+# the mirrored list verbatim.
 if [ -n "${DEAL_STRICT:-}" ]; then
-  run_step compile-coverage -- "${DEALPG4_PREFLIGHT_JAVAC_ARGS[@]}"
+  run_step compile-coverage -- "${STRICT_PREFLIGHT_JAVAC_ARGS[@]}"
 else
   dealpg4_preflight_javac "${DEALPG4_PREFLIGHT_JAVAC_ARGS[@]}"
 fi
@@ -292,7 +363,16 @@ BACKGROUND_PIDS=""
 launch_background() {
   local step
   step="$(main_step_name "$@")"
-  run_step "$step" -- "$@" &
+  if [ -n "${DEAL_STRICT:-}" ]; then
+    # Strict mode (S5(c)): every java main -- the background suites
+    # included -- runs under the append=true JaCoCo agent (the
+    # established multi-JVM recording pattern). The record's first four
+    # tokens (java -ea -cp <cp>) drop exactly as the foreground path.
+    run_step "$step" -- java -ea "$AGENT" -cp "build:$JUNIT_CP" "${@:5}" &
+  else
+    # Dev mode keeps the legacy background launch verbatim (no agent).
+    run_step "$step" -- "$@" &
+  fi
   BACKGROUND_PIDS="$BACKGROUND_PIDS $!"
 }
 
@@ -304,7 +384,15 @@ cleanup_background() {
 }
 trap cleanup_background EXIT
 
-for record in "${TEST_MAINS[@]}"; do
+# Strict mode (S5(a)): the run phase iterates the manifest-exact
+# TEST_MAINS snapshot -- the gate-script-level TEST_MAINS additions
+# above do not run in the strict run phase. Dev mode iterates the full
+# mirrored list verbatim.
+RUN_PHASE_MAINS=( "${TEST_MAINS[@]}" )
+if [ -n "${DEAL_STRICT:-}" ]; then
+  RUN_PHASE_MAINS=( "${STRICT_TEST_MAINS[@]}" )
+fi
+for record in "${RUN_PHASE_MAINS[@]}"; do
   record_class="${record%%|*}"
   record_rest="${record#*|}"
   record_banner="${record_rest%%|*}"
@@ -412,9 +500,23 @@ trap - EXIT
 # build/deal/test (package deal.test), so the find below is exactly the
 # production set.
 PROD_CLASSFILES=()
-while IFS= read -r cf; do
-  PROD_CLASSFILES+=("--classfiles" "$cf")
-done < <(find build/deal -name '*.class' | grep -v '^build/deal/test/')
+# Strict mode (S5(d)): the measured set is every *.class under build/deal
+# excluding build/deal/test/** and excluding *Test.class -- the
+# deal.project and deal.module test classes, the test/-declared
+# deal.semantic test classes, and any other *Test.class in production
+# packages stay out of the --classfiles input. Dev mode keeps the legacy
+# report input verbatim.
+if [ -n "${DEAL_STRICT:-}" ]; then
+  while IFS= read -r cf; do
+    PROD_CLASSFILES+=("--classfiles" "$cf")
+  done < <(find build/deal -name '*.class' \
+    | grep -v '^build/deal/test/' \
+    | grep -v 'Test\.class$')
+else
+  while IFS= read -r cf; do
+    PROD_CLASSFILES+=("--classfiles" "$cf")
+  done < <(find build/deal -name '*.class' | grep -v '^build/deal/test/')
+fi
 if [ "${#PROD_CLASSFILES[@]}" -eq 0 ]; then
   echo "ERROR: no production class files found under build/deal" >&2
   exit 1
@@ -436,7 +538,7 @@ else
   exit 1
 fi
 
-COVERAGE_TOTALS="$(LC_ALL=C awk -F, '
+COVERAGE_TOTALS="$(LC_ALL=C awk -F, -v strict_mode="${DEAL_STRICT:+1}" '
 NR==1 {
   for (i = 1; i <= NF; i++) {
     if ($i == "LINE_MISSED")      lm = i;
@@ -450,6 +552,11 @@ NR==1 {
 # filter and absent from the report input, so its rows must not exist;
 # skip them anyway so totals can never be skewed by an all-missed test row.
 $2 == "deal.test" { next; }
+# Strict mode (S5(d)): the measured-set *Test.class exclusion applies to
+# the aggregation too -- any *Test.class row (the deal.project/
+# deal.module/deal.semantic test classes, belt and braces over the
+# report-input exclusion) is skipped by the CLASS column.
+strict_mode == 1 && $3 ~ /Test$/ { next; }
 {
   lmiss += $lm;
   lcov  += $lc;
@@ -467,19 +574,36 @@ BRANCH_PCT="$(echo "$COVERAGE_TOTALS" | awk '{print $2}')"
 
 echo ""
 echo "=== JaCoCo production coverage (deal.*, excluding deal.test.*) ==="
-echo "Line coverage:   ${LINE_PCT}%  (gate: >= 75%)"
-echo "Branch coverage: ${BRANCH_PCT}%  (gate: >= 55%)"
-
-# The gate check runs under `set -e`: a failing awk would terminate the
-# script before the diagnostic below could run, so the awk exit status is
-# consumed by the `if` itself, keeping the error message reachable and the
-# failure loud instead of silent.
-if LC_ALL=C awk -v line="$LINE_PCT" -v branch="$BRANCH_PCT" \
-  'BEGIN { exit (line >= 75.0 && branch >= 55.0) ? 0 : 1 }'; then
-  :
+if [ -n "${DEAL_STRICT:-}" ]; then
+  # Strict gate (release-r0-r3-strict-gate-mechanics S5(e)): line ==
+  # 100.00 AND branch == 100.00 over the measured set. A shortfall
+  # prints COVERAGE_GATE_FAILED with both percentages against 100/100
+  # and exits nonzero -- fail closed, no per-class waiver.
+  echo "Line coverage: ${LINE_PCT}% (gate: 100)"
+  echo "Branch coverage: ${BRANCH_PCT}% (gate: 100)"
+  if LC_ALL=C awk -v line="$LINE_PCT" -v branch="$BRANCH_PCT" \
+    'BEGIN { exit (line == 100.00 && branch == 100.00) ? 0 : 1 }'; then
+    :
+  else
+    echo "COVERAGE_GATE_FAILED line=${LINE_PCT}% branch=${BRANCH_PCT}% (gate: 100/100)" >&2
+    exit 1
+  fi
 else
-  echo "ERROR: coverage gate failed (line >= 75% AND branch >= 55%)" >&2
-  exit 1
+  # Dev gate (unchanged): line >= 75% AND branch >= 55%.
+  echo "Line coverage:   ${LINE_PCT}%  (gate: >= 75%)"
+  echo "Branch coverage: ${BRANCH_PCT}%  (gate: >= 55%)"
+
+  # The gate check runs under `set -e`: a failing awk would terminate the
+  # script before the diagnostic below could run, so the awk exit status is
+  # consumed by the `if` itself, keeping the error message reachable and the
+  # failure loud instead of silent.
+  if LC_ALL=C awk -v line="$LINE_PCT" -v branch="$BRANCH_PCT" \
+    'BEGIN { exit (line >= 75.0 && branch >= 55.0) ? 0 : 1 }'; then
+    :
+  else
+    echo "ERROR: coverage gate failed (line >= 75% AND branch >= 55%)" >&2
+    exit 1
+  fi
 fi
 
 # Strict mode (S2(d)/S4): restore the live streams, close the capture,
