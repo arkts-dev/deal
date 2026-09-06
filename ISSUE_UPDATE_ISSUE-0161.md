@@ -162,7 +162,15 @@ this MR:
   the retained element-typed E8001 at a non-nullable `bytes` target,
   and the exact emitted helper text; the array-delete catalog anchor
   re-located to the post-merge spans with its re-derived baseline
-  digest (HistoricalRegressionCatalog).
+  digest (HistoricalRegressionCatalog). The rebase onto the canonical
+  revision that landed ISSUE-0357's differential-gate lane corpus test
+  required its truthful post-flip re-pins: the six runtime-ok
+  JVM-GAP-BYTES skip-registry entries retired from `JvmLane` (the four
+  runtime-error bytes entries remain — the JVM lane still cannot
+  serialize a complete DEALRuntimeError snapshot, ISSUE-0276), the
+  registry count re-pinned 44 → 38 in `JvmLaneTest` and
+  `DifferentialGateLanesCorpusTest`, and the JVM lane counters
+  re-pinned 194/107 → 200/101.
 
 No acceptance criterion changed: the fix restores the epic's
 LuaJIT/JVM bytes equivalence on the bytes-array indexing shapes the
