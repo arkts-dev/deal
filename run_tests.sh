@@ -20,6 +20,50 @@ echo "=== DEAL test parallelism: jobs=$JOBS ==="
 
 mkdir -p build
 
+# =========================================================================
+# Strict mode (release-r0-r3-strict-gate-mechanics S2(c)/S2(d)): export
+# the strict flag so every test JVM inherits it, and tee the complete
+# output to the captured gate log build/strict-run-tests.log. The
+# output assertion (tools/strict-output-assert.sh, S4) runs over the
+# captured log after the background wait and before the final marker.
+# Dev mode exports nothing, captures no log, and runs no assertion.
+# =========================================================================
+if [ -n "${DEAL_STRICT:-}" ]; then
+  export DEAL_STRICT=1
+  STRICT_LOG="build/strict-run-tests.log"
+  STRICT_OUT_FIFO="$STRICT_LOG.stdout.fifo"
+  STRICT_ERR_FIFO="$STRICT_LOG.stderr.fifo"
+  rm -f "$STRICT_LOG" "$STRICT_OUT_FIFO" "$STRICT_ERR_FIFO"
+  # fd 3/4 keep the original stdout/stderr for the post-capture restore.
+  exec 3>&1 4>&2
+  mkfifo "$STRICT_OUT_FIFO" "$STRICT_ERR_FIFO" \
+    || { echo "ERROR: strict log capture fifo creation failed" >&2; exit 1; }
+  # fd 5/6 are read-write fifo handles: the open never blocks, and
+  # closing them (after the restore below) delivers EOF to the relays.
+  exec 5<> "$STRICT_OUT_FIFO"
+  exec 6<> "$STRICT_ERR_FIFO"
+  # Two fifo/relay pairs keep the two live streams separate through the
+  # capture: stdout content is appended to the merged captured log and
+  # relayed to the original stdout (fd 3); stderr content is appended to
+  # the same merged log and relayed to the original stderr (fd 4), so
+  # error tokens such as TOOL_MISSING stay visible on stderr as the
+  # strict-mode gate contract pins. Both relays append to the single
+  # merged log -- the S4 assertion input -- one printf per line, so
+  # concurrent relays never interleave inside a line and the assertion's
+  # line surface stays intact.
+  ( exec 5>&- 6>&-; while IFS= read -r line || [ -n "$line" ]; do
+      printf '%s\n' "$line" >> "$STRICT_LOG"
+      printf '%s\n' "$line" >&3
+    done < "$STRICT_OUT_FIFO" ) &
+  STRICT_RELAY_OUT_PID=$!
+  ( exec 5>&- 6>&-; while IFS= read -r line || [ -n "$line" ]; do
+      printf '%s\n' "$line" >> "$STRICT_LOG"
+      printf '%s\n' "$line" >&4
+    done < "$STRICT_ERR_FIFO" ) &
+  STRICT_RELAY_ERR_PID=$!
+  exec >&5 2>&6
+fi
+
 # Single compile/test-list authority: tools/gate-manifest.sh provides
 # PROD_SOURCES + TEST_SOURCES (today's javac source list, verbatim) and
 # TEST_MAINS (today's run phase, verbatim). See gate-manifest-authority.
@@ -266,6 +310,58 @@ DEALPG4_PREFLIGHT_JAVAC_ARGS=(
 DEALPG4_PREFLIGHT_COORD_ARGS=(
   java -ea -cp build deal.test.containment.PreflightCoordinator
 )
+
+# =========================================================================
+# Strict-mode bounded routing (bounded-step-table-and-library D8): every
+# tool child dispatches through the shared step library under its pinned
+# step name. Dev mode (no DEAL_STRICT) executes the child directly --
+# the same child, the same output, the same exit status. Strict mode
+# routes through tools/release-step-lib.sh (E5) under the table bound.
+# =========================================================================
+run_step() {
+  local step="$1"; shift
+  [ "$#" -ge 1 ] && [ "$1" = "--" ] || { echo "INTERNAL ERROR: malformed run_step invocation" >&2; exit 1; }
+  shift
+  if [ -n "${DEAL_STRICT:-}" ]; then
+    RELEASE_EXPORT_ROOT="$PWD" tools/release-step-lib.sh step_run "$step" -- "$@"
+  else
+    "$@"
+  fi
+}
+
+# Step name for a TEST_MAINS java record: the main class token after the
+# -cp classpath, or the junit- bundle name for JUnitCore records
+# (bounded-step-table-and-library D4).
+main_step_name() {
+  if [ "$5" = "org.junit.runner.JUnitCore" ]; then
+    printf 'junit-%s\n' "$6"
+  else
+    printf '%s\n' "$5"
+  fi
+}
+
+# Step name for a guarded luajit/node suite invocation line, mapped by
+# the invoked fixture file (bounded-step-table-and-library D4).
+tool_line_step() {
+  # shellcheck disable=SC2124
+  local file="${@: -1}"
+  case "$file" in
+    test_runtime.lua) printf 'suite-runtime-core\n' ;;
+    test_runtime_int32.lua) printf 'suite-runtime-int32\n' ;;
+    test/lua_async_export_driver_test.lua) printf 'suite-async-export-driver\n' ;;
+    test_runtime_jsonable.lua) printf 'suite-runtime-jsonable\n' ;;
+    test_jsonable_js.js) printf 'suite-runtime-js-jsonable\n' ;;
+    test_host_js.js) printf 'suite-runtime-js-hostabi\n' ;;
+    test_stdlib.lua) printf 'suite-stdlib-lua\n' ;;
+    test_stdlib_js.js) printf 'suite-stdlib-js\n' ;;
+    test_async_nesting.lua) printf 'suite-async-nesting\n' ;;
+    *)
+      echo "INTERNAL ERROR: no strict step name for guarded suite file: $file" >&2
+      exit 1
+      ;;
+  esac
+}
+
 dealpg4_preflight_run
 
 # =========================================================================
@@ -282,19 +378,26 @@ dealpg4_preflight_run
 # of the raw javac; the stamp logic is unchanged.
 # =========================================================================
 STAMP="build/.deal-build-stamp"
-NEEDS_BUILD=0
-if [ ! -f "$STAMP" ]; then
+# Strict mode (S2(b)): the incremental stamp is never read and never
+# written -- a full compile runs unconditionally and a pre-existing stamp
+# is left untouched. Dev mode keeps the stamp logic verbatim.
+if [ -n "${DEAL_STRICT:-}" ]; then
   NEEDS_BUILD=1
-elif [ run_tests.sh -nt "$STAMP" ]; then
-  NEEDS_BUILD=1
-elif [ tools/preflight-lib.sh -nt "$STAMP" ]; then
-  NEEDS_BUILD=1
-elif [ -n "$(find deal test -name '*.java' -newer "$STAMP" -print -quit)" ]; then
-  NEEDS_BUILD=1
+else
+  NEEDS_BUILD=0
+  if [ ! -f "$STAMP" ]; then
+    NEEDS_BUILD=1
+  elif [ run_tests.sh -nt "$STAMP" ]; then
+    NEEDS_BUILD=1
+  elif [ tools/preflight-lib.sh -nt "$STAMP" ]; then
+    NEEDS_BUILD=1
+  elif [ -n "$(find deal test -name '*.java' -newer "$STAMP" -print -quit)" ]; then
+    NEEDS_BUILD=1
+  fi
 fi
 
 if [ "$NEEDS_BUILD" = "1" ]; then
-echo "=== Compiling all DEAL sources and tests ==="
+  echo "=== Compiling all DEAL sources and tests ==="
 # -proc:none: no DEAL/test source uses an annotation processor, so javac's
 # default processor-discovery pass is pure per-task startup cost (the gate
 # budget is shared with the JVM artifact suites; measured ~40% faster
@@ -302,8 +405,15 @@ echo "=== Compiling all DEAL sources and tests ==="
 # PROD_SOURCES is expanded unquoted so the manifest's quoted globs are
 # expanded here exactly as they were when the list lived inline; javac
 # receives the identical expanded file list it receives today.
-dealpg4_preflight_javac "${DEALPG4_PREFLIGHT_JAVAC_ARGS[@]}"
-  touch "$STAMP"
+  # Strict mode routes the compile through the step library under the
+  # compile-dev table entry (S2(e)); dev mode keeps the preflight P4
+  # launcher-bounded javac and the stamp update verbatim.
+  if [ -n "${DEAL_STRICT:-}" ]; then
+    run_step compile-dev -- "${DEALPG4_PREFLIGHT_JAVAC_ARGS[@]}"
+  else
+    dealpg4_preflight_javac "${DEALPG4_PREFLIGHT_JAVAC_ARGS[@]}"
+    touch "$STAMP"
+  fi
 else
   echo "=== DEAL sources and tests unchanged since the last build; reusing build/ ==="
 fi
@@ -331,7 +441,8 @@ dealpg4_preflight_outer
 echo ""
 echo "=== Identity Package Gate: JDK-only closure ==="
 mkdir -p build/identity-cp-empty build/identity-standalone
-javac --release 25 -proc:none -cp build/identity-cp-empty \
+run_step compile-identity -- javac --release 25 -proc:none \
+  -cp build/identity-cp-empty \
   -d build/identity-standalone deal/identity/*.java
 IDENTITY_IMPORTS="$(grep -hE '^import ' deal/identity/*.java || true)"
 IDENTITY_BAD_IMPORTS="$(echo "$IDENTITY_IMPORTS" \
@@ -397,7 +508,9 @@ echo "  Migration gate scans pass (no legacy record, no legacy references, no pr
 BACKGROUND_PIDS=""
 
 launch_background() {
-  java "-Ddeal.test.jobs=$JOBS" "${@:2}" &
+  local step
+  step="$(main_step_name "$@")"
+  run_step "$step" -- java "-Ddeal.test.jobs=$JOBS" "${@:2}" &
   BACKGROUND_PIDS="$BACKGROUND_PIDS $!"
 }
 
@@ -425,7 +538,7 @@ for record in "${TEST_MAINS[@]}"; do
       ;;
     fg)
       read -r -a record_args <<< "$record_command"
-      java "-Ddeal.test.jobs=$JOBS" "${record_args[@]:1}"
+      run_step "$(main_step_name "${record_args[@]}")" -- java "-Ddeal.test.jobs=$JOBS" "${record_args[@]:1}"
       ;;
     luajit|node)
       if command -v "$record_class" &> /dev/null; then
@@ -437,11 +550,18 @@ for record in "${TEST_MAINS[@]}"; do
             WARNING:*) ;;
             *)
               read -r -a record_args <<< "$record_line"
-              "${record_args[@]}"
+              run_step "$(tool_line_step "${record_args[@]}")" -- "${record_args[@]}"
               ;;
           esac
         done <<< "$record_command"
       else
+        # Strict mode (S2(a)): a missing guarded tool is a hard failure --
+        # TOOL_MISSING <tool> on stderr, no WARNING skip line, exit
+        # nonzero. Dev mode keeps the WARNING skip verbatim.
+        if [ -n "${DEAL_STRICT:-}" ]; then
+          echo "TOOL_MISSING $record_class" >&2
+          exit 1
+        fi
         while IFS= read -r record_line; do
           case "$record_line" in
             WARNING:*) echo "$record_line" ;;
@@ -452,7 +572,14 @@ for record in "${TEST_MAINS[@]}"; do
     golden-ir)
       GOLDEN_FILE="test/goldens/stdlib-declarations.ir.txt"
       TEMP_FILE="/tmp/deal-stdlib-ir-$$.txt"
-      java -ea -cp build deal.test.GenerateStdlibGoldenIr "$TEMP_FILE" 2>/dev/null
+      # Strict mode drops the dev-only stderr redirect: the library's
+      # capped stderr relay carries the tool's stderr (bounded-step-
+      # table-and-library D8). Dev mode keeps the exact redirect.
+      if [ -n "${DEAL_STRICT:-}" ]; then
+        run_step deal.test.GenerateStdlibGoldenIr -- java -ea -cp build deal.test.GenerateStdlibGoldenIr "$TEMP_FILE"
+      else
+        run_step deal.test.GenerateStdlibGoldenIr -- java -ea -cp build deal.test.GenerateStdlibGoldenIr "$TEMP_FILE" 2>/dev/null
+      fi
       if [ "${DEAL_UPDATE_GOLDENS}" = "true" ]; then
         cp "$TEMP_FILE" "$GOLDEN_FILE"
         echo "  Golden IR file updated"
@@ -490,5 +617,17 @@ if [ "$BACKGROUND_FAILED" -eq 1 ]; then
   exit 1
 fi
 trap - EXIT
+
+# Strict mode (S2(d)/S4): restore the live streams, close the capture,
+# and assert the captured log before the final marker. An assertion
+# failure fails the script with STRICT_OUTPUT_VIOLATION on stderr.
+if [ -n "${DEAL_STRICT:-}" ]; then
+  exec >&3 2>&4
+  exec 5>&- 6>&-
+  wait "$STRICT_RELAY_OUT_PID" || true
+  wait "$STRICT_RELAY_ERR_PID" || true
+  rm -f "$STRICT_OUT_FIFO" "$STRICT_ERR_FIFO"
+  tools/strict-output-assert.sh "$STRICT_LOG"
+fi
 
 echo "=== All Tests Passed ==="
