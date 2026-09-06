@@ -175,8 +175,6 @@ tool_line_step() {
   esac
 }
 
-dealpg4_preflight_run
-
 # =========================================================================
 # Reset the build directory before the --release 22 compile below. The
 # natural run_tests.sh -> coverage.sh sequence shares one build/ between
@@ -188,6 +186,12 @@ dealpg4_preflight_run
 # Wiping build/ first guarantees the CSV proof is reproducible from any
 # starting state, that only --release 22 class files are analyzed, and
 # that no stale build/jacoco.exec is appended to.
+#
+# In strict mode the reset runs before the capture starts (S2(b)/S2(d)):
+# the preflight P0-P3 phases and every later line then flow through the
+# capture, so build/strict-coverage.log holds the complete script
+# output. P0-P3 read no build/ artifact, so the reorder is
+# behavior-neutral beyond the capture.
 # =========================================================================
 rm -rf build
 mkdir -p build
@@ -196,27 +200,50 @@ mkdir -p build
 # Strict mode (release-r0-r3-strict-gate-mechanics S2(c)/S2(d)): export
 # the strict flag so every test JVM inherits it (before any JVM launch),
 # and tee the complete output to the captured gate log
-# build/strict-coverage.log. The output assertion
+# build/strict-coverage.log. The capture starts after the build/ reset
+# above and before the preflight run, so the preflight P0-P3 output and
+# the compile are captured too. The output assertion
 # (tools/strict-output-assert.sh, S4) runs over the captured log after
-# the background wait and before the final marker. The capture starts
-# after the build/ reset above -- the strict full-reset contract (S2(b)).
-# Dev mode exports nothing, captures no log, and runs no assertion.
+# the background wait and before the final marker. Dev mode exports
+# nothing, captures no log, and runs no assertion.
 # =========================================================================
 if [ -n "${DEAL_STRICT:-}" ]; then
   export DEAL_STRICT=1
   STRICT_LOG="build/strict-coverage.log"
-  rm -f "$STRICT_LOG" "$STRICT_LOG.fifo"
+  STRICT_OUT_FIFO="$STRICT_LOG.stdout.fifo"
+  STRICT_ERR_FIFO="$STRICT_LOG.stderr.fifo"
+  rm -f "$STRICT_LOG" "$STRICT_OUT_FIFO" "$STRICT_ERR_FIFO"
   # fd 3/4 keep the original stdout/stderr for the post-capture restore.
   exec 3>&1 4>&2
-  mkfifo "$STRICT_LOG.fifo" \
+  mkfifo "$STRICT_OUT_FIFO" "$STRICT_ERR_FIFO" \
     || { echo "ERROR: strict log capture fifo creation failed" >&2; exit 1; }
-  # fd 5 is a read-write fifo handle: the open never blocks, and closing
-  # it (after the restore below) delivers EOF to tee.
-  exec 5<> "$STRICT_LOG.fifo"
-  ( exec 5>&-; tee "$STRICT_LOG" < "$STRICT_LOG.fifo" >&3 ) &
-  STRICT_TEE_PID=$!
-  exec >&5 2>&1
+  # fd 5/6 are read-write fifo handles: the open never blocks, and
+  # closing them (after the restore below) delivers EOF to the relays.
+  exec 5<> "$STRICT_OUT_FIFO"
+  exec 6<> "$STRICT_ERR_FIFO"
+  # Two fifo/relay pairs keep the two live streams separate through the
+  # capture: stdout content is appended to the merged captured log and
+  # relayed to the original stdout (fd 3); stderr content is appended to
+  # the same merged log and relayed to the original stderr (fd 4), so
+  # error tokens such as TOOL_MISSING stay visible on stderr as the
+  # strict-mode gate contract pins. Both relays append to the single
+  # merged log -- the S4 assertion input -- one printf per line, so
+  # concurrent relays never interleave inside a line and the assertion's
+  # line surface stays intact.
+  ( exec 5>&- 6>&-; while IFS= read -r line || [ -n "$line" ]; do
+      printf '%s\n' "$line" >> "$STRICT_LOG"
+      printf '%s\n' "$line" >&3
+    done < "$STRICT_OUT_FIFO" ) &
+  STRICT_RELAY_OUT_PID=$!
+  ( exec 5>&- 6>&-; while IFS= read -r line || [ -n "$line" ]; do
+      printf '%s\n' "$line" >> "$STRICT_LOG"
+      printf '%s\n' "$line" >&4
+    done < "$STRICT_ERR_FIFO" ) &
+  STRICT_RELAY_ERR_PID=$!
+  exec >&5 2>&6
 fi
+
+dealpg4_preflight_run
 
 # =========================================================================
 # Single compilation step at --release 22 (the full mirrored compile
@@ -460,9 +487,10 @@ fi
 # failure fails the script with STRICT_OUTPUT_VIOLATION on stderr.
 if [ -n "${DEAL_STRICT:-}" ]; then
   exec >&3 2>&4
-  exec 5>&-
-  wait "$STRICT_TEE_PID" || true
-  rm -f "$STRICT_LOG.fifo"
+  exec 5>&- 6>&-
+  wait "$STRICT_RELAY_OUT_PID" || true
+  wait "$STRICT_RELAY_ERR_PID" || true
+  rm -f "$STRICT_OUT_FIFO" "$STRICT_ERR_FIFO"
   tools/strict-output-assert.sh "$STRICT_LOG"
 fi
 

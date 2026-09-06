@@ -31,17 +31,37 @@ mkdir -p build
 if [ -n "${DEAL_STRICT:-}" ]; then
   export DEAL_STRICT=1
   STRICT_LOG="build/strict-run-tests.log"
-  rm -f "$STRICT_LOG" "$STRICT_LOG.fifo"
+  STRICT_OUT_FIFO="$STRICT_LOG.stdout.fifo"
+  STRICT_ERR_FIFO="$STRICT_LOG.stderr.fifo"
+  rm -f "$STRICT_LOG" "$STRICT_OUT_FIFO" "$STRICT_ERR_FIFO"
   # fd 3/4 keep the original stdout/stderr for the post-capture restore.
   exec 3>&1 4>&2
-  mkfifo "$STRICT_LOG.fifo" \
+  mkfifo "$STRICT_OUT_FIFO" "$STRICT_ERR_FIFO" \
     || { echo "ERROR: strict log capture fifo creation failed" >&2; exit 1; }
-  # fd 5 is a read-write fifo handle: the open never blocks, and closing
-  # it (after the restore below) delivers EOF to tee.
-  exec 5<> "$STRICT_LOG.fifo"
-  ( exec 5>&-; tee "$STRICT_LOG" < "$STRICT_LOG.fifo" >&3 ) &
-  STRICT_TEE_PID=$!
-  exec >&5 2>&1
+  # fd 5/6 are read-write fifo handles: the open never blocks, and
+  # closing them (after the restore below) delivers EOF to the relays.
+  exec 5<> "$STRICT_OUT_FIFO"
+  exec 6<> "$STRICT_ERR_FIFO"
+  # Two fifo/relay pairs keep the two live streams separate through the
+  # capture: stdout content is appended to the merged captured log and
+  # relayed to the original stdout (fd 3); stderr content is appended to
+  # the same merged log and relayed to the original stderr (fd 4), so
+  # error tokens such as TOOL_MISSING stay visible on stderr as the
+  # strict-mode gate contract pins. Both relays append to the single
+  # merged log -- the S4 assertion input -- one printf per line, so
+  # concurrent relays never interleave inside a line and the assertion's
+  # line surface stays intact.
+  ( exec 5>&- 6>&-; while IFS= read -r line || [ -n "$line" ]; do
+      printf '%s\n' "$line" >> "$STRICT_LOG"
+      printf '%s\n' "$line" >&3
+    done < "$STRICT_OUT_FIFO" ) &
+  STRICT_RELAY_OUT_PID=$!
+  ( exec 5>&- 6>&-; while IFS= read -r line || [ -n "$line" ]; do
+      printf '%s\n' "$line" >> "$STRICT_LOG"
+      printf '%s\n' "$line" >&4
+    done < "$STRICT_ERR_FIFO" ) &
+  STRICT_RELAY_ERR_PID=$!
+  exec >&5 2>&6
 fi
 
 # Single compile/test-list authority: tools/gate-manifest.sh provides
@@ -603,9 +623,10 @@ trap - EXIT
 # failure fails the script with STRICT_OUTPUT_VIOLATION on stderr.
 if [ -n "${DEAL_STRICT:-}" ]; then
   exec >&3 2>&4
-  exec 5>&-
-  wait "$STRICT_TEE_PID" || true
-  rm -f "$STRICT_LOG.fifo"
+  exec 5>&- 6>&-
+  wait "$STRICT_RELAY_OUT_PID" || true
+  wait "$STRICT_RELAY_ERR_PID" || true
+  rm -f "$STRICT_OUT_FIFO" "$STRICT_ERR_FIFO"
   tools/strict-output-assert.sh "$STRICT_LOG"
 fi
 
