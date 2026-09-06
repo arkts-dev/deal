@@ -75,10 +75,11 @@ import java.util.stream.Stream;
  * single fixture byte (unchanged fixture-source handling).</p>
  *
  * <p>Production metadata rejection (acceptance criterion 3): every
- * fixture source is scanned with the real E5 lexer; a directive-shaped
- * {@code // @spec:} comment is E1044 in production, so a fixture
- * carrying one is a catalog failure — metadata is never stripped or
- * whitelisted.</p>
+ * fixture source of a record's graph — the root source and each
+ * resolved/walked support source — is scanned with the real E5 lexer;
+ * a directive-shaped {@code // @spec:} comment is E1044 in production,
+ * so a fixture carrying one is a catalog failure — metadata is never
+ * stripped or whitelisted.</p>
  *
  * <p>Source-project main requirements (D12): a {@code direct-main} or
  * {@code async-export} record's root source must export a non-async
@@ -333,11 +334,22 @@ public final class V12FeatureCatalog {
             List<String> sourceProblems = new ArrayList<>();
             List<Path> supportSources = resolveSupportEntries(
                 root, id, metadata.support(), allSources, sourceProblems);
+            Set<Path> walkedClosure = new LinkedHashSet<>();
             sourceProblems.addAll(checkSupportClosure(
-                root, id, metadata, source, allSources, supportSources));
-            String specProblem = checkProductionSpecRejection(id, source);
-            if (specProblem != null) {
-                sourceProblems.add(specProblem);
+                root, id, metadata, source, allSources, supportSources,
+                walkedClosure));
+            // E5 production-@spec rejection (acceptance criterion 3)
+            // covers the record's whole fixture graph: the root source,
+            // every resolved support entry, and every transitively
+            // walked catalog source. Directive-shaped // @spec:
+            // metadata is never stripped or whitelisted on any fixture
+            // the record compiles.
+            for (Path fixture : specScanFixtures(source, supportSources,
+                    walkedClosure)) {
+                String specProblem = checkProductionSpecRejection(id, fixture);
+                if (specProblem != null) {
+                    sourceProblems.add(specProblem);
+                }
             }
             List<String> shapeProblems = checkSourceShapes(id, metadata, source);
             sourceProblems.addAll(shapeProblems);
@@ -447,12 +459,18 @@ public final class V12FeatureCatalog {
      */
     private static List<String> checkSupportClosure(Path root, String id,
             Metadata metadata, Path source, Set<String> allSources,
-            List<Path> supportSources) {
+            List<Path> supportSources, Set<Path> walkedClosure) {
         List<String> problems = new ArrayList<>();
         Set<String> imported = new LinkedHashSet<>();
         List<String> walkProblems = new ArrayList<>();
         walkImports(root, source, allSources, imported, walkProblems,
             new LinkedHashSet<>());
+        // The walked closure (root included) is retained for the
+        // production-@spec scan: every fixture source the record's
+        // graph reaches must have a clean directive surface.
+        for (String rel : imported) {
+            walkedClosure.add(root.resolve(rel).normalize());
+        }
         for (String problem : walkProblems) {
             problems.add(problem);
         }
@@ -565,25 +583,60 @@ public final class V12FeatureCatalog {
             if (event.name() == null) {
                 String recovered = recoveredName(text, event);
                 if (SPEC_DIRECTIVE_NAME.equals(recovered)) {
-                    return "the fixture carries a directive-shaped "
-                        + "// @spec: comment — production emits E1044 for "
-                        + "it, so the metadata must not be stripped or "
-                        + "whitelisted (use the sidecar's spec field "
-                        + "instead)";
+                    return "the fixture source " + source.getFileName()
+                        + " carries a directive-shaped // @spec: comment "
+                        + "— production emits E1044 for it, so the "
+                        + "metadata must not be stripped or whitelisted "
+                        + "(use the sidecar's spec field instead)";
                 }
             }
         }
         return null;
     }
 
-    /** The recovered unknown-name text of an E1044 directive event. */
+    /**
+     * The recovered unknown-name text of an E1044 directive event.
+     * DiagnosticRange offsets count decoded Unicode scalars, so the
+     * recovery walks code points; {@code String.substring} would slice
+     * UTF-16 code units and mis-read the name whenever a non-BMP
+     * scalar precedes the directive.
+     */
     private static String recoveredName(String source, CompilerDirective event) {
         int start = event.nameRange().startScalarOffset();
         int end = event.nameRange().endScalarOffset();
-        if (start < 0 || end < start || end > source.length()) {
+        if (start < 0 || end < start) {
             return "";
         }
-        return source.substring(start, end);
+        StringBuilder recovered = new StringBuilder();
+        int scalar = 0;
+        int codeUnit = 0;
+        while (codeUnit < source.length() && scalar < end) {
+            int codePoint = source.codePointAt(codeUnit);
+            if (scalar >= start) {
+                recovered.appendCodePoint(codePoint);
+            }
+            scalar++;
+            codeUnit += Character.charCount(codePoint);
+        }
+        if (scalar < end) {
+            return ""; // the range runs past the decoded scalar count
+        }
+        return recovered.toString();
+    }
+
+    /**
+     * The fixture sources whose production directive surface must be
+     * clean for one record: the root source, every resolved support
+     * entry, and every transitively walked catalog source. Order is
+     * deterministic (root, support-list order, walk order).
+     */
+    private static Set<Path> specScanFixtures(Path source,
+            List<Path> supportSources, Set<Path> walkedClosure) {
+        Set<Path> fixtures = new LinkedHashSet<>();
+        fixtures.add(source);
+        fixtures.addAll(supportSources);
+        fixtures.addAll(walkedClosure);
+        return fixtures;
     }
 
     // =========================================================================

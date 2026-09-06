@@ -652,6 +652,53 @@ public class V12FeatureCatalogTest {
             "does not exist").isPresent(),
             "stray-sidecar failure: " + result.failures());
 
+        // 19. Astral-prefixed // @spec: on the root still fails: the
+        // recovered-name read must count decoded Unicode scalars, not
+        // UTF-16 code units (a non-BMP scalar before the directive
+        // previously mis-sliced the recovered name and skipped the
+        // rejection).
+        Path astralSpec = tempRoot.resolve("astral-spec");
+        buildValidCatalog(astralSpec);
+        write(astralSpec, "bytes-descriptors/descriptor.deal",
+            "// \uD83D\uDE00 emoji guard comment\n"
+                + "// @spec: Spec section\n" + DESCRIPTOR_OK);
+        result = V12FeatureCatalog.load(astralSpec);
+        check(!result.valid(), "astral-prefixed // @spec: fails");
+        check(failure(result, "bytes-descriptors/descriptor", "<source>",
+            "E1044").isPresent(),
+            "astral spec-rejection failure: " + result.failures());
+
+        // 20. Support-carried // @spec: fails at the catalog phase: the
+        // production scan covers every fixture source of the record's
+        // graph, not only the root (astral-prefixed here to exercise
+        // both recovery paths on a support source).
+        Path supportSpec = tempRoot.resolve("support-spec");
+        buildValidCatalog(supportSpec);
+        write(supportSpec, "bytes-core/helper/ops.deal",
+            "// \uD83D\uDE00 emoji guard comment\n"
+                + "// @spec: Spec section\n" + BYTES_HELPER);
+        result = V12FeatureCatalog.load(supportSpec);
+        check(!result.valid(), "support-carried // @spec: fails");
+        check(failure(result, "bytes-core/ops", "<source>",
+            "E1044").isPresent(),
+            "support spec-rejection failure: " + result.failures());
+
+        // 21. Transitive dual-role support carrying // @spec: fails for
+        // every record whose graph reaches it (the importer's walked
+        // closure, not only the root's own source).
+        Path transitSpec = tempRoot.resolve("transit-spec");
+        buildValidCatalog(transitSpec);
+        write(transitSpec, "bytes-defaults/defaults.deal",
+            "// @spec: Spec section\n" + DEFAULTS_ORACLE);
+        result = V12FeatureCatalog.load(transitSpec);
+        check(!result.valid(), "transitive // @spec: fails");
+        check(failure(result, "bytes-defaults/defaults", "<source>",
+            "E1044").isPresent(),
+            "transitive root-record failure: " + result.failures());
+        check(failure(result, "bytes-sync-function/sync", "<source>",
+            "E1044").isPresent(),
+            "transitive importer-record failure: " + result.failures());
+
         // =========================================================================
         // Cleanup
         // =========================================================================
