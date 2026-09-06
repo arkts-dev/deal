@@ -1,0 +1,12 @@
+{
+  "languageVersion": "1.2",
+  "moduleRoots": ["src"],
+  "backend": "luajit",
+  "output": "build/lua",
+  "externals": {
+    "native/math": {
+      "declaration": "src/lib.d.deal",
+      "nativeLibrary": 42
+    }
+  }
+}

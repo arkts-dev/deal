@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "feature": "directives",
+  "spec": "Comment semantics — no fixed name matches; unknown names are E1044",
+  "description": "@foo bar recovers the maximal unknown name and emits E1044",
+  "expected": { "compile-error": "E1044" },
+  "backends": ["luajit", "jvm"],
+  "invocation": "compile-only",
+  "support": []
+}

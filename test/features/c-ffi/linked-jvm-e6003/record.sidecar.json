@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "feature": "c-ffi",
+  "spec": "Linked JVM E6003 rejection — the same extern-C declarations on JVM",
+  "description": "the same extern-C project compiles on JVM to E6003 FFI_UNSUPPORTED_BACKEND at @extern-c before any artifact write (the linked rejection half of the C_FFI matrix rule)",
+  "expected": { "compile-error": "E6003" },
+  "backends": ["jvm"],
+  "invocation": "compile-only",
+  "support": [],
+  "native": {
+    "entries": [
+      { "importSpecifier": "native/math", "declaration": "src/lib.d.deal", "library": "ffi-runtime-fixture.c" },
+      { "importSpecifier": "native/dualA", "declaration": "src/duala.d.deal", "library": "ffi-runtime-dual-a.c" },
+      { "importSpecifier": "native/dualB", "declaration": "src/dualb.d.deal", "library": "ffi-runtime-dual-b.c" }
+    ]
+  }
+}

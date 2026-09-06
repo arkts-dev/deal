@@ -1,0 +1,6 @@
+// An out-of-root class declaration: E2010 at this declaration (no
+// configured root contains this source, so no public project identity
+// exists for the class).
+export class OutOfRoot {
+  x: int = 1;
+}

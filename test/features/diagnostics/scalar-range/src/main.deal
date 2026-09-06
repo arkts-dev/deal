@@ -1,0 +1,11 @@
+// ISSUE-0165 DIAGNOSTIC_RANGE: the E1045 diagnostic must carry a full
+// non-lossy scalar range (SOURCE origin, positive scalar length,
+// half-open offsets) for the recognized-prefix argument form.
+// @jsonablex
+export class Ranged {
+  x: int = 1;
+}
+
+export function main(): null {
+  return null;
+}

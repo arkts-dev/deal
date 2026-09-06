@@ -1,0 +1,6 @@
+// ISSUE-0165 DIRECTIVES: an older declaration version is E1046 — the
+// exact (1,2) version contract rejects older major/minor pairs.
+// @deal-version 9.9
+export function main(): null {
+  return null;
+}

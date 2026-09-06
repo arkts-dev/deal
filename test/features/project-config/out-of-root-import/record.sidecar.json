@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "feature": "project-config",
+  "spec": "Module resolution — importer-relative resolution may leave the roots",
+  "description": "a rooted entry imports a class-free ../shared provider and calls it on both backends",
+  "expected": "runtime-ok",
+  "backends": ["luajit", "jvm"],
+  "invocation": "direct-main",
+  "support": []
+}

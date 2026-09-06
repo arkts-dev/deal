@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "feature": "signed-int32",
+  "spec": "Explicit conversions — int()/number() truncate toward zero",
+  "description": "int(42.9)=42, int(-3.9)=-3, number roundtrips across the signed32 range",
+  "expected": "runtime-ok",
+  "backends": ["luajit", "jvm"],
+  "invocation": "direct-main",
+  "support": []
+}

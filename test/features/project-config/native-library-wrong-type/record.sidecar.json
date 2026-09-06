@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "feature": "project-config",
+  "spec": "Strict externals schema — a non-string nativeLibrary is E2010",
+  "description": "an externals entry whose nativeLibrary is not a string fails the strict manifest schema with E2010 at the value range (the native allowlist never accepts a malformed value)",
+  "expected": { "compile-error": "E2010" },
+  "backends": ["luajit", "jvm"],
+  "invocation": "compile-only",
+  "manifestPolicy": "inject",
+  "manifestErrorFragment": "'nativeLibrary' must be a string",
+  "support": []
+}

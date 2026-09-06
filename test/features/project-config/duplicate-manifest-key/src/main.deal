@@ -1,0 +1,8 @@
+// ISSUE-0165 PROJECT_CONFIG: the strict manifest parser rejects every
+// duplicate object member at the second key range with E2010 before any
+// override, context, or artifact. The gate injects the duplicate-key
+// manifest verbatim (manifest-inject.json) and expects E2010 from the
+// production locator.
+export function main(): null {
+  return null;
+}

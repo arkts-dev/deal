@@ -1,0 +1,8 @@
+// ISSUE-0165 SIGNED_INT32: 2147483647 + 1 overflows the signed32 range
+// and must raise E8004 on both backends.
+export function main(): null {
+  let a: int = 2147483647;
+  let b: int = 1;
+  let x: int = a + b;
+  return null;
+}

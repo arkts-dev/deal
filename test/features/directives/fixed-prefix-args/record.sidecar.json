@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "feature": "directives",
+  "spec": "Comment semantics — fixed-name matching consumes the remaining line",
+  "description": "@jsonablex lexes as jsonable plus forbidden argument x (E1045)",
+  "expected": { "compile-error": "E1045" },
+  "backends": ["luajit", "jvm"],
+  "invocation": "compile-only",
+  "support": []
+}

@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "feature": "c-ffi",
+  "spec": "Production LuaJIT C FFI runtime \u2014 generated bindings through production load_ffi",
+  "description": "extern-C declarations compiled through the production locator/orchestrator; the production LuaFfiBindingGenerator output serialized and loaded through production __rt.load_ffi to READY; real ABI/error/ownership rows, ordinal C-keyword fields, callable default plans, exact ready replay, changed-identity and cdef-failure caching, cross-module cdef replay, and dual-library same-symbol/different-signature handles",
+  "expected": "runtime-ok",
+  "backends": [
+    "luajit"
+  ],
+  "invocation": "direct-main",
+  "linkedRecord": "c-ffi/linked-jvm-e6003/record",
+  "support": [],
+  "native": {
+    "entries": [
+      {
+        "importSpecifier": "native/math",
+        "declaration": "src/lib.d.deal",
+        "library": "ffi-runtime-fixture.c"
+      },
+      {
+        "importSpecifier": "native/dualA",
+        "declaration": "src/duala.d.deal",
+        "library": "ffi-runtime-dual-a.c"
+      },
+      {
+        "importSpecifier": "native/dualB",
+        "declaration": "src/dualb.d.deal",
+        "library": "ffi-runtime-dual-b.c"
+      }
+    ]
+  }
+}

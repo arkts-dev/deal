@@ -1,0 +1,6 @@
+// ISSUE-0165 SIGNED_INT32 synthetic-main fixture: the gate generates the
+// typed entry module (src/main.deal) that imports this unchanged source,
+// calls oracle() once through a normal typed boundary, and returns null.
+export function oracle(): int {
+  return 42;
+}
