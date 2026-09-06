@@ -935,7 +935,7 @@ public final class DealCompilerWorkspace {
             case ReplaceFunctionBody value -> Map.of("body", value.body());
             case ReplaceBlockBody value -> Map.of("body", value.body());
             case SetCapabilities value -> Map.of(
-                    "capabilities", String.join("\n", canonicalCapabilities(value.capabilities())));
+                    "capabilities", String.join("\n", value.capabilities()));
             case RemoveDeclaration ignored -> Map.of();
         };
     }
@@ -1325,7 +1325,7 @@ public final class DealCompilerWorkspace {
                 index);
         List<StructuredDiagnostic> diagnostics = rawDiagnostics.stream()
                 .map(value -> {
-                    var result = diagnostic(value, moduleId, functionsByName.values());
+                    var result = diagnostic(value, moduleId, functionsByName.values(), classesByName.values());
                     return value.range().origin() == deal.diagnostics.RangeOrigin.SOURCE
                             ? result.withSourceContext(source) : result;
                 })
@@ -1538,7 +1538,8 @@ public final class DealCompilerWorkspace {
     private static StructuredDiagnostic diagnostic(
             CompilerDiagnostic value,
             SemanticId moduleId,
-            Iterable<FunctionInfo> functions) {
+            Iterable<FunctionInfo> functions,
+            Iterable<ClassInfo> classes) {
         FunctionInfo owner = null;
         for (FunctionInfo function : functions) {
             if (contains(function.declarationSpan(), value.line(), value.column())) {
@@ -1550,6 +1551,15 @@ public final class DealCompilerWorkspace {
         List<RepairScope> scopes = owner == null
                 ? List.of()
                 : List.of(new RepairScope(REPLACE_FUNCTION_BODY, owner.id()));
+        if (owner == null) {
+            for (ClassInfo valueClass : classes) {
+                if (contains(valueClass.declarationSpan(), value.line(), value.column())) {
+                    ownerId = valueClass.id();
+                    scopes = List.of(new RepairScope(REPLACE_DECLARATION, ownerId));
+                    break;
+                }
+            }
+        }
         var compilerRange = value.range();
         String expected = value.code().equals("E3010")
                 ? "Both '+' operands must be numeric, or both must be string; DEAL has no implicit coercion"

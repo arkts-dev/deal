@@ -19,6 +19,8 @@ public final class CompilerWorkspaceTest {
         blockReplacementUsesRevisionScopedIdentity();
         schemaChangeRequiresStateReset();
         capabilitiesChangeAtomicallyWithProgramState();
+        invalidCapabilitiesRemainRepairable();
+        duplicateClassDoesNotRejectCapabilities();
         protocolJsonIsDeterministicAndUnicodeSafe();
         protocolJsonSupportsDesugaredRecordShape();
         declarationsCanBeAddedAndRemovedAtomically();
@@ -100,6 +102,44 @@ public final class CompilerWorkspaceTest {
         check(!invalid.accepted() && invalid.source().equals(changed.source())
                         && invalid.diagnostics().get(0).code().equals("CP1030"),
                 "invalid capability replacement must roll back atomically");
+    }
+
+    private static void duplicateClassDoesNotRejectCapabilities() {
+        String source = "export class Value { count: int = 0; }\n";
+        var inspection = DealCompilerWorkspace.inspect(source, "app.deal");
+        var change = DealCompilerWorkspace.inspectChange(source, "app.deal", inspection.sourceDigest(),
+                List.of(inspection.moduleId()),
+                List.of(DealCompilerWorkspace.ADD_DECLARATION, DealCompilerWorkspace.SET_CAPABILITIES));
+        var precondition = new CompilerProtocol.ChangeSetPrecondition(inspection.sourceDigest(),
+                Map.of(inspection.moduleId().value(), inspection.sourceDigest()));
+        var staged = DealCompilerWorkspace.stageChange(source, "app.deal", precondition, change,
+                List.of(new DealCompilerWorkspace.AddDeclaration(inspection.moduleId(),
+                                "export class Value { count: int = 1; }"),
+                        new DealCompilerWorkspace.SetCapabilities(inspection.moduleId(), List.of("clock.frame"))));
+        var rejected = staged.workspace().slots().stream()
+                .filter(slot -> slot.status() == CompilerProtocol.RepairSlotStatus.REJECTED).toList();
+        check(rejected.size() == 1 && rejected.get(0).operation().equals(DealCompilerWorkspace.ADD_DECLARATION),
+                "class diagnostic must target its declaration, not unrelated module capabilities: " + rejected);
+    }
+
+    private static void invalidCapabilitiesRemainRepairable() {
+        String source = source();
+        var inspection = DealCompilerWorkspace.inspect(source, "app.deal");
+        var change = DealCompilerWorkspace.inspectChange(source, "app.deal", inspection.sourceDigest(),
+                List.of(inspection.moduleId()), List.of(DealCompilerWorkspace.SET_CAPABILITIES));
+        var precondition = new CompilerProtocol.ChangeSetPrecondition(inspection.sourceDigest(),
+                Map.of(inspection.moduleId().value(), inspection.sourceDigest()));
+        var staged = DealCompilerWorkspace.stageChange(source, "app.deal", precondition, change,
+                List.of(new DealCompilerWorkspace.SetCapabilities(inspection.moduleId(), List.of("invalid value"))));
+        check(!staged.accepted() && staged.source().equals(source), "invalid capabilities must stay staged without a throw");
+        var rejected = DealCompilerWorkspace.patchRepairWorkspace(source, "app.deal", staged.workspace(),
+                List.of(new CompilerProtocol.SlotPatch("R1", Map.of("capabilities", "clock.frame, invalid"))));
+        check(!rejected.accepted() && rejected.source().equals(source)
+                        && rejected.diagnostics().stream().anyMatch(value -> value.code().equals("CP1030")),
+                "invalid capability repair must return diagnostics and preserve committed source");
+        var repaired = DealCompilerWorkspace.patchRepairWorkspace(source, "app.deal", rejected.workspace(),
+                List.of(new CompilerProtocol.SlotPatch("R1", Map.of("capabilities", "clock.frame"))));
+        check(repaired.accepted(), "a valid capability patch must recover the same workspace");
     }
 
     private static void repairWorkspaceCanDropAnIndependentRejectedDeclaration() {
