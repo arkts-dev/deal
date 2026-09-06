@@ -1,0 +1,797 @@
+{
+ "schemaVersion": 1,
+ "entries": [
+  {
+   "step": "preflight-integrity",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "checkout"
+  },
+  {
+   "step": "preflight-limits",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "checkout"
+  },
+  {
+   "step": "release-export",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "checkout"
+  },
+  {
+   "step": "evidence-commit",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "checkout"
+  },
+  {
+   "step": "compile-coverage",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "compile-dev",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "compile-identity",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "coverage-csv-digest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "coverage-report",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.GenerateStdlibGoldenIr",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "suite-async-export-driver",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "suite-async-nesting",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "suite-runtime-core",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "suite-runtime-int32",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "suite-runtime-js-hostabi",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "suite-runtime-js-jsonable",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "suite-runtime-jsonable",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "suite-stdlib-js",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "suite-stdlib-lua",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.module.ModuleIdentityAssemblyTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.module.ModuleIdentityResolverTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.module.SourceModuleResolverTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.project.OutputConfigResolverTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.project.ProjectLocatorTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.project.StrictManifestParserTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.semantic.MigrationPlannerTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.semantic.StagingPublicationTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.AdapterCreationRuleTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.AdapterShapeMapPayloadTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.AddressChainLoweringTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.AddressChainProtocolTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.AstAndTypesTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.BackendConformanceTest",
+   "tier": 2,
+   "budget": 1800,
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.BindingCoreLoweringTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.BindingImmutabilityProofTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.BindingsIntegrationVerificationTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.BindingsValidationTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.BoundaryExecutorTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.BoundaryIntegrationTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.BoundaryRealizationReportTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.BoundaryTableCorpusTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.CanonicalIdentityTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.CanonicalJsonTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.CanonicalRuntimeTypeDescriptorTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.CapabilityRegistryTransitionTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.CheckedProjectBuilderTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.CheckerTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.ClosureLoweringTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.ComparisonExecutorTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.ComparisonSelectorLoweringTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.ConformanceHarnessMetadataTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.ConformanceTest",
+   "tier": 2,
+   "budget": 1800,
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.ContainerClaimingSeamTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.ContainerIntegrationTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.ContainerLoweringArmsTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.ContainerOpsExecutorTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.ContainerPayloadDescriptorsTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.ControlFlowLoweringTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.ControlFlowValidatorTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.DescriptorServiceTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.DiagnosticClassificationTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.DiagnosticRangeTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.DirectiveTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.DistributionHomeTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.EvaluationOrderIntegrationTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.FailureContractRegistryTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.FfiDeclarationValidatorTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.FoundationIntegrationTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.FunctionBindingRegistryTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.HistoricalRegressionCatalogTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.InvocationProfileRegistryTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.IrDumperTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.IrGoldenTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.JsBackendTest",
+   "tier": 2,
+   "budget": 1800,
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.JsE2eTest",
+   "tier": 2,
+   "budget": 1800,
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.JvmBackendTest",
+   "tier": 2,
+   "budget": 1800,
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.JvmConformanceTest",
+   "tier": 2,
+   "budget": 1800,
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.JvmLaneStatePinTest",
+   "tier": 2,
+   "budget": 1800,
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.LexerTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.LoweringFoundationTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.LoweringSupportTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.LuaBackendIntegrationTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.LuaBackendTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.ModuleSystemTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.ParserTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.ProjectGraphFixturesGatesTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.ProjectIntegrationGatesTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.ProjectMigrationIntegrationTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.ProtectedPathOpsTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.PublicationStagerTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.RecursiveGroupLoweringTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.RuntimeIntegrationMatrixTest",
+   "tier": 2,
+   "budget": 1800,
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.RuntimeSourceLocationTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.RuntimeTypeMatcherTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.SemanticIrDumperTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.SemanticIrSchemaTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.SemanticIrValidatorTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.SemanticTableTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.SharedStdlibSemanticsTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.SourceMapTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.StdlibCallLoweringTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.StdlibClaimingTimeLockTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.StdlibContractTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.StdlibDeclParseTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.StdlibEquivalenceBatteryTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.StdlibFailureProjectionTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.StdlibFunctionCatalogTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.StdlibIntegrationTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.StdlibTimePreActivationPinTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.TypeDescriptorTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.TypesBytesTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.UnicodeScalarsTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.conformance.CompileDiagnosticComparatorTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.conformance.CoverageManifestCorpusTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.conformance.CoverageManifestValidatorTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.conformance.DifferentialGateCorpusTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.conformance.DifferentialGateLanesCorpusTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.conformance.GateClassificationTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.conformance.GateDispatcherTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.conformance.JsLaneTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.conformance.JvmLaneTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.conformance.LuaLaneTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.conformance.SidecarCorpusValidationTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.conformance.SidecarSchemaValidatorTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.conformance.StructuredExpectationComparatorTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.containment.ContainedProcessBrokerFramingTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.containment.ContainedProcessBrokerStateTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "junit-deal.test.LuaAbiTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "junit-deal.test.LuaJitAsyncExportInvokerTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "junit-deal.test.RegistryAsyncExportBoundaryTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "strict-coverage",
+   "tier": 2,
+   "budget": 1800,
+   "cwd": "export"
+  },
+  {
+   "step": "strict-run-tests",
+   "tier": 2,
+   "budget": 1800,
+   "cwd": "export"
+  }
+ ]
+}
