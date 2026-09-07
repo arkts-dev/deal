@@ -152,7 +152,8 @@ public class DealConstruction {
                                 : " Add a " + kind + " constructor with this id, or reference an existing " + kind + " call. Do not substitute a literal or variable."));
             throw failure;
         }
-        if (kind == Kind.BLOCK && value.kind() == Kind.STATEMENT) return new Built(Kind.BLOCK, value.source());
+        if (kind == Kind.BLOCK && (value.kind() == Kind.STATEMENT || value.kind() == Kind.UI))
+            return new Built(Kind.BLOCK, value.source());
         if (value.kind() != kind) throw new Failure(callStack.isEmpty() ? id : callStack.peek(),
                 "expected " + kind + " handle: " + id + "; actual " + value.kind()
                         + ". Replace the incorrect operand reference, preserving the referenced call when it is used elsewhere."
