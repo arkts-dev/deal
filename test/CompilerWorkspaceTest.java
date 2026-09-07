@@ -40,7 +40,28 @@ public final class CompilerWorkspaceTest {
         fullCandidateDiagnosticsOwnDependentRepairSlots();
         numericStringDiagnosticPublishesRepairContract();
         syntaxDiagnosticsCarryCandidateEvidence();
+        emptyArrayConstructorOperands();
         System.out.println("CompilerWorkspaceTest: all tests passed");
+    }
+
+    private static void emptyArrayConstructorOperands() {
+        for (Object invalid : List.of(false, Map.of(), 1)) {
+            var input = CompilerProtocolJson.requireObject(CompilerProtocolJson.decode(CompilerProtocolJson.encode(Map.of(
+                    "calls", List.of(Map.of("id", "r", "op", "return", "value", Map.of("emptyArray", invalid))), "result", "r"))), "construction");
+            boolean rejected = false;
+            try { new deal.compiler.DealConstruction().build(input, deal.compiler.DealConstruction.Kind.STATEMENT); }
+            catch (IllegalArgumentException failure) { rejected = true; }
+            check(rejected, "empty-array marker must be exactly true");
+        }
+        for (String type : List.of("int[]", "string[]", "boolean[]")) {
+            var call = Map.of("id", "r", "op", "return", "value", Map.of("emptyArray", true));
+            var input = CompilerProtocolJson.requireObject(CompilerProtocolJson.decode(
+                    CompilerProtocolJson.encode(Map.of("calls", List.of(call), "result", "r"))), "construction");
+            String body = new deal.compiler.DealConstruction().build(input, deal.compiler.DealConstruction.Kind.STATEMENT);
+            check(body.equals("return [];"), "inline array projects through the ordinary constructor");
+            check(DealCompilerWorkspace.inspect("export function values(): " + type + " { " + body + " }", "app.deal")
+                    .diagnostics().stream().noneMatch(d -> d.severity().equals("error")), "empty array retains contextual typing");
+        }
     }
 
     private static void syntaxDiagnosticsCarryCandidateEvidence() {

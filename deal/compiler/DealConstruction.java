@@ -175,12 +175,17 @@ public class DealConstruction {
         if (operand instanceof CanonicalJson.Obj literal) {
             if (literal.entries().size() != 1) throw new IllegalArgumentException("Inline operand needs exactly one constructor tag");
             String tag = literal.entries().getFirst().key();
+            if (tag.equals("emptyArray")) {
+                if (!(field(literal, tag) instanceof CanonicalJson.Bool marker) || !marker.value())
+                    throw new IllegalArgumentException("Inline emptyArray marker must be true");
+                return "[]";
+            }
             if (tag.equals("integer") || tag.equals("boolean")) return invoke(tag,
                     CanonicalJson.obj(List.of(CanonicalJson.e("value", field(literal, tag))))).source();
             if (literal.entries().getFirst().key().equals("text")) return encode(stringField(literal, "text"));
             if (literal.entries().getFirst().key().equals("path")) return invoke("path",
                     CanonicalJson.obj(List.of(CanonicalJson.e("parts", field(literal, "path"))))).source();
-            throw new IllegalArgumentException("Inline operand needs text, path, integer or boolean");
+            throw new IllegalArgumentException("Inline operand needs text, path, integer, boolean or emptyArray");
         }
         if (operand instanceof CanonicalJson.Bool) return encode(operand);
         return Integer.toString(intField(c, key));
@@ -210,7 +215,8 @@ public class DealConstruction {
         return Map.of("anyOf", List.of(textSchema(), Map.of("type", "integer"), Map.of("type", "boolean"),
                 objectSchema(Map.of("text", textSchema())), objectSchema(Map.of("path", arraySchema(textSchema()))),
                 objectSchema(Map.of("integer", Map.of("type", "integer"))),
-                objectSchema(Map.of("boolean", Map.of("type", "boolean")))));
+                objectSchema(Map.of("boolean", Map.of("type", "boolean"))),
+                objectSchema(Map.of("emptyArray", Map.of("type", "boolean", "const", true)))));
     }
     public static Map<String, Object> objectSchema(Map<String, Object> properties) {
         return Map.of("type", "object", "additionalProperties", false, "properties", properties, "required", properties.keySet().stream().sorted().toList());
