@@ -15,7 +15,11 @@ D3).
 Canonical revision: `081a32a8f7b72ceb723625a980397293c0ab139b` (Merge
 MR-0373 — the JVM lane runner with the shared lane contract and
 orchestrator pipeline; the mandated rebase replays this record's commits
-onto it, and section 0 records the merged-state reconciliation). The prior acceptance review (canonical
+onto it, and section 0 records the merged-state reconciliation). A later
+mandated rebase onto `9ba0c2efae434d8819884e73fc0f44ec551be8a2` (Merge
+MR-0421 — the canonical line after the zero-skip flip, the both-backend
+signed-int32/bytes core, and the strict feature catalog) is recorded by
+section 8. The prior acceptance review (canonical
 `5a6997c`) found
 the unit not landed — fixture still `// @expected: runtime-ok`, the
 sanctioned staged entry still registered, the pin test still pinning the
@@ -548,3 +552,75 @@ strict gate, the span-less time-fixture oracle, and the empty staged
 registry are unchanged by this remediation; `std/time.lua`,
 `deal/runtime.lua`, `deal/runtime.js`, and `std/time.js` remain
 byte-identical; the working tree is clean.
+
+## 8. Fourth merge remediation — rebase onto the canonical post-zero-skip-flip line (9ba0c2e base)
+
+The engine's mandated rebase (`git rebase
+9ba0c2efae434d8819884e73fc0f44ec551be8a2`) replayed this record's
+commits onto the canonical line that had advanced past the 7910680e
+base with its own conformance-machinery work: MR-0420 (the zero-skip
+flip — promotions, residual JSON absorption, mechanism removal, FFI
+E6006 case, gate wiring), MR-0370 (signed-int32 and bytes core across
+both backends — the JVM bytes lane promoted the nine bytes
+skip-registry entries), MR-0383 (the strict v1.2 feature catalog and
+backend matrix), MR-0413 (class layouts and ClassFactoryRegistry),
+MR-0416 plus ISSUE-0528/0529 (strict no-skip mode in `run_tests.sh` and
+`coverage.sh`), and MR-0406/0410/0411/0412 (stdlib integration and
+JSON-slice absorption). Every conflict was resolved to the merged
+post-unit truth and every moved pin was re-captured from real runs:
+
+- **`run_tests.sh`** — the canonical line re-worded the ISSUE-0488
+  catalog comment block; the resolution keeps the canonical wording
+  with both gate-script blocks landing (the ISSUE-0488 catalog suite
+  and this change set's ISSUE-0477 strict-gate suite), the ISSUE-0488
+  `TEST_MAINS` array closed, and the single compile/test-list authority
+  (`tools/gate-manifest.sh`) untouched.
+- **`test/JvmLaneStatePinTest.java`** — the canonical line re-pinned
+  the JVM lane summary for the landed JVM bytes core (ISSUE-0158):
+  `denominator 301 ... passed 265, failed 0, skipped 36 (classified),
+  known-fail 0 (tracked) — pass rate 88.0%` (the 081a32a8-base pins
+  read 256/45/85.0%). The resolution keeps the canonical JVM pins; the
+  LuaJIT-lane pins of this record are unchanged (`Total: 496, Passed:
+  496` four-zero summary, the time fixture `OK (found DEAL_ERROR_CODE:
+  E8004)` without the retired legacy-authority label, profile authority
+  `1 legacy-authority result(s) ... 544 v1.2-credit result(s)`).
+- **`deal/test/conformance/DifferentialGateLanesCorpusTest.java`** —
+  reconciled to the merged truth: `SKIP_REGISTRY_ENTRIES` 44 → 39 (the
+  nine bytes registry entries the JVM bytes core promoted) and the jvm
+  counters 194/107 → 199/102; this change set's pins stay —
+  `KNOWN_FAILURES_TRACKED` 0, `FRONTEND_COMPILED` 191, luajit 269/32,
+  js 269/32, and the time-fixture rows of the pinned differential
+  enumeration (the luajit row gone — the lane PASSes; the jvm row
+  re-classed `TRANSCRIPT_MISMATCH` → `PROCESS_FAILURE`).
+- **`test/ConformanceTest.java`** — auto-merged: the strict gate
+  re-lands on the canonical STRICT_MODE runner with the three-mode
+  registry-shape key and the pinned reports unchanged.
+
+Verification on the final rebased commit (all numbers executed on the
+final tree; the engine gate command `flock /tmp/igelhaus-deal-tests.lock
+./run_tests.sh --jobs 1` exits 0 with `=== All Tests Passed ===` and
+zero `GATE FAILURE` lines): `deal.test.ConformanceTest` over
+`test/conformance/` — discovered 545, `Total: 496, Passed: 496,
+Failed: 0, Skipped: 0, KnownFailures (tracked): 0, StagedFailures
+(tracked): 0`, Companions 49, profile authority `1 legacy-authority
+result(s) ... 544 v1.2-credit result(s)`; phase lines `Frontend
+conformance (v1.2 grammar and semantics): 189/189` and `LuaJIT
+backend-runtime conformance (v1.2): 307/307` with all four zeros and
+`Tracked v1.2 follow-up issues: none — full v1.2 conformance`; the time
+fixture records `OK (found DEAL_ERROR_CODE: E8004)` and the promoted
+FFI pin records `OK (found E2010)`. Suite counts: `JvmLaneStatePinTest`
+35/0 (both real lanes inside the pin test, field-exact);
+`DifferentialGateCorpusTest` 282/0; `DifferentialGateLanesCorpusTest`
+826/0 (full three-lane run: 301 verdicts, 127 differential failures,
+39 tracked non-fatal, zero skips; the pre-flip verdict FAIL
+unweakened); `GateClosureStrictGateTest` 18/0;
+`StdlibTimePreActivationPinTest` 37/0; `SidecarCorpusValidationTest`
+2145/0; `LuaLaneTest` 47/0; `JsLaneTest` 69/0; `JvmLaneTest` 70/0;
+`StructuredExpectationComparatorTest` 139/0; `DirectiveTest` 146/0;
+`FfiDeclarationValidatorTest` 188/0. Unchanged by this remediation:
+the three-mode registry-shape strict gate active under the empty
+registry, the span-less time-fixture oracle and its lane/schema
+sanction, the empty staged registry with the sanctioned pre-unit pair
+retained as the dormant reference, and `std/time.lua`, `deal/runtime.lua`,
+`deal/runtime.js`, `std/time.js` byte-identical; no branch, fixture, or
+`std/time.lua` product decision is made; the working tree is clean.
