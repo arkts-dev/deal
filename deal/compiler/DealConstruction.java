@@ -169,6 +169,6 @@ public class DealConstruction {
         return Map.of("name", s, "parameters", arraySchema(objectSchema(Map.of("name", s, "type", s))), "returns", s, "body", s);
     }
     public static Map<String, Object> schema(List<Map<String, Object>> operations) {
-        return objectSchema(Map.of("calls", Map.of("type", "array", "maxItems", 512, "items", Map.of("oneOf", operations)), "result", textSchema()));
+        return objectSchema(Map.of("calls", Map.of("type", "array", "maxItems", 512, "items", Map.of("anyOf", operations)), "result", textSchema()));
     }
 }
