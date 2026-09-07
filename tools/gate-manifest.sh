@@ -213,6 +213,14 @@ TEST_SOURCES=(
   # CLASS_FACTORY registration, CLASS_DEFAULT emission, default-block
   # admission, and determinism).
   'test/ClassDeclarationLoweringTest.java'
+  # ISSUE-0512 registration: the CLASS_NEW LOCAL executor battery
+  # (class-construction-jsonable-operations K-D4/K-D11, Verification 1 —
+  # the closed D16 order with fixture side-effect probes).
+  'test/ClassOpsExecutorTest.java'
+  # ISSUE-0512 registration: the CLASS_NEW LOCAL lowering battery
+  # (class-construction-jsonable-operations K-D4 — the pinned literal
+  # payload shapes, the combined T1+T2 executor drive, and determinism).
+  'test/ClassNewLoweringTest.java'
   # ISSUE-0162 registration: the C FFI declaration validation and
   # forward binding generation battery.
   'test/FfiDeclarationValidatorTest.java'
@@ -379,4 +387,14 @@ WARNING: luajit not found, skipping async nesting stress tests'
   # task, Verification 7-8; sequencing item 7, the last task).
   'fg|=== Running Stdlib Integration Verification (ISSUE-0499, decomposition tail) ===|java -ea -cp build deal.test.StdlibIntegrationTest'
   'fg|=== Running Class Declaration Lowering Tests (ISSUE-0511 declaration arm) ===|java -ea -cp build deal.test.ClassDeclarationLoweringTest'
+  # ISSUE-0512 registration: the CLASS_NEW LOCAL execution battery —
+  # the closed K-D4/D16 order with fixture side-effect probes
+  # (class-construction-jsonable-operations K-D4/K-D11,
+  # Verification 1; sequencing item 2).
+  'fg|=== Running Class Ops Executor Tests (ISSUE-0512 K-D4/K-D11) ===|java -ea -cp build deal.test.ClassOpsExecutorTest'
+  # ISSUE-0512 registration: the CLASS_NEW LOCAL lowering battery —
+  # the pinned literal payload shapes, the combined T1+T2 executor
+  # drive, and determinism (class-construction-jsonable-operations
+  # K-D4; sequencing item 2).
+  'fg|=== Running Class New Lowering Tests (ISSUE-0512 LOCAL arm) ===|java -ea -cp build deal.test.ClassNewLoweringTest'
 )
