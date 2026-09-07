@@ -60,10 +60,19 @@ public class DealConstruction {
                 yield new Built(Kind.VALUE, encode(value));
             }
             case "reference" -> new Built(Kind.VALUE, identifier(stringField(c, "name")));
+            case "path" -> {
+                var parts = requireArray(field(c, "parts"), "parts").items();
+                if (parts.isEmpty() || parts.size() > 32) throw new IllegalArgumentException("path requires 1..32 identifiers");
+                yield new Built(Kind.VALUE, String.join(".", parts.stream().map(part -> {
+                    if (!(part instanceof CanonicalJson.Str s)) throw new IllegalArgumentException("path identifier required");
+                    return identifier(s.value());
+                }).toList()));
+            }
             case "field" -> new Built(Kind.VALUE, value(c, "object") + "." + identifier(stringField(c, "name")));
             case "index" -> new Built(Kind.VALUE, value(c, "array") + "[" + value(c, "index") + "]");
             case "emptyArray" -> new Built(Kind.VALUE, "[]");
             case "record" -> new Built(Kind.VALUE, "{" + fields(c, false) + "}");
+            case "returnRecord" -> new Built(Kind.BLOCK, "return {" + fields(c, false) + "};");
             case "binary" -> {
                 String operator = stringField(c, "operator");
                 if (!BINARY.contains(operator)) throw new IllegalArgumentException("unsupported binary operator");
@@ -122,7 +131,12 @@ public class DealConstruction {
         return value;
     }
 
-    protected final String value(CanonicalJson.Obj c, String key) { return get(stringField(c, key), Kind.VALUE).source(); }
+    protected final String value(CanonicalJson.Obj c, String key) {
+        var operand = field(c, key);
+        if (operand instanceof CanonicalJson.Str s) return get(s.value(), Kind.VALUE).source();
+        if (operand instanceof CanonicalJson.Bool) return encode(operand);
+        return Integer.toString(intField(c, key));
+    }
     protected final String refs(CanonicalJson.Obj c, String key, Kind kind, String separator) {
         return String.join(separator, requireArray(field(c, key), key).items().stream()
                 .map(v -> { if (!(v instanceof CanonicalJson.Str s)) throw new IllegalArgumentException("handle required");
@@ -144,6 +158,9 @@ public class DealConstruction {
 
     private static final List<String> BINARY = List.of("+", "-", "*", "/", "%", "===", "!==", "<", "<=", ">", ">=", "&&", "||");
     public static Map<String, Object> textSchema() { return Map.of("type", "string"); }
+    public static Map<String, Object> operandSchema() {
+        return Map.of("anyOf", List.of(textSchema(), Map.of("type", "integer"), Map.of("type", "boolean")));
+    }
     public static Map<String, Object> objectSchema(Map<String, Object> properties) {
         return Map.of("type", "object", "additionalProperties", false, "properties", properties, "required", properties.keySet().stream().sorted().toList());
     }
@@ -155,26 +172,29 @@ public class DealConstruction {
     }
     public static List<Map<String, Object>> operationSchemas() {
         var s = textSchema();
-        var field = objectSchema(Map.of("name", s, "value", s));
+        var v = operandSchema();
+        var field = objectSchema(Map.of("name", s, "value", v));
         var result = new ArrayList<Map<String, Object>>();
         result.add(callSchema("text", Map.of("value", s)));
         result.add(callSchema("integer", Map.of("value", Map.of("type", "integer"))));
         result.add(callSchema("boolean", Map.of("value", Map.of("type", "boolean"))));
         result.add(callSchema("reference", Map.of("name", s)));
-        result.add(callSchema("field", Map.of("object", s, "name", s)));
-        result.add(callSchema("index", Map.of("array", s, "index", s)));
+        result.add(callSchema("path", Map.of("parts", Map.of("type", "array", "minItems", 1, "maxItems", 32, "items", s))));
+        result.add(callSchema("field", Map.of("object", v, "name", s)));
+        result.add(callSchema("index", Map.of("array", v, "index", v)));
         result.add(callSchema("emptyArray", Map.of()));
         result.add(callSchema("record", Map.of("fields", arraySchema(field))));
-        result.add(callSchema("binary", Map.of("left", s, "right", s, "operator", Map.of("type", "string", "enum", BINARY))));
-        result.add(callSchema("unary", Map.of("value", s, "operator", Map.of("type", "string", "enum", List.of("!", "-")))));
+        result.add(callSchema("returnRecord", Map.of("fields", arraySchema(field))));
+        result.add(callSchema("binary", Map.of("left", v, "right", v, "operator", Map.of("type", "string", "enum", BINARY))));
+        result.add(callSchema("unary", Map.of("value", v, "operator", Map.of("type", "string", "enum", List.of("!", "-")))));
         result.add(callSchema("call", Map.of("name", s, "arguments", arraySchema(s))));
-        result.add(callSchema("local", Map.of("name", s, "type", s, "value", s)));
-        result.add(callSchema("assign", Map.of("target", s, "value", s)));
-        result.add(callSchema("return", Map.of("value", s)));
-        result.add(callSchema("if", Map.of("condition", s, "then", s, "else", s)));
-        result.add(callSchema("while", Map.of("condition", s, "body", s)));
+        result.add(callSchema("local", Map.of("name", s, "type", s, "value", v)));
+        result.add(callSchema("assign", Map.of("target", v, "value", v)));
+        result.add(callSchema("return", Map.of("value", v)));
+        result.add(callSchema("if", Map.of("condition", v, "then", s, "else", s)));
+        result.add(callSchema("while", Map.of("condition", v, "body", s)));
         result.add(callSchema("block", Map.of("statements", arraySchema(s))));
-        result.add(callSchema("declareRecord", Map.of("name", s, "fields", arraySchema(objectSchema(Map.of("name", s, "type", s, "value", s))))));
+        result.add(callSchema("declareRecord", Map.of("name", s, "fields", arraySchema(objectSchema(Map.of("name", s, "type", s, "value", v))))));
         result.add(callSchema("declareFunction", functionSchema()));
         return result;
     }
