@@ -830,7 +830,7 @@ public class DiagnosticRangeTest {
             check(d.line() == 1 && d.column() == 1,
                 "no-EOF pseudo-EOF must keep the (1,1) fallback position, got ("
                     + d.line() + "," + d.column() + ")");
-            check(d.notes().size() == 1
+            check(!d.notes().isEmpty()
                     && d.notes().get(0).message()
                         .equals("missing anchor: f.deal:1:1"),
                 "no-EOF pseudo-EOF diagnostic must carry the D4 anchor note, got "

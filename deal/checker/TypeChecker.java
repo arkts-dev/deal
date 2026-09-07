@@ -1276,6 +1276,14 @@ public final class TypeChecker {
             return Type.Error.INSTANCE;
         }
 
+        if (objType instanceof Type.Array) {
+            error(DiagnosticCode.E3003,
+                "Arrays have no method '" + field
+                    + "'; append to a fresh local array with items[items.length] = value",
+                mae.span());
+            return Type.Error.INSTANCE;
+        }
+
         error(DiagnosticCode.E3003,
             "Cannot access field '" + field + "' on type " + typeName(objType), mae.span());
         return Type.Error.INSTANCE;
