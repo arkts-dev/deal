@@ -519,6 +519,31 @@ public final class DealCompilerWorkspace {
             ModuleResolver resolver,
             SourceAdapter adapter,
             CandidateValidator validator) {
+        return applyRepairTransaction(source, modulePath, workspace, null, patches, List.of(), resolver, adapter, validator);
+    }
+
+    public static RepairWorkspaceResult applyRepairTransaction(
+            String source, String modulePath, RepairWorkspaceSnapshot workspace,
+            RepairWorkspaceProtocol.Grant grant, List<SlotPatch> patches,
+            List<RepairWorkspaceProtocol.Dependency> dependencies) {
+        return applyRepairTransaction(source, modulePath, workspace, grant, patches, dependencies,
+                rejectingResolver(), SourceAdapter.IDENTITY, NO_ADDITIONAL_VALIDATION);
+    }
+
+    public static RepairWorkspaceResult applyRepairTransaction(
+            String source, String modulePath, RepairWorkspaceSnapshot workspace,
+            RepairWorkspaceProtocol.Grant grant, List<SlotPatch> patches,
+            List<RepairWorkspaceProtocol.Dependency> dependencies,
+            ModuleResolver resolver, SourceAdapter adapter, CandidateValidator validator) {
+        return applyRepairTransaction(source, modulePath, workspace, grant, patches, dependencies,
+                resolver, adapter, validator, RepairDiagnosticRegistry.core());
+    }
+
+    public static RepairWorkspaceResult applyRepairTransaction(
+            String source, String modulePath, RepairWorkspaceSnapshot workspace,
+            RepairWorkspaceProtocol.Grant grant, List<SlotPatch> patches,
+            List<RepairWorkspaceProtocol.Dependency> dependencies,
+            ModuleResolver resolver, SourceAdapter adapter, CandidateValidator validator, RepairDiagnosticRegistry registry) {
         Objects.requireNonNull(workspace, "workspace");
         Objects.requireNonNull(validator, "validator");
         if (!digest(source).equals(workspace.baseRevision().sourceDigest())) {
@@ -526,6 +551,14 @@ public final class DealCompilerWorkspace {
         }
         if (!workspaceDigest(workspace).equals(workspace.workspaceDigest())) {
             return rejectedWorkspace(source, workspace, "CP1022", "Repair workspace digest is invalid");
+        }
+        List<AddDeclaration> additions;
+        try {
+            if (grant == null && !dependencies.isEmpty()) throw new IllegalArgumentException("Dependency additions require a repair grant");
+            additions = grant == null ? List.of()
+                    : RepairWorkspaceProtocol.validateDependencies(workspace, grant, dependencies, modulePath, registry);
+        } catch (IllegalArgumentException failure) {
+            return rejectedWorkspace(source, workspace, "CP1030", failure.getMessage());
         }
         Map<String, SlotPatch> bySlot = new LinkedHashMap<>();
         for (SlotPatch patch : patches) {
@@ -536,8 +569,10 @@ public final class DealCompilerWorkspace {
         List<Operation> operations = new ArrayList<>();
         for (RepairSlot slot : workspace.slots()) {
             SlotPatch patch = bySlot.remove(slot.slotId());
-            if (patch != null && slot.status() != RepairSlotStatus.REJECTED) {
-                return rejectedWorkspace(source, workspace, "CP1024", "Only rejected repair slots are writable");
+            if (patch != null && (grant == null ? slot.status() != RepairSlotStatus.REJECTED : !grant.slots().contains(slot.slotId()))) {
+                return rejectedWorkspace(source, workspace, "CP1024", grant == null
+                        ? "Only rejected repair slots are writable"
+                        : "Repair slot is outside the compiler-issued grant: " + slot.slotId());
             }
             if (patch != null && patch.drop()) {
                 if (!slot.operation().equals(ADD_DECLARATION)) {
@@ -562,12 +597,17 @@ public final class DealCompilerWorkspace {
         if (!bySlot.isEmpty()) {
             return rejectedWorkspace(source, workspace, "CP1026", "Unknown repair slot " + bySlot.keySet().iterator().next());
         }
+        operations.addAll(additions);
         ChangeInspection inspection = inspectChange(
                 source, modulePath, workspace.baseRevision().sourceDigest(),
-                workspace.slots().stream().map(RepairSlot::targetId).distinct().toList(),
-                workspace.slots().stream().map(RepairSlot::operation).distinct().toList(), resolver, adapter);
+                operations.stream().map(Operation::targetId).distinct().toList(),
+                operations.stream().map(DealCompilerWorkspace::operationName).distinct().toList(), resolver, adapter);
+        var fingerprints = new LinkedHashMap<>(workspace.precondition().expectedTargetFingerprints());
+        if (!additions.isEmpty()) inspection.allowedOperations().stream().filter(op -> op.operation().equals(ADD_DECLARATION))
+                .forEach(op -> fingerprints.put(op.targetId().value(), op.targetFingerprint()));
+        var precondition = new ChangeSetPrecondition(workspace.baseRevision().sourceDigest(), fingerprints);
         ChangeResult change = applyCheckedAndValidate(
-                source, modulePath, workspace.precondition(), operations, resolver, adapter, validator);
+                source, modulePath, precondition, operations, resolver, adapter, validator);
         if (change.accepted() && change.sourceDigest().equals(digest(source))) {
             RepairSlot owner = workspace.slots().stream()
                     .filter(slot -> patches.stream().anyMatch(patch -> patch.slotId().equals(slot.slotId())))
@@ -582,7 +622,7 @@ public final class DealCompilerWorkspace {
                     false, source, digest(source), change.inspection(), change.impact(), List.of(diagnostic));
         }
         RepairWorkspaceSnapshot next = workspace(
-                source, modulePath, workspace.precondition(), inspection, operations, change,
+                source, modulePath, precondition, inspection, operations, change,
                 workspace.repairRound() + 1, workspace.slots(), resolver, adapter, validator);
         return new RepairWorkspaceResult(
                 change.accepted(), change.accepted() ? change.source() : source,
@@ -630,11 +670,13 @@ public final class DealCompilerWorkspace {
             ModuleResolver resolver,
             SourceAdapter adapter,
             CandidateValidator validator) {
+        Analysis dependencyBase = analyze(source, modulePath, resolver, adapter);
         List<SemanticId> produced = operations.stream()
                 .map(operation -> operation instanceof AddDeclaration value
-                        ? declarationSemanticId(value.declaration(), modulePath) : null)
+                        ? declarationSemanticId(value.declaration(), modulePath)
+                        : Optional.ofNullable(dependencyBase.targets().get(operation.targetId())).map(Target::ownerId).orElse(null))
                 .toList();
-        List<Set<Integer>> dependencies = operationDependencies(operations, produced);
+        List<Set<Integer>> dependencies = operationDependencies(operations, produced, dependencyBase, modulePath, adapter);
         SccResult dependencyGroups = stronglyConnectedComponents(dependencies);
         int[] groupIndexes = dependencyGroups.groupByNode();
         List<StructuredDiagnostic> diagnostics = change.diagnostics();
@@ -815,17 +857,18 @@ public final class DealCompilerWorkspace {
 
     private static List<Set<Integer>> operationDependencies(
             List<? extends Operation> operations,
-            List<SemanticId> produced) {
+            List<SemanticId> produced, Analysis base, String modulePath, SourceAdapter adapter) {
         List<Set<Integer>> result = new ArrayList<>();
         for (int index = 0; index < operations.size(); index++) result.add(new LinkedHashSet<>());
         for (int consumer = 0; consumer < operations.size(); consumer++) {
             Operation operation = operations.get(consumer);
-            String source = String.join("\n", payload(operation).values());
+            Set<DeclarationReferences.Reference> references = operationReferences(operation, base, modulePath, adapter);
             for (int provider = 0; provider < produced.size(); provider++) {
                 SemanticId id = produced.get(provider);
                 if (consumer == provider || id == null) continue;
                 String name = id.value().substring(id.value().lastIndexOf(':') + 1);
-                if (containsIdentifier(source, name)) result.get(consumer).add(provider);
+                String kind = id.value().contains(":class:") ? "class" : "function";
+                if (references.contains(new DeclarationReferences.Reference(kind, name))) result.get(consumer).add(provider);
             }
             for (int other = 0; other < operations.size(); other++) {
                 if (consumer == other || operation instanceof AddDeclaration
@@ -836,6 +879,36 @@ public final class DealCompilerWorkspace {
             }
         }
         return result;
+    }
+
+    private static Set<DeclarationReferences.Reference> operationReferences(
+            Operation operation, Analysis base, String modulePath, SourceAdapter adapter) {
+        String candidate;
+        SemanticId owner;
+        if (operation instanceof AddDeclaration add) {
+            candidate = add.declaration();
+            owner = declarationSemanticId(candidate, modulePath);
+        } else if (operation instanceof ReplaceDeclaration replace) {
+            candidate = replace.declaration();
+            owner = operation.targetId();
+        } else if (operation instanceof ReplaceFunctionBody || operation instanceof ReplaceBlockBody) {
+            Target target = base.targets().get(operation.targetId());
+            if (target == null) return Set.of();
+            String body = payload(operation).get("body");
+            candidate = applyReplacements(base.source(), List.of(new Replacement(
+                    target.contentStart(), target.contentEnd(), body, true)));
+            owner = target.ownerId();
+        } else return Set.of();
+        if (owner == null) return Set.of();
+        var parsed = new Parser(new Lexer(adapter.parserSource(candidate), modulePath).tokenize().tokens(), modulePath).parse();
+        var references = new LinkedHashSet<DeclarationReferences.Reference>();
+        for (StatementNode statement : parsed.program().statements()) {
+            var declaration = statement instanceof ExportDeclaration exported ? exported.declaration() : statement;
+            SemanticId id = declaration instanceof ClassDeclaration c ? symbolId(modulePath, "class", c.name())
+                    : declaration instanceof FunctionDeclaration f ? symbolId(modulePath, "function", f.name()) : null;
+            if (owner.equals(id)) references.addAll(DeclarationReferences.collect(declaration, Set.of()));
+        }
+        return references;
     }
 
     private static Set<Integer> dependencyClosure(int operation, List<Set<Integer>> dependencies) {
@@ -928,11 +1001,6 @@ public final class DealCompilerWorkspace {
 
     private record SccResult(int[] groupByNode, List<Set<Integer>> groupDependencies) {}
 
-    private static boolean containsIdentifier(String source, String identifier) {
-        return new Lexer(source, "/generated/repair-slot.deal").tokenize().tokens().stream()
-                .anyMatch(token -> token.type() == TokenType.IDENTIFIER && token.lexeme().equals(identifier));
-    }
-
     private static Map<String, String> payload(Operation operation) {
         return switch (operation) {
             case AddDeclaration value -> Map.of("declaration", value.declaration());
@@ -964,6 +1032,27 @@ public final class DealCompilerWorkspace {
         return digest(CompilerProtocolJson.encode(List.of(
                 workspace.workspaceId(), workspace.baseRevision(), workspace.inspectionDigest(),
                 workspace.precondition(), workspace.slots(), workspace.groups(), workspace.repairRound())));
+    }
+
+    static boolean validRepairWorkspace(RepairWorkspaceSnapshot workspace) {
+        return workspaceDigest(workspace).equals(workspace.workspaceDigest());
+    }
+
+    static void validateDependencyDeclaration(String source, String modulePath,
+            deal.diagnostics.CompilerDiagnostic.MissingSymbol obligation) {
+        String kind = obligation.kind().equals("TYPE") ? "class" : "function";
+        if (!singleDeclarationIdentity(source, modulePath).equals(symbolId(modulePath, kind, obligation.name()).value()))
+            throw new IllegalArgumentException("Dependency must declare exactly the granted " + kind + " " + obligation.name());
+        if (!obligation.namespace().equals(modulePath)) throw new IllegalArgumentException("Dependency namespace does not match module");
+        if (kind.equals("function")) {
+            var parsed = new Parser(new Lexer(source, modulePath).tokenize().tokens(), modulePath).parse();
+            var statement = parsed.program().statements().getFirst();
+            var function = (FunctionDeclaration) (statement instanceof ExportDeclaration exported ? exported.declaration() : statement);
+            if (function.isExternal()) throw new IllegalArgumentException("A missing function requires an implementation, not an external capability");
+            for (String constraint : obligation.constraints())
+                if (constraint.startsWith("arity=") && function.params().size() != Integer.parseInt(constraint.substring(6)))
+                    throw new IllegalArgumentException("Dependency function arity does not satisfy its call site");
+        }
     }
 
     private static RepairWorkspaceResult rejectedWorkspace(
@@ -1339,7 +1428,8 @@ public final class DealCompilerWorkspace {
                 index);
         List<StructuredDiagnostic> diagnostics = rawDiagnostics.stream()
                 .map(value -> {
-                    var result = diagnostic(value, moduleId, functionsByName.values(), classesByName.values());
+                    var result = diagnostic(value, moduleId, functionsByName.values(), classesByName.values())
+                            .withMissingSymbols(value.missingSymbols());
                     return value.range().origin() == deal.diagnostics.RangeOrigin.SOURCE
                             ? result.withSourceContext(source) : result;
                 })
@@ -1626,7 +1716,7 @@ public final class DealCompilerWorkspace {
                 diagnostic.code(), diagnostic.severity(), diagnostic.message(), diagnostic.range(),
                 diagnostic.ownerId(), diagnostic.expected(), diagnostic.actual(),
                 ownedOperations.stream().map(Operation::targetId).toList(), scopes,
-                diagnostic.contextQuery(), diagnostic.context(), diagnostic.notes());
+                diagnostic.contextQuery(), diagnostic.context(), diagnostic.notes(), diagnostic.operationIndex(), diagnostic.missingSymbols());
     }
 
     private static SemanticId operationOwner(Operation operation, Analysis base) {

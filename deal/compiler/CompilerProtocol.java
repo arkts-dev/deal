@@ -229,7 +229,19 @@ public final class CompilerProtocol {
             String contextQuery,
             DiagnosticContext context,
             List<deal.diagnostics.DiagnosticNote> notes,
-            Integer operationIndex) {
+            Integer operationIndex,
+            List<deal.diagnostics.CompilerDiagnostic.MissingSymbol> missingSymbols) {
+        public StructuredDiagnostic(String code, String severity, String message, SourceRange range,
+                                    SemanticId ownerId, String expected, String actual,
+                                    List<SemanticId> relatedIds, List<RepairScope> repairScopes, String contextQuery,
+                                    DiagnosticContext context, List<deal.diagnostics.DiagnosticNote> notes, Integer operationIndex) {
+            this(code, severity, message, range, ownerId, expected, actual, relatedIds, repairScopes,
+                    contextQuery, context, notes, operationIndex, List.of());
+        }
+        public StructuredDiagnostic withMissingSymbols(List<deal.diagnostics.CompilerDiagnostic.MissingSymbol> facts) {
+            return new StructuredDiagnostic(code, severity, message, range, ownerId, expected, actual,
+                    relatedIds, repairScopes, contextQuery, context, notes, operationIndex, facts);
+        }
         public StructuredDiagnostic(String code, String severity, String message, SourceRange range,
                                     SemanticId ownerId, String expected, String actual,
                                     List<SemanticId> relatedIds, List<RepairScope> repairScopes, String contextQuery,
@@ -241,7 +253,7 @@ public final class CompilerProtocol {
         /** Index in this response's ChangeSet only; never a persisted semantic identity. */
         public StructuredDiagnostic withOperationIndex(int index) {
             return new StructuredDiagnostic(code, severity, message, range, ownerId, expected, actual,
-                    relatedIds, repairScopes, contextQuery, context, notes, index);
+                    relatedIds, repairScopes, contextQuery, context, notes, index, missingSymbols);
         }
         public StructuredDiagnostic(String code, String severity, String message, SourceRange range,
                                     SemanticId ownerId, String expected, String actual,
@@ -257,6 +269,7 @@ public final class CompilerProtocol {
             relatedIds = List.copyOf(relatedIds);
             repairScopes = List.copyOf(repairScopes);
             notes = List.copyOf(notes);
+            missingSymbols = List.copyOf(missingSymbols);
         }
 
         /** Candidate-owned evidence; coordinates remain in the original file, not the edited body. */
@@ -281,7 +294,7 @@ public final class CompilerProtocol {
             return new StructuredDiagnostic(code, severity, message, range, ownerId, expected, actual,
                     relatedIds, repairScopes, contextQuery,
                     new DiagnosticContext("diagnostic-context-v1", DealCompilerWorkspace.digest(source),
-                            first, excerpt.toString(), truncated), notes, operationIndex);
+                            first, excerpt.toString(), truncated), notes, operationIndex, missingSymbols);
         }
     }
 

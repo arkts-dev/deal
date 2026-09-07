@@ -51,6 +51,7 @@ public final class ConstructionRepairWorkspace {
         collectDirect(all.get(failure.ownerId), all, dependencies);
         var region = repairRegion(all);
         return Map.of("target", failure.ownerId, "diagnostic", failure.getMessage(),
+                "diagnosticFacts", Map.of("code", failure.code, "facts", failure.facts),
                 "progress", unchangedAttempts == 0 ? "Replace the rejected operand; preserve all unrelated calls."
                         : "NO_PROGRESS: the last " + unchangedAttempts + " repair attempts repeated the identical rejected calls. Do not resend the current call unchanged. Follow the diagnostic to change the offending operand.",
                 "call", all.containsKey(failure.ownerId) ? all.get(failure.ownerId) : Map.of("id", failure.ownerId, "missing", true),

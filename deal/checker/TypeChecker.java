@@ -1076,6 +1076,14 @@ public final class TypeChecker {
     // =======================================================================
 
     private Type checkCall(CallExpr call) {
+        if (call.callee() instanceof IdentifierExpr id && currentScope.resolve(id.name()) == null) {
+            diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E2001,
+                    "Undeclared identifier '" + id.name() + "'", id.span())
+                    .withMissingSymbol("FUNCTION", id.name(), id.span().file(),
+                            List.of("arity=" + call.args().size())));
+            for (ExpressionNode arg : call.args()) checkExpression(arg);
+            return Type.Error.INSTANCE;
+        }
         Type calleeType = checkExpression(call.callee());
         if (calleeType == Type.Error.INSTANCE) {
             for (ExpressionNode arg : call.args()) checkExpression(arg);

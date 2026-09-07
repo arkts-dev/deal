@@ -13,7 +13,12 @@ import static deal.compiler.CompilerProtocolJson.*;
 public class DealConstruction {
     public static final class Failure extends IllegalArgumentException {
         public final String ownerId;
-        public Failure(String ownerId, String message) { super(message); this.ownerId = ownerId; }
+        public final String code;
+        public final Map<String, String> facts;
+        public Failure(String ownerId, String message) { this("CC1003", ownerId, message, Map.of()); }
+        public Failure(String code, String ownerId, String message, Map<String, String> facts) {
+            super(message); this.ownerId = ownerId; this.code = code; this.facts = Map.copyOf(facts);
+        }
     }
     public enum Kind { VALUE, STATEMENT, BLOCK, DECLARATION, UI }
     public record Built(Kind kind, String source) {}
@@ -42,8 +47,8 @@ public class DealConstruction {
     private Built resolve(String id) {
         if (handles.containsKey(id)) return handles.get(id);
         var call = pending.get(id);
-        if (call == null) throw new Failure(id.matches("[A-Za-z_][A-Za-z0-9_]*") ? id : null, "unknown construction handle: " + id
-                + ". Define this id in the current calls batch. Handles from previous batches are invalid.");
+        if (call == null) throw new Failure("CC1004", id.matches("[A-Za-z_][A-Za-z0-9_]*") ? id : null, "unknown construction handle: " + id
+                + ". Define this id in the current calls batch. Handles from previous batches are invalid.", Map.of("missingHandle", id));
         if (!resolving.add(id)) throw new IllegalArgumentException("cyclic construction dependency: " + id);
         callStack.push(id);
         try {
@@ -145,16 +150,17 @@ public class DealConstruction {
         try {
             value = resolve(id);
         } catch (Failure failure) {
-            if (!pending.containsKey(id)) throw new Failure(callStack.isEmpty() ? failure.ownerId : callStack.peek(),
+            if (!pending.containsKey(id)) throw new Failure("CC1004", callStack.isEmpty() ? failure.ownerId : callStack.peek(),
                     "Expected " + kind + " operand. " + failure.getMessage()
                             + (kind == Kind.VALUE ? " For literal text use " + encode(Map.of("text", id))
                                 + "; for a variable use {\"path\":[\"variableName\"]}."
-                                : " Add a " + kind + " constructor with this id, or reference an existing " + kind + " call. Do not substitute a literal or variable."));
+                                : " Add a " + kind + " constructor with this id, or reference an existing " + kind + " call. Do not substitute a literal or variable."),
+                    Map.of("missingHandle", id, "expectedKind", kind.name()));
             throw failure;
         }
         if (kind == Kind.BLOCK && (value.kind() == Kind.STATEMENT || value.kind() == Kind.UI))
             return new Built(Kind.BLOCK, value.source());
-        if (value.kind() != kind) throw new Failure(callStack.isEmpty() ? id : callStack.peek(),
+        if (value.kind() != kind) throw new Failure("CC1005", callStack.isEmpty() ? id : callStack.peek(),
                 "expected " + kind + " handle: " + id + "; actual " + value.kind()
                         + ". Replace the incorrect operand reference, preserving the referenced call when it is used elsewhere."
                         + (kind == Kind.UI && value.kind() == Kind.VALUE
@@ -165,7 +171,7 @@ public class DealConstruction {
                                 ? " This handle declares a local; it is not its value. Read or assign the variable with inline operand "
                                     + encode(Map.of("path", List.of(stringField(pending.get(id), "name"))))
                                     + ". The local declaration handle must also occur in the enclosing block before use."
-                                : ""));
+                                : ""), Map.of("handle", id, "expectedKind", kind.name(), "actualKind", value.kind().name()));
         return value;
     }
 
