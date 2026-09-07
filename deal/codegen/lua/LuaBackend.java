@@ -11,6 +11,8 @@ import deal.codegen.SourceMapGenerator;
 import deal.descriptors.CanonicalRuntimeTypeDescriptor;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.distribution.DistributionHome;
+import deal.ffi.FfiFunctionDescriptor;
+import deal.ffi.FfiGeneratedModule;
 import deal.identity.CanonicalClassIdentity;
 import deal.identity.CanonicalClassIdentityIndex;
 import deal.identity.CanonicalModuleIdentity;
@@ -115,6 +117,33 @@ public final class LuaBackend implements Visitor<Void> {
     // instead of the raw require — the first argument is never the dotted
     // importResolutions value for that key.
     private Map<String, Map<String, Type>> hostModules = Map.of();
+
+    // Extern-C imports (emitter page D6): raw import path -> the metadata
+    // phase's generated module (descriptor, cdef bundle, retained plans,
+    // forward bindings). When an import path has an entry here, the
+    // import emits `local <alias> = __rt.load_ffi(<moduleKey>, <cdefBundle>,
+    // <plans>, <bindings>, <import span>)` - never load_host, never a raw
+    // require, never ffi.C access.
+    private Map<String, FfiGeneratedModule> ffiModules = Map.of();
+
+    // The compilation's manifest directory text (the base of the
+    // manifest-relative native-library loader-text resolution the FFI
+    // serializer performs; seam S3).
+    private String ffiManifestDirectory = "";
+
+    // Per-chunk FFI bindings-local counter: the bindings table literal of
+    // each extern-c import is emitted into its own local
+    // `__ffi_bindings_<n>` so deferred plan evaluators can close over the
+    // same-module forward cells (adopted D6: evaluators close over cells,
+    // never over a not-yet-published export table).
+    private int ffiBindingsCounter = 0;
+
+    // FFI wrapper call sites (emitter page D6): import alias -> the
+    // declared FFI function names routed through the generated wrappers
+    // with the call-site span triplet appended (the pinned wrapper call
+    // shape f(v1, ..., vN, file, line, column)).
+    private final Map<String, Set<String>> ffiAliasFunctions =
+        new HashMap<>();
 
     // ISSUE-0009: for-loop shadow-local lowering.
     // When non-null, all IdentifierExpr nodes with this name in condition
@@ -354,8 +383,8 @@ public final class LuaBackend implements Visitor<Void> {
                                               boolean entryModule,
                                               ModuleIdentityResolver.IdentityIndex identityIndex) {
         return generateResult(program, result, sourcePath, modulePath,
-            importResolutions, hostModules, entryModule, null, identityIndex,
-            SemanticProfile.LEGACY_SAFE_INT).lua();
+            importResolutions, hostModules, Map.of(), "", entryModule, null,
+            identityIndex, SemanticProfile.LEGACY_SAFE_INT).lua();
     }
 
     /**
@@ -371,7 +400,7 @@ public final class LuaBackend implements Visitor<Void> {
                                               boolean entryModule,
                                               SemanticProfile semanticProfile) {
         return generateResult(program, result, sourcePath, modulePath,
-            importResolutions, hostModules, entryModule, null,
+            importResolutions, hostModules, Map.of(), "", entryModule, null,
             standaloneIdentityIndex(modulePath, hostModules), semanticProfile)
             .lua();
     }
@@ -428,7 +457,10 @@ public final class LuaBackend implements Visitor<Void> {
     private static GenerationResult generateResult(ProgramNode program,
             CheckResult result, String sourcePath, String modulePath,
             Map<String, String> importResolutions,
-            Map<String, Map<String, Type>> hostModules, boolean entryModule,
+            Map<String, Map<String, Type>> hostModules,
+            Map<String, FfiGeneratedModule> ffiModules,
+            String manifestDirectory,
+            boolean entryModule,
             SourceMapGenerator smg,
             ModuleIdentityResolver.IdentityIndex identityIndex,
             SemanticProfile semanticProfile) {
@@ -441,6 +473,11 @@ public final class LuaBackend implements Visitor<Void> {
         backend.modulePath = modulePath;
         backend.importResolutions = Map.copyOf(importResolutions);
         backend.hostModules = Map.copyOf(hostModules);
+        backend.ffiModules = Map.copyOf(ffiModules);
+        backend.ffiManifestDirectory =
+            manifestDirectory == null ? "" : manifestDirectory;
+        backend.ffiBindingsCounter = 0;
+        backend.ffiAliasFunctions.clear();
         backend.entryModule = entryModule;
         backend.sourceMapGenerator = smg;
         backend.emitHeader();
@@ -516,7 +553,7 @@ public final class LuaBackend implements Visitor<Void> {
                                                 SourceMapGenerator smg,
                                                 boolean entryModule) {
         return generateResult(program, result, sourcePath, modulePath,
-            importResolutions, hostModules, entryModule, smg,
+            importResolutions, hostModules, Map.of(), "", entryModule, smg,
             standaloneIdentityIndex(modulePath, hostModules),
             SemanticProfile.LEGACY_SAFE_INT).lua();
     }
@@ -726,8 +763,8 @@ public final class LuaBackend implements Visitor<Void> {
                                        throws IOException {
         return generateToFile(program, result, sourcePath, modulePath,
             outputRoot, outputPath, outputRoot, outputPath, emitSourceMap,
-            importResolutions, hostModules, entryModule, identityIndex,
-            semanticProfile);
+            importResolutions, hostModules, Map.of(), "", entryModule,
+            identityIndex, semanticProfile);
     }
 
     /**
@@ -754,14 +791,17 @@ public final class LuaBackend implements Visitor<Void> {
                                        boolean emitSourceMap,
                                        Map<String, String> importResolutions,
                                        Map<String, Map<String, Type>> hostModules,
+                                       Map<String, FfiGeneratedModule> ffiModules,
+                                       String manifestDirectory,
                                        boolean entryModule,
                                        ModuleIdentityResolver.IdentityIndex identityIndex,
                                        SemanticProfile semanticProfile)
                                        throws IOException {
         SourceMapGenerator smg = emitSourceMap ? new SourceMapGenerator() : null;
         GenerationResult gen = generateResult(program, result, sourcePath,
-            modulePath, importResolutions, hostModules, entryModule, smg,
-            identityIndex, semanticProfile);
+            modulePath, importResolutions, hostModules, ffiModules,
+            manifestDirectory, entryModule, smg, identityIndex,
+            semanticProfile);
         String luaSource = gen.lua();
         boolean hasErrors = gen.diagnostics().stream()
             .anyMatch(d -> "error".equals(d.severity()));
@@ -929,6 +969,8 @@ public final class LuaBackend implements Visitor<Void> {
         classExportKeyOwners.clear();
         mainDeclSpan = null;
         this.entryModule = entryModule;
+        ffiBindingsCounter = 0;
+        ffiAliasFunctions.clear();
         emitHeader();
         emitLine("");
         walkStatements(program.statements());
@@ -1943,6 +1985,62 @@ public final class LuaBackend implements Visitor<Void> {
 
     @Override
     public Void visit(ImportDeclaration node) {
+        // Extern-C branch (emitter page D6): the metadata phase's
+        // generated module drives the loader call --
+        //   local <bindingsLocal> = <bindings literal>
+        //   local <alias> = __rt.load_ffi(<moduleKey>, <cdefBundle>,
+        //       <plans>, <bindingsLocal>, <import span triplet>)
+        // The bindings table lands in a named local first so the retained
+        // plan evaluators can close over the same-module forward cells
+        // (adopted D6); the generator owns every argument literal
+        // (private ordinals, private casts, C-struct plans, binding
+        // cells). The emitter never emits ffi.C access and never raises
+        // FFI_UNSUPPORTED_BACKEND (LuaJIT is the capable backend). The
+        // loader call carries the source span of the import node (D8).
+        FfiGeneratedModule ffi = ffiModules.get(node.modulePath());
+        if (ffi != null) {
+            String bindingsLocal = "__ffi_bindings_"
+                + (++ffiBindingsCounter);
+            String importPrefix = "__ffi_import_" + ffiBindingsCounter
+                + "_";
+            LuaFfiBindingGenerator.Generation gen =
+                LuaFfiBindingGenerator.generate(ffi, ffiManifestDirectory,
+                    bindingsLocal, importPrefix);
+            if (gen.failure() != null) {
+                // Defensive config failure: an extern-c shape the
+                // metadata seam cannot represent (the frontend FFI
+                // declaration validation is the owning gate). The chunk
+                // keeps a structurally valid alias so the artifact stays
+                // loadable in diagnostic-only runs.
+                addDiagnostic(DiagnosticCode.E6000,
+                    "unsupported extern-c import \"" + node.modulePath()
+                        + "\": " + gen.failure().message(), node.span());
+                emitLine("local " + node.alias() + " = nil");
+                return null;
+            }
+            Set<String> functionNames = new LinkedHashSet<>();
+            for (FfiFunctionDescriptor fn : ffi.descriptor().functions()) {
+                functionNames.add(fn.dealName());
+            }
+            ffiAliasFunctions.put(node.alias(), functionNames);
+            // The imported-provider prelude first (each referenced
+            // provider module requires into a per-import local the
+            // retained plan evaluators close over), then the bindings
+            // table, then the loader call.
+            for (String importLine : gen.parts().importLines()) {
+                emitLine(importLine);
+            }
+            emitLine("local " + bindingsLocal + " = "
+                + gen.parts().bindingsLiteral());
+            emitLine("local " + node.alias() + " = __rt.load_ffi("
+                + gen.parts().moduleKeyLiteral() + ", "
+                + gen.parts().bundleLiteral() + ", "
+                + gen.parts().plansLiteral() + ", "
+                + bindingsLocal + ", "
+                + spanArgs(node.span()) + ")");
+            return null;
+        }
+
         // Host-module branch (ISSUE-0082, host-module-abi D4): the declared
         // exports drive the runtime loader.  The first argument is the raw
         // import specifier byte-for-byte — never the dotted importResolutions
@@ -2480,6 +2578,25 @@ public final class LuaBackend implements Visitor<Void> {
             if (sym instanceof Symbol.IntrinsicSymbol) {
                 return emitExpression(call.callee()) + ".f(" + args.toString()
                     + ", " + spanArgs(call.span()) + ")";
+            }
+        }
+        // FFI wrapper calls (emitter page D6, seam joint-consumption
+        // contract): a direct call on an extern-c import's exported
+        // function routes through the wrapper's .f entry with the
+        // call-site span triplet appended -- the pinned FFI wrapper call
+        // shape f(v1, ..., vN, file, line, column). The alias wins over
+        // the generic Type.Func branch below (which emits no span).
+        if (call.callee() instanceof MemberAccessExpr mae
+                && mae.object() instanceof IdentifierExpr id) {
+            Set<String> ffiFunctions = ffiAliasFunctions.get(id.name());
+            if (ffiFunctions != null && ffiFunctions.contains(mae.field())) {
+                // The wrapper closure takes f(v1, ..., vN, file, line,
+                // column): a zero-argument call emits the span triplet
+                // without a leading comma.
+                return emitExpression(call.callee()) + ".f("
+                    + args.toString()
+                    + (args.length() == 0 ? "" : ", ")
+                    + spanArgs(call.span()) + ")";
             }
         }
         if (calleeType instanceof Type.Func) {

@@ -2385,6 +2385,12 @@ public final class CompilationOrchestrator {
 
         Map<String, String> importResolutions = new HashMap<>();
         Map<String, Map<String, Type>> hostModules = new HashMap<>();
+        // Extern-C imports (emitter page D6): raw import path -> the
+        // metadata phase's generated module (descriptor, cdef bundle,
+        // retained plans, forward bindings); the emitted import routes
+        // through __rt.load_ffi and never through load_host or a raw
+        // require.
+        Map<String, FfiGeneratedModule> ffiModules = new HashMap<>();
         for (StatementNode stmt : info.rawAst.statements()) {
             if (stmt instanceof ImportDeclaration imp) {
                 String resolvedSource = resolveImportPath(imp.modulePath(),
@@ -2398,11 +2404,24 @@ public final class CompilationOrchestrator {
                         // declaration files that are not spec stdlib
                         // modules load through __rt.load_host with the
                         // raw import path verbatim as the require key.
+                        // An effective extern-C declaration with published
+                        // FFI metadata is an FFI module instead (emitter
+                        // page D6): it loads through __rt.load_ffi and is
+                        // never a host module.
                         if (imported.isDeclarationFile
                                 && !isSpecStdlibModuleInfo(imported)) {
-                            hostModules.put(imp.modulePath(),
-                                imported.exports != null
-                                    ? imported.exports : Map.of());
+                            FfiGeneratedModule ffi =
+                                ffiGenerations.get(imported.modulePath);
+                            if (imported.rawAst != null
+                                    && imported.rawAst.fileDirectives()
+                                        .externC()
+                                    && ffi != null) {
+                                ffiModules.put(imp.modulePath(), ffi);
+                            } else {
+                                hostModules.put(imp.modulePath(),
+                                    imported.exports != null
+                                        ? imported.exports : Map.of());
+                            }
                         }
                     }
                 }
@@ -2440,7 +2459,8 @@ public final class CompilationOrchestrator {
         LuaBackend.GenerationResult gen = LuaBackend.generateToFile(
             info.rawAst, info.checkResult, info.sourcePath, info.modulePath,
             stager.stageTree(), stageOutputPath, outputRoot, liveOutputPath,
-            sourceMap, importResolutions, hostModules,
+            sourceMap, importResolutions, hostModules, ffiModules,
+            context.manifestDirectory(),
             isEntry, identityIndex, invocation.semanticProfile());
         // Native ranged backend list (T12): the backend emits
         // CompilerDiagnostic entries directly, so the orchestrator merge
