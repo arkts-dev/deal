@@ -134,7 +134,14 @@ public class DealConstruction {
     }
 
     protected final Built get(String id, Kind kind) {
-        Built value = resolve(id);
+        Built value;
+        try {
+            value = resolve(id);
+        } catch (Failure failure) {
+            if (!pending.containsKey(id)) throw new Failure(failure.ownerId,
+                    "Expected " + kind + " operand. " + failure.getMessage());
+            throw failure;
+        }
         if (value.kind() != kind) throw new Failure(id, "expected " + kind + " handle: " + id + "; actual " + value.kind());
         return value;
     }
