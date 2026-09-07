@@ -3368,10 +3368,10 @@ public class JsBackendTest {
      * pinned depth (negative case), and the mutated buffer stays
      * observable through the parallel non-null view. The nullable
      * shapes are flow-only in checker-accepted source: the
-     * {@code === null} test that would unpack them is the
-     * checker-owned E3019 bytes-comparison gate
-     * (binary-comparison-selectors B-D7, ISSUE-0111/ISSUE-0158) — a
-     * frontend gate, never a backend rejection.
+     * {@code === null} test that would unpack them is checker-admitted
+     * since the ISSUE-0158 E3019 gate lift (bytes identity equality —
+     * binary-comparison-selectors B-D7 assigned the lift to
+     * ISSUE-0111/ISSUE-0158), never a backend rejection.
      */
     private static void testBytesClosureDeepCompositionsNode() throws Exception {
         System.out.println("-- Node: arbitrary-depth Array/Nullable bytes compositions through boundaries --");
@@ -3574,12 +3574,13 @@ public class JsBackendTest {
      * The no-E6000 pins: every closure program generates with zero
      * diagnostics and no E6000 for bytes nesting or function shape
      * alone, the canonical descriptor texts appear byte-exact at the
-     * emitted boundary sites, and the only closure-position rejection
-     * is the checker-owned E3019 bytes-comparison gate
-     * (binary-comparison-selectors B-D7 — frontend, ISSUE-0111/
-     * ISSUE-0158), never a backend rejection.
+     * emitted boundary sites, and bytes identity equality is
+     * checker-admitted since the ISSUE-0158 E3019 gate lift
+     * (binary-comparison-selectors B-D7 — the frontend admission rule
+     * with native identity comparison emission), never a backend
+     * rejection.
      */
-    private static void testBytesClosureNoE6000Pins() {
+    private static void testBytesClosureNoE6000Pins() throws Exception {
         System.out.println("-- Bytes closure: no-E6000 generation pins and canonical descriptor texts --");
 
         String[] closurePrograms = {
@@ -3685,26 +3686,66 @@ public class JsBackendTest {
                     + "[[bytes]] inner descriptor byte-exact");
         }
 
-        // The legal-equality boundary: bytes identity equality stays
-        // the checker-owned E3019 gate (binary-comparison-selectors
-        // B-D7, owned by ISSUE-0111/ISSUE-0158) — the frontend
-        // admission rule, never a backend E6000 rejection. Equality
-        // inside closure programs runs on byte reads (int equality),
-        // which every node case above asserts.
+        // The legal-equality boundary: bytes identity equality is
+        // checker-admitted since the ISSUE-0158 E3019 gate lift
+        // (binary-comparison-selectors B-D7 assigned the lift to
+        // ISSUE-0111/ISSUE-0158) and emits native identity comparison
+        // ($rt carriers are Uint8Array objects, so `===` is reference
+        // identity) — never a backend E6000 rejection.
         Frontend eq = compileFrontend("""
             export function test(): int {
               let a: bytes = bytes(1);
               let b: bytes = a;
-              if (a === b) { return 0; }
-              return 1;
+              let c: bytes = bytes(1);
+              if (!(a === b)) { return 0; }
+              if (a === c) { return 0; }
+              if (a !== c) { return 1; }
+              return 0;
             }
             """, "jstest-bytes-closure-eq.deal");
-        check(eq.errors().stream().anyMatch(d -> "E3019".equals(d.code())),
-            "bytes identity equality stays the checker-owned E3019 gate "
-                + "(frontend, ISSUE-0111/ISSUE-0158): " + eq.errors());
-        check(eq.errors().stream().noneMatch(d -> "E6000".equals(d.code())),
-            "the equality closure position is never a backend E6000 "
-                + "rejection: " + eq.errors());
+        check(eq.errors().isEmpty(),
+            "bytes identity equality is checker-admitted with zero "
+                + "diagnostics (frontend, ISSUE-0158 lift): " + eq.errors());
+        if (eq.errors().isEmpty()) {
+            JsBackend.JsCodegenResult eqRes = generate(
+                """
+            export function test(): int {
+              let a: bytes = bytes(1);
+              let b: bytes = a;
+              let c: bytes = bytes(1);
+              if (!(a === b)) { return 0; }
+              if (a === c) { return 0; }
+              if (a !== c) { return 1; }
+              return 0;
+            }
+            """, "jstest-bytes-closure-eq.deal");
+            check(eqRes != null && !eqRes.hasErrors(),
+                "the equality closure position generates with zero "
+                    + "diagnostics: " + (eqRes == null ? "<null>"
+                        : eqRes.diagnostics()));
+            if (eqRes != null && !eqRes.hasErrors()) {
+                check(eqRes.source().contains("(a === b)")
+                        && eqRes.source().contains("(a !== c)"),
+                    "bytes equality emits native identity comparison");
+            }
+        }
+        if (nodeAvailable) {
+            NodeResult eqRun = runDealNode("""
+                export function test(): int {
+                  let a: bytes = bytes(1);
+                  let b: bytes = a;
+                  let c: bytes = bytes(1);
+                  if (!(a === b)) { return 0; }
+                  if (a === c) { return 0; }
+                  if (a !== c) { return 1; }
+                  return 0;
+                }
+                """, "bytes-closure-eq-node");
+            check(eqRun.exitCode() == 0 && eqRun.output().equals("1"),
+                "bytes identity equality executes real reference identity "
+                    + "on Node (alias true, distinct buffers false; "
+                    + "returns 1): " + eqRun.output());
+        }
     }
 
     private static void testNumModFloored() throws Exception {

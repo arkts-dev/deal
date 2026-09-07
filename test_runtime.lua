@@ -719,6 +719,20 @@ test("bytes reference aliasing: writes are visible through aliases", function()
   assert(__rt.bytes_get(b, 1) == 7)
 end)
 
+test("bytes reference identity: the same allocation compares equal", function()
+  local b = __rt.bytes_new(2)
+  local alias = b
+  assert(b == alias, "an alias is the same allocation")
+  assert(not (b ~= alias), "the same allocation is never unequal")
+end)
+
+test("bytes reference identity: distinct buffers compare unequal", function()
+  local a = __rt.bytes_new(2)
+  local c = __rt.bytes_new(2)
+  assert(not (a == c), "distinct zero-filled buffers are distinct allocations")
+  assert(a ~= c, "distinct allocations are never equal")
+end)
+
 test("zero-length buffer keeps stable storage", function()
   local b = __rt.bytes_new(0)
   assert(__rt.bytes_length(b) == 0)

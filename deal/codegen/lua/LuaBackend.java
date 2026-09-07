@@ -2374,6 +2374,17 @@ public final class LuaBackend implements Visitor<Void> {
             };
         }
 
+        // v1.2 bytes equality (ISSUE-0158, the binary-comparison-selectors
+        // B-D7 gate lift): equal bytes-typed operands compare by reference
+        // identity — the runtime bytes value is one tagged table with no
+        // __eq metamethod, so native Lua `==`/`~=` is identity (alias ===
+        // alias true, distinct buffers false, copied references keep one
+        // identity). Operands evaluate left to right exactly once.
+        if (leftType instanceof Type.Bytes && rightType instanceof Type.Bytes) {
+            if (op == BinaryOp.EQ) return "(" + left + " == " + right + ")";
+            if (op == BinaryOp.NEQ) return "(" + left + " ~= " + right + ")";
+        }
+
         // Nullable-vs-nullable comparison
         if (leftType instanceof Type.Nullable && rightType instanceof Type.Nullable) {
             if (op == BinaryOp.EQ) {

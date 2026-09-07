@@ -172,11 +172,12 @@ import java.util.concurrent.atomic.AtomicInteger;
  *       were removed with their promotions (the A5 seam promotions and
  *       the ISSUE-0397 I6 int32-math-abs-min absInt long-magnitude
  *       arm); the gap keeps no entries.</li>
- *   <li><b>JVM-GAP-BYTES</b> (10 entries) — the bytes runtime lane:
- *       JvmBackend raises E6000 at every bytes site until JVM v1.2
- *       completion (ISSUE-0277), so the LuaJIT-owned bytes expectations
- *       (zero-fill buffers, E8012/E8013, single-evaluation writes, and
- *       canonical bytes descriptors) pass only on LuaJIT and Node.</li>
+ *   <li><b>JVM-GAP-BYTES</b> (1 entry) — the bytes runtime lane
+ *       landed with ISSUE-0158 (zero-fill allocation, E8012/E8013,
+ *       single-evaluation writes, class fields all pass on JVM); the
+ *       one remaining fixture pins the recursive bytes-bearing
+ *       array/nullable/function wrapper closure, which stays E6000
+ *       until ISSUE-0160.</li>
  * </ul>
  *
  * <h2>Gates</h2>
@@ -311,55 +312,22 @@ public class JvmConformanceTest {
         // reaches the int32 checkInt gate and raises E8004
         // (int32-math-abs-min pins the promoted case on both retained
         // routes), and the stale skip was removed.
-        // ---- JVM-GAP-BYTES: the bytes runtime lane (ISSUE-0277) ----
-        // The v1.2 corpus pins the FFI-backed bytes carrier with
-        // zero-fill allocation, E8012 index bounds, E8013 value range,
-        // and the single-evaluation write sequence. The JVM backend has
-        // no bytes lane yet (E6000 at every bytes site), so the
-        // LuaJIT-owned bytes expectations below cannot pass on JVM.
-        // Once JVM bytes lands (ISSUE-0277), the probes start passing
-        // and the stale-skip gate forces these entries out.
-        skip("backend-runtime/bytes/bytes-buffer-ops.deal",
-            "the zero-filled bytes buffer, 0..255 byte writes, and "
-                + "reference-copy semantics require the bytes carrier; "
-                + "JvmBackend raises E6000 at bytes sites (ISSUE-0277).",
-            "JVM-GAP-BYTES");
-        skip("backend-runtime/bytes/bytes-index-bounds.deal",
-            "E8012 on byte reads/writes outside [0, b.length) requires "
-                + "the bytes carrier; JvmBackend raises E6000 at bytes "
-                + "sites (ISSUE-0277).", "JVM-GAP-BYTES");
-        skip("backend-runtime/bytes/bytes-write-range.deal",
-            "E8013 on byte values outside 0..255 requires the bytes "
-                + "carrier; JvmBackend raises E6000 at bytes sites "
-                + "(ISSUE-0277).", "JVM-GAP-BYTES");
-        skip("backend-runtime/bytes/bytes-length.deal",
-            "the compiler-resolved bytes .length requires the bytes "
-                + "carrier; JvmBackend raises E6000 at bytes sites "
-                + "(ISSUE-0277).", "JVM-GAP-BYTES");
+        // ---- JVM-GAP-BYTES: the bytes runtime lane (ISSUE-0158) ----
+        // The direct bytes lane landed with ISSUE-0158: bytes(n)
+        // allocation (zero-filled byte[]), b.length, unsigned reads,
+        // E8012 index bounds, E8013 value range, single-evaluation
+        // writes, reference aliasing, and bytes-typed class fields all
+        // pass the real pipeline — their skip entries became stale and
+        // the stale-skip gate forced them out with the promotion.
+        // The one remaining fixture pins the RECURSIVE bytes-bearing
+        // container/function closure (bytes[] / ?bytes /
+        // (bytes)->bytes array+function carriers), which the shared
+        // wrapper machinery rejects with E6000 until ISSUE-0160 lands.
         skip("backend-runtime/bytes/bytes-descriptor-boundary.deal",
-            "canonical [bytes]/?(bytes)/function bytes descriptors "
-                + "require the bytes carrier; JvmBackend raises E6000 at "
-                + "bytes sites (ISSUE-0277).", "JVM-GAP-BYTES");
-        skip("backend-runtime/bytes/bytes-class-field-descriptor.deal",
-            "class fields carrying real bytes buffers require the bytes "
-                + "carrier; JvmBackend raises E6000 at bytes sites "
-                + "(ISSUE-0277).", "JVM-GAP-BYTES");
-        skip("backend-runtime/bytes/bytes-write-single-evaluation.deal",
-            "the once-only receiver/index/RHS bytes write sequence "
-                + "requires the bytes carrier; JvmBackend raises E6000 at "
-                + "bytes sites (ISSUE-0277).", "JVM-GAP-BYTES");
-        skip("backend-runtime/bytes/bytes-write-validation-order.deal",
-            "validation-after-RHS bytes write ordering requires the "
-                + "bytes carrier; JvmBackend raises E6000 at bytes sites "
-                + "(ISSUE-0277).", "JVM-GAP-BYTES");
-        skip("backend-runtime/source-location/bytes-index-bounds-source.deal",
-            "the E8012 bytes bounds location requires the bytes carrier; "
-                + "JvmBackend raises E6000 at bytes sites (ISSUE-0277).",
-            "JVM-GAP-BYTES");
-        skip("backend-runtime/source-location/bytes-write-range-source.deal",
-            "the E8013 bytes value location requires the bytes carrier; "
-                + "JvmBackend raises E6000 at bytes sites (ISSUE-0277).",
-            "JVM-GAP-BYTES");
+            "canonical [bytes]/?(bytes)/(bytes)->bytes descriptors "
+                + "require the recursive bytes-bearing array/nullable/"
+                + "function wrapper carriers (ISSUE-0160); JvmBackend "
+                + "raises E6000 at those sites.", "JVM-GAP-BYTES");
 
         // ---- JVM-GAP-JSONABLE-RESIDUAL: residual @jsonable JVM defects ----
         // The two error-typed member-access/NEQ entries retired with
@@ -520,12 +488,12 @@ public class JvmConformanceTest {
             + "shapes — host class exports, array/function-typed "
             + "parameters and returns (E6000), the Lua pre-wrapped "
             + "export form",
-        "JVM-GAP-BYTES", "bytes runtime lane — JvmBackend raises E6000 on "
-            + "every bytes site (the bytes carrier/lowering slice is "
-            + "ISSUE-0277's); the LuaJIT bytes expectations "
-            + "(zero-fill buffers, E8012/E8013, single-evaluation "
-            + "writes, canonical bytes descriptors) pass only on "
-            + "LuaJIT and Node",
+        "JVM-GAP-BYTES", "bytes runtime lane — the direct bytes "
+            + "surface (allocation, length, indexing, mutation, class "
+            + "fields) landed with ISSUE-0158; the remaining fixture "
+            + "pins the recursive bytes-bearing array/nullable/"
+            + "function wrapper closure (bytes[] / ?bytes / "
+            + "(bytes)->bytes), which stays E6000 until ISSUE-0160",
         "JVM-GAP-DEFAULTS-PLANS", "v1.2 default-plan lane — imported "
             + "non-literal defaults evaluate in the declaring module's "
             + "scope under LuaJIT (E6000 on the JVM imported-class "

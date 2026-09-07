@@ -101,7 +101,7 @@ import java.util.Set;
  * <ol>
  *   <li>Exhaustive closed-enum enumeration: every closed enum's value list
  *       equals the verbatim design list (names + order + counts: 55 kinds,
- *       3 unary, 40 binary, 4 call modes, 3 async sources, 2 parameter
+ *       3 unary, 42 binary, 4 call modes, 3 async sources, 2 parameter
  *       boundary modes, 4 index modes, 2 iteration modes, 6 control
  *       selectors, 3 capture modes, 25 boundary kinds, 24 policies, 20
  *       stdlib ids); reserved names marked invalid.</li>
@@ -191,7 +191,8 @@ public class SemanticIrSchemaTest {
         "NUMBER_LE", "NUMBER_GT", "NUMBER_GE", "STRING_EQ", "STRING_NE", "STRING_LT",
         "STRING_LE", "STRING_GT", "STRING_GE", "BOOLEAN_EQ", "BOOLEAN_NE", "NULL_EQ",
         "NULL_NE", "NULLABLE_EQ", "NULLABLE_NE", "NULLABLE_NULL_EQ",
-        "NULLABLE_NULL_NE", "REFERENCE_EQ", "REFERENCE_NE");
+        "NULLABLE_NULL_NE", "REFERENCE_EQ", "REFERENCE_NE", "BYTES_EQ",
+        "BYTES_NE");
 
     private static final List<String> BOUNDARY_KINDS = List.of(
         "VARIABLE_DECLARATION", "VARIABLE_ASSIGNMENT", "CLASS_FIELD_ASSIGNMENT",
@@ -292,7 +293,7 @@ public class SemanticIrSchemaTest {
         // Pinned counts asserted verbatim (names + order + counts).
         check(OP_KINDS.size() == 55, "SemanticOpKind has exactly 55 values; got " + OP_KINDS.size());
         check(UNARY_SELECTORS.size() == 3, "UnarySelector has exactly 3 values");
-        check(BINARY_SELECTORS.size() == 40, "BinarySelector has exactly 40 values; got " + BINARY_SELECTORS.size());
+        check(BINARY_SELECTORS.size() == 42, "BinarySelector has exactly 42 values; got " + BINARY_SELECTORS.size());
         check(BOUNDARY_KINDS.size() == 25, "BoundaryKind has exactly 25 values; got " + BOUNDARY_KINDS.size());
         check(FAILURE_POLICIES.size() == 24, "FailurePolicyId has exactly 24 values; got " + FAILURE_POLICIES.size());
         check(STDLIB_IDS.size() == 20, "StdlibFunctionId has exactly 20 values; got " + STDLIB_IDS.size());
@@ -493,6 +494,12 @@ public class SemanticIrSchemaTest {
         check("number".equals(RuntimeDescriptor.Number.INSTANCE.canonicalSpecText()), "number -> \"number\"");
         check("string".equals(RuntimeDescriptor.String.INSTANCE.canonicalSpecText()), "string -> \"string\"");
         check("table".equals(RuntimeDescriptor.Table.INSTANCE.canonicalSpecText()), "table -> \"table\"");
+        check("bytes".equals(RuntimeDescriptor.Bytes.INSTANCE.canonicalSpecText()),
+            "bytes -> \"bytes\" (the ISSUE-0158 v1.2 bytes member)");
+        check("[bytes]".equals(new RuntimeDescriptor.Array(RuntimeDescriptor.Bytes.INSTANCE).canonicalSpecText()),
+            "array of bytes -> \"[bytes]\"");
+        check("?bytes".equals(new RuntimeDescriptor.Nullable(RuntimeDescriptor.Bytes.INSTANCE).canonicalSpecText()),
+            "nullable bytes -> \"?bytes\"");
 
         ClassId user = new ClassId("src/app", "User");
         check("@src/app/User".equals(new RuntimeDescriptor.Class(user).canonicalSpecText()),

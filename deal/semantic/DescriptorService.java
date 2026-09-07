@@ -24,20 +24,21 @@ import java.util.Objects;
  * <p><b>Mapping (D1, exact):</b> {@code Null→Null.INSTANCE},
  * {@code Boolean→Boolean.INSTANCE}, {@code Int→Int.INSTANCE},
  * {@code Number→Number.INSTANCE}, {@code String→String.INSTANCE},
- * {@code Table→Table.INSTANCE},
+ * {@code Table→Table.INSTANCE}, {@code Bytes→Bytes.INSTANCE}
+ * (the v1.2 bytes descriptor member — ISSUE-0158),
  * {@code Class(name, modulePath)→Class(new ClassId(modulePath, name))},
  * {@code Array(T)→Array(describe(T))},
  * {@code Nullable(T)→Nullable(describe(T))} (both type hierarchies
  * enforce the same invariants), and
  * {@code Func(paramTypes, returnType, isAsync)→Func(param descriptors in
  * order, describe(returnType), isAsync)}. The service is total over the
- * ten supported variants; structural equality of the produced descriptors
+ * eleven supported variants; structural equality of the produced descriptors
  * follows type equality — never text-based comparison.</p>
  *
- * <p><b>Fail closed (D1):</b> {@link Type.Bytes} and {@link Type.Error}
- * have no {@code RuntimeDescriptor} member in {@code deal.semantic-ir/1}
- * and must never be represented. {@link #describe(Type)} raises
- * {@link Defect} for them — internal control flow, never a crash and
+ * <p><b>Fail closed (D1):</b> {@link Type.Error} has no
+ * {@code RuntimeDescriptor} member in {@code deal.semantic-ir/1} and must
+ * never be represented. {@link #describe(Type)} raises
+ * {@link Defect} for it — internal control flow, never a crash and
  * never an invented descriptor. The unit-production seam converts the
  * defect into the E6005 diagnostic through
  * {@link #e6005(ModuleId, Defect)}: {@code FailureContractRegistry.e6005}
@@ -45,9 +46,8 @@ import java.util.Objects;
  * DESCRIPTOR_UNREPRESENTABLE}, {@code semanticProfile
  * DEAL_V1_2_INT32}, {@code irVersion deal.semantic-ir/1}, the module, and
  * the origin — the same pattern as {@code CanonicalTypeText.Defect} →
- * {@code INDEX_INTERNAL_ERROR_SENTINEL} (parent D11). Bytes value
- * semantics remain ISSUE-0158's; {@code BYTE_ELEMENT_ASSIGNMENT} stays a
- * reserved boundary name.</p>
+ * {@code INDEX_INTERNAL_ERROR_SENTINEL} (parent D11).
+ * {@code BYTE_ELEMENT_ASSIGNMENT} stays a reserved boundary name.</p>
  *
  * <p><b>Canonical text (D2):</b> the service's canonical spec text is
  * exactly {@link RuntimeDescriptor#canonicalSpecText()} — the
@@ -64,7 +64,7 @@ public final class DescriptorService {
     /**
      * The fact-defect identifier carried in the {@code validatorRule}
      * field of the E6005 diagnostic for an unrepresentable type
-     * ({@link Type.Bytes}/{@link Type.Error}).
+     * ({@link Type.Error}).
      */
     public static final String DESCRIPTOR_UNREPRESENTABLE = "DESCRIPTOR_UNREPRESENTABLE";
 
@@ -73,11 +73,11 @@ public final class DescriptorService {
     }
 
     /**
-     * A descriptor-production fact defect: {@link Type.Bytes} or
-     * {@link Type.Error} reached a descriptor-production position. The
-     * unit-production seam owns the conversion into E6005
-     * ({@code DESCRIPTOR_UNREPRESENTABLE}); this exception is internal
-     * control flow, never a crash and never a rendered fallback.
+     * A descriptor-production fact defect: {@link Type.Error} reached a
+     * descriptor-production position. The unit-production seam owns the
+     * conversion into E6005 ({@code DESCRIPTOR_UNREPRESENTABLE}); this
+     * exception is internal control flow, never a crash and never a
+     * rendered fallback.
      */
     public static final class Defect extends RuntimeException {
 
@@ -91,19 +91,16 @@ public final class DescriptorService {
     /**
      * Produces the structural runtime descriptor of a checked
      * {@link Type} — the only {@code Type}→{@link RuntimeDescriptor}
-     * producer for common units. Total and deterministic over the ten
-     * supported variants; {@link Type.Bytes} and {@link Type.Error} raise
-     * {@link Defect} (fail closed, never an invented descriptor).
+     * producer for common units. Total and deterministic over the eleven
+     * supported variants; {@link Type.Error} raises {@link Defect} (fail
+     * closed, never an invented descriptor).
      *
      * @param type the checked type; non-null
      * @return the mapped {@code RuntimeDescriptor} (D1 table); its
      *         {@link RuntimeDescriptor#canonicalSpecText()} is the
      *         schema-pinned canonical text (D2)
-     * @throws Defect when {@code type} is {@link Type.Bytes} (the v1.2
-     *         bytes primitive has no descriptor member in
-     *         {@code deal.semantic-ir/1}; bytes value semantics remain
-     *         ISSUE-0158's) or {@link Type.Error} (the internal checker
-     *         sentinel is excluded from common units by contract)
+     * @throws Defect when {@code type} is {@link Type.Error} (the internal
+     *         checker sentinel is excluded from common units by contract)
      */
     public static RuntimeDescriptor describe(Type type) {
         Objects.requireNonNull(type, "type must not be null");
@@ -114,15 +111,11 @@ public final class DescriptorService {
             case Type.Number ignored -> RuntimeDescriptor.Number.INSTANCE;
             case Type.String ignored -> RuntimeDescriptor.String.INSTANCE;
             case Type.Table ignored -> RuntimeDescriptor.Table.INSTANCE;
+            case Type.Bytes ignored -> RuntimeDescriptor.Bytes.INSTANCE;
             case Type.Error ignored -> throw new Defect(
                 "Type.Error reached a descriptor-production position: the internal checker "
                     + "sentinel has no RuntimeDescriptor member in deal.semantic-ir/1 and is "
                     + "excluded from common units");
-            case Type.Bytes ignored -> throw new Defect(
-                "Type.Bytes reached a descriptor-production position: the v1.2 bytes "
-                    + "primitive has no RuntimeDescriptor member in deal.semantic-ir/1 "
-                    + "(bytes value semantics remain ISSUE-0158's) and must never be "
-                    + "represented");
             case Type.Class cls -> new RuntimeDescriptor.Class(
                 new ClassId(semanticModulePath(cls.identity()),
                     cls.name()));

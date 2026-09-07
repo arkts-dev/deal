@@ -16,7 +16,7 @@ import java.util.List;
 /**
  * Verifies the ISSUE-0234 B-D1/B-D2/B-D4 surface: the closed
  * {@link ComparisonOperandView} and {@link ComparisonExecutor} as the
- * single, pure execution form of the 28 comparison selectors of
+ * single, pure execution form of the 30 comparison selectors of
  * {@code deal.semantic-ir/1}, with the missing≡null rule at both operand
  * positions.
  *
@@ -59,7 +59,7 @@ import java.util.List;
  *       {@code deal.checker}/{@code deal.codegen} import and the
  *       executor references no boundary-op type (B-D5: no boundary
  *       execution).</li>
- *   <li>Exactly 28 comparison selectors and 12 arithmetic selectors in
+ *   <li>Exactly 30 comparison selectors and 12 arithmetic selectors in
  *       the closed set; determinism of repeated execution.</li>
  * </ol>
  */
@@ -151,6 +151,7 @@ public class ComparisonExecutorTest {
         new RuntimeDescriptor.Class(new deal.semantic.ir.ClassId("src/app", "User"));
     private static final RuntimeDescriptor FUNC = new RuntimeDescriptor.Func(
         List.of(INT), NUMBER);
+    private static final RuntimeDescriptor BYTES = RuntimeDescriptor.Bytes.INSTANCE;
 
     // =========================================================================
     // 1. View shape
@@ -550,6 +551,56 @@ public class ComparisonExecutorTest {
         check(cmp(BinarySelector.NULLABLE_NE,
             ref(new FunctionAllocationIdentity(7)), ref(new FunctionAllocationIdentity(8)),
             FUNC, NullableSide.BOTH), "NULLABLE_NE BOTH(distinct function identities)");
+
+        // Inner bytes: allocation identity inside the nullable wrap.
+        check(cmp(BinarySelector.NULLABLE_EQ, ref(tokenA), ref(tokenA), BYTES,
+            NullableSide.BOTH), "NULLABLE_EQ BOTH(same bytes identity)");
+        check(!cmp(BinarySelector.NULLABLE_EQ, ref(tokenA), ref(tokenB), BYTES,
+            NullableSide.BOTH), "NULLABLE_EQ BOTH(distinct bytes identities) false");
+        check(cmp(BinarySelector.NULLABLE_NE, ref(tokenA), ref(tokenB), BYTES,
+            NullableSide.BOTH), "NULLABLE_NE BOTH(distinct bytes identities)");
+        check(!cmp(BinarySelector.NULLABLE_EQ, NULL, ref(tokenA), BYTES, NullableSide.BOTH),
+            "NULLABLE_EQ BOTH(null,bytes) false");
+        check(cmp(BinarySelector.NULLABLE_EQ, NULL, NULL, BYTES, NullableSide.BOTH),
+            "NULLABLE_EQ BOTH(null,null) bytes inner");
+    }
+
+    // =========================================================================
+    // 7a. BYTES matrix (ISSUE-0158 row)
+    // =========================================================================
+
+    private static void testBytesMatrix() {
+        System.out.println("-- BYTES_EQ/NE (bytes allocation identity) --");
+
+        Object bytesA = new Object();
+        Object bytesB = new Object();
+
+        check(cmp(BinarySelector.BYTES_EQ, ref(bytesA), ref(bytesA), BYTES, null),
+            "BYTES_EQ(same bytes identity)");
+        check(!cmp(BinarySelector.BYTES_NE, ref(bytesA), ref(bytesA), BYTES, null),
+            "BYTES_NE(same bytes identity) false");
+        check(!cmp(BinarySelector.BYTES_EQ, ref(bytesA), ref(bytesB), BYTES, null),
+            "BYTES_EQ(distinct buffers) false");
+        check(cmp(BinarySelector.BYTES_NE, ref(bytesA), ref(bytesB), BYTES, null),
+            "BYTES_NE(distinct buffers)");
+
+        // Null/missing operands follow the null rules.
+        check(!cmp(BinarySelector.BYTES_EQ, NULL, ref(bytesA), BYTES, null),
+            "BYTES_EQ(null,bytes) false");
+        check(!cmp(BinarySelector.BYTES_EQ, ref(bytesA), NULL, BYTES, null),
+            "BYTES_EQ(bytes,null) false");
+        check(cmp(BinarySelector.BYTES_NE, NULL, ref(bytesA), BYTES, null),
+            "BYTES_NE(null,bytes)");
+        check(cmp(BinarySelector.BYTES_EQ, NULL, NULL, BYTES, null),
+            "BYTES_EQ(null,null)");
+        check(!cmp(BinarySelector.BYTES_NE, NULL, NULL, BYTES, null),
+            "BYTES_NE(null,null) false");
+        check(!cmp(BinarySelector.BYTES_EQ, MISSING, ref(bytesA), BYTES, null),
+            "BYTES_EQ(missing,bytes) false");
+        check(cmp(BinarySelector.BYTES_NE, ref(bytesA), MISSING, BYTES, null),
+            "BYTES_NE(bytes,missing)");
+        check(cmp(BinarySelector.BYTES_EQ, MISSING, MISSING, BYTES, null),
+            "BYTES_EQ(missing,missing)");
     }
 
     private static void testNullableNullMatrix() {
@@ -729,11 +780,11 @@ public class ComparisonExecutorTest {
                 comparisonSelectors.add(selector);
             }
         }
-        check(comparisonSelectors.size() == 28,
-            "the closed set carries exactly 28 comparison selectors; got "
+        check(comparisonSelectors.size() == 30,
+            "the closed set carries exactly 30 comparison selectors; got "
                 + comparisonSelectors.size());
-        check(BinarySelector.values().length == 40,
-            "the closed set carries exactly 40 binary selectors; got "
+        check(BinarySelector.values().length == 42,
+            "the closed set carries exactly 42 binary selectors; got "
                 + BinarySelector.values().length);
 
         int swept = 0;
@@ -753,7 +804,7 @@ public class ComparisonExecutorTest {
                 swept++;
             }
         }
-        check(swept == 28 * 4, "the null/missing sweep covered every comparison selector; got "
+        check(swept == 30 * 4, "the null/missing sweep covered every comparison selector; got "
             + swept);
     }
 
@@ -763,7 +814,8 @@ public class ComparisonExecutorTest {
                  NUMBER_EQ, NUMBER_NE, NUMBER_LT, NUMBER_LE, NUMBER_GT, NUMBER_GE,
                  STRING_EQ, STRING_NE, STRING_LT, STRING_LE, STRING_GT, STRING_GE,
                  BOOLEAN_EQ, BOOLEAN_NE, NULL_EQ, NULL_NE, NULLABLE_EQ, NULLABLE_NE,
-                 NULLABLE_NULL_EQ, NULLABLE_NULL_NE, REFERENCE_EQ, REFERENCE_NE -> true;
+                 NULLABLE_NULL_EQ, NULLABLE_NULL_NE, REFERENCE_EQ, REFERENCE_NE,
+                 BYTES_EQ, BYTES_NE -> true;
             case INT32_ADD, INT32_SUB, INT32_MUL, INT32_DIV_TRUNC, INT32_MOD_TRUNC,
                  INT32_POW, NUMBER_ADD, NUMBER_SUB, NUMBER_MUL, NUMBER_DIV_IEEE,
                  NUMBER_MOD_FLOOR, NUMBER_POW_IEEE -> false;
@@ -776,6 +828,9 @@ public class ComparisonExecutorTest {
         }
         if (selector == BinarySelector.REFERENCE_EQ || selector == BinarySelector.REFERENCE_NE) {
             return ARRAY;
+        }
+        if (selector == BinarySelector.BYTES_EQ || selector == BinarySelector.BYTES_NE) {
+            return BYTES;
         }
         return null;
     }
@@ -869,6 +924,18 @@ public class ComparisonExecutorTest {
         expectDefect(() -> cmp(BinarySelector.REFERENCE_NE, s("a"), s("a"), ARRAY, null),
             "REFERENCE_NE with String operands");
 
+        // BYTES payload shapes.
+        expectDefect(() -> cmp(BinarySelector.BYTES_EQ, ref(new Object()),
+            ref(new Object()), null, null), "BYTES_EQ with a null descriptor");
+        expectDefect(() -> cmp(BinarySelector.BYTES_EQ, ref(new Object()),
+            ref(new Object()), INT, null), "BYTES_EQ with an int descriptor");
+        expectDefect(() -> cmp(BinarySelector.BYTES_EQ, ref(new Object()),
+            ref(new Object()), ARRAY, null), "BYTES_EQ with an array descriptor");
+        expectDefect(() -> cmp(BinarySelector.BYTES_EQ, i(1), i(1), BYTES, null),
+            "BYTES_EQ with Int operands");
+        expectDefect(() -> cmp(BinarySelector.BYTES_NE, s("a"), s("a"), BYTES, null),
+            "BYTES_NE with String operands");
+
         // Null arguments.
         expectNpe(() -> ComparisonExecutor.compare(null, i(1), i(1), null, null),
             "a null selector");
@@ -955,6 +1022,10 @@ public class ComparisonExecutorTest {
             cmp(BinarySelector.NULLABLE_NULL_EQ, MISSING, NULL, INT, NullableSide.LEFT),
             cmp(BinarySelector.REFERENCE_EQ, ref(token), ref(token), ARRAY, null),
             cmp(BinarySelector.REFERENCE_NE, ref(token), ref(new Object()), ARRAY, null),
+            cmp(BinarySelector.BYTES_EQ, ref(token), ref(token), BYTES, null),
+            cmp(BinarySelector.BYTES_NE, ref(token), ref(new Object()), BYTES, null),
+            cmp(BinarySelector.NULLABLE_EQ, ref(token), ref(token), BYTES,
+                NullableSide.BOTH),
             cmp(BinarySelector.INT32_EQ, MISSING, MISSING)
         );
     }
@@ -975,6 +1046,7 @@ public class ComparisonExecutorTest {
         testNullableMatrix();
         testNullableNullMatrix();
         testReferenceMatrix();
+        testBytesMatrix();
         testMissingNullEquivalence();
         testNoDealFailureSweep();
         testDefectCases();

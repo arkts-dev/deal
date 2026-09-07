@@ -1,5 +1,5 @@
 // @spec: Runtime execution model — Runtime type descriptor format
-// @description: Canonical bytes-bearing descriptors cross typed boundaries end to end: [bytes] arrays, ?bytes nullables, (bytes)->bytes function values, and [?(bytes)->bytes] arrays of nullable functions all pass through the canonical boundary matcher byte-for-byte with real bytes values (bytes comparison remains E3019-gated, so the nullable shapes exercise the matcher through pass-through boundaries).
+// @description: Canonical bytes-bearing descriptors cross typed boundaries end to end: [bytes] arrays, ?bytes nullables, (bytes)->bytes function values, and [?(bytes)->bytes] arrays of nullable functions all pass through the canonical boundary matcher byte-for-byte with real bytes values (bytes equality is reference identity since the ISSUE-0158 E3019 gate lift).
 // @expected: runtime-ok
 // @features: descriptors, bytes, functions
 

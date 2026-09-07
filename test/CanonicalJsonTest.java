@@ -88,7 +88,7 @@ import java.util.concurrent.TimeUnit;
  *       escaping, UTF-8 — with a stored golden document recomputed in a
  *       fresh JVM invocation (cross-process determinism).</li>
  *   <li>Parser round-trips: every serializer golden, all 55 payload
- *       shapes, the 40-selector digest matrix, and the
+ *       shapes, the 42-selector digest matrix, and the
  *       {@link RuntimeDescriptor} canonical spellings parse and
  *       re-serialize byte-exactly; a replaced reserved/open enum name
  *       survives the parse as a raw string (no enum conversion).</li>
@@ -101,7 +101,7 @@ import java.util.concurrent.TimeUnit;
  *       the digest; opId/origin-only changes leave it unchanged.</li>
  *   <li>{@code loweringContextHash} golden and the legacy/v1.2 profile
  *       confusion guard (T1's closed {@link SemanticProfile} enum).</li>
- *   <li>Combined T1/T2 integration: the 40-selector matrix, descriptor
+ *   <li>Combined T1/T2 integration: the 42-selector matrix, descriptor
  *       spellings, and every {@link SemanticOpKind} payload shape produce
  *       valid digests; a T1/T2 fault is detectable through the pinned
  *       constants.</li>
@@ -443,7 +443,7 @@ public class CanonicalJsonTest {
             testRoundTripSnapshot(snapshot, kind + " payload round-trips byte-exactly");
         }
 
-        // The 40-selector digest matrix round-trips.
+        // The 42-selector digest matrix round-trips.
         for (BinarySelector selector : BinarySelector.values()) {
             OperationContractSnapshot snapshot = binaryMatrixSnapshot(selector);
             testRoundTripSnapshot(snapshot,
@@ -906,8 +906,8 @@ public class CanonicalJsonTest {
             "T2's snapshot version is pinned to 1");
         check(SemanticOpKind.BINARY.payloadClass() == KindPayload.BinaryPayload.class,
             "T2's BINARY payload shape is pinned");
-        check(BinarySelector.values().length == 40,
-            "T2's BinarySelector has exactly 40 values; got " + BinarySelector.values().length);
+        check(BinarySelector.values().length == 42,
+            "T2's BinarySelector has exactly 42 values; got " + BinarySelector.values().length);
 
         // T2's RuntimeDescriptor canonical text renders in the JSON.
         String text = ContractSnapshotCanonicalizer.serializeText(pinnedSnapshot());
@@ -921,7 +921,7 @@ public class CanonicalJsonTest {
         check(unaryText.contains("\"selector\":\"INT32_NEG\""),
             "the closed unary selector renders as its name");
 
-        // The 40-selector digest matrix: valid distinct digests, one per
+        // The 42-selector digest matrix: valid distinct digests, one per
         // BinarySelector value.
         Set<String> digests = new LinkedHashSet<>();
         for (BinarySelector selector : BinarySelector.values()) {
@@ -933,8 +933,8 @@ public class CanonicalJsonTest {
                     .contains("\"selector\":\"" + selector.name() + "\""),
                 selector + " renders its exact selector name");
         }
-        check(digests.size() == 40,
-            "all 40 selector digests are distinct; got " + digests.size());
+        check(digests.size() == 42,
+            "all 42 selector digests are distinct; got " + digests.size());
 
         // Every SemanticOpKind payload shape canonicalizes and digests.
         for (SemanticOpKind kind : SemanticOpKind.values()) {

@@ -1580,7 +1580,12 @@ public class ContainerLoweringArmsTest {
     static void testDescriptorNegatives() {
         System.out.println("-- Descriptor negatives: DESCRIPTOR_UNREPRESENTABLE --");
 
-        // (a) An array of bytes at the element-descriptor position.
+        // (a) An array of bytes at the element-descriptor position. The
+        // bytes element descriptor IS representable since the ISSUE-0158
+        // schema lift (RuntimeDescriptor.Bytes), but bytes VALUE semantics
+        // stay backend-owned: the shared container pipeline excludes the
+        // position fail-closed as ConstructUnlowered (never an invented
+        // element check, never a crash).
         {
             Span span = new Span(SOURCE_ID, 1, 1, 1, 5);
             ArrayLiteralExpr literal = new ArrayLiteralExpr(span, List.of());
@@ -1588,38 +1593,20 @@ public class ContainerLoweringArmsTest {
                 Map.of(literal, new Type.Array(Type.Bytes.INSTANCE)),
                 new SymbolTable(), List.of());
             SemanticLowerer.ModuleLowerer lowerer = lowerer(checks);
-            ContainerPayloadDescriptors.Defect defect = null;
+            SemanticLowerer.ConstructUnlowered defect = null;
             try {
                 lowerer.lowerExpression(literal);
-            } catch (ContainerPayloadDescriptors.Defect raised) {
+            } catch (SemanticLowerer.ConstructUnlowered raised) {
                 defect = raised;
             }
             check(defect != null,
-                "the bytes element-descriptor position raises the bridge Defect (never an "
-                    + "invented descriptor, never a crash)");
-            if (defect != null) {
-                LoweringFailureDetail detail =
-                    SemanticLowerer.loweringFailureDetail(MODULE, defect);
-                check("main".equals(detail.module()), "detail module is main");
-                check(detail.capability() == SemanticCapability.CONTAINERS_AND_STRINGS,
-                    "detail capability CONTAINERS_AND_STRINGS");
-                check(ContainerPayloadDescriptors.DESCRIPTOR_UNREPRESENTABLE
-                        .equals(detail.validatorRule()),
-                    "detail validatorRule DESCRIPTOR_UNREPRESENTABLE");
-                check(detail.semanticProfile() == SemanticProfile.DEAL_V1_2_INT32,
-                    "detail semanticProfile DEAL_V1_2_INT32");
-                check(LoweredModuleUnit.FORMAT_VERSION.equals(detail.irVersion()),
-                    "detail irVersion deal.semantic-ir/1");
-                check(detail.origin().startsWith("ContainerPayloadDescriptors "
-                        + ContainerPayloadDescriptors.DESCRIPTOR_UNREPRESENTABLE),
-                    "detail origin names the bridge: " + detail.origin());
-                CompilerDiagnostic diagnostic = FailureContractRegistry.e6005(detail);
-                check("E6005".equals(diagnostic.code())
-                        && diagnostic.diagnosticCode() == DiagnosticCode.E6005
-                        && "error".equals(diagnostic.severity()),
-                    "the bridge defect converts to an error-severity E6005 at the "
-                        + "unit-production seam");
-            }
+                "the bytes element position raises ConstructUnlowered (the shared "
+                    + "container pipeline's bytes exclusion, never an invented "
+                    + "descriptor)");
+            check(defect != null && defect.getMessage().contains("ISSUE-0158")
+                    && defect.getMessage().contains("backend-owned"),
+                "the bytes exclusion defect names the backend-owned ISSUE-0158 value "
+                    + "semantics: " + (defect == null ? "<none>" : defect.getMessage()));
         }
 
         // (b) Type.Error at the element-descriptor position (same projection).

@@ -54,7 +54,13 @@ import java.util.List;
  * two host-prewrapped skip-probe exception lines remain in the
  * {@code ] FAIL (} set, and the summary moved from
  * {@code passed 254, failed 1 ... pass rate 84.4%} to
- * {@code passed 256, failed 0 ... pass rate 85.0%}. The LuaJIT lane
+ * {@code passed 256, failed 0 ... pass rate 85.0%}. ISSUE-0158
+ * (the JVM bytes core lane) then promoted the nine bytes skip
+ * entries — the direct bytes surface passes the real pipeline and
+ * the stale-skip gate forced the entries out — so the summary moved
+ * again to {@code passed 265, failed 0, skipped 36 ... pass rate
+ * 88.0%} with the single retained bytes skip (the recursive
+ * bytes-bearing wrapper closure, ISSUE-0160). The LuaJIT lane
  * (consequence, pinned): exit code 0 — the flipped time fixture
  * passes as {@code runtime-error E8004} under its legacy-authority
  * catalog row (zero v1.2 credit), the staged registry entry is
@@ -114,11 +120,15 @@ public class JvmLaneStatePinTest {
     // ISSUE-0380 (the disposition-application unit) flipped the time
     // fixture to runtime-error E8004 and promoted int-add-overflow, so
     // the summary moved from "passed 254, failed 1 ... pass rate 84.4%"
-    // to the re-pinned numbers below.
+    // to "passed 256, failed 0 ... pass rate 85.0%". ISSUE-0158 (the
+    // JVM bytes core lane) then promoted the nine bytes skip entries
+    // (only the recursive bytes-bearing wrapper-closure fixture stays
+    // skipped, ISSUE-0160), so the summary moved to the re-pinned
+    // numbers below.
     private static final String JVM_SUMMARY =
         "Backend-runtime on JVM: denominator 301 (every on-disk runtime "
-            + "test, unchanged), passed 256, failed 0, skipped 45 "
-            + "(classified), known-fail 0 (tracked) \u2014 pass rate 85.0%";
+            + "test, unchanged), passed 265, failed 0, skipped 36 "
+            + "(classified), known-fail 0 (tracked) \u2014 pass rate 88.0%";
 
     private static final String JVM_PROFILE_AUTHORITY =
         "Profile-authority accounting: 0 legacy-authority fixture(s) "

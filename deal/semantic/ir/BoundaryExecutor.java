@@ -482,6 +482,10 @@ public final class BoundaryExecutor {
                         : kindFail(descriptor, view);
             case RuntimeDescriptor.Table ignored ->
                 view.kind() == ActualKind.TABLE ? pass(view) : kindFail(descriptor, view);
+            case RuntimeDescriptor.Bytes ignored -> throw new Defect(
+                "a bytes descriptor reached the closed boundary projection: the closed "
+                    + "boundary-assignment table has no bytes cell and bytes boundaries are "
+                    + "backend-owned (ISSUE-0158) — never a BOUNDARY op");
             case RuntimeDescriptor.Class cls -> coreClass(cls, view);
             case RuntimeDescriptor.Array array -> coreArray(array, view);
             case RuntimeDescriptor.Nullable nullable -> coreNullable(nullable, view);
@@ -722,6 +726,11 @@ public final class BoundaryExecutor {
             case RuntimeDescriptor.Table ignored ->
                 view.kind() == ActualKind.TABLE
                     ? null : ActualKind.canonicalToken(view.kind(), view.classId());
+            case RuntimeDescriptor.Bytes ignored -> throw new Defect(
+                "a bytes descriptor reached the closed JSON-serializability projection: "
+                    + "the closed boundary-assignment table has no bytes cell (bytes are "
+                    + "non-jsonable and bytes boundaries are backend-owned, ISSUE-0158) — "
+                    + "never a BOUNDARY op");
             case RuntimeDescriptor.Func ignored ->
                 ActualKind.canonicalToken(view.kind(), view.classId());
         };

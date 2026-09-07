@@ -525,7 +525,8 @@ import java.util.function.Function;
  * (primitives/string/null, arrays, classes, nullables, and nested
  * sync/async function types — the shared wrapper machinery,
  * ISSUE-0301 D2), with only bytes/table carriers inside the signature
- * staying resolveTypeNode-gated with E6000 (the int32-bytes lane).
+ * staying resolveTypeNode-gated with E6000 (deferred to the
+ * ISSUE-0160 recursive bytes-bearing wrapper closure).
  * Async function expressions emit through the same closure machinery
  * with the async descriptor marker (ISSUE-0304), and block-level async
  * function declarations emit through the block-level cell + anonymous
@@ -1529,7 +1530,14 @@ public final class JvmBackend {
                 case "int" -> Type.Int.INSTANCE;
                 case "number" -> Type.Number.INSTANCE;
                 case "string" -> Type.String.INSTANCE;
-                case "bytes" -> Type.Bytes.INSTANCE;
+                case "bytes" -> {
+                    Symbol sym = symbols.resolve(nt.name());
+                    if (sym instanceof Symbol.ClassSymbol
+                            && moduleClasses.containsKey(nt.name())) {
+                        yield silentClassType(nt.name(), modulePath);
+                    }
+                    yield Type.Bytes.INSTANCE;
+                }
                 case "table" -> Type.Table.INSTANCE;
                 default -> {
                     Symbol sym = symbols.resolve(nt.name());
@@ -2146,8 +2154,10 @@ public final class JvmBackend {
      */
     /**
      * Emitted runtime-helper signatures under {@code LEGACY_SAFE_INT} —
-     * the pre-tree byte-identical base table (ISSUE-0375 keeps this arm
-     * untouched). A DEAL function whose translated name and mapped
+     * the pre-tree base table plus the ISSUE-0158 bytes helpers, whose
+     * carriers match the legacy backend-wide long int mode (the
+     * long-parameter bytesGet/bytesSet arms and the long bytesLength
+     * result). A DEAL function whose translated name and mapped
      * parameter types match a helper exactly would emit a duplicate Java
      * method; such declarations are rejected with E6000 instead.
      */
@@ -2169,7 +2179,18 @@ public final class JvmBackend {
         Map.entry("booleanNotNull", List.of("java.lang.Boolean")),
         Map.entry("intFromNullable", List.of("java.lang.Long")),
         Map.entry("numberFromNullable", List.of("java.lang.Double")),
-        Map.entry("checkSig", List.of("java.lang.String", "java.lang.String")));
+        Map.entry("checkSig", List.of("java.lang.String", "java.lang.String")),
+        // ISSUE-0158 bytes helpers (profile-matched carriers): under
+        // LEGACY_SAFE_INT the backend-wide int carrier is long, so the
+        // emitted bytesGet/bytesSet helpers take long index/value
+        // parameters (with the E8012/E8013 gates before the narrowing)
+        // and bytesLength returns long — matching every emitted bytes
+        // call site exactly, never a javac-rejected long-into-int
+        // argument.
+        Map.entry("bytesNew", List.of("long")),
+        Map.entry("bytesLength", List.of("$DealRt.Bytes")),
+        Map.entry("bytesGet", List.of("$DealRt.Bytes", "long")),
+        Map.entry("bytesSet", List.of("$DealRt.Bytes", "long", "long")));
 
     /**
      * Emitted runtime-helper signatures under {@code DEAL_V1_2_INT32}
@@ -2198,7 +2219,11 @@ public final class JvmBackend {
         Map.entry("booleanNotNull", List.of("java.lang.Boolean")),
         Map.entry("intFromNullable", List.of("java.lang.Integer")),
         Map.entry("numberFromNullable", List.of("java.lang.Double")),
-        Map.entry("checkSig", List.of("java.lang.String", "java.lang.String")));
+        Map.entry("checkSig", List.of("java.lang.String", "java.lang.String")),
+        Map.entry("bytesNew", List.of("long")),
+        Map.entry("bytesLength", List.of("$DealRt.Bytes")),
+        Map.entry("bytesGet", List.of("$DealRt.Bytes", "int")),
+        Map.entry("bytesSet", List.of("$DealRt.Bytes", "int", "int")));
 
     /**
      * The emitted runtime-helper signature table for the backend's
@@ -4289,6 +4314,43 @@ public final class JvmBackend {
             emitLine("static long intFromNumber(double v) { if (java.lang.Double.isNaN(v)) throw new DealError(\"E8001\", \"expected int, got NaN\"); if (java.lang.Double.isInfinite(v)) throw new DealError(\"E8001\", \"expected int, got infinity\"); if (v != java.lang.Math.floor(v)) throw new DealError(\"E8001\", \"expected int, got non-integer number\"); if (v > 9007199254740991.0 || v < -9007199254740991.0) throw new DealError(\"E8004\", \"int out of safe range\"); return (long) v; }");
             emitLine("static double numberFromInt(long v) { return (double) v; }");
         }
+        emitLine("// ---- DEAL v1.2 bytes runtime (ISSUE-0158 int32-bytes lane) ----");
+        emitLine("// The shared $DealRt.Bytes carrier wraps a Java byte[] (zero-filled");
+        emitLine("// by construction); the logical length is immutable signed-int32,");
+        emitLine("// reads yield unsigned 0..255, and a write changes exactly one byte");
+        emitLine("// (never appends). bytesNew gates the length through checkInt");
+        emitLine("// (E8004 out of range), a negative length is E8012, and allocation");
+        emitLine("// exhaustion is E8001 with no published object — the runtime.lua");
+        emitLine("// bytes_new error set (deal-v1.2-int32-and-bytes-architecture D4).");
+        emitLine("static $DealRt.Bytes bytesNew(long length) {");
+        emitLine("    long n = checkInt(length);");
+        emitLine("    if (n < 0L) throw new DealError(\"E8012\", \"bytes length must be non-negative\");");
+        emitLine("    if (n > 2147483647L) throw new DealError(\"E8004\", " + (int32Mode ? "\"int out of safe range\"" : "\"int out of range\"") + ");");
+        emitLine("    try { return new $DealRt.Bytes(new byte[(int) n]); }");
+        emitLine("    catch (java.lang.OutOfMemoryError e) { throw new DealError(\"E8001\", \"bytes allocation failed\"); }");
+        emitLine("}");
+        emitLine("// The immutable signed-int32 logical allocation length of a bytes buffer.");
+        emitLine("// The helpers' int carriers match the backend-wide int mode exactly");
+        emitLine("// (ISSUE-0375 carrier switch): primitive int under DEAL_V1_2_INT32 and");
+        emitLine("// the legacy long carrier under LEGACY_SAFE_INT. Every emitted bytes");
+        emitLine("// call site already produces the profile's int carrier for the index,");
+        emitLine("// the value, and the int result, so the helper parameters follow it —");
+        emitLine("// a v1.2 bytes program compiled through the default (legacy) production");
+        emitLine("// invocation must never produce an artifact javac rejects. The E8012");
+        emitLine("// index and E8013 value gates always run BEFORE the narrowing inside the");
+        emitLine("// long-parameter legacy arms, so the (int) casts are never silent.");
+        emitLine(int32Mode
+            ? "static int bytesLength($DealRt.Bytes b) { if (b == null) throw new DealError(\"E8001\", \"expected bytes, got null\"); return b.data.length; }"
+            : "static long bytesLength($DealRt.Bytes b) { if (b == null) throw new DealError(\"E8001\", \"expected bytes, got null\"); return b.data.length; }");
+        emitLine("// The unsigned byte (0..255) at index i, 0 <= i < b.length (E8012 otherwise).");
+        emitLine(int32Mode
+            ? "static int bytesGet($DealRt.Bytes b, int i) { if (b == null) throw new DealError(\"E8001\", \"expected bytes, got null\"); if (i < 0 || i >= b.data.length) throw new DealError(\"E8012\", \"bytes index out of bounds\"); return b.data[i] & 0xFF; }"
+            : "static long bytesGet($DealRt.Bytes b, long i) { if (b == null) throw new DealError(\"E8001\", \"expected bytes, got null\"); if (i < 0 || i >= b.data.length) throw new DealError(\"E8012\", \"bytes index out of bounds\"); return b.data[(int) i] & 0xFF; }");
+        emitLine("// Write byte value v (0..255) at index i and return the written value.");
+        emitLine("// A failed write (E8012 index, E8013 value range) changes no storage.");
+        emitLine(int32Mode
+            ? "static int bytesSet($DealRt.Bytes b, int i, int v) { if (b == null) throw new DealError(\"E8001\", \"expected bytes, got null\"); if (i < 0 || i >= b.data.length) throw new DealError(\"E8012\", \"bytes index out of bounds\"); if (v < 0 || v > 255) throw new DealError(\"E8013\", \"bytes value out of range\"); b.data[i] = (byte) v; return v; }"
+            : "static long bytesSet($DealRt.Bytes b, long i, long v) { if (b == null) throw new DealError(\"E8001\", \"expected bytes, got null\"); if (i < 0 || i >= b.data.length) throw new DealError(\"E8012\", \"bytes index out of bounds\"); if (v < 0 || v > 255) throw new DealError(\"E8013\", \"bytes value out of range\"); b.data[(int) i] = (byte) v; return v; }");
         emitLine("// string ordering: Unicode scalar-value order. LuaJIT orders bytewise in");
         emitLine("// UTF-8, which is scalar-value order — including supplementary characters");
         emitLine("// (String.compareTo's UTF-16 code-unit order diverges there).");
@@ -4691,8 +4753,9 @@ public final class JvmBackend {
      * table (unchanged, ISSUE-0102), the {@code FnValue} interface and
      * the per-signature function wrapper classes (D2), the
      * per-element-shape array wrapper classes (D3), the final
-     * {@code Bytes} wrapper over {@code byte[]} (D6 — carrier only; the
-     * operations live on the int32-bytes lane), and the synthesized
+     * {@code Bytes} wrapper over {@code byte[]} (D6 carrier; the
+     * ISSUE-0158 operations lower to the emitted bytes helpers), and
+     * the synthesized
      * host-class records (the host-abi lane). Every module references
      * the SAME class, so carrier values cross module boundaries with
      * shared identity — exactly like LuaJIT's single value types. The
@@ -4727,9 +4790,10 @@ public final class JvmBackend {
         emitLine("        java.util.LinkedHashMap<java.lang.String, java.lang.Object> $entries() { return entries; }");
         emitLine("    }");
         emitLine("    // The final runtime-owned bytes wrapper over byte[] (ISSUE-0301");
-        emitLine("    // D6 — carrier only: reference identity for equality/assignment/");
-        emitLine("    // aliasing, canonical descriptor 'bytes' in $check, non-jsonable.");
-        emitLine("    // Allocation/indexing/mutation live on the int32-bytes lane.");
+        emitLine("    // D6 carrier; ISSUE-0158 int32-bytes lane): reference identity for");
+        emitLine("    // equality/assignment/aliasing, canonical descriptor 'bytes' in");
+        emitLine("    // $check, non-jsonable. Allocation/indexing/mutation lower to the");
+        emitLine("    // emitted bytesNew/bytesLength/bytesGet/bytesSet helpers.");
         emitLine("    static final class Bytes {");
         emitLine("        final byte[] data;");
         emitLine("        Bytes(byte[] data) { this.data = data; }");
@@ -4872,7 +4936,8 @@ public final class JvmBackend {
         emitLine("// bytes row (the canonical matcher table): the shared $DealRt.Bytes");
         emitLine("// carrier is the JVM bytes representation (ISSUE-0301 D6 — the");
         emitLine("// final runtime-owned wrapper over byte[]); anything else raises");
-        emitLine("// E8001. Allocation/indexing/mutation live on the int32-bytes lane.");
+        emitLine("// E8001. Allocation/indexing/mutation lower to the emitted");
+        emitLine("// bytesNew/bytesLength/bytesGet/bytesSet helpers (ISSUE-0158).");
         emitLine("if (descriptor.equals(\"bytes\")) { if (v instanceof $DealRt.Bytes b) return b; throw new DealError(\"E8001\", \"expected bytes, got \" + $describe(v)); }");
         // Class branches (plain class descriptors and per-class array
         // descriptors) are appended by emitClass before the generic [D]
@@ -5046,7 +5111,7 @@ public final class JvmBackend {
             case Type.Class c -> silentClassJavaType(c);
             case Type.Nullable n -> silentNullableJavaType(n.inner());
             case Type.Func f -> registerWrapperShape(f);
-            case Type.Bytes ignored -> null;
+            case Type.Bytes ignored -> "$DealRt.Bytes";
             default -> null;
         };
     }
@@ -5163,7 +5228,7 @@ public final class JvmBackend {
             case Type.Class c -> silentClassJavaType(c);
             case Type.Array a -> silentArrayWrapperName(a.element());
             case Type.Func f -> registerWrapperShape(f);
-            case Type.Bytes ignored -> null;
+            case Type.Bytes ignored -> "$DealRt.Bytes";
             default -> null;
         };
     }
@@ -6340,18 +6405,20 @@ public final class JvmBackend {
                     || nn.inner() instanceof Type.Number
                     || nn.inner() instanceof Type.Boolean
                     || nn.inner() instanceof Type.String
+                    || nn.inner() instanceof Type.Bytes
                     || (nn.inner() instanceof Type.Class cls
                         && isLocalClassType(cls));
                 if (!innerOk) {
                     unsupported("class fields of type " + typeName(fieldType)
-                        + " (only primitive and local class nullable"
-                        + " fields are supported)", cf.span());
+                        + " (only primitive, bytes, and local class "
+                        + "nullable fields are supported)", cf.span());
                     return;
                 }
             } else if (!(fieldType instanceof Type.Int)
                     && !(fieldType instanceof Type.Number)
                     && !(fieldType instanceof Type.Boolean)
                     && !(fieldType instanceof Type.String)
+                    && !(fieldType instanceof Type.Bytes)
                     && !(fieldType instanceof Type.Table)
                     && !(fieldType instanceof Type.Array)
                     && !(fieldType instanceof Type.Class cls
@@ -6359,8 +6426,8 @@ public final class JvmBackend {
                         && !isBuiltinErrorType(cls))) {
                 unsupported("class fields of type " + typeName(fieldType)
                     + " (only primitive fields, nullable primitive/"
-                    + "class fields, and local array/table/class fields"
-                    + " are supported)", cf.span());
+                    + "class fields, and local bytes/array/table/class "
+                    + "fields are supported)", cf.span());
                 return;
             }
             String javaType = javaLocalType(fieldType, cf.span());
@@ -8393,8 +8460,8 @@ public final class JvmBackend {
         String shape = registerWrapperShape(funcType);
         if (shape == null) {
             unsupported("function values whose signature contains "
-                + "bytes/table carriers (deferred to the int32-bytes "
-                + "lane)", fd.span());
+                + "bytes/table carriers (deferred to the ISSUE-0160 recursive "
+                + "bytes-bearing wrapper closure)", fd.span());
             return;
         }
         String mapped = declareLocal(fd.name(), funcType);
@@ -8435,8 +8502,8 @@ public final class JvmBackend {
         String shape = registerWrapperShape(ft);
         if (shape == null) {
             unsupported("function values whose signature contains "
-                + "bytes/table carriers (deferred to the int32-bytes "
-                + "lane)", fe.span());
+                + "bytes/table carriers (deferred to the ISSUE-0160 recursive "
+                + "bytes-bearing wrapper closure)", fe.span());
             return "null";
         }
         Type returnType = ft.returnType();
@@ -10160,8 +10227,8 @@ public final class JvmBackend {
             // funcType arm stays defensive.
             if (fs.funcType() == null) {
                 unsupported("function values whose signature contains "
-                    + "bytes/table carriers (deferred to the int32-bytes "
-                    + "lane)", id.span());
+                    + "bytes/table carriers (deferred to the ISSUE-0160 recursive "
+                    + "bytes-bearing wrapper closure)", id.span());
                 return "null";
             }
             return javaName(id.name()) + "$fn";
@@ -10297,13 +10364,19 @@ public final class JvmBackend {
                     || rightType instanceof Type.Nullable) {
                 return emitNullableComparison(bin, op == BinaryOp.EQ);
             }
-            // Reference identity comparisons: T[] === T[] and C === C are
-            // value-equality by identity (LuaJIT's `==` on tables —
-            // array wrappers and class instances are the same shape there),
-            // exactly like the Lua backend's plain `(a == b)` fallthrough.
+            // Reference identity comparisons: T[] === T[], C === C, and
+            // bytes === bytes are value-equality by identity (LuaJIT's
+            // `==` on tables — array wrappers, class instances, and
+            // the runtime bytes carriers are the same shapes there) —
+            // Java `==` on the wrapper/$DealRt.Bytes references is the
+            // pinned reference-identity comparison (ISSUE-0158, the
+            // binary-comparison-selectors B-D7 gate lift): alias === alias
+            // true, distinct buffers false. Operands evaluate left to
+            // right exactly once.
             if (leftType instanceof Type.Array
                     || leftType instanceof Type.Class
-                    || leftType instanceof Type.Table) {
+                    || leftType instanceof Type.Table
+                    || leftType instanceof Type.Bytes) {
                 List<String> idOps = emitOperandsInOrder(
                     List.of(bin.left(), bin.right()));
                 return op == BinaryOp.EQ
@@ -11219,15 +11292,15 @@ public final class JvmBackend {
         String shape = registerWrapperShape(target);
         if (shape == null) {
             unsupported("function values whose signature contains "
-                + "bytes/table carriers (deferred to the int32-bytes "
-                + "lane)", value.span());
+                + "bytes/table carriers (deferred to the ISSUE-0160 recursive "
+                + "bytes-bearing wrapper closure)", value.span());
             return "null";
         }
         String actualShape = registerWrapperShape(actual);
         if (actualShape == null) {
             unsupported("function values whose signature contains "
-                + "bytes/table carriers (deferred to the int32-bytes "
-                + "lane)", value.span());
+                + "bytes/table carriers (deferred to the ISSUE-0160 recursive "
+                + "bytes-bearing wrapper closure)", value.span());
             return "null";
         }
         // Evaluate the value expression first (strict left-to-right /
@@ -11351,8 +11424,8 @@ public final class JvmBackend {
         String shape = registerWrapperShape(target);
         if (shape == null) {
             unsupported("function values whose signature contains "
-                + "bytes/table carriers (deferred to the int32-bytes "
-                + "lane)", value.span());
+                + "bytes/table carriers (deferred to the ISSUE-0160 recursive "
+                + "bytes-bearing wrapper closure)", value.span());
             return "null";
         }
         StringBuilder sb = new StringBuilder("new ").append(shape)
@@ -11571,8 +11644,8 @@ public final class JvmBackend {
         String shape = registerWrapperShape(actual);
         if (shape == null) {
             unsupported("function values whose signature contains "
-                + "bytes/table carriers (deferred to the int32-bytes "
-                + "lane)", value.span());
+                + "bytes/table carriers (deferred to the ISSUE-0160 recursive "
+                + "bytes-bearing wrapper closure)", value.span());
             return "null";
         }
         String tmp = nextFunctionValueTempName();
@@ -11862,8 +11935,8 @@ public final class JvmBackend {
             String shape = registerWrapperShape(f);
             if (shape == null) {
                 unsupported("function values whose signature contains "
-                    + "bytes/table carriers (deferred to the int32-bytes "
-                    + "lane)", call.callee().span());
+                    + "bytes/table carriers (deferred to the ISSUE-0160 recursive "
+                    + "bytes-bearing wrapper closure)", call.callee().span());
                 return "null";
             }
             String callee = emitExpression(call.callee());
@@ -12276,6 +12349,15 @@ public final class JvmBackend {
                 return "null";
             }
         }
+        if (objType instanceof Type.Bytes
+                && "length".equals(mae.field())) {
+            // v1.2 bytes .length (ISSUE-0158): the compiler-resolved
+            // immutable logical allocation length as DEAL int — not a
+            // class/table lookup. The receiver evaluates exactly once
+            // in Java, mirroring the Lua bytes_length lowering.
+            String obj = emitExpression(mae.object());
+            return "bytesLength(" + obj + ")";
+        }
         if (objType instanceof Type.Array && "length".equals(mae.field())) {
             String obj = emitExpression(mae.object());
             // ISSUE-0375 carrier switch: array length is DEAL int —
@@ -12403,6 +12485,19 @@ public final class JvmBackend {
      */
     private String emitIndexRead(IndexExpr idx, Type target) {
         Type arrayType = typeOf(idx.array());
+        if (arrayType instanceof Type.Bytes) {
+            // v1.2 bytes read (ISSUE-0158): b[i] lowers to
+            // bytesGet(b, i) — the receiver and index evaluate left to
+            // right (emitOperandsInOrder), the index is a declared int
+            // boundary, and the helper raises E8001 for a null carrier,
+            // E8012 outside [0, b.length), and returns the unsigned
+            // 0..255 byte value.
+            List<String> codes = emitOperandsInOrder(
+                List.of(idx.array(), idx.index()));
+            String indexCode = adaptIntBoundary(idx.index(),
+                codes.get(1), Type.Int.INSTANCE);
+            return "bytesGet(" + codes.get(0) + ", " + indexCode + ")";
+        }
         if (!(arrayType instanceof Type.Array arr)) {
             unsupported("indexing of " + typeName(arrayType), idx.span());
             return "null";
@@ -13134,6 +13229,21 @@ public final class JvmBackend {
                 unsupported("number() on " + typeName(argType), call.span());
                 yield "0.0";
             }
+            case "bytes" -> {
+                // v1.2 bytes allocation (ISSUE-0158): the checker pins
+                // exactly one int argument; the emitted length is a
+                // declared int boundary — a wider (time) value crosses
+                // through the signed32 checkInt inside adaptIntBoundary
+                // before bytesNew, whose own checkInt/negative/E8012
+                // gates then allocate the zero-filled byte[].
+                if (argType instanceof Type.Int) {
+                    yield "bytesNew("
+                        + adaptIntBoundary(arg, emitted,
+                            Type.Int.INSTANCE) + ")";
+                }
+                unsupported("bytes() on " + typeName(argType), call.span());
+                yield "null";
+            }
             default -> {
                 unsupported("intrinsic '" + name + "'", call.span());
                 yield "null";
@@ -13202,6 +13312,29 @@ public final class JvmBackend {
             return target + " = " + value;
         }
         if (ae.target() instanceof IndexExpr idx) {
+            if (typeOf(idx.array()) instanceof Type.Bytes) {
+                // v1.2 bytes write (ISSUE-0158): b[i] = v lowers to
+                // bytesSet(b, i, v). The receiver, the index, and the
+                // assignment RHS all evaluate (left to right) BEFORE the
+                // write validation — emitOperandsInOrder keeps that
+                // order when any operand hoists side-effecting
+                // pre-statements, and the emitted helper call's Java
+                // arguments evaluate left to right before bytesSet
+                // performs the E8012 index check, the E8013 value check,
+                // and the store. A failed write changes no storage; the
+                // helper returns the stored unsigned value, so the
+                // assignment expression keeps its DEAL value in value
+                // positions.
+                List<String> codes = emitOperandsInOrder(
+                    List.of(idx.array(), idx.index(), ae.value()),
+                    Arrays.asList(null, null, Type.Int.INSTANCE));
+                String rhs = adaptIntBoundary(ae.value(), codes.get(2),
+                    Type.Int.INSTANCE);
+                String indexCode = adaptIntBoundary(idx.index(),
+                    codes.get(1), Type.Int.INSTANCE);
+                return "bytesSet(" + codes.get(0) + ", " + indexCode
+                    + ", " + rhs + ")";
+            }
             // Array element write `xs[i] = v` (ISSUE-0094). The checker
             // enforces int indexes and element-type assignability
             // (E3007/E3001), so only the four primitive element arrays
@@ -13631,6 +13764,21 @@ public final class JvmBackend {
                 case "number" -> Type.Number.INSTANCE;
                 case "string" -> Type.String.INSTANCE;
                 case "table" -> Type.Table.INSTANCE;
+                case "bytes" -> {
+                    // v1.2 bytes annotation (ISSUE-0158 int32-bytes
+                    // lane): a bytes-spelled named type resolves to the
+                    // canonical Type.Bytes primitive. bytes is not a
+                    // DEAL keyword, so a checker-accepted user class
+                    // named bytes resolves to its ClassSymbol and wins
+                    // over the primitive (the same class-symbol-first
+                    // guard the Lua sibling uses).
+                    Symbol sym = symbols.resolve(nt.name());
+                    if (sym instanceof Symbol.ClassSymbol
+                            && moduleClasses.containsKey(nt.name())) {
+                        yield classTypeFor(nt.name(), modulePath);
+                    }
+                    yield Type.Bytes.INSTANCE;
+                }
                 default -> {
                     // A local module-level class (the checker's hoisted
                     // ClassSymbol). The builtin Error stays out of slice
@@ -13715,7 +13863,8 @@ public final class JvmBackend {
                 // covers), preserving the marker so the wrapper
                 // machinery carries async function values unchanged.
                 // Bytes/table carriers inside the signature stay
-                // rejected here (the int32-bytes lane's carriers) —
+                // rejected here (deferred to the ISSUE-0160 recursive
+                // bytes-bearing wrapper closure) —
                 // E6000, never a silent miscompile (DEAL v1.2 function
                 // types carry no rest arm).
                 List<Type> paramTypes = new ArrayList<>();
@@ -13729,7 +13878,8 @@ public final class JvmBackend {
                     if (hasBytesOrTableCarrier(pt)) {
                         unsupported("function values whose signature "
                             + "contains bytes/table carriers (deferred to "
-                            + "the int32-bytes lane)", p.type().span());
+                            + "the ISSUE-0160 recursive bytes-bearing "
+                            + "wrapper closure)", p.type().span());
                         ok = false;
                         break;
                     }
@@ -13740,8 +13890,8 @@ public final class JvmBackend {
                     ok = false;
                 } else if (hasBytesOrTableCarrier(rt)) {
                     unsupported("function values whose signature contains "
-                        + "bytes/table carriers (deferred to the int32-bytes "
-                        + "lane)", ft.returnType().span());
+                        + "bytes/table carriers (deferred to the ISSUE-0160 recursive "
+                        + "bytes-bearing wrapper closure)", ft.returnType().span());
                     ok = false;
                 }
                 yield ok ? new Type.Func(paramTypes, rt, ft.isAsync())
@@ -13753,7 +13903,8 @@ public final class JvmBackend {
     /** True when the type tree carries a {@code bytes} or {@code table}
      * carrier anywhere inside it (arrays, nullables, and nested
      * function signatures recurse): those carriers stay rejected at
-     * function-type annotations for the int32-bytes lane (E6000).
+     * function-type annotations for the ISSUE-0160 recursive
+     * bytes-bearing wrapper closure (E6000).
      * Every other shape — primitives/string/null, arrays, classes,
      * nullables, and nested sync/async function types — is carried by
      * the shared per-signature wrapper machinery (ISSUE-0301 D2). */
@@ -13839,9 +13990,13 @@ public final class JvmBackend {
                 yield nullableJavaType(n.inner(), span);
             }
             case Type.Bytes ignored -> {
-                unsupported("values of type " + typeName(t)
-                    + " (bytes is unsupported — ISSUE-0158 boundary)", span);
-                yield null;
+                // v1.2 bytes value (ISSUE-0158 int32-bytes lane): the
+                // shared $DealRt.Bytes carrier — reference identity for
+                // assignment/aliasing/equality, canonical descriptor
+                // "bytes", non-jsonable. Allocation/indexing/mutation
+                // lower to the emitted bytesNew/bytesLength/bytesGet/
+                // bytesSet helpers.
+                yield "$DealRt.Bytes";
             }
             case Type.Error ignored -> null;
             case Type.Func f -> {
@@ -13855,8 +14010,8 @@ public final class JvmBackend {
                 String shape = registerWrapperShape(f);
                 if (shape == null) {
                     unsupported("function values whose signature contains "
-                        + "bytes/table carriers (deferred to the int32-bytes "
-                        + "lane)", span);
+                        + "bytes/table carriers (deferred to the ISSUE-0160 recursive "
+                        + "bytes-bearing wrapper closure)", span);
                     yield null;
                 }
                 yield shape;
@@ -13942,16 +14097,16 @@ public final class JvmBackend {
                 String shape = registerWrapperShape(f);
                 if (shape == null) {
                     unsupported("function values whose signature contains "
-                        + "bytes/table carriers (deferred to the int32-bytes "
-                        + "lane)", span);
+                        + "bytes/table carriers (deferred to the ISSUE-0160 recursive "
+                        + "bytes-bearing wrapper closure)", span);
                     yield null;
                 }
                 yield shape;
             }
             case Type.Bytes ignored -> {
-                unsupported("values of type " + typeName(inner) + " | null"
-                    + " (bytes is unsupported — ISSUE-0158 boundary)", span);
-                yield null;
+                // v1.2 bytes | null (ISSUE-0158): the plain reference
+                // carrier — Java null is the DEAL null.
+                yield "$DealRt.Bytes";
             }
             default -> {
                 unsupported("values of type " + typeName(inner) + " | null"
@@ -13994,7 +14149,7 @@ public final class JvmBackend {
                 }
                 case Type.Bytes ignored -> {
                     unsupported("arrays with element type " + typeName(element)
-                        + " (bytes is unsupported — ISSUE-0158 boundary)", span);
+                        + " (recursive bytes-bearing closure — ISSUE-0160)", span);
                     yield null;
                 }
                 case Type.Func f -> {
@@ -14022,7 +14177,7 @@ public final class JvmBackend {
             }
             case Type.Bytes ignored -> {
                 unsupported("arrays with element type " + typeName(element)
-                    + " (bytes is unsupported — ISSUE-0158 boundary)", span);
+                    + " (recursive bytes-bearing closure — ISSUE-0160)", span);
                 yield null;
             }
             case Type.Array inner -> {
@@ -14317,8 +14472,8 @@ public final class JvmBackend {
                 && ne.inner() instanceof Type.Func f) {
             if (registerWrapperShape(f) == null) {
                 unsupported("function arrays whose signature contains "
-                    + "bytes/table carriers (deferred to the int32-bytes "
-                    + "lane)", span);
+                    + "bytes/table carriers (deferred to the ISSUE-0160 recursive "
+                    + "bytes-bearing wrapper closure)", span);
                 return null;
             }
             registerRefArrayShape(element);
@@ -14332,8 +14487,8 @@ public final class JvmBackend {
         if (element instanceof Type.Func f) {
             if (registerWrapperShape(f) == null) {
                 unsupported("function arrays whose signature contains "
-                    + "bytes/table carriers (deferred to the int32-bytes "
-                    + "lane)", span);
+                    + "bytes/table carriers (deferred to the ISSUE-0160 recursive "
+                    + "bytes-bearing wrapper closure)", span);
                 return null;
             }
             registerRefArrayShape(element);
@@ -14370,8 +14525,8 @@ public final class JvmBackend {
                 && ne.inner() instanceof Type.Func f) {
             if (registerWrapperShape(f) == null) {
                 unsupported("function arrays whose signature contains "
-                    + "bytes/table carriers (deferred to the int32-bytes "
-                    + "lane)", span);
+                    + "bytes/table carriers (deferred to the ISSUE-0160 recursive "
+                    + "bytes-bearing wrapper closure)", span);
                 return null;
             }
             registerRefArrayShape(element);
@@ -14385,8 +14540,8 @@ public final class JvmBackend {
         if (element instanceof Type.Func f) {
             if (registerWrapperShape(f) == null) {
                 unsupported("function arrays whose signature contains "
-                    + "bytes/table carriers (deferred to the int32-bytes "
-                    + "lane)", span);
+                    + "bytes/table carriers (deferred to the ISSUE-0160 recursive "
+                    + "bytes-bearing wrapper closure)", span);
                 return null;
             }
             registerRefArrayShape(element);
