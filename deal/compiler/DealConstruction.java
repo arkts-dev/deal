@@ -164,7 +164,7 @@ public class DealConstruction {
         return value;
     }
 
-    protected final String value(CanonicalJson.Obj c, String key) {
+    protected String value(CanonicalJson.Obj c, String key) {
         var operand = field(c, key);
         if (operand instanceof CanonicalJson.Str s) return get(s.value(), Kind.VALUE).source();
         if (operand instanceof CanonicalJson.Obj literal) {
