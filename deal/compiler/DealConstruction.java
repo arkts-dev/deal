@@ -21,11 +21,13 @@ public class DealConstruction {
     private final Map<String, Built> handles = new LinkedHashMap<>();
     private final Map<String, CanonicalJson.Obj> pending = new LinkedHashMap<>();
     private final Set<String> resolving = new java.util.HashSet<>();
+    private final java.util.Deque<String> callStack = new java.util.ArrayDeque<>();
 
     public final String build(CanonicalJson.Obj batch, Kind expected) {
         handles.clear();
         pending.clear();
         resolving.clear();
+        callStack.clear();
         var calls = requireArray(field(batch, "calls"), "calls").items();
         if (calls.size() > 512) throw new IllegalArgumentException("CC1001: construction batch exceeds 512 calls");
         for (var raw : calls) {
@@ -44,6 +46,7 @@ public class DealConstruction {
                 + ". Define this id in the current calls batch. A string operand is a handle, not literal text;"
                 + " for literal text define a text constructor and use its id. Handles from previous batches are invalid.");
         if (!resolving.add(id)) throw new IllegalArgumentException("cyclic construction dependency: " + id);
+        callStack.push(id);
         try {
                 Built built = invoke(stringField(call, "op"), call);
                 if (built.source().length() > 131_072)
@@ -54,6 +57,7 @@ public class DealConstruction {
                 if (failure instanceof Failure typed && typed.ownerId != null) throw typed;
                 throw new Failure(id, "CC1003 at " + id + ": " + failure.getMessage());
         } finally {
+            callStack.pop();
             resolving.remove(id);
         }
     }
@@ -138,11 +142,13 @@ public class DealConstruction {
         try {
             value = resolve(id);
         } catch (Failure failure) {
-            if (!pending.containsKey(id)) throw new Failure(failure.ownerId,
+            if (!pending.containsKey(id)) throw new Failure(callStack.isEmpty() ? failure.ownerId : callStack.peek(),
                     "Expected " + kind + " operand. " + failure.getMessage());
             throw failure;
         }
-        if (value.kind() != kind) throw new Failure(id, "expected " + kind + " handle: " + id + "; actual " + value.kind());
+        if (value.kind() != kind) throw new Failure(callStack.isEmpty() ? id : callStack.peek(),
+                "expected " + kind + " handle: " + id + "; actual " + value.kind()
+                        + ". Replace the incorrect operand reference, preserving the referenced call when it is used elsewhere.");
         return value;
     }
 
