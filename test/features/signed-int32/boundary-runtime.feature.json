@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "feature": "SIGNED_INT32",
+  "spec": "spec-v1.2.md §Numeric overflow",
+  "description": "signed-int32 boundary arithmetic, truncating division and remainder behave identically on both backends",
+  "expected": "runtime-ok",
+  "backends": ["luajit", "jvm"],
+  "invocation": "direct-main",
+  "support": []
+}

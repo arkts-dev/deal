@@ -1,0 +1,19 @@
+// v1.2 feature fixture — BYTES_SYNC_FUNCTION runtime-ok record
+// (synthetic-main). Explicit dual-role ownership: this record lists the
+// rooted bytes-defaults module (which has its own record) in its support
+// graph because this root imports it.
+import * as Defaults from "../bytes-defaults/defaults-synthetic"
+
+export function syncFunctionOracle(): int {
+  let f: (x: bytes) => bytes = function(x: bytes): bytes {
+    x[0] = x[0] + 1;
+    return x;
+  };
+  let b: bytes = bytes(2);
+  b[0] = 41;
+  let out: bytes = f(b);
+  if (out[0] !== 42 || b[0] !== 42) {
+    throw { code: "TEST_FAIL", message: "sync function bytes identity mismatch" };
+  }
+  return Defaults.defaultsOracle();
+}

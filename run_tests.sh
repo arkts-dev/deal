@@ -283,6 +283,38 @@ done
 TEST_MAINS=( "${REBUILT_MAINS[@]}" )
 
 # =========================================================================
+# ISSUE-0157 (strict v1.2 feature catalog and backend matrix): the three
+# reusable catalog components — the strict schema-v1 feature-record
+# metadata parser, the architecture-owned backend matrix, and the
+# catalog loader (root/support closure, linked records, production
+# // @spec: E1044 rejection, main/oracle source shapes) — plus their
+# unit batteries and the real-corpus gate join the compile list and the
+# unconditional run phase here. The change boundary is
+# deal/test/conformance/ plus test/features/ (the on-disk catalog
+# corpus); the linked JVM C_FFI rejection record pins E6003 — the exact
+# code the production JVM pipeline emits at @extern-c
+# (deal/module/CompilationOrchestrator.java) — so
+# deal/diagnostics/DiagnosticCode.java stays untouched by this change;
+# the single compile/test-list authority file (tools/gate-manifest.sh)
+# stays untouched.
+# =========================================================================
+TEST_SOURCES+=(
+  'deal/test/conformance/V12FeatureMetadata.java'
+  'deal/test/conformance/FeatureBackendMatrix.java'
+  'deal/test/conformance/V12FeatureCatalog.java'
+  'deal/test/conformance/V12FeatureMetadataTest.java'
+  'deal/test/conformance/FeatureBackendMatrixTest.java'
+  'deal/test/conformance/V12FeatureCatalogTest.java'
+  'deal/test/conformance/V12FeatureCatalogCorpusTest.java'
+)
+TEST_MAINS+=(
+  'fg|=== Running V12 Feature Metadata Tests (ISSUE-0157) ===|java -ea -cp build deal.test.conformance.V12FeatureMetadataTest'
+  'fg|=== Running Feature Backend Matrix Tests (ISSUE-0157) ===|java -ea -cp build deal.test.conformance.FeatureBackendMatrixTest'
+  'fg|=== Running V12 Feature Catalog Tests (ISSUE-0157) ===|java -ea -cp build deal.test.conformance.V12FeatureCatalogTest'
+  'fg|=== Running V12 Feature Catalog Corpus Tests (ISSUE-0157) ===|java -ea -cp build deal.test.conformance.V12FeatureCatalogCorpusTest'
+)
+
+# =========================================================================
 # DEALPG4 fail-closed toolchain preflight (ISSUE-0183,
 # fail-closed-toolchain-preflight D1/D2/D5): one ordered, fail-closed
 # phase sequence P0-P5 shared verbatim with coverage.sh via

@@ -1,0 +1,7 @@
+// v1.2 feature fixture — DIRECTIVES compile-ok record (compile-only):
+// an invalidly placed @jsonable stays warning E1043 and applies no
+// metadata, so compilation continues and succeeds.
+// @jsonable
+export function main(): null {
+  return null;
+}

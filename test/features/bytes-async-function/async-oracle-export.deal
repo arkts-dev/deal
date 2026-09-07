@@ -1,0 +1,29 @@
+// v1.2 feature fixture — BYTES_ASYNC_FUNCTION runtime-ok record
+// (async-export): the production host invoker calls and awaits the
+// async oracle once; the oracle assigns, invokes, and awaits a
+// first-class async(bytes)->bytes value and asserts bytes identity and
+// content. The project also carries the valid non-async main(): null.
+export function main(): null {
+  return null;
+}
+
+async function increment(buffer: bytes): bytes {
+  buffer[0] = buffer[0] + 1;
+  return buffer;
+}
+
+export async function oracle(): null {
+  let f: async (b: bytes) => bytes = increment;
+  let b: bytes = bytes(2);
+  b[0] = 41;
+  let out: bytes = await f(b);
+  if (out[0] !== 42 || b[0] !== 42) {
+    throw { code: "TEST_FAIL", message: "async bytes function identity mismatch" };
+  }
+  let holder: (async (b: bytes) => bytes)[] = [f];
+  let second: bytes = await holder[0](bytes(1));
+  if (second[0] !== 1) {
+    throw { code: "TEST_FAIL", message: "containerized async bytes function mismatch" };
+  }
+  return null;
+}

@@ -1,0 +1,24 @@
+// v1.2 feature fixture — BYTES_DESCRIPTORS runtime-ok record (direct-main).
+class Payload {
+  data: bytes = bytes(2);
+}
+
+function describe(p: Payload): int {
+  return p.data.length;
+}
+
+export function main(): null {
+  let p: Payload = { data: bytes(3) };
+  if (describe(p) !== 3) {
+    throw { code: "TEST_FAIL", message: "descriptors: bytes field length mismatch" };
+  }
+  p.data[1] = 200;
+  let q: Payload = { data: bytes(1) };
+  if (q.data.length !== 1) {
+    throw { code: "TEST_FAIL", message: "descriptors: second instance length mismatch" };
+  }
+  if (p.data[1] !== 200) {
+    throw { code: "TEST_FAIL", message: "descriptors: instances share bytes storage" };
+  }
+  return null;
+}

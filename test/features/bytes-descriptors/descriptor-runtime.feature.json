@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "feature": "BYTES_DESCRIPTORS",
+  "spec": "spec-v1.2.md §Runtime type descriptor format",
+  "description": "canonical descriptor bytes crosses class-field boundaries as a real buffer on both backends",
+  "expected": "runtime-ok",
+  "backends": ["luajit", "jvm"],
+  "invocation": "direct-main",
+  "support": []
+}

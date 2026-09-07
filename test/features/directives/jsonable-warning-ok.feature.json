@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "feature": "DIRECTIVES",
+  "spec": "spec-v1.2.md §JSON serialization",
+  "description": "invalid @jsonable placement stays warning E1043 and applies no metadata — compilation succeeds",
+  "expected": "compile-ok",
+  "backends": ["luajit", "jvm"],
+  "invocation": "compile-only",
+  "support": []
+}

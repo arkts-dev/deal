@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "feature": "BYTES_SYNC_FUNCTION",
+  "spec": "spec-v1.2.md §Function values",
+  "description": "a first-class sync bytes-bearing function value is assigned, invoked, and asserts bytes identity/content on both backends",
+  "expected": "runtime-ok",
+  "backends": ["luajit", "jvm"],
+  "invocation": "synthetic-main",
+  "oracle": { "exportName": "syncFunctionOracle", "functionDescriptor": "()->int" },
+  "support": ["bytes-defaults/defaults-synthetic.deal", "bytes-core/helper/bytes-ops.deal"]
+}

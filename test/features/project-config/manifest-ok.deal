@@ -1,0 +1,11 @@
+// v1.2 feature fixture — PROJECT_CONFIG compile-ok record
+// (compile-only): the executor supplies the exact-v1.2 project (one
+// ancestor deal.json with languageVersion "1.2"); this source carries
+// no directive-shaped metadata and compiles clean under it.
+export function main(): null {
+  let ok: boolean = true;
+  if (!ok) {
+    throw { code: "TEST_FAIL", message: "project config sanity" };
+  }
+  return null;
+}

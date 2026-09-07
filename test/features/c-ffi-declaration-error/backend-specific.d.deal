@@ -1,0 +1,8 @@
+// v1.2 feature fixture — C_FFI_DECLARATION_ERROR compile-error E7002
+// record (compile-only, backend-specific JVM pipeline): under effective
+// @extern-c a C marker anchored to an exported function is rejected
+// with E7002 at the function declaration.
+// @extern-c
+
+// @c-struct
+export function marked_function(a: int, b: int): int;

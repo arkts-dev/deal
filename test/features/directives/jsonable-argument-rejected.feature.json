@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "feature": "DIRECTIVES",
+  "spec": "spec-v1.2.md §Comment semantics and lexical grammar",
+  "description": "@jsonablex is the recognized jsonable name with the forbidden argument x — E1045 at the directive range",
+  "expected": { "compile-error": "E1045" },
+  "backends": ["luajit", "jvm"],
+  "invocation": "compile-only",
+  "support": []
+}

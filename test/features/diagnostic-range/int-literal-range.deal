@@ -1,0 +1,7 @@
+// v1.2 feature fixture — DIAGNOSTIC_RANGE compile-error E1036 record
+// (compile-only): the positive literal 2147483648 exceeds the signed
+// int32 range, and the parser rejects it at its exact scalar range.
+export function main(): null {
+  let tooWide: int = 2147483648;
+  return null;
+}

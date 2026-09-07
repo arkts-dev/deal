@@ -1,0 +1,12 @@
+// v1.2 feature fixture — C_FFI LuaJIT runtime-ok record (direct-main):
+// the runtime record runs exactly on LuaJIT and links the JVM
+// compile-error E6003 rejection record.
+import * as ffi from "./native-add"
+
+export function main(): null {
+  let sum: int = ffi.native_add(40, 2);
+  if (sum !== 42) {
+    throw { code: "TEST_FAIL", message: "c ffi native add mismatch" };
+  }
+  return null;
+}

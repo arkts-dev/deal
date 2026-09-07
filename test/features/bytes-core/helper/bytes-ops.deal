@@ -1,0 +1,15 @@
+// v1.2 feature fixture — support-only module for the BYTES_CORE record
+// (no sidecar of its own; reachable through the root's support graph).
+export function zeroFill(length: int): bytes {
+  return bytes(length);
+}
+
+export function byteSum(buffer: bytes): int {
+  let sum: int = 0;
+  let i: int = 0;
+  while (i < buffer.length) {
+    sum = sum + buffer[i];
+    i = i + 1;
+  }
+  return sum;
+}

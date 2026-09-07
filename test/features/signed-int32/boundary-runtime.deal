@@ -1,0 +1,19 @@
+// v1.2 feature fixture — SIGNED_INT32 runtime-ok record (direct-main).
+export function main(): null {
+  let max: int = 2147483647;
+  let min: int = -2147483648;
+  let sum: int = max - 1;
+  if (sum !== 2147483646) {
+    throw { code: "TEST_FAIL", message: "int32 boundary subtraction mismatch" };
+  }
+  if (min + 1 !== -2147483647) {
+    throw { code: "TEST_FAIL", message: "int32 minimum arithmetic mismatch" };
+  }
+  if (7 / -2 !== -3) {
+    throw { code: "TEST_FAIL", message: "int32 truncating division mismatch" };
+  }
+  if (7 % -2 !== 1) {
+    throw { code: "TEST_FAIL", message: "int32 truncating remainder mismatch" };
+  }
+  return null;
+}
