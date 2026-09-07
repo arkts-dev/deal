@@ -16,6 +16,8 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.Comparator;
 import java.util.List;
 import java.util.regex.Matcher;
@@ -376,26 +378,37 @@ public class ProjectIntegrationGatesTest {
     }
 
     // =========================================================================
-    // Extern-c hold gate (ISSUE-0345 review cycle 1 remediation): until
-    // ISSUE-0157 lands the frontend's FfiModuleDescriptor, the LuaJIT arm
-    // must not activate emitter D6 (epic open blocker: "nothing on the
-    // LuaJIT side can activate before they land"). An // @extern-c
-    // declaration import therefore keeps the pre-D6 route — the
-    // load_host declared-map emission — and the generated chunk carries
-    // no __rt.load_ffi loader call and no ffi.C access. This gate pins
-    // the held state so a premature D6 activation fails it; the
-    // ISSUE-0345 D6 landing (consuming FfiModuleDescriptor) replaces this
-    // gate with the load_ffi generated-content gates.
+    // Extern-c load_ffi emission gate (ISSUE-0454): the LuaJIT arm routes
+    // every // @extern-c declaration import through the metadata phase's
+    // FfiGeneratedModule into
+    //   local <bindingsLocal> = <bindings literal>
+    //   local <alias> = __rt.load_ffi(<moduleKey>, <cdefBundle>,
+    //       <plans>, <bindingsLocal>, <import span triplet>)
+    // with the metadata-provided module key, the normalized loader text,
+    // cdef, plans, bindings, and the source span. The obsolete pre-D6
+    // hold gate (extern-c -> __rt.load_host) is retired: the generated
+    // artifact carries no load_host route for the import and no ffi.C
+    // access. Isolated fixture copies perturb the externals key and the
+    // native-library path independently to prove the emission consumes
+    // the current FfiGeneratedModule metadata rather than constants.
     // =========================================================================
 
-    private static void testExternCImportPreD6Hold() throws Exception {
-        System.out.println("-- Extern-c hold gate: the pre-D6 route stays"
-            + " until ISSUE-0157 lands --");
-        Path base = Files.createTempDirectory("deal_gate_ffi_hold_");
+    private static void testExternCImportLoadFfiEmission() throws Exception {
+        System.out.println("-- Extern-c import: load_ffi emission with the"
+            + " metadata-provided module key, normalized loader text,"
+            + " cdef, plans, bindings, and source span --");
+        Path base = Files.createTempDirectory("deal_gate_ffi_emission_");
         try {
             Path proj = base.resolve("proj");
             write(proj, "ffi_math.d.deal",
                 "// @extern-c\n"
+                    + "\n"
+                    + "// @c-struct\n"
+                    + "export class Vec2 {\n"
+                    + "  x: number = 0.0;\n"
+                    + "  y: number = 1.5;\n"
+                    + "}\n"
+                    + "\n"
                     + "export function add(a: int, b: int): int;\n");
             write(proj, "deal.json",
                 "{\n  \"languageVersion\": \"1.2\",\n"
@@ -405,7 +418,7 @@ public class ProjectIntegrationGatesTest {
                     + "  \"externals\": {\n"
                     + "    \"ffi_math\": {\n"
                     + "      \"declaration\": \"ffi_math.d.deal\",\n"
-                    + "      \"nativeLibrary\": \"libffi_math.so\"\n"
+                    + "      \"nativeLibrary\": \"libs/libffi_math.so\"\n"
                     + "    }\n  }\n}\n");
             write(proj, "src/main.deal",
                 "import * as ffi from \"ffi_math\"\n"
@@ -417,7 +430,7 @@ public class ProjectIntegrationGatesTest {
             String[] lua = runCliCapturingErr(new String[]{
                 "compile", entry.toString()});
             check("0".equals(lua[0]),
-                "the extern-c import compiles on the held LuaJIT arm: "
+                "the extern-c import compiles on the LuaJIT arm: "
                     + lua[1]);
             check(!lua[1].contains("ERROR"),
                 "the extern-c compile emits no diagnostics: " + lua[1]);
@@ -427,18 +440,418 @@ public class ProjectIntegrationGatesTest {
 
             String mainLua = Files.readString(luaDir.resolve("main.lua"));
             check(mainLua.contains(
-                    "local ffi = __rt.load_host(\"ffi_math\", {"),
-                "the extern-c import keeps the pre-D6 host route pending"
-                    + " ISSUE-0157");
-            check(!mainLua.contains("__rt.load_ffi"),
-                "the held arm emits no load_ffi loader call");
+                    "local ffi = __rt.load_ffi(\"ffi:@$external/ffi_math\", {"),
+                "the extern-c import emits the load_ffi call with the"
+                    + " metadata-provided module key");
+            check(mainLua.contains("bundleDigest = \"")
+                    && mainLua.contains("identityDigest = \"")
+                    && mainLua.contains("fullContent = \"")
+                    && mainLua.contains("entries = { { entryDigest = \""),
+                "the emitted bundle carries the digest fields, the full"
+                    + " cdef content, and the ordered entries");
+            check(mainLua.contains("dealName = \"add\", cSymbol = \"add\"")
+                    && mainLua.contains("privateFunctionPointerType = \"")
+                    && mainLua.contains("orderedParams = { { kind = \"INT\","
+                        + " canonicalDescriptor = \"int\","
+                        + " canonicalClassIdentity = nil }"),
+                "the emitted bundle carries the canonical function"
+                    + " metadata");
+            check(mainLua.contains("name = \"Vec2\","
+                    + " canonicalClassIdentity ="
+                    + " \"@$external/ffi_math/Vec2\"")
+                    && mainLua.contains("kind = \"C_STRUCT\"")
+                    && mainLua.contains(
+                        "dealName = \"x\", fieldOrdinal = 0"),
+                "the emitted bundle carries the canonical class metadata");
+            // The normalized loader text (seam S3): the manifest-relative
+            // path resolves against the manifest directory through the
+            // pinned prefix-resolved symlink conversion.
+            ProtectedPathOps.PathResult loaderResolved =
+                ProtectedPathOps.normalizePrefixResolved(
+                    proj.resolve("libs/libffi_math.so").toString());
+            check(loaderResolved
+                    instanceof ProtectedPathOps.PathResult.Success,
+                "the loader text resolves: " + loaderResolved);
+            String expectedLoader =
+                ((ProtectedPathOps.PathResult.Success) loaderResolved)
+                    .resolvedPath().toString();
+            check(mainLua.contains(
+                    "nativeLibrary = { kind = \"MANIFEST_RELATIVE_PATH\","
+                        + " loaderText = \"" + expectedLoader + "\" }"),
+                "the emitted bundle carries the normalized loader text");
+            check(mainLua.contains(
+                    "[\"@$external/ffi_math/Vec2\"] = { plan = {")
+                    && mainLua.contains("name = \"x\", descriptor ="
+                        + " \"number\", optional = false,"
+                        + " evaluator = function() return 0.0 end")
+                    && mainLua.contains("canonicalPlanContent = \"")
+                    && mainLua.contains("semanticDefaultContents = \"")
+                    && mainLua.contains(
+                        "evaluatorImplementationContents = \"")
+                    && mainLua.contains("planDigest = \""),
+                "the emitted plans literal carries the plan list with"
+                    + " deferred evaluators and the three content strings");
+            check(mainLua.contains("local __ffi_bindings_1 = { moduleKey ="
+                    + " \"ffi:@$external/ffi_math\", state = \"UNBOUND\","
+                    + " cells = { add = { state = \"UNBOUND\","
+                    + " wrapper = nil, errorValue = nil } }")
+                    && mainLua.contains("importedFunctions = {")
+                    && mainLua.contains("importedClassPlans = {"),
+                "the emitted bindings literal carries the module key, the"
+                    + " UNBOUND forward cells, and the carried imported"
+                    + " reference lists");
+            check(mainLua.contains(", \"" + entry + "\", 1, 1)"),
+                "the loader call carries the import span triplet");
+            check(!mainLua.contains("load_host"),
+                "the extern-c import takes no load_host route");
             check(!mainLua.contains("ffi.C"),
-                "the held arm emits no ffi.C access");
+                "the generated chunk carries no ffi.C access");
             check(!mainLua.contains("FFI_UNSUPPORTED_BACKEND"),
-                "the held arm raises no FFI_UNSUPPORTED_BACKEND");
+                "the LuaJIT arm raises no FFI_UNSUPPORTED_BACKEND");
+
+            // Metadata consumption, part 1: an isolated copy whose
+            // externals KEY changes emits the changed module key while
+            // the loader text stays pinned.
+            Path keyPerturbed = base.resolve("key_perturbed");
+            write(keyPerturbed, "ffi_math.d.deal",
+                "// @extern-c\n"
+                    + "export function add(a: int, b: int): int;\n");
+            write(keyPerturbed, "deal.json",
+                "{\n  \"languageVersion\": \"1.2\",\n"
+                    + "  \"moduleRoots\": [\"src\"],\n"
+                    + "  \"output\": \"build/lua\",\n"
+                    + "  \"backend\": \"luajit\",\n"
+                    + "  \"externals\": {\n"
+                    + "    \"ffi_other\": {\n"
+                    + "      \"declaration\": \"ffi_math.d.deal\",\n"
+                    + "      \"nativeLibrary\":"
+                    + " \"libs/libffi_math.so\"\n"
+                    + "    }\n  }\n}\n");
+            write(keyPerturbed, "src/main.deal",
+                "import * as ffi from \"ffi_other\"\n"
+                    + "export function main(): null {\n"
+                    + "  return null;\n"
+                    + "}\n");
+            String[] keyRun = runCliCapturingErr(new String[]{
+                "compile",
+                keyPerturbed.resolve("src/main.deal").toAbsolutePath()
+                    .toString()});
+            check("0".equals(keyRun[0]),
+                "the key-perturbed copy compiles: " + keyRun[1]);
+            String keyLua = Files.readString(
+                keyPerturbed.resolve("build/lua/main.lua"));
+            check(keyLua.contains(
+                    "local ffi = __rt.load_ffi(\"ffi:@$external/ffi_other\""
+                        + ", {"),
+                "a changed externals key changes the emitted module key");
+            // The same relative nativeLibrary path resolves against the
+            // copy's own manifest directory: the emitted loader text is
+            // the copy-local normalized text, never the original
+            // project's constant.
+            ProtectedPathOps.PathResult keyLoaderResolved =
+                ProtectedPathOps.normalizePrefixResolved(
+                    keyPerturbed.resolve("libs/libffi_math.so").toString());
+            check(keyLoaderResolved
+                    instanceof ProtectedPathOps.PathResult.Success,
+                "the copy's loader text resolves: " + keyLoaderResolved);
+            String keyExpectedLoader =
+                ((ProtectedPathOps.PathResult.Success) keyLoaderResolved)
+                    .resolvedPath().toString();
+            check(keyLua.contains("loaderText = \"" + keyExpectedLoader
+                    + "\""),
+                "the changed externals key keeps the metadata-provided"
+                    + " loader text of the copy");
+            check(!keyLua.contains(expectedLoader),
+                "the copy's artifact carries no loader text constant of"
+                    + " the original project");
+
+            // Metadata consumption, part 2: an isolated copy whose
+            // nativeLibrary PATH changes emits the changed loader text
+            // while the module key stays pinned.
+            Path pathPerturbed = base.resolve("path_perturbed");
+            write(pathPerturbed, "ffi_math.d.deal",
+                "// @extern-c\n"
+                    + "export function add(a: int, b: int): int;\n");
+            write(pathPerturbed, "deal.json",
+                "{\n  \"languageVersion\": \"1.2\",\n"
+                    + "  \"moduleRoots\": [\"src\"],\n"
+                    + "  \"output\": \"build/lua\",\n"
+                    + "  \"backend\": \"luajit\",\n"
+                    + "  \"externals\": {\n"
+                    + "    \"ffi_math\": {\n"
+                    + "      \"declaration\": \"ffi_math.d.deal\",\n"
+                    + "      \"nativeLibrary\":"
+                    + " \"libs/libffi_other.so\"\n"
+                    + "    }\n  }\n}\n");
+            write(pathPerturbed, "src/main.deal",
+                "import * as ffi from \"ffi_math\"\n"
+                    + "export function main(): null {\n"
+                    + "  return null;\n"
+                    + "}\n");
+            String[] pathRun = runCliCapturingErr(new String[]{
+                "compile",
+                pathPerturbed.resolve("src/main.deal").toAbsolutePath()
+                    .toString()});
+            check("0".equals(pathRun[0]),
+                "the path-perturbed copy compiles: " + pathRun[1]);
+            String pathLua = Files.readString(
+                pathPerturbed.resolve("build/lua/main.lua"));
+            ProtectedPathOps.PathResult otherResolved =
+                ProtectedPathOps.normalizePrefixResolved(
+                    pathPerturbed.resolve("libs/libffi_other.so")
+                        .toString());
+            check(otherResolved
+                    instanceof ProtectedPathOps.PathResult.Success,
+                "the perturbed loader text resolves: " + otherResolved);
+            String expectedOther = ((ProtectedPathOps.PathResult.Success)
+                otherResolved).resolvedPath().toString();
+            check(pathLua.contains("loaderText = \"" + expectedOther
+                    + "\""),
+                "a changed native-library path changes the emitted"
+                    + " loader text");
+            check(pathLua.contains(
+                    "local ffi = __rt.load_ffi(\"ffi:@$external/ffi_math\""
+                        + ", {"),
+                "the changed native-library path leaves the module key"
+                    + " unchanged");
         } finally {
             deleteRecursively(base);
         }
+    }
+
+    // =========================================================================
+    // Committed FFIGEN fixture projects (ISSUE-0454): the three
+    // extern-c projects under test/fixtures/ffigen/ compile through the
+    // restored production emitter; their pairwise-distinct externals
+    // keys produce pairwise-distinct module keys (seam S1) and their
+    // manifest-relative "../../../../build/..." nativeLibrary paths
+    // produce the pinned symlink-resolved loader texts (seam S3). The
+    // committed native fixture and the pinned manifest/declaration/
+    // entry strings are checked byte-exact against the files.
+    // =========================================================================
+
+    private static void testFfigenCommittedFixtureProjects()
+            throws Exception {
+        System.out.println("-- Committed FFIGEN fixture projects:"
+            + " pairwise-distinct module keys and pinned loader texts"
+            + " through the production emitter --");
+        Path base = Files.createTempDirectory("deal_gate_ffigen_");
+        try {
+            String[] projects = {"missing-lib", "missing-symbol", "valid"};
+            LinkedHashMap<String, String> artifacts =
+                new LinkedHashMap<>();
+            for (String project : projects) {
+                Path entry = Path.of("test/fixtures/ffigen/" + project
+                    + "/src/main.deal").toAbsolutePath();
+                Path outDir = base.resolve(project);
+                String[] lua = runCliCapturingErr(new String[]{
+                    "compile", entry.toString(), "--backend", "lua",
+                    "--output", outDir.toString()});
+                check("0".equals(lua[0]),
+                    project + " compiles through the production CLI: "
+                        + lua[1]);
+                check(!lua[1].contains("ERROR"),
+                    project + " compile emits no diagnostics: " + lua[1]);
+                String artifact =
+                    Files.readString(outDir.resolve("main.lua"));
+                check(artifact.contains("__rt.load_ffi("),
+                    project + " artifact emits the load_ffi call");
+                check(!artifact.contains("load_host"),
+                    project + " artifact takes no load_host route");
+                check(!artifact.contains("ffi.C"),
+                    project + " artifact carries no ffi.C access");
+                artifacts.put(project, artifact);
+            }
+
+            // Pairwise-distinct module keys (seam S1): the metadata
+            // module keys exactly as pinned.
+            Pattern keyPattern = Pattern.compile(
+                "__rt\\.load_ffi\\(\"([^\"]*)\"");
+            String[] expectedKeys = {
+                "ffi:@$external/ffi/missing_lib",
+                "ffi:@$external/ffi/missing_symbol",
+                "ffi:@$external/ffi/valid",
+            };
+            for (int i = 0; i < projects.length; i++) {
+                Matcher m = keyPattern.matcher(artifacts.get(projects[i]));
+                check(m.find(),
+                    projects[i] + " artifact carries the load_ffi module"
+                        + " key");
+                check(expectedKeys[i].equals(m.group(1)),
+                    projects[i] + " emits the pinned metadata module key "
+                        + expectedKeys[i] + ", got " + m.group(1));
+            }
+            check(new HashSet<>(Arrays.asList(expectedKeys)).size() == 3,
+                "the emitted module keys are pairwise distinct");
+
+            // Pinned symlink-resolved loader texts (seam S3): the
+            // manifest-relative paths resolve to <repo-root>/build/...
+            // (each manifest sits four directory levels below the repo
+            // root).
+            String missingLibLoader = expectedLoaderText("missing-lib",
+                "ffigen-no-such-lib.so");
+            String fixtureLoader = expectedLoaderText("valid",
+                "ffigen-integration-fixture.so");
+            check(artifacts.get("missing-lib").contains(
+                    "loaderText = \"" + missingLibLoader + "\""),
+                "missing-lib carries the pinned resolved-absolute loader"
+                    + " text " + missingLibLoader);
+            check(artifacts.get("missing-symbol").contains(
+                    "loaderText = \"" + fixtureLoader + "\""),
+                "missing-symbol carries the pinned resolved-absolute"
+                    + " loader text " + fixtureLoader);
+            check(artifacts.get("valid").contains(
+                    "loaderText = \"" + fixtureLoader + "\""),
+                "valid carries the pinned resolved-absolute loader text "
+                    + fixtureLoader);
+
+            // Manifest pins: the externals keys and the
+            // "../../../../build/..." nativeLibrary strings byte-exact,
+            // and the three keys pairwise distinct.
+            String missingLibManifest = Files.readString(Path.of(
+                "test/fixtures/ffigen/missing-lib/deal.json"));
+            check(missingLibManifest.contains(
+                    "\"ffi/missing_lib\"")
+                    && missingLibManifest.contains(
+                        "\"../../../../build/ffigen-no-such-lib.so\""),
+                "the missing-lib manifest pins its externals key and"
+                    + " nativeLibrary byte-exact");
+            String missingSymbolManifest = Files.readString(Path.of(
+                "test/fixtures/ffigen/missing-symbol/deal.json"));
+            check(missingSymbolManifest.contains(
+                    "\"ffi/missing_symbol\"")
+                    && missingSymbolManifest.contains(
+                        "\"../../../../build/ffigen-integration-fixture.so\""),
+                "the missing-symbol manifest pins its externals key and"
+                    + " nativeLibrary byte-exact");
+            String validManifest = Files.readString(Path.of(
+                "test/fixtures/ffigen/valid/deal.json"));
+            check(validManifest.contains("\"ffi/valid\"")
+                    && validManifest.contains(
+                        "\"../../../../build/ffigen-integration-fixture.so\""),
+                "the valid manifest pins its externals key and"
+                    + " nativeLibrary byte-exact");
+
+            // Declaration pins: the valid surface plus the Probe default
+            // (D8), and exactly absent_symbol() in missing-symbol.
+            String validDeclaration = Files.readString(Path.of(
+                "test/fixtures/ffigen/valid/ffi.d.deal"));
+            check(validDeclaration.contains(
+                    "count: int = fixture_count_call_int();"),
+                "the valid declaration pins the Probe default"
+                    + " byte-exact");
+            String[] pinnedFunctions = {
+                "fixture_count_call", "fixture_count_call_int",
+                "fixture_call_count", "fixture_reset_counter",
+                "fixture_add_int", "fixture_sub_int",
+                "fixture_add_number", "fixture_not",
+                "fixture_echo_string", "fixture_bytes_sum",
+                "fixture_null_string",
+            };
+            for (String name : pinnedFunctions) {
+                check(validDeclaration.contains(
+                        "export function " + name),
+                    "the valid declaration declares " + name);
+            }
+            String missingSymbolDeclaration = Files.readString(Path.of(
+                "test/fixtures/ffigen/missing-symbol/ffi.d.deal"));
+            check(missingSymbolDeclaration.contains(
+                    "export function absent_symbol(): int;")
+                    && !missingSymbolDeclaration.contains("fixture_"),
+                "the missing-symbol declaration declares exactly"
+                    + " absent_symbol(): int");
+
+            // Entry pins: the empty non-async main(): null gate in every
+            // entry and the valid entry's std/json import plus scenario
+            // functions.
+            for (String project : projects) {
+                String entrySource = Files.readString(Path.of(
+                    "test/fixtures/ffigen/" + project
+                        + "/src/main.deal"));
+                check(entrySource.contains(
+                        "export function main(): null {\n"
+                            + "  return null;\n}"),
+                    project + " entry exports non-async main(): null"
+                        + " with an empty body");
+            }
+            String validEntry = Files.readString(Path.of(
+                "test/fixtures/ffigen/valid/src/main.deal"));
+            check(validEntry.contains(
+                    "import * as ffi from \"ffi/valid\";")
+                    && validEntry.contains(
+                        "import * as json from \"std/json\";"),
+                "the valid entry imports the extern module and std/json");
+            check(validEntry.contains("scenario_add_int")
+                    && validEntry.contains("scenario_sub_int")
+                    && validEntry.contains("fixture_sub_int(7, 2)")
+                    && validEntry.contains("scenario_add_number")
+                    && validEntry.contains("scenario_not")
+                    && validEntry.contains("scenario_echo_string")
+                    && validEntry.contains("scenario_bytes_sum")
+                    && validEntry.contains("scenario_count_call")
+                    && validEntry.contains("scenario_count_call_int")
+                    && validEntry.contains("scenario_call_count")
+                    && validEntry.contains("scenario_reset_counter")
+                    && validEntry.contains("scenario_invalid_string")
+                    && validEntry.contains("scenario_null_string"),
+                "the valid entry exports the scenario functions");
+
+            // The committed native fixture: the pinned eleven C
+            // signatures (byte-exact), the lifecycle event protocol, and
+            // standard C99 headers only.
+            String fixture = Files.readString(Path.of(
+                "test/fixtures/ffigen/ffigen-integration-fixture.c"));
+            String[] pinnedSignatures = {
+                "void fixture_count_call(void)",
+                "int fixture_count_call_int(void)",
+                "int fixture_call_count(void)",
+                "void fixture_reset_counter(void)",
+                "int fixture_add_int(int a, int b)",
+                "int fixture_sub_int(int a, int b)",
+                "double fixture_add_number(double a, double b)",
+                "int fixture_not(int b)",
+                "const char* fixture_echo_string(const char* s)",
+                "int fixture_bytes_sum(const uint8_t* p, int32_t n)",
+                "const char* fixture_null_string(void)",
+            };
+            for (String signature : pinnedSignatures) {
+                check(fixture.contains(signature + "\n{"),
+                    "the committed C fixture carries the pinned signature"
+                        + " byte-exact: " + signature);
+            }
+            Matcher exported = Pattern.compile(
+                "(?m)^(void |int |double |const char\\* )"
+                    + "fixture_[a-z_]+\\([^)]*\\)$").matcher(fixture);
+            int exportedCount = 0;
+            while (exported.find()) {
+                exportedCount++;
+            }
+            check(exportedCount == 11,
+                "the committed C fixture defines exactly the pinned"
+                    + " eleven exported functions, got " + exportedCount);
+            check(fixture.contains("__attribute__((constructor))")
+                    && fixture.contains("__attribute__((destructor))")
+                    && fixture.contains("FIXTURE_EVENTS_PATH"),
+                "the committed C fixture carries the lifecycle event"
+                    + " protocol");
+            check(!fixture.contains("#include \"deal")
+                    && !fixture.contains("#include <deal"),
+                "the committed C fixture includes no DEAL headers");
+        } finally {
+            deleteRecursively(base);
+        }
+    }
+
+    /**
+     * The pinned symlink-resolved loader text of one committed fixture
+     * project: the manifest directory (four levels below the repo root)
+     * resolved through symlinks, plus the lexically normalized
+     * {@code ../../../../build/...} suffix.
+     */
+    private static String expectedLoaderText(String project, String soName)
+            throws IOException {
+        return Path.of("test/fixtures/ffigen/" + project).toRealPath()
+            .resolve("../../../../build/" + soName).normalize().toString();
     }
 
     // =========================================================================
@@ -1231,7 +1644,8 @@ public class ProjectIntegrationGatesTest {
         System.out.println("=== Project Integration Gates Test (ISSUE-0270) ===\n");
 
         testClassFreeOutOfRootBothBackends();
-        testExternCImportPreD6Hold();
+        testExternCImportLoadFfiEmission();
+        testFfigenCommittedFixtureProjects();
         testOutOfRootClassBothBackends();
         testDeclarationClassGates();
         testImportResolutionErrorGates();
