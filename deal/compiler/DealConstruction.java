@@ -11,8 +11,13 @@ import static deal.compiler.CompilerProtocolJson.*;
 /** Source-free compiler construction calls. Handles are batch-local, never runtime instructions.
  * Projection is a candidate; the regular semantic checker remains authoritative. */
 public class DealConstruction {
+    public static final class Failure extends IllegalArgumentException {
+        public final String ownerId;
+        public Failure(String ownerId, String message) { super(message); this.ownerId = ownerId; }
+    }
     public enum Kind { VALUE, STATEMENT, BLOCK, DECLARATION, UI }
     public record Built(Kind kind, String source) {}
+    public static void validateHandle(String id) { identifier(id); }
     private final Map<String, Built> handles = new LinkedHashMap<>();
     private final Map<String, CanonicalJson.Obj> pending = new LinkedHashMap<>();
     private final Set<String> resolving = new java.util.HashSet<>();
@@ -35,7 +40,7 @@ public class DealConstruction {
     private Built resolve(String id) {
         if (handles.containsKey(id)) return handles.get(id);
         var call = pending.get(id);
-        if (call == null) throw new IllegalArgumentException("unknown construction handle: " + id
+        if (call == null) throw new Failure(id.matches("[A-Za-z_][A-Za-z0-9_]*") ? id : null, "unknown construction handle: " + id
                 + ". Define this id in the current calls batch. A string operand is a handle, not literal text;"
                 + " for literal text define a text constructor and use its id. Handles from previous batches are invalid.");
         if (!resolving.add(id)) throw new IllegalArgumentException("cyclic construction dependency: " + id);
@@ -46,7 +51,8 @@ public class DealConstruction {
                 handles.put(id, built);
                 return built;
         } catch (IllegalArgumentException failure) {
-                throw new IllegalArgumentException("CC1003 at " + id + ": " + failure.getMessage(), failure);
+                if (failure instanceof Failure typed && typed.ownerId != null) throw typed;
+                throw new Failure(id, "CC1003 at " + id + ": " + failure.getMessage());
         } finally {
             resolving.remove(id);
         }
@@ -129,7 +135,7 @@ public class DealConstruction {
 
     protected final Built get(String id, Kind kind) {
         Built value = resolve(id);
-        if (value.kind() != kind) throw new IllegalArgumentException("expected " + kind + " handle: " + id + "; actual " + value.kind());
+        if (value.kind() != kind) throw new Failure(id, "expected " + kind + " handle: " + id + "; actual " + value.kind());
         return value;
     }
 
