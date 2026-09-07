@@ -48,7 +48,7 @@ public final class ConstructionRepairWorkspace {
         var all = new LinkedHashMap<String, CanonicalJson.Obj>();
         for (var call : calls()) all.put(stringField(call, "id"), call);
         var dependencies = new LinkedHashSet<String>();
-        collect(all.get(failure.ownerId), all, dependencies);
+        collectDirect(all.get(failure.ownerId), all, dependencies);
         var region = repairRegion(all);
         return Map.of("target", failure.ownerId, "diagnostic", failure.getMessage(),
                 "progress", unchangedAttempts == 0 ? "Replace the rejected operand; preserve all unrelated calls."
@@ -69,10 +69,10 @@ public final class ConstructionRepairWorkspace {
         return false;
     }
 
-    private static void collect(CanonicalJson.Value value, Map<String, CanonicalJson.Obj> all, Set<String> visited) {
-        if (value instanceof CanonicalJson.Str s && all.containsKey(s.value()) && visited.add(s.value())) collect(all.get(s.value()), all, visited);
-        else if (value instanceof CanonicalJson.Obj o) for (var entry : o.entries()) collect(entry.value(), all, visited);
-        else if (value instanceof CanonicalJson.Arr a) for (var item : a.items()) collect(item, all, visited);
+    private static void collectDirect(CanonicalJson.Value value, Map<String, CanonicalJson.Obj> all, Set<String> visited) {
+        if (value instanceof CanonicalJson.Str s && all.containsKey(s.value())) visited.add(s.value());
+        else if (value instanceof CanonicalJson.Obj o) for (var entry : o.entries()) collectDirect(entry.value(), all, visited);
+        else if (value instanceof CanonicalJson.Arr a) for (var item : a.items()) collectDirect(item, all, visited);
     }
 
     public void patch(CanonicalJson.Arr replacements) {

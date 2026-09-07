@@ -157,6 +157,9 @@ public class DealConstruction {
         if (value.kind() != kind) throw new Failure(callStack.isEmpty() ? id : callStack.peek(),
                 "expected " + kind + " handle: " + id + "; actual " + value.kind()
                         + ". Replace the incorrect operand reference, preserving the referenced call when it is used elsewhere."
+                        + (kind == Kind.UI && value.kind() == Kind.VALUE
+                                ? " A value is not a visual node. Create a NEW component constructor consuming this value as a property, then replace this child reference with that component's id. Do not resend the same children list."
+                                : "")
                         + (kind == Kind.VALUE && pending.containsKey(id)
                                 && stringField(pending.get(id), "op").equals("local")
                                 ? " This handle declares a local; it is not its value. Read or assign the variable with inline operand "
