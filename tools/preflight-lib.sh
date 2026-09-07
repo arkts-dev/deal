@@ -22,9 +22,13 @@
 #      treated as a black box — exit 0 passes, a nonzero exit prints
 #      SELFTEST_FAIL or SELFTEST_TIMEOUT (the battery content grows
 #      with ISSUE-0184 and the scripts stay green).
-#   P3 tool presence (shell, fail-closed): gcc, javac, java, luajit
-#      present; coverage.sh adds its JaCoCo/JUnit assets through the
-#      extra-tool hook. Absence is an error here, never a skip.
+#   P3 tool presence (shell, fail-closed): gcc, javac, java, luajit,
+#      node present AND functional (ISSUE-0362 extends the set with
+#      node, v12-zero-skip-conformance-gate G3: a missing tool or a
+#      broken-but-present tool — a version probe that exits nonzero —
+#      is TOOL_MISSING <tool> here, never a skip); coverage.sh adds
+#      its JaCoCo/JUnit assets through the extra-tool hook. Absence is
+#      an error here, never a skip.
 #   P4 bounded standalone javac: launcher run <nonce> <repo> --
 #      <caller's javac argv> under the embedded LauncherLimits (45 s
 #      native deadline, 1 MiB bounded drains). javac failure or any
@@ -335,25 +339,39 @@ dealpg4_preflight_p2() {
 }
 
 # =========================================================================
-# P3: fail-closed tool presence. Absence is an error here, never a skip.
-# The optional hook (overridden by coverage.sh) adds the coverage-
-# specific assets; a failing hook fails the phase.
+# P3: fail-closed tool presence (ISSUE-0362: the required set gains
+# `node` — v12-zero-skip-conformance-gate G3). Every required tool must
+# be present AND functional: a missing tool or a broken-but-present
+# tool (a version probe that exits nonzero) is TOOL_MISSING <tool> here,
+# never a skip. The optional hook (overridden by coverage.sh) adds the
+# coverage-specific assets; a failing hook fails the phase.
 # =========================================================================
 dealpg4_preflight_extra_tool_check() {
     :
 }
 
 dealpg4_preflight_p3() {
-    local tool
+    local tool version_flag
     echo ""
     echo "=== Preflight P3: fail-closed tool presence ==="
-    for tool in gcc javac java luajit; do
+    for tool in gcc javac java luajit node; do
         if ! command -v "$tool" >/dev/null 2>&1; then
+            dealpg4_preflight_fail "TOOL_MISSING $tool"
+        fi
+        # Functional probe (G3's broken-but-present arm): every required
+        # tool answers its version probe with exit 0. luajit carries no
+        # --version flag (its -v form is the probe); the other tools
+        # answer --version.
+        case "$tool" in
+            luajit) version_flag="-v" ;;
+            *) version_flag="--version" ;;
+        esac
+        if ! "$tool" "$version_flag" >/dev/null 2>&1; then
             dealpg4_preflight_fail "TOOL_MISSING $tool"
         fi
     done
     dealpg4_preflight_extra_tool_check
-    echo "  gcc, javac, java, luajit present"
+    echo "  gcc, javac, java, luajit, node present"
 }
 
 # =========================================================================
