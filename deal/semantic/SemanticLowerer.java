@@ -9,6 +9,7 @@ import deal.ast.Block;
 import deal.ast.BreakStatement;
 import deal.ast.CallExpr;
 import deal.ast.ClassDeclaration;
+import deal.ast.ClassField;
 import deal.ast.ContinueStatement;
 import deal.ast.DeleteStatement;
 import deal.ast.Either;
@@ -63,6 +64,7 @@ import deal.semantic.ir.CaptureMode;
 import deal.semantic.ir.ClassId;
 import deal.semantic.ir.ConstructKind;
 import deal.semantic.ir.ControlSelector;
+import deal.semantic.ir.DefaultOwner;
 import deal.semantic.ir.ContractSnapshotCanonicalizer;
 import deal.semantic.ir.DeleteTargetKind;
 import deal.semantic.ir.ExportPlan;
@@ -630,6 +632,21 @@ public final class SemanticLowerer {
      */
     public static final long INITIAL_LOOP_GENERATION = 0L;
 
+    /**
+     * The fact-defect identifier of the E6005 default-block admission arm
+     * (class-construction-jsonable-operations K-D3; ISSUE-0511): a
+     * detached per-construction {@code CLASS_DEFAULT} block may reference
+     * only allocations inside the default block itself and module-level
+     * bindings resolved through the module-init block; an
+     * enclosing-region (function-local) free reference is invalid and
+     * fails E6005 with this {@code validatorRule} — the closed
+     * {@code ClassDefaultPayload} records no captures and the closed
+     * schema cannot carry them. The detail carries capability
+     * {@code CLASSES}, the module, and the {@code SemanticLowerer}
+     * origin.
+     */
+    public static final String CLASS_DEFAULT_CAPTURE = "CLASS_DEFAULT_CAPTURE";
+
     // =========================================================================
     // The binding-core child (ISSUE-0444): incarnations, generations, cell kinds
     // =========================================================================
@@ -1191,6 +1208,41 @@ public final class SemanticLowerer {
     }
 
     /**
+     * A default-block reference outside the closed admission rule
+     * (class-construction-jsonable-operations K-D3; ISSUE-0511): a
+     * detached per-construction {@code CLASS_DEFAULT} block may reference
+     * only allocations inside the default block itself and module-level
+     * bindings resolved through the module-init block. An
+     * enclosing-region (function-local) free reference is invalid —
+     * the closed {@code ClassDefaultPayload} records no captures and the
+     * closed schema cannot carry them — and converts at the unit-production
+     * seam to the pinned E6005 {@code CLASS_DEFAULT_CAPTURE} diagnostic
+     * (capability {@code CLASSES}) — never a silent capture, never a
+     * reroute, and never a crash.
+     */
+    public static final class ClassDefaultCapture extends RuntimeException {
+
+        private static final long serialVersionUID = 1L;
+
+        /** The referenced enclosing-region name carried into the E6005 origin. */
+        private final String name;
+
+        public ClassDefaultCapture(String name) {
+            super("default-block free reference '" + name
+                + "' resolves to an enclosing-region binding (a detached "
+                + "CLASS_DEFAULT block admits only block-internal allocations and "
+                + "module-level bindings resolved through the module-init block; the "
+                + "closed payload records no captures)");
+            this.name = Objects.requireNonNull(name, "name must not be null");
+        }
+
+        /** The referenced enclosing-region name carried into the E6005 origin. */
+        public String name() {
+            return name;
+        }
+    }
+
+    /**
      * An int literal whose value is outside the closed signed32 scalar
      * set (D1's CONST contract — "a literal outside the closed scalar
      * set is a producer defect (E6005), never an invented op"): the
@@ -1263,6 +1315,12 @@ public final class SemanticLowerer {
                 "SemanticLowerer " + INT32_LITERAL_OUT_OF_RANGE + " ("
                     + outOfRange.getMessage() + ")");
         }
+        if (defect instanceof ClassDefaultCapture capture) {
+            return new LoweringFailureDetail(module.path(),
+                SemanticCapability.CLASSES, CLASS_DEFAULT_CAPTURE,
+                SemanticProfile.DEAL_V1_2_INT32, LoweredModuleUnit.FORMAT_VERSION,
+                "SemanticLowerer " + CLASS_DEFAULT_CAPTURE + " (" + capture.getMessage() + ")");
+        }
         if (defect instanceof ContainerPayloadDescriptors.Defect descriptorDefect) {
             return ContainerPayloadDescriptors.loweringFailureDetail(module, descriptorDefect);
         }
@@ -1298,6 +1356,25 @@ public final class SemanticLowerer {
         /** True iff the lowering failed (no unit was produced). */
         public boolean hasErrors() {
             return !diagnostics.isEmpty();
+        }
+    }
+
+    /**
+     * The class-declaration child's lowering result (ISSUE-0511): the
+     * validated lowering result plus the produced
+     * {@link deal.semantic.ir.ClassFactoryRegistry} factory-registration
+     * record (K-D2 — the {@code constructionEntry}&#8594;{@code CLASS_FACTORY}
+     * op bindings carried alongside the unit, the
+     * {@link deal.semantic.ir.FunctionBindingRegistry}/{@link StructuredBodyTable}
+     * precedent). On failure the lowering result carries the first E6005
+     * and the registry is the empty record.
+     */
+    public record ClassDeclarationCoreResult(LoweringResult lowering,
+                                             deal.semantic.ir.ClassFactoryRegistry registry) {
+
+        public ClassDeclarationCoreResult {
+            Objects.requireNonNull(lowering, "lowering must not be null");
+            Objects.requireNonNull(registry, "registry must not be null");
         }
     }
 
@@ -2488,6 +2565,172 @@ public final class SemanticLowerer {
             lowerer.proofFacts(), lowerer.creationRuleFacts(), lowerer.shapeMapFacts());
     }
 
+    /**
+     * The class-declaration child's public lowering entry point
+     * (ISSUE-0511, sequencing item 1): lowers one checked implementation
+     * module through the group walk plus the class-declaration arms —
+     * one {@link deal.semantic.ir.ClassLayout} per declared class in
+     * declaration order keyed by the checker-resolved
+     * {@link ClassId} (field descriptors produced through the single
+     * {@link DescriptorService} producer, {@code required} from the
+     * checker's non-optional field fact, {@code defaultOwner LOCAL} —
+     * default expressions are never part of a layout), one detached
+     * {@code CLASS_DEFAULT} op per defaulted field whose own default
+     * block carries the lowered default expression (only the default
+     * blocks enter the block-membership table; each {@code CLASS_DEFAULT}
+     * op is a member of exactly its own default block; the block's
+     * final producing op publishes the {@code CLASS_DEFAULT} op's
+     * result identity — a function-typed default's result is the
+     * closure identity of a function-literal default or the statically
+     * tracked function identity of a binding-referenced default, each
+     * already carrying its {@code FunctionExecutionBinding};
+     * module-level bindings resolve through the module-init block and
+     * an enclosing-region free reference — direct or through a nested
+     * closure's capture — fails E6005
+     * {@code CLASS_DEFAULT_CAPTURE}), and one detached static
+     * {@code CLASS_FACTORY} op per exported class registered under the
+     * pre-allocated {@code ClassInterface.constructionEntry} id in the
+     * produced {@link deal.semantic.ir.ClassFactoryRegistry} (policy
+     * {@code CLASS_CONSTRUCTION}, zero boundary children, zero return
+     * boundaries, never part of the module-init flow). Non-exported
+     * classes get a layout but never a factory and never a
+     * {@code ClassFactoryId}.
+     *
+     * <p>The default-block walk routes class-typed object literals of
+     * locally declared classes through the {@code CLASS_NEW} arm (K-D4's
+     * closed LOCAL payload shape — provided values in literal order,
+     * {@code classDefaultOpIds} for omitted required-present defaulted
+     * fields in declaration order, field boundaries in declaration order with the
+     * pinned input wiring, {@code CLASS_CONSTRUCTION}, tag-last result) —
+     * the same arm any class-typed literal of the walk uses; a literal of
+     * an imported class (no local layout) fails closed.</p>
+     *
+     * <p>The produced unit passes the closed validator, the production-time
+     * address-chain protocol, the control-flow validator (the factory is
+     * detached per the five-module-level-kind rule), and the B9
+     * bindings production validator. The unit's
+     * {@code constructCoverage} rows are recorded verbatim from the
+     * caller-supplied rows; the {@code CLASS_DECLARATION} row is satisfied
+     * through the produced {@code CLASS_DEFAULT}/{@code CLASS_FACTORY}
+     * ops for defaulted/exported shapes and through the produced layout
+     * record for the layout-only shape (the validator's row-extension
+     * admission).</p>
+     *
+     * <p>This entry point is driven by the class-declaration tests; no
+     * production route change — retained/public compilation paths and
+     * {@link #lowerModule} are untouched.</p>
+     *
+     * @param module                the checked implementation module; non-null
+     * @param profile               the invocation's semantic profile
+     *                              (I3 guard: only
+     *                              {@code DEAL_V1_2_INT32} is lowered);
+     *                              non-null
+     * @param constructCoverage     the manifest's reachable-construct rows
+     *                              recorded at lowering start (S1); non-null
+     * @param interfaceHash         the interface index digest the unit is
+     *                              checked against (R-PROFILE); non-null
+     * @param capabilityRegistryHash the invocation's capability-registry
+     *                              digest (R-PROFILE); non-null
+     * @param ownInterface          the module's own interface index entry
+     *                              (the pre-allocated
+     *                              {@code constructionEntry} ids of the
+     *                              exported classes, K-D2); non-null
+     * @param allocator             the project's semantic-id allocator in
+     *                              dependency order; non-null
+     * @return the validated unit with the factory registry, or the first
+     *         E6005 on failure
+     */
+    public static ClassDeclarationCoreResult lowerModuleClassCore(
+            CheckedModuleInput module,
+            SemanticProfile profile,
+            Map<ConstructKind, List<SemanticOpKind>> constructCoverage,
+            String interfaceHash,
+            String capabilityRegistryHash,
+            deal.semantic.ir.ExternalModuleInterface ownInterface,
+            SemanticIdAllocator allocator) {
+        Objects.requireNonNull(module, "module must not be null");
+        Objects.requireNonNull(profile, "profile must not be null");
+        Objects.requireNonNull(constructCoverage, "constructCoverage must not be null");
+        Objects.requireNonNull(interfaceHash, "interfaceHash must not be null");
+        Objects.requireNonNull(capabilityRegistryHash, "capabilityRegistryHash must not be null");
+        Objects.requireNonNull(ownInterface, "ownInterface must not be null");
+        Objects.requireNonNull(allocator, "allocator must not be null");
+        if (profile != SemanticProfile.DEAL_V1_2_INT32) {
+            return new ClassDeclarationCoreResult(new LoweringResult(null, null,
+                List.of(FailureContractRegistry.e6005(
+                    new LoweringFailureDetail(module.moduleId().path(),
+                        SemanticCapability.FOUNDATION_VALUES, LOWER_LEGACY_PROFILE_REJECTED,
+                        profile, LoweredModuleUnit.FORMAT_VERSION, "SemanticLowerer")))),
+                new deal.semantic.ir.ClassFactoryRegistry(Map.of()));
+        }
+        ModuleLowerer lowerer = new ModuleLowerer(module.moduleId(), module.sourceId(),
+            module.checks(), allocator, true, true, true, false, false, false,
+            module.ast().span(), false, true, ownInterface);
+        try {
+            lowerer.lowerGroupModule(module.ast().statements());
+        } catch (ConstructUnlowered unlowered) {
+            return new ClassDeclarationCoreResult(new LoweringResult(null, null,
+                List.of(FailureContractRegistry.e6005(
+                    loweringFailureDetail(module.moduleId(), unlowered)))),
+                new deal.semantic.ir.ClassFactoryRegistry(Map.of()));
+        } catch (IntLiteralOutOfRange outOfRange) {
+            return new ClassDeclarationCoreResult(new LoweringResult(null, null,
+                List.of(FailureContractRegistry.e6005(
+                    loweringFailureDetail(module.moduleId(), outOfRange)))),
+                new deal.semantic.ir.ClassFactoryRegistry(Map.of()));
+        } catch (ContainerPayloadDescriptors.Defect defect) {
+            return new ClassDeclarationCoreResult(new LoweringResult(null, null,
+                List.of(FailureContractRegistry.e6005(
+                    loweringFailureDetail(module.moduleId(), defect)))),
+                new deal.semantic.ir.ClassFactoryRegistry(Map.of()));
+        } catch (ComparisonSelectorLowering.Defect defect) {
+            return new ClassDeclarationCoreResult(new LoweringResult(null, null,
+                List.of(ComparisonSelectorLowering.e6005(module.moduleId(), defect))),
+                new deal.semantic.ir.ClassFactoryRegistry(Map.of()));
+        } catch (ClassDefaultCapture capture) {
+            return new ClassDeclarationCoreResult(new LoweringResult(null, null,
+                List.of(FailureContractRegistry.e6005(
+                    loweringFailureDetail(module.moduleId(), capture)))),
+                new deal.semantic.ir.ClassFactoryRegistry(Map.of()));
+        }
+        LoweredModuleUnit unit = lowerer.buildUnit(constructCoverage,
+            module.imports().stream().map(ResolvedImport::resolvedModuleId).toList(),
+            interfaceHash, capabilityRegistryHash,
+            ContainerClaimingSeam.E6_GATE_ACTIVATION);
+        Optional<CompilerDiagnostic> validation = SemanticIrValidator.validate(unit,
+            new SemanticIrValidator.ComparisonFacts(interfaceHash,
+                SemanticProfile.DEAL_V1_2_INT32, capabilityRegistryHash));
+        if (validation.isPresent()) {
+            return new ClassDeclarationCoreResult(new LoweringResult(null, null,
+                List.of(validation.get())),
+                new deal.semantic.ir.ClassFactoryRegistry(Map.of()));
+        }
+        Optional<CompilerDiagnostic> chainShape = AddressChainProtocol.validate(unit);
+        if (chainShape.isPresent()) {
+            return new ClassDeclarationCoreResult(new LoweringResult(null, null,
+                List.of(chainShape.get())),
+                new deal.semantic.ir.ClassFactoryRegistry(Map.of()));
+        }
+        Optional<CompilerDiagnostic> controlFlow =
+            ControlFlowValidator.validate(unit, lowerer.bodyTable());
+        if (controlFlow.isPresent()) {
+            return new ClassDeclarationCoreResult(new LoweringResult(null, null,
+                List.of(controlFlow.get())),
+                new deal.semantic.ir.ClassFactoryRegistry(Map.of()));
+        }
+        Optional<CompilerDiagnostic> bindings =
+            BindingsProductionValidator.validate(unit, lowerer.bodyTable(),
+                lowerer.pinnedWriteFacts());
+        if (bindings.isPresent()) {
+            return new ClassDeclarationCoreResult(new LoweringResult(null, null,
+                List.of(bindings.get())),
+                new deal.semantic.ir.ClassFactoryRegistry(Map.of()));
+        }
+        return new ClassDeclarationCoreResult(
+            new LoweringResult(unit, lowerer.bodyTable(), List.of()),
+            lowerer.factoryRegistry());
+    }
+
     // =========================================================================
     // The per-module lowering session (the arms)
     // =========================================================================
@@ -2738,6 +2981,95 @@ public final class SemanticLowerer {
          * Full-program mode implies binding-core and closure-core modes.
          */
         private final boolean fullProgram;
+        /**
+         * The class-declaration mode flag (ISSUE-0511): {@code true}
+         * exactly when the session was created by
+         * {@link SemanticLowerer#lowerModuleClassCore} — the class walk
+         * is the group walk plus the class-declaration arms
+         * ({@code ClassLayout} records, detached {@code CLASS_DEFAULT}
+         * ops with their default blocks, and the exported classes'
+         * {@code CLASS_FACTORY} ops plus the
+         * {@link deal.semantic.ir.ClassFactoryRegistry} registrations).
+         */
+        private final boolean classCore;
+        /**
+         * The module's own interface index entry (class-core mode): the
+         * pre-allocated {@code ClassInterface.constructionEntry} ids of
+         * the exported classes (K-D2). {@code null} outside class-core
+         * mode.
+         */
+        private final deal.semantic.ir.ExternalModuleInterface ownInterface;
+        /**
+         * The produced class layouts keyed by {@link ClassId} in
+         * declaration order (K-D2; the unit's {@code classLayouts} map,
+         * built by the class-declaration arm).
+         */
+        private final java.util.LinkedHashMap<ClassId, deal.semantic.ir.ClassLayout>
+            classLayouts = new java.util.LinkedHashMap<>();
+        /**
+         * The produced factory registrations keyed by the pre-allocated
+         * {@link deal.semantic.ir.ClassFactoryId} construction entry in
+         * declaration order (K-D2; the unit-side
+         * {@link deal.semantic.ir.ClassFactoryRegistry} record).
+         */
+        private final java.util.LinkedHashMap<deal.semantic.ir.ClassFactoryId, OpId>
+            factoryRegistry = new java.util.LinkedHashMap<>();
+        /**
+         * One defaulted field's declaration-arm facts: the emitted
+         * {@code CLASS_DEFAULT} op id and its result {@code ValueId}
+         * (the {@code CLASS_DEFAULT_FIELD} boundary input of a later
+         * {@code CLASS_NEW}, K-D4).
+         */
+        private record ClassDefaultFact(OpId opId, ValueId result) {
+
+            private ClassDefaultFact {
+                Objects.requireNonNull(opId, "opId must not be null");
+                Objects.requireNonNull(result, "result must not be null");
+            }
+        }
+        /**
+         * The produced per-class default facts keyed by {@link ClassId}
+         * then field name in declaration order (class-core mode): the
+         * surface the {@code CLASS_NEW} arm consults for
+         * {@code classDefaultOpIds} and {@code CLASS_DEFAULT_FIELD}
+         * boundary inputs — gated on required-present at the use site
+         * (K-D4 step 2/step 5: an optional-with-default field's fact is
+         * recorded but never wired).
+         */
+        private final java.util.LinkedHashMap<ClassId,
+            java.util.LinkedHashMap<String, ClassDefaultFact>> classDefaults =
+            new java.util.LinkedHashMap<>();
+        /**
+         * One open default-block walk's admission context (K-D3): the
+         * default block itself, the blocks allocated inside the walk
+         * (block-internal allocations), and the capture-collector depth
+         * at entry. Every reference of the walk — a direct identifier
+         * reference or a capture resolved by a nested detached walk (a
+         * closure body allocated inside the default) — admits only blocks
+         * in {@code internalBlocks} and the module-init block; the
+         * collector depth decides the dispatch (direct load versus the
+         * nested closure's capture registration), never the admission —
+         * a nested closure's capture resolving to an enclosing-region
+         * binding fails the same {@code CLASS_DEFAULT_CAPTURE} admission
+         * (K-D3's closed rule has no nested-closure bypass).
+         */
+        private record DefaultContext(BlockId block, Set<BlockId> internalBlocks,
+                                      int entryCaptureDepth) {
+
+            private DefaultContext {
+                Objects.requireNonNull(block, "block must not be null");
+                Objects.requireNonNull(internalBlocks, "internalBlocks must not be null");
+                if (entryCaptureDepth < 0) {
+                    throw new IllegalArgumentException(
+                        "entryCaptureDepth must be >= 0, got " + entryCaptureDepth);
+                }
+            }
+        }
+        /**
+         * The open default-block walks of the session, innermost first
+         * (class-core mode).
+         */
+        private final ArrayDeque<DefaultContext> defaultContexts = new ArrayDeque<>();
         /**
          * The statement-walk strategy of the session: the nested-statement
          * recursion every arm consults. The E5 window routes to
@@ -3241,6 +3573,27 @@ public final class SemanticLowerer {
                              boolean proofAnalysis, boolean creationRuleAnalysis,
                              boolean shapeMapAnalysis, Span programSpan,
                              boolean fullProgram) {
+            this(module, sourceId, checks, ids, bindingCore, closureCore, groupCore,
+                proofAnalysis, creationRuleAnalysis, shapeMapAnalysis, programSpan,
+                fullProgram, false, null);
+        }
+
+        /**
+         * The class-declaration session constructor (ISSUE-0511): the
+         * {@code classCore} flag activates the class-declaration arms on
+         * top of the walk flags (the class walk is the group walk plus
+         * the class arms), and {@code ownInterface} supplies the
+         * module's own interface index entry — the pre-allocated
+         * {@code ClassInterface.constructionEntry} ids the exported
+         * classes' {@code CLASS_FACTORY} ops register under (K-D2).
+         */
+        public ModuleLowerer(ModuleId module, String sourceId, CheckResult checks,
+                             SemanticIdAllocator ids, boolean bindingCore,
+                             boolean closureCore, boolean groupCore,
+                             boolean proofAnalysis, boolean creationRuleAnalysis,
+                             boolean shapeMapAnalysis, Span programSpan,
+                             boolean fullProgram, boolean classCore,
+                             deal.semantic.ir.ExternalModuleInterface ownInterface) {
 
             this.module = Objects.requireNonNull(module, "module must not be null");
             this.sourceId = Objects.requireNonNull(sourceId, "sourceId must not be null");
@@ -3253,6 +3606,8 @@ public final class SemanticLowerer {
             this.creationRuleAnalysis = creationRuleAnalysis;
             this.shapeMapAnalysis = shapeMapAnalysis && this.creationRuleAnalysis;
             this.fullProgram = fullProgram && bindingCore;
+            this.classCore = classCore;
+            this.ownInterface = ownInterface;
             this.statementWalk = fullProgram
                 ? this::lowerFullStatements
                 : (bindingCore ? this::lowerBindingStatements
@@ -3338,6 +3693,12 @@ public final class SemanticLowerer {
             BlockId block = ids.nextBlockId(module, nextOrdinal++, 0);
             blockOps.put(block, new ArrayList<>());
             blockTerminated.put(block, false);
+            if (!defaultContexts.isEmpty()) {
+                // K-D3: a block allocated inside an open default-block
+                // walk is a block-internal allocation of that walk's
+                // admission context.
+                defaultContexts.peek().internalBlocks().add(block);
+            }
             return block;
         }
 
@@ -3947,6 +4308,20 @@ public final class SemanticLowerer {
                 case deal.ast.ExpressionStatement expressionStatement ->
                     lowerBindingExprStatement(expressionStatement);
                 case Block block -> lowerBindingBlock(block);
+                case ClassDeclaration classDeclaration -> {
+                    if (!classCore) {
+                        throw new ConstructUnlowered(describeStatement(statement));
+                    }
+                    lowerClassDeclaration(classDeclaration, false);
+                }
+                case ExportDeclaration exportDeclaration -> {
+                    if (!(classCore
+                            && exportDeclaration.declaration()
+                                instanceof ClassDeclaration classDeclaration)) {
+                        throw new ConstructUnlowered(describeStatement(statement));
+                    }
+                    lowerClassDeclaration(classDeclaration, true);
+                }
                 default -> throw new ConstructUnlowered(describeStatement(statement));
             }
         }
@@ -3967,6 +4342,432 @@ public final class SemanticLowerer {
                     + "ISSUE-0234; the binding walk admits assignment statements only)");
             }
             lowerExpression(statement.expr());
+        }
+
+        // ---------------------------------------------------------------------
+        // The class-declaration arms (ISSUE-0511 declaration arm): class
+        // layouts, CLASS_DEFAULT emission, CLASS_FACTORY registration, and
+        // the CLASS_NEW literal arm (K-D2/K-D3/K-D4)
+        // ---------------------------------------------------------------------
+
+        /**
+         * The class-declaration arm (K-D2/K-D3): one
+         * {@link deal.semantic.ir.ClassLayout} per declared class keyed by
+         * the checker-resolved {@link ClassId} in declaration order —
+         * fields in declaration order with the declared descriptor
+         * produced through the single {@link DescriptorService} producer,
+         * the required-present marker ({@code !optional}), and
+         * {@code defaultOwner LOCAL} (default expressions are never part
+         * of a layout). For each defaulted field the arm emits exactly
+         * one detached {@code CLASS_DEFAULT} op whose own default block
+         * carries the lowered default expression — the
+         * {@code CLASS_DEFAULT} op is a member of exactly its own default
+         * block, the default-block ops record it as {@code parentOpId},
+         * and only these default blocks enter the block-membership table
+         * (K-D3). For an exported class the arm additionally emits one
+         * detached static {@code CLASS_FACTORY} op (policy
+         * {@code CLASS_CONSTRUCTION}, zero boundary children, zero return
+         * boundaries, never part of the module-init flow) registered under
+         * the pre-allocated
+         * {@code ClassInterface.constructionEntry} id in the produced
+         * {@link deal.semantic.ir.ClassFactoryRegistry} (K-D2);
+         * non-exported classes get a layout but never a factory and never
+         * a {@code ClassFactoryId}. Default application is gated on
+         * required-present (K-D4 step 2: "applies defaults for omitted
+         * required-present fields"): the factory payload's
+         * {@code classDefaultOpIds} lists only required-present defaulted
+         * fields' {@code CLASS_DEFAULT} op ids in declaration order — an
+         * omitted optional-with-default field stays missing and its
+         * default never runs, so its op id never enters the factory
+         * payload (the {@code CLASS_DEFAULT} op itself is still emitted,
+         * one per defaulted field per class).
+         *
+         * @param declaration the checked class declaration; non-null
+         * @param exported    whether the declaration is module-level
+         *                    export-wrapped
+         * @throws ConstructUnlowered    on a fact defect (duplicate class,
+         *         missing interface entry, unrepresentable field type)
+         * @throws ClassDefaultCapture   on a default-block reference to an
+         *         enclosing-region binding
+         */
+        private void lowerClassDeclaration(ClassDeclaration declaration, boolean exported) {
+            ClassId classId = new ClassId(module.path(), declaration.name());
+            if (classLayouts.containsKey(classId)) {
+                throw new ConstructUnlowered("duplicate class declaration '"
+                    + declaration.name() + "' (the checker rejects duplicate class names; "
+                    + "a second layout for " + classId + " is a fact defect)");
+            }
+            // The layout: one FieldLayout per declared field in declaration
+            // order (K-D2).
+            List<deal.semantic.ir.ClassLayout.FieldLayout> fields = new ArrayList<>();
+            Map<String, RuntimeDescriptor> descriptors = new LinkedHashMap<>();
+            for (ClassField field : declaration.fields()) {
+                Type fieldType = fieldTypeOf(field.type());
+                RuntimeDescriptor descriptor;
+                try {
+                    descriptor = DescriptorService.describe(fieldType);
+                } catch (DescriptorService.Defect defect) {
+                    throw new ConstructUnlowered("class field '" + declaration.name()
+                        + "." + field.name() + "' of unrepresentable checked type "
+                        + typeName(fieldType) + " (" + defect.getMessage() + ")");
+                }
+                fields.add(new deal.semantic.ir.ClassLayout.FieldLayout(field.name(),
+                    descriptor, !field.optional(), DefaultOwner.LOCAL));
+                descriptors.put(field.name(), descriptor);
+            }
+            deal.semantic.ir.ClassLayout layout =
+                new deal.semantic.ir.ClassLayout(classId, fields);
+            classLayouts.put(classId, layout);
+
+            // CLASS_DEFAULT emission: one detached op per defaulted field in
+            // declaration order (K-D3); only these default blocks enter the
+            // block-membership table and each CLASS_DEFAULT op is a member of
+            // exactly its own default block.
+            List<OpId> classDefaultOpIds = new ArrayList<>();
+            LinkedHashMap<String, ClassDefaultFact> defaults = new LinkedHashMap<>();
+            for (ClassField field : declaration.fields()) {
+                if (field.defaultExpr().isEmpty()) {
+                    continue;
+                }
+                ExpressionNode defaultExpr = field.defaultExpr().get();
+                BlockId defaultBlock = allocateBlock();
+                ValueId slot = ids.nextValueId(module, nextOrdinal++, 0);
+                AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+                OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
+                // The detached structural op (K-D12: SYNTHETIC; no static
+                // parent — the nesting owner is the triggering CLASS_NEW /
+                // CLASS_FACTORY recorded in their payloads).
+                SourceOrigin origin = new SourceOrigin(sourceId,
+                    toSourceSpan(defaultExpr.span()), SourceOriginKind.SYNTHETIC,
+                    anchor, null);
+                SemanticOp op = buildOp(opId, SemanticOpKind.CLASS_DEFAULT,
+                    new KindPayload.ClassDefaultPayload(classId, field.name(), defaultBlock),
+                    slot, descriptors.get(field.name()), FailurePolicyId.NO_DEAL_FAILURE,
+                    origin);
+                pushBlock(defaultBlock);
+                pushBlockParent(opId);
+                Set<BlockId> internalBlocks =
+                    java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+                DefaultContext context = new DefaultContext(defaultBlock, internalBlocks,
+                    captureCollectors.size());
+                defaultContexts.push(context);
+                ValueId produced;
+                try {
+                    emit(op);
+                    // The default expression's final producing op publishes
+                    // the CLASS_DEFAULT op's result slot (the slot-threaded
+                    // production — one value identity re-produced per
+                    // construction execution, the LOOP(FOR) condition
+                    // precedent). A function-typed default whose final
+                    // producing op publishes the statically tracked
+                    // function identity instead of the threaded slot — a
+                    // function-typed binding reference's load — rebuilds
+                    // the CLASS_DEFAULT op with that identity as its
+                    // result, so R-FUNCTION-BINDING resolves the op's
+                    // result through the identity's own
+                    // FunctionExecutionBinding (K-D3:
+                    // binding-referenced defaults pass the referenced
+                    // value by reference; loads preserve allocation
+                    // identity). The function-literal default's
+                    // CLOSURE_NEW publishes the threaded slot itself, so
+                    // no rebuild fires there.
+                    produced = lowerExpression(defaultExpr, slot);
+                    if (!produced.equals(slot)) {
+                        op = buildOp(opId, SemanticOpKind.CLASS_DEFAULT,
+                            new KindPayload.ClassDefaultPayload(classId, field.name(),
+                                defaultBlock),
+                            produced, descriptors.get(field.name()),
+                            FailurePolicyId.NO_DEAL_FAILURE, origin);
+                        List<SemanticOp> target = emitTarget();
+                        for (int i = target.size() - 1; i >= 0; i--) {
+                            if (target.get(i).opId().equals(opId)) {
+                                target.set(i, op);
+                                break;
+                            }
+                        }
+                    }
+                } finally {
+                    defaultContexts.pop();
+                    popBlockParent();
+                    popBlock();
+                }
+                if (!field.optional()) {
+                    classDefaultOpIds.add(opId);
+                }
+                defaults.put(field.name(), new ClassDefaultFact(opId, produced));
+            }
+            classDefaults.put(classId, defaults);
+
+            if (!exported) {
+                return;
+            }
+            // CLASS_FACTORY emission for exported classes (K-D2): the
+            // pre-allocated constructionEntry from the module's own interface
+            // index entry; zero boundary children and zero return boundaries;
+            // detached static op, never part of the module-init flow.
+            deal.semantic.ir.ClassInterface interfaceEntry = null;
+            for (deal.semantic.ir.ClassInterface candidate : ownInterface.classes()) {
+                if (candidate.classId().equals(classId)) {
+                    interfaceEntry = candidate;
+                    break;
+                }
+            }
+            if (interfaceEntry == null) {
+                throw new ConstructUnlowered("exported class " + classId
+                    + " has no interface index entry (the index build derives one "
+                    + "ClassInterface per exported class — a fact defect)");
+            }
+            OpId callerOpRef = ids.nextOpId(module, nextOrdinal++, 0);
+            ValueId result = ids.nextValueId(module, nextOrdinal++, 0);
+            AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+            OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
+            SourceOrigin origin = new SourceOrigin(sourceId,
+                toSourceSpan(declaration.span()), SourceOriginKind.SYNTHETIC, anchor, null);
+            SemanticOp op = buildOp(opId, SemanticOpKind.CLASS_FACTORY,
+                new KindPayload.ClassFactoryPayload(classId, List.copyOf(classDefaultOpIds),
+                    callerOpRef),
+                result, classDescriptorOf(declaration.name()),
+                FailurePolicyId.CLASS_CONSTRUCTION, origin);
+            // Detached emission: appended to the unit op list with no block
+            // membership (the five-module-level-kind rule; the factory is
+            // never part of the module-init flow).
+            emitTarget().add(op);
+            factoryRegistry.put(interfaceEntry.constructionEntry(), opId);
+        }
+
+        /**
+         * {@code CLASS_NEW} — the class-typed object-literal arm of the
+         * class walk (K-D4's closed LOCAL payload shape; ISSUE-0511): the
+         * provided-value operands complete in literal order before the op,
+         * the payload records {@code providedFields} in literal order,
+         * {@code classDefaultOpIds} for omitted required-present
+         * defaulted fields in declaration order (LOCAL default
+         * application, K-D4 step 2), and {@code fieldBoundaries} in
+         * declaration order — {@code CLASS_LITERAL_FIELD} per provided
+         * field with input = the provided value,
+         * {@code CLASS_DEFAULT_FIELD} per omitted required-present
+         * defaulted field with input = the field's {@code CLASS_DEFAULT}
+         * child result (K-D4 input wiring); omitted optional fields get no
+         * boundary and no default op id, defaulted or not — an
+         * optional-with-default field's default never runs at construction
+         * and the field stays missing.
+         * The op carries policy {@code CLASS_CONSTRUCTION} and publishes a
+         * fresh tagged-instance value ({@code class:<ClassId>}); the
+         * boundary children record the {@code CLASS_NEW} op as
+         * {@code parentOpId}. A literal of an imported class (no local
+         * layout) fails closed — the SHARED_FACTORY/RETAINED_ABI arms are
+         * the later epic children's.
+         *
+         * @param literal the checked class-typed object literal; non-null
+         * @param slot    the result slot of the final producing op, or
+         *                {@code null} to allocate one
+         * @return the produced {@code ValueId} (the slot when given)
+         * @throws ConstructUnlowered on a class without a local layout or
+         *         any other shape outside this arm
+         */
+        private ValueId lowerClassLiteral(ObjectLiteralExpr literal, ValueId slot) {
+            Type type = checkedType(literal);
+            if (!(type instanceof Type.Class classType)) {
+                throw new ConstructUnlowered("class literal of non-class checked type "
+                    + typeName(type) + " (a class-typed ObjectLiteralExpr must carry a "
+                    + "Type.Class fact)");
+            }
+            ClassId classId = new ClassId(
+                DescriptorService.semanticModulePath(classType.identity()), classType.name());
+            deal.semantic.ir.ClassLayout layout = classLayouts.get(classId);
+            if (layout == null) {
+                throw new ConstructUnlowered("class-typed literal " + classId
+                    + " without a local layout (the unit's classLayouts carry locally "
+                    + "declared classes; imported-class construction is a later epic arm)");
+            }
+            // Provided values complete in literal order (K-D4 step 1).
+            List<KindPayload.ProvidedField> providedFields = new ArrayList<>();
+            Map<String, ValueId> providedValues = new LinkedHashMap<>();
+            Map<String, Span> providedSpans = new LinkedHashMap<>();
+            for (Property property : literal.properties()) {
+                ValueId value = lowerExpression(property.value());
+                providedFields.add(new KindPayload.ProvidedField(property.name(), value));
+                providedValues.put(property.name(), value);
+                providedSpans.put(property.name(), property.span());
+            }
+            ValueId result = slot != null ? slot : ids.nextValueId(module, nextOrdinal++, 0);
+            AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+            OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
+            // Default application and field validation in declaration order
+            // (K-D4 steps 2 and 5): the boundary children are built first so
+            // the payload names their op ids, then emitted as children.
+            List<OpId> classDefaultOpIds = new ArrayList<>();
+            List<KindPayload.FieldBoundary> boundaries = new ArrayList<>();
+            List<SemanticOp> children = new ArrayList<>();
+            Map<String, ClassDefaultFact> facts = classDefaults.get(classId);
+            for (deal.semantic.ir.ClassLayout.FieldLayout field : layout.fields()) {
+                ValueId provided = providedValues.get(field.name());
+                if (provided != null) {
+                    SemanticOp child = buildFieldBoundary(BoundaryKind.CLASS_LITERAL_FIELD,
+                        field.descriptor(), provided, providedSpans.get(field.name()), opId);
+                    boundaries.add(new KindPayload.FieldBoundary(field.name(),
+                        BoundaryKind.CLASS_LITERAL_FIELD, child.opId()));
+                    children.add(child);
+                    continue;
+                }
+                ClassDefaultFact fact = facts == null ? null : facts.get(field.name());
+                if (fact != null && field.required()) {
+                    SemanticOp child = buildFieldBoundary(BoundaryKind.CLASS_DEFAULT_FIELD,
+                        field.descriptor(), fact.result(), literal.span(), opId);
+                    classDefaultOpIds.add(fact.opId());
+                    boundaries.add(new KindPayload.FieldBoundary(field.name(),
+                        BoundaryKind.CLASS_DEFAULT_FIELD, child.opId()));
+                    children.add(child);
+                }
+                // An omitted optional field stays missing: no boundary.
+            }
+            SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(literal.span()),
+                SourceOriginKind.USER, anchor, currentParent());
+            emit(buildOp(opId, SemanticOpKind.CLASS_NEW,
+                new KindPayload.ClassNewPayload(classId, layout, providedFields,
+                    DefaultOwner.LOCAL, classDefaultOpIds, null, boundaries),
+                result, ContainerPayloadDescriptors.resultDescriptorOf(classType),
+                FailurePolicyId.CLASS_CONSTRUCTION, origin));
+            for (SemanticOp child : children) {
+                emit(child);
+            }
+            return result;
+        }
+
+        /**
+         * Builds (without emitting) one {@code CLASS_NEW} field-boundary
+         * child (K-D4 step 5): kind, the field's declared descriptor, the
+         * pinned input, the descriptor-kind policy, the canonical
+         * runtime-validation realization, {@code parentOpId} = the
+         * {@code CLASS_NEW} op id, and a {@code SYNTHETIC} origin at the
+         * given span (the {@code ARRAY_NEW} element-boundary precedent).
+         */
+        private SemanticOp buildFieldBoundary(BoundaryKind kind, RuntimeDescriptor descriptor,
+                                              ValueId input, Span span, OpId classNewOpId) {
+            return buildNullOp(SemanticOpKind.BOUNDARY,
+                new KindPayload.BoundaryPayload(kind, descriptor, input,
+                    new BoundaryRealization.RuntimeValidation(
+                        CANONICAL_RUNTIME_VALIDATION_ID)),
+                span, descriptorKindPolicy(descriptor), SourceOriginKind.SYNTHETIC,
+                classNewOpId);
+        }
+
+        /**
+         * The class descriptor of a locally declared class (the factory's
+         * result type): the checked {@code Type.Class} of the checker's
+         * {@code ClassSymbol} rendered through the single
+         * {@link DescriptorService} producer — never a hand-built
+         * descriptor (the producer-singularity rule).
+         */
+        private RuntimeDescriptor classDescriptorOf(String name) {
+            SymbolTable scope = currentCheckerScope();
+            Symbol symbol = scope == null ? null : scope.resolve(name);
+            if (!(symbol instanceof Symbol.ClassSymbol classSymbol)) {
+                throw new ConstructUnlowered("class declaration '" + name
+                    + "' has no checked ClassSymbol (a missing checker fact is a "
+                    + "producer defect)");
+            }
+            try {
+                return DescriptorService.describe(
+                    deal.types.Types.classType(classSymbol.name(), classSymbol.identity()));
+            } catch (DescriptorService.Defect defect) {
+                throw new ConstructUnlowered("class '" + name
+                    + "' of unrepresentable checked type (" + defect.getMessage() + ")");
+            }
+        }
+
+        /**
+         * The checked {@link Type} of a class-field annotation (K-D2: the
+         * layout descriptors are produced from the checked field types
+         * through {@link DescriptorService}): the checker-fact mirror of
+         * {@code NameResolver.resolveTypeNode} resolved against the
+         * current checker scope (the scope the checker resolved the
+         * annotation in — D4: no {@code NameResolver} instance is
+         * retained). An unresolvable annotation is a producer defect.
+         */
+        private Type fieldTypeOf(deal.ast.TypeNode node) {
+            return switch (node) {
+                case deal.ast.NamedType named -> resolveNamedFieldType(named);
+                case deal.ast.QualifiedType qualified -> resolveQualifiedFieldType(qualified);
+                case deal.ast.ArrayType array -> deal.types.Types.array(
+                    fieldTypeOf(array.elementType()));
+                case deal.ast.NullableType nullable -> deal.types.Types.nullable(
+                    fieldTypeOf(nullable.innerType()));
+                case deal.ast.FunctionType function -> {
+                    List<Type> paramTypes = new ArrayList<>();
+                    for (deal.ast.FunctionTypeParam parameter : function.params()) {
+                        paramTypes.add(fieldTypeOf(parameter.type()));
+                    }
+                    yield new Type.Func(List.copyOf(paramTypes),
+                        fieldTypeOf(function.returnType()), function.isAsync());
+                }
+            };
+        }
+
+        /** The checker-fact mirror of {@code NameResolver.resolveNamedType}. */
+        private Type resolveNamedFieldType(deal.ast.NamedType named) {
+            String name = named.name();
+            return switch (name) {
+                case "null" -> Type.Null.INSTANCE;
+                case "boolean" -> Type.Boolean.INSTANCE;
+                case "int" -> Type.Int.INSTANCE;
+                case "number" -> Type.Number.INSTANCE;
+                case "string" -> Type.String.INSTANCE;
+                case "table" -> Type.Table.INSTANCE;
+                case "Error" -> deal.types.Types.classType("Error",
+                    deal.checker.NameResolver.intrinsicErrorIdentity());
+                case "bytes" -> {
+                    Symbol symbol = resolveScopeName(name);
+                    if (symbol instanceof Symbol.ClassSymbol classSymbol) {
+                        yield deal.types.Types.classType(classSymbol.name(),
+                            classSymbol.identity());
+                    }
+                    yield Type.Bytes.INSTANCE;
+                }
+                default -> {
+                    Symbol symbol = resolveScopeName(name);
+                    if (symbol instanceof Symbol.ClassSymbol classSymbol) {
+                        yield deal.types.Types.classType(classSymbol.name(),
+                            classSymbol.identity());
+                    }
+                    throw new ConstructUnlowered("class-field type annotation names unknown "
+                        + "type '" + name + "' (a checked module cannot reach this arm — "
+                        + "a fact defect, never an invented type)");
+                }
+            };
+        }
+
+        /** The checker-fact mirror of {@code NameResolver.resolveQualifiedType}. */
+        private Type resolveQualifiedFieldType(deal.ast.QualifiedType qualified) {
+            Symbol symbol = resolveScopeName(qualified.moduleName());
+            if (!(symbol instanceof Symbol.ModuleSymbol moduleSymbol)) {
+                throw new ConstructUnlowered("class-field type annotation qualifies unknown "
+                    + "module '" + qualified.moduleName() + "' (a checked module cannot "
+                    + "reach this arm — a fact defect)");
+            }
+            Type exportType = moduleSymbol.exports().get(qualified.typeName());
+            if (exportType == null) {
+                throw new ConstructUnlowered("class-field type annotation names unknown "
+                    + "export '" + qualified.typeName() + "' of module '"
+                    + qualified.moduleName() + "' (a fact defect)");
+            }
+            return exportType;
+        }
+
+        /** Resolves one annotation name against the current checker scope. */
+        private Symbol resolveScopeName(String name) {
+            SymbolTable scope = currentCheckerScope();
+            return scope == null ? null : scope.resolve(name);
+        }
+
+        /**
+         * The produced factory-registration record of the session (K-D2):
+         * the insertion-ordered {@code constructionEntry}&#8594;factory
+         * bindings of the exported classes.
+         */
+        public deal.semantic.ir.ClassFactoryRegistry factoryRegistry() {
+            return new deal.semantic.ir.ClassFactoryRegistry(
+                new LinkedHashMap<>(factoryRegistry));
         }
 
         /**
@@ -5793,7 +6594,7 @@ public final class SemanticLowerer {
                 case IdentifierExpr identifier -> lowerBindingLoad(identifier, slot);
                 case FunctionExpr functionExpr -> {
                     if (closureCore) {
-                        yield lowerClosureExpr(functionExpr);
+                        yield lowerClosureExpr(functionExpr, slot);
                     }
                     throw new ConstructUnlowered(describeExpression(expr));
                 }
@@ -6898,7 +7699,7 @@ public final class SemanticLowerer {
                     capabilityRegistryHash),
                 claims,
                 coverage,
-                Map.of(),
+                new LinkedHashMap<>(classLayouts),
                 Map.copyOf(functions),
                 new ModuleInitPlan(List.copyOf(imports), moduleInitBlock),
                 ExportPlan.empty(),
@@ -7885,6 +8686,50 @@ public final class SemanticLowerer {
                         FailurePolicyId.NO_DEAL_FAILURE, slot);
                 }
             }
+            if (!defaultContexts.isEmpty()) {
+                // The default-block admission rule (K-D3, ISSUE-0511):
+                // every reference of the open default walk — a direct
+                // identifier reference or a capture resolved by a nested
+                // detached walk (a closure body inside the default) —
+                // admits only block-internal allocations (blocks allocated
+                // inside the walk) and module-level bindings resolved
+                // through the module-init block; an enclosing-region
+                // (function-local) free reference is invalid — the closed
+                // ClassDefaultPayload records no captures — and fails
+                // E6005 CLASS_DEFAULT_CAPTURE, never a silent capture. A
+                // nested closure's capture collector is no bypass: its
+                // captures resolve against the same closed admission set.
+                DefaultContext context = defaultContexts.peek();
+                FrameResolution resolution = resolveFrame(identifier.name());
+                if (resolution == null) {
+                    throw new ConstructUnlowered("identifier '" + identifier.name()
+                        + "' is not a declared binding of the class walk's "
+                        + "environment (class/module members are E9's/E10's)");
+                }
+                BlockId producing = resolution.entry().incarnation().scope();
+                if (!producing.equals(moduleInitBlock)
+                        && !producing.equals(context.block())
+                        && !context.internalBlocks().contains(producing)) {
+                    throw new ClassDefaultCapture(identifier.name());
+                }
+                if (captureCollectors.size() <= context.entryCaptureDepth()) {
+                    // A direct reference of the walk: the load publishes
+                    // the threaded slot when one is threaded (the
+                    // slot-threaded production — the CLASS_DEFAULT op's
+                    // result identity, K-D3); a function-typed load
+                    // publishes the incarnation's statically tracked
+                    // function identity instead (loads preserve
+                    // allocation identity).
+                    return emitResolvedLoad(identifier, type, resolution.entry(), slot);
+                }
+                // A nested detached walk's reference (a closure body
+                // inside the default): the closure walk's own capture
+                // business (B3) under the admission set checked above;
+                // no slot is threaded below the default expression's
+                // top level.
+                maybeRegisterCapture(identifier.name(), resolution);
+                return emitResolvedLoad(identifier, type, resolution.entry(), null);
+            }
             if (closureCore) {
                 FrameResolution resolution = resolveFrame(identifier.name());
                 if (resolution == null) {
@@ -7919,11 +8764,23 @@ public final class SemanticLowerer {
          * the payload names the dominant incarnation's
          * {@code {binding, generation}}; the result publishes the
          * incarnation's statically tracked function identity for
-         * function-typed loads (identity preservation) or a fresh
-         * {@code ValueId} otherwise.
+         * function-typed loads (identity preservation — a threaded slot
+         * never replaces the tracked identity, because the identity is
+         * the {@code ValueId} whose {@code FunctionExecutionBinding}
+         * resolves the load under R-FUNCTION-BINDING) or a fresh
+         * {@code ValueId} otherwise. A non-function load with a threaded
+         * slot ({@code slot} non-null) publishes the slot instead of
+         * allocating one — the slot-threaded production of the default
+         * walk's direct identifier reference (the {@code CLASS_DEFAULT}
+         * op's result identity, K-D3).
          */
         private ValueId emitResolvedLoad(IdentifierExpr identifier, Type type,
                                          FrameEntry entry) {
+            return emitResolvedLoad(identifier, type, entry, null);
+        }
+
+        private ValueId emitResolvedLoad(IdentifierExpr identifier, Type type,
+                                         FrameEntry entry, ValueId slot) {
             RuntimeDescriptor descriptor = ContainerPayloadDescriptors.resultDescriptorOf(type);
             ValueId result = null;
             if (descriptor instanceof RuntimeDescriptor.Func) {
@@ -7938,7 +8795,7 @@ public final class SemanticLowerer {
                 }
             }
             if (result == null) {
-                result = ids.nextValueId(module, nextOrdinal++, 0);
+                result = slot != null ? slot : ids.nextValueId(module, nextOrdinal++, 0);
             }
             AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
             OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
@@ -7960,9 +8817,18 @@ public final class SemanticLowerer {
          * buffered body walk — B3), and the {@code LoweredBody} binding.
          * The body ops flush after the {@code CLOSURE_NEW} op (the
          * buffered walk runs first so the captures are known when the
-         * payload is built).
+         * payload is built). A threaded result slot ({@code slot}
+         * non-null) becomes the {@code CLOSURE_NEW} result identity — the
+         * closure identity <em>is</em> the {@code CLASS_DEFAULT} op's
+         * result for a function-literal default (K-D3), and the
+         * {@code LoweredBody} binding registers under that identity so
+         * R-FUNCTION-BINDING resolves it.
          */
         private ValueId lowerClosureExpr(FunctionExpr functionExpr) {
+            return lowerClosureExpr(functionExpr, null);
+        }
+
+        private ValueId lowerClosureExpr(FunctionExpr functionExpr, ValueId slot) {
             BlockId bodyBlock = allocateBlock();
             FunctionId functionId = ids.nextFunctionId(module, nextOrdinal++, 0);
             Type checkedFunctionType = checkedType(functionExpr);
@@ -8007,7 +8873,7 @@ public final class SemanticLowerer {
             for (CapturedCell capture : captured) {
                 captureIds.add(capture.cell().id);
             }
-            ValueId result = ids.nextValueId(module, nextOrdinal++, 0);
+            ValueId result = slot != null ? slot : ids.nextValueId(module, nextOrdinal++, 0);
             emitClosureNew(functionId, result, signature, captureIds, bodyBlock,
                 functionExpr.span(), captured);
             emitTarget().addAll(bodyOps);
@@ -8079,10 +8945,13 @@ public final class SemanticLowerer {
         private ValueId lowerTableNew(ObjectLiteralExpr literal, ValueId slot) {
             Type type = checkedType(literal);
             if (type instanceof Type.Class classType) {
-                throw new ConstructUnlowered("class-typed object literal "
-                    + DescriptorService.semanticModulePath(classType.identity())
-                    + "/" + classType.name()
-                    + " (class construction and CLASS_NEW are E9's)");
+                if (!classCore) {
+                    throw new ConstructUnlowered("class-typed object literal "
+                        + DescriptorService.semanticModulePath(classType.identity())
+                        + "/" + classType.name()
+                        + " (class construction and CLASS_NEW are E9's)");
+                }
+                return lowerClassLiteral(literal, slot);
             }
             if (!(type instanceof Type.Table)) {
                 throw new ConstructUnlowered("object literal of non-table, non-class checked "

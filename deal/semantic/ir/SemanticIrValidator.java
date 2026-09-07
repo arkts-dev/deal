@@ -205,7 +205,12 @@ public final class SemanticIrValidator {
     public static Optional<CompilerDiagnostic> validate(LoweredModuleUnit unit, ComparisonFacts facts) {
         Objects.requireNonNull(unit, "unit must not be null");
         Objects.requireNonNull(facts, "facts must not be null");
-        return validateUnit(RawUnit.fromTyped(unit), facts, Map.of());
+        RawUnit raw = RawUnit.fromTyped(unit);
+        Optional<CompilerDiagnostic> failure = validateUnit(raw, facts, Map.of());
+        if (failure.isPresent()) {
+            return failure;
+        }
+        return checkClassDeclarationLayout(unit, raw, facts);
     }
 
     /**
@@ -402,6 +407,42 @@ public final class SemanticIrValidator {
 
     // -- R-COVERAGE ------------------------------------------------------------
 
+    /**
+     * The typed-surface layout tie of the {@code CLASS_DECLARATION}
+     * row's layout-only R-COVERAGE waiver (ISSUE-0511): the waiver is
+     * admitted only when the layout record the row is satisfied by was
+     * actually produced. The raw model carries no layouts
+     * ({@link RawUnit}), so the tie is checked on the typed unit after
+     * the closed rule engine passes: when the
+     * {@code CLASS_DECLARATION} row is recorded, no op of the mapped
+     * kinds ({@code CLASS_DEFAULT}/{@code CLASS_FACTORY}/
+     * {@code EXPORT_PUBLISH}) was produced, and
+     * {@code unit.classLayouts()} is empty, the row is satisfied by
+     * nothing — a layout-only class must still have its layout record —
+     * and R-COVERAGE fails.
+     */
+    private static Optional<CompilerDiagnostic> checkClassDeclarationLayout(
+            LoweredModuleUnit unit, RawUnit raw, ComparisonFacts facts) {
+        if (!unit.constructCoverage().containsKey(ConstructKind.CLASS_DECLARATION)) {
+            return Optional.empty();
+        }
+        Set<SemanticOpKind> mapped =
+            new LinkedHashSet<>(ConstructKind.CLASS_DECLARATION.mappedOpKinds());
+        for (SemanticOp op : unit.ops()) {
+            if (mapped.contains(op.kind())) {
+                return Optional.empty();
+            }
+        }
+        if (!unit.classLayouts().isEmpty()) {
+            return Optional.empty();
+        }
+        return fail(raw, facts, R_COVERAGE, SemanticCapability.FOUNDATION_VALUES,
+            origin(R_COVERAGE, "construct " + ConstructKind.CLASS_DECLARATION.name()
+                + " recorded in constructCoverage with no produced op of any mapped kind "
+                + "and no class layout record (a layout-only class must still have its "
+                + "layout)"));
+    }
+
     private static Optional<CompilerDiagnostic> checkCoverage(RawUnit unit, ComparisonFacts facts) {
         for (RawCoverage row : unit.coverage()) {
             ConstructKind construct = enumByName(ConstructKind.class, row.construct());
@@ -427,6 +468,23 @@ public final class SemanticIrValidator {
                 }
             }
             if (!produced) {
+                // ISSUE-0231..0239 row-extension consumption: the
+                // CLASS_DECLARATION row's required common form begins with
+                // "layout" — a class layout is unit data
+                // (unit.classLayouts), never an op. A no-default
+                // non-exported (layout-only) class therefore produces no
+                // CLASS_DEFAULT/CLASS_FACTORY op, and the row is satisfied
+                // by the produced layout record; the op-bearing shapes
+                // (defaulted/exported classes) evidence the row through
+                // the produced CLASS_DEFAULT/CLASS_FACTORY ops. No vacuous
+                // op is invented for the layout-only shape. The raw model
+                // carries no layouts, so the waiver's layout record is
+                // tied on the typed surface (checkClassDeclarationLayout):
+                // a recorded row with no mapped op and no layout record
+                // still fails R-COVERAGE.
+                if (construct == ConstructKind.CLASS_DECLARATION) {
+                    continue;
+                }
                 return fail(unit, facts, R_COVERAGE, SemanticCapability.FOUNDATION_VALUES,
                     origin(R_COVERAGE, "construct " + row.construct()
                         + " recorded in constructCoverage with no produced op of any mapped kind"));

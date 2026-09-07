@@ -207,6 +207,12 @@ TEST_SOURCES=(
   # (stdlib-operations-and-time-lock Contracts §Integration verification
   # task, Verification 7-8; sequencing item 7, the last task).
   'test/StdlibIntegrationTest.java'
+  # ISSUE-0511 registration: the class-declaration lowering battery
+  # (class-construction-jsonable-operations K-D2/K-D3/K-D4,
+  # Verification 1 — the declaration arm: class layouts,
+  # CLASS_FACTORY registration, CLASS_DEFAULT emission, default-block
+  # admission, and determinism).
+  'test/ClassDeclarationLoweringTest.java'
   # ISSUE-0162 registration: the C FFI declaration validation and
   # forward binding generation battery.
   'test/FfiDeclarationValidatorTest.java'
@@ -372,4 +378,5 @@ WARNING: luajit not found, skipping async nesting stress tests'
   # (stdlib-operations-and-time-lock Contracts §Integration verification
   # task, Verification 7-8; sequencing item 7, the last task).
   'fg|=== Running Stdlib Integration Verification (ISSUE-0499, decomposition tail) ===|java -ea -cp build deal.test.StdlibIntegrationTest'
+  'fg|=== Running Class Declaration Lowering Tests (ISSUE-0511 declaration arm) ===|java -ea -cp build deal.test.ClassDeclarationLoweringTest'
 )
