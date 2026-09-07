@@ -8,6 +8,7 @@ import static deal.compiler.CompilerProtocolJson.*;
 public final class ConstructionRepairWorkspace {
     private CanonicalJson.Obj envelope;
     private DealConstruction.Failure failure;
+    private int unchangedAttempts;
 
     public ConstructionRepairWorkspace(CanonicalJson.Obj envelope, DealConstruction.Failure failure) {
         this.envelope = envelope;
@@ -33,6 +34,8 @@ public final class ConstructionRepairWorkspace {
         var dependencies = new LinkedHashSet<String>();
         collect(all.get(failure.ownerId), all, dependencies);
         return Map.of("target", failure.ownerId, "diagnostic", failure.getMessage(),
+                "progress", unchangedAttempts == 0 ? "Replace the rejected operand; preserve all unrelated calls."
+                        : "NO_PROGRESS: the last " + unchangedAttempts + " repair attempts repeated the identical rejected calls. Do not resend the current call unchanged. Follow the diagnostic to change the offending operand.",
                 "call", all.containsKey(failure.ownerId) ? all.get(failure.ownerId) : Map.of("id", failure.ownerId, "missing", true),
                 "dependencies", dependencies.stream().filter(id -> !id.equals(failure.ownerId)).map(all::get).toList(),
                 "consumers", all.values().stream().filter(call -> !stringField(call, "id").equals(failure.ownerId))
@@ -71,8 +74,10 @@ public final class ConstructionRepairWorkspace {
         }
         if (!seen.contains(failure.ownerId)) throw new IllegalArgumentException("Patch must replace " + failure.ownerId);
         if (all.size() > 512) throw new IllegalArgumentException("CC1001: construction batch exceeds 512 calls");
-        envelope = CanonicalJson.obj(envelope.entries().stream().map(e -> e.key().equals("calls")
+        var candidate = CanonicalJson.obj(envelope.entries().stream().map(e -> e.key().equals("calls")
                 ? CanonicalJson.e("calls", CanonicalJson.arr(new ArrayList<CanonicalJson.Value>(all.values()))) : e).toList());
+        unchangedAttempts = encode(candidate).equals(encode(envelope)) ? unchangedAttempts + 1 : 0;
+        envelope = candidate;
     }
 
     public void validatePatch(CanonicalJson.Arr replacements) {
