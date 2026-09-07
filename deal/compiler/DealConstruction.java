@@ -35,7 +35,9 @@ public class DealConstruction {
     private Built resolve(String id) {
         if (handles.containsKey(id)) return handles.get(id);
         var call = pending.get(id);
-        if (call == null) throw new IllegalArgumentException("unknown construction handle: " + id);
+        if (call == null) throw new IllegalArgumentException("unknown construction handle: " + id
+                + ". Define this id in the current calls batch. A string operand is a handle, not literal text;"
+                + " for literal text define a text constructor and use its id. Handles from previous batches are invalid.");
         if (!resolving.add(id)) throw new IllegalArgumentException("cyclic construction dependency: " + id);
         try {
                 Built built = invoke(stringField(call, "op"), call);
