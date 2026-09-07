@@ -811,7 +811,7 @@ public final class V12FeatureGateTest {
 
         check("the committed corpus catalog is fully valid", () -> {
             V12FeatureFixtureCatalog catalog = V12FeatureFixtureCatalog.load(
-                Path.of("test/features").toAbsolutePath().normalize());
+                Path.of("test/features-iss0111").toAbsolutePath().normalize());
             List<String> ids = new ArrayList<>();
             for (var entry : catalog.records()) {
                 ids.add(entry.id());

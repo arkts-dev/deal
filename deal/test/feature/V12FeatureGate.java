@@ -89,7 +89,7 @@ public final class V12FeatureGate {
         "tools/deal-process-launcher-linux-x86_64";
     private static final String LAUNCHER_MANIFEST_RELATIVE =
         "tools/launcher-manifest.json";
-    private static final String CORPUS_DEFAULT = "test/features";
+    private static final String CORPUS_DEFAULT = "test/features-iss0111";
     private static final String NATIVE_FIXTURES_DEFAULT = "test/native-fixtures";
     private static final String NATIVE_C_FIXTURES = "test/fixtures";
 

@@ -52,7 +52,6 @@ TEST_MAINS+=(
 )
 
 # =========================================================================
-# =========================================================================
 # ISSUE-0488 (historical/legacy catalogs): HistoricalRegressionCatalog
 # (the closed historical pin authority with pinned expectation
 # baselines), LegacyCapabilityCatalog (the release-owned unsupported-
@@ -89,7 +88,6 @@ TEST_MAINS+=(
 )
 
 # =========================================================================
-# =========================================================================
 # ISSUE-0356 (JS lane): the JavaScript lane of the differential gate plus
 # its lane suite join the compile list and the run phase here. The lane
 # implements the Shared Lane Contract (G4) over the absorbed
@@ -107,7 +105,6 @@ TEST_MAINS+=(
   'fg|=== Running JS Lane Tests (ISSUE-0356) ===|java -ea -cp build deal.test.conformance.JsLaneTest'
 )
 
-# =========================================================================
 # =========================================================================
 # ISSUE-0355 (JVM lane): the JVM lane of the differential gate plus its
 # lane suite join the compile list and the run phase here. The lane

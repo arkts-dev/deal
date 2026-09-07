@@ -519,7 +519,6 @@ tool_line_step() {
 dealpg4_preflight_run
 
 # =========================================================================
-# =========================================================================
 # Single compilation step: compile all source and test files at once.
 # Incremental: when every .java source under deal/ and test/ is older
 # than the recorded build stamp (and this script itself has not changed
