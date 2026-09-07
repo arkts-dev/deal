@@ -4,7 +4,7 @@ import deal.semantic.ir.CanonicalJson;
 import java.util.*;
 import static deal.compiler.CompilerProtocolJson.*;
 
-/** Ephemeral constructor transaction. Existing sibling calls and transaction arguments are immutable. */
+/** Ephemeral constructor transaction. Independent calls and transaction arguments are immutable. */
 public final class ConstructionRepairWorkspace {
     private CanonicalJson.Obj envelope;
     private DealConstruction.Failure failure;
@@ -28,19 +28,37 @@ public final class ConstructionRepairWorkspace {
                 .map(c -> requireObject(c, "call")).toList();
     }
 
+    private Set<String> repairRegion(Map<String, CanonicalJson.Obj> all) {
+        var region = new LinkedHashSet<String>();
+        region.add(failure.ownerId);
+        boolean changed;
+        do {
+            changed = false;
+            for (var entry : all.entrySet()) {
+                if (!region.contains(entry.getKey()) && region.stream().anyMatch(id -> references(entry.getValue(), id))) {
+                    region.add(entry.getKey());
+                    changed = true;
+                }
+            }
+        } while (changed);
+        return region;
+    }
+
     public Map<String, Object> snapshot() {
         var all = new LinkedHashMap<String, CanonicalJson.Obj>();
         for (var call : calls()) all.put(stringField(call, "id"), call);
         var dependencies = new LinkedHashSet<String>();
         collect(all.get(failure.ownerId), all, dependencies);
+        var region = repairRegion(all);
         return Map.of("target", failure.ownerId, "diagnostic", failure.getMessage(),
                 "progress", unchangedAttempts == 0 ? "Replace the rejected operand; preserve all unrelated calls."
                         : "NO_PROGRESS: the last " + unchangedAttempts + " repair attempts repeated the identical rejected calls. Do not resend the current call unchanged. Follow the diagnostic to change the offending operand.",
                 "call", all.containsKey(failure.ownerId) ? all.get(failure.ownerId) : Map.of("id", failure.ownerId, "missing", true),
                 "dependencies", dependencies.stream().filter(id -> !id.equals(failure.ownerId)).map(all::get).toList(),
                 "consumers", all.values().stream().filter(call -> !stringField(call, "id").equals(failure.ownerId))
-                        .filter(call -> references(call, failure.ownerId)).toList(),
-                "preserved", all.keySet().stream().filter(id -> !dependencies.contains(id)).toList());
+                        .filter(call -> region.contains(stringField(call, "id"))).toList(),
+                "editable", region.stream().toList(),
+                "preserved", all.keySet().stream().filter(id -> !region.contains(id)).toList());
     }
 
     private static boolean references(CanonicalJson.Value value, String id) {
@@ -58,16 +76,17 @@ public final class ConstructionRepairWorkspace {
     }
 
     public void patch(CanonicalJson.Arr replacements) {
-        if (replacements.items().isEmpty() || replacements.items().size() > 8)
-            throw new IllegalArgumentException("Replace the rejected call plus at most seven new dependencies");
+        if (replacements.items().isEmpty() || replacements.items().size() > 16)
+            throw new IllegalArgumentException("Repair at most sixteen calls in the rejected dependency region");
         var all = new LinkedHashMap<String, CanonicalJson.Obj>();
         for (var call : calls()) all.put(stringField(call, "id"), call);
+        var region = repairRegion(all);
         var seen = new HashSet<String>();
         for (var raw : replacements.items()) {
             var call = requireObject(raw, "call");
             String id = stringField(call, "id");
             if (!seen.add(id)) throw new IllegalArgumentException("Duplicate constructor call: " + id);
-            if (all.containsKey(id) && !id.equals(failure.ownerId)
+            if (all.containsKey(id) && !region.contains(id)
                     && !encode(all.get(id)).equals(encode(call)))
                 throw new IllegalArgumentException("Cannot change preserved constructor call: " + id);
             all.put(id, call);

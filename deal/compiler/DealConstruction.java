@@ -43,9 +43,7 @@ public class DealConstruction {
         if (handles.containsKey(id)) return handles.get(id);
         var call = pending.get(id);
         if (call == null) throw new Failure(id.matches("[A-Za-z_][A-Za-z0-9_]*") ? id : null, "unknown construction handle: " + id
-                + ". Define this id in the current calls batch. A string operand is a handle, not literal text;"
-                + " For literal text use the inline operand " + encode(Map.of("text", id))
-                + " instead of the bare string. For a variable use {\"path\":[\"variableName\"]}. Handles from previous batches are invalid.");
+                + ". Define this id in the current calls batch. Handles from previous batches are invalid.");
         if (!resolving.add(id)) throw new IllegalArgumentException("cyclic construction dependency: " + id);
         callStack.push(id);
         try {
@@ -148,7 +146,10 @@ public class DealConstruction {
             value = resolve(id);
         } catch (Failure failure) {
             if (!pending.containsKey(id)) throw new Failure(callStack.isEmpty() ? failure.ownerId : callStack.peek(),
-                    "Expected " + kind + " operand. " + failure.getMessage());
+                    "Expected " + kind + " operand. " + failure.getMessage()
+                            + (kind == Kind.VALUE ? " For literal text use " + encode(Map.of("text", id))
+                                + "; for a variable use {\"path\":[\"variableName\"]}."
+                                : " Add a " + kind + " constructor with this id, or reference an existing " + kind + " call. Do not substitute a literal or variable."));
             throw failure;
         }
         if (kind == Kind.BLOCK && value.kind() == Kind.STATEMENT) return new Built(Kind.BLOCK, value.source());
