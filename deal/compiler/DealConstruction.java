@@ -155,6 +155,13 @@ public class DealConstruction {
     protected final String value(CanonicalJson.Obj c, String key) {
         var operand = field(c, key);
         if (operand instanceof CanonicalJson.Str s) return get(s.value(), Kind.VALUE).source();
+        if (operand instanceof CanonicalJson.Obj literal) {
+            if (literal.entries().size() != 1) throw new IllegalArgumentException("Inline operand needs exactly one of text or path");
+            if (literal.entries().getFirst().key().equals("text")) return encode(stringField(literal, "text"));
+            if (literal.entries().getFirst().key().equals("path")) return invoke("path",
+                    CanonicalJson.obj(List.of(CanonicalJson.e("parts", field(literal, "path"))))).source();
+            throw new IllegalArgumentException("Inline operand needs text or path");
+        }
         if (operand instanceof CanonicalJson.Bool) return encode(operand);
         return Integer.toString(intField(c, key));
     }
@@ -180,7 +187,8 @@ public class DealConstruction {
     private static final List<String> BINARY = List.of("+", "-", "*", "/", "%", "===", "!==", "<", "<=", ">", ">=", "&&", "||");
     public static Map<String, Object> textSchema() { return Map.of("type", "string"); }
     public static Map<String, Object> operandSchema() {
-        return Map.of("anyOf", List.of(textSchema(), Map.of("type", "integer"), Map.of("type", "boolean")));
+        return Map.of("anyOf", List.of(textSchema(), Map.of("type", "integer"), Map.of("type", "boolean"),
+                objectSchema(Map.of("text", textSchema())), objectSchema(Map.of("path", arraySchema(textSchema())))));
     }
     public static Map<String, Object> objectSchema(Map<String, Object> properties) {
         return Map.of("type", "object", "additionalProperties", false, "properties", properties, "required", properties.keySet().stream().sorted().toList());
