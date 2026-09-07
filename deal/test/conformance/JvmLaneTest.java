@@ -48,7 +48,7 @@ import java.util.Set;
  *       reuse, the sidecar-authoritative field set, the suppression of
  *       unpinned optionals, and the {@code sourceFile} normalization
  *       from the temp project root to the corpus-relative form).</li>
- *   <li>Pre-flip skip tolerance (G2/G8): the absorbed 47-entry
+ *   <li>Pre-flip skip tolerance (G2/G8): the absorbed 45-entry
  *       {@code JvmConformanceTest} registry validates cleanly against
  *       the real corpus; a registry-tracked failing outcome is reported
  *       non-fatal with its gap id by the gate; a stale entry (missing
@@ -98,11 +98,18 @@ public class JvmLaneTest {
     // bytes-length, bytes-write-single-evaluation,
     // bytes-write-validation-order): the direct bytes surface passes
     // the real pipeline and the stale-skip gate forced them out.
-    // ISSUE-0502 (the gap-suite runtime population) adds nine live
-    // entries for the landed population: the eight promoted bytes
-    // fixtures (JVM-GAP-BYTES) and rtc-015-error-default-code under the
-    // new gap id JVM-GAP-ERROR-LITERAL-DEFAULTS.
-    private static final int SKIP_REGISTRY_ENTRIES = 48;
+    // ISSUE-0502 (the gap-suite runtime population) adds six live
+    // entries for the landed population: the five promoted
+    // runtime-error gap bytes fixtures (JVM-GAP-BYTES — each raises
+    // its pinned E8012/E8013 on the JVM lane, but the JVM
+    // DEALRuntimeError snapshot carries no column field (ISSUE-0276),
+    // so the lane cannot serialize the canonical error snapshot) and
+    // rtc-015-error-default-code under the new gap id
+    // JVM-GAP-ERROR-LITERAL-DEFAULTS. The three promoted runtime-ok
+    // gap bytes fixtures carry no entries (they pass the real
+    // pipeline, verified this run) and the promoted
+    // bytes-boundary-order fixture carries none either.
+    private static final int SKIP_REGISTRY_ENTRIES = 45;
 
     public static void main(String[] args) throws Exception {
         System.out.println("=== JVM Lane Tests (ISSUE-0355) ===\n");

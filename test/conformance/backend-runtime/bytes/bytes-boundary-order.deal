@@ -1,7 +1,6 @@
 // @spec: Bytes — indexing, byte-value checks, and reference semantics
 // @description: Bytes are zero-filled references and failed writes evaluate operands then leave the buffer unchanged
-// @expected: known-fail runtime-ok
-// @issue: ISSUE-0111
+// @expected: runtime-ok
 // @features: bytes, int32, aliasing, evaluation-order, runtime-errors
 
 export function main(): null {

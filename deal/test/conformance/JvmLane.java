@@ -1709,42 +1709,48 @@ public class JvmLane implements Lane {
 
         // ---- JVM-GAP-BYTES: the gap-suite runtime population
         // (ISSUE-0502) ----
-        // The eight promoted gap bytes fixtures carry the same lane
-        // reason: E6000 at every bytes site until JVM v1.2 bytes lands
-        // (ISSUE-0277); the LuaJIT-owned bytes expectations pass only
-        // on LuaJIT and Node.
-        skip("backend-runtime/bytes/bytes-class-default.deal",
-            "a bytes class-field default requires the bytes carrier; "
-                + "JvmBackend raises E6000 at bytes sites (ISSUE-0277).",
-            "JVM-GAP-BYTES");
-        skip("backend-runtime/bytes/bytes-write-zero.deal",
-            "the zero byte-value write requires the bytes carrier; "
-                + "JvmBackend raises E6000 at bytes sites (ISSUE-0277).",
-            "JVM-GAP-BYTES");
-        skip("backend-runtime/bytes/bytes-zero-length.deal",
-            "the bytes(0) empty buffer requires the bytes carrier; "
-                + "JvmBackend raises E6000 at bytes sites (ISSUE-0277).",
-            "JVM-GAP-BYTES");
+        // The three promoted runtime-ok gap bytes fixtures
+        // (bytes-class-default, bytes-write-zero, bytes-zero-length)
+        // carry NO entries: they pass the real JVM pipeline on the
+        // ISSUE-0158 direct bytes lane (verified this run — a skip
+        // entry would be stale and fail the gate deterministically).
+        // The five promoted runtime-error gap bytes fixtures stay
+        // tracked: each raises its pinned E8012/E8013 on the JVM lane,
+        // but the JVM DEALRuntimeError snapshot carries no column
+        // field (ISSUE-0276 owns the backend convergence), so the lane
+        // cannot serialize the canonical error snapshot — the same
+        // lane reason as the pre-existing bytes-index-bounds and
+        // bytes-write-range entries.
         skip("backend-runtime/bytes/bytes-negative-length-error.deal",
-            "the E8012 negative-allocation rejection requires the bytes "
-                + "carrier; JvmBackend raises E6000 at bytes sites "
-                + "(ISSUE-0277).", "JVM-GAP-BYTES");
+            "the fixture raises E8012 on the JVM lane, but the JVM "
+                + "DEALRuntimeError snapshot carries no column field "
+                + "(ISSUE-0276 owns the backend convergence), so the "
+                + "lane cannot serialize the canonical error snapshot.",
+            "JVM-GAP-BYTES");
         skip("backend-runtime/bytes/bytes-negative-read-error.deal",
-            "the E8012 negative-index read rejection requires the bytes "
-                + "carrier; JvmBackend raises E6000 at bytes sites "
-                + "(ISSUE-0277).", "JVM-GAP-BYTES");
+            "the fixture raises E8012 on the JVM lane, but the JVM "
+                + "DEALRuntimeError snapshot carries no column field "
+                + "(ISSUE-0276 owns the backend convergence), so the "
+                + "lane cannot serialize the canonical error snapshot.",
+            "JVM-GAP-BYTES");
         skip("backend-runtime/bytes/bytes-read-at-length-error.deal",
-            "the E8012 read-at-length rejection requires the bytes "
-                + "carrier; JvmBackend raises E6000 at bytes sites "
-                + "(ISSUE-0277).", "JVM-GAP-BYTES");
+            "the fixture raises E8012 on the JVM lane, but the JVM "
+                + "DEALRuntimeError snapshot carries no column field "
+                + "(ISSUE-0276 owns the backend convergence), so the "
+                + "lane cannot serialize the canonical error snapshot.",
+            "JVM-GAP-BYTES");
         skip("backend-runtime/bytes/bytes-write-at-length-error.deal",
-            "the E8012 write-at-length rejection requires the bytes "
-                + "carrier; JvmBackend raises E6000 at bytes sites "
-                + "(ISSUE-0277).", "JVM-GAP-BYTES");
+            "the fixture raises E8012 on the JVM lane, but the JVM "
+                + "DEALRuntimeError snapshot carries no column field "
+                + "(ISSUE-0276 owns the backend convergence), so the "
+                + "lane cannot serialize the canonical error snapshot.",
+            "JVM-GAP-BYTES");
         skip("backend-runtime/bytes/bytes-write-negative-error.deal",
-            "the E8013 below-zero byte-value write rejection requires "
-                + "the bytes carrier; JvmBackend raises E6000 at bytes "
-                + "sites (ISSUE-0277).", "JVM-GAP-BYTES");
+            "the fixture raises E8013 on the JVM lane, but the JVM "
+                + "DEALRuntimeError snapshot carries no column field "
+                + "(ISSUE-0276 owns the backend convergence), so the "
+                + "lane cannot serialize the canonical error snapshot.",
+            "JVM-GAP-BYTES");
 
         // ---- JVM-GAP-ERROR-LITERAL-DEFAULTS: the LuaJIT-owned Error
         // literal default filling (ISSUE-0502, new gap id) ----
