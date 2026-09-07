@@ -52,19 +52,21 @@ are marked met.
 
 ### Delivered in this MR
 
-1. **JVM recursive bytes closure (E8) landed in `JvmBackend`** — the
-   E6 five-helper bytes core (`__bytesNew`/`__bytesLength`/`__bytesGet`/
-   `__bytesSet` with the pinned E8012/E8013 texts and the receiver/
-   index/RHS-before-validation write order), `bytes`/`?bytes` mapping
-   through `javaLocalType`/`nullableJavaType`/`silent*`/
-   `javaArrayElementType`, `bytes[]` and `(bytes | null)[]` element
-   helpers with the per-element-shape `$checkArray` rows, function
-   values (sync and async) with bytes-bearing signatures through the
-   shared `Fn..._Y_...` wrappers, bytes-typed class fields/defaults,
-   and the table-only remainder of the old annotation gate. All ten
-   `JVM-GAP-BYTES` skip entries were removed by the stale-skip gate
-   (the fixtures pass their modes through the real pipeline) and the
-   `jvm-bytes-buffer-ops` known-fail marker was promoted.
+1. **JVM recursive bytes closure (E8) landed in `JvmBackend`** — on the
+   canonical MR-0370 base the landed ISSUE-0158 five-helper bytes core
+   (`bytesNew`/`bytesLength`/`bytesGet`/`bytesSet` with the pinned
+   E8012/E8013 texts and the receiver/index/RHS-before-validation
+   write order) is retained, and the E8 closure lands on top of it:
+   `bytes`/`?bytes` mapping through `javaLocalType`/`nullableJavaType`/
+   `silent*`/`javaArrayElementType`, `bytes[]` and `(bytes | null)[]`
+   element helpers with the per-element-shape `$checkArray` rows,
+   function values (sync and async) with bytes-bearing signatures
+   through the shared `Fn..._Y_...` wrappers, bytes-typed class
+   fields/defaults, and the table-only remainder of the old annotation
+   gate. All ten `JVM-GAP-BYTES` skip entries were removed by the
+   stale-skip gate (the fixtures pass their modes through the real
+   pipeline) and the `jvm-bytes-buffer-ops` known-fail marker was
+   promoted.
 2. **The exact bytes-bearing oracle on the JVM lane** —
    `test/JvmAsyncExportInvokerTest.java`:
    `productionCompiledAsyncBytesOracleCompletesNull` compiles the exact
@@ -168,10 +170,30 @@ this MR:
   JVM-GAP-BYTES skip-registry entries retired from `JvmLane` (the four
   runtime-error bytes entries remain — the JVM lane still cannot
   serialize a complete DEALRuntimeError snapshot, ISSUE-0276), the
-  registry count re-pinned 44 → 38 in `JvmLaneTest` and
+  registry count re-pinned 39 → 38 in `JvmLaneTest` and
   `DifferentialGateLanesCorpusTest`, and the JVM lane counters
-  re-pinned 194/107 → 200/101.
+  re-pinned 199/102 → 200/101.
 
 No acceptance criterion changed: the fix restores the epic's
 LuaJIT/JVM bytes equivalence on the bytes-array indexing shapes the
 E8 closure made compilable.
+
+## Update: rebase reconciliation onto the canonical MR-0370/MR-0383 base
+
+The canonical revision landed MR-0370 (ISSUE-0158, signed-int32 and
+bytes core across both backends) and MR-0383 (ISSUE-0157, the strict
+v1.2 feature catalog and backend matrix), whose JVM bytes core
+overlapped this MR's E8 closure. The rebase reconciliation keeps the
+canonical ISSUE-0158 core (the `bytesNew`/`bytesLength`/`bytesGet`/
+`bytesSet` helpers and their `b.length`/`b[i]`/`b[i]=v`/`bytes(n)`
+call sites, including the reserved-helper-name collision rejection)
+and lands the E8 closure on top: bytes-bearing sync/async function
+signatures, `bytes[]` and `(bytes | null)[]` per-element-shape
+helpers with the or-null past-end nil parity (cycle-3 remediation),
+and the table-only remainder of the function-signature gate. The
+bytes-descriptor-boundary JVM-GAP-BYTES registry entry retired with
+the closure (38 live entries; JVM lane counters 200/101), and the
+HistoricalRegressionCatalog array-delete anchors re-located to the
+post-merge spans (JvmBackend.java:9899; 15609-15613) with the
+tree-derived baseline digest. No acceptance criterion changed; the
+full gate exits 0 with all four async-export suites green.
