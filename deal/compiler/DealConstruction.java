@@ -153,7 +153,13 @@ public class DealConstruction {
         if (kind == Kind.BLOCK && value.kind() == Kind.STATEMENT) return new Built(Kind.BLOCK, value.source());
         if (value.kind() != kind) throw new Failure(callStack.isEmpty() ? id : callStack.peek(),
                 "expected " + kind + " handle: " + id + "; actual " + value.kind()
-                        + ". Replace the incorrect operand reference, preserving the referenced call when it is used elsewhere.");
+                        + ". Replace the incorrect operand reference, preserving the referenced call when it is used elsewhere."
+                        + (kind == Kind.VALUE && pending.containsKey(id)
+                                && stringField(pending.get(id), "op").equals("local")
+                                ? " This handle declares a local; it is not its value. Read or assign the variable with inline operand "
+                                    + encode(Map.of("path", List.of(stringField(pending.get(id), "name"))))
+                                    + ". The local declaration handle must also occur in the enclosing block before use."
+                                : ""));
         return value;
     }
 
