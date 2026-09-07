@@ -105,7 +105,11 @@ public class DealConstruction {
                     + get(stringField(c, "else"), Kind.BLOCK).source() + "\n}");
             case "while" -> new Built(Kind.STATEMENT, "while (" + value(c, "condition") + ") {\n"
                     + get(stringField(c, "body"), Kind.BLOCK).source() + "\n}");
-            case "block" -> new Built(Kind.BLOCK, refs(c, "statements", Kind.STATEMENT, "\n"));
+            case "block" -> new Built(Kind.BLOCK, String.join("\n", requireArray(field(c, "statements"), "statements").items().stream()
+                    .map(item -> {
+                        if (!(item instanceof CanonicalJson.Str s)) throw new IllegalArgumentException("statement or block handle required");
+                        return get(s.value(), Kind.BLOCK).source();
+                    }).toList()));
             case "declareRecord" -> new Built(Kind.DECLARATION, "export class " + identifier(stringField(c, "name"))
                     + " {\n" + fields(c, true) + "\n}");
             case "declareFunction" -> function(c);
@@ -146,6 +150,7 @@ public class DealConstruction {
                     "Expected " + kind + " operand. " + failure.getMessage());
             throw failure;
         }
+        if (kind == Kind.BLOCK && value.kind() == Kind.STATEMENT) return new Built(Kind.BLOCK, value.source());
         if (value.kind() != kind) throw new Failure(callStack.isEmpty() ? id : callStack.peek(),
                 "expected " + kind + " handle: " + id + "; actual " + value.kind()
                         + ". Replace the incorrect operand reference, preserving the referenced call when it is used elsewhere.");

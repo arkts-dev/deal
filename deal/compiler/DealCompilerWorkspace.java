@@ -1260,6 +1260,8 @@ public final class DealCompilerWorkspace {
         rawDiagnostics.addAll(names.diagnostics());
         if (rawDiagnostics.stream().noneMatch(value -> value.severity().equals("error"))) {
             CheckResult checked = TypeChecker.check(modulePath, symbols, names, parsed.program());
+            // Field types can be resolved lazily by the checker; retain their owning diagnostics.
+            names.diagnostics().stream().filter(value -> !rawDiagnostics.contains(value)).forEach(rawDiagnostics::add);
             rawDiagnostics.addAll(checked.diagnostics());
         }
 
