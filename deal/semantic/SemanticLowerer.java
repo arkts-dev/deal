@@ -2609,6 +2609,18 @@ public final class SemanticLowerer {
      * the same arm any class-typed literal of the walk uses; a literal of
      * an imported class (no local layout) fails closed.</p>
      *
+     * <p>The field-operation arms (ISSUE-0513, K-D6/K-D7) extend the same
+     * window: class member reads lower to {@code FIELD_READ} with the
+     * {@code UNTYPED_CLASS_INPUT} + {@code OPTIONAL_FIELD_READ} boundary
+     * children (the cross-module nullable read lowers the receiver as
+     * checked), class-field assignments/deletes lower the closed
+     * {@code CLASS_FIELD} address chains with the commit-op boundary
+     * children ({@code UNTYPED_CLASS_INPUT} + {@code CLASS_FIELD_ASSIGNMENT}
+     * on {@code FIELD_WRITE}, {@code UNTYPED_CLASS_INPUT} on
+     * {@code FIELD_DELETE}), {@code has(obj.field)} lowers to
+     * {@code HAS_FIELD}, and the class window's expression statements audit
+     * the dropped committed value through {@code DISCARD}.</p>
+     *
      * <p>The produced unit passes the closed validator, the production-time
      * address-chain protocol, the control-flow validator (the factory is
      * detached per the five-module-level-kind rule), and the B9
@@ -2620,7 +2632,8 @@ public final class SemanticLowerer {
      * record for the layout-only shape (the validator's row-extension
      * admission).</p>
      *
-     * <p>This entry point is driven by the class-declaration tests; no
+     * <p>This entry point is driven by the class-declaration,
+     * class-construction, and field-operation tests; no
      * production route change — retained/public compilation paths and
      * {@link #lowerModule} are untouched.</p>
      *
@@ -4326,6 +4339,12 @@ public final class SemanticLowerer {
                     }
                     lowerClassDeclaration(classDeclaration, true);
                 }
+                case deal.ast.DeleteStatement delete -> {
+                    if (!classCore) {
+                        throw new ConstructUnlowered(describeStatement(statement));
+                    }
+                    lowerDelete(delete);
+                }
                 default -> throw new ConstructUnlowered(describeStatement(statement));
             }
         }
@@ -4344,6 +4363,20 @@ public final class SemanticLowerer {
                 throw new ConstructUnlowered("expression statement "
                     + describeExpression(statement.expr()) + " (DISCARD is E5's, "
                     + "ISSUE-0234; the binding walk admits assignment statements only)");
+            }
+            if (classCore) {
+                // The class window's expression-statement arm (C-D8): the
+                // committed value's producing ops already completed, then
+                // one DISCARD audited in the op stream — never inferred
+                // away (and the closed RETURN_EXPRESSION_STATEMENT
+                // coverage row is satisfied through its pinned
+                // DISCARD form).
+                ValueId value = lowerExpression(statement.expr());
+                emitNullOp(SemanticOpKind.DISCARD,
+                    new KindPayload.DiscardPayload(value), statement.span(),
+                    FailurePolicyId.NO_DEAL_FAILURE, SourceOriginKind.SYNTHETIC,
+                    currentParent());
+                return;
             }
             lowerExpression(statement.expr());
         }
@@ -6611,6 +6644,12 @@ public final class SemanticLowerer {
                 case CallExpr call -> lowerCallSite(call, slot);
                 case IndexExpr index -> lowerIndexRead(index, slot);
                 case AssignmentExpr assignment -> lowerAssignment(assignment, slot);
+                case HasExpr has -> {
+                    if (!classCore) {
+                        throw new ConstructUnlowered(describeExpression(expr));
+                    }
+                    yield lowerHasField(has, slot);
+                }
                 default -> throw new ConstructUnlowered(describeExpression(expr));
             };
         }
@@ -7369,9 +7408,22 @@ public final class SemanticLowerer {
 
         /**
          * ASSIGN CLASS_FIELD write — {@code [containerOp, valueOp,
-         * commitOp(FIELD_WRITE)]}: zero write-check boundaries
+         * commitOp(FIELD_WRITE)]}: zero chain boundary ops (the write
+         * check lives in the commit op, A-D4). The E4/E5 window keeps
+         * the zero-boundary {@code FIELD_WRITE} shape
          * ({@code CLASS_FIELD_ASSIGNMENT} stays admissible but is
-         * produced by E9, never here; A-D4).
+         * produced by E9, never here). The class window (K-D6) produces
+         * the pinned boundary children parented to the commit op: (1)
+         * {@code UNTYPED_CLASS_INPUT} with descriptor
+         * {@code class:<ClassId>} and input = the resolved receiver;
+         * (2) {@code CLASS_FIELD_ASSIGNMENT} with the field's declared
+         * descriptor (the unit's local layout) and input = the stored
+         * value — both with the descriptor-kind policy, the canonical
+         * runtime-validation realization, a {@code SYNTHETIC} origin at
+         * the access span, and {@code parentOpId} = the
+         * {@code FIELD_WRITE} op (K-D12). The store commits only after
+         * both pass; the receiver and the key are never re-evaluated
+         * (the key is the static field name).
          */
         private ValueId lowerClassFieldAssign(AssignmentExpr assignment,
                                               MemberAccessExpr access, Type.Class classType) {
@@ -7384,6 +7436,41 @@ public final class SemanticLowerer {
             RuntimeDescriptor fieldDescriptor =
                 ContainerPayloadDescriptors.resultDescriptorOf(checkedType(access));
             ClassId classId = new ClassId(DescriptorService.semanticModulePath(classType.identity()), classType.name());
+            // The class window's pinned CLASS_FIELD_ASSIGNMENT descriptor
+            // (K-D6): the field's declared descriptor from the unit's
+            // local layout — never the checker's optional-read nullable
+            // wrap, which write contexts do not carry here anyway.
+            RuntimeDescriptor declaredDescriptor = null;
+            RuntimeDescriptor classDescriptor = null;
+            if (classCore) {
+                deal.semantic.ir.ClassLayout layout = classLayouts.get(classId);
+                if (layout == null) {
+                    throw new ConstructUnlowered("class field write '" + access.field()
+                        + "' on " + classId + " without a local layout (the declared field "
+                        + "descriptor comes from the unit's classLayouts; an imported "
+                        + "class's field write is outside this epic's unit-level window)");
+                }
+                deal.semantic.ir.ClassLayout.FieldLayout fieldLayout = null;
+                for (deal.semantic.ir.ClassLayout.FieldLayout candidate : layout.fields()) {
+                    if (candidate.name().equals(access.field())) {
+                        fieldLayout = candidate;
+                        break;
+                    }
+                }
+                if (fieldLayout == null) {
+                    throw new ConstructUnlowered("class field write '" + access.field()
+                        + "' on " + classId + " names an undeclared field (the checker "
+                        + "admits declared fields only — a fact defect)");
+                }
+                declaredDescriptor = fieldLayout.descriptor();
+                try {
+                    classDescriptor = DescriptorService.describe(classType);
+                } catch (DescriptorService.Defect defect) {
+                    throw new ConstructUnlowered("class field write '" + access.field()
+                        + "' on " + classId + " of unrepresentable receiver type ("
+                        + defect.getMessage() + ")");
+                }
+            }
             OpId chainOpId = ids.nextOpId(module, nextOrdinal++, 0);
             chainParents.push(chainOpId);
             ValueId value;
@@ -7400,6 +7487,22 @@ public final class SemanticLowerer {
                         value),
                     access.span(), FailurePolicyId.NO_DEAL_FAILURE,
                     SourceOriginKind.SYNTHETIC, chainOpId);
+                if (classCore) {
+                    emitNullOp(SemanticOpKind.BOUNDARY,
+                        new KindPayload.BoundaryPayload(BoundaryKind.UNTYPED_CLASS_INPUT,
+                            classDescriptor, container,
+                            new BoundaryRealization.RuntimeValidation(
+                                CANONICAL_RUNTIME_VALIDATION_ID)),
+                        access.span(), descriptorKindPolicy(classDescriptor),
+                        SourceOriginKind.SYNTHETIC, commitOp);
+                    emitNullOp(SemanticOpKind.BOUNDARY,
+                        new KindPayload.BoundaryPayload(BoundaryKind.CLASS_FIELD_ASSIGNMENT,
+                            declaredDescriptor, value,
+                            new BoundaryRealization.RuntimeValidation(
+                                CANONICAL_RUNTIME_VALIDATION_ID)),
+                        access.span(), descriptorKindPolicy(declaredDescriptor),
+                        SourceOriginKind.SYNTHETIC, commitOp);
+                }
             } finally {
                 chainParents.pop();
             }
@@ -7560,11 +7663,29 @@ public final class SemanticLowerer {
          * DELETE CLASS_FIELD — {@code [containerOp,
          * commitOp(FIELD_DELETE)]}: no key, no normalize, no bounds
          * boundary (table and class targets run no bounds boundary;
-         * A-D9).
+         * A-D9). The E4/E5 window keeps the zero-boundary
+         * {@code FIELD_DELETE} shape. The class window (K-D6) produces
+         * the pinned boundary child parented to the commit op: exactly
+         * one {@code UNTYPED_CLASS_INPUT} boundary with descriptor
+         * {@code class:<ClassId>} and input = the resolved receiver —
+         * the descriptor-kind policy, the canonical runtime-validation
+         * realization, a {@code SYNTHETIC} origin at the access span,
+         * and {@code parentOpId} = the {@code FIELD_DELETE} op (K-D12).
+         * Required-field deletes never reach the IR (checker E4004).
          */
         private void lowerClassFieldDelete(DeleteStatement delete, MemberAccessExpr access,
                                            Type.Class classType) {
             ClassId classId = new ClassId(DescriptorService.semanticModulePath(classType.identity()), classType.name());
+            RuntimeDescriptor classDescriptor = null;
+            if (classCore) {
+                try {
+                    classDescriptor = DescriptorService.describe(classType);
+                } catch (DescriptorService.Defect defect) {
+                    throw new ConstructUnlowered("class field delete '" + access.field()
+                        + "' on " + classId + " of unrepresentable receiver type ("
+                        + defect.getMessage() + ")");
+                }
+            }
             OpId chainOpId = ids.nextOpId(module, nextOrdinal++, 0);
             chainParents.push(chainOpId);
             OpId containerOp;
@@ -7576,6 +7697,15 @@ public final class SemanticLowerer {
                     new KindPayload.FieldDeletePayload(container, classId, access.field()),
                     access.span(), FailurePolicyId.NO_DEAL_FAILURE,
                     SourceOriginKind.SYNTHETIC, chainOpId);
+                if (classCore) {
+                    emitNullOp(SemanticOpKind.BOUNDARY,
+                        new KindPayload.BoundaryPayload(BoundaryKind.UNTYPED_CLASS_INPUT,
+                            classDescriptor, container,
+                            new BoundaryRealization.RuntimeValidation(
+                                CANONICAL_RUNTIME_VALIDATION_ID)),
+                        access.span(), descriptorKindPolicy(classDescriptor),
+                        SourceOriginKind.SYNTHETIC, commitOp);
+                }
             } finally {
                 chainParents.pop();
             }
@@ -9081,10 +9211,22 @@ public final class SemanticLowerer {
                 return lowerMemberRead(access, slot);
             }
             if (objectType instanceof Type.Class classType) {
-                throw new ConstructUnlowered("class member access "
-                    + DescriptorService.semanticModulePath(classType.identity())
-                    + "/" + classType.name() + "." + access.field()
-                    + " (FIELD_READ is E9's)");
+                if (!classCore) {
+                    throw new ConstructUnlowered("class member access "
+                        + DescriptorService.semanticModulePath(classType.identity())
+                        + "/" + classType.name() + "." + access.field()
+                        + " (FIELD_READ is E9's)");
+                }
+                return lowerFieldRead(access, classType, slot);
+            }
+            if (classCore && objectType instanceof Type.Nullable nullable
+                    && nullable.inner() instanceof Type.Class innerClassType) {
+                // The checker's cross-module nullable-class read unwrap
+                // (a receiver of checked type ?C over a foreign identity):
+                // the receiver lowers as checked (nullable) and the
+                // runtime null guard is the FIELD_READ op's
+                // UNTYPED_CLASS_INPUT boundary (K-D6).
+                return lowerFieldRead(access, innerClassType, slot);
             }
             if (objectType instanceof Type.Bytes) {
                 throw new ConstructUnlowered("member access '" + access.field()
@@ -9094,6 +9236,100 @@ public final class SemanticLowerer {
             throw new ConstructUnlowered("member access '" + access.field() + "' on "
                 + typeName(objectType) + " (no member-access arm for this receiver shape "
                 + "in this stage's window)");
+        }
+
+        /**
+         * {@code FIELD_READ} — the class member-read arm of the class
+         * walk (K-D6): exactly one {@code FIELD_READ} op whose receiver
+         * lowers exactly once as a prior step and whose key is the
+         * static field name (never evaluated), plus two {@code BOUNDARY}
+         * children in order — (1) the nominal receiver boundary, kind
+         * {@code UNTYPED_CLASS_INPUT}, descriptor {@code class:<ClassId>},
+         * input = the receiver; (2) the field boundary, kind
+         * {@code OPTIONAL_FIELD_READ}, descriptor = the read's checked
+         * result descriptor (the checker's nullable-wrapped type for
+         * optional fields), input = the {@code FIELD_READ} result. Both
+         * children carry the descriptor-kind policy, the canonical
+         * runtime-validation realization, a {@code SYNTHETIC} origin at
+         * the access span, and {@code parentOpId} = the
+         * {@code FIELD_READ} op (K-D12). A cross-module nullable class
+         * read lowers the receiver as checked (nullable) — the runtime
+         * null guard is the {@code UNTYPED_CLASS_INPUT} boundary. The op
+         * carries policy {@code NO_DEAL_FAILURE} and publishes the
+         * read's checked result descriptor.
+         *
+         * @param access    the checked class member access; non-null
+         * @param classType the class the receiver's checked type names
+         *                  (the inner class of a cross-module nullable
+         *                  receiver); non-null
+         * @param slot      the result slot of the final producing op, or
+         *                  {@code null} to allocate one
+         * @return the produced {@code ValueId} (the slot when given)
+         * @throws ConstructUnlowered on an unrepresentable receiver
+         *         descriptor (a fact defect)
+         */
+        private ValueId lowerFieldRead(MemberAccessExpr access, Type.Class classType,
+                                       ValueId slot) {
+            ClassId classId = new ClassId(
+                DescriptorService.semanticModulePath(classType.identity()), classType.name());
+            RuntimeDescriptor classDescriptor;
+            try {
+                classDescriptor = DescriptorService.describe(classType);
+            } catch (DescriptorService.Defect defect) {
+                throw new ConstructUnlowered("class member access "
+                    + classId + "." + access.field() + " on an unrepresentable receiver "
+                    + "type (" + defect.getMessage() + ")");
+            }
+            RuntimeDescriptor resultDescriptor =
+                ContainerPayloadDescriptors.resultDescriptorOf(checkedType(access));
+            ValueId receiver = lowerExpression(access.object());
+            ValueId result = slot != null ? slot : ids.nextValueId(module, nextOrdinal++, 0);
+            AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+            OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
+            SemanticOp receiverBoundary = buildNullOp(SemanticOpKind.BOUNDARY,
+                new KindPayload.BoundaryPayload(BoundaryKind.UNTYPED_CLASS_INPUT,
+                    classDescriptor, receiver,
+                    new BoundaryRealization.RuntimeValidation(
+                        CANONICAL_RUNTIME_VALIDATION_ID)),
+                access.span(), descriptorKindPolicy(classDescriptor),
+                SourceOriginKind.SYNTHETIC, opId);
+            SemanticOp fieldBoundary = buildNullOp(SemanticOpKind.BOUNDARY,
+                new KindPayload.BoundaryPayload(BoundaryKind.OPTIONAL_FIELD_READ,
+                    resultDescriptor, result,
+                    new BoundaryRealization.RuntimeValidation(
+                        CANONICAL_RUNTIME_VALIDATION_ID)),
+                access.span(), descriptorKindPolicy(resultDescriptor),
+                SourceOriginKind.SYNTHETIC, opId);
+            SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(access.span()),
+                SourceOriginKind.USER, anchor, currentParent());
+            emit(buildOp(opId, SemanticOpKind.FIELD_READ,
+                new KindPayload.FieldReadPayload(receiver, classId, access.field()),
+                result, resultDescriptor, FailurePolicyId.NO_DEAL_FAILURE, origin));
+            emit(receiverBoundary);
+            emit(fieldBoundary);
+            return result;
+        }
+
+        /**
+         * {@code HAS_FIELD} — the {@code has(obj.field)} arm of the class
+         * walk (K-D7): exactly one {@code HAS_FIELD} op whose receiver
+         * lowers exactly once as a prior step and whose key is the
+         * static field name (never evaluated). The op runs no boundary
+         * children, publishes {@code boolean}, and carries policy
+         * {@code NO_DEAL_FAILURE}.
+         *
+         * @param has  the checked has expression; non-null
+         * @param slot the result slot of the final producing op, or
+         *             {@code null} to allocate one
+         * @return the produced {@code ValueId} (the slot when given)
+         */
+        private ValueId lowerHasField(HasExpr has, ValueId slot) {
+            ValueId receiver = lowerExpression(has.object());
+            return emitValueOp(SemanticOpKind.HAS_FIELD,
+                new KindPayload.HasFieldPayload(receiver, has.field()),
+                has.span(),
+                ContainerPayloadDescriptors.resultDescriptorOf(Type.Boolean.INSTANCE),
+                FailurePolicyId.NO_DEAL_FAILURE, slot);
         }
 
         /** {@code ARRAY_LENGTH} — the receiver is one prior step, never re-evaluated. */
@@ -9751,7 +9987,7 @@ public final class SemanticLowerer {
                 case deal.ast.FunctionExpr ignored ->
                     "function expression (CLOSURE_NEW is E6's, ISSUE-0235)";
                 case deal.ast.HasExpr ignored ->
-                    "has expression (HAS_FIELD is E5's, ISSUE-0234)";
+                    "has expression (HAS_FIELD is E9's, ISSUE-0238)";
                 case deal.ast.AwaitExpression ignored ->
                     "await expression (ASYNC_START/AWAIT are E7's)";
                 default -> expr.getClass().getSimpleName() + " expression";

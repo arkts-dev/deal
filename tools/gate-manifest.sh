@@ -221,6 +221,17 @@ TEST_SOURCES=(
   # (class-construction-jsonable-operations K-D4 — the pinned literal
   # payload shapes, the combined T1+T2 executor drive, and determinism).
   'test/ClassNewLoweringTest.java'
+  # ISSUE-0513 registration: the field-operation executor battery
+  # (class-construction-jsonable-operations K-D6/K-D7, Verification 4 —
+  # the presence matrix, nominal receiver failures, the required-field
+  # missing read, write-commit ordering, single evaluation, and the
+  # fail-closed discipline over T2-produced instances).
+  'test/FieldOpsExecutorTest.java'
+  # ISSUE-0513 registration: the field-operation lowering battery
+  # (class-construction-jsonable-operations K-D6/K-D7 — the pinned
+  # read/write/delete/has arms, the cross-module nullable read shape,
+  # the combined T1+T2+T3 executor drive, and determinism).
+  'test/FieldOpsLoweringTest.java'
   # ISSUE-0162 registration: the C FFI declaration validation and
   # forward binding generation battery.
   'test/FfiDeclarationValidatorTest.java'
@@ -397,4 +408,14 @@ WARNING: luajit not found, skipping async nesting stress tests'
   # drive, and determinism (class-construction-jsonable-operations
   # K-D4; sequencing item 2).
   'fg|=== Running Class New Lowering Tests (ISSUE-0512 LOCAL arm) ===|java -ea -cp build deal.test.ClassNewLoweringTest'
+  # ISSUE-0513 registration: the field-operation executor battery — the
+  # K-D6/K-D7 presence semantics, the canonical receiver projections,
+  # and the commit discipline (class-construction-jsonable-operations
+  # K-D6/K-D7, Verification 4; sequencing item 3).
+  'fg|=== Running Field Ops Executor Tests (ISSUE-0513 K-D6/K-D7) ===|java -ea -cp build deal.test.FieldOpsExecutorTest'
+  # ISSUE-0513 registration: the field-operation lowering battery — the
+  # pinned read/write/delete/has arms and the combined T1+T2+T3 drive
+  # (class-construction-jsonable-operations K-D6/K-D7; sequencing
+  # item 3).
+  'fg|=== Running Field Ops Lowering Tests (ISSUE-0513 K-D6/K-D7 arms) ===|java -ea -cp build deal.test.FieldOpsLoweringTest'
 )

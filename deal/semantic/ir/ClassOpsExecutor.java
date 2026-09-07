@@ -16,12 +16,17 @@ import java.util.Objects;
  * extended with the class variant
  * {@code Class {classId, fields: [Present(Value) | Missing]}} preserving
  * missing versus null — plus the value lookup for payload-referenced
- * provided-field prior steps. This child (sequencing item 2) introduces
- * the executor with the {@code CLASS_DEFAULT}/{@code CLASS_NEW(LOCAL)}
- * surface and the pinned delegate seams; the {@code CLASS_FACTORY},
- * {@code FIELD_*}, {@code HAS_FIELD}, and {@code JSON_*} surfaces
- * complete the assembled executor in the later children (sequencing
- * items 3-6).
+ * provided-field prior steps. The sequencing item 2 child (ISSUE-0512)
+ * introduced the executor with the
+ * {@code CLASS_DEFAULT}/{@code CLASS_NEW(LOCAL)} surface and the pinned
+ * delegate seams; this child (sequencing item 3, ISSUE-0513) completes
+ * the field-operation surface — {@code FIELD_READ}/{@code FIELD_WRITE}/
+ * {@code FIELD_DELETE} with the nominal receiver boundary first and the
+ * presence-aware read/commit/idempotent-delete semantics (K-D6) and
+ * {@code HAS_FIELD} with the presence boolean (K-D7). The
+ * {@code CLASS_FACTORY} (SHARED_FACTORY transfer) and {@code JSON_*}
+ * surfaces complete the assembled executor in the later children
+ * (sequencing items 4-6).
  *
  * <p><b>Interpretation surface.</b> The executor interprets only
  * validated op shapes ({@link SemanticOp} records whose kind/payload
@@ -920,6 +925,531 @@ public final class ClassOpsExecutor {
         }
         return new Outcome.Success<Value>(
             new Value.Class(payload.classId(), List.copyOf(states)));
+    }
+
+    // =========================================================================
+    // FIELD_READ
+    // =========================================================================
+
+    /**
+     * Executes one validated {@code FIELD_READ} op (K-D6): the nominal
+     * receiver boundary runs first — the {@code UNTYPED_CLASS_INPUT}
+     * child with descriptor {@code class:<ClassId>} and input = the
+     * payload's resolved receiver (a null receiver fails E8001
+     * {@code expected {@module/C}, got null} and a wrong identity fails
+     * with actual {@code class:<other>} — the canonical descriptor-kind
+     * projections of the child's own delegate); then the presence-aware
+     * read: a missing field pre-maps to language null before the
+     * {@code OPTIONAL_FIELD_READ} boundary (present null passes a
+     * nullable descriptor; a missing value against a non-nullable
+     * descriptor — a required field of a defective instance — fails
+     * E8001 {@code expected {T}, got null}); SUCCESS publishes the
+     * boundary-checked value. The receiver resolves from the value
+     * lookup exactly once (never re-evaluated) and the key is the
+     * static payload field name (never evaluated).
+     *
+     * <p>The children are supplied as explicit ops (the payload records
+     * no boundary ids — the K-D12 parentage pin is the owner relation)
+     * and are shape-checked fail closed before each run: the pinned
+     * kind, {@code parentOpId} = the {@code FIELD_READ} op, a
+     * {@code RuntimeValidation} realization, the pinned descriptor
+     * ({@code class:<ClassId>} for the receiver boundary; the read's
+     * checked result descriptor for the field boundary — the field's
+     * declared descriptor, nullable-wrapped for an optional non-nullable
+     * field, the checker's optional-read wrap), the pinned input
+     * (the payload's {@code classValue} / the op's own result
+     * {@code ValueId}), and the descriptor-kind policy.</p>
+     *
+     * @param op               the validated {@code FIELD_READ} op
+     *                         carrying {@code NO_DEAL_FAILURE}; non-null
+     * @param priorValues      the resolved prior-step values (the
+     *                         receiver); non-null, no null entries
+     * @param receiverBoundary the op's first child — the
+     *                         {@code UNTYPED_CLASS_INPUT} boundary;
+     *                         non-null
+     * @param fieldBoundary    the op's second child — the
+     *                         {@code OPTIONAL_FIELD_READ} boundary;
+     *                         non-null
+     * @param layouts          the layout-resolution context
+     *                         {@code ClassId → ClassLayout}; the
+     *                         payload's classId must resolve; non-null
+     * @param checkRunner      the boundary-check delegate; non-null
+     * @return {@code Success} with the boundary-checked field value, or
+     *         {@code Failure} with the first failing boundary's failure
+     *         at the op origin
+     * @throws Defect               on a shape outside the pinned
+     *                              contracts — a wrong op kind/policy, a
+     *                              non-{@code ValueId} result, a child of
+     *                              the wrong kind/parentage/realization/
+     *                              descriptor/policy/input, an
+     *                              unresolvable or mismatched layout, a
+     *                              field not declared in the layout, an
+     *                              instance of the wrong class or field
+     *                              count, or a receiver the pinned
+     *                              receiver boundary could not pass
+     * @throws NullPointerException if any argument is null
+     */
+    public static Outcome<Value> executeFieldRead(
+            SemanticOp op,
+            Map<ValueId, Value> priorValues,
+            SemanticOp receiverBoundary,
+            SemanticOp fieldBoundary,
+            Map<ClassId, ClassLayout> layouts,
+            BoundaryCheckRunner checkRunner) {
+        requireOp(op, SemanticOpKind.FIELD_READ, FailurePolicyId.NO_DEAL_FAILURE);
+        Objects.requireNonNull(priorValues, "priorValues must not be null");
+        Objects.requireNonNull(receiverBoundary, "receiverBoundary must not be null");
+        Objects.requireNonNull(fieldBoundary, "fieldBoundary must not be null");
+        Objects.requireNonNull(layouts, "layouts must not be null");
+        Objects.requireNonNull(checkRunner, "checkRunner must not be null");
+        KindPayload.FieldReadPayload payload = (KindPayload.FieldReadPayload) op.payload();
+
+        // The receiver resolves exactly once (never re-evaluated).
+        Value receiver = resolve(priorValues, payload.classValue());
+
+        // The nominal receiver boundary first (K-D6): the pinned child
+        // shape, then the delegate run with the resolved receiver.
+        RuntimeDescriptor classDescriptor = new RuntimeDescriptor.Class(payload.classId());
+        requireFieldBoundaryChild(receiverBoundary, op, BoundaryKind.UNTYPED_CLASS_INPUT,
+            classDescriptor, payload.classValue());
+        BoundaryResult receiverResult =
+            runReceiverBoundary(op, receiverBoundary, receiver, checkRunner);
+        if (receiverResult instanceof BoundaryResult.Fail fail) {
+            return new Outcome.Failure<Value>(new OpFailure(fail.failure(), op.origin()));
+        }
+
+        // After the receiver boundary passes, the receiver is the pinned
+        // class instance (the production delegate can only pass an
+        // instance of class:<ClassId>; a pass-through fixture passing
+        // anything else is a producer defect).
+        Value receiverValue = ((BoundaryResult.Pass) receiverResult).value();
+        ClassLayout layout = requireInstance(op, payload.classId(), receiverValue, layouts);
+
+        // The presence-aware read: Present(value) reads the value;
+        // Missing pre-maps to language null before the field boundary
+        // (K-D6) — present null stays present null, missing stays
+        // distinguishable through the pre-map.
+        int fieldIndex = fieldIndexOf(op, layout, payload.field());
+        FieldState state = ((Value.Class) receiverValue).fields().get(fieldIndex);
+        Value readValue;
+        if (state instanceof FieldState.Present present) {
+            readValue = present.value();
+        } else {
+            readValue = Value.Null.INSTANCE;
+        }
+
+        // The field boundary's pinned result descriptor (the checker's
+        // optional-read wrap: the field's declared descriptor,
+        // nullable-wrapped for an optional non-nullable field).
+        ClassLayout.FieldLayout fieldLayout = layout.fields().get(fieldIndex);
+        RuntimeDescriptor resultDescriptor = readResultDescriptorOf(fieldLayout);
+        if (!(op.result() instanceof ValueId readResult)) {
+            throw new Defect("FIELD_READ " + op.opId() + " publishes a non-ValueId result "
+                + op.result() + ": the pinned OPTIONAL_FIELD_READ input is the op's own "
+                + "result ValueId — a producer defect, never executed");
+        }
+        requireFieldBoundaryChild(fieldBoundary, op, BoundaryKind.OPTIONAL_FIELD_READ,
+            resultDescriptor, readResult);
+        BoundaryResult fieldResult = checkRunner.run(
+            (KindPayload.BoundaryPayload) fieldBoundary.payload(), readValue);
+        return switch (fieldResult) {
+            case BoundaryResult.Pass pass -> new Outcome.Success<Value>(pass.value());
+            case BoundaryResult.Fail fail -> new Outcome.Failure<Value>(
+                new OpFailure(fail.failure(), op.origin()));
+        };
+    }
+
+    // =========================================================================
+    // FIELD_WRITE
+    // =========================================================================
+
+    /**
+     * Executes one validated {@code FIELD_WRITE} commit op (K-D6): the
+     * nominal receiver boundary runs first (the
+     * {@code UNTYPED_CLASS_INPUT} child with descriptor
+     * {@code class:<ClassId>} and input = the payload's resolved
+     * receiver), then the field boundary (the
+     * {@code CLASS_FIELD_ASSIGNMENT} child with the field's declared
+     * descriptor and input = the payload's resolved stored value), and
+     * the store commits immediately before SUCCESS — the published
+     * instance carries the boundary-published value in the named field
+     * with every other field state unchanged (a fresh updated instance;
+     * the caller rebinds the receiver's reference to it). A failed
+     * boundary commits nothing: the outcome is {@code Failure} and no
+     * updated instance exists. The receiver and the stored value each
+     * resolve from the value lookup exactly once (never re-evaluated);
+     * the key is the static payload field name (never evaluated).
+     *
+     * <p>The children are supplied as explicit ops and are shape-checked
+     * fail closed before each run exactly like {@link #executeFieldRead}'s
+     * (pinned kind, {@code parentOpId} = the {@code FIELD_WRITE} op, a
+     * {@code RuntimeValidation} realization, the pinned descriptor and
+     * input, the descriptor-kind policy).</p>
+     *
+     * @param op               the validated {@code FIELD_WRITE} op
+     *                         carrying {@code NO_DEAL_FAILURE}; non-null
+     * @param priorValues      the resolved prior-step values (the
+     *                         receiver and the stored value); non-null,
+     *                         no null entries
+     * @param receiverBoundary the op's first child — the
+     *                         {@code UNTYPED_CLASS_INPUT} boundary;
+     *                         non-null
+     * @param fieldBoundary    the op's second child — the
+     *                         {@code CLASS_FIELD_ASSIGNMENT} boundary;
+     *                         non-null
+     * @param layouts          the layout-resolution context
+     *                         {@code ClassId → ClassLayout}; the
+     *                         payload's classId must resolve; non-null
+     * @param checkRunner      the boundary-check delegate; non-null
+     * @return {@code Success} with the updated instance (the store
+     *         committed), or {@code Failure} with the first failing
+     *         boundary's failure at the op origin (nothing committed)
+     * @throws Defect               on a shape outside the pinned
+     *                              contracts (the
+     *                              {@link #executeFieldRead} set)
+     * @throws NullPointerException if any argument is null
+     */
+    public static Outcome<Value> executeFieldWrite(
+            SemanticOp op,
+            Map<ValueId, Value> priorValues,
+            SemanticOp receiverBoundary,
+            SemanticOp fieldBoundary,
+            Map<ClassId, ClassLayout> layouts,
+            BoundaryCheckRunner checkRunner) {
+        requireOp(op, SemanticOpKind.FIELD_WRITE, FailurePolicyId.NO_DEAL_FAILURE);
+        Objects.requireNonNull(priorValues, "priorValues must not be null");
+        Objects.requireNonNull(receiverBoundary, "receiverBoundary must not be null");
+        Objects.requireNonNull(fieldBoundary, "fieldBoundary must not be null");
+        Objects.requireNonNull(layouts, "layouts must not be null");
+        Objects.requireNonNull(checkRunner, "checkRunner must not be null");
+        KindPayload.FieldWritePayload payload = (KindPayload.FieldWritePayload) op.payload();
+
+        // The receiver and the stored value each resolve exactly once.
+        Value receiver = resolve(priorValues, payload.classValue());
+        Value stored = resolve(priorValues, payload.value());
+
+        // The nominal receiver boundary first (K-D6).
+        RuntimeDescriptor classDescriptor = new RuntimeDescriptor.Class(payload.classId());
+        requireFieldBoundaryChild(receiverBoundary, op, BoundaryKind.UNTYPED_CLASS_INPUT,
+            classDescriptor, payload.classValue());
+        BoundaryResult receiverResult =
+            runReceiverBoundary(op, receiverBoundary, receiver, checkRunner);
+        if (receiverResult instanceof BoundaryResult.Fail fail) {
+            return new Outcome.Failure<Value>(new OpFailure(fail.failure(), op.origin()));
+        }
+        Value receiverValue = ((BoundaryResult.Pass) receiverResult).value();
+        ClassLayout layout = requireInstance(op, payload.classId(), receiverValue, layouts);
+        int fieldIndex = fieldIndexOf(op, layout, payload.field());
+        ClassLayout.FieldLayout fieldLayout = layout.fields().get(fieldIndex);
+
+        // The field boundary with the stored value and the field's
+        // declared descriptor (K-D6); the store commits only after both
+        // pass — a failed boundary commits nothing.
+        requireFieldBoundaryChild(fieldBoundary, op, BoundaryKind.CLASS_FIELD_ASSIGNMENT,
+            fieldLayout.descriptor(), payload.value());
+        BoundaryResult fieldResult = checkRunner.run(
+            (KindPayload.BoundaryPayload) fieldBoundary.payload(), stored);
+        if (fieldResult instanceof BoundaryResult.Fail fail) {
+            return new Outcome.Failure<Value>(new OpFailure(fail.failure(), op.origin()));
+        }
+
+        // The store commits immediately before SUCCESS: the published
+        // instance carries the boundary-published value in the named
+        // field; every other field state is unchanged.
+        Value committed = ((BoundaryResult.Pass) fieldResult).value();
+        return new Outcome.Success<Value>(updatedInstance((Value.Class) receiverValue,
+            fieldIndex, new FieldState.Present(committed)));
+    }
+
+    // =========================================================================
+    // FIELD_DELETE
+    // =========================================================================
+
+    /**
+     * Executes one validated {@code FIELD_DELETE} commit op (K-D6): the
+     * nominal receiver boundary runs (the {@code UNTYPED_CLASS_INPUT}
+     * child with descriptor {@code class:<ClassId>} and input = the
+     * payload's resolved receiver), then the field is set missing — the
+     * published instance carries {@code Missing} in the named field with
+     * every other field state unchanged. Deleting an already-missing
+     * field is a no-op SUCCESS (the published instance equals the
+     * receiver's state). The receiver resolves from the value lookup
+     * exactly once; the key is the static payload field name (never
+     * evaluated).
+     *
+     * <p>The child is supplied as an explicit op and is shape-checked
+     * fail closed before the run exactly like {@link #executeFieldRead}'s
+     * children (pinned kind, {@code parentOpId} = the
+     * {@code FIELD_DELETE} op, a {@code RuntimeValidation} realization,
+     * the pinned descriptor and input, the descriptor-kind policy).</p>
+     *
+     * @param op               the validated {@code FIELD_DELETE} op
+     *                         carrying {@code NO_DEAL_FAILURE}; non-null
+     * @param priorValues      the resolved prior-step values (the
+     *                         receiver); non-null, no null entries
+     * @param receiverBoundary the op's only child — the
+     *                         {@code UNTYPED_CLASS_INPUT} boundary;
+     *                         non-null
+     * @param layouts          the layout-resolution context
+     *                         {@code ClassId → ClassLayout}; the
+     *                         payload's classId must resolve; non-null
+     * @param checkRunner      the boundary-check delegate; non-null
+     * @return {@code Success} with the updated instance (the field
+     *         missing), or {@code Failure} with the failing boundary's
+     *         failure at the op origin
+     * @throws Defect               on a shape outside the pinned
+     *                              contracts (the
+     *                              {@link #executeFieldRead} set)
+     * @throws NullPointerException if any argument is null
+     */
+    public static Outcome<Value> executeFieldDelete(
+            SemanticOp op,
+            Map<ValueId, Value> priorValues,
+            SemanticOp receiverBoundary,
+            Map<ClassId, ClassLayout> layouts,
+            BoundaryCheckRunner checkRunner) {
+        requireOp(op, SemanticOpKind.FIELD_DELETE, FailurePolicyId.NO_DEAL_FAILURE);
+        Objects.requireNonNull(priorValues, "priorValues must not be null");
+        Objects.requireNonNull(receiverBoundary, "receiverBoundary must not be null");
+        Objects.requireNonNull(layouts, "layouts must not be null");
+        Objects.requireNonNull(checkRunner, "checkRunner must not be null");
+        KindPayload.FieldDeletePayload payload = (KindPayload.FieldDeletePayload) op.payload();
+
+        // The receiver resolves exactly once (never re-evaluated).
+        Value receiver = resolve(priorValues, payload.classValue());
+
+        // The nominal receiver boundary (K-D6).
+        RuntimeDescriptor classDescriptor = new RuntimeDescriptor.Class(payload.classId());
+        requireFieldBoundaryChild(receiverBoundary, op, BoundaryKind.UNTYPED_CLASS_INPUT,
+            classDescriptor, payload.classValue());
+        BoundaryResult receiverResult =
+            runReceiverBoundary(op, receiverBoundary, receiver, checkRunner);
+        if (receiverResult instanceof BoundaryResult.Fail fail) {
+            return new Outcome.Failure<Value>(new OpFailure(fail.failure(), op.origin()));
+        }
+        Value receiverValue = ((BoundaryResult.Pass) receiverResult).value();
+        ClassLayout layout = requireInstance(op, payload.classId(), receiverValue, layouts);
+        int fieldIndex = fieldIndexOf(op, layout, payload.field());
+
+        // Set the field missing; deleting an already-missing field is a
+        // no-op SUCCESS (the produced instance equals the receiver's
+        // state).
+        return new Outcome.Success<Value>(updatedInstance((Value.Class) receiverValue,
+            fieldIndex, FieldState.Missing.INSTANCE));
+    }
+
+    // =========================================================================
+    // HAS_FIELD
+    // =========================================================================
+
+    /**
+     * Executes one validated {@code HAS_FIELD} op (K-D7): the receiver
+     * resolves from the value lookup exactly once (the key is the static
+     * payload field name — never evaluated) and the op publishes the
+     * presence boolean: present (present null included) → {@code true},
+     * missing → {@code false}. The op runs no boundary children of any
+     * kind and its policy is {@code NO_DEAL_FAILURE} — a valid shape
+     * never fails, so the success terminal always carries the presence
+     * boolean.
+     *
+     * <p>The presence states stay distinct in the class value view:
+     * {@code Present(null)} is present, {@code Missing} is missing —
+     * never conflated.</p>
+     *
+     * @param op          the validated {@code HAS_FIELD} op carrying
+     *                    {@code NO_DEAL_FAILURE}; non-null
+     * @param priorValues the resolved prior-step values (the receiver);
+     *                    non-null, no null entries
+     * @param layouts     the layout-resolution context
+     *                    {@code ClassId → ClassLayout}; the instance's
+     *                    own classId must resolve; non-null
+     * @return {@code Success} with the presence boolean
+     * @throws Defect               on a shape outside the pinned
+     *                              contracts — a wrong op kind/policy, a
+     *                              receiver that does not resolve to a
+     *                              class, an unresolvable layout, a key
+     *                              not declared in the layout, or an
+     *                              instance field-count mismatch
+     * @throws NullPointerException if any argument is null
+     */
+    public static Outcome<Value> executeHasField(
+            SemanticOp op,
+            Map<ValueId, Value> priorValues,
+            Map<ClassId, ClassLayout> layouts) {
+        requireOp(op, SemanticOpKind.HAS_FIELD, FailurePolicyId.NO_DEAL_FAILURE);
+        Objects.requireNonNull(priorValues, "priorValues must not be null");
+        Objects.requireNonNull(layouts, "layouts must not be null");
+        KindPayload.HasFieldPayload payload = (KindPayload.HasFieldPayload) op.payload();
+
+        // The receiver resolves exactly once; the key is never evaluated.
+        Value receiver = resolve(priorValues, payload.receiver());
+        if (!(receiver instanceof Value.Class instance)) {
+            throw new Defect("HAS_FIELD " + op.opId() + " receiver " + payload.receiver()
+                + " resolves to " + receiver.actualKind()
+                + ": the pinned receiver is a class instance (the checker admits class "
+                + "receivers only) — a producer defect, never a projection");
+        }
+        ClassLayout layout = layouts.get(instance.classId());
+        if (layout == null) {
+            throw new Defect("HAS_FIELD " + op.opId() + " instance classId "
+                + instance.classId() + " does not resolve in the layout-resolution "
+                + "context: the presence read maps the static key through the instance's "
+                + "own layout — an unresolvable layout is a producer defect, never "
+                + "executed");
+        }
+        if (layout.fields().size() != instance.fields().size()) {
+            throw new Defect("HAS_FIELD " + op.opId() + " instance of "
+                + instance.classId() + " carries " + instance.fields().size()
+                + " field states for a layout of " + layout.fields().size()
+                + " fields: the pinned instance shape matches its layout's declaration "
+                + "order — a count mismatch is a producer defect, never executed");
+        }
+        int fieldIndex = fieldIndexOf(op, layout, payload.key());
+        FieldState state = instance.fields().get(fieldIndex);
+        return new Outcome.Success<Value>(new Value.Bool(
+            state instanceof FieldState.Present));
+    }
+
+    // =========================================================================
+    // Field-op fail-closed helpers
+    // =========================================================================
+
+    /**
+     * Requires one field-op boundary child's pinned shape fail closed:
+     * a {@code BOUNDARY} op of the pinned kind whose origin
+     * {@code parentOpId} is the owning field op, a
+     * {@code RuntimeValidation} realization (proof is inadmissible on
+     * these cells, K-D6), the pinned descriptor, the pinned input, and
+     * the descriptor-kind policy.
+     */
+    private static void requireFieldBoundaryChild(SemanticOp child, SemanticOp owner,
+                                                  BoundaryKind pinnedKind,
+                                                  RuntimeDescriptor pinnedDescriptor,
+                                                  ValueId pinnedInput) {
+        requireChildOf(child, owner, pinnedKind);
+        KindPayload.BoundaryPayload payload = (KindPayload.BoundaryPayload) child.payload();
+        if (!(payload.realization() instanceof BoundaryRealization.RuntimeValidation)) {
+            throw new Defect(owner.kind() + " " + owner.opId() + " names boundary child "
+                + child.opId() + " carrying realization " + payload.realization()
+                + ": the pinned field-op boundary cells are RuntimeValidation only "
+                + "(representation proof is inadmissible on UNTYPED_CLASS_INPUT, "
+                + "OPTIONAL_FIELD_READ, and CLASS_FIELD_ASSIGNMENT) — a producer defect, "
+                + "never executed");
+        }
+        if (!payload.descriptor().equals(pinnedDescriptor)) {
+            throw new Defect(owner.kind() + " " + owner.opId() + " names boundary child "
+                + child.opId() + " carrying descriptor "
+                + payload.descriptor().canonicalSpecText() + ": the pinned child "
+                + "descriptor is " + pinnedDescriptor.canonicalSpecText()
+                + " — a mismatch is a producer defect, never executed");
+        }
+        if (!payload.input().equals(pinnedInput)) {
+            throw new Defect(owner.kind() + " " + owner.opId() + " names boundary child "
+                + child.opId() + " carrying input " + payload.input()
+                + ": the pinned input is " + pinnedInput + " (K-D6 input wiring) — a "
+                + "mismatch is a producer defect, never executed");
+        }
+        requireDescriptorKindPolicy(child, pinnedDescriptor);
+    }
+
+    /**
+     * Runs the nominal receiver boundary of one field op with the
+     * resolved receiver and returns the delegate's terminal. The child's
+     * pinned shape has already been checked by the caller
+     * ({@link #requireFieldBoundaryChild}); the descriptor-kind policy
+     * projection is the delegate's (the production
+     * {@link BoundaryExecutor}'s canonical E8001/E8010 projections).
+     */
+    private static BoundaryResult runReceiverBoundary(SemanticOp op, SemanticOp receiverBoundary,
+                                                      Value receiver,
+                                                      BoundaryCheckRunner checkRunner) {
+        return checkRunner.run((KindPayload.BoundaryPayload) receiverBoundary.payload(),
+            receiver);
+    }
+
+    /**
+     * Requires the post-boundary receiver of one field op: a
+     * {@link Value.Class} instance of the payload's classId whose field
+     * count matches the resolved layout's declaration order. The pinned
+     * receiver boundary on a class descriptor can only pass such an
+     * instance (the production delegate's canonical identity check), so
+     * any other shape reaching the read/write/delete is a producer
+     * defect — never a projection and never a silent read.
+     */
+    private static ClassLayout requireInstance(SemanticOp op, ClassId classId, Value receiver,
+                                               Map<ClassId, ClassLayout> layouts) {
+        if (!(receiver instanceof Value.Class instance)) {
+            throw new Defect(op.kind() + " " + op.opId() + " receiver boundary passed value "
+                + receiver.actualKind() + ": the pinned UNTYPED_CLASS_INPUT boundary on "
+                + "descriptor class:" + classId.text() + " can only pass an instance of "
+                + classId + " — a wrong-kind value after a passing receiver boundary is a "
+                + "producer defect, never executed");
+        }
+        if (!instance.classId().equals(classId)) {
+            throw new Defect(op.kind() + " " + op.opId() + " receiver boundary passed an "
+                + "instance of " + instance.classId() + ": the pinned receiver is "
+                + classId + " (the canonical nominal identity check) — a wrong-identity "
+                + "value after a passing receiver boundary is a producer defect, never "
+                + "executed");
+        }
+        ClassLayout layout = layouts.get(classId);
+        if (layout == null) {
+            throw new Defect(op.kind() + " " + op.opId() + " classId " + classId
+                + " does not resolve in the layout-resolution context: the field "
+                + "read/write/delete maps the static field name through the class's "
+                + "layout — an unresolvable layout is a producer defect, never executed");
+        }
+        if (layout.fields().size() != instance.fields().size()) {
+            throw new Defect(op.kind() + " " + op.opId() + " instance of " + classId
+                + " carries " + instance.fields().size() + " field states for a layout of "
+                + layout.fields().size() + " fields: the pinned instance shape matches its "
+                + "layout's declaration order — a count mismatch is a producer defect, "
+                + "never executed");
+        }
+        return layout;
+    }
+
+    /** The declaration-order index of {@code field} in {@code layout}, fail closed. */
+    private static int fieldIndexOf(SemanticOp op, ClassLayout layout, java.lang.String field) {
+        for (int i = 0; i < layout.fields().size(); i++) {
+            if (layout.fields().get(i).name().equals(field)) {
+                return i;
+            }
+        }
+        throw new Defect(op.kind() + " " + op.opId() + " names field '" + field
+            + "' which is not a declared field of " + layout.classId()
+            + ": the pinned payload names declared fields only — a producer defect, "
+            + "never executed");
+    }
+
+    /**
+     * The pinned {@code OPTIONAL_FIELD_READ} result descriptor of one
+     * layout field (the checker's optional-read wrap): the field's
+     * declared descriptor, nullable-wrapped for an optional non-nullable
+     * field.
+     */
+    private static RuntimeDescriptor readResultDescriptorOf(ClassLayout.FieldLayout field) {
+        RuntimeDescriptor declared = field.descriptor();
+        if (!field.required() && !(declared instanceof RuntimeDescriptor.Nullable)) {
+            return new RuntimeDescriptor.Nullable(declared);
+        }
+        return declared;
+    }
+
+    /**
+     * Produces the updated instance of one field commit: the named
+     * declaration-order field state replaced with the committed state
+     * ({@code Present(committed)} for a write, {@code Missing} for a
+     * delete); every other field state is unchanged. The model is
+     * immutable, so the commit is the fresh updated instance the caller
+     * rebinds the receiver's reference to — a failed boundary produces
+     * no updated instance at all (nothing commits).
+     */
+    private static Value updatedInstance(Value.Class instance, int fieldIndex,
+                                         FieldState committed) {
+        List<FieldState> states = new ArrayList<>(instance.fields());
+        states.set(fieldIndex, committed);
+        return new Value.Class(instance.classId(), List.copyOf(states));
     }
 
     // =========================================================================
