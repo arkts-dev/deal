@@ -35,7 +35,7 @@ public class DealConstruction {
             String id = identifier(stringField(call, "id"));
             if (pending.putIfAbsent(id, call) != null) throw new IllegalArgumentException("CC1002: duplicate handle " + id);
         }
-        for (String id : pending.keySet()) resolve(id);
+        // Calls are pure construction nodes. Only the requested result and its dependencies project source.
         return get(stringField(batch, "result"), expected).source();
     }
 
@@ -167,7 +167,7 @@ public class DealConstruction {
 
     protected String value(CanonicalJson.Obj c, String key) {
         var operand = field(c, key);
-        if (operand instanceof CanonicalJson.Str s) return get(s.value(), Kind.VALUE).source();
+        if (operand instanceof CanonicalJson.Str s) return s.value().isEmpty() ? "\"\"" : get(s.value(), Kind.VALUE).source();
         if (operand instanceof CanonicalJson.Obj literal) {
             if (literal.entries().size() != 1) throw new IllegalArgumentException("Inline operand needs exactly one of text or path");
             if (literal.entries().getFirst().key().equals("text")) return encode(stringField(literal, "text"));

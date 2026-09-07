@@ -76,12 +76,13 @@ public final class ConstructionRepairWorkspace {
     }
 
     public void patch(CanonicalJson.Arr replacements) {
-        if (replacements.items().isEmpty() || replacements.items().size() > 16)
-            throw new IllegalArgumentException("Repair at most sixteen calls in the rejected dependency region");
+        if (replacements.items().isEmpty() || replacements.items().size() > 512)
+            throw new IllegalArgumentException("Repair batch must contain 1..512 calls");
         var all = new LinkedHashMap<String, CanonicalJson.Obj>();
         for (var call : calls()) all.put(stringField(call, "id"), call);
         var region = repairRegion(all);
         var seen = new HashSet<String>();
+        int changedCalls = 0;
         for (var raw : replacements.items()) {
             var call = requireObject(raw, "call");
             String id = stringField(call, "id");
@@ -89,9 +90,11 @@ public final class ConstructionRepairWorkspace {
             if (all.containsKey(id) && !region.contains(id)
                     && !encode(all.get(id)).equals(encode(call)))
                 throw new IllegalArgumentException("Cannot change preserved constructor call: " + id);
+            if (!all.containsKey(id) || !encode(all.get(id)).equals(encode(call))) changedCalls++;
             all.put(id, call);
         }
         if (!seen.contains(failure.ownerId)) throw new IllegalArgumentException("Patch must replace " + failure.ownerId);
+        if (changedCalls > 16) throw new IllegalArgumentException("Repair at most sixteen NEW or CHANGED calls; omit unrelated work");
         if (all.size() > 512) throw new IllegalArgumentException("CC1001: construction batch exceeds 512 calls");
         var candidate = CanonicalJson.obj(envelope.entries().stream().map(e -> e.key().equals("calls")
                 ? CanonicalJson.e("calls", CanonicalJson.arr(new ArrayList<CanonicalJson.Value>(all.values()))) : e).toList());
