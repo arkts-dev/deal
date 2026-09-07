@@ -14,26 +14,40 @@ public class DealConstruction {
     public enum Kind { VALUE, STATEMENT, BLOCK, DECLARATION, UI }
     public record Built(Kind kind, String source) {}
     private final Map<String, Built> handles = new LinkedHashMap<>();
+    private final Map<String, CanonicalJson.Obj> pending = new LinkedHashMap<>();
+    private final Set<String> resolving = new java.util.HashSet<>();
 
     public final String build(CanonicalJson.Obj batch, Kind expected) {
         handles.clear();
+        pending.clear();
+        resolving.clear();
         var calls = requireArray(field(batch, "calls"), "calls").items();
         if (calls.size() > 512) throw new IllegalArgumentException("CC1001: construction batch exceeds 512 calls");
         for (var raw : calls) {
             var call = requireObject(raw, "construction call");
             String id = identifier(stringField(call, "id"));
-            if (handles.containsKey(id)) throw new IllegalArgumentException("CC1002: duplicate handle " + id);
-            try {
+            if (pending.putIfAbsent(id, call) != null) throw new IllegalArgumentException("CC1002: duplicate handle " + id);
+        }
+        for (String id : pending.keySet()) resolve(id);
+        return get(stringField(batch, "result"), expected).source();
+    }
+
+    private Built resolve(String id) {
+        if (handles.containsKey(id)) return handles.get(id);
+        var call = pending.get(id);
+        if (call == null) throw new IllegalArgumentException("unknown construction handle: " + id);
+        if (!resolving.add(id)) throw new IllegalArgumentException("cyclic construction dependency: " + id);
+        try {
                 Built built = invoke(stringField(call, "op"), call);
                 if (built.source().length() > 131_072)
                     throw new IllegalArgumentException("construction result exceeds source resource limit");
                 handles.put(id, built);
-            }
-            catch (IllegalArgumentException failure) {
+                return built;
+        } catch (IllegalArgumentException failure) {
                 throw new IllegalArgumentException("CC1003 at " + id + ": " + failure.getMessage(), failure);
-            }
+        } finally {
+            resolving.remove(id);
         }
-        return get(stringField(batch, "result"), expected).source();
     }
 
     protected Built invoke(String op, CanonicalJson.Obj c) {
@@ -103,8 +117,8 @@ public class DealConstruction {
     }
 
     protected final Built get(String id, Kind kind) {
-        Built value = handles.get(id);
-        if (value == null || value.kind() != kind) throw new IllegalArgumentException("expected " + kind + " handle: " + id);
+        Built value = resolve(id);
+        if (value.kind() != kind) throw new IllegalArgumentException("expected " + kind + " handle: " + id + "; actual " + value.kind());
         return value;
     }
 
