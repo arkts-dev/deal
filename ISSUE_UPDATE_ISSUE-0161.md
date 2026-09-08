@@ -15,7 +15,7 @@ parent: ISSUE-0111
 workdir: WD-0900
 mr: MR-0387
 assignee: BOT-3227
-review_cycles: 2
+review_cycles: 5
 run_attempts: 0
 integration_attempts: 0
 total_runs: 6
@@ -33,7 +33,7 @@ external_researched: true
 architecture_status: pending
 breakdown_candidate_id: null
 created: 2026-08-21T14:37:11Z
-updated: 2026-09-05T11:28:33Z
+updated: 2026-09-08T11:35:45Z
 ---
 
 ## Update: the JVM recursive bytes closure landed; the E8 flip executed (review cycle 2 remediation)
@@ -197,3 +197,47 @@ HistoricalRegressionCatalog array-delete anchors re-located to the
 post-merge spans (JvmBackend.java:9899; 15609-15613) with the
 tree-derived baseline digest. No acceptance criterion changed; the
 full gate exits 0 with all four async-export suites green.
+
+## Update: rebase onto the canonical 52082f0c base (engine-imported revision)
+
+The engine imported canonical revision `52082f0c` (MR-0418 release
+determinism, MR-0376/ISSUE-0402 remediation, MR-0422 Lua extern-C
+restore with FFIGEN fixtures, MR-0421 ClassOpsExecutor CLASS_NEW
+LOCAL lowering, MR-0420 zero-skip flip, ISSUE-0361 promotions,
+ISSUE-0477 gate closure, ISSUE-0512/ISSUE-0520). The MR rebased with
+one conflict in `DifferentialGateLanesCorpusTest` (commit `0789e93e`):
+the canonical ISSUE-0477/ISSUE-0361 line had moved the pre-flip
+accounting pins (KNOWN_FAILURES_TRACKED 1→0, registry 38→39, luajit
+268/33→269/32, jvm 200/101→199/102), and the E8-closure delta was
+re-applied on top of the canonical state — the
+bytes-descriptor-boundary registry entry retires with the closure
+(registry 39→38, jvm counters 199/102→200/101), the known-fail
+counter stays 0 (ISSUE-0477 promoted the last marker), and the
+luajit/js counters stay at the canonical 269/32. No acceptance
+criterion or source contract changed; every re-pin is tree-derived
+from the real gate run on the rebased tree.
+
+### Verification on the final rebased commits (rebase tip 3f70f485 and the record-update commit; the gate was re-run on the final tree and produced the same evidence)
+
+- Engine gate `flock /tmp/igelhaus-deal-tests.lock ./run_tests.sh
+  --jobs 1`: exit 0, `=== All Tests Passed ===`.
+- Async-export suites: LuaJitAsyncExportInvokerTest OK (49),
+  RegistryAsyncExportBoundaryTest OK (5), JvmAsyncExportInvokerTest
+  OK (38, incl. the bytes oracle asserting Result.Value("null",
+  "null")), JvmRegistryAsyncExportBoundaryTest OK (6); Lua async
+  export driver 14/14 PASS lines.
+- DifferentialGateLanesCorpusTest 823/0: full three-lane gate 301
+  verdicts, 127 differential failures, 38 tracked non-fatal — the
+  re-pinned registry set matches the live JvmLane registry exactly.
+- JvmLaneStatePinTest 27/0 with the real LuaJIT and JVM lane
+  subprocess runs (JVM summary pinned passed 266, failed 0, skipped
+  35 ... 88.4%, denominator 301).
+- Backend Conformance: Total 328, Passed 328, Failed 0, Skipped 0,
+  KnownFailures 1; backend-runtime gates LuaJIT 99/99, JVM 260/260,
+  JS 42/42, zero skips.
+- Historical / Legacy-Profile / Legacy-Capability catalog tests pass
+  (the array-delete anchors and baseline digests hold against the
+  post-rebase JvmBackend spans).
+
+`git status` is clean; the committed diff contains only the intended
+backend/test/fixture/record changes.
