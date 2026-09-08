@@ -1,0 +1,5 @@
+// Out-of-root class-free provider: the rooted class default calls
+// marker() once per construction attempt.
+export function marker(): int {
+  return 42;
+}

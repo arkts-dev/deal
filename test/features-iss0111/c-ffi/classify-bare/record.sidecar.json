@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "feature": "c-ffi",
+  "spec": "Configuration classification \u2014 a bare loader-name nativeLibrary",
+  "description": "the nativeLibrary contains no '/': the production classifier selects BARE_NAME and dlopen uses the loader search path verbatim; the absent bare name raises the cached FFI_LIBRARY_LOAD and the exact same load re-raises the cached error value (the bare-name classification branch, never the process CWD)",
+  "expected": { "runtime-error": "FFI_LIBRARY_LOAD" },
+  "backends": ["luajit"],
+  "invocation": "direct-main",
+  "linkedRecord": "c-ffi/linked-jvm-e6003/record",
+  "support": [],
+  "native": {
+    "entries": [
+      {
+        "importSpecifier": "native/bare",
+        "declaration": "src/lib.d.deal",
+        "library": "v12-bare-loader-name.so"
+      }
+    ]
+  }
+}

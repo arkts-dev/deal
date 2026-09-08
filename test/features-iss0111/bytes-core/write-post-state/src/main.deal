@@ -1,0 +1,34 @@
+// ISSUE-0165 BYTES_CORE failed-write post-state row (int32/bytes page
+// D4): an out-of-range value raises E8013 and an out-of-bounds index
+// raises E8012, each with storage and immutable length unchanged — a
+// failed write never appends.
+export function main(): null {
+  let b: bytes = bytes(3);
+  b[0] = 200;
+  try {
+    b[1] = 256;
+    throw { code: "TEST_FAIL", message: "expected E8013 for an out-of-range write" };
+  } catch (e) {
+    if (e.code !== "E8013") {
+      throw { code: "TEST_FAIL", message: "expected E8013, got " + e.code };
+    }
+  }
+  if (b[1] !== 0) {
+    throw { code: "TEST_FAIL", message: "failed write must not change storage" };
+  }
+  if (b.length !== 3) {
+    throw { code: "TEST_FAIL", message: "failed write must not append or resize" };
+  }
+  try {
+    b[3] = 7;
+    throw { code: "TEST_FAIL", message: "expected E8012 for an out-of-bounds write" };
+  } catch (e) {
+    if (e.code !== "E8012") {
+      throw { code: "TEST_FAIL", message: "expected E8012, got " + e.code };
+    }
+  }
+  if (b.length !== 3 || b[0] !== 200) {
+    throw { code: "TEST_FAIL", message: "bounds failure must preserve post-state" };
+  }
+  return null;
+}

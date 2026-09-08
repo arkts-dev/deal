@@ -239,14 +239,53 @@ public final class V12FeatureGateTest {
                         + " \"declaration\": \"src/lib.deal\","
                         + " \"library\": \"/abs.so\"}]}")));
 
-        expectFailure("native library shape rejects", "or start with '/'",
+        expectFailure("native manifest-relative library must end .so",
+            "end with .so",
             () -> V12FeatureMetadata.parse("x.sidecar.json",
                 valid().replace("\"feature\": \"signed-int32\"",
                     "\"feature\": \"c-ffi\"").replace("\"support\": []",
                     "\"support\": [], \"native\": {\"entries\": ["
                         + "{\"importSpecifier\": \"native/math\","
                         + " \"declaration\": \"src/lib.d.deal\","
-                        + " \"library\": \"fixture.so\"}]}")));
+                        + " \"library\": \"native/rel.bad\"}]}")));
+
+        expectFailure("native fixture names must not carry a slash",
+            "must not contain '/'",
+            () -> V12FeatureMetadata.parse("x.sidecar.json",
+                valid().replace("\"feature\": \"signed-int32\"",
+                    "\"feature\": \"c-ffi\"").replace("\"support\": []",
+                    "\"support\": [], \"native\": {\"entries\": ["
+                        + "{\"importSpecifier\": \"native/math\","
+                        + " \"declaration\": \"src/lib.d.deal\","
+                        + " \"library\": \"native/x.c\"}]}")));
+
+        check("native classification shapes parse (bare + manifest-relative)",
+            () -> {
+                V12FeatureMetadata bare = V12FeatureMetadata.parse(
+                    "x.sidecar.json",
+                    valid().replace("\"feature\": \"signed-int32\"",
+                        "\"feature\": \"c-ffi\"").replace("\"support\": []",
+                        "\"support\": [], \"native\": {\"entries\": ["
+                            + "{\"importSpecifier\": \"native/bare\","
+                            + " \"declaration\": \"src/lib.d.deal\","
+                            + " \"library\": \"v12-bare.so\"}]}"));
+                V12FeatureMetadata relative = V12FeatureMetadata.parse(
+                    "x.sidecar.json",
+                    valid().replace("\"feature\": \"signed-int32\"",
+                        "\"feature\": \"c-ffi\"").replace("\"support\": []",
+                        "\"support\": [], \"native\": {\"entries\": ["
+                            + "{\"importSpecifier\": \"native/rel\","
+                            + " \"declaration\": \"src/lib.d.deal\","
+                            + " \"library\": \"native/rel.so\"}]}"));
+                if (!bare.nativePlan().entries().get(0).library()
+                        .equals("v12-bare.so")
+                        || !relative.nativePlan().entries().get(0).library()
+                            .equals("native/rel.so")) {
+                    throw new AssertionError("classification shapes not "
+                        + "parsed: " + bare.nativePlan() + " / "
+                        + relative.nativePlan());
+                }
+            });
 
         check("a c-ffi record with a native block parses", () -> {
             V12FeatureMetadata record = V12FeatureMetadata.parse(
@@ -303,6 +342,28 @@ public final class V12FeatureGateTest {
         return valid().replace("\"support\": []",
             "\"support\": [], \"manifestPolicy\": \"" + policy
                 + "\", \"manifestErrorFragment\": \"frag\"");
+    }
+
+    /** The closed providerVariants block of the conditional-rule pins. */
+    private static String providerVariantsBlock() {
+        return "{\"providerPath\": \"shared/provider.deal\","
+            + " \"variantA\": \"shared/a.deal\","
+            + " \"variantB\": \"shared/b.deal\","
+            + " \"oracleResults\": [42, 24]}";
+    }
+
+    /** A bytes-defaults runtime-ok synthetic-main record with the
+     *  providerVariants block. */
+    private static String providerVariantRecord(String feature) {
+        return "{\"version\": 1, \"feature\": \"" + feature + "\","
+            + " \"spec\": \"s\", \"description\": \"d\","
+            + " \"expected\": \"runtime-ok\","
+            + " \"backends\": [\"luajit\", \"jvm\"],"
+            + " \"invocation\": \"synthetic-main\","
+            + " \"oracle\": {\"exportName\": \"o\","
+            + " \"functionDescriptor\": \"()->int\"},"
+            + " \"support\": [],"
+            + " \"providerVariants\": " + providerVariantsBlock() + "}";
     }
 
     /** A valid C_FFI record with one native entry naming the given
@@ -502,7 +563,7 @@ public final class V12FeatureGateTest {
             List.of("luajit", "jvm"),
             V12FeatureMetadata.Invocation.COMPILE_ONLY, null, List.of(), null,
             "unsupported backend 'lua'",
-            V12FeatureMetadata.ManifestPolicy.INJECT, null, null);
+            V12FeatureMetadata.ManifestPolicy.INJECT, null, null, null);
         V12FeatureFixtureCatalog.RecordEntry entry =
             new V12FeatureFixtureCatalog.RecordEntry("probe",
                 Path.of("probe"), Path.of("probe/record.sidecar.json"),
@@ -555,7 +616,7 @@ public final class V12FeatureGateTest {
             List.of("luajit", "jvm"),
             V12FeatureMetadata.Invocation.COMPILE_ONLY, null, List.of(), null,
             "no deal.json project manifest found",
-            V12FeatureMetadata.ManifestPolicy.MISSING, null, null);
+            V12FeatureMetadata.ManifestPolicy.MISSING, null, null, null);
         V12FeatureFixtureCatalog.RecordEntry missingEntry =
             new V12FeatureFixtureCatalog.RecordEntry("missing-probe",
                 Path.of("missing-probe"),
@@ -592,7 +653,7 @@ public final class V12FeatureGateTest {
             List.of("luajit", "jvm"),
             V12FeatureMetadata.Invocation.COMPILE_ONLY, null, List.of(), null,
             "multiple deal.json project manifests found",
-            V12FeatureMetadata.ManifestPolicy.MULTIPLE, null, null);
+            V12FeatureMetadata.ManifestPolicy.MULTIPLE, null, null, null);
         V12FeatureFixtureCatalog.RecordEntry multipleEntry =
             new V12FeatureFixtureCatalog.RecordEntry("multiple-probe",
                 Path.of("multiple-probe"),
@@ -817,8 +878,8 @@ public final class V12FeatureGateTest {
                 ids.add(entry.id());
             }
             ids.sort(Comparator.naturalOrder());
-            if (ids.size() != 29) {
-                throw new AssertionError("committed corpus must carry 29 "
+            if (ids.size() != 43) {
+                throw new AssertionError("committed corpus must carry 43 "
                     + "records, got " + ids);
             }
             if (!ids.contains("int32/truncating-arith/record")
@@ -826,12 +887,26 @@ public final class V12FeatureGateTest {
                     || !ids.contains("c-ffi/runtime-native/record")
                     || !ids.contains("c-ffi/linked-jvm-e6003/record")
                     || !ids.contains("c-ffi/unloadable-library/record")
+                    || !ids.contains("c-ffi/missing-symbol/record")
+                    || !ids.contains("c-ffi/classify-manifest-relative/record")
+                    || !ids.contains("c-ffi/classify-bare/record")
                     || !ids.contains("project-config/out-of-root-import/record")
                     || !ids.contains("project-config/missing-manifest/record")
                     || !ids.contains("project-config/multiple-manifests/record")
                     || !ids.contains("project-config/identity-separation/record")
                     || !ids.contains("directives/anchor-break/record")
-                    || !ids.contains("directives/anchor-attach/record")) {
+                    || !ids.contains("directives/anchor-attach/record")
+                    || !ids.contains("bytes-core/buffer-ops/record")
+                    || !ids.contains("bytes-core/write-post-state/record")
+                    || !ids.contains("bytes-core/index-bounds-error/record")
+                    || !ids.contains("bytes-core/write-range-error/record")
+                    || !ids.contains("bytes-core/json-reject/record")
+                    || !ids.contains("bytes-defaults/record")
+                    || !ids.contains("bytes-defaults/out-of-root-provider/record")
+                    || !ids.contains("bytes-defaults/cycle/record")
+                    || !ids.contains("bytes-defaults/changed-provider/record")
+                    || !ids.contains("bytes-descriptors/record")
+                    || !ids.contains("bytes-descriptors/nullable/record")) {
                 throw new AssertionError("missing committed record: " + ids);
             }
         });
@@ -975,6 +1050,67 @@ public final class V12FeatureGateTest {
                         "\"manifestErrorFragment\": \"frag\","
                             + " \"identityArtifact\": "
                             + "{\"classDescriptor\": \"@src/main/W\"}")));
+
+        check("providerVariants parses the closed block", () -> {
+            V12FeatureMetadata record = V12FeatureMetadata.parse(
+                "x.sidecar.json",
+                valid().replace("\"feature\": \"signed-int32\"",
+                    "\"feature\": \"bytes-defaults\"")
+                    .replace("\"expected\": { \"compile-error\": \"E1036\" }",
+                        "\"expected\": \"runtime-ok\"")
+                    .replace("\"invocation\": \"compile-only\"",
+                        "\"invocation\": \"synthetic-main\"")
+                    .replace("\"support\": []",
+                        "\"support\": [], \"oracle\": {\"exportName\": \"o\","
+                            + " \"functionDescriptor\": \"()->int\"},"
+                            + " \"providerVariants\": {\"providerPath\": "
+                            + "\"shared/provider.deal\","
+                            + " \"variantA\": \"shared/a.deal\","
+                            + " \"variantB\": \"shared/b.deal\","
+                            + " \"oracleResults\": [42, 24]}"));
+            if (record.providerVariants() == null
+                    || !record.providerVariants().oracleResults()
+                        .equals(java.util.List.of(42, 24))) {
+                throw new AssertionError("providerVariants not parsed: "
+                    + record.providerVariants());
+            }
+        });
+        expectFailure("providerVariants with a wrong feature fails",
+            "bytes-defaults only",
+            () -> V12FeatureMetadata.parse("x.sidecar.json",
+                providerVariantRecord("signed-int32")));
+        expectFailure("providerVariants with a compile-error expectation "
+                + "fails", "runtime-ok expectation",
+            () -> V12FeatureMetadata.parse("x.sidecar.json",
+                valid().replace("\"feature\": \"signed-int32\"",
+                    "\"feature\": \"bytes-defaults\"")
+                    .replace("\"support\": []",
+                        "\"support\": [], \"providerVariants\": "
+                            + providerVariantsBlock())));
+
+        expectFailure("providerVariants with direct-main fails",
+            "synthetic-main",
+            () -> V12FeatureMetadata.parse("x.sidecar.json",
+                providerVariantRecord("bytes-defaults")
+                    .replace("\"invocation\": \"synthetic-main\"",
+                        "\"invocation\": \"direct-main\"")));
+        expectFailure("providerVariants with a non-int oracle fails",
+            "()->int oracle",
+            () -> V12FeatureMetadata.parse("x.sidecar.json",
+                providerVariantRecord("bytes-defaults")
+                    .replace("\"()->int\"", "\"()->null\"")));
+        expectFailure("providerVariants with one result fails",
+            "exactly two integers",
+            () -> V12FeatureMetadata.parse("x.sidecar.json",
+                providerVariantRecord("bytes-defaults")
+                    .replace("\"oracleResults\": [42, 24]",
+                        "\"oracleResults\": [42]")));
+        expectFailure("providerVariants with a non-integer result fails",
+            "JSON integers",
+            () -> V12FeatureMetadata.parse("x.sidecar.json",
+                providerVariantRecord("bytes-defaults")
+                    .replace("\"oracleResults\": [42, 24]",
+                        "\"oracleResults\": [42, 2.5]")));
 
         Path tmp = Files.createTempDirectory("v12identity-");
         check("artifact pin accepts a descriptor without private text",

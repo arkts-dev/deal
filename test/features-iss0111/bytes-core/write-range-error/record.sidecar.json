@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "feature": "bytes-core",
+  "spec": "spec-v1.2.md §Bytes",
+  "description": "a write with a value outside 0..255 raises E8013 on both backends",
+  "expected": { "runtime-error": "E8013" },
+  "backends": ["luajit", "jvm"],
+  "invocation": "direct-main",
+  "support": []
+}

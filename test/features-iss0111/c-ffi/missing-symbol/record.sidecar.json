@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "feature": "c-ffi",
+  "spec": "Runtime \u2014 declared-but-absent symbol becomes the cached FFI_SYMBOL_MISSING",
+  "description": "the library opens but the declared symbol is absent: load_ffi raises FFI_SYMBOL_MISSING through the handle-scoped resolver, the exact same load re-raises the cached error value, and the fresh bindings are marked FAILED (a declared DEAL runtime error, never an infrastructure match)",
+  "expected": { "runtime-error": "FFI_SYMBOL_MISSING" },
+  "backends": ["luajit"],
+  "invocation": "direct-main",
+  "linkedRecord": "c-ffi/linked-jvm-e6003/record",
+  "support": [],
+  "native": {
+    "entries": [
+      {
+        "importSpecifier": "native/missing",
+        "declaration": "src/lib.d.deal",
+        "library": "ffi-runtime-missing-symbol.c"
+      }
+    ]
+  }
+}

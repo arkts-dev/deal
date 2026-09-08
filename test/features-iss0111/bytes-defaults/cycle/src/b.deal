@@ -1,0 +1,11 @@
+// The cycle partner: its default calls back into the entry module, so
+// the cycle is runtime-bearing and E2005 fires at the import edges.
+import * as A from "./main"
+
+class Bc {
+  v: bytes = A.markerBytes();
+}
+
+export function mk(): bytes {
+  return bytes(1);
+}

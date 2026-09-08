@@ -287,6 +287,14 @@ private final Path repoRoot;
                                String backend) {
         String label = entry.id() + " [" + backend + "]";
         try {
+            if (entry.metadata().providerVariants() != null) {
+                // The changed-provider-identity row: the same unchanged
+                // fixture compiles twice per backend, differing only in
+                // the resolved provider's content; each compilation must
+                // produce its pinned oracle result (per-variant records).
+                executeProviderVariants(catalog, entry, backend, label);
+                return;
+            }
             nativeEvents.clear();
             Path project = materializeProject(catalog, entry, backend);
             CompileOutcome outcome = compileProject(project, entry, backend);
@@ -299,7 +307,7 @@ private final Path repoRoot;
                 // through the production __rt.load_ffi pipeline (the
                 // generated-import emission shape) and asserts the real
                 // ABI/error/ownership/replay rows.
-                ok = executeCffiRecord(entry, outcome, label);
+                ok = executeCffiRecord(entry, outcome, label, project);
             } else {
                 V12FeatureMetadata.Expectation expectation =
                     entry.metadata().expected();
@@ -322,6 +330,49 @@ private final Path repoRoot;
             System.err.println("  FAIL " + label + ": " + failure.getMessage());
         } finally {
             // Temp projects are system-scoped; leave cleanup to the OS.
+        }
+    }
+
+    /**
+     * The changed-provider-identity execution (int32/bytes page D5-D6):
+     * compiles the record's unchanged fixture twice per backend, with
+     * the resolved provider's content replaced between the two
+     * compilations (variant A then variant B, both record-relative
+     * files published at the fixture's provider import path). Each
+     * compilation runs the typed synthetic entry pinned to that
+     * variant's oracle result — identical fixture bytes producing the
+     * two pinned results prove the changed provider's
+     * behavior/identity flows through the production compilation (no
+     * stale reuse), never a vacuous same-input rerun. Every leg is a
+     * hard gate failure; there is no skip.
+     */
+    private void executeProviderVariants(V12FeatureFixtureCatalog catalog,
+            V12FeatureFixtureCatalog.RecordEntry entry, String backend,
+            String label) {
+        V12FeatureMetadata.ProviderVariants variants =
+            entry.metadata().providerVariants();
+        for (int v = 0; v < 2; v++) {
+            String variantLabel = label + " [variant " + v + "]";
+            try {
+                nativeEvents.clear();
+                Path variantSource = entry.directory().resolve(
+                    v == 0 ? variants.variantA() : variants.variantB());
+                if (!Files.isRegularFile(variantSource)) {
+                    throw new GateFailure("provider variant source missing: "
+                        + variantSource);
+                }
+                Path project = materializeProject(catalog, entry, backend,
+                    variants.oracleResults().get(v), variantSource);
+                CompileOutcome outcome = compileProject(project, entry, backend);
+                checkIdentityArtifact(entry, outcome);
+                RunOutcome run = executeRuntime(entry, backend, outcome);
+                boolean ok = checkRunOutcome(entry, null, variantLabel, run);
+                record(variantLabel, ok);
+            } catch (GateFailure failure) {
+                record(variantLabel, false);
+                System.err.println("  FAIL " + variantLabel + ": "
+                    + failure.getMessage());
+            }
         }
     }
 
@@ -741,6 +792,20 @@ private final Path repoRoot;
     private Path materializeProject(V12FeatureFixtureCatalog catalog,
                                   V12FeatureFixtureCatalog.RecordEntry entry,
                                   String backend) {
+        return materializeProject(catalog, entry, backend, null, null);
+    }
+
+    /**
+     * The variant-aware materialization: {@code expectedOverride} and
+     * {@code variantSource} are non-null exactly for the
+     * changed-provider record — the provider variant file is published
+     * at the fixture's provider import path and the synthetic entry
+     * pins the variant's oracle result.
+     */
+    private Path materializeProject(V12FeatureFixtureCatalog catalog,
+                                  V12FeatureFixtureCatalog.RecordEntry entry,
+                                  String backend, Integer expectedOverride,
+                                  Path variantSource) {
         final Path project;
         try {
             project = Files.createTempDirectory("v12feature-");
@@ -795,13 +860,20 @@ private final Path repoRoot;
                 // The standard generated manifest below.
             }
         }
+        if (variantSource != null) {
+            V12FeatureMetadata.ProviderVariants variants =
+                entry.metadata().providerVariants();
+            writeText(project.resolve(variants.providerPath()),
+                readText(variantSource));
+        }
         if (entry.metadata().invocation()
                 == V12FeatureMetadata.Invocation.SYNTHETIC_MAIN) {
             writeText(project.resolve("src/main.deal"),
-                syntheticEntry(entry));
+                syntheticEntry(entry,
+                    expectedOverride == null ? 42 : expectedOverride));
         }
         writeText(project.resolve("deal.json"),
-            generatedManifest(entry, backend));
+            generatedManifest(project, entry, backend));
         return project;
     }
 
@@ -814,7 +886,7 @@ private final Path repoRoot;
      * object's absolute path, or the pinned absolute path of the
      * unloadable row).
      */
-    private String generatedManifest(
+    private String generatedManifest(Path project,
             V12FeatureFixtureCatalog.RecordEntry entry, String backend) {
         StringBuilder sb = new StringBuilder();
         sb.append("{\n  \"languageVersion\": \"1.2\",\n")
@@ -837,8 +909,8 @@ private final Path repoRoot;
                     .append(jsonEscape(nativeEntry.declaration()))
                     .append("\",\n")
                     .append("      \"nativeLibrary\": \"")
-                    .append(jsonEscape(nativeLibraryPath(entry,
-                        nativeEntry, backend)))
+                    .append(jsonEscape(nativeLibraryPath(project,
+                        entry, nativeEntry, backend)))
                     .append("\"\n")
                     .append("    }");
             }
@@ -849,31 +921,85 @@ private final Path repoRoot;
     }
 
     /**
-     * One externals nativeLibrary value: a {@code .c} library is the
-     * repository C fixture — on the LuaJIT runtime leg the gate compiles
-     * it with contained GCC into a shared object and returns its
-     * absolute path (the events file is recorded for the C FFI driver);
-     * on a compile-error leg (the linked JVM E6003 record) a pinned
-     * placeholder absolute path is used (the library is never loaded).
-     * Any other value is a pinned absolute path used verbatim (the
-     * valid-but-unloadable classification row).
+     * One externals nativeLibrary value (the exact closed shapes of
+     * {@link V12FeatureMetadata.NativeEntry#library()}):
+     * <ul>
+     *   <li>{@code .c} (no {@code /}): the repository C fixture — on the
+     *       LuaJIT runtime leg the gate compiles it with contained GCC
+     *       into a shared object and returns its absolute path (the
+     *       events file is recorded for the C FFI driver); on a
+     *       compile-error leg (the linked JVM E6003 record) a pinned
+     *       placeholder absolute path is used (the library is never
+     *       loaded);</li>
+     *   <li>leading {@code /}: a pinned absolute path used verbatim (the
+     *       valid-but-unloadable classification row);</li>
+     *   <li>contains {@code /} without a leading one ({@code .so}): the
+     *       manifest-relative classification row — the gate compiles the
+     *       same-stem repository C fixture and places the shared object
+     *       at exactly that relative path inside the temporary project,
+     *       and the manifest carries the relative spelling verbatim (a
+     *       library present at the relative location);</li>
+     *   <li>no {@code /}: a bare loader-name classification row used
+     *       verbatim (dlopen's loader search).</li>
+     * </ul>
      */
-    private String nativeLibraryPath(
+    private String nativeLibraryPath(Path project,
             V12FeatureFixtureCatalog.RecordEntry entry,
             V12FeatureMetadata.NativeEntry nativeEntry, String backend) {
         String library = nativeEntry.library();
-        if (!library.endsWith(".c")) {
+        if (library.endsWith(".c") && !library.contains("/")) {
+            boolean runtimeLeg = backend.equals("luajit")
+                && (entry.metadata().expected()
+                    instanceof V12FeatureMetadata.RuntimeOk
+                    || entry.metadata().expected()
+                        instanceof V12FeatureMetadata.RuntimeError);
+            if (!runtimeLeg) {
+                return "/v12-linked-jvm-e6003/" + library;
+            }
+            return compileNativeFixture(entry, library).toString();
+        }
+        if (library.startsWith("/")) {
             return library;
         }
-        boolean runtimeLeg = backend.equals("luajit")
-            && (entry.metadata().expected()
-                instanceof V12FeatureMetadata.RuntimeOk
-                || entry.metadata().expected()
-                    instanceof V12FeatureMetadata.RuntimeError);
-        if (!runtimeLeg) {
-            return "/v12-linked-jvm-e6003/" + library;
+        if (library.contains("/")) {
+            boolean runtimeLeg = backend.equals("luajit")
+                && (entry.metadata().expected()
+                    instanceof V12FeatureMetadata.RuntimeOk
+                    || entry.metadata().expected()
+                        instanceof V12FeatureMetadata.RuntimeError);
+            if (!runtimeLeg) {
+                // Never loaded on a non-runtime leg; the manifest keeps
+                // the relative spelling so the production classifier
+                // still sees the manifest-relative shape.
+                return library;
+            }
+            String stem = library.substring(
+                library.lastIndexOf('/') + 1,
+                library.length() - ".so".length());
+            Path shared = compileNativeFixture(entry, stem + ".c");
+            copyBytes(shared, project.resolve(library));
+            return library;
         }
-        return compileNativeFixture(entry, library).toString();
+        return library;
+    }
+
+    /**
+     * The repository C fixture name a library reference selects for
+     * gate compilation, or null when the reference is never
+     * gate-compiled (pinned absolute paths and bare loader names):
+     * {@code x.c} → {@code x.c}; a manifest-relative {@code d/x.so} →
+     * {@code x.c}.
+     */
+    private static String nativeFixtureName(String library) {
+        if (library.endsWith(".c") && !library.contains("/")) {
+            return library;
+        }
+        if (library.contains("/") && !library.startsWith("/")
+                && library.endsWith(".so")) {
+            return library.substring(library.lastIndexOf('/') + 1,
+                library.length() - ".so".length()) + ".c";
+        }
+        return null;
     }
 
     /** Compiles one repository C fixture into a shared object with
@@ -949,6 +1075,18 @@ private final Path repoRoot;
      */
     private static String syntheticEntry(
             V12FeatureFixtureCatalog.RecordEntry entry) {
+        return syntheticEntry(entry, 42);
+    }
+
+    /**
+     * The typed synthetic entry with the pinned oracle result: the
+     * standard synthetic-main shape pins 42 (the established corpus
+     * convention); the changed-provider variants pin their per-variant
+     * result so each compilation must produce its own provider-derived
+     * value.
+     */
+    private static String syntheticEntry(
+            V12FeatureFixtureCatalog.RecordEntry entry, int expected) {
         V12FeatureMetadata.Oracle oracle = entry.metadata().oracle();
         if (oracle == null || !oracle.functionDescriptor().startsWith("()->")) {
             throw new GateFailure("synthetic-main record '" + entry.id()
@@ -964,7 +1102,7 @@ private final Path repoRoot;
             + "export function main(): null {\n"
             + "  let result: " + returnType + " = fixture."
             + oracle.exportName() + "();\n"
-            + "  if (result !== 42) {\n"
+            + "  if (result !== " + expected + ") {\n"
             + "    throw { code: \"TEST_FAIL\", message: \"synthetic oracle "
             + "boundary\" };\n"
             + "  }\n"
@@ -1426,7 +1564,7 @@ private final Path repoRoot;
      */
     private boolean executeCffiRecord(
             V12FeatureFixtureCatalog.RecordEntry entry, CompileOutcome outcome,
-            String label) {
+            String label, Path project) {
         if (outcome.locateE2010 != null || !outcome.success) {
             throw new GateFailure("C FFI record must compile before runtime "
                 + "execution: "
@@ -1481,18 +1619,28 @@ private final Path repoRoot;
             || entry.metadata().expected()
                 instanceof V12FeatureMetadata.RuntimeError;
         for (V12FeatureMetadata.NativeEntry nativeEntry : nativePlan.entries()) {
-            if (nativeEntry.library().endsWith(".c")
-                    && runtimeExpectation) {
-                Path events = nativeEvents.get(nativeEntry.library());
+            String fixtureName = nativeFixtureName(nativeEntry.library());
+            if (fixtureName != null && runtimeExpectation) {
+                Path events = nativeEvents.get(fixtureName);
                 if (events == null) {
                     throw new GateFailure("no event file recorded for the "
-                        + "gate-compiled fixture "
-                        + nativeEntry.library());
+                        + "gate-compiled fixture " + fixtureName);
                 }
                 argv.add(events.toString());
             }
         }
-        RunOutcome run = runContained(repoRoot.toString(), argv);
+        // The production classifier resolves a manifest-relative
+        // nativeLibrary against the process CWD at dlopen time; a record
+        // carrying the manifest-relative classification row therefore
+        // runs its driver from the temporary project root (the pinned
+        // relative library lives there), with the repository runtime on
+        // the driver's package path. Every other record keeps the
+        // repository CWD (absolute loader texts resolve identically).
+        boolean manifestRelative = nativePlan.entries().stream()
+            .anyMatch(nativeEntry -> nativeEntry.library().contains("/")
+                && !nativeEntry.library().startsWith("/"));
+        Path driverCwd = manifestRelative ? project : repoRoot;
+        RunOutcome run = runContained(driverCwd.toString(), argv);
         String errorCode = entry.metadata().expected()
                 instanceof V12FeatureMetadata.RuntimeError error
             ? error.code() : null;
@@ -1520,20 +1668,23 @@ private final Path repoRoot;
                 "fixture_identity_int", "fixture_extreme_int",
                 "fixture_number_special", "fixture_nonzero_bool",
                 "fixture_zero_bool", "fixture_long_string",
-                "fixture_echo_long", "fixture_bytes_sum2",
+                "fixture_echo_long", "fixture_echo_len",
+                "fixture_bytes_sum2",
                 "fixture_make_pair", "fixture_echo_pair",
                 "fixture_bump_pair", "fixture_sum_pair",
                 "fixture_make_kw", "fixture_make_ptr_box",
                 "fixture_make_null_ptr_box", "fixture_ptrbox_nonnull"),
             "native/dualA", java.util.Set.of("fixture_dual_combine"),
-            "native/dualB", java.util.Set.of("fixture_dual_combine"));
+            "native/dualB", java.util.Set.of("fixture_dual_combine"),
+            "native/rel", java.util.Set.of("fixture_dual_combine"));
 
     private static final java.util.Map<String, java.util.Set<String>>
         PINNED_CFFI_CLASSES = java.util.Map.of(
             "native/math", java.util.Set.of("Handle", "Pair", "Kw",
                 "PtrBox"),
             "native/dualA", java.util.Set.of(),
-            "native/dualB", java.util.Set.of());
+            "native/dualB", java.util.Set.of(),
+            "native/rel", java.util.Set.of());
 
     private static String pinnedCffiSurfaceViolation(
             V12FeatureMetadata.NativeEntry nativeEntry,
@@ -1588,6 +1739,13 @@ private final Path repoRoot;
             .append("-- __rt.load_ffi pipeline (cdef certainty registry,\n")
             .append("-- handle-scoped resolver, ABI converters, wrapper/readiness\n")
             .append("-- runtime). Every assertion is a hard Lua error.\n")
+            .append("-- The repository runtime is on the driver path even ")
+            .append("when the\n")
+            .append("-- run CWD is a temporary project (the manifest-relative\n")
+            .append("-- classification row).\n")
+            .append("package.path = ")
+            .append(luaString(repoRoot.resolve("?.lua").toString()))
+            .append(" .. \";\" .. package.path\n")
             .append("local __rt = require(\"deal.runtime\")\n")
             .append("local F = ").append(luaString(CFFI_IMPORT_FILE)).append("\n")
             .append("local FL = ").append(CFFI_IMPORT_LINE).append("\n")
@@ -1621,37 +1779,90 @@ private final Path repoRoot;
                 runtimeError);
         }
         if (runtimeError) {
-            // The valid-but-unloadable row: the first load raises the
-            // cached FFI_LIBRARY_LOAD; the exact same load re-raises the
-            // cached error value (transition 4); the fresh bindings are
-            // marked FAILED by the failure envelope.
-            sb.append("-- ===== unloadable row: cached FFI_LIBRARY_LOAD =====\n")
-                .append("local ok_, e_ = pcall(function()\n")
-                .append("  return __rt.load_ffi(M1_KEY, M1_BUNDLE, M1_PLANS,")
-                .append(" M1_B1, F, FL, FC)\n")
-                .append("end)\n")
-                .append("assert(not ok_, \"an unloadable library must fail ")
-                .append("the load\")\n")
-                .append("assert(type(e_) == \"table\" and e_.code == ")
-                .append("\"FFI_LIBRARY_LOAD\", \"expected FFI_LIBRARY_LOAD, ")
-                .append("got \" .. tostring(e_))\n")
-                .append("assert(M1_B1.state == \"FAILED\", \"the failure ")
-                .append("envelope must mark the bindings FAILED\")\n")
-                .append("local M1_B2 = M1_BINDINGS()\n")
-                .append("local ok2_, e2_ = pcall(function()\n")
-                .append("  return __rt.load_ffi(M1_KEY, M1_BUNDLE, M1_PLANS,")
-                .append(" M1_B2, F, FL, FC)\n")
-                .append("end)\n")
-                .append("assert(not ok2_ and type(e2_) == \"table\" and ")
-                .append("e2_.code == \"FFI_LIBRARY_LOAD\", \"the exact failed ")
-                .append("replay must re-raise FFI_LIBRARY_LOAD\")\n")
-                .append("assert(e2_ == e_, \"the exact failed replay must ")
-                .append("re-raise the cached error value itself\")\n")
-                .append("assert(M1_B2.state == \"FAILED\", \"the failed replay ")
-                .append("must mark the fresh bindings FAILED\")\n")
-                .append("print(\"DEAL_ERROR_CODE: FFI_LIBRARY_LOAD \" ")
-                .append(".. tostring(e_.message))\n")
-                .append("os.exit(1)\n");
+            V12FeatureMetadata.RuntimeError expectation =
+                (V12FeatureMetadata.RuntimeError) entry.metadata().expected();
+            switch (expectation.code()) {
+                case "FFI_LIBRARY_LOAD" -> {
+                    // The valid-but-unloadable row (absolute) and the
+                    // bare-loader-name row: the first load raises the
+                    // cached FFI_LIBRARY_LOAD; the exact same load
+                    // re-raises the cached error value (transition 4);
+                    // the fresh bindings are marked FAILED by the
+                    // failure envelope.
+                    sb.append("-- ===== cached FFI_LIBRARY_LOAD row =====\n")
+                        .append("local ok_, e_ = pcall(function()\n")
+                        .append("  return __rt.load_ffi(M1_KEY, M1_BUNDLE, ")
+                        .append("M1_PLANS, M1_B1, F, FL, FC)\n")
+                        .append("end)\n")
+                        .append("assert(not ok_, \"the library load must fail ")
+                        .append("with FFI_LIBRARY_LOAD\")\n")
+                        .append("assert(type(e_) == \"table\" and e_.code == ")
+                        .append("\"FFI_LIBRARY_LOAD\", \"expected ")
+                        .append("FFI_LIBRARY_LOAD, got \" .. tostring(e_))\n")
+                        .append("assert(M1_B1.state == \"FAILED\", \"the ")
+                        .append("failure envelope must mark the bindings ")
+                        .append("FAILED\")\n")
+                        .append("local M1_B2 = M1_BINDINGS()\n")
+                        .append("local ok2_, e2_ = pcall(function()\n")
+                        .append("  return __rt.load_ffi(M1_KEY, M1_BUNDLE, ")
+                        .append("M1_PLANS, M1_B2, F, FL, FC)\n")
+                        .append("end)\n")
+                        .append("assert(not ok2_ and type(e2_) == \"table\" ")
+                        .append("and e2_.code == \"FFI_LIBRARY_LOAD\", \"the ")
+                        .append("exact failed replay must re-raise ")
+                        .append("FFI_LIBRARY_LOAD\")\n")
+                        .append("assert(e2_ == e_, \"the exact failed replay ")
+                        .append("must re-raise the cached error value ")
+                        .append("itself\")\n")
+                        .append("assert(M1_B2.state == \"FAILED\", \"the ")
+                        .append("failed replay must mark the fresh bindings ")
+                        .append("FAILED\")\n")
+                        .append("print(\"DEAL_ERROR_CODE: FFI_LIBRARY_LOAD \" ")
+                        .append(".. tostring(e_.message))\n")
+                        .append("os.exit(1)\n");
+                }
+                case "FFI_SYMBOL_MISSING" -> {
+                    // The declared-but-absent-symbol row: the library
+                    // opens, the symbol resolution raises the cached
+                    // FFI_SYMBOL_MISSING; the exact same load re-raises
+                    // the cached error value; the fresh bindings are
+                    // marked FAILED by the failure envelope.
+                    sb.append("-- ===== cached FFI_SYMBOL_MISSING row =====\n")
+                        .append("local ok_, e_ = pcall(function()\n")
+                        .append("  return __rt.load_ffi(M1_KEY, M1_BUNDLE, ")
+                        .append("M1_PLANS, M1_B1, F, FL, FC)\n")
+                        .append("end)\n")
+                        .append("assert(not ok_, \"the declared-but-missing ")
+                        .append("symbol must fail the load\")\n")
+                        .append("assert(type(e_) == \"table\" and e_.code == ")
+                        .append("\"FFI_SYMBOL_MISSING\", \"expected ")
+                        .append("FFI_SYMBOL_MISSING, got \" .. tostring(e_))\n")
+                        .append("assert(M1_B1.state == \"FAILED\", \"the ")
+                        .append("failure envelope must mark the bindings ")
+                        .append("FAILED\")\n")
+                        .append("local M1_B2 = M1_BINDINGS()\n")
+                        .append("local ok2_, e2_ = pcall(function()\n")
+                        .append("  return __rt.load_ffi(M1_KEY, M1_BUNDLE, ")
+                        .append("M1_PLANS, M1_B2, F, FL, FC)\n")
+                        .append("end)\n")
+                        .append("assert(not ok2_ and type(e2_) == \"table\" ")
+                        .append("and e2_.code == \"FFI_SYMBOL_MISSING\", ")
+                        .append("\"the exact failed replay must re-raise ")
+                        .append("FFI_SYMBOL_MISSING\")\n")
+                        .append("assert(e2_ == e_, \"the exact failed replay ")
+                        .append("must re-raise the cached error value ")
+                        .append("itself\")\n")
+                        .append("assert(M1_B2.state == \"FAILED\", \"the ")
+                        .append("failed replay must mark the fresh bindings ")
+                        .append("FAILED\")\n")
+                        .append("print(\"DEAL_ERROR_CODE: FFI_SYMBOL_MISSING ")
+                        .append("\" .. tostring(e_.message))\n")
+                        .append("os.exit(1)\n");
+                }
+                default -> throw new GateFailure("unpinned C FFI "
+                    + "runtime-error code '" + expectation.code()
+                    + "' for record '" + entry.id() + "'");
+            }
             return sb.toString();
         }
         for (int i = 0; i < modules.size(); i++) {
@@ -1989,6 +2200,7 @@ private final Path repoRoot;
             case "native/math" -> mathBattery(sb, index, module);
             case "native/dualA" -> dualBattery(sb, index, module, false);
             case "native/dualB" -> dualBattery(sb, index, module, true);
+            case "native/rel" -> dualBattery(sb, index, module, false);
             default -> throw new GateFailure("no pinned assertion battery "
                 + "for C FFI import specifier '" + importSpecifier + "'");
         }
@@ -2066,6 +2278,26 @@ private final Path repoRoot;
             List.of("string.rep(\"x\", 4096)"),
             "string.rep(\"x\", 4096)",
             "long string parameter roundtrip");
+        // FFI_INVALID_STRING: an embedded-NUL string parameter fails the
+        // pre-call conversion, so no native call runs (the counter is
+        // pinned identical before and after).
+        sb.append("-- FFI_INVALID_STRING: embedded-NUL parameter fails ")
+            .append("before the call\n")
+            .append("local pre_inv_ = ").append(exports)
+            .append("[\"fixture_call_count\"].f(CF, CL, CC)\n")
+            .append("local ok_inv_, e_inv_ = pcall(function()\n")
+            .append("  return ").append(exports)
+            .append("[\"fixture_echo_len\"].f(")
+            .append(luaString("a\u0000b")).append(", CF, CL, CC)\n")
+            .append("end)\n")
+            .append("assert(not ok_inv_ and type(e_inv_) == \"table\" ")
+            .append("and e_inv_.code == \"FFI_INVALID_STRING\", ")
+            .append("\"embedded-NUL string parameter must raise ")
+            .append("FFI_INVALID_STRING, got \" .. tostring(e_inv_))\n")
+            .append("local post_inv_ = ").append(exports)
+            .append("[\"fixture_call_count\"].f(CF, CL, CC)\n")
+            .append("assert(pre_inv_ == post_inv_, \"the pre-call string ")
+            .append("failure must not run the native call\")\n");
         // By-value struct rows + ordinal C-keyword fields.
         classCase(sb, exports, "fixture_make_pair", List.of("3", "2.5"),
             m + "_ID_Pair",

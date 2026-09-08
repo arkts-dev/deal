@@ -40,6 +40,7 @@ export function fixture_nonzero_bool(): boolean;
 export function fixture_zero_bool(): boolean;
 export function fixture_long_string(): string;
 export function fixture_echo_long(s: string): string;
+export function fixture_echo_len(s: string): int;
 export function fixture_bytes_sum2(a: bytes, b: bytes): int;
 export function fixture_make_pair(x: int, y: number): Pair;
 export function fixture_echo_pair(p: Pair): Pair;

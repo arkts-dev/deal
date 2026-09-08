@@ -37,6 +37,13 @@ import java.util.Set;
  * byte-for-byte (the runtime half stays the single completion-checking
  * authority).</p>
  *
+ * <p>The optional {@code providerVariants} block pins the
+ * changed-provider-identity row: the gate compiles the same unchanged
+ * fixture twice per backend, differing only in the resolved provider's
+ * content, and requires the pinned oracle result per variant — a
+ * changed provider flows through the production compilation, never a
+ * vacuous same-input rerun.</p>
+ *
  * <p>The optional {@code manifestErrorFragment} pins the exact text a
  * malformed-manifest record's E2010 message must carry: the gate
  * publishes the record's {@code manifest-inject.json} bytes as the
@@ -58,14 +65,15 @@ public record V12FeatureMetadata(
         String manifestErrorFragment,
         ManifestPolicy manifestPolicy,
         NativeBlock nativePlan,
-        IdentityArtifact identityArtifact) {
+        IdentityArtifact identityArtifact,
+        ProviderVariants providerVariants) {
 
     /** The exact sidecar member set (version 1). */
     static final Set<String> CLOSED_MEMBERS = Set.of(
         "version", "feature", "spec", "description", "expected",
         "backends", "invocation", "oracle", "support", "linkedRecord",
         "manifestErrorFragment", "manifestPolicy", "native",
-        "identityArtifact");
+        "identityArtifact", "providerVariants");
 
     /** The exact backend spellings (declarations page D12). */
     static final Set<String> BACKEND_NAMES = Set.of("luajit", "jvm");
@@ -140,11 +148,25 @@ public record V12FeatureMetadata(
      * the manifest externals key ({@code importSpecifier}, e.g.
      * {@code native/math}), the record-relative declaration path
      * ({@code declaration}, ends {@code .d.deal}), and the library
-     * reference ({@code library}) — a repository C fixture name under
-     * {@code test/fixtures/} when it ends with {@code .c} (the gate
-     * compiles it with contained GCC into a shared object and writes
-     * the absolute path into the manifest), otherwise a pinned absolute
-     * path used verbatim (the valid-but-unloadable classification row).
+     * reference ({@code library}) — one of the exact closed shapes:
+     * <ul>
+     *   <li>ends with {@code .c} and contains no {@code /}: a repository
+     *       C fixture under {@code test/fixtures/} the gate compiles with
+     *       contained GCC into a shared object and writes as the absolute
+     *       path into the manifest (the gate-compiled absolute rows);</li>
+     *   <li>starts with {@code /}: a pinned absolute path used verbatim
+     *       (the valid-but-unloadable classification row);</li>
+     *   <li>contains {@code /} without a leading one and ends with
+     *       {@code .so}: a manifest-relative classification row — the
+     *       gate compiles the same-stem repository {@code .c} fixture
+     *       ({@code <stem>.c}) and places the shared object at exactly
+     *       that manifest-relative path inside the temporary project,
+     *       so the production classifier resolves and dlopens it (a
+     *       library present at the relative location);</li>
+     *   <li>contains no {@code /}: a bare loader-name classification
+     *       row used verbatim (dlopen's loader search, never the
+     *       process CWD).</li>
+     * </ul>
      */
     public record NativeEntry(String importSpecifier, String declaration,
                               String library) {
@@ -174,6 +196,27 @@ public record V12FeatureMetadata(
         public IdentityArtifact {
             java.util.Objects.requireNonNull(classDescriptor,
                 "classDescriptor");
+        }
+    }
+
+    /**
+     * The optional changed-provider-identity plan (int32/bytes page
+     * D5-D6): the gate compiles the record's unchanged fixture twice per
+     * backend with the resolved provider replaced between compilations —
+     * the provider path ({@code providerPath}, the fixture's import
+     * spelling), the two record-relative provider sources
+     * ({@code variantA}, {@code variantB}), and the pinned oracle result
+     * each compilation must produce ({@code oracleResults}, exactly two
+     * signed-int32 values).
+     */
+    public record ProviderVariants(String providerPath, String variantA,
+                                   String variantB, List<Integer> oracleResults) {
+        public ProviderVariants {
+            Objects.requireNonNull(providerPath, "providerPath");
+            Objects.requireNonNull(variantA, "variantA");
+            Objects.requireNonNull(variantB, "variantB");
+            oracleResults = List.copyOf(
+                Objects.requireNonNull(oracleResults, "oracleResults"));
         }
     }
 
@@ -357,10 +400,19 @@ public record V12FeatureMetadata(
             }
         }
 
+        ProviderVariants providerVariants = null;
+        if (fields.get("providerVariants") != null) {
+            providerVariants = parseProviderVariants(sidecarPath,
+                fields.get("providerVariants"));
+            if (providerVariants == null) {
+                return fail(sidecarPath, "malformed providerVariants field");
+            }
+        }
+
         V12FeatureMetadata record = new V12FeatureMetadata(1, feature, spec,
             description, expected, backends, invocation, oracle, support,
             linkedRecord, manifestErrorFragment, manifestPolicy, nativePlan,
-            identityArtifact);
+            identityArtifact, providerVariants);
 
         String violation = validateConditionalRules(record);
         if (violation != null) {
@@ -437,6 +489,26 @@ public record V12FeatureMetadata(
                 + "compile, and every malformed-manifest policy forces a "
                 + "compile-error)";
         }
+        if (record.providerVariants() != null) {
+            if (record.feature() != FeatureId.BYTES_DEFAULTS) {
+                return "providerVariants is the changed-provider row of "
+                    + "feature bytes-defaults only";
+            }
+            if (!(record.expected() instanceof RuntimeOk)) {
+                return "providerVariants requires a runtime-ok expectation";
+            }
+            if (invocation != Invocation.SYNTHETIC_MAIN) {
+                return "providerVariants requires synthetic-main invocation";
+            }
+            if (record.oracle() == null
+                    || !record.oracle().functionDescriptor().equals("()->int")) {
+                return "providerVariants requires a canonical ()->int oracle";
+            }
+            if (record.providerVariants().oracleResults().size() != 2) {
+                return "providerVariants requires exactly two pinned oracle "
+                    + "results";
+            }
+        }
         switch (invocation) {
             case COMPILE_ONLY, DIRECT_MAIN -> {
                 if (record.oracle() != null) {
@@ -502,6 +574,66 @@ public record V12FeatureMetadata(
     }
 
     /**
+     * The closed {@code providerVariants} block: an object with exactly
+     * the members {@code providerPath}, {@code variantA},
+     * {@code variantB} (non-empty strings) and {@code oracleResults} (a
+     * JSON array of exactly two integers).
+     */
+    private static ProviderVariants parseProviderVariants(String path,
+                                                          JsonValue value) {
+        if (!(value instanceof JsonValue.ObjectVal obj)) {
+            return null;
+        }
+        Map<String, JsonValue> members = obj.members();
+        if (members.size() != 4
+                || !(members.get("providerPath")
+                    instanceof JsonValue.StringVal providerPath)
+                || !(members.get("variantA")
+                    instanceof JsonValue.StringVal variantA)
+                || !(members.get("variantB")
+                    instanceof JsonValue.StringVal variantB)
+                || !(members.get("oracleResults")
+                    instanceof JsonValue.ArrayVal results)) {
+            return null;
+        }
+        if (providerPath.value().isEmpty()) {
+            fail(path, "providerVariants providerPath must be a non-empty "
+                + "string");
+            return null;
+        }
+        if (variantA.value().isEmpty() || variantB.value().isEmpty()) {
+            fail(path, "providerVariants variantA and variantB must be "
+                + "non-empty strings");
+            return null;
+        }
+        List<Integer> oracleResults = new ArrayList<>();
+        for (JsonValue element : results.elements()) {
+            if (!(element instanceof JsonValue.NumberVal num)
+                    || num.sourceText().contains(".")
+                    || num.sourceText().contains("e")
+                    || num.sourceText().contains("E")) {
+                fail(path, "providerVariants oracleResults must be JSON "
+                    + "integers");
+                return null;
+            }
+            try {
+                oracleResults.add(Integer.parseInt(num.sourceText()));
+            } catch (NumberFormatException e) {
+                fail(path, "providerVariants oracleResults must be signed "
+                    + "32-bit integers");
+                return null;
+            }
+        }
+        if (oracleResults.size() != 2) {
+            fail(path, "providerVariants oracleResults must carry exactly "
+                + "two integers");
+            return null;
+        }
+        return new ProviderVariants(providerPath.value(), variantA.value(),
+            variantB.value(), oracleResults);
+    }
+
+    /**
      * The closed {@code native} block: an object with exactly one member
      * {@code entries} — a non-empty array of entry objects with exactly
      * the members {@code importSpecifier} (non-empty string containing
@@ -552,11 +684,22 @@ public record V12FeatureMetadata(
                     + "string");
                 return null;
             }
-            if (!library.value().endsWith(".c")
-                    && !library.value().startsWith("/")) {
-                fail(path, "native entry library must end with .c "
-                    + "(a repository C fixture) or start with '/' (a pinned "
-                    + "absolute path), got '" + library.value() + "'");
+            boolean fixture = library.value().endsWith(".c")
+                && !library.value().contains("/");
+            boolean absolute = library.value().startsWith("/");
+            boolean manifestRelative = !absolute
+                && library.value().contains("/");
+            if (library.value().endsWith(".c")
+                    && library.value().contains("/")) {
+                fail(path, "native entry library fixture names must not "
+                    + "contain '/' (repository C fixtures live directly "
+                    + "under test/fixtures), got '" + library.value() + "'");
+                return null;
+            }
+            if (manifestRelative && !library.value().endsWith(".so")) {
+                fail(path, "native entry library manifest-relative paths "
+                    + "must end with .so (the same-stem repository C "
+                    + "fixture), got '" + library.value() + "'");
                 return null;
             }
             entries.add(new NativeEntry(specifier.value(),

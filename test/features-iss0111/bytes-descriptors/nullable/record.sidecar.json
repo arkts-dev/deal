@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "feature": "bytes-descriptors",
+  "spec": "spec-v1.2.md §Runtime type descriptor format",
+  "description": "the canonical ?bytes nullable descriptor crosses a typed boundary byte-for-byte on both backends",
+  "expected": "runtime-ok",
+  "backends": ["luajit", "jvm"],
+  "invocation": "direct-main",
+  "support": []
+}

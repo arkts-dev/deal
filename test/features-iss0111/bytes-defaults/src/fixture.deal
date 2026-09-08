@@ -1,0 +1,29 @@
+// ISSUE-0165 BYTES_DEFAULTS row (int32/bytes page D5): the synthetic
+// entry imports this module unchanged and calls defaultsOracle() once.
+// Per-attempt construction runs the declared bytes(2) default freshly
+// for every instance (zero fill, declared length); a provided field
+// overlays the default before publication.
+class BufferBox {
+  data: bytes = bytes(2);
+}
+
+export function defaultsOracle(): int {
+  let a: BufferBox = {};
+  let b: BufferBox = {};
+  a.data[0] = 9;
+  if (b.data[0] !== 0) {
+    throw { code: "TEST_FAIL", message: "defaults: bytes shared across instances" };
+  }
+  if (b.data.length !== 2) {
+    throw { code: "TEST_FAIL", message: "defaults: bytes default length mismatch" };
+  }
+  let c: BufferBox = { data: bytes(1) };
+  if (c.data.length !== 1 || c.data[0] !== 0) {
+    throw { code: "TEST_FAIL", message: "defaults: provided field must overlay the default" };
+  }
+  let total: int = a.data[0] + b.data.length;
+  if (total !== 11) {
+    throw { code: "TEST_FAIL", message: "defaults: computed total mismatch" };
+  }
+  return 42;
+}
