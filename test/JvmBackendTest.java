@@ -10284,6 +10284,10 @@ public class JvmBackendTest {
               let ns: (bytes | null)[] = [];
               let fs: ((b: bytes) => bytes)[] = [id];
               let g: async (b: bytes) => bytes = echo;
+              let t: table = {};
+              t.x = b;
+              let c: bytes = t.x;
+              let d: bytes | null = t.x;
               return xs[0][0] + b.length;
             }
             """, "bytes_closure_artifact");
@@ -10337,6 +10341,13 @@ public class JvmBackendTest {
                 && artifact.contains(
                     "if (v instanceof $DealRt.Bytes b) return b;"),
             "__hostCheck carries the bytes return-boundary branch");
+
+        check(artifact.contains("(($DealRt.Bytes) $check(\"bytes\", "),
+            "a bytes-typed table read lowers through the canonical "
+                + "$check bytes row");
+        check(artifact.contains("(($DealRt.Bytes) $check(\"?bytes\", "),
+            "a (bytes | null) table read lowers through the canonical "
+                + "$check ?bytes row");
 
         // ---- Behavior battery (real pipeline under DEAL_V1_2_INT32) ----
         record ClosurePin(String name, String prelude, String body,
@@ -10481,6 +10492,74 @@ public class JvmBackendTest {
                 "unsupported type for JSON encoding: bytes"),
             "the JVM stringify raises the pinned bytes message: "
                 + jsonRun.output());
+
+        // ---- Dynamic scalar table-read boundary (ISSUE-0160 D5) ----
+        // Table writes store the raw wrapper reference; a bytes-typed
+        // read routes through the canonical $check realization — the
+        // bytes row accepts exactly a $DealRt.Bytes (reference identity
+        // preserved), the ?bytes row passes the DEAL null, and any
+        // wrong-kind value raises E8001 "expected bytes, got {actual}".
+        ExecResult tableBytesOk = runInt32Project("""
+            export function main(): null { return null; }
+            export function test(): int {
+              let t: table = {};
+              t.x = bytes(2);
+              let b: bytes = t.x;
+              b[0] = 7;
+              let n: bytes | null = null;
+              t.y = n;
+              let d: bytes | null = t.y;
+              let extra: int = 0;
+              if (d !== null) { extra = 1; }
+              let e: bytes | null = t.x;
+              if (e !== null) { e[0] = 9; }
+              return b[0] + extra;
+            }
+            """, "table_bytes_read_ok");
+        check(tableBytesOk.exitCode() == 0,
+            "table-held bytes read roundtrip runs green: "
+                + tableBytesOk.output());
+        check(tableBytesOk.output().contains("9"),
+            "the bytes-typed table read preserves reference identity "
+                + "(the re-read alias sees the 7 \u2192 9 write) and the "
+                + "?bytes row passes the DEAL null: "
+                + tableBytesOk.output());
+        ExecResult tableBytesBad = runInt32Project("""
+            export function main(): null { return null; }
+            export function test(): int {
+              let t: table = {};
+              t.x = 7;
+              let b: bytes = t.x;
+              return b.length;
+            }
+            """, "table_bytes_read_bad");
+        check(tableBytesBad.exitCode() == 1
+                && tableBytesBad.output().contains(
+                    "DEAL_ERROR_CODE: E8001")
+                && tableBytesBad.output().contains(
+                    "expected bytes, got "),
+            "the bytes-typed table read raises E8001 with the pinned "
+                + "\"expected bytes, got {actual}\" message for a "
+                + "wrong-kind value: " + tableBytesBad.output());
+        ExecResult tableBytesBadNullable = runInt32Project("""
+            export function main(): null { return null; }
+            export function test(): int {
+              let t: table = {};
+              t.x = "nope";
+              let b: bytes | null = t.x;
+              let r: int = 0;
+              if (b !== null) { r = b.length; }
+              return r;
+            }
+            """, "table_bytes_read_bad_nullable");
+        check(tableBytesBadNullable.exitCode() == 1
+                && tableBytesBadNullable.output().contains(
+                    "DEAL_ERROR_CODE: E8001")
+                && tableBytesBadNullable.output().contains(
+                    "expected bytes, got "),
+            "the ?bytes table read raises E8001 with the pinned message "
+                + "for a wrong-kind value: "
+                + tableBytesBadNullable.output());
 
         // ---- Legacy-profile pin (LEGACY_SAFE_INT long carriers) ----
         // The bytes-array carriers are profile-independent ($DealRt.Bytes

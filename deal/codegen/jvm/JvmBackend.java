@@ -13990,6 +13990,15 @@ public final class JvmBackend {
             // branch runs the surrogate scan.
             return "((java.lang.String) $check(\"string\", " + get + "))";
         }
+        if (target instanceof Type.Bytes) {
+            // ISSUE-0160 D5 (dynamic boundaries): a table-held bytes
+            // read routes through the canonical $check realization —
+            // the bytes row accepts exactly a $DealRt.Bytes and raises
+            // E8001 "expected bytes, got {actual}" otherwise. The write
+            // side stores the raw wrapper reference (emitTableWrite), so
+            // the roundtrip preserves reference identity.
+            return "(($DealRt.Bytes) $check(\"bytes\", " + get + "))";
+        }
         if (target instanceof Type.Nullable nn) {
             // Nullable boundary checks (ISSUE-0108, unified ISSUE-0110):
             // the read materializes the table lookup into an Object
@@ -14028,6 +14037,13 @@ public final class JvmBackend {
                 return "((" + arrayWrapperName(arr.element()) + ") $check("
                     + quoteJavaString("?[" + elemDesc + "]")
                     + ", " + temp + "))";
+            }
+            if (inner instanceof Type.Bytes) {
+                // ISSUE-0160 D5: the ?bytes row — Java null (the
+                // DEAL null) passes the ? prefix strip, exactly a
+                // $DealRt.Bytes passes, anything else raises E8001
+                // "expected bytes, got {actual}".
+                return "(($DealRt.Bytes) $check(\"?bytes\", " + temp + "))";
             }
             if (inner instanceof Type.Int || inner instanceof Type.Number
                     || inner instanceof Type.Boolean
@@ -15025,12 +15041,16 @@ public final class JvmBackend {
     /**
      * Java storage element type for a supported array element type, or
      * {@code null} (with an E6000 diagnostic recorded) for any other
-     * element type: the four primitive elements, their nullable forms
-     * (boxed storage for {@code (T | null)[]}), and local class elements
-     * ({@code java.lang.Object} storage inside the per-class
-     * {@code $Array$<C>} wrapper) are in scope — nested arrays, function
-     * arrays, and nullable-table elements are rejected, never silently
-     * miscompiled.
+     * element type: the primitive elements, their nullable forms
+     * (boxed storage for {@code (T | null)[]}), bytes elements
+     * ({@code bytes[]} and {@code (bytes | null)[]} through the shared
+     * {@code __BytesArray}/{@code __BytesOrNullArray} carriers), local
+     * class elements ({@code java.lang.Object} storage inside the
+     * per-class {@code $Array$<C>} wrapper), nested arrays, and function
+     * elements ({@code java.lang.Object} storage inside the shared
+     * per-element-shape {@code $DealRt} wrappers with per-element
+     * checks) are in scope — table elements and other unsupported
+     * shapes are rejected, never silently miscompiled.
      */
     private String javaArrayElementType(Type element, Span span) {
         return switch (element) {
@@ -15066,8 +15086,9 @@ public final class JvmBackend {
                     unsupported("arrays with element type "
                         + typeName(element)
                         + " (only int[], number[], string[], boolean[], "
-                        + "local class arrays, and their nullable-element "
-                        + "forms are supported)", span);
+                        + "bytes[], class arrays, nested arrays, function "
+                        + "arrays, and their nullable-element forms are "
+                        + "supported)", span);
                     yield null;
                 }
             };
@@ -15105,8 +15126,9 @@ public final class JvmBackend {
             }
             default -> {
                 unsupported("arrays with element type " + typeName(element)
-                    + " (only int[], number[], string[], boolean[], local "
-                    + "class arrays, and their nullable-element forms are "
+                    + " (only int[], number[], string[], boolean[], "
+                    + "bytes[], class arrays, nested arrays, function "
+                    + "arrays, and their nullable-element forms are "
                     + "supported)", span);
                 yield null;
             }
