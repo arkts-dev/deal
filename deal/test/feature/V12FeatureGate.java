@@ -1073,11 +1073,6 @@ private final Path repoRoot;
      * normal typed boundary, and returns null. The return annotation is
      * derived from the canonical sync oracle descriptor {@code ()->R}.
      */
-    private static String syntheticEntry(
-            V12FeatureFixtureCatalog.RecordEntry entry) {
-        return syntheticEntry(entry, 42);
-    }
-
     /**
      * The typed synthetic entry with the pinned oracle result: the
      * standard synthetic-main shape pins 42 (the established corpus
