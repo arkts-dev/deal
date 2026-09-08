@@ -55,9 +55,7 @@ import java.util.List;
  * {@code backend-runtime/arithmetic/int-add-overflow.deal} passes the
  * same way, so the stale-known-fail gate no longer names it; only the
  * two host-prewrapped skip-probe exception lines remain in the
- * {@code ] FAIL (} set, and the summary moved from
- * {@code passed 254, failed 1 ... pass rate 84.4%} to
- * {@code passed 256, failed 0 ... pass rate 85.0%}. ISSUE-0158
+ * {@code ] FAIL (} set. ISSUE-0158
  * (the JVM bytes core lane) then promoted the nine bytes skip
  * entries — the direct bytes surface passes the real pipeline and
  * the stale-skip gate forced the entries out — so the summary moved
