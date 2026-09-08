@@ -2493,19 +2493,50 @@ public class JsBackendTest {
             }
         }
 
-        // The default invocation stays PRE_ACTIVATION → LEGACY_SAFE_INT
-        // and plumbs the legacy mode: no selector in any module.
-        Path legacyOutputDir = tmpDir.resolve("js_int32_proj/build/js_legacy");
-        CompilationOrchestrator legacy = new CompilationOrchestrator(
-            entryFile, legacyOutputDir, false, false, false, Backend.JS,
+        // The default invocation is now the committed V1_2_ACTIVE public
+        // build: it plumbs the int32 mode (the selector appears exactly
+        // once per emitted module).
+        Path defaultOutputDir = tmpDir.resolve("js_int32_proj/build/js_default");
+        CompilationOrchestrator defaultOrchestrator = new CompilationOrchestrator(
+            entryFile, defaultOutputDir, false, false, false, Backend.JS,
             (Map<String, String>) null, roots,
             Path.of(".").toAbsolutePath().normalize());
+        boolean defaultOk = defaultOrchestrator.compile();
+        check(defaultOk, "default JS orchestrator compile succeeds: "
+            + defaultOrchestrator.diagnostics());
+        check(defaultOrchestrator.invocation().semanticProfile()
+                == SemanticProfile.DEAL_V1_2_INT32,
+            "the orchestrator default invocation derives DEAL_V1_2_INT32 "
+                + "under the committed V1_2_ACTIVE release state");
+        if (defaultOk) {
+            for (String artifactName : List.of("app/main.js", "app/lib.js")) {
+                Path artifact = defaultOutputDir.resolve(artifactName);
+                check(Files.exists(artifact),
+                    "default orchestrator wrote " + artifactName);
+                if (Files.exists(artifact)) {
+                    check(Files.readString(artifact).contains("setInt32Mode"),
+                        artifactName + " emits the int32 selector under the "
+                            + "default post-flip invocation");
+                }
+            }
+        }
+
+        // The explicit PRE_ACTIVATION invocation keeps LEGACY_SAFE_INT
+        // (the internal matrix row) and plumbs the legacy mode: no
+        // selector in any module.
+        Path legacyOutputDir = tmpDir.resolve("js_int32_proj/build/js_legacy");
+        CompilationOrchestrator legacy = new CompilationOrchestrator(
+            entryFile, legacyOutputDir, false, false, false, false, Backend.JS,
+            (Map<String, String>) null, roots,
+            Path.of(".").toAbsolutePath().normalize(), null,
+            CompilerProfileProvider.resolve(ReleaseState.PRE_ACTIVATION,
+                CapabilityRegistry.releaseRegistry()));
         boolean legacyOk = legacy.compile();
-        check(legacyOk, "default JS orchestrator compile succeeds: "
+        check(legacyOk, "legacy JS orchestrator compile succeeds: "
             + legacy.diagnostics());
         check(legacy.invocation().semanticProfile()
                 == SemanticProfile.LEGACY_SAFE_INT,
-            "the orchestrator default invocation stays "
+            "the explicit PRE_ACTIVATION invocation keeps "
                 + "PRE_ACTIVATION → LEGACY_SAFE_INT");
         if (legacyOk) {
             for (String artifactName : List.of("app/main.js", "app/lib.js")) {
@@ -2520,6 +2551,7 @@ public class JsBackendTest {
             }
         }
     }
+
 
     private static void testInt32MatrixNode() throws Exception {
         System.out.println("-- Node: signed-int32 matrix under DEAL_V1_2_INT32 --");
@@ -2537,7 +2569,6 @@ public class JsBackendTest {
             "int32-min-ok", SemanticProfile.DEAL_V1_2_INT32);
         check(minOk.exitCode() == 0 && minOk.output().equals("-2147483648"),
             "-2147483648 is the accepted int32 minimum: " + minOk.output());
-
         // Overflow on every producing site: E8004 with the pinned
         // "int out of safe range" message, exit 1.
         NodeResult addOver = runDealNodeProfile(

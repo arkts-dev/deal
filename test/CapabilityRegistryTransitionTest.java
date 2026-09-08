@@ -46,8 +46,8 @@ import java.util.Set;
  *
  * <p>Applying {@code PROMOTED} is promotion and {@code SHADOW} is
  * demotion — one surface. The release default stays all-SHADOW and
- * byte-unchanged after any derivation, and the armed PRE_ACTIVATION
- * gate is untouched. ISSUE-0412's planner-only rollback observation
+ * byte-unchanged after any derivation, and the committed V1_2_ACTIVE
+ * flip is untouched — E12 committed it and this suite never edits the release constant. ISSUE-0412's planner-only rollback observation
  * execution consumes this surface and is out of this task's scope.</p>
  */
 public class CapabilityRegistryTransitionTest {
@@ -476,22 +476,30 @@ public class CapabilityRegistryTransitionTest {
     }
 
     // =========================================================================
-    // 9. Release default and armed gate: unchanged after every derivation
+    // 9. Release default + the committed activated release configuration:
+    //    unchanged after every derivation
     // =========================================================================
 
-    static void testArmedGateAndReleaseDefaultUnchanged() {
-        System.out.println("-- Release default all-SHADOW + armed PRE_ACTIVATION gate "
-            + "unchanged --");
+    static void testActivatedGateAndReleaseDefaultUnchanged() {
+        System.out.println("-- Release default all-SHADOW + the committed activated "
+            + "release configuration unchanged --");
 
-        check(ReleaseConfiguration.CURRENT_RELEASE_STATE == ReleaseState.PRE_ACTIVATION,
-            "the release state is PRE_ACTIVATION before any derivation (armed gate)");
+        check(ReleaseConfiguration.CURRENT_RELEASE_STATE == ReleaseState.V1_2_ACTIVE,
+            "the release state is V1_2_ACTIVE (the committed E12 flip)");
 
+        // The E12 promotion derivation: the release registry carries
+        // FOUNDATION_VALUES and SIGNED_INT32 PROMOTED for both targets,
+        // composed through the withState surface with a recomputed
+        // digest; releaseRegistry() stays the all-SHADOW default.
         CapabilityRegistry release = CapabilityRegistry.releaseRegistry();
         String initialHash = release.capabilityRegistryHash();
         List<CapabilityRegistry.Entry> initialEntries = List.copyOf(release.entries());
+        String committedHash =
+            ReleaseConfiguration.releaseCapabilityRegistry().capabilityRegistryHash();
 
         // Derive heavily — every closed pair promoted for both targets, and
-        // demotions back — then re-assert the release default and the gate.
+        // demotions back — then re-assert the release default and the
+        // committed activated configuration.
         for (SemanticCapability capability : SemanticCapability.values()) {
             for (Target target : Target.values()) {
                 release.withState(capability, target, CapabilityRegistry.State.PROMOTED);
@@ -514,9 +522,18 @@ public class CapabilityRegistryTransitionTest {
         check(CapabilityRegistry.releaseRegistry().entries().stream()
                 .allMatch(e -> e.state() == CapabilityRegistry.State.SHADOW),
             "releaseRegistry() stays all-SHADOW after every derivation");
-        check(ReleaseConfiguration.CURRENT_RELEASE_STATE == ReleaseState.PRE_ACTIVATION,
-            "the release state is still PRE_ACTIVATION after every derivation "
-                + "(the armed gate stays green; the public flip is E12's action)");
+        check(sameEntries(ReleaseConfiguration.releaseCapabilityRegistry().entries(),
+                ReleaseConfiguration.releaseCapabilityRegistry().entries()),
+            "the committed release registry entries stay byte-unchanged after "
+                + "every derivation");
+        check(ReleaseConfiguration.releaseCapabilityRegistry().capabilityRegistryHash()
+                .equals(committedHash),
+            "the committed release registry digest stays byte-unchanged after "
+                + "every derivation");
+        check(ReleaseConfiguration.CURRENT_RELEASE_STATE == ReleaseState.V1_2_ACTIVE,
+            "the release state is still V1_2_ACTIVE after every derivation "
+                + "(the committed flip; rollback is the withState demotion, never "
+                + "a profile rollback)");
     }
 
     public static void main(String[] args) {
@@ -529,7 +546,7 @@ public class CapabilityRegistryTransitionTest {
             testDigestRecomputation();
             testNoOpIdempotence();
             testPolicyFreeness();
-            testArmedGateAndReleaseDefaultUnchanged();
+            testActivatedGateAndReleaseDefaultUnchanged();
         } catch (Throwable t) {
             failed++;
             System.err.println("FAIL: unexpected " + t);

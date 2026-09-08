@@ -299,6 +299,33 @@ TEST_MAINS+=(
   'fg|=== Running Capability Registry Transition Surface Tests (ISSUE-0485) ===|java -ea -cp build deal.test.CapabilityRegistryTransitionTest'
 )
 
+# =========================================================================
+# ISSUE-0490 (E12 public activation release action): the activation
+# evidence record, the twelve-item promotion gate records, the release
+# action, and the gate-run battery join the compile list and the
+# unconditional run phase here. The suite proves the evidence-record
+# content, every activation precondition negative (empty promotion
+# list, missing SIGNED_INT32 for a shared target, missing/incomplete
+# E11 evidence, a recorded pre-activation shared route, a gate-rejected
+# pair), the promotion-attempt order/lock rejections, the digest
+# recomputation over the flipped configuration (never an
+# unchanged-hash claim), the committed flipped constant and promoted
+# registry state, the A1 profile-mapping rows, the absence of any
+# legacy-selection surface, and a concrete post-flip shared-routing
+# plan for an int-using module (eligibility plus the SIGNED_INT32
+# requirement). The committed release state stays flipped; every
+# negative runs over a derived configuration.
+# =========================================================================
+TEST_SOURCES+=(
+  'test/PromotionGateRecord.java'
+  'test/ActivationEvidenceRecord.java'
+  'test/E12ActivationReleaseAction.java'
+  'test/E12ActivationReleaseTest.java'
+)
+TEST_MAINS+=(
+  'fg|=== Running E12 Public Activation Release Action Tests (ISSUE-0490) ===|java -ea -cp build deal.test.E12ActivationReleaseTest'
+)
+
 # ISSUE-0378 D5 (JvmLaneStatePinTest substitution): the pin test owns
 # both raw lane runs. It launches the real LuaJIT lane and the real JVM
 # lane as subprocesses and asserts their captured failure sets
