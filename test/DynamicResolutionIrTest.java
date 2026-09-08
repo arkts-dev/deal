@@ -93,7 +93,11 @@ import java.util.Set;
  *   <li>Validator negatives: wrong mode, missing/extra record,
  *       exclusive single return id, per-class cell violations,
  *       unresolvable/non-BOUNDARY entries, the ASYNC_START source and
- *       missing-return violations, and the open callee type (R-ENUM).</li>
+ *       missing-return violations, the closed per-class cell checks
+ *       (kind/policy/descriptor, mutual distinctness, and the
+ *       RETURN-parentage of the DEAL-body and ASYNC task cells), the
+ *       malformed-record exclusivity, and the open callee type
+ *       (R-ENUM).</li>
  *   <li>The HostFunctionValue crossing closure: the positive
  *       registration, and the negatives (missing registration, dangling
  *       correlation id, descriptor/key mismatches, null correlation id
@@ -623,6 +627,131 @@ public class DynamicResolutionIrTest {
                 "dynamic return boundary " + nonBoundary + " is not a BOUNDARY op");
         }
 
+        // Per-class cell checks close on the invocation side (direction
+        // (b)): a recorded cell of the wrong class must be rejected even
+        // when its direction-(a) cell never consults the invocation.
+        negative("dynamic.hostExternal.wrongCellKind",
+            dynamicCallUnit(deal, BoundaryKind.FUNCTION_RETURN, INT,
+                FailurePolicyId.TYPE_DESCRIPTOR, host, BoundaryKind.VARIABLE_DECLARATION,
+                FailurePolicyId.TYPE_DESCRIPTOR, external, BoundaryKind.VARIABLE_DECLARATION,
+                FailurePolicyId.TYPE_DESCRIPTOR),
+            SemanticIrValidator.R_BOUNDARY_TRIPLE,
+            "the DYNAMIC CALL's host return boundary must be HOST_TO_DEAL + "
+                + "HOST_SYNC_RETURN on the declared return descriptor");
+
+        // All three entries aliasing one FUNCTION_RETURN cell.
+        {
+            OpId callOp = nextOpId();
+            OpId paramBoundary = nextOpId();
+            OpId aliased = nextOpId();
+            OpId returnOp = nextOpId();
+            List<SemanticOp> ops = new ArrayList<>();
+            ops.add(boundaryWith(paramBoundary, BoundaryKind.FUNCTION_PARAMETER, INT,
+                FailurePolicyId.TYPE_DESCRIPTOR, callOp));
+            ops.add(boundaryWith(aliased, BoundaryKind.FUNCTION_RETURN, INT,
+                FailurePolicyId.TYPE_DESCRIPTOR, returnOp));
+            ops.add(opWith(returnOp, SemanticOpKind.RETURN,
+                new KindPayload.ReturnPayload(nextValue(), new FunctionId(1), callOp,
+                    aliased),
+                null, null, FailurePolicyId.NO_DEAL_FAILURE, callOp));
+            ops.add(opWith(callOp, SemanticOpKind.CALL,
+                new KindPayload.CallPayload(CallMode.INDIRECT,
+                    new KindPayload.CallCallee.Dynamic(new ValueId(77)),
+                    SIG, List.of(paramBoundary), null,
+                    new KindPayload.DynamicReturnBoundary(aliased, aliased, aliased),
+                    null, null),
+                nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE, null));
+            negative("dynamic.entries.aliased", unit(Map.of(), ops),
+                SemanticIrValidator.R_BOUNDARY_TRIPLE,
+                "the DYNAMIC CALL's three dynamic return-boundary entries must be "
+                    + "mutually distinct");
+        }
+
+        // The DEAL-body cell owned by another CALL's RETURN: the recorded
+        // cell must be parented to a RETURN naming THIS call.
+        {
+            OpId otherCall = nextOpId();
+            OpId otherParam = nextOpId();
+            OpId otherRet = nextOpId();
+            OpId otherReturn = nextOpId();
+            OpId callOp = nextOpId();
+            OpId paramBoundary = nextOpId();
+            OpId hostCell = nextOpId();
+            OpId externalCell = nextOpId();
+            List<SemanticOp> ops = new ArrayList<>();
+            ops.add(boundaryWith(otherParam, BoundaryKind.FUNCTION_PARAMETER, INT,
+                FailurePolicyId.TYPE_DESCRIPTOR, otherCall));
+            ops.add(boundaryWith(otherRet, BoundaryKind.FUNCTION_RETURN, INT,
+                FailurePolicyId.TYPE_DESCRIPTOR, otherReturn));
+            ops.add(opWith(otherReturn, SemanticOpKind.RETURN,
+                new KindPayload.ReturnPayload(nextValue(), new FunctionId(1), otherCall,
+                    otherRet),
+                null, null, FailurePolicyId.NO_DEAL_FAILURE, otherCall));
+            ops.add(opWith(otherCall, SemanticOpKind.CALL,
+                new KindPayload.CallPayload(CallMode.DIRECT,
+                    new KindPayload.CallCallee.Static(
+                        new FunctionExecutionBinding.LoweredBody(new FunctionId(1),
+                            new BlockId(1))),
+                    SIG, List.of(otherParam), otherRet, null, new BlockId(1), null),
+                nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE, null));
+            ops.add(boundaryWith(paramBoundary, BoundaryKind.FUNCTION_PARAMETER, INT,
+                FailurePolicyId.TYPE_DESCRIPTOR, callOp));
+            ops.add(boundaryWith(hostCell, BoundaryKind.HOST_TO_DEAL, INT,
+                FailurePolicyId.HOST_SYNC_RETURN, callOp));
+            ops.add(boundaryWith(externalCell, BoundaryKind.EXTERNAL_RETURN, INT,
+                FailurePolicyId.TYPE_DESCRIPTOR, callOp));
+            ops.add(opWith(callOp, SemanticOpKind.CALL,
+                new KindPayload.CallPayload(CallMode.INDIRECT,
+                    new KindPayload.CallCallee.Dynamic(new ValueId(77)),
+                    SIG, List.of(paramBoundary), null,
+                    new KindPayload.DynamicReturnBoundary(otherRet, hostCell, externalCell),
+                    null, null),
+                nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE, null));
+            negative("dynamic.deal.misOwned", unit(Map.of(), ops),
+                SemanticIrValidator.R_BOUNDARY_TRIPLE,
+                "the DYNAMIC CALL's DEAL-body return boundary must be parented to a "
+                    + "RETURN naming the CALL");
+        }
+
+        // The DEAL-body cell class is closed on the text surface as well
+        // (direction (b)): a kind whose direction-(a) cell never consults
+        // the invocation cannot bypass the per-class check.
+        {
+            OpId callOp = nextOpId();
+            OpId paramBoundary = nextOpId();
+            OpId dealBoundary = nextOpId();
+            OpId hostCell = nextOpId();
+            OpId externalCell = nextOpId();
+            OpId returnOp = nextOpId();
+            List<SemanticOp> ops = new ArrayList<>();
+            ops.add(boundaryWith(paramBoundary, BoundaryKind.FUNCTION_PARAMETER, INT,
+                FailurePolicyId.TYPE_DESCRIPTOR, callOp));
+            ops.add(boundaryWith(dealBoundary, BoundaryKind.FUNCTION_RETURN, INT,
+                FailurePolicyId.TYPE_DESCRIPTOR, returnOp));
+            ops.add(boundaryWith(hostCell, BoundaryKind.HOST_TO_DEAL, INT,
+                FailurePolicyId.HOST_SYNC_RETURN, callOp));
+            ops.add(boundaryWith(externalCell, BoundaryKind.EXTERNAL_RETURN, INT,
+                FailurePolicyId.TYPE_DESCRIPTOR, callOp));
+            ops.add(opWith(returnOp, SemanticOpKind.RETURN,
+                new KindPayload.ReturnPayload(nextValue(), new FunctionId(1), callOp,
+                    dealBoundary),
+                null, null, FailurePolicyId.NO_DEAL_FAILURE, callOp));
+            ops.add(opWith(callOp, SemanticOpKind.CALL,
+                new KindPayload.CallPayload(CallMode.INDIRECT,
+                    new KindPayload.CallCallee.Dynamic(new ValueId(77)),
+                    SIG, List.of(paramBoundary), null,
+                    new KindPayload.DynamicReturnBoundary(dealBoundary, hostCell,
+                        externalCell),
+                    null, null),
+                nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE, null));
+            LoweredModuleUnit unit = unit(Map.of(), ops);
+            String wrongKind = substituteBoundaryKind(SemanticIrValidator.toUnitText(unit),
+                dealBoundary, "VARIABLE_DECLARATION");
+            negativeText("dynamic.deal.wrongKindText", wrongKind,
+                SemanticIrValidator.R_BOUNDARY_TRIPLE,
+                "the DYNAMIC CALL's DEAL-body return boundary must be FUNCTION_RETURN");
+        }
+
         // Text-surface record violations (one leaf + digest recompute).
         {
             LoweredModuleUnit base = dynamicCallUnit(nextOpId(), BoundaryKind.FUNCTION_RETURN,
@@ -664,6 +793,38 @@ public class DynamicResolutionIrTest {
             String withRecord = setPayloadLeaf(staticCallee, SemanticOpKind.CALL,
                 "dynamicReturnBoundary", parseJson(record));
             negativeText("static.withRecord", withRecord,
+                SemanticIrValidator.R_BOUNDARY_TRIPLE,
+                "only a DYNAMIC callee records the dynamic return-boundary set");
+        }
+
+        // A non-Dynamic callee carrying a malformed record object: the
+        // exclusivity fires on the key's presence, not on parse success
+        // (the record is silently unparseable, yet its presence alone is
+        // the pinned violation). The baseline DIRECT CALL validates, and
+        // only the injected malformed record trips the rule.
+        {
+            OpId callOp = nextOpId();
+            OpId paramBoundary = nextOpId();
+            OpId retBoundary = nextOpId();
+            List<SemanticOp> ops = new ArrayList<>();
+            ops.add(boundaryWith(paramBoundary, BoundaryKind.FUNCTION_PARAMETER, INT,
+                FailurePolicyId.TYPE_DESCRIPTOR, callOp));
+            ops.add(boundaryWith(retBoundary, BoundaryKind.FUNCTION_RETURN, INT,
+                FailurePolicyId.TYPE_DESCRIPTOR, callOp));
+            ops.add(opWith(callOp, SemanticOpKind.CALL,
+                new KindPayload.CallPayload(CallMode.DIRECT,
+                    new KindPayload.CallCallee.Static(
+                        new FunctionExecutionBinding.LoweredBody(new FunctionId(1),
+                            new BlockId(1))),
+                    SIG, List.of(paramBoundary), retBoundary, null, new BlockId(1), null),
+                nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE, null));
+            LoweredModuleUnit base = unit(Map.of(), ops);
+            assertPass(SemanticIrValidator.validate(base, FACTS),
+                "the plain DIRECT CALL baseline validates");
+            String text = SemanticIrValidator.toUnitText(base);
+            String withMalformedRecord = setPayloadLeaf(text, SemanticOpKind.CALL,
+                "dynamicReturnBoundary", parseJson("{\"bogus\":1}"));
+            negativeText("direct.malformedRecord", withMalformedRecord,
                 SemanticIrValidator.R_BOUNDARY_TRIPLE,
                 "only a DYNAMIC callee records the dynamic return-boundary set");
         }
@@ -712,6 +873,60 @@ public class DynamicResolutionIrTest {
                 SemanticIrValidator.R_BOUNDARY_TRIPLE,
                 "the DYNAMIC ASYNC_START's recorded task return boundary must be "
                     + "FUNCTION_RETURN");
+        }
+
+        // The recorded task cell of the wrong class (a kind whose
+        // direction-(a) cell never consults the invocation).
+        {
+            OpId startOp = nextOpId();
+            OpId paramBoundary = nextOpId();
+            OpId taskCell = nextOpId();
+            OpId declParent = nextOpId();
+            List<SemanticOp> ops = new ArrayList<>();
+            ops.add(boundaryWith(paramBoundary, BoundaryKind.FUNCTION_PARAMETER, INT,
+                FailurePolicyId.TYPE_DESCRIPTOR, startOp));
+            ops.add(boundaryWith(taskCell, BoundaryKind.VARIABLE_DECLARATION, INT,
+                FailurePolicyId.TYPE_DESCRIPTOR, declParent));
+            ops.add(opWith(declParent, SemanticOpKind.CONST,
+                new KindPayload.ConstPayload(new ScalarValue.Int(1)),
+                nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE, null));
+            ops.add(opWith(startOp, SemanticOpKind.ASYNC_START,
+                new KindPayload.AsyncStartPayload(
+                    new KindPayload.CallCallee.Dynamic(new ValueId(88)),
+                    AsyncStartSource.DEAL_BODY, ParameterBoundaryMode.RUN,
+                    List.of(paramBoundary), INT, taskCell, null, null),
+                new AsyncTokenId.Canonical(6, AsyncTokenOwner.DEAL_BODY_TASK),
+                InternalResultType.INTERNAL_ASYNC, FailurePolicyId.NO_DEAL_FAILURE, null));
+            negative("async.dynamic.wrongCellKind", unit(Map.of(), ops),
+                SemanticIrValidator.R_BOUNDARY_TRIPLE,
+                "the DYNAMIC ASYNC_START's recorded task return boundary must be "
+                    + "FUNCTION_RETURN under the descriptor-kind rule on the completion "
+                    + "descriptor");
+        }
+
+        // The recorded task cell not parented to a RETURN naming the
+        // ASYNC_START (a well-formed FUNCTION_RETURN parented directly to
+        // the ASYNC_START op).
+        {
+            OpId startOp = nextOpId();
+            OpId paramBoundary = nextOpId();
+            OpId taskCell = nextOpId();
+            List<SemanticOp> ops = new ArrayList<>();
+            ops.add(boundaryWith(paramBoundary, BoundaryKind.FUNCTION_PARAMETER, INT,
+                FailurePolicyId.TYPE_DESCRIPTOR, startOp));
+            ops.add(boundaryWith(taskCell, BoundaryKind.FUNCTION_RETURN, INT,
+                FailurePolicyId.TYPE_DESCRIPTOR, startOp));
+            ops.add(opWith(startOp, SemanticOpKind.ASYNC_START,
+                new KindPayload.AsyncStartPayload(
+                    new KindPayload.CallCallee.Dynamic(new ValueId(88)),
+                    AsyncStartSource.DEAL_BODY, ParameterBoundaryMode.RUN,
+                    List.of(paramBoundary), INT, taskCell, null, null),
+                new AsyncTokenId.Canonical(6, AsyncTokenOwner.DEAL_BODY_TASK),
+                InternalResultType.INTERNAL_ASYNC, FailurePolicyId.NO_DEAL_FAILURE, null));
+            negative("async.dynamic.misOwnedCell", unit(Map.of(), ops),
+                SemanticIrValidator.R_BOUNDARY_TRIPLE,
+                "the DYNAMIC ASYNC_START's recorded task return boundary must be "
+                    + "parented to a RETURN naming the ASYNC_START");
         }
     }
 

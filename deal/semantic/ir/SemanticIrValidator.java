@@ -1497,7 +1497,7 @@ public final class SemanticIrValidator {
             return dynamicCallCell(call, boundary, mode, signature, index, isReturn, policy,
                 descriptor);
         }
-        if (parseDynamicReturnBoundary(call) != null) {
+        if (recordsDynamicReturnBoundary(call)) {
             return Optional.of("only a DYNAMIC callee records the dynamic return-boundary set");
         }
         if (!isReturn && index < 0) {
@@ -2030,25 +2030,9 @@ public final class SemanticIrValidator {
                 return Optional.of("a DYNAMIC CALL records no single returnBoundaryOpId (the "
                     + "dynamic return-boundary set replaces it)");
             }
-            for (OpId entry : List.of(dynamic.dealBodyBoundaryOpId(),
-                    dynamic.hostBoundaryOpId(), dynamic.externalBoundaryOpId())) {
-                RawOp resolved = resolveOp(entry, unit, closure);
-                if (resolved == null) {
-                    if (closure.isEmpty()
-                            && !entry.module().path().equals(unit.modulePath())) {
-                        continue; // unit-level: foreign-module entries are indeterminate.
-                    }
-                    return Optional.of("dynamic return boundary " + entry + " does not resolve");
-                }
-                if (enumByName(SemanticOpKind.class, resolved.kind())
-                        != SemanticOpKind.BOUNDARY) {
-                    return Optional.of("dynamic return boundary " + entry
-                        + " is not a BOUNDARY op");
-                }
-            }
-            return Optional.empty();
+            return checkDynamicReturnCells(unit, call, dynamic, signature, closure);
         }
-        if (dynamic != null) {
+        if (recordsDynamicReturnBoundary(call)) {
             return Optional.of("only a DYNAMIC callee records the dynamic return-boundary set");
         }
         BindingInfo binding = resolveCalleeBinding(unit, call, closure);
@@ -2072,6 +2056,150 @@ public final class SemanticIrValidator {
         if (resolved == null
                 || enumByName(SemanticOpKind.class, resolved.kind()) != SemanticOpKind.BOUNDARY) {
             return Optional.of("return boundary " + ret + " does not resolve to a BOUNDARY op");
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * The DYNAMIC CALL's per-class return-cell checks (direction (b),
+     * ISSUE-0531): each recorded entry must resolve to the BOUNDARY op
+     * carrying the closed cell of its runtime resolution class — the
+     * DEAL-body cell a FUNCTION_RETURN checking the declared return
+     * descriptor under the descriptor-kind rule and parented to a
+     * RETURN naming the CALL, the host cell HOST_TO_DEAL +
+     * HOST_SYNC_RETURN on the declared return descriptor, and the
+     * retained-ABI cell EXTERNAL_RETURN under the descriptor-kind rule
+     * on the declared return descriptor — so the runtime selection can
+     * never execute a cell whose actual kind/owner contradicts the
+     * selection's pinned kind/owner. The three entries must be
+     * mutually distinct.
+     */
+    private static Optional<String> checkDynamicReturnCells(RawUnit unit, RawOp call,
+                                                            KindPayload.DynamicReturnBoundary dynamic,
+                                                            RuntimeDescriptor.Func signature,
+                                                            Map<String, RawUnit> closure) {
+        OpId dealEntry = dynamic.dealBodyBoundaryOpId();
+        OpId hostEntry = dynamic.hostBoundaryOpId();
+        OpId externalEntry = dynamic.externalBoundaryOpId();
+        if (dealEntry.equals(hostEntry) || dealEntry.equals(externalEntry)
+                || hostEntry.equals(externalEntry)) {
+            return Optional.of("the DYNAMIC CALL's three dynamic return-boundary entries must "
+                + "be mutually distinct");
+        }
+        Optional<String> deal = dynamicDealReturnCell(unit, call, dealEntry, signature, closure);
+        if (deal.isPresent()) {
+            return deal;
+        }
+        Optional<String> host = dynamicHostReturnCell(unit, call, hostEntry, signature, closure);
+        if (host.isPresent()) {
+            return host;
+        }
+        return dynamicExternalReturnCell(unit, call, externalEntry, signature, closure);
+    }
+
+    /** A resolved recorded dynamic return entry: the BOUNDARY op, or the resolution failure. */
+    private record ResolvedDynamicEntry(RawOp boundary, String failure) {
+
+        static ResolvedDynamicEntry of(RawUnit unit, OpId entry,
+                                       Map<String, RawUnit> closure) {
+            RawOp resolved = resolveOp(entry, unit, closure);
+            if (resolved == null) {
+                if (closure.isEmpty()
+                        && !entry.module().path().equals(unit.modulePath())) {
+                    return new ResolvedDynamicEntry(null, null); // unit-level: indeterminate.
+                }
+                return new ResolvedDynamicEntry(null,
+                    "dynamic return boundary " + entry + " does not resolve");
+            }
+            if (enumByName(SemanticOpKind.class, resolved.kind()) != SemanticOpKind.BOUNDARY) {
+                return new ResolvedDynamicEntry(null,
+                    "dynamic return boundary " + entry + " is not a BOUNDARY op");
+            }
+            return new ResolvedDynamicEntry(resolved, null);
+        }
+    }
+
+    /** The DEAL-body cell of a DYNAMIC CALL (direction (b)). */
+    private static Optional<String> dynamicDealReturnCell(RawUnit unit, RawOp call, OpId entry,
+                                                          RuntimeDescriptor.Func signature,
+                                                          Map<String, RawUnit> closure) {
+        ResolvedDynamicEntry resolved = ResolvedDynamicEntry.of(unit, entry, closure);
+        if (resolved.failure() != null) {
+            return Optional.of(resolved.failure());
+        }
+        if (resolved.boundary() == null) {
+            return Optional.empty(); // unit-level: foreign-module entries are indeterminate.
+        }
+        RawOp boundary = resolved.boundary();
+        FailurePolicyId policy = enumByName(FailurePolicyId.class, boundary.failurePolicy());
+        RuntimeDescriptor descriptor = parseDescriptorQuiet(
+            optionalString(boundary.payload(), "descriptor"));
+        if (!isKind(boundary, BoundaryKind.FUNCTION_RETURN)) {
+            return Optional.of("the DYNAMIC CALL's DEAL-body return boundary must be "
+                + "FUNCTION_RETURN");
+        }
+        if (!signature.returnType().equals(descriptor)
+                || !matchesDescriptorKind(descriptor, policy)) {
+            return Optional.of("the DYNAMIC CALL's DEAL-body FUNCTION_RETURN boundary must "
+                + "check the declared return descriptor under the descriptor-kind rule");
+        }
+        RawOp parent = resolveParent(boundary, unit, closure);
+        if (parent == null
+                || enumByName(SemanticOpKind.class, parent.kind()) != SemanticOpKind.RETURN
+                || !call.opId().equals(parseOptionalOpId(parent.payload(),
+                    "enclosingInvocationOpId"))) {
+            return Optional.of("the DYNAMIC CALL's DEAL-body return boundary must be parented "
+                + "to a RETURN naming the CALL");
+        }
+        return Optional.empty();
+    }
+
+    /** The host cell of a DYNAMIC CALL (direction (b)). */
+    private static Optional<String> dynamicHostReturnCell(RawUnit unit, RawOp call, OpId entry,
+                                                          RuntimeDescriptor.Func signature,
+                                                          Map<String, RawUnit> closure) {
+        ResolvedDynamicEntry resolved = ResolvedDynamicEntry.of(unit, entry, closure);
+        if (resolved.failure() != null) {
+            return Optional.of(resolved.failure());
+        }
+        if (resolved.boundary() == null) {
+            return Optional.empty();
+        }
+        RawOp boundary = resolved.boundary();
+        FailurePolicyId policy = enumByName(FailurePolicyId.class, boundary.failurePolicy());
+        RuntimeDescriptor descriptor = parseDescriptorQuiet(
+            optionalString(boundary.payload(), "descriptor"));
+        if (!isKind(boundary, BoundaryKind.HOST_TO_DEAL)
+                || policy != FailurePolicyId.HOST_SYNC_RETURN
+                || !signature.returnType().equals(descriptor)) {
+            return Optional.of("the DYNAMIC CALL's host return boundary must be HOST_TO_DEAL "
+                + "+ HOST_SYNC_RETURN on the declared return descriptor");
+        }
+        return Optional.empty();
+    }
+
+    /** The retained-ABI external cell of a DYNAMIC CALL (direction (b)). */
+    private static Optional<String> dynamicExternalReturnCell(RawUnit unit, RawOp call,
+                                                              OpId entry,
+                                                              RuntimeDescriptor.Func signature,
+                                                              Map<String, RawUnit> closure) {
+        ResolvedDynamicEntry resolved = ResolvedDynamicEntry.of(unit, entry, closure);
+        if (resolved.failure() != null) {
+            return Optional.of(resolved.failure());
+        }
+        if (resolved.boundary() == null) {
+            return Optional.empty();
+        }
+        RawOp boundary = resolved.boundary();
+        FailurePolicyId policy = enumByName(FailurePolicyId.class, boundary.failurePolicy());
+        RuntimeDescriptor descriptor = parseDescriptorQuiet(
+            optionalString(boundary.payload(), "descriptor"));
+        if (!isKind(boundary, BoundaryKind.EXTERNAL_RETURN)
+                || !signature.returnType().equals(descriptor)
+                || !matchesDescriptorKind(descriptor, policy)) {
+            return Optional.of("the DYNAMIC CALL's retained-ABI return boundary must be "
+                + "EXTERNAL_RETURN under the descriptor-kind rule on the declared return "
+                + "descriptor");
         }
         return Optional.empty();
     }
@@ -2127,6 +2255,31 @@ public final class SemanticIrValidator {
                         != SemanticOpKind.BOUNDARY) {
                     return Optional.of("return boundary " + ret
                         + " does not resolve to a BOUNDARY op");
+                }
+                RuntimeDescriptor completion = parseDescriptorQuiet(
+                    optionalString(start.payload(), "completionDescriptor"));
+                if (completion == null) {
+                    return Optional.empty(); // R-ENUM owns a malformed completion descriptor.
+                }
+                FailurePolicyId policy = enumByName(FailurePolicyId.class,
+                    resolved.failurePolicy());
+                RuntimeDescriptor descriptor = parseDescriptorQuiet(
+                    optionalString(resolved.payload(), "descriptor"));
+                if (!isKind(resolved, BoundaryKind.FUNCTION_RETURN)
+                        || !completion.equals(descriptor)
+                        || !matchesDescriptorKind(descriptor, policy)) {
+                    return Optional.of("the DYNAMIC ASYNC_START's recorded task return "
+                        + "boundary must be FUNCTION_RETURN under the descriptor-kind rule "
+                        + "on the completion descriptor");
+                }
+                RawOp parent = resolveParent(resolved, unit, closure);
+                if (parent == null
+                        || enumByName(SemanticOpKind.class, parent.kind())
+                            != SemanticOpKind.RETURN
+                        || !start.opId().equals(parseOptionalOpId(parent.payload(),
+                            "enclosingInvocationOpId"))) {
+                    return Optional.of("the DYNAMIC ASYNC_START's recorded task return "
+                        + "boundary must be parented to a RETURN naming the ASYNC_START");
                 }
             }
             return Optional.empty();
@@ -2316,6 +2469,19 @@ public final class SemanticIrValidator {
             return null;
         }
         return new KindPayload.DynamicReturnBoundary(deal, host, external);
+    }
+
+    /**
+     * True iff the CALL payload carries a non-null
+     * {@code dynamicReturnBoundary} value — presence, not parse success:
+     * the pinned exclusivity 'only a DYNAMIC callee records the dynamic
+     * return-boundary set' fires for a non-Dynamic callee even when the
+     * recorded object is malformed (the canonical rendering carries an
+     * absent record as JSON {@code null}).
+     */
+    private static boolean recordsDynamicReturnBoundary(RawOp call) {
+        CanonicalJson.Value value = payloadValue(call.payload(), "dynamicReturnBoundary");
+        return value != null && !(value instanceof CanonicalJson.Null);
     }
 
     /** Parses one op-id entry of a payload record object ({@code null} when absent/malformed). */
