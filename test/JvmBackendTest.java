@@ -455,6 +455,7 @@ public class JvmBackendTest {
             new TestCase("testInt32NumPowHelperCollision", () -> testInt32NumPowHelperCollision()),
             new TestCase("testInt32ArrayAndFieldBoundaries", () -> testInt32ArrayAndFieldBoundaries()),
             new TestCase("testBytesRuntimeLane", () -> testBytesRuntimeLane()),
+            new TestCase("testRecursiveBytesClosureLane", () -> testRecursiveBytesClosureLane()),
             new TestCase("testCommonShadowInvocationPipeline", () -> testCommonShadowInvocationPipeline()),
             new TestCase("testLegacyByteCompat", () -> testLegacyByteCompat()),
             new TestCase("testOrchestratorJvmBackend", () -> testOrchestratorJvmBackend()),
@@ -3398,56 +3399,97 @@ public class JvmBackendTest {
                     + exec.output());
         }
 
-        // The bytes-signature function-array for-of fails the
-        // orchestrator with E6000 (bytes carriers inside function
-        // signatures stay rejected — the recursive bytes-bearing
-        // wrapper closure is ISSUE-0160's; the direct bytes lane
-        // landed with ISSUE-0158) and writes no entry artifact (the
-        // slice contract: E6000, never a broken artifact).
-        writeFile("src2/refof_bad.deal", """
+        // ISSUE-0160 (recursive bytes-bearing closure): the
+        // bytes-signature function-array for-of now compiles through
+        // the orchestrator — the bytes carriers map to the shared
+        // $DealRt wrappers and the per-signature read helper — and the
+        // emitted artifacts run through javac + java.
+        writeFile("src2/refof_bytes.deal", """
             export function main(): null { return null; }
             function bad(xs: bytes): int { return 1; }
             export function run(): int {
-              let fs: ((xs: bytes) => int)[] = [];
-              for (let f: (xs: bytes) => int of fs) { }
+              let fs: ((xs: bytes) => int)[] = [bad];
+              let total: int = 0;
+              for (let f: (xs: bytes) => int of fs) {
+                total = total + f(bytes(2));
+              }
+              return total;
+            }
+            """);
+        Path bytesEntry = tmpDir.get().resolve("src2/refof_bytes.deal").toAbsolutePath();
+        Path bytesOut = tmpDir.get().resolve("build/refof_bytes");
+        List<Path> roots2 = List.of(tmpDir.get().resolve("src2").toAbsolutePath());
+        CompilationOrchestrator bytesOrchestrator = new CompilationOrchestrator(
+            bytesEntry, bytesOut, false, false, false, Backend.JVM,
+            null, roots2,
+            Path.of(".").toAbsolutePath().normalize());
+        boolean bytesSuccess = bytesOrchestrator.compile();
+        check(bytesSuccess,
+            "the bytes-signature for-of compiles through the orchestrator: "
+                + bytesOrchestrator.diagnostics());
+        check(bytesOrchestrator.diagnostics().isEmpty(),
+            "zero diagnostics for the bytes-signature for-of: "
+                + bytesOrchestrator.diagnostics());
+        check(Files.exists(bytesOut.resolve("Refof_bytes.java")),
+            "the bytes-signature for-of entry module writes its artifact");
+        if (bytesSuccess && Files.exists(bytesOut.resolve("Refof_bytes.java"))) {
+            ExecResult bytesExec = runJvmArtifacts(bytesOut,
+                parseProgram("export function run(): int { return 1; }"),
+                "Refof_bytes");
+            check(bytesExec.exitCode() == 0 && bytesExec.output().contains("1"),
+                "the bytes-signature for-of artifacts run: f(bytes(2))=1: "
+                    + bytesExec.output());
+        }
+
+        // The table-signature function-array for-of stays E6000 (table
+        // carriers inside function signatures are the ISSUE-0110
+        // descriptor-join family, never the bytes closure — the
+        // recursive bytes-bearing wrapper closure is retired) and
+        // writes no entry artifact (E6000, never a broken artifact).
+        writeFile("src3/refof_table.deal", """
+            export function main(): null { return null; }
+            function bad(t: table): int { return 1; }
+            export function run(): int {
+              let fs: ((t: table) => int)[] = [];
+              for (let f: (t: table) => int of fs) { }
               return 0;
             }
             """);
-        Path badEntry = tmpDir.get().resolve("src2/refof_bad.deal").toAbsolutePath();
-        Path badOut = tmpDir.get().resolve("build/refof_bad");
-        List<Path> roots2 = List.of(tmpDir.get().resolve("src2").toAbsolutePath());
-        CompilationOrchestrator badOrchestrator = new CompilationOrchestrator(
-            badEntry, badOut, false, false, false, Backend.JVM,
-            null, roots2,
+        Path tableEntry = tmpDir.get().resolve("src3/refof_table.deal").toAbsolutePath();
+        Path tableOut = tmpDir.get().resolve("build/refof_table");
+        List<Path> roots3 = List.of(tmpDir.get().resolve("src3").toAbsolutePath());
+        CompilationOrchestrator tableOrchestrator = new CompilationOrchestrator(
+            tableEntry, tableOut, false, false, false, Backend.JVM,
+            null, roots3,
             Path.of(".").toAbsolutePath().normalize());
-        boolean badSuccess = badOrchestrator.compile();
-        check(!badSuccess,
-            "the bytes-signature for-of fails the orchestrator: "
-                + badOrchestrator.diagnostics());
-        check(badOrchestrator.diagnostics().stream()
+        boolean tableSuccess = tableOrchestrator.compile();
+        check(!tableSuccess,
+            "the table-signature for-of fails the orchestrator: "
+                + tableOrchestrator.diagnostics());
+        check(tableOrchestrator.diagnostics().stream()
                 .anyMatch(d -> "E6000".equals(d.code())),
-            "orchestrator reports E6000 for the bytes-signature for-of: "
-                + badOrchestrator.diagnostics());
-        check(!Files.exists(badOut.resolve("Refof_bad.java")),
-            "no entry artifact when the ref-shape for-of is rejected");
+            "orchestrator reports E6000 for the table-signature for-of: "
+                + tableOrchestrator.diagnostics());
+        check(!Files.exists(tableOut.resolve("Refof_table.java")),
+            "no entry artifact when the table-signature for-of is rejected");
 
         // Backend-boundary pin (T12): the for-of E6000 arrives through
         // the backend's native List<CompilerDiagnostic> and renders at
         // its real source position — SOURCE origin with exact scalar
-        // offsets, never synthetic (1,1). The bytes-signature rejection
-        // (bytes carriers inside function signatures — the recursive
-        // bytes-bearing wrapper closure, ISSUE-0160) anchors at the
-        // loop variable's bytes annotation.
-        String badSrc = Files.readString(badEntry);
-        int forIdx = badSrc.indexOf("bytes", badSrc.indexOf("for (let f"));
-        check(forIdx >= 0, "fixture contains the bytes annotation");
-        int lineStart = badSrc.lastIndexOf('\n', forIdx) + 1;
-        int expectedLine = badSrc.substring(0, forIdx).split("\n", -1).length;
+        // offsets, never synthetic (1,1). The table-signature rejection
+        // (table carriers inside function signatures — the ISSUE-0110
+        // descriptor-join family) anchors at the loop variable's table
+        // annotation.
+        String tableSrc = Files.readString(tableEntry);
+        int forIdx = tableSrc.indexOf("table", tableSrc.indexOf("for (let f"));
+        check(forIdx >= 0, "fixture contains the table annotation");
+        int lineStart = tableSrc.lastIndexOf('\n', forIdx) + 1;
+        int expectedLine = tableSrc.substring(0, forIdx).split("\n", -1).length;
         int expectedColumn = forIdx - lineStart + 1;
-        int expectedOffset = ScalarSourceCursor.scalarCount(badSrc, 0, forIdx);
-        CompilerDiagnostic e6000 = badOrchestrator.diagnostics().stream()
+        int expectedOffset = ScalarSourceCursor.scalarCount(tableSrc, 0, forIdx);
+        CompilerDiagnostic e6000 = tableOrchestrator.diagnostics().stream()
             .filter(d -> "E6000".equals(d.code())
-                && d.message().contains("bytes/table carriers"))
+                && d.message().contains("table carriers"))
             .filter(d -> d.range() != null
                 && d.range().startLine() == expectedLine
                 && d.range().startColumn() == expectedColumn)
@@ -3459,7 +3501,7 @@ public class JvmBackendTest {
                 "backend-boundary E6000 range origin is SOURCE: " + range);
             check(range.startLine() == expectedLine
                     && range.startColumn() == expectedColumn,
-                "backend-boundary E6000 starts at the bytes annotation: "
+                "backend-boundary E6000 starts at the table annotation: "
                     + range);
             check(range.startScalarOffset() == expectedOffset,
                 "backend-boundary E6000 start scalar offset is exact ("
@@ -10220,6 +10262,291 @@ public class JvmBackendTest {
         }
     }
 
+    /** The recursive bytes-bearing type closure (ISSUE-0160/E8, consumed
+     * by ISSUE-0306): arbitrary-depth Array/Nullable bytes compositions,
+     * sync/async bytes-bearing function signatures, the shared
+     * __BytesArray/__BytesOrNullArray carriers, the [bytes]/[?bytes]
+     * $checkArray rows, the pinned JSON bytes rejection, and the host
+     * bytes ABI arms — all through the real emitted artifact surface. */
+    private static void testRecursiveBytesClosureLane() throws Exception {
+        System.out.println("-- Recursive bytes-bearing type closure (ISSUE-0160) --");
+
+        // ---- Emitted artifact surface (int32 artifact inspection) ----
+        String artifact = int32Artifact("""
+            // @jsonable
+            export class Holder { payload: table = {}; }
+            function id(b: bytes): bytes { return b; }
+            async function echo(b: bytes): bytes { return b; }
+            export function main(): null { return null; }
+            export function run(): int {
+              let b: bytes = bytes(2);
+              let xs: bytes[] = [b];
+              let ns: (bytes | null)[] = [];
+              let fs: ((b: bytes) => bytes)[] = [id];
+              let g: async (b: bytes) => bytes = echo;
+              return xs[0][0] + b.length;
+            }
+            """, "bytes_closure_artifact");
+        check(artifact.contains(
+                "static final class __BytesArray { Bytes[] data; "
+                    + "__BytesArray(Bytes[] data) { this.data = data; } }"),
+            "the shared scope carries the concrete __BytesArray carrier "
+                + "over $DealRt.Bytes[] storage");
+        check(artifact.contains(
+                "static final class __BytesOrNullArray { Bytes[] data; "
+                    + "__BytesOrNullArray(Bytes[] data) { this.data = data; } }"),
+            "the shared scope carries the concrete __BytesOrNullArray "
+                + "carrier");
+        check(artifact.contains("static $DealRt.Bytes __bytesArrayRead("),
+            "bytes[] reads lower to the typed __bytesArrayRead helper");
+        check(artifact.contains("static $DealRt.Bytes __bytesArrayWrite("),
+            "bytes[] writes lower to the typed __bytesArrayWrite helper");
+        check(artifact.contains("static $DealRt.Bytes __bytesArrayReadBoxed("),
+            "the boxed bytes[] read supports === / !== nil semantics");
+        check(artifact.contains(
+                "static $DealRt.Bytes __bytesOrNullArrayRead("),
+            "(bytes | null)[] reads lower to the or-null helper");
+        check(artifact.contains(
+                "static $DealRt.Bytes __bytesOrNullArrayWrite("),
+            "(bytes | null)[] writes lower to the or-null helper");
+        check(artifact.contains(
+                "\"expected bytes, got \" + $describe(v)"),
+            "the bytes[] element policy rejects a null element with the "
+                + "pinned E8001 shape");
+        check(artifact.contains("descriptor.equals(\"[bytes]\")"),
+            "the $checkArray seam carries the [bytes] row");
+        check(artifact.contains("descriptor.equals(\"[?bytes]\")"),
+            "the $checkArray seam carries the [?bytes] widening row");
+        check(artifact.contains("static $DealRt.__BytesArray $dynamicBytesArray("),
+            "an array-mode table converts through $dynamicBytesArray "
+                + "with the E8003 element wrap");
+        check(artifact.contains(
+                "static $DealRt.__BytesOrNullArray $dynamicBytesOrNullArray("),
+            "an array-mode table converts through $dynamicBytesOrNullArray");
+        check(artifact.contains("static abstract class Fn1_Y_R_Y"),
+            "(bytes)->bytes uses the shared Y-segment wrapper shape");
+        check(artifact.contains("static abstract class FnA1_Y_R_Y"),
+            "async(bytes)->bytes uses the distinct async wrapper shape");
+        check(artifact.contains(
+                "if (v instanceof $DealRt.Bytes) throw new DealError("
+                    + "\"E8001\", \"unsupported type for JSON encoding: "
+                    + "bytes\")"),
+            "the stringifier pins the byte-identical JSON bytes "
+                + "rejection branch");
+        check(artifact.contains("case \"bytes\":")
+                && artifact.contains(
+                    "if (v instanceof $DealRt.Bytes b) return b;"),
+            "__hostCheck carries the bytes return-boundary branch");
+
+        // ---- Behavior battery (real pipeline under DEAL_V1_2_INT32) ----
+        record ClosurePin(String name, String prelude, String body,
+                          String expected) {}
+        List<ClosurePin> pins = List.of(
+            new ClosurePin("nested-alias", "",
+                "let b: bytes = bytes(2);\n"
+                    + "      let xs: bytes[][] = [[b]];\n"
+                    + "      xs[0][0][0] = 7;\n"
+                    + "      if (b[0] !== 7) { throw { code: \"TEST_FAIL\", message: \"alias\" }; }\n"
+                    + "      return b[0];",
+                "7"),
+            new ClosurePin("nested-read-write", "",
+                "let xs: bytes[][] = [[bytes(1)], [bytes(2)]];\n"
+                    + "      xs[1][0][0] = 9;\n"
+                    + "      return xs[0][0][0] + xs[1][0][0];",
+                "9"),
+            new ClosurePin("nullable-elements", "",
+                "let ns: (bytes | null)[] = [];\n"
+                    + "      ns[ns.length] = bytes(1);\n"
+                    + "      ns[ns.length] = null;\n"
+                    + "      let first: bytes | null = ns[0];\n"
+                    + "      if (first !== null) { first[0] = 9; }\n"
+                    + "      if (ns[1] !== null) { throw { code: \"TEST_FAIL\", message: \"null element\" }; }\n"
+                    + "      let again: bytes | null = ns[0];\n"
+                    + "      if (again !== null) {\n"
+                    + "        if (again[0] !== 9) { throw { code: \"TEST_FAIL\", message: \"write\" }; }\n"
+                    + "        return again[0];\n"
+                    + "      }\n"
+                    + "      throw { code: \"TEST_FAIL\", message: \"lost element\" };",
+                "9"),
+            new ClosurePin("fn-array-invoke",
+                "function bump(b: bytes, v: int): bytes { b[0] = b[0] + v; return b; }\n",
+                "let fs: ((b: bytes, v: int) => bytes)[] = [bump, bump];\n"
+                    + "      fs[fs.length] = bump;\n"
+                    + "      let r: bytes = fs[0](bytes(2), 5);\n"
+                    + "      return r[0];",
+                "5"),
+            new ClosurePin("fn-array-nullable",
+                "function id(b: bytes): bytes { return b; }\n",
+                "let ns: (((b: bytes) => bytes) | null)[] = [];\n"
+                    + "      ns[ns.length] = id;\n"
+                    + "      ns[ns.length] = null;\n"
+                    + "      let g: ((b: bytes) => bytes) | null = ns[0];\n"
+                    + "      if (g !== null) { return g(bytes(3)).length; }\n"
+                    + "      throw { code: \"TEST_FAIL\", message: \"nullable fn\" };",
+                "3"),
+            new ClosurePin("array-identity",
+                "function id(b: bytes): bytes { return b; }\n",
+                "let b: bytes = bytes(2);\n"
+                    + "      let xs: bytes[] = [b];\n"
+                    + "      let copy: bytes[] = [bytes(2)];\n"
+                    + "      if (!(xs[0] === b)) { throw { code: \"TEST_FAIL\", message: \"element identity\" }; }\n"
+                    + "      if (xs === copy) { throw { code: \"TEST_FAIL\", message: \"array identity\" }; }\n"
+                    + "      return 1;",
+                "1"),
+            new ClosurePin("past-end-read", "",
+                "let xs: bytes[] = [];\n"
+                    + "      return xs[0][0];",
+                "E8001"),
+            new ClosurePin("json-rejection",
+                "// @jsonable\nexport class Holder { payload: table = {}; }\n",
+                "let h: Holder = { payload: { inner: {} } };\n"
+                    + "      h.payload.inner.b = bytes(2);\n"
+                    + "      let s: string = Holder$toJson(h);\n"
+                    + "      return 0;",
+                "E8001"));
+        for (ClosurePin pin : pins) {
+            String source = "export function main(): null { return null; }\n"
+                + pin.prelude()
+                + "export function test(): int {\n      " + pin.body() + "\n"
+                + "    }\n";
+            ExecResult r = runInt32Project(source, pin.name());
+            if (pin.expected().startsWith("E8")) {
+                check(r.exitCode() == 1,
+                    pin.name() + " run exits 1: " + r.output());
+                check(r.output().contains("DEAL_ERROR_CODE: "
+                        + pin.expected()),
+                    pin.name() + " raises exactly " + pin.expected()
+                        + ": " + r.output());
+            } else {
+                check(r.exitCode() == 0,
+                    pin.name() + " run exits 0: " + r.output());
+                check(r.output().contains(pin.expected()),
+                    pin.name() + " computes the pinned value "
+                        + pin.expected() + ": " + r.output());
+            }
+        }
+        check(pins.stream().anyMatch(p ->
+                p.name().equals("json-rejection")),
+            "the JSON rejection pin ran");
+
+        // Async bytes-bearing function values (await needs an async test
+        // function, so these run as standalone sources).
+        ExecResult asyncBytes = runInt32Project("""
+            async function echo(b: bytes): bytes { return b; }
+            export function main(): null { return null; }
+            export async function test(): int {
+              let f: async (b: bytes) => bytes = echo;
+              let out: bytes = await f(bytes(2));
+              return out.length;
+            }
+            """, "async_bytes_value");
+        check(asyncBytes.exitCode() == 0,
+            "async bytes function value run exits 0: " + asyncBytes.output());
+        check(asyncBytes.output().contains("2"),
+            "awaited async bytes function value completes with length 2: "
+                + asyncBytes.output());
+        ExecResult asyncContainer = runInt32Project("""
+            async function echo(b: bytes): bytes { return b; }
+            export function main(): null { return null; }
+            export async function test(): int {
+              let fs: ((async (b: bytes) => bytes) | null)[] = [];
+              fs[fs.length] = echo;
+              fs[fs.length] = null;
+              let g: (async (b: bytes) => bytes) | null = fs[0];
+              if (g !== null) {
+                let again: bytes = await g(bytes(3));
+                return again[0];
+              }
+              throw { code: "TEST_FAIL", message: "async container" };
+            }
+            """, "async_bytes_container");
+        check(asyncContainer.exitCode() == 0,
+            "containerized async bytes value run exits 0: "
+                + asyncContainer.output());
+        check(asyncContainer.output().contains("0"),
+            "containerized async bytes value completes with the zero-filled "
+                + "first byte: " + asyncContainer.output());
+        // The pinned JSON rejection message is byte-identical to the
+        // LuaJIT std/json bytes arm.
+        String jsonSource = "export function main(): null { return null; }\n"
+            + "// @jsonable\nexport class Holder { payload: table = {}; }\n"
+            + "export function test(): int {\n"
+            + "      let h: Holder = { payload: { inner: {} } };\n"
+            + "      h.payload.inner.b = bytes(2);\n"
+            + "      let s: string = Holder$toJson(h);\n"
+            + "      return 0;\n"
+            + "    }\n";
+        ExecResult jsonRun = runInt32Project(jsonSource, "json_rejection_msg");
+        check(jsonRun.output().contains(
+                "unsupported type for JSON encoding: bytes"),
+            "the JVM stringify raises the pinned bytes message: "
+                + jsonRun.output());
+
+        // ---- Legacy-profile pin (LEGACY_SAFE_INT long carriers) ----
+        // The bytes-array carriers are profile-independent ($DealRt.Bytes
+        // storage); the array helpers follow the emitted int carriers the
+        // same way the bytes helpers do, so the closure shapes compile
+        // and execute under the untouched default invocation.
+        ExecResult legacyRun = runLegacyProject("""
+            export function main(): null { return null; }
+            function id(b: bytes): bytes { return b; }
+            export function test(): int {
+              let b: bytes = bytes(2);
+              let xs: bytes[][] = [[b]];
+              xs[0][0][0] = 7;
+              let ns: (bytes | null)[] = [];
+              ns[ns.length] = b;
+              ns[ns.length] = null;
+              let fs: ((b: bytes) => bytes)[] = [id];
+              if (fs[0](b).length !== 2) { throw { code: "TEST_FAIL", message: "fn" }; }
+              let extra: int = 0;
+              if (ns[1] === null) { extra = 1; }
+              return b[0] + extra;
+            }
+            """, "bytes_closure_legacy_full");
+        check(legacyRun.exitCode() == 0,
+            "legacy closure program compiles under javac and runs green: "
+                + legacyRun.output());
+        check(legacyRun.output().contains("8"),
+            "legacy closure program computes 7 + 1 = 8: "
+                + legacyRun.output());
+
+        // ---- No-E6000-for-bytes negative pin (D9) ----
+        // A bytes-closure program tripping an unrelated guard must name
+        // the unrelated cause — never bytes nesting or function shape.
+        Frontend reassigned = compileFrontend("""
+            function id(b: bytes): bytes { return b; }
+            export function main(): null { return null; }
+            export function test(): int {
+              let f: (b: bytes) => bytes = id;
+              let g: (b: bytes, extra: int) => bytes = f;
+              f = id;
+              return 0;
+            }
+            """, "jvmtest-bytes-closure-reassigned.deal");
+        check(reassigned.errors().isEmpty(),
+            "bytes closure reassigned-adapter probe frontend clean: "
+                + reassigned.errors());
+        if (reassigned.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                reassigned.program(), reassigned.checkResult(),
+                "jvmtest-bytes-closure-reassigned.deal", "main",
+                Map.of(), Map.of(), Map.of(), true,
+                SemanticProfile.DEAL_V1_2_INT32);
+            check(res.hasErrors() && res.diagnostics().stream()
+                    .anyMatch(d -> "E6000".equals(d.code())
+                        && d.message().contains("reassigns")),
+                "the reassigned-binding adapter guard fires with the "
+                    + "reassignment reason (never bytes): "
+                    + res.diagnostics());
+            check(res.diagnostics().stream()
+                    .noneMatch(d -> "E6000".equals(d.code())
+                        && d.message().contains("bytes")),
+                "no E6000 names bytes nesting or function shape: "
+                    + res.diagnostics());
+        }
+    }
+
     /** The combined T1+T3 verification (ISSUE-0394): the profile flows
      * from a {@code COMMON_SHADOW + DEAL_V1_2_INT32 + PRE_ACTIVATION}
      * invocation (the closed invocation matrix) through phase-0 parsing
@@ -10496,7 +10823,7 @@ public class JvmBackendTest {
      * closure machinery with async descriptors and blocking bodies,
      * and an {@code await E;} statement evaluates exactly once with
      * the completion check. Non-representable function-type signatures
-     * (bytes/table carriers) stay E6000, and the pre-rebase
+     * (table carriers) stay E6000, and the pre-rebase
      * module-level function-value read shapes are the v1.2 grammar
      * gate E1049 — never an artifact javac rejects after the CLI
      * reported success.
@@ -10787,10 +11114,12 @@ public class JvmBackendTest {
             "awaited call through the array-param wrapper computes 1: "
                 + shape.output());
 
-        // The bytes/table carrier gate stays: a function-type
-        // ANNOTATION whose signature contains a table carrier raises
-        // E6000 with the bytes/table-carrier message (the recursive
-        // bytes-bearing wrapper closure stays deferred to ISSUE-0160).
+        // The table-carrier gate stays: a function-type ANNOTATION
+        // whose signature contains a table carrier raises E6000 with
+        // the table-carrier message (the ISSUE-0110 descriptor-join
+        // family; the recursive bytes-bearing wrapper closure landed
+        // with ISSUE-0160, so bytes carriers inside annotation
+        // signatures are representable).
         Frontend tableSig = compileFrontend("""
             async function pick(t: table): int { return 1; }
             export async function test(): int {
@@ -10807,9 +11136,9 @@ public class JvmBackendTest {
                 "jvmtest-async-tablesig.deal", "main");
             check(tableRes.hasErrors() && tableRes.diagnostics().stream()
                     .anyMatch(d -> "E6000".equals(d.code())
-                        && d.message().contains("bytes/table carriers")),
+                        && d.message().contains("table carriers")),
                 "table carriers inside an annotation signature stay E6000 "
-                    + "(bytes/table-carrier message): "
+                    + "(table-carrier message): "
                     + tableRes.diagnostics());
         }
 

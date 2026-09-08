@@ -117,9 +117,10 @@ public class JvmLaneTest {
     // while the int32-activated profile resolves the declared int /
     // int | null parameters as int/Integer, so the load-time export
     // check raises E8011 for every fixture importing host/boundary.
-    // ISSUE-0544 (the lowering epic) lifts the imported-non-literal-
-    // default plan-shape guard, so plan-imported-provider-scope passes
-    // the real pipeline and its registry entry is removed.
+    // ISSUE-0160 (the recursive bytes-bearing closure) promoted the
+    // last bytes entry (bytes-descriptor-boundary): the closure
+    // carriers landed, the fixture passes the lane, and the
+    // stale-skip gate forced the entry out.
     private static final int SKIP_REGISTRY_ENTRIES = 45;
 
     public static void main(String[] args) throws Exception {

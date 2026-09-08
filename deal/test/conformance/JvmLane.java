@@ -1715,10 +1715,11 @@ public class JvmLane implements Lane {
         // satisfy the canonical lane snapshot: the E8012/E8013 error
         // fixtures raise a real JVM DEALRuntimeError whose snapshot
         // carries no column field (ISSUE-0276 owns the backend
-        // convergence) and the lane never fabricates it, and
-        // bytes-descriptor-boundary pins the recursive bytes-bearing
-        // array/nullable/function wrapper closure (E6000 until
-        // ISSUE-0160).
+        // convergence) and the lane never fabricates it.
+        // bytes-descriptor-boundary passed the lane after the
+        // ISSUE-0160 recursive bytes-bearing array/nullable/function
+        // wrapper closure landed, so its entry was removed with the
+        // promotion.
         skip("backend-runtime/bytes/bytes-index-bounds.deal",
             "the fixture raises E8012 on the JVM lane, but the JVM "
                 + "DEALRuntimeError snapshot carries no column field "
@@ -1731,11 +1732,6 @@ public class JvmLane implements Lane {
                 + "(ISSUE-0276 owns the backend convergence), so the "
                 + "lane cannot serialize the canonical error snapshot.",
             "JVM-GAP-BYTES");
-        skip("backend-runtime/bytes/bytes-descriptor-boundary.deal",
-            "canonical [bytes]/?(bytes)/(bytes)->bytes descriptors "
-                + "require the recursive bytes-bearing array/nullable/"
-                + "function wrapper carriers (ISSUE-0160); JvmBackend "
-                + "raises E6000 at those sites.", "JVM-GAP-BYTES");
         skip("backend-runtime/source-location/bytes-index-bounds-source.deal",
             "the fixture raises E8012 on the JVM lane, but the JVM "
                 + "DEALRuntimeError snapshot carries no column field "

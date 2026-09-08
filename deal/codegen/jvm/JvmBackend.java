@@ -535,11 +535,14 @@ import java.util.function.Function;
  * await-site completion check applied at every await. Function
  * expressions and nested functions emit (ISSUE-0102); function-type
  * ANNOTATIONS carry the complete canonical signature grammar
- * (primitives/string/null, arrays, classes, nullables, and nested
- * sync/async function types — the shared wrapper machinery,
- * ISSUE-0301 D2), with only bytes/table carriers inside the signature
- * staying resolveTypeNode-gated with E6000 (deferred to the
- * ISSUE-0160 recursive bytes-bearing wrapper closure).
+ * (primitives/string/null, bytes, arrays, classes, nullables, and
+ * nested sync/async function types — the shared wrapper machinery,
+ * ISSUE-0301 D2), with only table carriers inside the signature staying
+ * resolveTypeNode-gated with E6000 (deferred to the ISSUE-0110
+ * descriptor join). The recursive bytes-bearing wrapper closure landed
+ * with ISSUE-0160: bytes carriers inside signatures are representable
+ * through the shared $DealRt wrappers and never E6000 for the bytes
+ * reason alone.
  * Async function expressions emit through the same closure machinery
  * with the async descriptor marker (ISSUE-0304), and block-level async
  * function declarations emit through the block-level cell + anonymous
@@ -1390,10 +1393,11 @@ public final class JvmBackend {
         }
         if (t instanceof Type.Array a) {
             Type element = a.element();
-            // Bytes-element arrays (bytes[] / (bytes | null)[]) carry
-            // the fixed __BytesArray / __BytesOrNullArray carriers with
-            // the fixed $checkArray rows (ISSUE-0160 container step) —
-            // no per-element-shape registration.
+            // bytes[] / (bytes | null)[] use the FIXED shared
+            // __BytesArray / __BytesOrNullArray carriers and the fixed
+            // $checkArray rows (ISSUE-0160 D1/D5) — no generated
+            // per-shape class or [bytes] branch. Nested arrays and
+            // function arrays keep the generated __A$[...] carriers.
             if (element instanceof Type.Array
                     || element instanceof Type.Func
                     || (element instanceof Type.Nullable ne
@@ -4554,6 +4558,9 @@ public final class JvmBackend {
         emitLine("        case \"string\":");
         emitLine("            if (v instanceof java.lang.String s) { if (__hasUnpairedSurrogate(s)) throw new DealError(completion ? \"E8001\" : \"E8010\", \"expected string, got string with unpaired surrogate code units\"); return s; }");
         emitLine("            break;");
+        emitLine("        case \"bytes\":");
+        emitLine("            if (v instanceof $DealRt.Bytes b) return b;");
+        emitLine("            break;");
         emitLine("        case \"null\":");
         emitLine("            if (v == null) return null;");
         emitLine("            break;");
@@ -4761,37 +4768,25 @@ public final class JvmBackend {
         emitLine("static java.lang.Double __numberOrNullArrayRead($DealRt.__NumberOrNullArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return a.data[(int) i]; }");
         emitLine("static java.lang.String __stringOrNullArrayRead($DealRt.__StringOrNullArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return a.data[(int) i]; }");
         emitLine("static java.lang.Boolean __booleanOrNullArrayRead($DealRt.__BooleanOrNullArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return a.data[(int) i]; }");
-        emitLine("// bytes[] / (bytes | null)[] shared carriers (ISSUE-0160");
-        emitLine("// container step, jvm-v12-recursive-bytes-closure D1):");
-        emitLine("// $DealRt.Bytes[] storage inside the __BytesArray /");
-        emitLine("// __BytesOrNullArray wrapper classes. The wrapper identity");
-        emitLine("// is stable across appends (writing at i == length grows");
-        emitLine("// the wrapped storage in place), so every alias observes");
-        emitLine("// each write exactly like LuaJIT's shared 1-based table —");
-        emitLine("// reference semantics throughout, no deep copies. Reads:");
-        emitLine("// a negative index is E8002 (LuaJIT's emitted negative-index");
-        emitLine("// check); an index past the end is E8001 \"expected bytes,");
-        emitLine("// got null\" at the typed read (LuaJIT reads nil there and");
-        emitLine("// the read site's check_type(\"bytes\", nil) boundary fails");
-        emitLine("// with exactly that shape), while the boxed read yields the");
-        emitLine("// DEAL null there for === / !== operand positions (the read-");
-        emitLine("// site contract applies no typed boundary to a comparison");
-        emitLine("// operand, so nil === v computes on the nil value). The");
-        emitLine("// (bytes | null)[] read yields the DEAL null past the end");
-        emitLine("// (a valid nullable element — LuaJIT's nil, no E8001 at the");
-        emitLine("// read). Writes: 0 <= i <= length (E8002 otherwise); i ==");
-        emitLine("// length appends one element (spec §Array writes); the");
-        emitLine("// element policy of the PLAIN form rejects the DEAL null");
-        emitLine("// element with E8001 \"expected bytes, got null\" (LuaJIT's");
-        emitLine("// check_type(\"bytes\", nil) at the write), the OrNull form");
-        emitLine("// accepts it (check_nullable permits it) — a failed write");
-        emitLine("// mutates nothing. The helper call's Java arguments");
-        emitLine("// evaluate left to right before the bounds check, per");
-        emitLine("// spec-v1.2 §Operational semantics rule 3.");
+        emitLine("// ---- DEAL bytes-array runtime support (ISSUE-0160 recursive");
+        emitLine("// bytes-bearing closure) ----");
+        emitLine("// bytes[] / (bytes | null)[] map to the SHARED $DealRt");
+        emitLine("// __BytesArray / __BytesOrNullArray wrappers over");
+        emitLine("// $DealRt.Bytes[] storage: reference elements (alias-observed");
+        emitLine("// writes, reference identity), the pinned bounds policy (E8002");
+        emitLine("// negative index / gap write, append at i == length), and the");
+        emitLine("// element policy: bytes[] rejects the null element with E8001");
+        emitLine("// \"expected bytes, got null\", (bytes | null)[] accepts it as the");
+        emitLine("// DEAL null element. Reads past the end raise the element-typed");
+        emitLine("// E8001 \"expected bytes, got null\" (LuaJIT reads nil there and the");
+        emitLine("// read site's typed boundary fails with that shape); the boxed");
+        emitLine("// read yields null past the end for === / !== operand positions");
+        emitLine("// (no typed boundary at a comparison operand — LuaJIT computes");
+        emitLine("// the comparison on nil).");
         emitLine("static $DealRt.Bytes __bytesArrayRead($DealRt.__BytesArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected bytes, got null\"); return a.data[(int) i]; }");
         emitLine("static $DealRt.Bytes __bytesArrayReadBoxed($DealRt.__BytesArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return a.data[(int) i]; }");
-        emitLine("static $DealRt.Bytes __bytesArrayWrite($DealRt.__BytesArray a, long i, $DealRt.Bytes v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (v == null) throw new DealError(\"E8001\", \"expected bytes, got null\"); if (i == (long) a.data.length) { $DealRt.Bytes[] nd = new $DealRt.Bytes[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
-        emitLine("static $DealRt.Bytes __bytesOrNullArrayWrite($DealRt.__BytesOrNullArray a, long i, $DealRt.Bytes v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (i == (long) a.data.length) { $DealRt.Bytes[] nd = new $DealRt.Bytes[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
+        emitLine("static $DealRt.Bytes __bytesArrayWrite($DealRt.__BytesArray a, long i, $DealRt.Bytes v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (!(v instanceof $DealRt.Bytes)) throw new DealError(\"E8001\", \"expected bytes, got \" + $describe(v)); if (i == (long) a.data.length) { $DealRt.Bytes[] nd = new $DealRt.Bytes[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
+        emitLine("static $DealRt.Bytes __bytesOrNullArrayWrite($DealRt.__BytesOrNullArray a, long i, $DealRt.Bytes v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (v != null && !(v instanceof $DealRt.Bytes)) throw new DealError(\"E8001\", \"expected bytes, got \" + $describe(v)); if (i == (long) a.data.length) { $DealRt.Bytes[] nd = new $DealRt.Bytes[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
         emitLine("static $DealRt.Bytes __bytesOrNullArrayRead($DealRt.__BytesOrNullArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return a.data[(int) i]; }");
         emitLine("// Class arrays (C[], (C | null)[]) map to the shared");
         emitLine("// $DealRt.__RefArray holding java.lang.Object[]; every class");
@@ -4987,15 +4982,16 @@ public final class JvmBackend {
         emitLine("    static final class __NumberOrNullArray { java.lang.Double[] data; __NumberOrNullArray(java.lang.Double[] data) { this.data = data; } }");
         emitLine("    static final class __StringOrNullArray { java.lang.String[] data; __StringOrNullArray(java.lang.String[] data) { this.data = data; } }");
         emitLine("    static final class __BooleanOrNullArray { java.lang.Boolean[] data; __BooleanOrNullArray(java.lang.Boolean[] data) { this.data = data; } }");
-        emitLine("    // The bytes-element array carriers (ISSUE-0160 container");
-        emitLine("    // step): $DealRt.Bytes[] storage for bytes[] and");
-        emitLine("    // (bytes | null)[] — the OrNull form accepts the DEAL");
-        emitLine("    // null element, the plain form rejects it. Identity");
-        emitLine("    // stays stable across appends, so aliases observe every");
-        emitLine("    // write; values cross module boundaries with shared");
-        emitLine("    // identity like every other shared carrier.");
-        emitLine("    static final class __BytesArray { $DealRt.Bytes[] data; __BytesArray($DealRt.Bytes[] data) { this.data = data; } }");
-        emitLine("    static final class __BytesOrNullArray { $DealRt.Bytes[] data; __BytesOrNullArray($DealRt.Bytes[] data) { this.data = data; } }");
+        // ISSUE-0160 D1: bytes[] and (bytes | null)[] use CONCRETE
+        // shared carriers over $DealRt.Bytes[] storage — reference
+        // elements (alias-observed writes, reference identity); the
+        // (bytes | null)[] form accepts the DEAL null element (Java
+        // null). Named like the primitive carriers so the pinned
+        // typed read/write helpers and the $checkArray rows key on
+        // them; nested bytes arrays (bytes[][]) still use the generic
+        // __A$[...] wrappers with per-element instance proofs.
+        emitLine("    static final class __BytesArray { Bytes[] data; __BytesArray(Bytes[] data) { this.data = data; } }");
+        emitLine("    static final class __BytesOrNullArray { Bytes[] data; __BytesOrNullArray(Bytes[] data) { this.data = data; } }");
         emitLine("    // The Object-storage base for per-class array wrappers (each");
         emitLine("    // module's $Array$<C> extends it so instanceof proves the");
         emitLine("    // element type).");
@@ -5289,6 +5285,12 @@ public final class JvmBackend {
         emitLine("if (descriptor.equals(\"[number]\")) { if (v instanceof $DealRt.__NumberArray a) return a; return $dynamicNumberArray(v); }");
         emitLine("if (descriptor.equals(\"[string]\")) { if (v instanceof $DealRt.__StringArray a) return a; return $dynamicStringArray(v); }");
         emitLine("if (descriptor.equals(\"[boolean]\")) { if (v instanceof $DealRt.__BooleanArray a) return a; return $dynamicBooleanArray(v); }");
+        // ISSUE-0160 D5: the [bytes] row accepts the concrete shared
+        // __BytesArray carrier (identity) and converts an array-mode
+        // $DealRt.Table with the element-level E8003 wrap; the [?bytes]
+        // row below additionally accepts the widening __BytesArray form
+        // with the same storage copy the retired primitive gates
+        // performed.
         emitLine("if (descriptor.equals(\"[bytes]\")) { if (v instanceof $DealRt.__BytesArray a) return a; return $dynamicBytesArray(v); }");
         emitLine(int32Mode
             ? "if (descriptor.equals(\"[?int]\")) { if (v instanceof $DealRt.__IntOrNullArray a) return a; if (v instanceof $DealRt.__IntArray a) { java.lang.Integer[] nd = new java.lang.Integer[a.data.length]; for (int i = 0; i < a.data.length; i++) nd[i] = java.lang.Integer.valueOf(a.data[i]); return new $DealRt.__IntOrNullArray(nd); } return $dynamicIntOrNullArray(v); }"
@@ -5314,6 +5316,8 @@ public final class JvmBackend {
         emitLine("static $DealRt.__NumberArray $dynamicNumberArray(java.lang.Object v) { if (v instanceof $DealRt.Table t && t.$array() != null) { java.util.ArrayList<java.lang.Object> a = t.$array(); double[] data = new double[a.size()]; for (int i = 0; i < a.size(); i++) { try { data[i] = ((java.lang.Double) $check(\"number\", a.get(i))).doubleValue(); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return new $DealRt.__NumberArray(data); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
         emitLine("static $DealRt.__StringArray $dynamicStringArray(java.lang.Object v) { if (v instanceof $DealRt.Table t && t.$array() != null) { java.util.ArrayList<java.lang.Object> a = t.$array(); java.lang.String[] data = new java.lang.String[a.size()]; for (int i = 0; i < a.size(); i++) { try { data[i] = (java.lang.String) $check(\"string\", a.get(i)); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return new $DealRt.__StringArray(data); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
         emitLine("static $DealRt.__BooleanArray $dynamicBooleanArray(java.lang.Object v) { if (v instanceof $DealRt.Table t && t.$array() != null) { java.util.ArrayList<java.lang.Object> a = t.$array(); boolean[] data = new boolean[a.size()]; for (int i = 0; i < a.size(); i++) { try { data[i] = ((java.lang.Boolean) $check(\"boolean\", a.get(i))).booleanValue(); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return new $DealRt.__BooleanArray(data); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
+        emitLine("static $DealRt.__BytesArray $dynamicBytesArray(java.lang.Object v) { if (v instanceof $DealRt.Table t && t.$array() != null) { java.util.ArrayList<java.lang.Object> a = t.$array(); $DealRt.Bytes[] data = new $DealRt.Bytes[a.size()]; for (int i = 0; i < a.size(); i++) { try { data[i] = ($DealRt.Bytes) $check(\"bytes\", a.get(i)); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return new $DealRt.__BytesArray(data); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
+        emitLine("static $DealRt.__BytesOrNullArray $dynamicBytesOrNullArray(java.lang.Object v) { if (v instanceof $DealRt.Table t && t.$array() != null) { java.util.ArrayList<java.lang.Object> a = t.$array(); $DealRt.Bytes[] data = new $DealRt.Bytes[a.size()]; for (int i = 0; i < a.size(); i++) { try { data[i] = ($DealRt.Bytes) $check(\"?bytes\", a.get(i)); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return new $DealRt.__BytesOrNullArray(data); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
         emitLine(int32Mode
             ? "static $DealRt.__IntOrNullArray $dynamicIntOrNullArray(java.lang.Object v) { if (v instanceof $DealRt.Table t && t.$array() != null) { java.util.ArrayList<java.lang.Object> a = t.$array(); java.lang.Integer[] data = new java.lang.Integer[a.size()]; for (int i = 0; i < a.size(); i++) { try { data[i] = (java.lang.Integer) $check(\"?int\", a.get(i)); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return new $DealRt.__IntOrNullArray(data); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }"
             : "static $DealRt.__IntOrNullArray $dynamicIntOrNullArray(java.lang.Object v) { if (v instanceof $DealRt.Table t && t.$array() != null) { java.util.ArrayList<java.lang.Object> a = t.$array(); java.lang.Long[] data = new java.lang.Long[a.size()]; for (int i = 0; i < a.size(); i++) { try { data[i] = (java.lang.Long) $check(\"?int\", a.get(i)); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return new $DealRt.__IntOrNullArray(data); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
@@ -5357,8 +5361,10 @@ public final class JvmBackend {
         // The invoke signature is built through the DIAGNOSTIC-FREE
         // mapper: pre-registration of the orchestrator's collected
         // shape set must never invent an E6000, and an unrepresentable
-        // signature (bytes/table carriers inside the signature) keeps
-        // its E6000 at the call site, never a broken wrapper class.
+        // signature (table | null positions and host-class carriers
+        // inside the signature) keeps its E6000 at the call site,
+        // never a broken wrapper class. Bytes carriers are
+        // representable (ISSUE-0160).
         if (!isRepresentableSignature(f)) return null;
         if (emittedWrapperShapes.add(id)) {
             StringBuilder body = new StringBuilder();
@@ -5392,9 +5398,10 @@ public final class JvmBackend {
      * True when the signature's invoke method maps every parameter and
      * the return type to a real Java carrier through the diagnostic-free
      * mapper — the shape the shared wrapper class can carry without an
-     * E6000. Signatures with bytes/table carriers or classes the module
-     * cannot reference are not representable (their E6000 surfaces at
-     * the emission call site, as before the shared-scope migration).
+     * E6000. Signatures with table | null positions or classes the
+     * module cannot reference are not representable (their E6000
+     * surfaces at the emission call site, as before the shared-scope
+     * migration); bytes carriers are representable (ISSUE-0160).
      */
     private boolean isRepresentableSignature(Type.Func f) {
         String ret = silentReturnJavaType(f.returnType());
@@ -6001,14 +6008,14 @@ public final class JvmBackend {
             case Type.Number ignored -> "java.lang.Double";
             case Type.Boolean ignored -> "java.lang.Boolean";
             case Type.String ignored -> "java.lang.String";
-            case Type.Bytes ignored -> "java.lang.Object";
+            case Type.Bytes ignored -> "$DealRt.Bytes";
             case Type.Nullable n -> switch (n.inner()) {
                 case Type.Int ignored ->
                     int32Mode ? "java.lang.Integer" : "java.lang.Long";
                 case Type.Number ignored -> "java.lang.Double";
                 case Type.Boolean ignored -> "java.lang.Boolean";
                 case Type.String ignored -> "java.lang.String";
-                case Type.Bytes ignored -> "java.lang.Object";
+                case Type.Bytes ignored -> "$DealRt.Bytes";
                 default -> "java.lang.Object";
             };
             default -> "java.lang.Object";
@@ -6041,8 +6048,8 @@ public final class JvmBackend {
                         unsupported("host export '" + name + "' of module '"
                             + raw + "' declares unsupported parameter type '"
                             + typeName(pt) + "' (the JVM host ABI slice "
-                            + "supports int, number, boolean, string, and "
-                            + "their nullable forms as parameters)", span);
+                            + "supports int, number, boolean, string, bytes, "
+                            + "and their nullable forms as parameters)", span);
                         ok = false;
                     }
                 }
@@ -6051,8 +6058,8 @@ public final class JvmBackend {
                     unsupported("host export '" + name + "' of module '"
                         + raw + "' declares unsupported return type '"
                         + typeName(ret) + "' (the JVM host ABI slice "
-                        + "supports int, number, boolean, string, null, and "
-                        + "their nullable forms as returns)", span);
+                        + "supports int, number, boolean, string, bytes, "
+                        + "null, and their nullable forms as returns)", span);
                     ok = false;
                 }
             } else {
@@ -6076,7 +6083,7 @@ public final class JvmBackend {
             case Type.Number ignored -> true;
             case Type.Boolean ignored -> true;
             case Type.String ignored -> true;
-            case Type.Bytes ignored -> false;
+            case Type.Bytes ignored -> true;
             default -> false;
         };
     }
@@ -6089,14 +6096,21 @@ public final class JvmBackend {
             case Type.Number ignored -> "double";
             case Type.Boolean ignored -> "boolean";
             case Type.String ignored -> "java.lang.String";
-            case Type.Bytes ignored -> null;
+            // ISSUE-0160 D5: bytes-typed host parameters arrive as the
+            // shared $DealRt.Bytes carrier (the load-time
+            // getDeclaredMethod class literal, the call-time parameter
+            // boundary — a failed load-time resolution raises the
+            // pinned E8010 "parameter {i} type mismatch", never a
+            // masking read-site error); nullable forms pass Java null
+            // as the DEAL null.
+            case Type.Bytes ignored -> "$DealRt.Bytes";
             case Type.Nullable n -> switch (n.inner()) {
                 case Type.Int ignored ->
                     int32Mode ? "java.lang.Integer" : "java.lang.Long";
                 case Type.Number ignored -> "java.lang.Double";
                 case Type.Boolean ignored -> "java.lang.Boolean";
                 case Type.String ignored -> "java.lang.String";
-                case Type.Bytes ignored -> null;
+                case Type.Bytes ignored -> "$DealRt.Bytes";
                 default -> null;
             };
             default -> null;
@@ -6112,14 +6126,14 @@ public final class JvmBackend {
             case Type.Number ignored -> "double.class";
             case Type.Boolean ignored -> "boolean.class";
             case Type.String ignored -> "java.lang.String.class";
-            case Type.Bytes ignored -> "java.lang.Object.class";
+            case Type.Bytes ignored -> "$DealRt.Bytes.class";
             case Type.Nullable n -> switch (n.inner()) {
                 case Type.Int ignored ->
                     int32Mode ? "java.lang.Integer.class" : "java.lang.Long.class";
                 case Type.Number ignored -> "java.lang.Double.class";
                 case Type.Boolean ignored -> "java.lang.Boolean.class";
                 case Type.String ignored -> "java.lang.String.class";
-                case Type.Bytes ignored -> "java.lang.Object.class";
+                case Type.Bytes ignored -> "$DealRt.Bytes.class";
                 default -> "java.lang.Object.class";
             };
             default -> "java.lang.Object.class";
@@ -6310,12 +6324,13 @@ public final class JvmBackend {
 
     /**
      * The element descriptor a table-read array target dispatches on
-     * ({@code [int]}, {@code [string]}, {@code [?int]},
-     * {@code [@module/Name]}, {@code [?@module/Name]}, …), or {@code null}
-     * for an element type the slice does not support at the untyped
-     * boundary (nested arrays, function arrays, table elements — the
-     * caller records the E6000). Mirrors the element-type surface of the
-     * retired per-wrapper gates exactly.
+     * ({@code [int]}, {@code [string]}, {@code [?int]}, {@code [bytes]},
+     * {@code [?bytes]}, {@code [@module/Name]}, {@code [?@module/Name]},
+     * …), or {@code null} for an element type the slice does not
+     * support at the untyped boundary (nested arrays, function arrays,
+     * table elements — the caller records the E6000). Mirrors the
+     * element-type surface of the retired per-wrapper gates exactly;
+     * bytes elements joined with ISSUE-0160.
      */
     private String elementCheckDescriptor(Type element) {
         return switch (element) {
@@ -7176,7 +7191,7 @@ public final class JvmBackend {
             case Type.Null ignored ->
                 emitLine("out.put(" + name + ", null);");
             case Type.Table ignored ->
-                emitLine("out.put(" + name + ", " + valueCode + ");");
+                emitLine("out.put(" + name + ", __jsonShape(" + valueCode + "));");
             case Type.Class c -> {
                 String ref = jsonClassRef(c, cf.span());
                 if (optional) {
@@ -8206,6 +8221,95 @@ public final class JvmBackend {
         emitLine("throw new DealError(\"E8001\", \"unsupported type for JSON encoding: \" + (v instanceof $DealRt.FnValue ? \"function\" : v instanceof $DealRt.Bytes ? \"bytes\" : v.getClass().getSimpleName()));");
         indent--;
         emitLine("}");
+        emitLine("// ---- @jsonable table-field shape validation (ISSUE-0160 D6) ----");
+        emitLine("// deal/runtime.lua _json_table_shape mirror: the @jsonable");
+        emitLine("// C$toJson walker validates every table FIELD value BEFORE the");
+        emitLine("// stringifier runs (LuaJIT's _json_to_value jtype \"table\"");
+        emitLine("// arm), so a table-held value outside the finite acyclic");
+        emitLine("// JSON-shaped set — a bytes carrier, a function, a class");
+        emitLine("// instance, a NaN/Infinity leaf — raises E8001 \"value is");
+        emitLine("// not JSON-shaped\", a re-entered table/array raises");
+        emitLine("// \"cyclic value cannot be encoded as JSON\", and nesting");
+        emitLine("// past " + JSON_TABLE_DEPTH_LIMIT + " levels raises the depth guard —");
+        emitLine("// byte-identical to the LuaJIT @jsonable reference BEFORE");
+        emitLine("// std/json's encode_value ever runs. The std/json stringify");
+        emitLine("// surface keeps its own encode_value-parity arm above");
+        emitLine("// (\"unsupported type for JSON encoding: bytes\" — std/json.lua's");
+        emitLine("// explicit bytes arm), so the two LuaJIT surfaces stay");
+        emitLine("// byte-distinct exactly like the reference runtime.");
+        emitLine("static $DealRt.Table __jsonShape($DealRt.Table v) {");
+        indent++;
+        emitLine("java.util.Set<java.lang.Object> seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());");
+        emitLine("__jsonShapeWalk(v, seen, 0);");
+        emitLine("return v;");
+        indent--;
+        emitLine("}");
+        emitLine("static void __jsonShapeWalk(java.lang.Object v, java.util.Set<java.lang.Object> seen, int depth) {");
+        indent++;
+        emitLine("if (depth > " + JSON_TABLE_DEPTH_LIMIT + ") throw new DealError(\"E8001\", \"maximum JSON nesting depth (512) exceeded\");");
+        emitLine("if (v == null) return;");
+        emitLine("if (v instanceof java.lang.Boolean) return;");
+        emitLine("if (v instanceof java.lang.String) return;");
+        emitLine("if (v instanceof java.lang.Integer) return;");
+        emitLine("if (v instanceof java.lang.Long) return;");
+        emitLine("if (v instanceof java.lang.Number n) {");
+        indent++;
+        emitLine("double d = n.doubleValue();");
+        emitLine("if (java.lang.Double.isNaN(d) || java.lang.Double.isInfinite(d)) throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
+        emitLine("return;");
+        indent--;
+        emitLine("}");
+        emitLine("if (v instanceof $DealRt.Table t) {");
+        indent++;
+        emitLine("if (!seen.add(v)) throw new DealError(\"E8001\", \"cyclic value cannot be encoded as JSON\");");
+        emitLine("java.util.ArrayList<java.lang.Object> arr = t.$array();");
+        emitLine("if (arr != null) {");
+        indent++;
+        emitLine("for (java.lang.Object e : arr) __jsonShapeWalk(e, seen, depth + 1);");
+        indent--;
+        emitLine("} else {");
+        indent++;
+        emitLine("for (java.lang.Object e : t.$entries().values()) __jsonShapeWalk(e, seen, depth + 1);");
+        indent--;
+        emitLine("}");
+        emitLine("seen.remove(v);");
+        emitLine("return;");
+        indent--;
+        emitLine("}");
+        emitLine("if (v instanceof $DealRt.__RefArray a) {");
+        indent++;
+        emitLine("if (!seen.add(v)) throw new DealError(\"E8001\", \"cyclic value cannot be encoded as JSON\");");
+        emitLine("for (java.lang.Object e : a.data) __jsonShapeWalk(e, seen, depth + 1);");
+        emitLine("seen.remove(v);");
+        emitLine("return;");
+        indent--;
+        emitLine("}");
+        emitLine("if (v instanceof $DealRt.__IntArray) return;");
+        emitLine("if (v instanceof $DealRt.__StringArray) return;");
+        emitLine("if (v instanceof $DealRt.__BooleanArray) return;");
+        emitLine("if (v instanceof $DealRt.__IntOrNullArray) return;");
+        emitLine("if (v instanceof $DealRt.__StringOrNullArray) return;");
+        emitLine("if (v instanceof $DealRt.__BooleanOrNullArray) return;");
+        emitLine("if (v instanceof $DealRt.__NumberArray a) {");
+        indent++;
+        emitLine("for (double e : a.data) { if (java.lang.Double.isNaN(e) || java.lang.Double.isInfinite(e)) throw new DealError(\"E8001\", \"value is not JSON-shaped\"); }");
+        emitLine("return;");
+        indent--;
+        emitLine("}");
+        emitLine("if (v instanceof $DealRt.__NumberOrNullArray a) {");
+        indent++;
+        emitLine("for (java.lang.Double e : a.data) { if (e != null && (java.lang.Double.isNaN(e) || java.lang.Double.isInfinite(e))) throw new DealError(\"E8001\", \"value is not JSON-shaped\"); }");
+        emitLine("return;");
+        indent--;
+        emitLine("}");
+        emitLine("if (v instanceof java.util.List<?> l) { for (java.lang.Object e : l) __jsonShapeWalk(e, seen, depth + 1); return; }");
+        emitLine("if (v instanceof java.util.Map<?, ?> m) { for (java.lang.Object e : m.values()) __jsonShapeWalk(e, seen, depth + 1); return; }");
+        emitLine("throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
+        indent--;
+        emitLine("}");
+
+        indent--;
+        emitLine("}");
         emitLine("static java.lang.String __jsonQuote(java.lang.String s) {");
         indent++;
         emitLine("// ISSUE-0302 stringify-side unpaired-surrogate scan");
@@ -8955,8 +9059,9 @@ public final class JvmBackend {
         String shape = registerWrapperShape(funcType);
         if (shape == null) {
             unsupported("function values whose signature contains "
-                + "bytes/table carriers (deferred to the ISSUE-0160 recursive "
-                + "bytes-bearing wrapper closure)", fd.span());
+                + "unsupported carriers (table | null positions and "
+                + "host-class carriers — deferred to the ISSUE-0110 "
+                + "descriptor join)", fd.span());
             return;
         }
         String mapped = declareLocal(fd.name(), funcType);
@@ -8997,8 +9102,9 @@ public final class JvmBackend {
         String shape = registerWrapperShape(ft);
         if (shape == null) {
             unsupported("function values whose signature contains "
-                + "bytes/table carriers (deferred to the ISSUE-0160 recursive "
-                + "bytes-bearing wrapper closure)", fe.span());
+                + "unsupported carriers (table | null positions and "
+                + "host-class carriers — deferred to the ISSUE-0110 "
+                + "descriptor join)", fe.span());
             return "null";
         }
         Type returnType = ft.returnType();
@@ -10972,14 +11078,15 @@ public final class JvmBackend {
             // The wrapper field always exists for a module function: the
             // shared $DealRt scope carries every wrapper shape, and
             // emitFunction emits the per-declaration wrapper field.
-            // Signature shapes with bytes/table carriers are rejected
+            // Signature shapes with table | null positions are rejected
             // earlier at the parameter/return type mapping (E6000), so
             // no dangling reference can be emitted here; the null
             // funcType arm stays defensive.
             if (fs.funcType() == null) {
                 unsupported("function values whose signature contains "
-                    + "bytes/table carriers (deferred to the ISSUE-0160 recursive "
-                    + "bytes-bearing wrapper closure)", id.span());
+                    + "unsupported carriers (table | null positions and "
+                    + "host-class carriers — deferred to the ISSUE-0110 "
+                    + "descriptor join)", id.span());
                 return "null";
             }
             return javaName(id.name()) + "$fn";
@@ -12043,15 +12150,17 @@ public final class JvmBackend {
         String shape = registerWrapperShape(target);
         if (shape == null) {
             unsupported("function values whose signature contains "
-                + "bytes/table carriers (deferred to the ISSUE-0160 recursive "
-                + "bytes-bearing wrapper closure)", value.span());
+                + "unsupported carriers (table | null positions and "
+                + "host-class carriers — deferred to the ISSUE-0110 "
+                + "descriptor join)", value.span());
             return "null";
         }
         String actualShape = registerWrapperShape(actual);
         if (actualShape == null) {
             unsupported("function values whose signature contains "
-                + "bytes/table carriers (deferred to the ISSUE-0160 recursive "
-                + "bytes-bearing wrapper closure)", value.span());
+                + "unsupported carriers (table | null positions and "
+                + "host-class carriers — deferred to the ISSUE-0110 "
+                + "descriptor join)", value.span());
             return "null";
         }
         // Evaluate the value expression first (strict left-to-right /
@@ -12175,8 +12284,9 @@ public final class JvmBackend {
         String shape = registerWrapperShape(target);
         if (shape == null) {
             unsupported("function values whose signature contains "
-                + "bytes/table carriers (deferred to the ISSUE-0160 recursive "
-                + "bytes-bearing wrapper closure)", value.span());
+                + "unsupported carriers (table | null positions and "
+                + "host-class carriers — deferred to the ISSUE-0110 "
+                + "descriptor join)", value.span());
             return "null";
         }
         StringBuilder sb = new StringBuilder("new ").append(shape)
@@ -12395,8 +12505,9 @@ public final class JvmBackend {
         String shape = registerWrapperShape(actual);
         if (shape == null) {
             unsupported("function values whose signature contains "
-                + "bytes/table carriers (deferred to the ISSUE-0160 recursive "
-                + "bytes-bearing wrapper closure)", value.span());
+                + "unsupported carriers (table | null positions and "
+                + "host-class carriers — deferred to the ISSUE-0110 "
+                + "descriptor join)", value.span());
             return "null";
         }
         String tmp = nextFunctionValueTempName();
@@ -12686,8 +12797,9 @@ public final class JvmBackend {
             String shape = registerWrapperShape(f);
             if (shape == null) {
                 unsupported("function values whose signature contains "
-                    + "bytes/table carriers (deferred to the ISSUE-0160 recursive "
-                    + "bytes-bearing wrapper closure)", call.callee().span());
+                    + "unsupported carriers (table | null positions and "
+                    + "host-class carriers — deferred to the ISSUE-0110 "
+                    + "descriptor join)", call.callee().span());
                 return "null";
             }
             String callee = emitExpression(call.callee());
@@ -13358,10 +13470,11 @@ public final class JvmBackend {
 
     /**
      * True when {@code e} is an index read of one of the four supported
-     * primitive array types — together with the local class reads of
-     * {@link #isClassArrayRead}, the in-scope read shapes that can yield
-     * the LuaJIT nil past the end. Table indexing and out-of-slice
-     * element types are not affected (they are E6000 elsewhere).
+     * primitive array types or a bytes[] read (ISSUE-0160) — together
+     * with the local class reads of {@link #isClassArrayRead}, the
+     * in-scope read shapes that can yield the LuaJIT nil past the end.
+     * Table indexing and out-of-slice element types are not affected
+     * (they are E6000 elsewhere).
      */
     private boolean isPrimitiveArrayRead(ExpressionNode e) {
         if (!(e instanceof IndexExpr idx)) return false;
@@ -14640,17 +14753,18 @@ public final class JvmBackend {
                 // Function-type annotations (ISSUE-0098 slice), with the
                 // async marker lifted by ISSUE-0099: build the internal
                 // Type.Func from the complete canonical signature
-                // surface — primitives/string/null, arrays, classes,
-                // nullables, and nested sync/async function types
-                // (ISSUE-0301 D2: the shared per-signature wrapper
-                // machinery carries every shape the injective encoding
-                // covers), preserving the marker so the wrapper
-                // machinery carries async function values unchanged.
-                // Bytes/table carriers inside the signature stay
-                // rejected here (deferred to the ISSUE-0160 recursive
-                // bytes-bearing wrapper closure) —
-                // E6000, never a silent miscompile (DEAL v1.2 function
-                // types carry no rest arm).
+                // surface — primitives/string/null, bytes, arrays,
+                // classes, nullables, and nested sync/async function
+                // types (ISSUE-0301 D2: the shared per-signature
+                // wrapper machinery carries every shape the injective
+                // encoding covers), preserving the marker so the
+                // wrapper machinery carries async function values
+                // unchanged. Bytes carriers inside the signature are
+                // representable (the recursive bytes-bearing wrapper
+                // closure landed with ISSUE-0160); table carriers stay
+                // rejected here (deferred to the ISSUE-0110 descriptor
+                // join) — E6000, never a silent miscompile (DEAL v1.2
+                // function types carry no rest arm).
                 List<Type> paramTypes = new ArrayList<>();
                 boolean ok = true;
                 for (FunctionTypeParam p : ft.params()) {
@@ -14659,11 +14773,11 @@ public final class JvmBackend {
                         ok = false;
                         break;
                     }
-                    if (hasBytesOrTableCarrier(pt)) {
+                    if (hasTableCarrier(pt)) {
                         unsupported("function values whose signature "
-                            + "contains bytes/table carriers (deferred to "
-                            + "the ISSUE-0160 recursive bytes-bearing "
-                            + "wrapper closure)", p.type().span());
+                            + "contains table carriers (deferred to "
+                            + "the ISSUE-0110 descriptor join)",
+                            p.type().span());
                         ok = false;
                         break;
                     }
@@ -14672,10 +14786,10 @@ public final class JvmBackend {
                 Type rt = resolveTypeNode(ft.returnType());
                 if (rt == Type.Error.INSTANCE) {
                     ok = false;
-                } else if (hasBytesOrTableCarrier(rt)) {
+                } else if (hasTableCarrier(rt)) {
                     unsupported("function values whose signature contains "
-                        + "bytes/table carriers (deferred to the ISSUE-0160 recursive "
-                        + "bytes-bearing wrapper closure)", ft.returnType().span());
+                        + "table carriers (deferred to the ISSUE-0110 "
+                        + "descriptor join)", ft.returnType().span());
                     ok = false;
                 }
                 yield ok ? new Type.Func(paramTypes, rt, ft.isAsync())
@@ -14684,29 +14798,30 @@ public final class JvmBackend {
         };
     }
 
-    /** True when the type tree carries a {@code bytes} or {@code table}
-     * carrier anywhere inside it (arrays, nullables, and nested
-     * function signatures recurse): those carriers stay rejected at
-     * function-type annotations for the ISSUE-0160 recursive
-     * bytes-bearing wrapper closure (E6000).
-     * Every other shape — primitives/string/null, arrays, classes,
+    /** True when the type tree carries a {@code table} carrier anywhere
+     * inside it (arrays, nullables, and nested function signatures
+     * recurse): table carriers stay rejected at function-type
+     * annotations for the ISSUE-0110 descriptor join (E6000). Every
+     * other shape — primitives/string/null, bytes, arrays, classes,
      * nullables, and nested sync/async function types — is carried by
-     * the shared per-signature wrapper machinery (ISSUE-0301 D2). */
-    private static boolean hasBytesOrTableCarrier(Type t) {
-        if (t instanceof Type.Bytes || t instanceof Type.Table) {
+     * the shared per-signature wrapper machinery (ISSUE-0301 D2); the
+     * recursive bytes-bearing wrapper closure (ISSUE-0160) makes
+     * bytes-bearing signatures representable. */
+    private static boolean hasTableCarrier(Type t) {
+        if (t instanceof Type.Table) {
             return true;
         }
         if (t instanceof Type.Array a) {
-            return hasBytesOrTableCarrier(a.element());
+            return hasTableCarrier(a.element());
         }
         if (t instanceof Type.Nullable n) {
-            return hasBytesOrTableCarrier(n.inner());
+            return hasTableCarrier(n.inner());
         }
         if (t instanceof Type.Func f) {
             for (Type p : f.paramTypes()) {
-                if (hasBytesOrTableCarrier(p)) return true;
+                if (hasTableCarrier(p)) return true;
             }
-            return hasBytesOrTableCarrier(f.returnType());
+            return hasTableCarrier(f.returnType());
         }
         return false;
     }
@@ -14794,8 +14909,9 @@ public final class JvmBackend {
                 String shape = registerWrapperShape(f);
                 if (shape == null) {
                     unsupported("function values whose signature contains "
-                        + "bytes/table carriers (deferred to the ISSUE-0160 recursive "
-                        + "bytes-bearing wrapper closure)", span);
+                        + "unsupported carriers (table | null positions and "
+                        + "host-class carriers — deferred to the ISSUE-0110 "
+                        + "descriptor join)", span);
                     yield null;
                 }
                 yield shape;
@@ -14881,8 +14997,9 @@ public final class JvmBackend {
                 String shape = registerWrapperShape(f);
                 if (shape == null) {
                     unsupported("function values whose signature contains "
-                        + "bytes/table carriers (deferred to the ISSUE-0160 recursive "
-                        + "bytes-bearing wrapper closure)", span);
+                        + "unsupported carriers (table | null positions and "
+                        + "host-class carriers — deferred to the ISSUE-0110 "
+                        + "descriptor join)", span);
                     yield null;
                 }
                 yield shape;
@@ -15080,11 +15197,13 @@ public final class JvmBackend {
             case Type.Number ignored -> "__NumberArray";
             case Type.String ignored -> "__StringArray";
             case Type.Boolean ignored -> "__BooleanArray";
+            case Type.Bytes ignored -> "__BytesArray";
             case Type.Nullable ne -> switch (ne.inner()) {
                 case Type.Int ignored -> "__IntOrNullArray";
                 case Type.Number ignored -> "__NumberOrNullArray";
                 case Type.String ignored -> "__StringOrNullArray";
                 case Type.Boolean ignored -> "__BooleanOrNullArray";
+                case Type.Bytes ignored -> "__BytesOrNullArray";
                 case Type.Class c -> classOrNullArrayWrapperName(c.name());
                 case Type.Bytes ignored -> "__BytesOrNullArray";
                 default -> refArrayWrapperId(element);
@@ -15261,8 +15380,9 @@ public final class JvmBackend {
                 && ne.inner() instanceof Type.Func f) {
             if (registerWrapperShape(f) == null) {
                 unsupported("function arrays whose signature contains "
-                    + "bytes/table carriers (deferred to the ISSUE-0160 recursive "
-                    + "bytes-bearing wrapper closure)", span);
+                    + "unsupported carriers (table | null positions and "
+                    + "host-class carriers — deferred to the ISSUE-0110 "
+                    + "descriptor join)", span);
                 return null;
             }
             registerRefArrayShape(element);
@@ -15276,8 +15396,9 @@ public final class JvmBackend {
         if (element instanceof Type.Func f) {
             if (registerWrapperShape(f) == null) {
                 unsupported("function arrays whose signature contains "
-                    + "bytes/table carriers (deferred to the ISSUE-0160 recursive "
-                    + "bytes-bearing wrapper closure)", span);
+                    + "unsupported carriers (table | null positions and "
+                    + "host-class carriers — deferred to the ISSUE-0110 "
+                    + "descriptor join)", span);
                 return null;
             }
             registerRefArrayShape(element);
@@ -15314,8 +15435,9 @@ public final class JvmBackend {
                 && ne.inner() instanceof Type.Func f) {
             if (registerWrapperShape(f) == null) {
                 unsupported("function arrays whose signature contains "
-                    + "bytes/table carriers (deferred to the ISSUE-0160 recursive "
-                    + "bytes-bearing wrapper closure)", span);
+                    + "unsupported carriers (table | null positions and "
+                    + "host-class carriers — deferred to the ISSUE-0110 "
+                    + "descriptor join)", span);
                 return null;
             }
             registerRefArrayShape(element);
@@ -15329,8 +15451,9 @@ public final class JvmBackend {
         if (element instanceof Type.Func f) {
             if (registerWrapperShape(f) == null) {
                 unsupported("function arrays whose signature contains "
-                    + "bytes/table carriers (deferred to the ISSUE-0160 recursive "
-                    + "bytes-bearing wrapper closure)", span);
+                    + "unsupported carriers (table | null positions and "
+                    + "host-class carriers — deferred to the ISSUE-0110 "
+                    + "descriptor join)", span);
                 return null;
             }
             registerRefArrayShape(element);
@@ -15346,7 +15469,7 @@ public final class JvmBackend {
 
     /**
      * Registers the per-element-shape {@code [D]} check branch for a
-     * nested-array, function-array, or bytes-array element shape
+     * nested-array or function-array element shape
      * (ISSUE-0301 D5): the emitted {@code $checkArray} accepts the
      * matching shared wrapper (identity) and an array-mode
      * {@code $DealRt.Table} (the {@code __jsonTableValue} dynamic array

@@ -1,0 +1,31 @@
+// @spec: Async/Await — bytes-bearing async function values
+// @description: First-class async(bytes)->bytes values assign to typed locals, containerize in nullable arrays (null and real elements), and complete exactly once through await with the canonical async(bytes)->bytes descriptor (v1.2)
+// @expected: runtime-ok
+// @features: bytes, async, functions
+
+async function echo(b: bytes): bytes {
+  return b;
+}
+
+export async function test_bytes_async_closure(): int {
+  let f: async (b: bytes) => bytes = echo;
+  let out: bytes = await f(bytes(2));
+  if (out.length !== 2) {
+    throw { code: "TEST_FAIL", message: "async bytes value failed" };
+  }
+  let fs: ((async (b: bytes) => bytes) | null)[] = [];
+  fs[fs.length] = echo;
+  fs[fs.length] = null;
+  let g: (async (b: bytes) => bytes) | null = fs[0];
+  if (g !== null) {
+    let again: bytes = await g(bytes(3));
+    if (again[0] !== 0) {
+      throw { code: "TEST_FAIL", message: "containerized async invoke failed" };
+    }
+  }
+  return 0;
+}
+
+export function main(): null {
+  return null;
+}

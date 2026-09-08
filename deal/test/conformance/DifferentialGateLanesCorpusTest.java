@@ -33,7 +33,7 @@ import java.util.Set;
  *       {@code error-handling/try-catch.deal} plus two more converged
  *       cases) passes byte-exact on all three lanes;</li>
  *   <li>the failure set is exactly the tracked non-fatal set (the
- *       46 JVM registry entries, including the eight ISSUE-0504
+ *       45 JVM registry entries, including the eight ISSUE-0504
  *       host-boundary E8011 carrier mismatches) plus the enumerated differential
  *       failures — every one naming fixture,
  *       backend, and the closed mismatch class with the first differing
@@ -98,9 +98,10 @@ public class DifferentialGateLanesCorpusTest {
      * ISSUE-0158 lifted the E3019 bytes-equality gate — +10
      * runtime-error, +1 companion; ISSUE-0504 lands the eight
      * host-boundary runtime-ok fixtures with their uniform three-backend
-     * sidecars). */
-    private static final int TOTAL_FIXTURES = 596;
-    private static final int RUNTIME_CASES = 351;
+     * sidecars; the three ISSUE-0160 recursive bytes-closure fixtures
+     * land on top). */
+    private static final int TOTAL_FIXTURES = 599;
+    private static final int RUNTIME_CASES = 357;
     private static final int FRONTEND_COMPILED = 191;
     private static final int COMPILE_PINS = 4;
 
@@ -115,16 +116,20 @@ public class DifferentialGateLanesCorpusTest {
      * seven runtime-ok std/json fixtures ISSUE-0302 promoted out of
      * the registry (the four jsonable residuals and the three stdlib
      * pins; the ten std/json runtime-error fixtures stay tracked with
-     * the ISSUE-0276 snapshot reason), so the count is the landed
-     * 46). */
+     * the ISSUE-0276 snapshot reason), so the count was the landed
+     * 46; the ISSUE-0160 recursive bytes-bearing closure then
+     * promoted the last bytes entry (bytes-descriptor-boundary) out
+     * of the registry — the closure carriers landed, the fixture
+     * passes the lane, and the stale-skip gate forced the entry out —
+     * so the count is the landed 45). */
     private static final int KNOWN_FAILURES_TRACKED = 0;
     private static final int SKIP_REGISTRY_ENTRIES = 45;
 
     /** The per-backend pass/fail counters of the full run. */
     private static final Map<String, int[]> PER_BACKEND = Map.of(
-        "luajit", new int[] {319, 32},
-        "jvm", new int[] {238, 113},
-        "js", new int[] {321, 30});
+        "luajit", new int[] {322, 32},
+        "jvm", new int[] {241, 114},
+        "js", new int[] {324, 30});
 
     /** The designated converged subset (task criterion (a)): every lane
      * of every fixture here passes byte-exact. */
@@ -139,7 +144,6 @@ public class DifferentialGateLanesCorpusTest {
     /** The tracked non-fatal registry set (the live pre-flip JVM
      * registry entries, every one still failing on the jvm lane). */
     private static final Set<String> TRACKED_REGISTRY = Set.of(
-        "backend-runtime/bytes/bytes-descriptor-boundary.deal",
         "backend-runtime/bytes/bytes-index-bounds.deal",
         "backend-runtime/bytes/bytes-write-range.deal",
         "backend-runtime/class-runtime-errors/dynamic-bad-class-array-element-e8001.deal",
@@ -148,6 +152,7 @@ public class DifferentialGateLanesCorpusTest {
         "backend-runtime/class-runtime-errors/dynamic-bad-imported-class-param-e8001.deal",
         "backend-runtime/class-runtime-errors/dynamic-bad-nullable-class-e8001.deal",
         "backend-runtime/defaults/plan-host-discriminator.deal",
+        "backend-runtime/defaults/plan-imported-provider-scope.deal",
         "backend-runtime/defaults/plan-phase-order-provided-before-defaults.deal",
         "backend-runtime/host-abi/host-array-return-ok.deal",
         "backend-runtime/host-abi/host-async-shape-value.deal",

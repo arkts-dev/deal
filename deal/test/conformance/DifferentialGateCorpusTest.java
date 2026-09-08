@@ -100,13 +100,18 @@ public class DifferentialGateCorpusTest {
      * change: total 588 -> 596, backend-runtime 378 -> 386,
      * runtime-ok 250 -> 258; the runtime-error population (93), the
      * known-fail population, the companions (50), the frontend
-     * populations, and the compile pins (4) are unchanged. */
-    private static final int TOTAL_FIXTURES = 596;
+     * populations, and the compile pins (4) are unchanged.
+     * ISSUE-0160 (the recursive bytes-bearing closure) then adds the
+     * three closure fixtures (bytes-array-closure, bytes-async-closure,
+     * bytes-function-array-closure) with their three-backend runtime-ok
+     * sidecars: total 596 -> 599, backend-runtime 386 -> 389,
+     * runtime-ok 258 -> 261. */
+    private static final int TOTAL_FIXTURES = 599;
     private static final int FRONTEND_FIXTURES = 210;
-    private static final int BACKEND_RUNTIME_FIXTURES = 386;
+    private static final int BACKEND_RUNTIME_FIXTURES = 389;
     private static final int COMPILE_OK = 64;
     private static final int COMPILE_ERROR = 131;
-    private static final int RUNTIME_OK = 258;
+    private static final int RUNTIME_OK = 261;
     private static final int RUNTIME_ERROR = 93;
     private static final int RUNTIME_ERROR_SIDECARS = 93;
     private static final int COMPANIONS = 50;

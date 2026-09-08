@@ -108,6 +108,13 @@ import java.util.List;
  * 351-fixture denominator (the eight JVM-GAP-HOST-ABI-SHAPES skip
  * entries) and the LuaJIT summary reads {@code Total: 546,
  * Passed: 546} with zero tracked known-fails and zero staged
+ * failures. The ISSUE-0160 recursive bytes-bearing wrapper closure
+ * then promoted the last bytes skip ({@code bytes-descriptor-boundary})
+ * and added the three closure corpus fixtures, so the JVM summary
+ * moves to {@code passed 327, failed 0, skipped 27 ... pass rate
+ * 92.4%} over the 354-fixture denominator and the LuaJIT summary
+ * reads {@code Total: 549, Passed: 549} with zero tracked
+ * known-fails and zero staged failures.
  * failures.
  *
  * <p>The test runs from the repository root (the {@code run_tests.sh}
@@ -148,7 +155,7 @@ public class JvmLaneStatePinTest {
     private static final String JVM_GATES_PASSED =
         "Gates PASSED: frontend 100%; backend-runtime zero applicable "
 
-            + "failures AND >= 80% pass rate over the unchanged 351-test "
+            + "failures AND >= 80% pass rate over the unchanged 357-test "
             + "denominator; zero unclassified skips; zero stale skips; "
             + "zero stale known-fail markers; zero probe runner "
             + "exceptions.";
@@ -193,11 +200,16 @@ public class JvmLaneStatePinTest {
     // int/Integer, so the module-level load-time export check raises
     // E8011 for every fixture importing host/boundary — so the
     // summary moves to the re-pinned numbers below (denominator 351,
-    // pass rate 92.0%).
+    // pass rate 92.0%). The ISSUE-0160 recursive bytes-bearing
+    // wrapper closure then promoted the last bytes skip
+    // (bytes-descriptor-boundary) and added the three closure corpus
+    // fixtures (bytes-array-closure, bytes-async-closure,
+    // bytes-function-array-closure), moving the summary to the final
+    // re-pinned numbers below.
     private static final String JVM_SUMMARY =
-        "Backend-runtime on JVM: denominator 351 (every on-disk runtime "
-            + "test, unchanged), passed 324, failed 0, skipped 27 "
-            + "(classified), known-fail 0 (tracked) \u2014 pass rate 92.3%";
+        "Backend-runtime on JVM: denominator 354 (every on-disk runtime "
+            + "test, unchanged), passed 327, failed 0, skipped 27 "
+            + "(classified), known-fail 0 (tracked) \u2014 pass rate 92.4%";
 
     private static final String JVM_PROFILE_AUTHORITY =
         "Profile-authority accounting: 0 legacy-authority fixture(s) "
@@ -218,17 +230,9 @@ public class JvmLaneStatePinTest {
             + "(found DEAL_ERROR_CODE: E8004)";
 
     // ISSUE-0500 (v12-gap-suite-integration E1/E2 co-landing): the
-    // LuaJIT lane discovers 545 fixtures after the ISSUE-0501 landing
-    // (528 + 17 frontend fixtures: the preserved resolution subtree
-    // with its nine companions and the transformed direct declaration
-    // fixture), so the summary reads 496 recorded results
-    // (545 - 49 companions, zero tracked known-fail: this tree
-    // promoted the FFI-manifest frontend pin to compile-error E2010).
-    // ISSUE-0547 (the ISSUE-0160 container step) adds the two
-    // bytes-container fixtures, so the summary reads 498 recorded
-    // results (547 discovered - 49 companions). ISSUE-0502 (the
-    // gap-suite runtime population landing) then adds forty-one
-    // fixtures — 30 runtime-ok (the promoted gap
+    // LuaJIT lane discovers 588 fixtures after the ISSUE-0501 landing
+    // plus the ISSUE-0547 bytes-container fixtures plus the ISSUE-0502
+    // gap-suite runtime population (30 runtime-ok — the promoted gap
     // bytes-boundary-order included, its retained-known-fail marker
     // forced off by the zero-skip promotion gate after ISSUE-0158
     // lifted the E3019 bytes-equality gate), 10 runtime-error, and 1
@@ -239,13 +243,16 @@ public class JvmLaneStatePinTest {
     // real runtime-ok fixture). ISSUE-0504 (the host ABI conversion
     // leaf) then lands the eight host-boundary fixtures, so the
     // summary reads 546 recorded results (596 discovered - 50
-    // companions) and the backend-runtime phase reads 357/357.
+    // companions) and the backend-runtime phase reads 357/357; the
+    // three ISSUE-0160 recursive bytes-closure corpus fixtures then
+    // land on top (599 discovered), so the summary reads 549 recorded
+    // results and the backend-runtime phase reads 360/360.
     private static final String LUA_SUMMARY =
-        "Total: 546, Passed: 546, Failed: 0, Skipped: 0, "
+        "Total: 549, Passed: 549, Failed: 0, Skipped: 0, "
             + "KnownFailures (tracked): 0, StagedFailures (tracked): 0";
 
     private static final String LUA_PHASE =
-        "  LuaJIT backend-runtime conformance (v1.2): 357/357 passed, "
+        "  LuaJIT backend-runtime conformance (v1.2): 360/360 passed, "
             + "0 failed, 0 skipped, 0 known-fail (tracked), 0 "
             + "staged-fail (tracked)";
 
@@ -256,7 +263,7 @@ public class JvmLaneStatePinTest {
     private static final String LUA_PROFILE_AUTHORITY =
         "Profile-authority accounting: 1 legacy-authority result(s) "
             + "(LEGACY_REGRESSION + LEGACY_SAFE_INT \u2014 zero "
-            + "v1.2/promotion credit; 1 passed, 0 failed), 595 v1.2-credit "
+            + "v1.2/promotion credit; 1 passed, 0 failed), 598 v1.2-credit "
             + "result(s) (COMMON_SHADOW + DEAL_V1_2_INT32)";
 
 

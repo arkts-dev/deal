@@ -181,20 +181,15 @@ import java.util.concurrent.atomic.AtomicInteger;
  *       were removed with their promotions (the A5 seam promotions and
  *       the ISSUE-0397 I6 int32-math-abs-min absInt long-magnitude
  *       arm); the gap keeps no entries.</li>
- *   <li><b>JVM-GAP-BYTES</b> (1 entry) — the direct typed-position
- *       bytes boundary is closed (ISSUE-0160 step 1, implemented by
- *       the ISSUE-0158 carrier mapping): locals, parameters, returns,
- *       and class-field storage map to the shared {@code $DealRt.Bytes}
- *       reference, bytes defaults evaluate once per construction, and
- *       the nine direct bytes fixtures promoted through the real
- *       pipeline; ISSUE-0547 (the ISSUE-0160 container step) then
- *       closed the bytes container layer (bytes[]/(bytes | null)[] and
- *       nested compositions through the __BytesArray/__BytesOrNullArray
- *       carriers) and landed the two bytes-container fixtures; the one
- *       remaining fixture pins the recursive bytes-bearing FUNCTION
- *       wrapper closure ((bytes)->bytes signature positions), which
- *       stays E6000 at the function-type-annotation gate until the
- *       later ISSUE-0160 function steps land. ISSUE-0502 (the
+ *   <li><b>JVM-GAP-BYTES</b> — RETIRED (ISSUE-0160): the bytes
+ *       runtime lane landed with ISSUE-0158 (zero-fill allocation,
+ *       E8012/E8013, single-evaluation writes, class fields all pass
+ *       on JVM), and the recursive bytes-bearing array/nullable/
+ *       function wrapper closure landed with the ISSUE-0160 closure —
+ *       bytes[] / (bytes | null)[] / (bytes)-&gt;bytes carriers, the
+ *       pinned JSON bytes rejection, and the host bytes ABI arms — so
+ *       bytes-descriptor-boundary.deal passes the real pipeline and
+ *       the stale-skip gate forced the entry out. ISSUE-0502 (the
  *       gap-suite runtime population) lands the eight promoted gap
  *       bytes fixtures <b>without entries</b>: every one passes the
  *       real JVM pipeline on the ISSUE-0158 direct bytes lane
@@ -214,10 +209,12 @@ import java.util.concurrent.atomic.AtomicInteger;
  *   <li>frontend-classified files: 100% pass (zero failed);</li>
  *   <li>backend-runtime: zero applicable failures AND at least 80% of
  *       the on-disk backend-runtime tests (the per-run
- *       {@code runtimeDenominator()} count — 343 with the restored
+ *       {@code runtimeDenominator()} count — 354 with the restored
  *       known-fail fixture, the two ISSUE-0547 bytes-container
- *       fixtures, and the forty ISSUE-0502 gap-suite runtime
- *       fixtures) pass through the frontend →
+ *       fixtures, the forty ISSUE-0502 gap-suite runtime fixtures,
+ *       the eight ISSUE-0504 host-boundary fixtures, and the three
+ *       ISSUE-0160 recursive bytes-closure fixtures)
+ *       pass through the frontend →
  *       CompilationOrchestrator → JVM codegen → javac → JVM
  *       pipeline — on the post-unit tree the lane passes the two
  *       former staged cases (the flipped time fixture and the promoted
@@ -305,35 +302,21 @@ public class JvmConformanceTest {
         // reaches the int32 checkInt gate and raises E8004
         // (int32-math-abs-min pins the promoted case on both retained
         // routes), and the stale skip was removed.
-        // ---- JVM-GAP-BYTES: the direct typed-position bytes boundary ----
-        // Direct typed positions are closed at the ISSUE-0160 step-1
-        // boundary (the ISSUE-0158 carrier mapping): locals,
-        // parameters, returns, and class-field storage emit the shared
-        // $DealRt.Bytes reference (javaLocalType/nullableJavaType and
-        // the required/optional field gates), bytes(n) class defaults
-        // evaluate once per construction through the default
-        // machinery, and the nine direct bytes fixtures — buffer ops,
-        // E8012 bounds, E8013 range, length, single-evaluation and
-        // validation-after-RHS write order, class-field isolation, and
-        // the two source-location pins — pass the real pipeline; their
-        // skip entries became stale and the stale-skip gate forced
-        // them out with the promotion.
-        // The one remaining fixture pins the RECURSIVE bytes-bearing
-        // FUNCTION closure: its (bytes)->bytes and ((bytes)->bytes |
-        // null)[] signature positions still hit the live
-        // function-type-annotation bytes gate (the ISSUE-0160 function
-        // steps own the lift) — the [bytes]/?bytes container positions
-        // now compile through the ISSUE-0547 carriers, but the probe
-        // still fails E6000 at the signature sites.
-        skip("backend-runtime/bytes/bytes-descriptor-boundary.deal",
-            "canonical (bytes)->bytes / [?(bytes)->bytes] function "
-                + "signatures require the recursive bytes-bearing "
-                + "function wrapper closure (the ISSUE-0160 function "
-                + "steps); JvmBackend raises E6000 at the function-type-"
-                + "annotation bytes gate.", "JVM-GAP-BYTES");
-
-        // ---- JVM-GAP-BYTES: the gap-suite runtime population
-        // (ISSUE-0502) ----
+        // ---- JVM-GAP-BYTES: RETIRED (ISSUE-0160 recursive bytes
+        // closure) ----
+        // The direct bytes lane landed with ISSUE-0158: bytes(n)
+        // allocation (zero-filled byte[]), b.length, unsigned reads,
+        // E8012 index bounds, E8013 value range, single-evaluation
+        // writes, reference aliasing, and bytes-typed class fields all
+        // pass the real pipeline — their skip entries became stale and
+        // the stale-skip gate forced them out with the promotion. The
+        // last entry pinned the RECURSIVE bytes-bearing container/
+        // function closure (bytes[] / ?bytes / (bytes)->bytes array+
+        // function carriers): the closure landed with ISSUE-0160 (the
+        // shared __BytesArray/__BytesOrNullArray carriers, the bytes
+        // wrapper signatures, and the [bytes]/[?bytes] $checkArray
+        // rows), so bytes-descriptor-boundary.deal passes the real
+        // pipeline and the stale-skip gate forced the entry out.
         // The eight promoted gap bytes fixtures carry NO entries: the
         // ISSUE-0158 direct bytes lane passes every one on the real
         // JVM pipeline (bytes-class-default, bytes-write-zero,
@@ -470,17 +453,22 @@ public class JvmConformanceTest {
         // ---- JVM-GAP-DEFAULTS-PLANS: the v1.2 default-plan lane
         // (ISSUE-0340, LuaJIT-owned) ----
         // The defaults corpus pins per-attempt default plans: imported
-        // defaults run in the declaring module's scope through the
-        // provider's published plan records — the ISSUE-0544 lowering
-        // epic lifted the JVM imported-non-literal-default plan-shape
-        // guard, so plan-imported-provider-scope passes the real
-        // pipeline (promoted with its skip entry removed). The
-        // phase-order fixture probes provided-value evaluation before
-        // defaults with a caught E8002 (an Error | null local with a
-        // catch-block assignment): the JVM slice rejects the
+        // non-literal defaults run in the declaring module's scope under
+        // LuaJIT (the provider's module-local default function executes
+        // through the imported plan), and the phase-order fixture probes
+        // provided-value evaluation before defaults with a caught E8002
+        // (an Error | null local with a catch-block assignment). The JVM
+        // backend evaluates defaults inline per call and rejects
+        // non-literal defaults on imported classes with E6000
+        // (JvmBackend's declared scope), and its slice rejects the
         // Error-typed nullable local plus the catch-assignment pattern
-        // of that probe, so it stays a LuaJIT/JS-lane pin until the JVM
-        // Error-literal/catch-assignment slice lands.
+        // of the phase-order probe. Both fixtures stay LuaJIT/JS-lane
+        // pins until JVM default plans land (ISSUE-0277).
+        skip("backend-runtime/defaults/plan-imported-provider-scope.deal",
+            "E6000: non-literal default expression on an imported class "
+                + "(JVM defaults evaluate in the declaring module's "
+                + "scope under LuaJIT; the JVM imported-class slice "
+                + "rejects them).", "JVM-GAP-DEFAULTS-PLANS");
         skip("backend-runtime/defaults/plan-phase-order-provided-before-defaults.deal",
             "E6000: the Error | null catch-probe local and the "
                 + "catch-block assignment are outside the JVM slice "
@@ -534,24 +522,11 @@ public class JvmConformanceTest {
             + "export form, and the E8011 legacy long/Long carrier "
             + "signature mismatches of the verbatim gap host "
             + "implementations under the int32-activated profile",
-        "JVM-GAP-BYTES", "bytes runtime lane — direct typed "
-            + "positions (locals, parameters, returns, class-field "
-            + "storage and bytes defaults) map to the shared "
-            + "$DealRt.Bytes reference and the nine direct bytes "
-            + "fixtures promoted (ISSUE-0158 implementation; "
-            + "ISSUE-0160 step-1 boundary); the ISSUE-0547 container "
-            + "step closes bytes[]/(bytes | null)[]/nested compositions "
-            + "through the __BytesArray/__BytesOrNullArray carriers; "
-            + "the remaining fixture pins the recursive bytes-bearing "
-            + "function wrapper closure ((bytes)->bytes signatures), "
-            + "which stays E6000 until the later ISSUE-0160 function "
-            + "steps",
-        "JVM-GAP-DEFAULTS-PLANS", "v1.2 default-plan lane — the "
-            + "ISSUE-0544 lowering epic lifted the imported-non-literal-"
-            + "default plan-shape guard (imported defaults run through "
-            + "the provider's published plan records); the phase-order "
-            + "Error-catch probe stays outside the JVM slice (ISSUE-0340 "
-            + "is the LuaJIT emitter cutover)",
+        "JVM-GAP-DEFAULTS-PLANS", "v1.2 default-plan lane — imported "
+            + "non-literal defaults evaluate in the declaring module's "
+            + "scope under LuaJIT (E6000 on the JVM imported-class "
+            + "slice) and the phase-order Error-catch probe is outside "
+            + "the JVM slice (ISSUE-0340 is the LuaJIT emitter cutover)",
         "JVM-GAP-ERROR-LITERAL-DEFAULTS", "Error literal default "
             + "filling — JvmBackend raises E6000 on an Error literal "
             + "without both code and message fields (LuaJIT-owned "

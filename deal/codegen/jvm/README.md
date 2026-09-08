@@ -273,11 +273,12 @@ wrapper infrastructure, no duplicated lowering:
   `invoke`; and arity extension inherits the adapter machinery.
 - **Errors** raised by an awaited operation propagate at the await site
   out of the caller (the runner's `DEAL_ERROR_CODE` contract).
-- **Out of slice (E6000, deferred to the int32-bytes lane):** async
-  function expressions and function types whose signatures contain
-  bytes/table carriers (the shared per-signature wrapper machinery
-  carries primitives/string/null, arrays, classes, nullables, and
-  nested sync/async function types — ISSUE-0301 D2). The v1.2 module
+- **Out of slice (E6000, deferred to the ISSUE-0110 descriptor
+  join):** function types whose signatures contain table carriers.
+  The shared per-signature wrapper machinery carries
+  primitives/string/null, bytes, arrays, classes, nullables, and
+  nested sync/async function types (ISSUE-0301 D2; the recursive
+  bytes-bearing wrapper closure landed with ISSUE-0160). The v1.2 module
   shape (E1049) removes module-level statements, so the load-time
   function-value-read guards stay defensive, pinned exactly like the
   sibling ISSUE-0098 load-time guards.

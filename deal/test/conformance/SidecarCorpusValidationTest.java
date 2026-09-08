@@ -220,9 +220,11 @@ public class SidecarCorpusValidationTest {
      * host-boundary-unicode-string-roundtrip,
      * host-boundary-nullable-int-null-roundtrip, and
      * host-boundary-nullable-int-value-roundtrip — the host +8 delta:
-     * 250 -> 258. */
+     * 250 -> 258. ISSUE-0160 (the recursive bytes-bearing closure)
+     * adds the three closure fixtures with their three-backend
+     * runtime-ok sidecars: 258 -> 261. */
 
-    private static final int RUNTIME_OK_COUNT = 258;
+    private static final int RUNTIME_OK_COUNT = 261;
 
     /**
      * The exact runtime-error population (ISSUE-0350 completeness, plus

@@ -1,0 +1,53 @@
+// @spec: Bytes — recursive array/nullable closure
+// @description: Arbitrary-depth Array/Nullable bytes compositions — bytes[][], (bytes | null)[], and bytes[] | null — read, write, append, and alias with LuaJIT semantics: reference identity, alias-observed mutation, the DEAL null element, and reference-identity equality (v1.2)
+// @expected: runtime-ok
+// @features: bytes, arrays, descriptors
+
+function stamp(xs: bytes[][]): int {
+  xs[0][0][0] = 7;
+  return xs[0][0][0];
+}
+
+export function test_bytes_array_closure(): int {
+  let b: bytes = bytes(2);
+  let xs: bytes[][] = [[b]];
+  if (stamp(xs) !== 7) {
+    throw { code: "TEST_FAIL", message: "nested bytes write failed" };
+  }
+  if (b[0] !== 7) {
+    throw { code: "TEST_FAIL", message: "alias mutation not visible through the source buffer" };
+  }
+  let ns: (bytes | null)[] = [];
+  ns[ns.length] = bytes(1);
+  ns[ns.length] = null;
+  let first: bytes | null = ns[0];
+  if (first !== null) {
+    first[0] = 9;
+    if (first[0] !== 9) {
+      throw { code: "TEST_FAIL", message: "nullable element write not visible" };
+    }
+  }
+  if (ns[1] !== null) {
+    throw { code: "TEST_FAIL", message: "null element lost" };
+  }
+  let alias: bytes[] = xs[0];
+  alias[0][0] = 11;
+  if (b[0] !== 11) {
+    throw { code: "TEST_FAIL", message: "array alias must share storage" };
+  }
+  let distinct: bytes[] = [bytes(2)];
+  if (distinct === xs[0]) {
+    throw { code: "TEST_FAIL", message: "distinct arrays must not be reference-equal" };
+  }
+  let maybe: bytes[] | null = alias;
+  if (maybe !== null) {
+    if (maybe[0] === b) {
+      return 0;
+    }
+  }
+  throw { code: "TEST_FAIL", message: "nullable array alias failed" };
+}
+
+export function main(): null {
+  return null;
+}
