@@ -35,6 +35,7 @@ import deal.identity.CanonicalClassIdentity;
 import deal.publication.PublicationStager;
 import deal.parser.*;
 import deal.semantic.CheckedProjectBuildResult;
+import deal.semantic.CapabilityRegistry;
 import deal.semantic.CheckedProjectBuilder;
 import deal.semantic.CompilerInvocation;
 import deal.semantic.CompilerProfileProvider;
@@ -661,9 +662,10 @@ public final class CompilationOrchestrator {
      * {@link CompilerProfileProvider} from
      * {@link ReleaseConfiguration#CURRENT_RELEASE_STATE} and the release
      * capability registry (A2 — the single release-owned selection
-     * point; while the release state is {@code PRE_ACTIVATION} the
-     * derived public profile is {@code LEGACY_SAFE_INT} and production
-     * SHARED routing stays unreachable, foundation F1/F4). The provider
+     * point; the release state is {@code V1_2_ACTIVE} after the E12
+     * activation release action, so the derived public profile is
+     * {@code DEAL_V1_2_INT32} and production SHARED routing is eligible
+     * for the promoted capability × target pairs, foundation F1/F4).
      * is the only invocation constructor — the orchestrator never
      * constructs an invocation itself.
      */
@@ -1950,15 +1952,21 @@ public final class CompilationOrchestrator {
             log("  Requirement manifest computation failed: " + result.diagnostics());
         }
     }
-
     /**
      * Runs the route-plan foundation after the manifests (ISSUE-0290):
      * hands the checked project, the interface index, the manifests, the
-     * release capability registry, and the compile's target to
-     * {@link MigrationPlanner} — one deterministic plan per target over
-     * the closed routing rules (F4). Public builds stay all-LEGACY while
-     * the release state is {@code PRE_ACTIVATION}; planner E6005
-     * diagnostics merge into {@link #diagnostics()} and fail the
+     * capability registry the invocation recorded, and the compile's
+     * target to {@link MigrationPlanner} — one deterministic plan per
+     * target over the closed routing rules (F4). The planner's F1/F7
+     * guard requires the registry digest to equal the invocation's
+     * recorded digest, so the registry is resolved from the invocation:
+     * the promoted release registry (E12's committed derivation — the
+     * production route set, F4 rule 4 eligible for promoted
+     * capability × target pairs) or the all-{@code SHADOW} release
+     * default (the internal harnesses' recorded registry — F4 rule 4
+     * ineligible, all-LEGACY); any other digest fails the planner guard
+     * (a producer-defect wiring defect, never an E6005 class). Planner
+     * E6005 diagnostics merge into {@link #diagnostics()} and fail the
      * compile. The JS backend skips the phase: the closed route-plan
      * target axis is {@code LUAJIT|JVM} (foundation F4/F5), and no
      * closed target exists for JS in this epic.
@@ -1980,7 +1988,7 @@ public final class CompilationOrchestrator {
             return; // JS: no closed route-plan target in this epic
         }
         RoutePlanResult result = MigrationPlanner.planRoutes(
-            invocation, ReleaseConfiguration.releaseCapabilityRegistry(),
+            invocation, registryForInvocation(invocation),
             checked.input(), checked.index(),
             this.requirementManifests.manifests(), target, Set.of());
         this.routePlan = result;
@@ -1989,6 +1997,31 @@ public final class CompilationOrchestrator {
             hasErrors = true;
             log("  Route planning failed: " + result.diagnostics());
         }
+    }
+
+    /**
+     * Resolves the capability registry the invocation recorded (F1/F7
+     * discipline): the promoted release registry when the invocation
+     * records its digest (the production path — {@code Main} and
+     * {@link #defaultInvocation()}), or the all-{@code SHADOW} release
+     * default when the invocation records that digest (the internal
+     * harnesses' explicit invocations — lanes, conformance seam,
+     * regression purposes). Any other digest leaves the invocation's own
+     * mismatch for the planner's defensive guard, which rejects it as a
+     * producer-defect wiring error.
+     */
+    private static CapabilityRegistry registryForInvocation(
+            CompilerInvocation invocation) {
+        String recorded = invocation.capabilityRegistryHash();
+        CapabilityRegistry release = ReleaseConfiguration.releaseCapabilityRegistry();
+        if (release.capabilityRegistryHash().equals(recorded)) {
+            return release;
+        }
+        CapabilityRegistry releaseDefault = CapabilityRegistry.releaseRegistry();
+        if (releaseDefault.capabilityRegistryHash().equals(recorded)) {
+            return releaseDefault;
+        }
+        return release;
     }
 
     // =========================================================================

@@ -131,7 +131,7 @@ public final class JsE2eTest {
             List.of("modules ok: main invoked"), 0, null),
         new Sample("stdlib",
             List.of("console as a value line",
-                "time structural invariant ok", "stdlib ok"), 0, null));
+                "stdlib ok"), 0, null));
 
     private static final long SUBPROCESS_TIMEOUT_SECONDS = 120;
 

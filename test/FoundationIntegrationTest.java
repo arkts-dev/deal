@@ -146,16 +146,21 @@ import java.util.stream.Stream;
  *       {@code CompilerInvocation} record guard.</li>
  *   <li>ReleaseConfiguration consumers (A2):
  *       {@code CURRENT_RELEASE_STATE} is pinned to
- *       {@code PRE_ACTIVATION}; {@code deal/Main.java} and
+ *       {@code V1_2_ACTIVE} (the committed E12 flip) with the release
+ *       registry carrying the E12 promotion list;
+ *       {@code deal/Main.java} and
  *       {@code CompilationOrchestrator.defaultInvocation()} both consume
  *       the constant with no hardcoded release-state literal remaining;
  *       the default invocation and the CLI path resolve the public build
  *       from the release configuration.</li>
- *   <li>Armed gate + rollback owned halves (A2/A3): a
+ *   <li>Activated gate + rollback owned halves (A2/A3): a
  *       {@code PRE_ACTIVATION} public build of an int-using module
  *       derives {@code LEGACY_SAFE_INT} with an all-LEGACY plan and
- *       empty {@code shadowModules}; an internal {@code V1_2_ACTIVE}
- *       construction derives {@code DEAL_V1_2_INT32}; a
+ *       empty {@code shadowModules} (the internal matrix row — never a
+ *       post-activation rollback target); the post-flip
+ *       {@code V1_2_ACTIVE} public build over the promoted release
+ *       registry derives {@code DEAL_V1_2_INT32} and routes the
+ *       int-using module {@code SHARED} (F4 rule 4 reachable); a
  *       {@code V1_2_ACTIVE} public build over the all-SHADOW release
  *       registry produces the route-only terminal state (profile
  *       {@code DEAL_V1_2_INT32}, release state {@code V1_2_ACTIVE},
@@ -186,14 +191,14 @@ import java.util.stream.Stream;
  *       pinned outcome (code + origin compared; canonical
  *       {@code int out of range} for the shared primitive and retained
  *       {@code int out of safe range} for the retained routes; raw
- *       messages never compared across sides). The armed-state gate
- *       facts are asserted (armed at {@code PRE_ACTIVATION}, the public
- *       build of an int-using module derives {@code LEGACY_SAFE_INT}
- *       with an all-LEGACY plan and empty shadowModules, an internal
- *       {@code V1_2_ACTIVE} construction derives
- *       {@code DEAL_V1_2_INT32}, the flip is exactly the one
- *       {@code ReleaseConfiguration} constant edit and is not
- *       performed), and each named constituent — parser, shared
+ *       messages never compared across sides). The activated-state gate
+ *       facts are asserted (activated at {@code V1_2_ACTIVE}, the public
+ *       build of an int-using module derives {@code DEAL_V1_2_INT32}
+ *       with a SHARED plan over the promoted release registry and empty
+ *       shadowModules, a re-armed {@code PRE_ACTIVATION} probe fails,
+ *       the flip stays exactly the one {@code ReleaseConfiguration}
+ *       constant edit plus the promotion list and is never re-edited),
+ *       and each named constituent — parser, shared
  *       semantics, LuaJIT route, JVM route, provider matrix, release
  *       configuration, catalog, harness seam — is faulted in turn and
  *       proven to fail the verification (no hollow pass).</li>
@@ -227,7 +232,7 @@ public class FoundationIntegrationTest {
             testVerboseReportWiring();
             testA1MatrixResolutionAndRecordGuard();
             testReleaseConfigurationConsumers();
-            testArmedStateAndRollbackOwnedHalves();
+            testActivatedStateAndRollbackOwnedHalves();
             testCapabilityRegistryTransitionRollbackObservation();
             testCommonShadowPreActivationWiringProof();
             testProfileAwareParserWiringProof();
@@ -1176,14 +1181,23 @@ public class FoundationIntegrationTest {
     static void testReleaseConfigurationConsumers() throws Exception {
         System.out.println("-- ReleaseConfiguration: single selection point consumed by Main + defaultInvocation --");
 
-        // Armed, not fired: the constant is pinned to PRE_ACTIVATION at
-        // this stage's gate and carries the release registry.
-        check(ReleaseConfiguration.CURRENT_RELEASE_STATE == ReleaseState.PRE_ACTIVATION,
-            "ReleaseConfiguration.CURRENT_RELEASE_STATE == PRE_ACTIVATION at the gate");
-        check(ReleaseConfiguration.releaseCapabilityRegistry().capabilityRegistryHash()
-                .equals(CapabilityRegistry.releaseRegistry().capabilityRegistryHash()),
-            "ReleaseConfiguration carries the release capability registry");
 
+        // Fired (E12): the constant is pinned to V1_2_ACTIVE and the
+        // release registry carries the E12 promotion derivation.
+        check(ReleaseConfiguration.CURRENT_RELEASE_STATE == ReleaseState.V1_2_ACTIVE,
+            "ReleaseConfiguration.CURRENT_RELEASE_STATE == V1_2_ACTIVE (the "
+                + "committed E12 flip)");
+        check(!ReleaseConfiguration.releaseCapabilityRegistry()
+                .capabilityRegistryHash()
+                .equals(CapabilityRegistry.releaseRegistry()
+                    .capabilityRegistryHash()),
+            "ReleaseConfiguration carries the promoted release registry (its "
+                + "digest differs from the all-SHADOW release default)");
+        check(ReleaseConfiguration.releaseCapabilityRegistry()
+                .state(SemanticCapability.SIGNED_INT32, Target.LUAJIT)
+                == CapabilityRegistry.State.PROMOTED,
+            "the release registry promotes SIGNED_INT32 × LUAJIT (the E12 "
+                + "promotion list)");
         // Both former hardcoded selection sites now read the constant:
         // no ReleaseState.PRE_ACTIVATION selection literal remains in
         // deal/Main.java or the orchestrator.
@@ -1248,7 +1262,7 @@ public class FoundationIntegrationTest {
             }
             check(rc == 0, "the CLI compile exits 0");
             check(cliOut.toString(StandardCharsets.UTF_8)
-                    .contains("Release state: PRE_ACTIVATION"),
+                    .contains("Release state: V1_2_ACTIVE"),
                 "the CLI verbose report prints the release state read from the "
                     + "release configuration");
         } finally {
@@ -1257,20 +1271,21 @@ public class FoundationIntegrationTest {
     }
 
     // =========================================================================
-    // 7. Armed gate facts (A2) + rollback owned halves (A3)
+    // 7. Activated gate facts (A2, post-flip) + rollback owned halves (A3)
     // =========================================================================
 
-    static void testArmedStateAndRollbackOwnedHalves() throws Exception {
-        System.out.println("-- Armed gate (A2) + rollback owned halves (A3) --");
+    static void testActivatedStateAndRollbackOwnedHalves() throws Exception {
+        System.out.println("-- Activated gate (A2, post-flip) + rollback owned "
+            + "halves (A3) --");
 
         CapabilityRegistry registry = CapabilityRegistry.releaseRegistry();
 
-        // Armed gate fact: the public flip is E12's action; this stage
-        // keeps PRE_ACTIVATION.
-        check(ReleaseConfiguration.CURRENT_RELEASE_STATE == ReleaseState.PRE_ACTIVATION,
-            "the gate is armed at PRE_ACTIVATION (the public flip is E12's action)");
+        // Activated gate fact: E12's public flip is committed —
+        // V1_2_ACTIVE with the promoted release registry.
+        check(ReleaseConfiguration.CURRENT_RELEASE_STATE == ReleaseState.V1_2_ACTIVE,
+            "the gate is activated at V1_2_ACTIVE (the committed E12 flip)");
 
-        Path tmp = Files.createTempDirectory("deal-foundation-armed");
+        Path tmp = Files.createTempDirectory("deal-foundation-activated");
         try {
             Path src = tmp.resolve("src");
             Files.createDirectories(src);
@@ -1287,9 +1302,11 @@ public class FoundationIntegrationTest {
             List<Path> roots = List.of(src.toAbsolutePath());
             Path entry = src.resolve("main.deal").toAbsolutePath();
 
-            // A public build of an int-using module: LEGACY_SAFE_INT, an
-            // all-LEGACY plan, and empty shadowModules (production SHARED
-            // ineligible — F4 rule 3).
+            // The pre-activation matrix row remains an internal
+            // derivation fact: PUBLIC_BUILD + PRE_ACTIVATION derives
+            // LEGACY_SAFE_INT with an all-LEGACY plan and empty
+            // shadowModules (F4 rule 3) — inspection only, never a
+            // post-activation rollback target.
             CompilerInvocation publicPre = CompilerProfileProvider.resolve(
                 ReleaseState.PRE_ACTIVATION, registry);
             CompilationOrchestrator orchestrator = new CompilationOrchestrator(
@@ -1302,10 +1319,10 @@ public class FoundationIntegrationTest {
             check(orchestrator.invocation().semanticProfile()
                     == SemanticProfile.LEGACY_SAFE_INT,
                 "a PRE_ACTIVATION public build of an int-using module derives "
-                    + "LEGACY_SAFE_INT");
+                    + "LEGACY_SAFE_INT (the internal matrix row)");
             RoutePlanResult plan = orchestrator.routePlan();
             check(plan != null && !plan.hasErrors() && plan.plan() != null,
-                "the public build produces exactly one route plan");
+                "the PRE_ACTIVATION public build produces exactly one route plan");
             if (plan != null && !plan.hasErrors() && plan.plan() != null) {
                 check(plan.plan().entries().values().stream()
                         .allMatch(route -> route == ModuleRoute.LEGACY),
@@ -1315,8 +1332,45 @@ public class FoundationIntegrationTest {
                         + "(production SHARED ineligible)");
             }
 
-            // An internal V1_2_ACTIVE construction derives
-            // DEAL_V1_2_INT32 (F4 rule 4 structurally reachable).
+            // The post-flip public build: V1_2_ACTIVE over the promoted
+            // release registry derives DEAL_V1_2_INT32 and routes the
+            // int-using module SHARED (F4 rule 4 reachable — production
+            // shared routing is eligible post-activation).
+            CompilerInvocation postFlip = CompilerProfileProvider.resolve(
+                ReleaseState.V1_2_ACTIVE,
+                ReleaseConfiguration.releaseCapabilityRegistry());
+            check(postFlip.semanticProfile() == SemanticProfile.DEAL_V1_2_INT32
+                    && postFlip.releaseState() == ReleaseState.V1_2_ACTIVE
+                    && postFlip.capabilityRegistryHash().equals(
+                        ReleaseConfiguration.releaseCapabilityRegistry()
+                            .capabilityRegistryHash()),
+                "the post-flip public build derives DEAL_V1_2_INT32 under "
+                    + "V1_2_ACTIVE with the promoted release registry hash recorded");
+            CompilationOrchestrator postFlipOrchestrator =
+                new CompilationOrchestrator(entry, tmp.resolve("build-postflip"),
+                    false, false, false, false, Backend.LUAJIT, null, roots,
+                    Path.of("std").toAbsolutePath().normalize(), null, postFlip);
+            boolean postFlipOk = postFlipOrchestrator.compile();
+            check(postFlipOk, "the post-flip public int-using build compiles: "
+                + postFlipOrchestrator.diagnostics());
+            RoutePlanResult postFlipPlan = postFlipOrchestrator.routePlan();
+            check(postFlipPlan != null && !postFlipPlan.hasErrors()
+                    && postFlipPlan.plan() != null,
+                "the post-flip public build produces exactly one route plan");
+            if (postFlipPlan != null && !postFlipPlan.hasErrors()
+                    && postFlipPlan.plan() != null) {
+                check(postFlipPlan.plan().entries().values().stream()
+                        .allMatch(route -> route == ModuleRoute.SHARED),
+                    "the post-flip public plan routes the int-using module "
+                        + "SHARED (F4 rule 4; FOUNDATION_VALUES + SIGNED_INT32 "
+                        + "promoted): " + postFlipPlan.plan().entries());
+                check(postFlipPlan.plan().shadowModules().isEmpty(),
+                    "the post-flip shared plan has empty shadowModules "
+                        + "(production SHARED, never shadow)");
+            }
+
+            // An internal V1_2_ACTIVE construction over the all-SHADOW
+            // release default derives DEAL_V1_2_INT32 (the A1 row).
             CompilerInvocation internalActive = CompilerProfileProvider.resolve(
                 ReleaseState.V1_2_ACTIVE, registry);
             check(internalActive.semanticProfile() == SemanticProfile.DEAL_V1_2_INT32
@@ -1334,12 +1388,12 @@ public class FoundationIntegrationTest {
                     false, false, false, Backend.LUAJIT, null, roots,
                     Path.of("std").toAbsolutePath().normalize(), null, internalActive);
             boolean activeOk = activeOrchestrator.compile();
-            check(activeOk, "the V1_2_ACTIVE public build compiles: "
-                + activeOrchestrator.diagnostics());
+            check(activeOk, "the V1_2_ACTIVE build over the all-SHADOW registry "
+                + "compiles: " + activeOrchestrator.diagnostics());
             RoutePlanResult activePlan = activeOrchestrator.routePlan();
             check(activePlan != null && !activePlan.hasErrors()
                     && activePlan.plan() != null,
-                "the V1_2_ACTIVE public build produces exactly one route plan");
+                "the V1_2_ACTIVE all-SHADOW build produces exactly one route plan");
             if (activePlan != null && !activePlan.hasErrors()
                     && activePlan.plan() != null) {
                 check(activeOrchestrator.invocation().semanticProfile()
@@ -1372,6 +1426,10 @@ public class FoundationIntegrationTest {
                     == SemanticProfile.DEAL_V1_2_INT32,
                 "publicProfile(V1_2_ACTIVE) = DEAL_V1_2_INT32 (no derivation back "
                     + "to a legacy public profile)");
+            check(CompilerProfileProvider.publicProfile(ReleaseState.PRE_ACTIVATION)
+                    == SemanticProfile.LEGACY_SAFE_INT,
+                "publicProfile(PRE_ACTIVATION) = LEGACY_SAFE_INT (the internal "
+                    + "matrix row — never a production rollback target)");
             String registryHash = registry.capabilityRegistryHash();
             try {
                 new CompilerInvocation(InvocationPurpose.LEGACY_REGRESSION,
@@ -1395,8 +1453,6 @@ public class FoundationIntegrationTest {
             deleteRecursively(tmp);
         }
     }
-
-    // =========================================================================
     // 7b. Capability-registry transition rollback observation
     // (ISSUE-0413: D4 steps 1-11 + D5 negatives)
     // =========================================================================
@@ -1438,12 +1494,12 @@ public class FoundationIntegrationTest {
         System.out.println("-- Capability registry transition rollback observation "
             + "(D4 steps 1-11 + D5) --");
 
-        // D5: the gate stays armed at PRE_ACTIVATION at every derivation
+        // D5: the committed V1_2_ACTIVE flip holds at every derivation
         // boundary; the V1_2_ACTIVE invocations below are internal T1
         // derivations only — the release constant is never edited.
-        check(ReleaseConfiguration.CURRENT_RELEASE_STATE == ReleaseState.PRE_ACTIVATION,
-            "PRE_ACTIVATION holds at observation entry (the public flip is never "
-                + "fired)");
+        check(ReleaseConfiguration.CURRENT_RELEASE_STATE == ReleaseState.V1_2_ACTIVE,
+            "V1_2_ACTIVE holds at observation entry (the public flip is committed by E12 and never "
+                + "re-edited here)");
 
         CapabilityRegistry release = CapabilityRegistry.releaseRegistry();
         String releaseDigestBefore = release.capabilityRegistryHash();
@@ -1496,8 +1552,8 @@ public class FoundationIntegrationTest {
 
             byte[] irBefore = Files.readAllBytes(factsRoot.resolve("main.ir.txt"));
 
-            check(ReleaseConfiguration.CURRENT_RELEASE_STATE == ReleaseState.PRE_ACTIVATION,
-                "PRE_ACTIVATION holds after compile #1 (the facts compile is an "
+            check(ReleaseConfiguration.CURRENT_RELEASE_STATE == ReleaseState.V1_2_ACTIVE,
+                "V1_2_ACTIVE holds after compile #1 (the facts compile is an "
                     + "internal T1 derivation)");
 
             if (checked == null || checked.hasErrors() || checked.input() == null
@@ -1569,8 +1625,8 @@ public class FoundationIntegrationTest {
                 "P.capabilityRegistryHash() differs from the release digest (the "
                     + "transition recomputes the digest)");
 
-            check(ReleaseConfiguration.CURRENT_RELEASE_STATE == ReleaseState.PRE_ACTIVATION,
-                "PRE_ACTIVATION holds after the P derivation (withState derives a "
+            check(ReleaseConfiguration.CURRENT_RELEASE_STATE == ReleaseState.V1_2_ACTIVE,
+                "V1_2_ACTIVE holds after the P derivation (withState derives a "
                     + "new registry; the release constant is never edited)");
 
             // D4 step 4: the promoted plan over the real planner seam.
@@ -1645,8 +1701,8 @@ public class FoundationIntegrationTest {
                 "D.capabilityRegistryHash() != P.capabilityRegistryHash() (the "
                     + "demotion recomputes the digest)");
 
-            check(ReleaseConfiguration.CURRENT_RELEASE_STATE == ReleaseState.PRE_ACTIVATION,
-                "PRE_ACTIVATION holds after the D derivation");
+            check(ReleaseConfiguration.CURRENT_RELEASE_STATE == ReleaseState.V1_2_ACTIVE,
+                "V1_2_ACTIVE holds after the D derivation");
 
             // D4 step 7: the demoted plan — silent plan-time
             // ineligibility, never E6005; zero diagnostics by the helper.
@@ -1730,8 +1786,8 @@ public class FoundationIntegrationTest {
                     + "arguments facts are missing)");
             }
 
-            check(ReleaseConfiguration.CURRENT_RELEASE_STATE == ReleaseState.PRE_ACTIVATION,
-                "PRE_ACTIVATION holds after the last plan call plus compile #2");
+            check(ReleaseConfiguration.CURRENT_RELEASE_STATE == ReleaseState.V1_2_ACTIVE,
+                "V1_2_ACTIVE holds after the last plan call plus compile #2");
 
             // D4 step 11: hash and state discipline — the A1 PUBLIC_BUILD
             // row, profile/release state equal across the transition,
@@ -1968,7 +2024,7 @@ public class FoundationIntegrationTest {
 
     // =========================================================================
     // 10. SignedInt32 integration verification (ISSUE-0398): fixed corpus,
-    // four-way agreement, armed-state gate facts, fault-injection matrix
+    // four-way agreement, activated-state gate facts, fault-injection matrix
     // =========================================================================
 
     /**
@@ -1982,8 +2038,8 @@ public class FoundationIntegrationTest {
      * compared, the canonical {@code int out of range} template for the
      * shared primitive and the pinned retained
      * {@code int out of safe range} template for both retained routes,
-     * raw messages never compared across sides. Then it asserts the
-     * armed-state gate facts (A2) and faults each named constituent in
+     * raw messages never compared across sides. Then it asserts the activated-state
+     * activated-state gate facts (A2) and faults each named constituent in
      * turn — parser, shared semantics, LuaJIT route, JVM route, provider
      * matrix, release configuration, catalog, harness seam — proving the
      * verification fails when any constituent is broken (anti-hollow).
@@ -2049,7 +2105,7 @@ public class FoundationIntegrationTest {
 
         static void runAll() throws Exception {
             testCorpusFourWayAgreement();
-            testArmedStateGateFacts();
+            testActivatedStateGateFacts();
             testFaultMatrix();
         }
 
@@ -2068,12 +2124,10 @@ public class FoundationIntegrationTest {
                 SemanticProfile.LEGACY_SAFE_INT, ReleaseState.PRE_ACTIVATION,
                 CapabilityRegistry.releaseRegistry());
         }
-
         private static CompilerInvocation publicBuildInvocation(ReleaseState state) {
             return CompilerProfileProvider.resolve(state,
-                CapabilityRegistry.releaseRegistry());
+                ReleaseConfiguration.releaseCapabilityRegistry());
         }
-
         private static Path stdlibDir() {
             return Path.of("std").toAbsolutePath().normalize();
         }
@@ -3071,39 +3125,42 @@ public class FoundationIntegrationTest {
         }
 
         // =====================================================================
-        // 10.2 Armed-state gate facts (A2)
+        // 10.2 Activated-state gate facts (A2, post-flip)
         // =====================================================================
 
-        static void testArmedStateGateFacts() throws Exception {
-            System.out.println("-- SignedInt32 armed-state gate facts (A2) --");
-            check(armedStateFactsHold(ReleaseState.PRE_ACTIVATION),
-                "the armed-state gate facts hold (release state PRE_ACTIVATION)");
-            check(!armedStateFactsHold(ReleaseState.V1_2_ACTIVE),
-                "a flipped release constant (V1_2_ACTIVE) fails the armed-state "
-                    + "verification (the flip is E12's action, never performed here)");
+        static void testActivatedStateGateFacts() throws Exception {
+            System.out.println("-- SignedInt32 activated-state gate facts (A2, post-flip) --");
+            check(activatedStateFactsHold(ReleaseState.V1_2_ACTIVE),
+                "the activated-state gate facts hold (release state V1_2_ACTIVE)");
+            check(!activatedStateFactsHold(ReleaseState.PRE_ACTIVATION),
+                "a re-armed release constant (PRE_ACTIVATION) fails the "
+                    + "activated-state verification (the flip is committed and "
+                    + "irreversible)");
         }
 
         /**
-         * Every armed-state gate fact as one predicate, evaluated end to
-         * end under the asserted release state. Returns true iff all
-         * hold: the public build of an int-using module under the
-         * asserted state derives LEGACY_SAFE_INT with an all-LEGACY plan
-         * and empty shadowModules (production SHARED ineligible), an
-         * internal V1_2_ACTIVE construction derives DEAL_V1_2_INT32, the
-         * release constant equals the asserted state and is still
-         * PRE_ACTIVATION (the flip is not performed), the flip is
-         * exactly the one ReleaseConfiguration constant edit, and no
-         * CLI/source profile selection path exists.
+         * Every activated-state gate fact as one predicate, evaluated end
+         * to end under the asserted release state. Returns true iff all
+         * hold: the public build of an int-using module under
+         * {@code V1_2_ACTIVE} derives {@code DEAL_V1_2_INT32} with a
+         * SHARED plan over the promoted release registry (F4 rule 4
+         * reachable), the pre-activation matrix row still derives
+         * {@code LEGACY_SAFE_INT} internally (never a production rollback
+         * target), the release constant is committed at
+         * {@code V1_2_ACTIVE} (a PRE_ACTIVATION probe fails), the flip
+         * stays exactly the one ReleaseConfiguration constant edit plus
+         * the promotion list, and no CLI/source profile selection path
+         * exists.
          *
          * <p>The asserted state drives the derivation, the public-build
          * compile, and the plan checks — not only the entry guard — so
-         * the {@code V1_2_ACTIVE} probe executes a genuinely flipped
+         * the {@code PRE_ACTIVATION} probe executes a genuinely re-armed
          * configuration through the real orchestrator and must fail the
-         * LEGACY_SAFE_INT gate facts. The release-constant guard runs
-         * after the parameterized facts, so a flipped-configuration
-         * probe reaches and fails them instead of short-circuiting.</p>
+         * DEAL_V1_2_INT32/SHARED gate facts. The release-constant guard
+         * runs after the parameterized facts, so a re-armed probe reaches
+         * and fails them instead of short-circuiting.</p>
          */
-        private static boolean armedStateFactsHold(ReleaseState assertedState)
+        private static boolean activatedStateFactsHold(ReleaseState assertedState)
                 throws Exception {
             // State-independent provider facts: the closed public
             // derivation in both release states.
@@ -3122,14 +3179,15 @@ public class FoundationIntegrationTest {
             }
 
             // The asserted state drives the public-build invocation and
-            // the real orchestrator compile end to end: the V1_2_ACTIVE
-            // probe executes the flipped configuration (a v1.2 public
-            // build) and only then fails the LEGACY_SAFE_INT gate facts.
+            // the real orchestrator compile end to end: the PRE_ACTIVATION
+            // probe executes a genuinely re-armed configuration (a legacy
+            // public build) and only then fails the DEAL_V1_2_INT32 gate
+            // facts.
             CompilerInvocation publicInvocation = publicBuildInvocation(assertedState);
             SignedInt32Corpus.Case intCase = SignedInt32Corpus.CASES.stream()
                 .filter(c -> c.name().equals("add_overflow_max"))
                 .findFirst().orElseThrow();
-            Path tmp = Files.createTempDirectory("deal-int32-armed");
+            Path tmp = Files.createTempDirectory("deal-int32-activated");
             try {
                 Path src = tmp.resolve("src");
                 Files.createDirectories(src);
@@ -3147,27 +3205,33 @@ public class FoundationIntegrationTest {
                     return false;
                 }
 
-                // The armed-state gate facts over the executed
-                // configuration: while PRE_ACTIVATION the public build
-                // derives LEGACY_SAFE_INT with an all-LEGACY plan and
-                // empty shadowModules (production SHARED ineligible — F4
-                // rule 3); the flipped V1_2_ACTIVE run fails the
-                // LEGACY_SAFE_INT derivation facts here.
+                // The activated-state gate facts over the executed
+                // configuration: under V1_2_ACTIVE the public build
+                // derives DEAL_V1_2_INT32 with a SHARED plan and empty
+                // shadowModules (production SHARED eligible — F4 rule 4
+                // over the promoted release registry); the re-armed
+                // PRE_ACTIVATION run fails the DEAL_V1_2_INT32
+                // derivation facts here.
                 if (CompilerProfileProvider.publicProfile(assertedState)
-                        != SemanticProfile.LEGACY_SAFE_INT) {
+                        != SemanticProfile.DEAL_V1_2_INT32) {
                     return false;
                 }
                 if (publicInvocation.semanticProfile()
-                        != SemanticProfile.LEGACY_SAFE_INT
+                        != SemanticProfile.DEAL_V1_2_INT32
                         || publicInvocation.releaseState() != assertedState) {
                     return false;
                 }
+                if (publicInvocation.capabilityRegistryHash().equals(
+                        CapabilityRegistry.releaseRegistry()
+                            .capabilityRegistryHash())) {
+                    return false; // the promoted release registry hash, never stale
+                }
                 if (orchestrator.invocation().semanticProfile()
-                        != SemanticProfile.LEGACY_SAFE_INT) {
+                        != SemanticProfile.DEAL_V1_2_INT32) {
                     return false;
                 }
                 if (!plan.plan().entries().values().stream()
-                        .allMatch(route -> route == ModuleRoute.LEGACY)) {
+                        .allMatch(route -> route == ModuleRoute.SHARED)) {
                     return false;
                 }
                 if (!plan.plan().shadowModules().isEmpty()) {
@@ -3177,18 +3241,20 @@ public class FoundationIntegrationTest {
                 deleteRecursively(tmp);
             }
 
-            // The release-constant facts: the constant must equal the
-            // asserted state and the flip must not have been performed.
-            if (ReleaseConfiguration.CURRENT_RELEASE_STATE != assertedState) {
+            // The release-constant facts: the committed constant stays
+            // V1_2_ACTIVE; a re-armed probe fails here.
+            if (ReleaseConfiguration.CURRENT_RELEASE_STATE != ReleaseState.V1_2_ACTIVE) {
                 return false;
             }
-            if (ReleaseConfiguration.CURRENT_RELEASE_STATE != ReleaseState.PRE_ACTIVATION) {
-                return false; // the flip must not have been performed
+            if (ReleaseConfiguration.CURRENT_RELEASE_STATE != assertedState) {
+                return false; // only the V1_2_ACTIVE probe can hold
             }
 
-            // The flip is exactly the one ReleaseConfiguration constant edit:
-            // both former hardcoded sites consume the constant and carry no
-            // release-state selection literal; no CLI/source profile surface.
+            // The flip stays exactly the one ReleaseConfiguration
+            // constant edit plus the promotion list: both former
+            // hardcoded sites consume the constant and carry no
+            // release-state selection literal; no CLI/source profile
+            // surface; the promotion list is the committed registry half.
             String mainSource = Files.readString(Path.of("deal/Main.java"));
             String orchestratorSource =
                 Files.readString(Path.of("deal/module/CompilationOrchestrator.java"));
@@ -3199,6 +3265,11 @@ public class FoundationIntegrationTest {
             }
             if (!orchestratorSource.contains("ReleaseConfiguration.CURRENT_RELEASE_STATE")
                     || orchestratorSource.contains("ReleaseState.PRE_ACTIVATION")) {
+                return false;
+            }
+            if (!ReleaseConfiguration.releaseCapabilityRegistry()
+                    .capabilityRegistryHash().equals(
+                        publicInvocation.capabilityRegistryHash())) {
                 return false;
             }
             return true;
@@ -3250,9 +3321,9 @@ public class FoundationIntegrationTest {
                     "faulted provider matrix (COMMON_SHADOW + LEGACY_SAFE_INT — the "
                         + "rejected combination) fails the verification");
 
-                check(!armedStateFactsHold(ReleaseState.V1_2_ACTIVE),
-                    "faulted release configuration (a flipped release constant) fails "
-                        + "the armed-state verification");
+                check(!activatedStateFactsHold(ReleaseState.PRE_ACTIVATION),
+                    "faulted release configuration (a re-armed PRE_ACTIVATION release constant) fails "
+                        + "the activated-state verification");
 
                 check(catalogAuthorityProbe(tmp, true),
                     "the intact catalog selects the legacy regression invocation and "

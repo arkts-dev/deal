@@ -243,6 +243,17 @@ public final class MigrationPlanner {
                 boolean shadowRequested = shadowRequests.contains(module.moduleId());
                 ModuleRoute route = routeOf(invocation, registry, target, manifest,
                     shadowRequested);
+                if (route == ModuleRoute.SHARED
+                        && !allImplementationImportsRouted(module, entries)) {
+                    // A tolerated declaration-only import cycle (foundation
+                    // F3's atomic-component input shape): the shared
+                    // module's implementation import has no route yet in
+                    // the planner's single ordered pass. Silent plan-time
+                    // LEGACY reroute — complete retained modules selected
+                    // before lowering, never E6005, never a within-run
+                    // fallback (the rollback reroute contract).
+                    route = ModuleRoute.LEGACY;
+                }
                 if (route == ModuleRoute.SHARED) {
                     verifySharedEdges(invocation, module, index);
                     if (shadowRequested) {
@@ -679,6 +690,28 @@ public final class MigrationPlanner {
     // =========================================================================
 
     /**
+     * The plan-time routedness precondition of a SHARED route: every
+     * implementation import of the module must already carry a route
+     * entry in the planner's single ordered pass. A missing route is the
+     * tolerated declaration-only cycle shape (foundation F3 — the
+     * orchestrator's atomic-component input) and reroutes the module
+     * LEGACY at plan time, never an exception and never an E6005 class.
+     */
+    private static boolean allImplementationImportsRouted(CheckedModuleInput module,
+                                                          Map<ModuleId, ModuleRoute> entries) {
+        for (ResolvedImport resolvedImport : module.imports()) {
+            if (resolvedImport.kind() != ExternalModuleKind.IMPLEMENTATION) {
+                continue;
+            }
+            if (!entries.containsKey(resolvedImport.resolvedModuleId())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Collects one plan-time {@link TargetModuleAbi} per legacy
      * Collects one plan-time {@link TargetModuleAbi} per legacy
      * dependency of the shared module (F4/F5): the planner-owned fields
      * copied from the index — {@code classFactoryAbi} from the

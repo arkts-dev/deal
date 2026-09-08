@@ -8032,28 +8032,52 @@ public class JvmBackendTest {
                     + "the real stored int32 mode");
         }
 
-        // The default orchestrator invocation stays
-        // PRE_ACTIVATION → LEGACY_SAFE_INT and plumbs the legacy mode.
-        CompilationOrchestrator legacyOrchestrator =
+        // The default orchestrator invocation is now the committed
+        // V1_2_ACTIVE public build: it plumbs the int32 mode. The
+        // explicit PRE_ACTIVATION invocation keeps the legacy mode for
+        // the negative-control comparison (the internal matrix row).
+        CompilationOrchestrator defaultOrchestrator =
             new CompilationOrchestrator(
                 entryFile, outputRoot, false, false, false, Backend.JVM,
                 null, roots, Path.of(".").toAbsolutePath().normalize());
+        boolean defaultOk = defaultOrchestrator.compile();
+        check(defaultOk, "default orchestrator compile succeeds: "
+            + defaultOrchestrator.diagnostics());
+        check(defaultOrchestrator.invocation().semanticProfile()
+                == SemanticProfile.DEAL_V1_2_INT32,
+            "the orchestrator default invocation derives DEAL_V1_2_INT32 "
+                + "under the committed V1_2_ACTIVE release state");
+        if (defaultOk) {
+            JvmBackend.JvmCodegenResult plumbed =
+                defaultOrchestrator.jvmGeneratedResults()
+                    .get(entryFile.toString());
+            check(plumbed != null && plumbed.int32Mode(),
+                "the default invocation plumbs the int32 mode into the "
+                    + "backend post-flip");
+        }
+
+        CompilationOrchestrator legacyOrchestrator =
+            new CompilationOrchestrator(
+                entryFile, outputRoot, false, false, false, false, Backend.JVM,
+                null, roots, Path.of(".").toAbsolutePath().normalize(), null,
+                CompilerProfileProvider.resolve(ReleaseState.PRE_ACTIVATION,
+                    CapabilityRegistry.releaseRegistry()));
         boolean legacyOk = legacyOrchestrator.compile();
-        check(legacyOk, "default orchestrator compile succeeds: "
+        check(legacyOk, "explicit legacy orchestrator compile succeeds: "
             + legacyOrchestrator.diagnostics());
         check(legacyOrchestrator.invocation().semanticProfile()
                 == SemanticProfile.LEGACY_SAFE_INT,
-            "orchestrator default invocation stays "
-                + "PRE_ACTIVATION → LEGACY_SAFE_INT");
+            "the explicit PRE_ACTIVATION invocation keeps LEGACY_SAFE_INT "
+                + "(the internal matrix row)");
         if (legacyOk) {
             JvmBackend.JvmCodegenResult plumbed =
                 legacyOrchestrator.jvmGeneratedResults()
                     .get(entryFile.toString());
             check(plumbed != null && !plumbed.int32Mode(),
-                "default invocation plumbs the LEGACY int mode into the "
-                    + "backend");
+                "the explicit legacy invocation plumbs the LEGACY int mode "
+                    + "into the backend");
         }
-        if (int32Ok && legacyOk) {
+        if (defaultOk && legacyOk) {
             String int32Source = int32Orchestrator.jvmGeneratedResults()
                 .get(entryFile.toString()).source();
             String legacySource = legacyOrchestrator.jvmGeneratedResults()
@@ -8064,10 +8088,11 @@ public class JvmBackendTest {
             check(int32Source.contains("static int intAdd(int a, int b)")
                     && !legacySource.contains("static int intAdd(int a, int b)"),
                 "orchestrator plumb selects the backend int mode: int32 "
-                    + "carriers under V1_2_ACTIVE, legacy carriers under "
-                    + "the default PRE_ACTIVATION invocation");
+                    + "carriers under V1_2_ACTIVE (the default), legacy "
+                    + "carriers under the explicit PRE_ACTIVATION invocation");
         }
     }
+
 
     private static final String LEGACY_BASE_INT_HELPERS = String.join("\n",
         "    // DEAL int safe range: \u00b1(2^53-1), mirroring deal/runtime.lua's",
@@ -8159,10 +8184,14 @@ public class JvmBackendTest {
         return new ExecResult(out, exit);
     }
 
-    /** The same full-pipeline run under the untouched default invocation
-     * ({@code PRE_ACTIVATION → LEGACY_SAFE_INT}) — the integration
-     * counterpart that proves a missing or defaulted profile produces
-     * legacy artifacts where the int32 edges do not raise. */
+    /** The same full-pipeline run under the explicit legacy invocation
+     * ({@code PUBLIC_BUILD + PRE_ACTIVATION → LEGACY_SAFE_INT}, the
+     * pre-activation matrix row that stays available as an internal
+     * derivation after E12's flip) — the integration counterpart that
+     * proves the retained legacy profile produces legacy artifacts where
+     * the int32 edges do not raise. The default invocation is now the
+     * committed V1_2_ACTIVE public build, so legacy negative controls
+     * pass the legacy invocation explicitly. */
     private static ExecResult runLegacyProject(String source, String name)
             throws Exception {
         writeFile("src/legacy_" + name + ".deal", source);
@@ -8174,7 +8203,9 @@ public class JvmBackendTest {
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entryFile, outputRoot, false, false, false, false,
             Backend.JVM, null, roots,
-            Path.of(".").toAbsolutePath().normalize());
+            Path.of(".").toAbsolutePath().normalize(), null,
+            CompilerProfileProvider.resolve(ReleaseState.PRE_ACTIVATION,
+                CapabilityRegistry.releaseRegistry()));
         boolean ok = orchestrator.compile();
         check(ok, "legacy orchestrator compile succeeds for " + name + ": "
             + orchestrator.diagnostics());
@@ -8182,7 +8213,7 @@ public class JvmBackendTest {
         JvmBackend.JvmCodegenResult res =
             orchestrator.jvmGeneratedResults().get(entryFile.toString());
         check(res != null && !res.int32Mode(),
-            "default invocation plumbs the LEGACY int mode for " + name);
+            "the explicit legacy invocation plumbs the LEGACY int mode for " + name);
         if (res == null || res.int32Mode()) return new ExecResult("", 1);
         Frontend f = compileFrontend(source, "legacy_" + name + ".deal");
         Files.writeString(outputRoot.resolve("JvmConformanceRunner.java"),
@@ -10072,7 +10103,7 @@ public class JvmBackendTest {
         }
 
         // ---- Legacy-profile pin (LEGACY_SAFE_INT long carriers) ----
-        // The default production invocation (PRE_ACTIVATION →
+        // The explicit legacy invocation (PRE_ACTIVATION →
         // LEGACY_SAFE_INT) compiles v1.2 bytes programs with the legacy
         // long int carrier. The emitted bytes helpers must follow the
         // same carrier — long index/value parameters with the E8012/E8013
@@ -10099,7 +10130,7 @@ public class JvmBackendTest {
             "legacy bytesGet/bytesSet narrow the index only after the "
                 + "E8012 bounds gate");
 
-        // The real default-invocation pipeline (orchestrator →
+        // The real legacy-invocation pipeline (orchestrator →
         // JvmBackend → javac → java): runLegacyProject compiles every
         // emitted artifact with javac and throws on any javac error, so
         // a green run is also a javac-compiling-artifact pin.
@@ -11499,7 +11530,7 @@ public class JvmBackendTest {
             check(java.contains("Lib.$C_C c = Lib.getC();"),
                 "the inferred imported-class value declares the imported "
                 + "module's generated class type: " + java);
-            check(java.contains("return intAdd((c).v, 1L);"),
+            check(java.contains("return intAdd((c).v, 1);"),
                 "the imported class field read emits a direct access fed "
                 + "into int arithmetic: " + java);
             ExecResult exec = runJvmArtifacts(outputDir,
@@ -11552,7 +11583,7 @@ public class JvmBackendTest {
             check(java.contains("LibIndex.$C_C c = LibIndex.getC();"),
                 "the imported type references LibIndex.$C_C even with a "
                 + "local C: " + java);
-            check(java.contains("new $C_C(4L)"),
+            check(java.contains("new $C_C(4)"),
                 "the local construction keeps the local $C_C: " + java);
             ExecResult exec = runJvmArtifacts(outputDir2,
                 parseProgram("export function run(): int { return 1; }"),
@@ -11593,7 +11624,7 @@ public class JvmBackendTest {
             + orchestrator3.diagnostics());
         if (success3 && Files.exists(outputDir3.resolve("Entry.java"))) {
             String java = Files.readString(outputDir3.resolve("Entry.java"));
-            check(java.contains("new Lib.$C_C(9L)"),
+            check(java.contains("new Lib.$C_C(9)"),
                 "the imported construction emits new Lib.$C_C(...): " + java);
             ExecResult exec = runJvmArtifacts(outputDir3,
                 parseProgram("export function run(): int { return 1; }"),
@@ -11638,9 +11669,9 @@ public class JvmBackendTest {
             + "compiles: " + orchestrator4.diagnostics());
         if (success4 && Files.exists(outputDir4.resolve("Entry.java"))) {
             String java = Files.readString(outputDir4.resolve("Entry.java"));
-            check(java.contains("new Lib.$C_Point(10L, 20L)"),
+            check(java.contains("new Lib.$C_Point(10, 20)"),
                 "the empty literal emits every default inline: " + java);
-            check(java.contains("new Lib.$C_Point(2L, 5L)"),
+            check(java.contains("new Lib.$C_Point(2, 5)"),
                 "provided fields land in declaration order regardless of "
                 + "literal order: " + java);
             ExecResult exec = runJvmArtifacts(outputDir4,
@@ -13052,12 +13083,21 @@ public class JvmBackendTest {
      */
     private static CompilationOrchestrator jvmTestOrchestrator(Path entryFile,
             Path outputDir) {
+        // The explicit legacy invocation keeps this helper's emission
+        // pins (the host-ABI slice's long-parameter HostLog fixtures and
+        // the legacy carrier pins) valid under the committed post-flip
+        // default — the legacy profile stays an internal derivation row
+        // (PUBLIC_BUILD + PRE_ACTIVATION), never a production rollback
+        // target. The activated default is pinned separately by
+        // testProfilePlumbIntMode and the E12 activation suite.
         return new CompilationOrchestrator(entryFile, outputDir, false, false,
-            false, Backend.JVM,
+            false, false, Backend.JVM,
             Map.of("host/log",
                 tmpDir.get().resolve("bindings/log.d.deal").toString()),
             List.of(tmpDir.get().resolve("src").toAbsolutePath()),
-            Path.of(".").toAbsolutePath().normalize());
+            Path.of(".").toAbsolutePath().normalize(), null,
+            CompilerProfileProvider.resolve(ReleaseState.PRE_ACTIVATION,
+                CapabilityRegistry.releaseRegistry()));
     }
 
     /** Parses a small DEAL snippet with the real lexer+parser for runner
@@ -13119,7 +13159,7 @@ public class JvmBackendTest {
             String java = Files.readString(entryArtifact);
             check(java.contains("Lib.__init$();"),
                 "the import emits the load-time init trigger for Lib");
-            check(java.contains("return Lib.add(10L, 20L);"),
+            check(java.contains("return Lib.add(10, 20);"),
                 "the imported direct call emits a static call on the "
                 + "imported class: " + java);
         }

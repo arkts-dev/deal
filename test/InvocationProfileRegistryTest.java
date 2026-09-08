@@ -131,6 +131,12 @@ public class InvocationProfileRegistryTest {
     private static final String PINNED_RELEASE_STATE_HASH_ACTIVE =
         "dc4c3fe0ae1356816a9454644af201fbf8289c03de1603a2c1e671f99441aa36";
 
+    /** Stored golden: releaseStateHash for the committed E12 configuration —
+     * V1_2_ACTIVE over the promoted release registry hash (the
+     * releaseCapabilityRegistry digest, never the all-SHADOW default). */
+    private static final String PINNED_ACTIVATED_RELEASE_STATE_HASH =
+        "461b6ae01dedbb6f15767bf79c2ff26f6efbbcafdc2ce64dc84c8bb835b393d6";
+
     private static final List<String> CAPABILITY_ORDER = List.of(
         "FOUNDATION_VALUES", "SIGNED_INT32", "CONTAINERS_AND_STRINGS", "DESCRIPTORS",
         "BOUNDARIES", "EVALUATION_ORDER", "BINDINGS", "CALLS", "STDLIB_SEMANTICS",
@@ -555,7 +561,7 @@ public class InvocationProfileRegistryTest {
         check(Files.exists(cliOutVerbose.resolve("trivial.lua")),
             "CLI compile with --verbose emits the artifact");
         check(cliVerboseStream.toString(StandardCharsets.UTF_8)
-                .contains("Release-state hash: " + PINNED_RELEASE_STATE_HASH_PRE),
+                .contains("Release-state hash: " + PINNED_ACTIVATED_RELEASE_STATE_HASH),
             "the CLI verbose path prints the recorded release-state hash");
     }
 

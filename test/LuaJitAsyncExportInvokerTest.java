@@ -684,7 +684,7 @@ public class LuaJitAsyncExportInvokerTest {
 
         Result result = invoke(entryArtifactOf(out), "oracle", "int");
         assertEquals("main's DEAL error propagates verbatim",
-            new Result.DealError("E8004", "int out of range",
+            new Result.DealError("E8004", "int out of safe range",
                 entrySource.toString(), 6, 7), result);
     }
 
