@@ -30,11 +30,11 @@
 #          with the clone's expectation runtime-error E8004 (same body)
 #          -> FAIL (no E8004 is raised), exit 1
 #   run E  unmodified runner + stand-in + runtime-ok clone
-#          -> stale passing promotion (test/ConformanceTest.java:691-694),
+#          -> stale passing promotion (test/ConformanceTest.java:845-847),
 #             exit 1
 #   run F  unmodified runner + stand-in + runtime-error E8004 clone
 #          -> stale expectation-changed promotion
-#             (test/ConformanceTest.java:511-516), exit 1
+#             (test/ConformanceTest.java:665-670), exit 1
 #
 # Usage: verify_both_branches_scratch.sh [EVIDENCE_DIR]
 #

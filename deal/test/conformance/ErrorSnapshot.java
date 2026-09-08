@@ -17,10 +17,13 @@ import java.util.Optional;
  * error framing the StructuredExpectationComparator consumes.
  *
  * <p>Canonical serialization is fully pinned: one single-line JSON object
- * with the fixed key order {@code code}, {@code message},
- * {@code sourceFile}, {@code line}, {@code column}, then pinned optional
- * fields in spec order {@code expected}, {@code actual}, {@code frames},
- * {@code cause} — only pinned fields are emitted. Strings use minimal
+ * with the fixed key order {@code code}, {@code message}, then the span
+ * group {@code sourceFile}, {@code line}, {@code column} — emitted
+ * exactly when pinned; the one sanctioned span-less shape (the locked
+ * time selector's retained {@code nowMillis} wrapper raising E8004 with
+ * no span) omits the whole group — then pinned optional fields in spec
+ * order {@code expected}, {@code actual}, {@code frames},
+ * {@code cause}; only pinned fields are emitted. Strings use minimal
  * RFC 8259 section-7 escaping: only the double quote and the backslash
  * are escaped, and control characters U+0000 through U+001F are escaped
  * with the named escapes {@code \b} {@code \t} {@code \n} {@code \f}
@@ -68,20 +71,35 @@ public final class ErrorSnapshot {
     public static String canonicalJson(SidecarExpectations.ErrorExpectation fields) {
         Objects.requireNonNull(fields, "fields must not be null");
         StringBuilder sb = new StringBuilder("{");
-        appendStringField(sb, "code", fields.code(), true);
-        appendStringField(sb, "message", fields.message(), false);
-        appendStringField(sb, "sourceFile", fields.sourceFile(), false);
-        appendIntField(sb, "line", fields.line(), false);
-        appendIntField(sb, "column", fields.column(), false);
-        fields.expected().ifPresent(v ->
-            appendStringField(sb, "expected", v, false));
-        fields.actual().ifPresent(v -> appendStringField(sb, "actual", v, false));
-        fields.frames().ifPresent(v -> appendIntField(sb, "frames", v, false));
-        fields.cause().ifPresent(v -> appendStringField(sb, "cause", v, false));
+        boolean first = true;
+        first = appendStringField(sb, "code", fields.code(), first);
+        first = appendStringField(sb, "message", fields.message(), first);
+        // The span group (sourceFile, line, column) is emitted exactly
+        // when pinned; the sanctioned span-less shape (the locked time
+        // selector's retained nowMillis wrapper raising E8004 with no
+        // span — luajit-time-selector-disposition, Failure and
+        // operations) omits all three.
+        if (fields.pinsSpan()) {
+            first = appendStringField(sb, "sourceFile", fields.sourceFile(), first);
+            first = appendIntField(sb, "line", fields.line(), first);
+            first = appendIntField(sb, "column", fields.column(), first);
+        }
+        if (fields.expected().isPresent()) {
+            first = appendStringField(sb, "expected", fields.expected().get(), first);
+        }
+        if (fields.actual().isPresent()) {
+            first = appendStringField(sb, "actual", fields.actual().get(), first);
+        }
+        if (fields.frames().isPresent()) {
+            first = appendIntField(sb, "frames", fields.frames().get(), first);
+        }
+        if (fields.cause().isPresent()) {
+            first = appendStringField(sb, "cause", fields.cause().get(), first);
+        }
         return sb.append('}').toString();
     }
 
-    private static void appendStringField(StringBuilder sb, String key,
+    private static boolean appendStringField(StringBuilder sb, String key,
             String stringValue, boolean first) {
         if (!first) {
             sb.append(',');
@@ -89,17 +107,19 @@ public final class ErrorSnapshot {
         appendString(sb, key);
         sb.append(':');
         appendString(sb, stringValue);
+        return false;
     }
 
     /** Canonical decimal integer: no leading zeros, sign, or exponent. */
-    private static void appendIntField(StringBuilder sb, String key,
-            int value, boolean first) {
+    private static boolean appendIntField(StringBuilder sb, String key,
+            Integer value, boolean first) {
         if (!first) {
             sb.append(',');
         }
         appendString(sb, key);
         sb.append(':');
         sb.append(Integer.toString(value));
+        return false;
     }
 
     /** Minimal RFC 8259 §7 escaping with raw UTF-8 non-ASCII (C2). */
@@ -169,8 +189,8 @@ public final class ErrorSnapshot {
 
     /**
      * Extracts the snapshot's error fields from a parsed object, enforcing
-     * the closed field set (the five mandatory fields plus exactly the
-     * four optional fields) and field types.
+     * the closed field set (the two mandatory fields, the pinned-or-absent
+     * span group, plus exactly the four optional fields) and field types.
      */
     public static SidecarExpectations.ErrorExpectation extractFields(
             CanonicalJson.Obj obj) {
@@ -190,12 +210,25 @@ public final class ErrorSnapshot {
                         + "expected, actual, frames, cause)");
             }
         }
-        for (String mandatory : List.of("code", "message", "sourceFile",
-                "line", "column")) {
+        // code and message are always mandatory; the span group
+        // (sourceFile, line, column) is emitted exactly when pinned —
+        // the sanctioned span-less shape (the locked time selector's
+        // retained nowMillis wrapper raising E8004 with no span) omits
+        // all three, and a snapshot carrying the group must carry it
+        // complete.
+        for (String mandatory : List.of("code", "message")) {
             if (!fields.containsKey(mandatory)) {
                 throw new IllegalArgumentException(
                     "missing mandatory snapshot field \"" + mandatory + "\"");
             }
+        }
+        boolean hasSourceFile = fields.containsKey("sourceFile");
+        boolean hasLine = fields.containsKey("line");
+        boolean hasColumn = fields.containsKey("column");
+        if (hasSourceFile != hasLine || hasSourceFile != hasColumn) {
+            throw new IllegalArgumentException(
+                "the snapshot span group (sourceFile, line, column) must "
+                    + "be carried complete or omitted entirely");
         }
         for (String key : List.of("code", "message", "sourceFile", "expected",
                 "actual", "cause")) {

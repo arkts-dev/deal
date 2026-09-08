@@ -31,6 +31,7 @@ public class StructuredExpectationComparatorTest {
         canonicalSerializationViolations();
         authoritativeFieldSet();
         mandatoryFieldMismatch();
+        spanGroupAuthority();
         malformedFraming();
         framingCodeMismatch();
         nonCanonicalSnapshotDirectValidation();
@@ -60,6 +61,14 @@ public class StructuredExpectationComparatorTest {
             String message, String sourceFile, int line, int column) {
         return new SidecarExpectations.ErrorExpectation(code, message,
             sourceFile, line, column, Optional.empty(), Optional.empty(),
+            Optional.empty(), Optional.empty());
+    }
+
+    /** The sanctioned span-less shape: code/message, no span group. */
+    private static SidecarExpectations.ErrorExpectation spanlessErr(
+            String code, String message) {
+        return new SidecarExpectations.ErrorExpectation(code, message,
+            null, null, null, Optional.empty(), Optional.empty(),
             Optional.empty(), Optional.empty());
     }
 
@@ -371,6 +380,72 @@ public class StructuredExpectationComparatorTest {
             executed(framing, "", 1)),
             MismatchClass.ERROR_SNAPSHOT_MISMATCH, "luajit",
             "error.message must be \"expected int\", got \"expected string\"");
+    }
+
+    /**
+     * The span group (sourceFile, line, column) is emitted exactly when
+     * the sidecar pins it: the sanctioned span-less shape (the locked
+     * time selector's retained nowMillis wrapper raising E8004 with no
+     * span — luajit-time-selector-disposition, Failure and operations)
+     * matches a lane that emits code/message only; a lane emitting the
+     * unpinned group, or suppressing a pinned group, mismatches naming
+     * the group.
+     */
+    private static void spanGroupAuthority() {
+        // Span-less sidecar + span-less lane snapshot: pass.
+        SidecarExpectations.ErrorExpectation spanless = spanlessErr(
+            "E8004", "int out of safe range");
+        SidecarExpectations.RuntimeExpectation expectation =
+            runtimeError(spanless, framed(spanless));
+        check(compare("luajit", expectation,
+            executed(framed(spanless), "", 1)).isEmpty(),
+            "span-less: the code/message-only snapshot matches the "
+                + "span-less sidecar");
+        check(framed(spanless).contains("{\"code\":\"E8004\","
+                + "\"message\":\"int out of safe range\"}\n"),
+            "span-less: the canonical snapshot carries exactly code and "
+                + "message, got " + framed(spanless));
+
+        // The lane emits the span group the sidecar does not pin
+        // (the expectation's transcript carries the lane's own framing
+        // so the field comparison, not the transcript, names the defect).
+        SidecarExpectations.ErrorExpectation spanEmitted = err("E8004",
+            "int out of safe range",
+            "backend-runtime/stdlib-edge/time-now-millis-positive.deal",
+            9, 18);
+        SidecarExpectations.RuntimeExpectation emittedExpectation =
+            runtimeError(spanless, framed(spanEmitted));
+        assertMismatch(compare("luajit", emittedExpectation,
+            executed(framed(spanEmitted), "", 1)),
+            MismatchClass.ERROR_SNAPSHOT_MISMATCH, "luajit",
+            "the lane emitted the span group");
+
+        // The lane suppresses the span group the sidecar pins.
+        SidecarExpectations.ErrorExpectation spanPinned = err("E8004",
+            "int out of safe range",
+            "backend-runtime/stdlib-edge/time-now-millis-positive.deal",
+            9, 18);
+        SidecarExpectations.RuntimeExpectation pinnedExpectation =
+            runtimeError(spanPinned, framed(spanless));
+        assertMismatch(compare("luajit", pinnedExpectation,
+            executed(framed(spanless), "", 1)),
+            MismatchClass.ERROR_SNAPSHOT_MISMATCH, "luajit",
+            "the lane suppressed the pinned span group");
+
+        // A partial span group in the lane snapshot violates the
+        // canonical serialization (the group must be complete or absent);
+        // the expectation's transcript carries the lane's own framing so
+        // the framing validation names the defect.
+        String partial = ErrorSnapshot.CODE_LINE_PREFIX + "E8004\n"
+            + ErrorSnapshot.SNAPSHOT_LINE_PREFIX
+            + "{\"code\":\"E8004\",\"message\":\"int out of safe range\","
+            + "\"line\":9}\n";
+        SidecarExpectations.RuntimeExpectation partialExpectation =
+            runtimeError(spanless, partial);
+        assertMismatch(compare("luajit", partialExpectation,
+            executed(partial, "", 1)),
+            MismatchClass.ERROR_SNAPSHOT_MISMATCH, "luajit",
+            "carries no well-formed DEAL_ERROR_CODE/DEAL_ERROR_SNAPSHOT");
     }
 
     private static void malformedFraming() {

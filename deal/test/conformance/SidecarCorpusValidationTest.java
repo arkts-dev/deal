@@ -61,44 +61,43 @@ import java.util.stream.Stream;
  *       stdout ({@code DEAL_ERROR_CODE: <code>} then
  *       {@code DEAL_ERROR_SNAPSHOT: <canonical JSON>}). The Error
  *       Expectation is the authoritative field set: mandatory
- *       {@code code}/{@code message}/{@code sourceFile}/{@code line}/
- *       {@code column} (the code equals the fixture's {@code @expected}
- *       code; the sourceFile names the module that threw — the fixture
- *       itself or a corpus module of its transitive import closure — in
- *       canonical corpus-relative form), optional {@code expected}/
- *       {@code actual} pinned as the {@code _err} pair where the spec
- *       diagnostic carries them, and no {@code frames}/{@code cause}
- *       pins (today's runtime error values carry no structured frames;
- *       the cause chain is pinned nowhere). The snapshot JSON of the
- *       framing must byte-equal the canonical snapshot serialization
- *       recomputed from the error object: fixed key order
- *       {@code code, message, sourceFile, line, column, expected,
- *       actual, frames, cause}, minimal RFC 8259 §7 escaping, raw UTF-8,
- *       canonical decimal integers, no whitespace between tokens.</li>
- *   <li>The backend-runtime known-fail population is empty post-unit
- *       (ISSUE-0380, the disposition-application unit): the restored
- *       {@code arithmetic/int-add-overflow.deal} fixture
- *       (ISSUE-0378 D3) was promoted in the unit's landing change —
- *       its {@code known-fail runtime-error E8004} marker and
- *       {@code @issue} tag dropped, {@code @expected: runtime-error
- *       E8004} set — so it counts in the runtime-error population
- *       with its three-backend runtime sidecar unchanged (the
- *       differential gate's presence rule, ISSUE-0353: a
- *       runtime-classified fixture requires a valid three-backend
- *       sidecar; the gate has no silent default). The same unit
- *       flipped the shared time fixture
- *       {@code stdlib-edge/time-now-millis-positive.deal} to its
- *       canonical {@code runtime-error E8004} header
- *       (std-time-nowmillis-resolution-and-disposition D2) and
- *       re-authored its sidecar as the uniform three-backend E8004
- *       sidecar — the retained {@code ()->int} route raises E8004 at
- *       the declared int boundary on every lane under its activated
- *       gate. The two-backend slice surface
+
+ *       {@code code}/{@code message} plus the span group
+ *       {@code sourceFile}/{@code line}/{@code column} (the code equals
+ *       the fixture's {@code @expected} code; the sourceFile names the
+ *       module that threw — the fixture itself or a corpus module of
+ *       its transitive import closure — in canonical corpus-relative
+ *       form). The span group is mandatory for every runtime-error
+ *       fixture except the one sanctioned span-less shape
+ *       ({@code stdlib-edge/time-now-millis-positive.deal}: the locked
+ *       time selector's retained {@code nowMillis} wrapper raises E8004
+ *       with no file/line/column at all —
+ *       {@code luajit-time-selector-disposition}, Failure and
+ *       operations — so its sidecar omits the whole group and pinning
+ *       any of the three is a classification failure), optional
+ *       {@code expected}/ {@code actual} pinned as the {@code _err}
+ *       pair where the spec diagnostic carries them, and no
+ *       {@code frames}/{@code cause} pins (today's runtime error values
+ *       carry no structured frames; the cause chain is pinned nowhere).
+ *       The snapshot JSON of the framing must byte-equal the canonical
+ *       snapshot serialization recomputed from the error object: fixed
+ *       key order {@code code, message, sourceFile, line, column,
+ *       expected, actual, frames, cause}, minimal RFC 8259 §7 escaping,
+ *       raw UTF-8, canonical decimal integers, no whitespace between
+ *       tokens.</li>
+ *   <li>The backend-runtime known-fail population is empty. ISSUE-0378
+ *       restored {@code arithmetic/int-add-overflow.deal} byte-exactly
+ *       with its canonical known-fail header and its three-backend
+ *       runtime-error sidecar; the gate-closure promotion then dropped
+ *       the known-fail marker, leaving the fixture as a real
+ *       runtime-error fixture whose uniform E8004 sidecar stays. The
+ *       two-backend slice re-home
  *       ({@code jvm-int32-slice.json#int32-add-overflow}) stays.
- *       ISSUE-0339 promoted the last previously tracked bytes fixture
+ *       ISSUE-0339 promoted the last previously tracked fixture
  *       ({@code bytes-buffer-ops.deal}, which received its runtime-ok
  *       sidecar in the same change that dropped its known-fail
  *       marker).</li>
+
  *   <li>All other fixtures ({@code compile-ok}, {@code compile-error},
  *       {@code companion}, frontend fixtures) carry no sidecar except
  *       the Diagnostics-bullet fixtures.</li>
@@ -171,22 +170,24 @@ public class SidecarCorpusValidationTest {
      * same change; plus the jsonable-fromjson-nested-depth3 fixture
      * the ISSUE-0340 review fix added with its sidecar in the same
      * change, pinning the depth >= 3 nested compiler-class fromJson
+
          * decode). ISSUE-0380 (the disposition-application unit) flips the
      * shared time fixture
      * {@code stdlib-edge/time-now-millis-positive.deal} to its canonical
      * {@code runtime-error E8004} header, moving it out of this
      * population: 219 -> 218. */
+
     private static final int RUNTIME_OK_COUNT = 218;
 
     /**
      * The exact runtime-error population (ISSUE-0350 completeness, plus
      * the int32 E8004 fixtures ISSUE-0332 promoted/added: the
-     * promoted int-add-overflow — ISSUE-0378 restored the
-     * backend-runtime fixture with its canonical known-fail header,
-     * so this population excludes it (a known-fail-classified
-     * fixture counts in neither population; the activated-route
-     * E8004 coverage stays on the two-backend slice surface) —
-     * and the new int-sub-overflow,
+     * restored int-add-overflow — ISSUE-0378 restored the
+     * backend-runtime fixture byte-exactly with its canonical
+     * known-fail header and its three-backend runtime-error sidecar,
+     * and the gate-closure promotion dropped the known-fail marker,
+     * so the fixture now counts in this population as a real
+     * runtime-error fixture — and the new int-sub-overflow,
      * int-mul-overflow,
      * int-conversion-out-of-range, and source-location/int32-overflow-source
      * fixtures each land their sidecar in the same change as their
@@ -209,6 +210,8 @@ public class SidecarCorpusValidationTest {
      * plus the host-class-extra-field E8007 fixture ISSUE-0334 added
      * with its sidecar in the same change; plus the stdlib/table
      * keys-nontable-error E8001 fixture ISSUE-0341 added with its
+
+
          * sidecar in the same change). ISSUE-0380 (the
      * disposition-application unit) adds two members to this population
      * with their sidecars: the flipped time fixture
@@ -218,6 +221,8 @@ public class SidecarCorpusValidationTest {
      * dropped, E8004 sidecar unchanged): 81 -> 83.
  */
     private static final int RUNTIME_ERROR_COUNT = 83;
+
+
 
     /**
      * ISSUE-0397 count-pin criterion record (MR-0305 review cycles 1
@@ -497,14 +502,27 @@ public class SidecarCorpusValidationTest {
         check(!message.isEmpty(), fixture.corpusPath()
             + ": error.message must be the exact canonical template "
             + "instantiation, not an empty placeholder");
-        int line = intField(error, "line");
-        int column = intField(error, "column");
-        check(line >= 1, fixture.corpusPath()
-            + ": error.line must trace to the throwing site (a positive "
-            + "line), got " + line);
-        check(column >= 1, fixture.corpusPath()
-            + ": error.column must trace to the throwing site (a positive "
-            + "column), got " + column);
+        int line = optionalIntField(error, "line");
+        int column = optionalIntField(error, "column");
+        boolean spanless = SidecarSchemaValidator.SANCTIONED_SPANLESS_FIXTURE
+            .equals(fixture.corpusPath());
+        if (spanless) {
+            check(!hasErrorField(error, "sourceFile")
+                    && !hasErrorField(error, "line")
+                    && !hasErrorField(error, "column"),
+                fixture.corpusPath() + ": the sanctioned span-less shape "
+                    + "must omit the whole span group (sourceFile, line, "
+                    + "column) — the retained nowMillis wrapper raises "
+                    + "E8004 with no span and a sidecar never pins "
+                    + "fabricated values");
+        } else {
+            check(line >= 1, fixture.corpusPath()
+                + ": error.line must trace to the throwing site (a positive "
+                + "line), got " + line);
+            check(column >= 1, fixture.corpusPath()
+                + ": error.column must trace to the throwing site (a positive "
+                + "column), got " + column);
+        }
         check(!hasErrorField(error, "frames"), fixture.corpusPath()
             + ": no runtime-error sidecar pins frames — today's runtime "
             + "error values carry no structured frames");
@@ -647,6 +665,26 @@ public class SidecarCorpusValidationTest {
             .filter(e -> e.key().equals(key))
             .findFirst().orElseThrow().value();
         return ((CanonicalJson.Int) value).value();
+    }
+
+    /**
+     * The absent-tolerant integer accessor for the span group: returns 0
+     * when the field is absent — the sanctioned span-less error shape
+     * omits {@code line}/{@code column} entirely, and the audit rules
+     * branch on the fixture path before reading them.
+     */
+    private static int optionalIntField(CanonicalJson.Obj obj, String key) {
+        CanonicalJson.Value value = null;
+        for (CanonicalJson.Entry entry : obj.entries()) {
+            if (entry.key().equals(key)) {
+                value = entry.value();
+                break;
+            }
+        }
+        if (!(value instanceof CanonicalJson.Int integer)) {
+            return 0;
+        }
+        return integer.value();
     }
 
     private static String describe(String s) {
@@ -897,9 +935,12 @@ public class SidecarCorpusValidationTest {
 
         // The exact sidecar paths the corpus may carry: one per runtime-ok
         // fixture, one per runtime-error fixture, one per known-fail
-        // runtime fixture (the restored int-add-overflow), plus the two
-        // Diagnostics-bullet Compile Expectation Sidecars (the two
-        // ISSUE-0501 gap fixtures extend the closed set to four).
+        // runtime fixture (none today: the gate-closure promotion
+        // dropped the restored int-add-overflow marker, so every
+        // runtime-classified fixture is a real runtime-ok or
+        // runtime-error fixture), plus the two Diagnostics-bullet
+        // Compile Expectation Sidecars (the two ISSUE-0501 gap
+        // fixtures extend the closed set to four).
         Set<String> allowedSidecars = new HashSet<>();
         int runtimeOk = 0;
         int runtimeError = 0;
@@ -928,13 +969,14 @@ public class SidecarCorpusValidationTest {
             } else if (fixture.expectedTag().startsWith("known-fail ")
                     && fixture.expectedTag().substring(
                         "known-fail ".length()).startsWith("runtime")) {
-                // The restored known-fail runtime fixture
-                // (ISSUE-0378 D3) carries its three-backend sidecar:
-                // the differential gate's presence rule (ISSUE-0353)
-                // requires a valid sidecar for every runtime-classified
-                // fixture — including a known-fail whose underlying
-                // mode is a runtime mode — and the gate has no
-                // silent default.
+                // A known-fail whose underlying mode is a runtime mode
+                // carries its three-backend sidecar: the differential
+                // gate's presence rule (ISSUE-0353) requires a valid
+                // sidecar for every runtime-classified fixture — the
+                // gate has no silent default. The gate-closure
+                // promotion dropped the restored int-add-overflow
+                // marker, so this branch is dormant today; it stays
+                // as the presence rule's defense in depth.
                 allowedSidecars.add(sidecarPath.toString());
                 check(Files.exists(sidecarPath), fixture.corpusPath()
                     + ": the known-fail runtime fixture must carry its "
@@ -961,6 +1003,7 @@ public class SidecarCorpusValidationTest {
             + "exactly " + RUNTIME_ERROR_COUNT + " runtime-error fixtures "
             + "with sidecars, found " + runtimeError);
 
+
         // The tracked backend-runtime known-fail population is empty
         // post-unit (ISSUE-0380, the disposition-application unit): the
         // restored known-fail fixture
@@ -969,6 +1012,7 @@ public class SidecarCorpusValidationTest {
         // now counts in the runtime-error population with its unchanged
         // three-backend sidecar (the differential gate's presence rule,
         // ISSUE-0353), and the stale-known-fail gate no longer names it.
+
         Set<String> knownFail = new TreeSet<>();
         for (Fixture fixture : fixtures) {
             if (fixture.corpusPath().startsWith("backend-runtime/")
@@ -978,8 +1022,10 @@ public class SidecarCorpusValidationTest {
         }
         Set<String> expectedKnownFail = new TreeSet<>();
         check(knownFail.equals(expectedKnownFail),
+
             "the tracked backend-runtime known-fail population must be "
                 + "empty post-unit, got " + knownFail);
+
 
         // No stray sidecar anywhere in the corpus.
         try (Stream<Path> stream = Files.walk(CORPUS_ROOT)) {

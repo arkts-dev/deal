@@ -244,9 +244,8 @@ public final class StructuredExpectationComparator {
         }
         SidecarExpectations.ErrorExpectation fields = framed.get().fields();
 
-        // Mandatory fields, in canonical order.
-        for (String field : List.of("code", "message", "sourceFile", "line",
-                "column")) {
+        // Mandatory code/message, in canonical order.
+        for (String field : List.of("code", "message")) {
             String expectedValue = fieldValue(expectation, field);
             String actualValue = fieldValue(fields, field);
             if (!expectedValue.equals(actualValue)) {
@@ -254,6 +253,43 @@ public final class StructuredExpectationComparator {
                     MismatchClass.ERROR_SNAPSHOT_MISMATCH, backend,
                     "error." + field + " must be " + describe(expectedValue)
                         + ", got " + describe(actualValue)));
+            }
+        }
+        // The span group (sourceFile, line, column): emitted exactly
+        // when the sidecar pins it. The one sanctioned span-less shape —
+        // the locked time selector's retained nowMillis wrapper raising
+        // E8004 with no file/line/column
+        // (luajit-time-selector-disposition, Failure and operations) —
+        // pins none of the three, so a lane emitting the group there is
+        // a mismatch and a lane suppressing it matches.
+        boolean spanPinned = expectation.pinsSpan();
+        boolean spanEmitted = fields.pinsSpan();
+        if (spanPinned && !spanEmitted) {
+            return Optional.of(new GateMismatch(
+                MismatchClass.ERROR_SNAPSHOT_MISMATCH, backend,
+                "the lane suppressed the pinned span group "
+                    + "(sourceFile/line/column) — the sidecar pins "
+                    + describe(fieldValue(expectation, "sourceFile"))
+                    + ":" + fieldValue(expectation, "line") + ":"
+                    + fieldValue(expectation, "column")));
+        }
+        if (!spanPinned && spanEmitted) {
+            return Optional.of(new GateMismatch(
+                MismatchClass.ERROR_SNAPSHOT_MISMATCH, backend,
+                "the lane emitted the span group (sourceFile/line/column)"
+                    + " the sidecar does not pin — the sanctioned "
+                    + "span-less shape must stay span-less"));
+        }
+        if (spanPinned) {
+            for (String field : List.of("sourceFile", "line", "column")) {
+                String expectedValue = fieldValue(expectation, field);
+                String actualValue = fieldValue(fields, field);
+                if (!expectedValue.equals(actualValue)) {
+                    return Optional.of(new GateMismatch(
+                        MismatchClass.ERROR_SNAPSHOT_MISMATCH, backend,
+                        "error." + field + " must be " + describe(expectedValue)
+                            + ", got " + describe(actualValue)));
+                }
             }
         }
         // Optional fields: the sidecar is the authoritative field set.
@@ -306,8 +342,8 @@ public final class StructuredExpectationComparator {
             case "code" -> f.code();
             case "message" -> f.message();
             case "sourceFile" -> f.sourceFile();
-            case "line" -> Integer.toString(f.line());
-            case "column" -> Integer.toString(f.column());
+            case "line" -> f.line() == null ? null : Integer.toString(f.line());
+            case "column" -> f.column() == null ? null : Integer.toString(f.column());
             case "expected" -> f.expected().orElseThrow();
             case "actual" -> f.actual().orElseThrow();
             case "frames" -> Integer.toString(f.frames().orElseThrow());

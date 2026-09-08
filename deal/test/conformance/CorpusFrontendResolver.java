@@ -73,7 +73,8 @@ final class CorpusFrontendResolver implements ModuleResolver {
     @Override
     public Map<String, Type> resolveModule(String modulePath,
             String importingModule, Set<String> modulesInProgress)
-            throws ModuleNotFoundException {
+            throws ModuleNotFoundException,
+                CffiImportWithoutNativeLibraryException {
         if (stdlibExports.containsKey(modulePath)) {
             return stdlibExports.get(modulePath);
         }
@@ -89,9 +90,25 @@ final class CorpusFrontendResolver implements ModuleResolver {
         CorpusDiscovery.Fixture dependency = resolved == null
             ? null : corpusByPath.get(resolved);
         if (dependency != null) {
+            ProgramNode dependencyProgram = parse(dependency).program();
+            // The v1.2 C FFI manifest policy (docs/spec-v1.2.md:1891):
+            // a C FFI declaration file — a .d.deal file whose effective
+            // @extern-c holds — may only be imported through a deal.json
+            // externals entry specifying nativeLibrary. The gate's
+            // frontend corpus has no manifest, so such an import is an
+            // invalid project configuration — the same
+            // CffiImportWithoutNativeLibraryException the legacy
+            // runners' compile-stage resolvers throw (ConformanceTest /
+            // JvmConformanceTest), which the checker maps to E2010 at
+            // the import span. This is the gate's real-frontend
+            // observation of the promoted ffi-manifest rejection.
+            if (resolved.endsWith(".d.deal")
+                    && dependencyProgram.fileDirectives().externC()) {
+                throw new CffiImportWithoutNativeLibraryException(modulePath);
+            }
             ExportExtractor extractor = new ExportExtractor(resolved,
                 resolved.endsWith(".d.deal"));
-            return extractor.extract(parse(dependency).program());
+            return extractor.extract(dependencyProgram);
         }
         throw new ModuleNotFoundException("Module not found: " + modulePath);
     }

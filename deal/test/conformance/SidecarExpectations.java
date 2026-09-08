@@ -22,11 +22,20 @@ import java.util.OptionalInt;
  * sidecar).</p>
  *
  * <p>{@link ErrorExpectation} models the sidecar-authoritative error field
- * set: the mandatory {@code code}/{@code message}/{@code sourceFile}/
- * {@code line}/{@code column} plus the pinned optional fields exactly
- * {@code expected}/{@code actual}/{@code frames}/{@code cause} (C2 — the
- * lane emits exactly the fields the sidecar pins and suppresses every
- * unpinned optional).</p>
+ * set: the mandatory {@code code}/{@code message}, the span group
+ * {@code sourceFile}/{@code line}/{@code column}, and the pinned optional
+ * fields exactly {@code expected}/{@code actual}/{@code frames}/
+ * {@code cause} (C2 — the lane emits exactly the fields the sidecar pins
+ * and suppresses every unpinned one). The span group is pinned by every
+ * runtime-error sidecar except the one sanctioned span-less shape: the
+ * locked time selector's retained {@code nowMillis} wrapper raises E8004
+ * with no file/line/column at all
+ * ({@code luajit-time-selector-disposition}, Failure and operations —
+ * "the E8004 carries the route's existing shape (the retained wrapper
+ * passes no span)"), so
+ * {@code backend-runtime/stdlib-edge/time-now-millis-positive.deal}'s
+ * sidecar omits the whole span group (all three fields null) — a sidecar
+ * must never pin span values the runtime cannot produce.</p>
  */
 public final class SidecarExpectations {
 
@@ -36,15 +45,20 @@ public final class SidecarExpectations {
 
     /**
      * One Error Expectation (C2): the mandatory DEALRuntimeError fields
-     * plus the pinned optional fields. An empty optional means "not
-     * pinned" (the lane must suppress the field).
+     * {@code code}/{@code message}, the span group
+     * {@code sourceFile}/{@code line}/{@code column} (all three non-null
+     * when pinned, all three null for the one sanctioned span-less shape
+     * — the locked time selector's retained {@code nowMillis} wrapper
+     * raises E8004 with no span), and the pinned optional fields. An
+     * empty optional means "not pinned" (the lane must suppress the
+     * field).
      */
     public record ErrorExpectation(
         String code,
         String message,
         String sourceFile,
-        int line,
-        int column,
+        Integer line,
+        Integer column,
         Optional<String> expected,
         Optional<String> actual,
         Optional<Integer> frames,
@@ -54,11 +68,22 @@ public final class SidecarExpectations {
         public ErrorExpectation {
             Objects.requireNonNull(code, "code must not be null");
             Objects.requireNonNull(message, "message must not be null");
-            Objects.requireNonNull(sourceFile, "sourceFile must not be null");
+            if ((sourceFile == null) != (line == null)
+                    || (sourceFile == null) != (column == null)) {
+                throw new IllegalArgumentException(
+                    "the span group (sourceFile, line, column) is pinned "
+                        + "together: all three non-null or all three null "
+                        + "(the sanctioned span-less shape)");
+            }
             expected = Objects.requireNonNull(expected, "expected must not be null");
             actual = Objects.requireNonNull(actual, "actual must not be null");
             frames = Objects.requireNonNull(frames, "frames must not be null");
             cause = Objects.requireNonNull(cause, "cause must not be null");
+        }
+
+        /** True when the span group (sourceFile, line, column) is pinned. */
+        public boolean pinsSpan() {
+            return sourceFile != null;
         }
 
         /** True when the sidecar pins the optional field {@code field}. */
@@ -215,9 +240,9 @@ public final class SidecarExpectations {
             return new ErrorExpectation(
                 stringField(error, "code", prefix + ".code"),
                 stringField(error, "message", prefix + ".message"),
-                stringField(error, "sourceFile", prefix + ".sourceFile"),
-                intField(error, "line", prefix + ".line"),
-                intField(error, "column", prefix + ".column"),
+                nullableStringField(error, "sourceFile"),
+                nullableIntField(error, "line"),
+                nullableIntField(error, "column"),
                 optionalStringField(error, "expected"),
                 optionalStringField(error, "actual"),
                 boxed(optionalIntField(error, "frames")),
@@ -292,6 +317,41 @@ public final class SidecarExpectations {
             throw new IllegalArgumentException(path + " must be a JSON string");
         }
         return str.value();
+    }
+
+    /**
+     * The nullable string field (the span group's {@code sourceFile}):
+     * absent is null — the sanctioned span-less error shape.
+     */
+    private static String nullableStringField(CanonicalJson.Obj obj,
+            String key) {
+        CanonicalJson.Value value = field(obj, key);
+        if (value == null) {
+            return null;
+        }
+        if (!(value instanceof CanonicalJson.Str str)) {
+            throw new IllegalArgumentException(
+                key + " must be a JSON string when pinned");
+        }
+        return str.value();
+    }
+
+    /**
+     * The nullable integer field (the span group's {@code line}/
+     * {@code column}): absent is null — the sanctioned span-less error
+     * shape.
+     */
+    private static Integer nullableIntField(CanonicalJson.Obj obj,
+            String key) {
+        CanonicalJson.Value value = field(obj, key);
+        if (value == null) {
+            return null;
+        }
+        if (!(value instanceof CanonicalJson.Int integer)) {
+            throw new IllegalArgumentException(
+                key + " must be a JSON integer when pinned");
+        }
+        return integer.value();
     }
 
     private static int intField(CanonicalJson.Obj obj, String key, String path) {

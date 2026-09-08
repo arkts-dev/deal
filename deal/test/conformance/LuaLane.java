@@ -108,13 +108,21 @@ import java.util.concurrent.TimeUnit;
  *       shared {@link ErrorSnapshot} serializer — the same helper the
  *       JVM and JS lanes reuse verbatim, so the three lanes can never
  *       drift on serialization. The sidecar's Error Expectation is the
- *       authoritative field set: the lane emits the mandatory fields plus
- *       exactly the optional fields the sidecar pins ({@code expected},
- *       {@code actual}, {@code frames}, {@code cause}) and suppresses
- *       every unpinned optional — a pinned field the captured error does
- *       not carry is never fabricated, so the comparison fails honestly.
- *       The runner transports the raw captured error fields through a
- *       workspace payload file; the lane normalizes and frames them.</li>
+ *       authoritative field set: the lane emits the mandatory
+ *       {@code code}/{@code message} plus exactly the span group
+ *       ({@code sourceFile}/{@code line}/{@code column}) and the
+ *       optional fields ({@code expected}, {@code actual},
+ *       {@code frames}, {@code cause}) the sidecar pins and suppresses
+ *       every unpinned one — a pinned field the captured error does not
+ *       carry is never fabricated, so the comparison fails honestly.
+ *       The one sanctioned span-less shape — the locked time selector's
+ *       retained {@code nowMillis} wrapper raising E8004 with no
+ *       file/line/column ({@code luajit-time-selector-disposition},
+ *       Failure and operations) — pairs with a sidecar that omits the
+ *       whole span group, so the lane emits the span-less snapshot
+ *       exactly as captured. The runner transports the raw captured
+ *       error fields through a workspace payload file; the lane
+ *       normalizes and frames them.</li>
  *   <li>{@code sourceFile} normalization (corpus C2): the lane maintains
  *       its per-module deployment map (the absolute path every compiled
  *       module's spans carry ↔ its canonical corpus-relative path plus
@@ -1410,10 +1418,9 @@ public class LuaLane implements Lane {
             Objects.requireNonNull(cause, "cause must not be null");
         }
 
-        /** True when every mandatory snapshot field is present. */
-        boolean complete() {
-            return code != null && message != null && file != null
-                && line != null && column != null;
+        /** True when the captured error carries the full span group. */
+        boolean carriesSpan() {
+            return file != null && line != null && column != null;
         }
     }
 
@@ -1477,11 +1484,17 @@ public class LuaLane implements Lane {
      * untouched; an uncaught DEAL error appends the exact G4.6 framing
      * built by the shared {@link ErrorSnapshot} canonical serializer with
      * the sidecar as the authoritative field set (the lane emits the
-     * mandatory fields plus exactly the pinned optional fields and
-     * suppresses every unpinned one; a pinned field the captured error
-     * does not carry is never fabricated — the comparison fails
-     * honestly). A non-zero exit without a complete DEAL error payload is
-     * a subprocess failure outside the DEAL outcome surface.
+     * mandatory fields plus exactly the pinned span group and pinned
+     * optional fields and suppresses every unpinned one; a pinned field
+     * the captured error does not carry is never fabricated — the lane
+     * fails honestly instead). The one sanctioned span-less shape — the
+     * locked time selector's retained {@code nowMillis} wrapper raising
+     * E8004 with no file/line/column
+     * ({@code luajit-time-selector-disposition}, Failure and
+     * operations) — pairs with a sidecar that omits the whole span
+     * group, so the lane emits the span-less snapshot exactly as
+     * captured. A non-zero exit without a DEAL error payload is a
+     * subprocess failure outside the DEAL outcome surface.
      */
     private LaneExecution assembleOutcome(
             SidecarExpectations.RuntimeExpectation.Executed expectation,
@@ -1499,39 +1512,57 @@ public class LuaLane implements Lane {
                     + "payload was captured); stderr: "
                     + boundedText(subprocess.stderr()));
         }
-        if (!captured.complete()) {
+        if (captured.code() == null || captured.message() == null) {
             return new LaneExecution.Infrastructure(MismatchClass.PROCESS_FAILURE,
-                "the captured DEAL error carries no complete DEALRuntimeError "
-                    + "field set (code, message, file, line, column are "
-                    + "mandatory) — the lane cannot serialize the canonical "
+                "the captured DEAL error carries no complete code/message "
+                    + "pair — the lane cannot serialize the canonical "
                     + "snapshot; captured fields: code="
+                    + boundedString(captured.code())
+                    + ", message=" + boundedString(captured.message()));
+        }
+
+        // The sidecar is the authoritative field set. The span group is
+        // emitted exactly when the sidecar pins it; the sanctioned
+        // span-less shape (the retained nowMillis wrapper raising E8004
+        // with no span) pairs with a sidecar that omits the whole group.
+        SidecarExpectations.ErrorExpectation pinned = expectation.error();
+        boolean spanPinned = pinned == null || pinned.pinsSpan();
+        if (spanPinned && !captured.carriesSpan()) {
+            return new LaneExecution.Infrastructure(
+                MismatchClass.PROCESS_FAILURE,
+                "the captured DEAL error carries no span (file, line, "
+                    + "column) where one is required — the lane never "
+                    + "fabricates a pinned field; captured fields: code="
                     + boundedString(captured.code())
                     + ", message=" + boundedString(captured.message())
                     + ", file=" + boundedString(captured.file())
                     + ", line=" + captured.line() + ", column="
                     + captured.column());
         }
+        String sourceFile = null;
+        Integer line = null;
+        Integer column = null;
+        if (spanPinned && captured.carriesSpan()) {
+            // sourceFile normalization (corpus C2): map the captured file
+            // through the per-module deployment map and rebase the line
+            // onto raw corpus-file coordinates; an unmappable file is
+            // emitted verbatim so the byte comparison fails and surfaces
+            // the defect.
+            DeploymentEntry deployment = deploymentEntryFor(captured.file(),
+                compilation);
+            sourceFile = deployment != null
+                ? deployment.corpusPath()
+                : captured.file();
+            line = deployment != null
+                ? captured.line() + deployment.headerLinesStripped()
+                : captured.line();
+            column = captured.column();
+        }
 
-        // sourceFile normalization (corpus C2): map the captured file
-        // through the per-module deployment map and rebase the line onto
-        // raw corpus-file coordinates; an unmappable file is emitted
-        // verbatim so the byte comparison fails and surfaces the defect.
-        DeploymentEntry deployment = deploymentEntryFor(captured.file(),
-            compilation);
-        String sourceFile = deployment != null
-            ? deployment.corpusPath()
-            : captured.file();
-        int line = deployment != null
-            ? captured.line() + deployment.headerLinesStripped()
-            : captured.line();
-
-        // The sidecar is the authoritative field set: emit exactly the
-        // pinned optional fields (no error expectation pins nothing).
-        SidecarExpectations.ErrorExpectation pinned = expectation.error();
         SidecarExpectations.ErrorExpectation snapshot =
             new SidecarExpectations.ErrorExpectation(
                 captured.code(), captured.message(), sourceFile, line,
-                captured.column(),
+                column,
                 optionalField(pinned, "expected", captured.expected()),
                 optionalField(pinned, "actual", captured.actual()),
                 optionalField(pinned, "frames", captured.frames()),

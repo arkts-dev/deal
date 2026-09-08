@@ -4945,15 +4945,22 @@ public class JsBackendTest {
         // ISSUE-0273 D9 re-key: the E6003 trigger is an import of an
         // extern-C declaration module — the @extern-c file directive
         // lives on ffi.d.deal, never on the importing implementation
-        // file (where it is E1046).
+        // file (where it is E1046). The import is manifest-backed (an
+        // externals entry with nativeLibrary) — an unbacked extern-C
+        // import is the frontend E2010 invalid-manifest-policy
+        // rejection (docs/spec-v1.2.md:1891), which the production
+        // pipeline emits before codegen (ISSUE-0477 remediation).
         writeFile("rej_proj/deal.json",
-            "{\"languageVersion\": \"1.2\", \"backend\": \"js\"}");
+            "{\"languageVersion\": \"1.2\", \"backend\": \"js\","
+                + " \"moduleRoots\": [\"src\"], \"externals\": {"
+                + " \"ffi\": {\"declaration\": \"src/ffi.d.deal\","
+                + " \"nativeLibrary\": \"libhost\"}}}");
         writeFile("rej_proj/src/ffi.d.deal", """
             // @extern-c
             export function cFn(x: int): int;
             """);
         writeFile("rej_proj/src/lib.deal", """
-            import * as ffi from "./ffi"
+            import * as ffi from "ffi"
             export function use(): int { return ffi.cFn(1); }
             """);
         writeFile("rej_proj/src/rej_main.deal", """
@@ -4963,14 +4970,27 @@ public class JsBackendTest {
             """);
 
         Path entryFile = tmpDir.resolve("rej_proj/src/rej_main.deal").toAbsolutePath();
-        Path outputDir = tmpDir.resolve("rej_proj/build/js");
-        List<Path> roots = List.of(tmpDir.resolve("rej_proj/src").toAbsolutePath());
-        // Test-only isolated-phase Backend.JS path (the production
-        // manifest/CLI path is pinned separately).
-        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
-            entryFile, outputDir, false, false, false, Backend.JS,
-            (Map<String, String>) null, roots,
-            Path.of(".").toAbsolutePath().normalize());
+        // The production locator path (ISSUE-0169 remediation,
+        // ISSUE-0471): the manifest-selected Backend.JS compile
+        // rejects the manifest-backed @extern-c import with E6003.
+        ProjectLocator.LocateResult located = ProjectLocator.locate(
+            entryFile.toString(), null);
+        check(located.context() != null && located.e2010() == null
+                && located.cliDiagnostic() == null,
+            "rejection manifest locates a context: "
+                + (located.e2010() != null
+                    ? located.e2010() : located.cliDiagnostic()));
+        if (located.context() == null) {
+            return;
+        }
+        CompilerInvocation invocation = CompilerProfileProvider.resolve(
+            ReleaseConfiguration.CURRENT_RELEASE_STATE,
+            ReleaseConfiguration.releaseCapabilityRegistry());
+        CompilationOrchestrator orchestrator =
+            new CompilationOrchestrator(located.context(), entryFile,
+                false, false, false, false, null, invocation);
+        Path outputDir = Path.of(located.context().outputPath()
+            .absoluteNormalizedPath());
         boolean success = orchestrator.compile();
         check(!success, "the @extern-c project fails the compilation");
         check(orchestrator.diagnostics().stream().anyMatch(d ->
@@ -5208,18 +5228,24 @@ public class JsBackendTest {
             projectDir = Files.createTempDirectory("deal_js_reject_test_");
             Files.writeString(projectDir.resolve("deal.json"),
                 "{\n  \"languageVersion\": \"1.2\",\n  \"backend\": \"js\",\n"
-                    + "  \"moduleRoots\": [\".\"]\n}\n",
+                    + "  \"moduleRoots\": [\".\"],\n"
+                    + "  \"externals\": {\"ffi\": {\"declaration\":"
+                    + " \"ffi.d.deal\", \"nativeLibrary\": \"libhost\"}}\n}\n",
                 StandardCharsets.UTF_8);
             // ISSUE-0273 D9 re-key: the E6003 trigger is an import of an
             // extern-C declaration module — the @extern-c file directive
             // lives on ffi.d.deal (on an implementation file it is
-            // E1046).
+            // E1046). The import is manifest-backed (an externals entry
+            // with nativeLibrary) — an unbacked extern-C import is the
+            // frontend E2010 invalid-manifest-policy rejection
+            // (docs/spec-v1.2.md:1891), emitted before codegen
+            // (ISSUE-0477 remediation).
             Files.writeString(projectDir.resolve("ffi.d.deal"),
                 "// @extern-c\nexport function cFn(x: int): int;\n",
                 StandardCharsets.UTF_8);
             Path entry = projectDir.resolve("main.deal");
             Files.writeString(entry,
-                "import * as ffi from \"./ffi\";\n\n"
+                "import * as ffi from \"ffi\";\n\n"
                     + "export function main(): null {\n"
                     + "  let v: int = ffi.cFn(1);\n"
                     + "  return null;\n"

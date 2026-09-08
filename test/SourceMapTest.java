@@ -10,6 +10,9 @@ import deal.codegen.lua.LuaBackend;
 import deal.lexer.*;
 import deal.module.CompilationOrchestrator;
 import deal.parser.*;
+import deal.project.ProjectLocator;
+import deal.semantic.CompilerProfileProvider;
+import deal.semantic.ReleaseConfiguration;
 import deal.types.Type;
 
 import java.io.*;
@@ -1494,22 +1497,43 @@ public class SourceMapTest {
             // pin; the still-live @extern-c E6003 arm keeps the
             // rejected-module model covered. ISSUE-0273 D9 re-key: the
             // trigger is an import of an extern-C declaration module —
-            // the @extern-c file directive lives on host.d.deal.
+            // the @extern-c file directive lives on host.d.deal. The
+            // import is manifest-backed (an externals entry with
+            // nativeLibrary) — an unbacked extern-C import is the
+            // frontend E2010 invalid-manifest-policy rejection
+            // (docs/spec-v1.2.md:1891), emitted before codegen, so the
+            // E6003 two-pass model needs the valid-manifest trigger.
+            Files.writeString(proj.resolve("deal.json"),
+                "{\"languageVersion\": \"1.2\", \"backend\": \"js\","
+                    + " \"moduleRoots\": [\"src\"], \"externals\": {"
+                    + " \"host\": {\"declaration\": \"src/host.d.deal\","
+                    + " \"nativeLibrary\": \"libhost\"}}}\n");
             Files.writeString(src.resolve("host.d.deal"), """
                 // @extern-c
                 export function hostFn(x: int): int;
                 """);
             Files.writeString(src.resolve("bad.deal"), """
-                import * as host from "./host"
+                import * as host from "host"
                 export function make(): int { return host.hostFn(1); }
                 """);
             Path outputRoot = proj.resolve("build/js");
 
+            ProjectLocator.LocateResult located = ProjectLocator.locate(
+                mainSrc.toString(), null);
+            check(located.context() != null && located.e2010() == null
+                    && located.cliDiagnostic() == null,
+                "rejection manifest locates a context: "
+                    + (located.e2010() != null
+                        ? located.e2010() : located.cliDiagnostic()));
+            if (located.context() == null) {
+                return;
+            }
             CompilationOrchestrator orchestrator =
-                new CompilationOrchestrator(mainSrc, outputRoot, false,
-                    false, true, Backend.JS,
-                    (Map<String, String>) null, List.of(src),
-                    Path.of(".").toAbsolutePath().normalize());
+                new CompilationOrchestrator(located.context(), mainSrc,
+                    false, false, true, false, null,
+                    CompilerProfileProvider.resolve(
+                        ReleaseConfiguration.CURRENT_RELEASE_STATE,
+                        ReleaseConfiguration.releaseCapabilityRegistry()));
             boolean ok = orchestrator.compile();
             check(!ok, "the rejected module fails the compilation");
             check(!Files.exists(outputRoot.resolve("bad.js")),

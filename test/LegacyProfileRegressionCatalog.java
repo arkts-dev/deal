@@ -29,10 +29,13 @@ import java.util.Set;
  * {@code LEGACY_REGRESSION}, profile {@code LEGACY_SAFE_INT}, authority
  * {@code legacy-regression}, credit {@code none}, and the mandatory
  * additive v1.2 replacement locator (absent only for the excluded
- * families — the time lock and the JS v1.2 exclusion). The three
- * conformance runners consume the catalog per case (A5): a catalogued
- * case resolves the legacy regression invocation with its source and
- * expectations unchanged, every other case and every frontend suite
+ * families — the slice-level time lock and the JS v1.2 exclusion; the
+ * backend-runtime time fixture is no longer catalogued after the
+ * disposition-application unit flipped it to {@code runtime-error E8004}).
+ * The three conformance runners consume the catalog per case (A5): a
+ * catalogued case resolves the legacy regression invocation with its
+ * source and expectations unchanged, every other case and every
+ * frontend suite
  * resolves {@code COMMON_SHADOW + DEAL_V1_2_INT32}, and the JS retained
  * route ignores the profile.
  *
@@ -122,12 +125,18 @@ public final class LegacyProfileRegressionCatalog {
      * {@code <fixture-file>#<case-name>} locators; backend-runtime rows
      * carry the corpus-relative path; test locators carry the file plus
      * the pin lines for documentation. Excluded families record no
-     * replacement this epic: {@code jvm-std-time-nowmillis} and
-     * {@code time-now-millis-positive.deal} (time lock — the nowMillis
-     * resolution owns the replacement), {@code js-int-safe-range-e8004},
+     * replacement this epic: {@code jvm-std-time-nowmillis} (time lock —
+     * the nowMillis resolution owns the replacement),
+     * {@code js-int-safe-range-e8004},
      * {@code js-bytes-length-above-int32-e8012}, and
      * {@code js-stdlib-time-structural} (JS v1.2 excluded —
-     * {@code js-v12-int32-bytes} owns the JS replacements).
+     * {@code js-v12-int32-bytes} owns the JS replacements). The
+     * {@code time-now-millis-positive.deal} backend-runtime row is gone:
+     * the disposition-application unit flipped the fixture to
+     * {@code runtime-error E8004}, whose expectation depends on the
+     * v1.2 signed-int32 gate, not the legacy range — the fixture now
+     * resolves the {@code COMMON_SHADOW + DEAL_V1_2_INT32} invocation
+     * (A5) and passes under it on every lane.
      */
     static final List<Row> ROWS = List.of(
         // jvm-skeleton.json — the safe-int-era boundary/overflow family
@@ -190,7 +199,6 @@ public final class LegacyProfileRegressionCatalog {
         // backend-runtime .deal population
         row("backend-runtime/runtime/int-convert-range.deal",
             "jvm-int32-slice.json#int32-convert-range"),
-        row("backend-runtime/stdlib-edge/time-now-millis-positive.deal", null),
         // Test locators (legacy defaults — no relocation needed, unchanged)
         row("test_runtime.lua:122-140,481-490", "test_runtime_int32.lua"),
         row("test/LuaBackendIntegrationTest.java", "test_runtime_int32.lua"),
@@ -367,8 +375,9 @@ public final class LegacyProfileRegressionCatalog {
      * is a harness defect, never a silent pairing gap. Slice-row
      * replacements are checked file-level here and case-level by
      * {@link #validateReplacementSliceRows(Map)} (the runners with the
-     * parsed fixture index); excluded rows ({@code null} — the time
-     * lock and the JS v1.2 exclusion) record no replacement this epic.
+     * parsed fixture index); excluded rows ({@code null} — the slice
+     * time-lock pin and the JS v1.2 exclusion) record no replacement
+     * this epic.
      */
     static void validateReplacementRows() {
         for (Row row : ROWS) {
@@ -551,21 +560,23 @@ public final class LegacyProfileRegressionCatalog {
                 + "the legacy-dependent int literal");
         }
         String time = "backend-runtime/stdlib-edge/time-now-millis-positive.deal";
-        if (!isCatalogued(time)) {
-            violation("self-probe: the " + time + " catalog row is "
-                + "missing (completeness rule: its exit-0 expectation "
-                + "depends on the legacy range)");
+        if (isCatalogued(time)) {
+            violation("self-probe: the " + time + " catalog row must be "
+                + "gone (the disposition-application unit flipped the "
+                + "fixture to runtime-error E8004 — its expectation now "
+                + "depends on the v1.2 signed-int32 gate, not the "
+                + "legacy range)");
         }
         if (isCatalogued(time + "#removed")) {
             violation("self-probe: an unknown locator must not be "
                 + "catalogued");
         }
         CompilerInvocation timeInvocation = invocationFor(time);
-        if (timeInvocation.purpose() != deal.semantic.ir.InvocationPurpose.LEGACY_REGRESSION
+        if (timeInvocation.purpose() != deal.semantic.ir.InvocationPurpose.COMMON_SHADOW
                 || timeInvocation.semanticProfile()
-                    != SemanticProfile.LEGACY_SAFE_INT) {
-            violation("self-probe: the catalogued time fixture must "
-                + "resolve LEGACY_REGRESSION + LEGACY_SAFE_INT, got "
+                    != SemanticProfile.DEAL_V1_2_INT32) {
+            violation("self-probe: the uncatalogued time fixture must "
+                + "resolve COMMON_SHADOW + DEAL_V1_2_INT32, got "
                 + timeInvocation.purpose() + " + "
                 + timeInvocation.semanticProfile());
         }
