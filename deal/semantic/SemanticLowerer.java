@@ -1426,6 +1426,7 @@ public final class SemanticLowerer {
     }
 
     /**
+    /**
      * The E7 call-machine lowering result (ISSUE-0236): the validated
      * lowering result plus the module's recorded {@code EXTERNAL_ENTRY}
      * and {@code CALLBACK_INVOKE} op ids by export name — the surfaces a
@@ -1448,21 +1449,31 @@ public final class SemanticLowerer {
     }
 
     /**
-     * The class-declaration child's lowering result (ISSUE-0511): the
-     * validated lowering result plus the produced
-     * {@link deal.semantic.ir.ClassFactoryRegistry} factory-registration
-     * record (K-D2 — the {@code constructionEntry}&#8594;{@code CLASS_FACTORY}
-     * op bindings carried alongside the unit, the
-     * {@link deal.semantic.ir.FunctionBindingRegistry}/{@link StructuredBodyTable}
-     * precedent). On failure the lowering result carries the first E6005
-     * and the registry is the empty record.
+     * The class-declaration child's lowering result (ISSUE-0511,
+     * extended by the ISSUE-0515 JSON child): the validated lowering
+     * result plus the two produced production records carried alongside
+     * the unit (K-D2/K-D8 — the
+     * {@link deal.semantic.ir.FunctionBindingRegistry}/
+     * {@link StructuredBodyTable} precedent): the
+     * {@link deal.semantic.ir.ClassFactoryRegistry}
+     * factory-registration record (the
+     * {@code constructionEntry}&#8594;{@code CLASS_FACTORY} op bindings) and the
+     * {@link deal.semantic.ir.JsonDefaultChildTable} record (the
+     * per-site {@code CLASS_DEFAULT} child op ids of every
+     * {@code @jsonable} class's {@code JSON_FROM_CLASS} op in
+     * declaration order). On failure the lowering result carries the
+     * first E6005 and both records are empty.
+     */
+
      */
     public record ClassDeclarationCoreResult(LoweringResult lowering,
-                                             deal.semantic.ir.ClassFactoryRegistry registry) {
+                                             deal.semantic.ir.ClassFactoryRegistry registry,
+                                             deal.semantic.ir.JsonDefaultChildTable jsonDefaults) {
 
         public ClassDeclarationCoreResult {
             Objects.requireNonNull(lowering, "lowering must not be null");
             Objects.requireNonNull(registry, "registry must not be null");
+            Objects.requireNonNull(jsonDefaults, "jsonDefaults must not be null");
         }
     }
 
@@ -2913,7 +2924,8 @@ public final class SemanticLowerer {
                     new LoweringFailureDetail(module.moduleId().path(),
                         SemanticCapability.FOUNDATION_VALUES, LOWER_LEGACY_PROFILE_REJECTED,
                         profile, LoweredModuleUnit.FORMAT_VERSION, "SemanticLowerer")))),
-                new deal.semantic.ir.ClassFactoryRegistry(Map.of()));
+                new deal.semantic.ir.ClassFactoryRegistry(Map.of()),
+                new deal.semantic.ir.JsonDefaultChildTable(Map.of()));
         }
         ModuleLowerer lowerer = new ModuleLowerer(module.moduleId(), module.sourceId(),
             module.checks(), allocator, true, true, true, false, false, false,
@@ -2924,31 +2936,37 @@ public final class SemanticLowerer {
             return new ClassDeclarationCoreResult(new LoweringResult(null, null,
                 List.of(FailureContractRegistry.e6005(
                     loweringFailureDetail(module.moduleId(), unlowered)))),
-                new deal.semantic.ir.ClassFactoryRegistry(Map.of()));
+                new deal.semantic.ir.ClassFactoryRegistry(Map.of()),
+                new deal.semantic.ir.JsonDefaultChildTable(Map.of()));
         } catch (IntLiteralOutOfRange outOfRange) {
             return new ClassDeclarationCoreResult(new LoweringResult(null, null,
                 List.of(FailureContractRegistry.e6005(
                     loweringFailureDetail(module.moduleId(), outOfRange)))),
-                new deal.semantic.ir.ClassFactoryRegistry(Map.of()));
+                new deal.semantic.ir.ClassFactoryRegistry(Map.of()),
+                new deal.semantic.ir.JsonDefaultChildTable(Map.of()));
         } catch (ContainerPayloadDescriptors.Defect defect) {
             return new ClassDeclarationCoreResult(new LoweringResult(null, null,
                 List.of(FailureContractRegistry.e6005(
                     loweringFailureDetail(module.moduleId(), defect)))),
-                new deal.semantic.ir.ClassFactoryRegistry(Map.of()));
+                new deal.semantic.ir.ClassFactoryRegistry(Map.of()),
+                new deal.semantic.ir.JsonDefaultChildTable(Map.of()));
         } catch (ComparisonSelectorLowering.Defect defect) {
             return new ClassDeclarationCoreResult(new LoweringResult(null, null,
                 List.of(ComparisonSelectorLowering.e6005(module.moduleId(), defect))),
-                new deal.semantic.ir.ClassFactoryRegistry(Map.of()));
+                new deal.semantic.ir.ClassFactoryRegistry(Map.of()),
+                new deal.semantic.ir.JsonDefaultChildTable(Map.of()));
         } catch (ClassDefaultCapture capture) {
             return new ClassDeclarationCoreResult(new LoweringResult(null, null,
                 List.of(FailureContractRegistry.e6005(
                     loweringFailureDetail(module.moduleId(), capture)))),
-                new deal.semantic.ir.ClassFactoryRegistry(Map.of()));
+                new deal.semantic.ir.ClassFactoryRegistry(Map.of()),
+                new deal.semantic.ir.JsonDefaultChildTable(Map.of()));
         } catch (RetainedAbiDeferred deferred) {
             return new ClassDeclarationCoreResult(new LoweringResult(null, null,
                 List.of(FailureContractRegistry.e6005(
                     loweringFailureDetail(module.moduleId(), deferred)))),
-                new deal.semantic.ir.ClassFactoryRegistry(Map.of()));
+                new deal.semantic.ir.ClassFactoryRegistry(Map.of()),
+                new deal.semantic.ir.JsonDefaultChildTable(Map.of()));
         }
         LoweredModuleUnit unit = lowerer.buildUnit(constructCoverage,
             module.imports().stream().map(ResolvedImport::resolvedModuleId).toList(),
@@ -2960,20 +2978,23 @@ public final class SemanticLowerer {
         if (validation.isPresent()) {
             return new ClassDeclarationCoreResult(new LoweringResult(null, null,
                 List.of(validation.get())),
-                new deal.semantic.ir.ClassFactoryRegistry(Map.of()));
+                new deal.semantic.ir.ClassFactoryRegistry(Map.of()),
+                new deal.semantic.ir.JsonDefaultChildTable(Map.of()));
         }
         Optional<CompilerDiagnostic> chainShape = AddressChainProtocol.validate(unit);
         if (chainShape.isPresent()) {
             return new ClassDeclarationCoreResult(new LoweringResult(null, null,
                 List.of(chainShape.get())),
-                new deal.semantic.ir.ClassFactoryRegistry(Map.of()));
+                new deal.semantic.ir.ClassFactoryRegistry(Map.of()),
+                new deal.semantic.ir.JsonDefaultChildTable(Map.of()));
         }
         Optional<CompilerDiagnostic> controlFlow =
             ControlFlowValidator.validate(unit, lowerer.bodyTable());
         if (controlFlow.isPresent()) {
             return new ClassDeclarationCoreResult(new LoweringResult(null, null,
                 List.of(controlFlow.get())),
-                new deal.semantic.ir.ClassFactoryRegistry(Map.of()));
+                new deal.semantic.ir.ClassFactoryRegistry(Map.of()),
+                new deal.semantic.ir.JsonDefaultChildTable(Map.of()));
         }
         Optional<CompilerDiagnostic> bindings =
             BindingsProductionValidator.validate(unit, lowerer.bodyTable(),
@@ -2981,11 +3002,13 @@ public final class SemanticLowerer {
         if (bindings.isPresent()) {
             return new ClassDeclarationCoreResult(new LoweringResult(null, null,
                 List.of(bindings.get())),
-                new deal.semantic.ir.ClassFactoryRegistry(Map.of()));
+                new deal.semantic.ir.ClassFactoryRegistry(Map.of()),
+                new deal.semantic.ir.JsonDefaultChildTable(Map.of()));
         }
         return new ClassDeclarationCoreResult(
             new LoweringResult(unit, lowerer.bodyTable(), List.of()),
-            lowerer.factoryRegistry());
+            lowerer.factoryRegistry(),
+            lowerer.jsonDefaultChildren());
     }
 
     // =========================================================================
@@ -3283,6 +3306,19 @@ public final class SemanticLowerer {
          */
         private final java.util.LinkedHashMap<deal.semantic.ir.ClassFactoryId, OpId>
             factoryRegistry = new java.util.LinkedHashMap<>();
+        /**
+         * The produced per-site JSON default-child registrations keyed by
+         * the {@code @jsonable} classes' {@code JSON_FROM_CLASS} op ids
+         * (K-D8; ISSUE-0515 — the unit-side
+         * {@link deal.semantic.ir.JsonDefaultChildTable} record): each
+         * entry lists the class's required-present defaulted fields'
+         * {@code CLASS_DEFAULT} op ids in declaration order (the same
+         * list the factory payload carries; an omitted
+         * optional-with-default field's default never runs and its op id
+         * never enters the list, K-D4 step 2).
+         */
+        private final java.util.LinkedHashMap<OpId, List<OpId>> jsonDefaultChildren =
+            new java.util.LinkedHashMap<>();
         /**
          * One defaulted field's declaration-arm facts: the emitted
          * {@code CLASS_DEFAULT} op id and its result {@code ValueId}
@@ -4886,6 +4922,14 @@ public final class SemanticLowerer {
             }
             classDefaults.put(classId, defaults);
 
+            // The generated C$fromJson/C$toJson function bodies (K-D8/
+            // K-D10, ISSUE-0515): emitted for every @jsonable class
+            // (exported or not) — the checker defines the synthetic
+            // function symbols for every @jsonable class.
+            if (declaration.isJsonable()) {
+                lowerJsonFunctions(declaration, classId, layout, classDefaultOpIds);
+            }
+
             if (!exported) {
                 return;
             }
@@ -4921,6 +4965,195 @@ public final class SemanticLowerer {
             // never part of the module-init flow).
             emitTarget().add(op);
             factoryRegistry.put(interfaceEntry.constructionEntry(), opId);
+        }
+
+        /**
+         * The generated {@code @jsonable} function bodies (ISSUE-0515,
+         * class-construction-jsonable-operations K-D8/K-D10; the
+         * {@code js-v12-jsonable-completion}/{@code jvm-v12-json-completion}
+         * generated {@code C$fromJson}/{@code C$toJson} shapes): for
+         * every {@code @jsonable} class exactly two synthetic
+         * module-level {@link LoweredFunction}s —
+         * {@code C$fromJson(s: string): C|null} and
+         * {@code C$toJson(v: C): string} — emitted as ordinary
+         * {@code CLOSURE_NEW} producers (the closure-seam precedent: the
+         * {@code CLOSURE_NEW} op at the declaration position, the
+         * {@code LoweredFunction} record in {@code unit.functions}, and
+         * the {@code FunctionExecutionBinding.LoweredBody} registration
+         * through the {@link FunctionBindingRegistry} seam). The {@code $}
+         * sigil names are compiler-reserved (the spec {@code $} rule;
+         * the checker already defines the synthetic function symbols in
+         * the root scope). Each body block carries exactly the parameter
+         * {@code BINDING_ALLOC} at the body entry (the pinned parameter
+         * model), the parameter {@code BINDING_LOAD}, and one JSON op:
+         * {@code JSON_FROM_CLASS {layout, jsonString = the parameter
+         * load result}} with policy {@code JSON_FROM_NULL} and result
+         * type {@code ?class:<ClassId>}, or {@code JSON_TO_CLASS
+         * {classValue = the parameter load result, layout}} with policy
+         * {@code JSON_TO_ERROR} and result type {@code string} (the
+         * validator-pinned policies and result types). The
+         * {@code JSON_FROM_CLASS} op's per-site {@code CLASS_DEFAULT}
+         * children are recorded in the produced
+         * {@link deal.semantic.ir.JsonDefaultChildTable} record — the
+         * class's required-present defaulted fields'
+         * {@code CLASS_DEFAULT} op ids in declaration order (the
+         * {@code classDefaultOpIds} list; the schema payload carries no
+         * child list, K-D8 step 5). Export publication of the generated
+         * functions is E10's — not emitted here. All ids/origins are
+         * deterministic synthetic values, so repeated lowering is
+         * byte-identical.
+         *
+         * @param declaration       the checked {@code @jsonable} class
+         *                          declaration; non-null
+         * @param classId           the checker-resolved class identity;
+         *                          non-null
+         * @param layout            the produced layout record of the
+         *                          class; non-null
+         * @param classDefaultOpIds the class's required-present defaulted
+         *                          fields' {@code CLASS_DEFAULT} op ids in
+         *                          declaration order; non-null
+         */
+        private void lowerJsonFunctions(ClassDeclaration declaration, ClassId classId,
+                                        deal.semantic.ir.ClassLayout layout,
+                                        List<OpId> classDefaultOpIds) {
+            // The generated signatures flow from the checker's synthetic
+            // C$fromJson/C$toJson function symbols through the single
+            // DescriptorService producer (the producer-singularity rule:
+            // no RuntimeDescriptor is ever constructed directly here).
+            SymbolTable scope = currentCheckerScope();
+            Symbol fromSymbol = scope == null ? null
+                : scope.resolve(declaration.name() + "$fromJson");
+            Symbol toSymbol = scope == null ? null
+                : scope.resolve(declaration.name() + "$toJson");
+            if (!(fromSymbol instanceof Symbol.FunctionSymbol fromFunction)
+                    || !(toSymbol instanceof Symbol.FunctionSymbol toFunction)) {
+                throw new ConstructUnlowered("the @jsonable class '"
+                    + declaration.name() + "' has no checked C$fromJson/C$toJson "
+                    + "function symbols (the checker defines the synthetic symbols for "
+                    + "every @jsonable class — a fact defect)");
+            }
+            RuntimeDescriptor.Func fromSignature = (RuntimeDescriptor.Func)
+                ContainerPayloadDescriptors.resultDescriptorOf(fromFunction.funcType());
+            RuntimeDescriptor.Func toSignature = (RuntimeDescriptor.Func)
+                ContainerPayloadDescriptors.resultDescriptorOf(toFunction.funcType());
+            RuntimeDescriptor fromResult = fromSignature.returnType();
+            RuntimeDescriptor toResult = toSignature.returnType();
+            RuntimeDescriptor fromParameter = fromSignature.paramTypes().get(0);
+            RuntimeDescriptor toParameter = toSignature.paramTypes().get(0);
+
+            // C$fromJson(s: string): C|null — the walk records the
+            // class's per-site CLASS_DEFAULT children (declaration
+            // order) in the produced JsonDefaultChildTable record.
+            OpId fromJsonOpId = lowerJsonFunction(declaration, layout, fromSignature,
+                fromParameter, fromResult, FailurePolicyId.JSON_FROM_NULL, true);
+            jsonDefaultChildren.put(fromJsonOpId, List.copyOf(classDefaultOpIds));
+
+            // C$toJson(v: C): string.
+            lowerJsonFunction(declaration, layout, toSignature, toParameter, toResult,
+                FailurePolicyId.JSON_TO_ERROR, false);
+        }
+
+        /**
+         * Emits one generated {@code @jsonable} function: the body block
+         * (parameter {@code BINDING_ALLOC}, parameter {@code
+         * BINDING_LOAD}, the single JSON op — the parameter load
+         * result wired as the JSON payload's operand), then the
+         * {@code CLOSURE_NEW} op publishing the fresh function identity
+         * with the {@code LoweredFunction} record and the
+         * {@code LoweredBody} registration through the registry seam,
+         * and finally the buffered body ops flushed after the closure
+         * (the closure-expression precedent's pinned unit order). The
+         * JSON op's id is returned (the {@code JsonDefaultChildTable}
+         * key of the {@code fromJson} arm).
+         */
+        private OpId lowerJsonFunction(ClassDeclaration declaration,
+                                       deal.semantic.ir.ClassLayout layout,
+                                       RuntimeDescriptor.Func signature,
+                                       RuntimeDescriptor parameterDescriptor,
+                                       RuntimeDescriptor jsonResultType,
+                                       FailurePolicyId jsonPolicy,
+                                       boolean fromJson) {
+            BlockId bodyBlock = allocateBlock();
+            FunctionId functionId = ids.nextFunctionId(module, nextOrdinal++, 0);
+            ValueId closureIdentity = ids.nextValueId(module, nextOrdinal++, 0);
+            List<SemanticOp> bodyOps = new ArrayList<>();
+            emitTargets.push(bodyOps);
+            blockStack.push(bodyBlock);
+            OpId jsonOpId;
+            try {
+                // The parameter ALLOC at the body entry (the pinned
+                // parameter model: DIRECT, mutable, generation 0, the
+                // body-root block).
+                BindingId parameterBinding = ids.nextBindingId(module, nextOrdinal++, 0);
+                BindingCoreIncarnation incarnation = new BindingCoreIncarnation(
+                    INITIAL_LOOP_GENERATION, bodyBlock, BindingCellKind.DIRECT,
+                    true, BindingProducer.BINDING_ALLOC, false);
+                parameterBindings.add(parameterBinding);
+                AnchorId allocAnchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+                OpId allocOpId = ids.nextOpId(module, nextOrdinal++, 0);
+                SourceOrigin allocOrigin = new SourceOrigin(sourceId,
+                    toSourceSpan(declaration.span()), SourceOriginKind.SYNTHETIC,
+                    allocAnchor, null);
+                emit(buildOp(allocOpId, SemanticOpKind.BINDING_ALLOC,
+                    new KindPayload.BindingAllocPayload(parameterBinding, bodyBlock, true,
+                        cellKinds.cellKindOf(incarnation), INITIAL_LOOP_GENERATION),
+                    null, null, FailurePolicyId.NO_DEAL_FAILURE, allocOrigin));
+
+                // The parameter load: the generated body's only operand
+                // producer.
+                ValueId loadValue = ids.nextValueId(module, nextOrdinal++, 0);
+                AnchorId loadAnchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+                OpId loadOpId = ids.nextOpId(module, nextOrdinal++, 0);
+                SourceOrigin loadOrigin = new SourceOrigin(sourceId,
+                    toSourceSpan(declaration.span()), SourceOriginKind.SYNTHETIC,
+                    loadAnchor, null);
+                emit(buildOp(loadOpId, SemanticOpKind.BINDING_LOAD,
+                    new KindPayload.BindingLoadPayload(parameterBinding,
+                        INITIAL_LOOP_GENERATION),
+                    loadValue, parameterDescriptor, FailurePolicyId.NO_DEAL_FAILURE,
+                    loadOrigin));
+
+                // The single JSON op of the body: payload-referenced
+                // operand wiring (the FIELD_READ precedent), the pinned
+                // policy and result type, a SYNTHETIC origin at the class
+                // declaration span.
+                ValueId jsonResult = ids.nextValueId(module, nextOrdinal++, 0);
+                AnchorId jsonAnchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+                jsonOpId = ids.nextOpId(module, nextOrdinal++, 0);
+                SourceOrigin jsonOrigin = new SourceOrigin(sourceId,
+                    toSourceSpan(declaration.span()), SourceOriginKind.SYNTHETIC,
+                    jsonAnchor, null);
+                KindPayload payload = fromJson
+                    ? new KindPayload.JsonFromClassPayload(layout, loadValue)
+                    : new KindPayload.JsonToClassPayload(loadValue, layout);
+                emit(buildOp(jsonOpId,
+                    fromJson ? SemanticOpKind.JSON_FROM_CLASS : SemanticOpKind.JSON_TO_CLASS,
+                    payload, jsonResult, jsonResultType, jsonPolicy, jsonOrigin));
+            } finally {
+                blockStack.pop();
+                emitTargets.pop();
+            }
+            // The CLOSURE_NEW producer: the fresh function identity, the
+            // LoweredFunction record, and the LoweredBody registration
+            // through the registry seam (generated synthetics are
+            // ordinary CLOSURE_NEW producers).
+            AnchorId closureAnchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+            OpId closureOpId = ids.nextOpId(module, nextOrdinal++, 0);
+            FunctionExecutionBinding.LoweredBody binding =
+                new FunctionExecutionBinding.LoweredBody(functionId, bodyBlock);
+            SourceOrigin closureOrigin = new SourceOrigin(sourceId,
+                toSourceSpan(declaration.span()), SourceOriginKind.SYNTHETIC,
+                closureAnchor, currentParent());
+            emit(buildOp(closureOpId, SemanticOpKind.CLOSURE_NEW,
+                new KindPayload.ClosureNewPayload(functionId, signature, List.of(), binding),
+                closureIdentity, signature, FailurePolicyId.NO_DEAL_FAILURE,
+                closureOrigin));
+            functions.put(functionId, new LoweredFunction(functionId, signature, List.of(),
+                bodyBlock));
+            registry.registerClosure(new FunctionAllocationIdentity(closureIdentity.id()),
+                functionId, bodyBlock);
+            emitTarget().addAll(bodyOps);
+            return jsonOpId;
         }
 
         /**
@@ -5212,6 +5445,17 @@ public final class SemanticLowerer {
         public deal.semantic.ir.ClassFactoryRegistry factoryRegistry() {
             return new deal.semantic.ir.ClassFactoryRegistry(
                 new LinkedHashMap<>(factoryRegistry));
+        }
+
+        /**
+         * The produced JSON default-child record of the session (K-D8):
+         * the insertion-ordered {@code JSON_FROM_CLASS}&#8594;per-site
+         * {@code CLASS_DEFAULT} child bindings of the {@code @jsonable}
+         * classes.
+         */
+        public deal.semantic.ir.JsonDefaultChildTable jsonDefaultChildren() {
+            return new deal.semantic.ir.JsonDefaultChildTable(
+                new LinkedHashMap<>(jsonDefaultChildren));
         }
 
         /**

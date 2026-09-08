@@ -34,7 +34,20 @@ import java.util.Objects;
  * the K-D4 transfer order, the overlay reorder pin, the
  * {@code CLASS_DEFAULT_FIELD} extraction rule, and the tag-last
  * publication. The {@code JSON_*} surfaces complete the assembled
- * executor in the later children (sequencing items 5-6).
+ * executor in this child (sequencing item 5, ISSUE-0515): the
+ * {@code JSON_FROM_CLASS} walk (K-D8/K-D9 — the parse seam, the
+ * top-level gate with the {@code {}}/{@code []} collapse, the
+ * document-order extra-key gate, the declaration-order provided
+ * decode, the per-site {@code CLASS_DEFAULT} children of the
+ * {@code JsonDefaultChildTable} record, the nested-class
+ * {@code CLASS_FACTORY} trigger, the final validation, the tag, and
+ * the {@code JSON_MAX_DEPTH} bound) and the {@code JSON_TO_CLASS}
+ * walk (K-D10 — the root identity check, the declaration-order
+ * serialization with the pinned fieldPath convention, the
+ * path-local cycle set, the call-origin {@code JSON_TO_ERROR}
+ * projection, and deterministic RFC-8259 text) over the JSON
+ * algorithm delegate seam (K-D11 — E8's
+ * {@code SharedStdlibSemantics} is the production delegate).
  *
  * <p><b>Interpretation surface.</b> The executor interprets only
  * validated op shapes ({@link SemanticOp} records whose kind/payload
@@ -944,9 +957,10 @@ public final class ClassOpsExecutor {
      * Executes one validated {@code CLASS_FACTORY} op (K-D5): the
      * declaring module's default-application op, one per exported class,
      * triggered by a caller's {@code CLASS_NEW} with
-     * {@code defaultOwner: SHARED_FACTORY} (this child's trigger; the
-     * {@code JSON_FROM_CLASS} nested-class decode is the later JSON
-     * child's trigger of the same closed trigger set). The factory runs
+     * {@code defaultOwner: SHARED_FACTORY} or by a
+     * {@code JSON_FROM_CLASS} nested-class decode (K-D8 step 6, K-D5
+     * trigger (b) — the JSON child's trigger of the same closed
+     * trigger set). The factory runs
      * its {@code CLASS_DEFAULT} children in declaration order through
      * the {@link BodyRunner} seam — defaults evaluate per construction
      * in the declaring module's scope (the owner-side body runner
@@ -1009,7 +1023,9 @@ public final class ClassOpsExecutor {
      *         fields present, every other field missing)
      * @throws Defect               on a shape outside the pinned
      *                              contracts — a wrong op kind/policy, a
-     *                              non-{@code CLASS_NEW} trigger, a
+     *                              trigger outside the closed trigger set
+     *                              ({@code CLASS_NEW} or
+     *                              {@code JSON_FROM_CLASS}), a
      *                              self-trigger, an unresolvable layout, a
      *                              default child of the wrong
      *                              kind/policy/class, a defaulted field
@@ -1034,13 +1050,15 @@ public final class ClassOpsExecutor {
         // parent to the triggering caller op — a caller CLASS_NEW for this
         // child's surface (the JSON_FROM_CLASS nested-decode trigger is
         // the later JSON child's). The factory never parents to itself.
-        if (triggeringCaller.kind() != SemanticOpKind.CLASS_NEW) {
+        if (triggeringCaller.kind() != SemanticOpKind.CLASS_NEW
+                && triggeringCaller.kind() != SemanticOpKind.JSON_FROM_CLASS) {
             throw new Defect("CLASS_FACTORY " + op.opId() + " triggered by an op of kind "
-                + triggeringCaller.kind() + ": the closed trigger set is {CLASS_NEW (this "
-                + "child's trigger), JSON_FROM_CLASS (the later JSON child's trigger)} and "
-                + "the factory's executed parentOpId is the triggering caller op's id "
-                + "(K-D5/K-D12) — a non-CLASS_NEW caller reaching this child's surface is "
-                + "a producer defect, never executed");
+                + triggeringCaller.kind() + ": the closed trigger set is {CLASS_NEW (the "
+                + "SHARED_FACTORY construction trigger), JSON_FROM_CLASS (the "
+                + "nested-class decode trigger, K-D8 step 6/K-D5 trigger (b))} and the "
+                + "factory's executed parentOpId is the triggering caller op's id "
+                + "(K-D5/K-D12) — an op outside the closed trigger set reaching "
+                + "execution is a producer defect, never executed");
         }
         if (triggeringCaller.opId().equals(op.opId())) {
             throw new Defect("CLASS_FACTORY " + op.opId() + " triggered by itself: the "
@@ -2094,6 +2112,1319 @@ public final class ClassOpsExecutor {
         List<FieldState> states = new ArrayList<>(instance.fields());
         states.set(fieldIndex, committed);
         return new Value.Class(instance.classId(), List.copyOf(states));
+    }
+
+    // =========================================================================
+    // The JSON algorithm delegate seam (K-D8/K-D10/K-D11)
+    // =========================================================================
+
+    /**
+     * The pinned parse terminal of the JSON algorithm delegate seam
+     * (K-D11): exactly {@code Success(value) | SyntaxFailure}. The
+     * seam's parse contract is the E8 {@code JSON_PARSE} row — an
+     * RFC-8259 scalar-valid parse of the (already scalar-valid) input;
+     * object order follows text; duplicate keys keep the last value and
+     * the first position; a signed32 <em>integer lexical form</em>
+     * becomes {@link Value.Int} and every other numeric form becomes
+     * {@link Value.Number}; a syntax defect is a {@link SyntaxFailure}
+     * (the walk swallows it into language null — policy
+     * {@code JSON_FROM_NULL} has no visible failure). E8's
+     * {@code SharedStdlibSemantics} is the production delegate; the
+     * walker tests use a fixture delegate implementing exactly the
+     * pinned rows. The executor defines no second production JSON
+     * algorithm.
+     */
+    public sealed interface JsonParse permits JsonParse.Success, JsonParse.SyntaxFailure {
+
+        /**
+         * The parse succeeded: {@code value} is the closed parsed-JSON
+         * value model of the input — exactly the JSON-shaped subset of
+         * the executor's {@link Value} view: {@code Null}, {@code Bool},
+         * {@code Int} (signed32 integer lexical forms only),
+         * {@code Number}, {@code String} (valid scalar carriers),
+         * {@code Table} (objects with ordered entries), and
+         * {@code Array}. A value outside that set is a seam-contract
+         * violation and fails closed as a producer {@link Defect}.
+         */
+        record Success(Value value) implements JsonParse {
+
+            public Success {
+                Objects.requireNonNull(value, "value must not be null");
+            }
+        }
+
+        /** The input is not RFC-8259 scalar-valid JSON text. */
+        record SyntaxFailure() implements JsonParse {
+        }
+    }
+
+    /**
+     * The pinned stringify terminal of the JSON algorithm delegate seam
+     * (K-D11): exactly {@code Success(text) | Failure(fieldPath,
+     * actual)}. The seam's stringify contract is the E8
+     * {@code JSON_STRINGIFY} row over the executor's JSON-shape view —
+     * finite acyclic JSON-shaped data (string-keyed objects, arrays,
+     * and null/boolean/int/number/string leaves); object fields in
+     * first-insertion order, arrays in index order; RFC-8259 escaping;
+     * shortest round-trippable decimal number formatting
+     * ({@code Double.toString}); the first failure in declaration order
+     * fails with the pinned {@code JSON_TO_CLASS} segment convention —
+     * a table key {@code k} appends {@code ".k"}, an array element
+     * {@code i} appends {@code "[i]"}, and the root value itself has
+     * the empty relative path — prefixed with the caller-supplied field
+     * path, so the executor projects the exact
+     * {@code value at {fieldPath} is not JSON serializable: {actual}}
+     * template (K-D10). Unsupported values, cycles, and nonfinite
+     * numbers fail here; acyclic finite data never fails. E8's
+     * {@code SharedStdlibSemantics} is the production delegate; the
+     * walker tests use a fixture delegate implementing exactly the
+     * pinned rows.
+     */
+    public sealed interface JsonStringify permits JsonStringify.Success, JsonStringify.Failure {
+
+        /** The exact RFC-8259 text of the JSON-shaped value. */
+        record Success(UnicodeScalars.Valid text) implements JsonStringify {
+
+            public Success {
+                Objects.requireNonNull(text, "text must not be null");
+            }
+        }
+
+        /**
+         * The first declaration-order failure: {@code fieldPath} is the
+         * full pinned-convention path (the caller's prefix plus the
+         * seam's relative segments), {@code actual} is the offending
+         * value's canonical actual-kind token.
+         */
+        record Failure(String fieldPath, String actual) implements JsonStringify {
+
+            public Failure {
+                Objects.requireNonNull(fieldPath, "fieldPath must not be null");
+                Objects.requireNonNull(actual, "actual must not be null");
+            }
+        }
+    }
+
+    /**
+     * The parse arm of the JSON algorithm delegate seam (K-D11):
+     * {@code (UnicodeScalars.Valid) → JsonParse}. The executor calls it
+     * once per {@code JSON_FROM_CLASS} execution with the resolved
+     * scalar-valid input text; an invalid scalar carrier never reaches
+     * the seam (the walk returns language null first — the input is
+     * not RFC-8259 text).
+     */
+    @FunctionalInterface
+    public interface JsonParser {
+
+        /**
+         * Parses one scalar-valid JSON text per the E8 {@code JSON_PARSE}
+         * row.
+         *
+         * @param text the scalar-valid input text; non-null
+         * @return the pinned parse terminal
+         */
+        JsonParse parse(UnicodeScalars.Valid text);
+    }
+
+    /**
+     * The stringify arm of the JSON algorithm delegate seam (K-D11):
+     * {@code (Value, fieldPathPrefix) → JsonStringify} over the
+     * executor's JSON-shape view. The executor delegates every leaf,
+     * table, and non-class array element encoding of the
+     * {@code JSON_TO_CLASS} walk to this seam — the walk itself owns
+     * the declared-field selection/order, presence, identity checks,
+     * class recursion, paths, and depth; the seam owns the exact
+     * RFC-8259 text and the finite-acyclic JSON-shape discipline.
+     */
+    @FunctionalInterface
+    public interface JsonStringifier {
+
+        /**
+         * Stringifies one JSON-shaped value per the E8
+         * {@code JSON_STRINGIFY} row.
+         *
+         * @param jsonShaped      the JSON-shaped value (null, boolean,
+         *                        int, number, valid string, table, or
+         *                        array); non-null, never a class,
+         *                        function, or missing value
+         * @param fieldPathPrefix the caller's pinned-convention field
+         *                        path prefix the seam appends its
+         *                        relative failure path to; non-null
+         * @return the pinned stringify terminal
+         */
+        JsonStringify stringify(Value jsonShaped, String fieldPathPrefix);
+    }
+
+    /**
+     * The nested-defaults seam of the {@code JSON_FROM_CLASS} walk
+     * (K-D8 step 6; K-D5 trigger (b)): fills the omitted
+     * required-present defaults of one nested class for the runtime
+     * provided-field set by resolving and executing the nested class's
+     * {@code CLASS_FACTORY} in the nested declaring module's scope, and
+     * returns the default-filled untagged transfer instance. The
+     * production caller resolves the factory op through the
+     * layout-resolution context (the nested
+     * {@link ClassInterface#constructionEntry()} plus the owner unit's
+     * {@link ClassFactoryRegistry}) and drives
+     * {@link #executeClassFactory} with the triggering
+     * {@code JSON_FROM_CLASS} op as the factory's executed
+     * {@code parentOpId} (K-D12, cross-unit) — a nested class whose
+     * factory does not resolve is a producer defect, never executed and
+     * never silently skipped. A failing default child throws (the walk
+     * swallows it into language null); the returned instance must carry
+     * the nested classId with the nested layout's declaration-order
+     * field count (fail closed otherwise).
+     */
+    @FunctionalInterface
+    public interface NestedClassFactory {
+
+        /**
+         * Fills the nested class's omitted required-present defaults.
+         *
+         * @param classId         the nested class identity; non-null
+         * @param providedFields  the runtime provided-field name set of
+         *                        the nested document (the factory's
+         *                        skip-provided rule); non-null
+         * @return the default-filled untagged transfer instance (a
+         *         {@link Value.Class} of {@code classId})
+         */
+        Value fillDefaults(ClassId classId, Set<String> providedFields);
+    }
+
+    // =========================================================================
+    // JSON_FROM_CLASS (the generated C$fromJson walk, K-D8/K-D9)
+    // =========================================================================
+
+    /**
+     * The pinned bounded walk depth of the two JSON walkers (K-D8/K-D10):
+     * {@code 512} — the retained bound of the runtime's JSON plans
+     * ({@code deal/runtime.lua} {@code __rt._JSON_MAX_DEPTH = 512}).
+     * Nesting deeper than 512 levels fails: the
+     * {@code JSON_FROM_CLASS} walk returns language null and the
+     * {@code JSON_TO_CLASS} walk fails {@code JSON_TO_ERROR} at the
+     * exceeding position.
+     */
+    public static final int JSON_MAX_DEPTH = 512;
+
+    /**
+     * Executes one validated {@code JSON_FROM_CLASS} op (K-D8, the
+     * generated {@code C$fromJson} walk), policy
+     * {@code JSON_FROM_NULL}:
+     *
+     * <ol>
+     *   <li>the {@code jsonString} operand resolves exactly once; an
+     *       invalid scalar carrier is a syntax defect (RFC-8259 text is
+     *       scalar-valid) and returns language null;</li>
+     *   <li>parse through the {@link JsonParser} seam (the E8
+     *       {@code JSON_PARSE} algorithm — signed32 integer lexical
+     *       mapping, duplicate keys keep last value and first position,
+     *       document order preserved); a syntax defect returns language
+     *       null (no DEAL failure);</li>
+     *   <li>the top-level gate (K-D8 step 2): a JSON null returns
+     *       language null; a JSON object walks; an empty array
+     *       {@code []} decodes as the defaulted instance (the pinned
+     *       {@code {}}/{@code []} collapse); a non-empty array or
+     *       scalar returns language null;</li>
+     *   <li>the extra-key gate in document order (K-D8 step 3): the
+     *       first parsed key that is not a declared field returns
+     *       language null before any field decode or default runs;</li>
+     *   <li>provided-field decode in declaration order (K-D8 step 4):
+     *       per the field's declared descriptor — int fields accept
+     *       only {@code Int} carriers from the parse's signed32 lexical
+     *       mapping (out-of-range, fractional, or {@code Number}
+     *       carriers fail); nullable fields accept JSON null; a JSON
+     *       null on a non-nullable field fails; {@code table} fields
+     *       accept only a JSON object or the empty-array collapse (a
+     *       non-empty array-shaped value fails — the retained pins);
+     *       {@code array} fields decode element-wise; class fields
+     *       recurse into the nested walk with an identity check and the
+     *       same phase order. A decode failure returns language null
+     *       immediately and no defaults run (parent D5);</li>
+     *   <li>default application in declaration order (K-D8 step 5):
+     *       the op's per-site {@code CLASS_DEFAULT} children (the
+     *       {@code JsonDefaultChildTable} record's declaration-order
+     *       list resolved through {@code defaultChildIds}/
+     *       {@code defaultOps}) run exactly once each for omitted
+     *       required-present fields, skipping fields present in the
+     *       document; an absent required-present field without a
+     *       declared default is a field failure returning language null
+     *       (K-D9 — no per-type reference defaults are invented); a
+     *       failing child returns language null with the completed
+     *       children's effects remaining;</li>
+     *   <li>nested-class defaults (K-D8 step 6): a nested class decode
+     *       triggers the nested class's {@code CLASS_FACTORY} through
+     *       the {@link NestedClassFactory} seam (K-D5 trigger (b)),
+     *       which fills the nested defaults in the nested declaring
+     *       module's scope; the decoded provided fields overlay; nested
+     *       validation; nested tag; a nested failure returns language
+     *       null end-to-end;</li>
+     *   <li>final validation in declaration order (K-D8 step 7): every
+     *       present field (decoded or defaulted) validates against its
+     *       declared descriptor through the executor's internal
+     *       descriptor checks with the {@code JSON_FROM_NULL}
+     *       projection — never {@code BOUNDARY} children
+     *       (walk-internal values have no IR {@code ValueId}s);</li>
+     *   <li>the fresh instance is tagged with the classId and published
+     *       (K-D8 step 8); omitted optionals stay missing and present
+     *       null stays present null (the three-state roundtrip).</li>
+     * </ol>
+     *
+     * Every listed failure publishes language null and no partial
+     * instance is visible; the walk is bounded by
+     * {@link #JSON_MAX_DEPTH} (exceeding it returns language null). The
+     * op runs zero boundary children and zero return boundaries — the
+     * executor never drives a {@code BOUNDARY} child.
+     *
+     * @param op               the validated {@code JSON_FROM_CLASS} op
+     *                         carrying {@code JSON_FROM_NULL}; non-null
+     * @param priorValues      the resolved prior-step values (the
+     *                         {@code jsonString} operand); non-null, no
+     *                         null entries
+     * @param defaultChildIds  the op's per-site {@code CLASS_DEFAULT}
+     *                         child op ids in declaration order (the
+     *                         unit's {@code JsonDefaultChildTable}
+     *                         entry); non-null
+     * @param defaultOps       the unit's {@code CLASS_DEFAULT} ops by
+     *                         {@link OpId}; every id of
+     *                         {@code defaultChildIds} must resolve to a
+     *                         {@code CLASS_DEFAULT} op of the layout's
+     *                         classId carrying
+     *                         {@code NO_DEAL_FAILURE}; non-null
+     * @param layouts          the layout-resolution context
+     *                         {@code ClassId → ClassLayout} (the unit's
+     *                         {@code classLayouts} plus the project
+     *                         interface index); the payload's layout
+     *                         must resolve to exactly the payload's
+     *                         layout and every nested class must resolve;
+     *                         non-null
+     * @param parser           the parse arm of the JSON algorithm seam;
+     *                         non-null
+     * @param nestedFactory    the nested-class default-filling seam
+     *                         (K-D5 trigger (b)); non-null
+     * @param bodyRunner       the default-block callback for the op's
+     *                         own {@code CLASS_DEFAULT} children; non-null
+     * @return the tagged fresh instance, or language null
+     *         ({@link Value.Null}) on every listed failure — never a
+     *         partial instance
+     * @throws Defect               on a shape outside the pinned
+     *                              contracts — a wrong op kind/policy,
+     *                              an unresolvable or mismatched layout,
+     *                              an unresolvable or wrong-kind operand,
+     *                              a default child of the wrong
+     *                              kind/policy/class/field, a duplicate
+     *                              default child, a nested factory
+     *                              producing a wrong-kind or
+     *                              wrong-shaped instance, an
+     *                              unresolvable nested layout, or a
+     *                              non-JSON-shaped seam result
+     * @throws NullPointerException if any argument is null
+     */
+    public static Value executeJsonFromClass(
+            SemanticOp op,
+            Map<ValueId, Value> priorValues,
+            List<OpId> defaultChildIds,
+            Map<OpId, SemanticOp> defaultOps,
+            Map<ClassId, ClassLayout> layouts,
+            JsonParser parser,
+            NestedClassFactory nestedFactory,
+            BodyRunner bodyRunner) {
+        requireOp(op, SemanticOpKind.JSON_FROM_CLASS, FailurePolicyId.JSON_FROM_NULL);
+        Objects.requireNonNull(priorValues, "priorValues must not be null");
+        Objects.requireNonNull(defaultChildIds, "defaultChildIds must not be null");
+        Objects.requireNonNull(defaultOps, "defaultOps must not be null");
+        Objects.requireNonNull(layouts, "layouts must not be null");
+        Objects.requireNonNull(parser, "parser must not be null");
+        Objects.requireNonNull(nestedFactory, "nestedFactory must not be null");
+        Objects.requireNonNull(bodyRunner, "bodyRunner must not be null");
+        KindPayload.JsonFromClassPayload payload =
+            (KindPayload.JsonFromClassPayload) op.payload();
+
+        // Layout resolution (K-D11): the payload is never interpreted
+        // against a foreign layout.
+        ClassLayout layout = layouts.get(payload.layout().classId());
+        if (layout == null || !layout.equals(payload.layout())) {
+            throw new Defect("JSON_FROM_CLASS " + op.opId() + " layout of "
+                + payload.layout().classId() + " does not resolve to exactly the "
+                + "payload's layout in the layout-resolution context: the payload's "
+                + "layout must be exactly the resolved layout — an unresolvable or "
+                + "mismatched layout is a producer defect, never executed");
+        }
+
+        // The JSON string operand resolves exactly once (never
+        // re-evaluated); an invalid scalar carrier is a syntax defect of
+        // the walk's input — RFC-8259 text is scalar-valid, so the walk
+        // returns language null before any parse or default runs.
+        Value operand = resolve(priorValues, payload.jsonString());
+        if (!(operand instanceof Value.String string)) {
+            throw new Defect("JSON_FROM_CLASS " + op.opId() + " jsonString operand "
+                + payload.jsonString() + " resolves to " + operand.actualKind()
+                + ": the pinned operand is a string value (the generated body's "
+                + "parameter load) — a wrong-kind operand is a producer defect, never "
+                + "executed");
+        }
+        if (!(string.scalar() instanceof UnicodeScalars.Valid valid)) {
+            return Value.Null.INSTANCE;
+        }
+
+        // Parse through the seam (the E8 JSON_PARSE algorithm); a syntax
+        // defect returns language null — no DEAL failure.
+        JsonParse parsed = parser.parse(valid);
+        if (parsed instanceof JsonParse.SyntaxFailure) {
+            return Value.Null.INSTANCE;
+        }
+        Value document = ((JsonParse.Success) parsed).value();
+        requireJsonShape(op, document);
+
+        // The top-level gate (K-D8 step 2): a JSON null → null; a JSON
+        // object → the walk; an empty array [] → the defaulted instance
+        // (the pinned {}/[] collapse); a non-empty array or scalar → null.
+        if (document instanceof Value.Null) {
+            return Value.Null.INSTANCE;
+        }
+        if (document instanceof Value.Array empty && empty.array().size() == 0) {
+            document = emptyTable();
+        }
+        if (!(document instanceof Value.Table table)) {
+            return Value.Null.INSTANCE;
+        }
+        try {
+            return decodeFromJson(op, layout, (Value.Table) table, defaultChildIds,
+                defaultOps, layouts, nestedFactory, bodyRunner, 0);
+        } catch (JsonFromFailure failure) {
+            // Every listed walk failure publishes language null and no
+            // partial instance is visible; completed default-block
+            // effects remain (the walk never rolls back a runner).
+            return Value.Null.INSTANCE;
+        }
+    }
+
+    // =========================================================================
+    // JSON_TO_CLASS (the generated C$toJson walk, K-D10)
+    // =========================================================================
+
+    /**
+     * Executes one validated {@code JSON_TO_CLASS} op (K-D10, the
+     * generated {@code C$toJson} walk), policy {@code JSON_TO_ERROR}:
+     *
+     * <ol>
+     *   <li>the {@code classValue} operand resolves exactly once; the
+     *       root identity check requires an instance of exactly the
+     *       layout's classId — otherwise the op fails
+     *       {@code JSON_TO_ERROR} — E8001
+     *       {@code value at {fieldPath} is not JSON serializable: {actual}}
+     *       with fieldPath {@code ""} (the root) and {@code actual} the
+     *       offending value's canonical actual-kind token
+     *       ({@code class:<other>} for a wrong identity);</li>
+     *   <li>each declared field serializes in declaration order: an
+     *       omitted optional field is skipped; a missing required field
+     *       fails (the "missing required value" arm, {@code actual}
+     *       {@code missing}); present null serializes as JSON null;
+     *       primitives encode per JSON kind (nonfinite numbers fail);
+     *       class fields recurse with a nested identity check; array
+     *       fields encode element-wise; {@code table} fields run the
+     *       seam's finite-acyclic JSON-shape walk (functions, class
+     *       instances, NaN/Infinity, and cyclic containers inside a
+     *       table fail);</li>
+     *   <li>cycle detection is path-local (a seen set over entered
+     *       class instances); re-entry fails at the re-entering
+     *       position; the walk is bounded by {@link #JSON_MAX_DEPTH}
+     *       (exceeding it fails at the exceeding position);</li>
+     *   <li>the first failure wins in declaration order; the pinned
+     *       fieldPath convention — root {@code ""}, a declared field
+     *       {@code f} = {@code "f"}, a nested class field under
+     *       {@code f} = {@code "f.g"}, an array element =
+     *       {@code "f[0]"} (0-based), a table object key =
+     *       {@code "f.k"};</li>
+     *   <li>the failure origin is the call origin — the origin of the
+     *       call invoking the generated {@code C$toJson} ({@code
+     *       callOrigin}, resolved through the active call executing the
+     *       op; the generated body's synthetic anchor is never used);
+     *       frames are the active DEAL calls; no cause;</li>
+     *   <li>success emits deterministic RFC-8259 text — declared
+     *       fields in declaration order, table entries in
+     *       first-insertion order, arrays in index order, shortest
+     *       round-trippable number formatting (the E8 stringify
+     *       algorithm).</li>
+     * </ol>
+     *
+     * The op runs zero boundary children and zero return boundaries —
+     * the executor never drives a {@code BOUNDARY} child.
+     *
+     * @param op           the validated {@code JSON_TO_CLASS} op
+     *                     carrying {@code JSON_TO_ERROR}; non-null
+     * @param priorValues  the resolved prior-step values (the
+     *                     {@code classValue} operand); non-null, no null
+     *                     entries
+     * @param layouts      the layout-resolution context
+     *                     {@code ClassId → ClassLayout}; the payload's
+     *                     layout must resolve to exactly the payload's
+     *                     layout and every nested class must resolve;
+     *                     non-null
+     * @param stringifier  the stringify arm of the JSON algorithm seam;
+     *                     non-null
+     * @param callOrigin   the call origin of the call invoking the
+     *                     generated {@code C$toJson} — the
+     *                     {@code JSON_TO_ERROR} projection origin (the
+     *                     generated body's synthetic anchor is never
+     *                     used); non-null
+     * @return {@code Success} with the deterministic JSON text, or
+     *         {@code Failure} with the first declaration-order
+     *         {@code JSON_TO_ERROR} projection at the call origin
+     * @throws Defect               on a shape outside the pinned
+     *                              contracts — a wrong op kind/policy,
+     *                              an unresolvable or mismatched layout,
+     *                              an unresolvable operand, an
+     *                              unresolvable nested layout, or a
+     *                              function-typed field descriptor
+     * @throws NullPointerException if any argument is null
+     */
+    public static Outcome<Value> executeJsonToClass(
+            SemanticOp op,
+            Map<ValueId, Value> priorValues,
+            Map<ClassId, ClassLayout> layouts,
+            JsonStringifier stringifier,
+            SourceOrigin callOrigin) {
+        requireOp(op, SemanticOpKind.JSON_TO_CLASS, FailurePolicyId.JSON_TO_ERROR);
+        Objects.requireNonNull(priorValues, "priorValues must not be null");
+        Objects.requireNonNull(layouts, "layouts must not be null");
+        Objects.requireNonNull(stringifier, "stringifier must not be null");
+        Objects.requireNonNull(callOrigin, "callOrigin must not be null");
+        KindPayload.JsonToClassPayload payload =
+            (KindPayload.JsonToClassPayload) op.payload();
+
+        // Layout resolution (K-D11): the payload is never interpreted
+        // against a foreign layout.
+        ClassLayout layout = layouts.get(payload.layout().classId());
+        if (layout == null || !layout.equals(payload.layout())) {
+            throw new Defect("JSON_TO_CLASS " + op.opId() + " layout of "
+                + payload.layout().classId() + " does not resolve to exactly the "
+                + "payload's layout in the layout-resolution context: the payload's "
+                + "layout must be exactly the resolved layout — an unresolvable or "
+                + "mismatched layout is a producer defect, never executed");
+        }
+
+        // The class value operand resolves exactly once (never
+        // re-evaluated).
+        Value operand = resolve(priorValues, payload.classValue());
+        Set<Object> entered = java.util.Collections.newSetFromMap(
+            new java.util.IdentityHashMap<>());
+        try {
+            String text = encodeToJson(op, layout, operand, layouts, stringifier,
+                entered, 0, "");
+            return new Outcome.Success<Value>(Value.string(text));
+        } catch (JsonToFailure failure) {
+            // The first declaration-order failure: the registry row's
+            // exact template, projected at the call origin (never the
+            // generated body's synthetic anchor) with no cause.
+            BoundaryFailure row = BoundaryFailure.fromRow(
+                FailureContractRegistry.row(FailurePolicyId.JSON_TO_ERROR), 0, null, null,
+                metadataOf("fieldPath", failure.fieldPath, "actual", failure.actual),
+                null);
+            return new Outcome.Failure<Value>(new OpFailure(row, callOrigin));
+        }
+    }
+
+    // =========================================================================
+    // The JSON walk internals (fail closed, never a DEAL projection)
+    // =========================================================================
+
+    /**
+     * The internal failure of the {@code JSON_FROM_CLASS} walk: exactly
+     * the swallowed-failure carrier (K-D8 — policy {@code JSON_FROM_NULL}
+     * has no visible failure). Every decode/default/field/nested/depth
+     * failure of the walk throws it; {@link #executeJsonFromClass}
+     * catches it and publishes language null. A default child's own
+     * failure is wrapped (completed effects remain); producer defects
+     * ({@link Defect}) and infrastructure failures never use this
+     * carrier.
+     */
+    private static final class JsonFromFailure extends RuntimeException {
+
+        private static final long serialVersionUID = 1L;
+
+        JsonFromFailure(String reason) {
+            super(reason);
+        }
+
+        JsonFromFailure(String reason, Throwable cause) {
+            super(reason, cause);
+        }
+    }
+
+    /**
+     * The internal failure of the {@code JSON_TO_CLASS} walk: the first
+     * declaration-order failing position's pinned fieldPath and the
+     * offending value's canonical actual-kind token — the carrier
+     * {@link #executeJsonToClass} projects as the
+     * {@code JSON_TO_ERROR} row at the call origin.
+     */
+    private static final class JsonToFailure extends RuntimeException {
+
+        private static final long serialVersionUID = 1L;
+
+        final String fieldPath;
+        final String actual;
+
+        JsonToFailure(String fieldPath, String actual) {
+            super("value at " + fieldPath + " is not JSON serializable: " + actual);
+            this.fieldPath = fieldPath;
+            this.actual = actual;
+        }
+    }
+
+    /**
+     * The declaration-order decode walk of one parsed JSON object
+     * document (K-D8 steps 3-8): the extra-key gate in document order,
+     * provided-field decode in declaration order, default application in
+     * declaration order (the op's per-site {@code CLASS_DEFAULT}
+     * children, skipping provided fields; K-D9 for an absent
+     * required-present no-default field), final validation in
+     * declaration order, and the tag. Returns the tagged fresh instance
+     * or throws {@link JsonFromFailure} (language null).
+     */
+    private static Value decodeFromJson(
+            SemanticOp op, ClassLayout layout, Value.Table document,
+            List<OpId> defaultChildIds, Map<OpId, SemanticOp> defaultOps,
+            Map<ClassId, ClassLayout> layouts, NestedClassFactory nestedFactory,
+            BodyRunner bodyRunner, int depth) {
+        if (depth > JSON_MAX_DEPTH) {
+            throw new JsonFromFailure("walk depth exceeded " + JSON_MAX_DEPTH
+                + " (the pinned retained bound)");
+        }
+        // The pinned default-child shape, checked fail closed before the
+        // walk: exactly one CLASS_DEFAULT child per required-present
+        // defaulted field in declaration order (the JsonDefaultChildTable
+        // record's production shape).
+        LinkedHashMap<String, SemanticOp> defaultsByField = new LinkedHashMap<>();
+        for (OpId childId : defaultChildIds) {
+            SemanticOp child = requireDefaultChild(defaultOps, childId, layout.classId(),
+                op);
+            KindPayload.ClassDefaultPayload defaultPayload =
+                (KindPayload.ClassDefaultPayload) child.payload();
+            ClassLayout.FieldLayout fieldLayout = fieldOf(layout, defaultPayload.field());
+            if (fieldLayout == null || !fieldLayout.required()) {
+                throw new Defect("JSON_FROM_CLASS " + op.opId() + " names CLASS_DEFAULT "
+                    + "child " + childId + " for field '" + defaultPayload.field()
+                    + "' which is not a required-present declared field of "
+                    + layout.classId() + ": the JsonDefaultChildTable lists "
+                    + "required-present defaulted fields only — a producer defect, "
+                    + "never executed");
+            }
+            if (defaultsByField.containsKey(defaultPayload.field())) {
+                throw new Defect("JSON_FROM_CLASS " + op.opId() + " names two "
+                    + "CLASS_DEFAULT children for field '" + defaultPayload.field()
+                    + "': the pinned shape carries exactly one default child per "
+                    + "defaulted field — a duplicate is a producer defect, never "
+                    + "executed");
+            }
+            defaultsByField.put(defaultPayload.field(), child);
+        }
+
+        // The extra-key gate, document order (K-D8 step 3): the first
+        // parsed key not a declared field fails before any field decode
+        // or default runs.
+        SemanticTable<Value> entries = document.table();
+        for (String key : entries.keys()) {
+            if (fieldOf(layout, key) == null) {
+                throw new JsonFromFailure("extra key '" + key + "' in the JSON document "
+                    + "of " + layout.classId() + " (K-D8 step 3)");
+            }
+        }
+
+        // Provided-field decode in declaration order (K-D8 step 4): a
+        // decode failure fails the walk immediately and no defaults run.
+        LinkedHashMap<String, Value> instanceFields = new LinkedHashMap<>();
+        for (ClassLayout.FieldLayout field : layout.fields()) {
+            SemanticTable.Lookup<Value> lookup = entries.get(field.name());
+            if (!(lookup instanceof SemanticTable.Lookup.Present<Value> present)) {
+                continue;
+            }
+            Value raw = present.value();
+            requireJsonShape(op, raw);
+            instanceFields.put(field.name(), decodeRaw(op, field.descriptor(), raw,
+                layouts, nestedFactory, bodyRunner, depth));
+        }
+
+        // Default application in declaration order (K-D8 step 5): an
+        // omitted required-present field with a declared default runs its
+        // CLASS_DEFAULT child exactly once (a provided field's default
+        // never runs); an absent required-present field without a
+        // declared default is a field failure (K-D9 — no per-type
+        // reference defaults are invented); an omitted optional field
+        // stays missing. A failing child fails the walk (language null)
+        // with the completed children's effects remaining.
+        for (ClassLayout.FieldLayout field : layout.fields()) {
+            if (instanceFields.containsKey(field.name())) {
+                continue; // provided: decoded; the skip-provided rule.
+            }
+            if (!field.required()) {
+                continue; // optional: stays missing, no default ever runs.
+            }
+            SemanticOp child = defaultsByField.get(field.name());
+            if (child == null) {
+                throw new JsonFromFailure("required-present field '" + field.name()
+                    + "' absent from the JSON document without a declared default "
+                    + "(K-D9)");
+            }
+            Value produced;
+            try {
+                produced = bodyRunner.runDefault(child);
+            } catch (RuntimeException childFailure) {
+                throw new JsonFromFailure("CLASS_DEFAULT child " + child.opId()
+                    + " of field '" + field.name() + "' failed (K-D8 step 5)",
+                    childFailure);
+            }
+            if (produced instanceof Value.Missing) {
+                throw new Defect("JSON_FROM_CLASS " + op.opId() + " CLASS_DEFAULT child "
+                    + child.opId() + " produced the internal Missing view: a default "
+                    + "block always produces a present value (language null is the "
+                    + "explicit Null variant) — a wrong-kind value is a producer "
+                    + "defect, never executed");
+            }
+            instanceFields.put(field.name(), produced);
+        }
+
+        // Final validation in declaration order (K-D8 step 7): every
+        // present field (decoded or defaulted) validates against its
+        // declared descriptor through the executor's internal descriptor
+        // checks with the JSON_FROM_NULL projection — never BOUNDARY
+        // children (walk-internal values have no IR ValueIds).
+        for (ClassLayout.FieldLayout field : layout.fields()) {
+            Value value = instanceFields.get(field.name());
+            if (value == null) {
+                continue;
+            }
+            requireDescriptorConforming(op, field.descriptor(), value, layouts);
+        }
+
+        // Tag and publish (K-D8 step 8): declaration-order states;
+        // omitted optionals stay missing; present null stays present
+        // null.
+        return taggedInstance(layout, instanceFields);
+    }
+
+    /**
+     * The nested-class decode of one {@code JSON_FROM_CLASS} walk
+     * (K-D8 step 6, the same phase order as the top walk): the nested
+     * extra-key gate, provided decode in declaration order, default
+     * application through the nested class's {@code CLASS_FACTORY}
+     * (the {@link NestedClassFactory} seam — K-D5 trigger (b); the
+     * nested defaults evaluate in the nested declaring module's scope),
+     * the decoded provided fields overlay, final validation, and the
+     * nested tag.
+     */
+    private static Value decodeNestedClass(
+            SemanticOp op, ClassId classId, Value.Table document,
+            Map<ClassId, ClassLayout> layouts, NestedClassFactory nestedFactory,
+            BodyRunner bodyRunner, int depth) {
+        if (depth > JSON_MAX_DEPTH) {
+            throw new JsonFromFailure("walk depth exceeded " + JSON_MAX_DEPTH
+                + " (the pinned retained bound)");
+        }
+        ClassLayout nested = layouts.get(classId);
+        if (nested == null) {
+            throw new Defect("JSON_FROM_CLASS " + op.opId() + " nested decode of "
+                + classId + " does not resolve in the layout-resolution context: every "
+                + "nested @jsonable class resolves through the unit's classLayouts plus "
+                + "the project interface index — an unresolvable nested layout is a "
+                + "producer defect, never executed");
+        }
+        // The nested extra-key gate in document order.
+        SemanticTable<Value> entries = document.table();
+        for (String key : entries.keys()) {
+            if (fieldOf(nested, key) == null) {
+                throw new JsonFromFailure("extra key '" + key + "' in the JSON document "
+                    + "of nested class " + classId + " (K-D8 step 6)");
+            }
+        }
+        // Nested provided-field decode in declaration order.
+        LinkedHashMap<String, Value> decoded = new LinkedHashMap<>();
+        for (ClassLayout.FieldLayout field : nested.fields()) {
+            SemanticTable.Lookup<Value> lookup = entries.get(field.name());
+            if (!(lookup instanceof SemanticTable.Lookup.Present<Value> present)) {
+                continue;
+            }
+            Value raw = present.value();
+            requireJsonShape(op, raw);
+            decoded.put(field.name(), decodeRaw(op, field.descriptor(), raw, layouts,
+                nestedFactory, bodyRunner, depth));
+        }
+        // Nested default application through the nested class's
+        // CLASS_FACTORY (K-D5 trigger (b)): the factory fills the
+        // omitted required-present defaults in the nested declaring
+        // module's scope (skip-provided) and returns the default-filled
+        // untagged transfer instance.
+        Value filled = nestedFactory.fillDefaults(classId,
+            new LinkedHashSet<>(decoded.keySet()));
+        if (!(filled instanceof Value.Class instance)) {
+            throw new Defect("JSON_FROM_CLASS " + op.opId() + " nested factory of "
+                + classId + " produced " + filled.actualKind() + ": the factory returns "
+                + "the default-filled transfer instance (a Value.Class) — a producer "
+                + "defect, never executed");
+        }
+        if (!instance.classId().equals(classId)) {
+            throw new Defect("JSON_FROM_CLASS " + op.opId() + " nested factory of "
+                + classId + " produced an instance of " + instance.classId()
+                + ": the factory fills its own class's declared layout — a wrong "
+                + "identity is a producer defect, never executed");
+        }
+        if (instance.fields().size() != nested.fields().size()) {
+            throw new Defect("JSON_FROM_CLASS " + op.opId() + " nested factory of "
+                + classId + " produced an instance of " + instance.fields().size()
+                + " field states for a layout of " + nested.fields().size()
+                + " fields: the pinned instance shape matches its layout's declaration "
+                + "order — a count mismatch is a producer defect, never executed");
+        }
+        // The decoded provided fields overlay the factory-filled instance
+        // in declaration order; an absent required-present no-default
+        // field is a field failure (K-D9); omitted optionals stay missing.
+        LinkedHashMap<String, Value> instanceFields = new LinkedHashMap<>();
+        for (ClassLayout.FieldLayout field : nested.fields()) {
+            Value provided = decoded.get(field.name());
+            if (provided != null) {
+                instanceFields.put(field.name(), provided);
+                continue;
+            }
+            Value defaulted = defaultValueOf(instance, nested, field.name());
+            if (defaulted != null) {
+                instanceFields.put(field.name(), defaulted);
+                continue;
+            }
+            if (field.required()) {
+                throw new JsonFromFailure("required-present field '" + field.name()
+                    + "' of nested class " + classId + " absent without a declared "
+                    + "default (K-D9)");
+            }
+        }
+        // Nested final validation in declaration order, then the nested
+        // tag.
+        for (ClassLayout.FieldLayout field : nested.fields()) {
+            Value value = instanceFields.get(field.name());
+            if (value == null) {
+                continue;
+            }
+            requireDescriptorConforming(op, field.descriptor(), value, layouts);
+        }
+        return taggedInstance(nested, instanceFields);
+    }
+
+    /**
+     * Decodes one raw parsed-JSON value per the field's declared
+     * descriptor (K-D8 step 4): int fields accept only {@code Int}
+     * carriers from the parse's signed32 lexical mapping; nullable
+     * fields accept JSON null; a JSON null on a non-nullable field
+     * fails; {@code table} fields accept only a JSON object or the
+     * empty-array collapse; {@code array} fields decode element-wise;
+     * class fields recurse into the nested walk with an identity check.
+     * Any failure throws {@link JsonFromFailure} (language null).
+     */
+    private static Value decodeRaw(
+            SemanticOp op, RuntimeDescriptor descriptor, Value raw,
+            Map<ClassId, ClassLayout> layouts, NestedClassFactory nestedFactory,
+            BodyRunner bodyRunner, int depth) {
+        if (depth > JSON_MAX_DEPTH) {
+            throw new JsonFromFailure("walk depth exceeded " + JSON_MAX_DEPTH
+                + " (the pinned retained bound)");
+        }
+        return switch (descriptor) {
+            case RuntimeDescriptor.Null ignored -> {
+                if (!(raw instanceof Value.Null)) {
+                    throw new JsonFromFailure("expected null, got " + raw.actualKind());
+                }
+                yield Value.Null.INSTANCE;
+            }
+            case RuntimeDescriptor.Boolean ignored -> {
+                if (!(raw instanceof Value.Bool)) {
+                    throw new JsonFromFailure(
+                        "expected boolean, got " + raw.actualKind());
+                }
+                yield raw;
+            }
+            case RuntimeDescriptor.Int ignored -> {
+                // Int fields accept only Int carriers from the parse's
+                // signed32 lexical mapping — out-of-range, fractional,
+                // or Number carriers fail (the retained pins).
+                if (!(raw instanceof Value.Int)) {
+                    throw new JsonFromFailure("expected int, got " + raw.actualKind()
+                        + " (an int field accepts only signed32 integer lexical "
+                        + "carriers)");
+                }
+                yield raw;
+            }
+            case RuntimeDescriptor.Number ignored -> {
+                if (raw instanceof Value.Number) {
+                    yield raw;
+                }
+                if (raw instanceof Value.Int intValue) {
+                    // An integer lexical carrier converts exactly.
+                    yield new Value.Number((double) intValue.value());
+                }
+                throw new JsonFromFailure("expected number, got " + raw.actualKind());
+            }
+            case RuntimeDescriptor.String ignored -> {
+                if (!(raw instanceof Value.String)) {
+                    throw new JsonFromFailure(
+                        "expected string, got " + raw.actualKind());
+                }
+                yield raw;
+            }
+            case RuntimeDescriptor.Table ignored -> {
+                if (raw instanceof Value.Table) {
+                    yield raw;
+                }
+                // The empty-array collapse: [] decodes as an empty table
+                // (the retained pins; a non-empty array-shaped value
+                // fails).
+                if (raw instanceof Value.Array empty && empty.array().size() == 0) {
+                    yield emptyTable();
+                }
+                throw new JsonFromFailure("expected table, got " + raw.actualKind());
+            }
+            case RuntimeDescriptor.Array arrayDescriptor -> {
+                if (!(raw instanceof Value.Array elements)) {
+                    throw new JsonFromFailure(
+                        "expected array, got " + raw.actualKind());
+                }
+                List<Value> decoded = new ArrayList<>(elements.array().size());
+                for (Value element : elements.array().elements()) {
+                    requireJsonShape(op, element);
+                    decoded.add(decodeRaw(op, arrayDescriptor.element(), element,
+                        layouts, nestedFactory, bodyRunner, depth + 1));
+                }
+                yield new Value.Array(SemanticArray.of(decoded));
+            }
+            case RuntimeDescriptor.Nullable nullable -> {
+                if (raw instanceof Value.Null) {
+                    yield Value.Null.INSTANCE;
+                }
+                yield decodeRaw(op, nullable.inner(), raw, layouts, nestedFactory,
+                    bodyRunner, depth);
+            }
+            case RuntimeDescriptor.Class classDescriptor -> {
+                if (raw instanceof Value.Null) {
+                    throw new JsonFromFailure("expected "
+                        + classDescriptor.canonicalSpecText() + ", got null (a JSON "
+                        + "null on a non-nullable field fails)");
+                }
+                if (raw instanceof Value.Table) {
+                    yield decodeNestedClass(op, classDescriptor.classId(),
+                        (Value.Table) raw, layouts, nestedFactory, bodyRunner,
+                        depth + 1);
+                }
+                if (raw instanceof Value.Array empty && empty.array().size() == 0) {
+                    // The {}/[] collapse of the nested walk's own
+                    // top-level gate: [] decodes as the nested defaulted
+                    // instance.
+                    yield decodeNestedClass(op, classDescriptor.classId(),
+                        (Value.Table) emptyTable(), layouts, nestedFactory, bodyRunner,
+                        depth + 1);
+                }
+                throw new JsonFromFailure("expected "
+                    + classDescriptor.canonicalSpecText() + ", got " + raw.actualKind());
+            }
+            case RuntimeDescriptor.Bytes ignored -> throw new Defect(
+                "a @jsonable field never carries a bytes descriptor (the checker's "
+                    + "E4007 allowlist) — a bytes-typed JSON field is a producer "
+                    + "defect, never executed");
+            case RuntimeDescriptor.Func ignored -> throw new Defect(
+                "a @jsonable field never carries a function descriptor (the checker's "
+                    + "E4007 allowlist) — a function-typed JSON field is a producer "
+                    + "defect, never executed");
+        };
+    }
+
+    /**
+     * The declaration-order serialization walk of one
+     * {@code JSON_TO_CLASS} execution (K-D10): the root identity check,
+     * the per-field declaration-order encoding with the pinned
+     * fieldPath convention, the path-local cycle seen-set over entered
+     * class instances, and the {@link #JSON_MAX_DEPTH} bound. Returns
+     * the deterministic RFC-8259 text or throws {@link JsonToFailure}.
+     */
+    private static String encodeToJson(
+            SemanticOp op, ClassLayout layout, Value value,
+            Map<ClassId, ClassLayout> layouts, JsonStringifier stringifier,
+            Set<Object> entered, int depth, String fieldPath) {
+        if (depth > JSON_MAX_DEPTH) {
+            throw new JsonToFailure(fieldPath, actualTokenOf(value));
+        }
+        // The root identity check (K-D10 step 1): the value must be an
+        // instance of exactly layout.classId — a wrong identity fails
+        // with actual class:<other>, any other kind with its own token.
+        if (!(value instanceof Value.Class instance)) {
+            throw new JsonToFailure(fieldPath, actualTokenOf(value));
+        }
+        if (!instance.classId().equals(layout.classId())) {
+            throw new JsonToFailure(fieldPath, actualTokenOf(value));
+        }
+        if (instance.fields().size() != layout.fields().size()) {
+            throw new Defect("JSON_TO_CLASS " + op.opId() + " root instance of "
+                + layout.classId() + " carries " + instance.fields().size()
+                + " field states for a layout of " + layout.fields().size()
+                + " fields: the pinned instance shape matches its layout's declaration "
+                + "order — a count mismatch is a producer defect, never executed");
+        }
+        // The path-local cycle check over entered class instances.
+        if (!entered.add(instance)) {
+            throw new JsonToFailure(fieldPath, actualTokenOf(instance));
+        }
+        try {
+            StringBuilder out = new StringBuilder();
+            out.append('{');
+            boolean first = true;
+            for (int i = 0; i < layout.fields().size(); i++) {
+                ClassLayout.FieldLayout field = layout.fields().get(i);
+                FieldState state = instance.fields().get(i);
+                if (state instanceof FieldState.Missing) {
+                    // A missing required field fails (the "missing
+                    // required value" arm); an omitted optional field is
+                    // skipped.
+                    if (field.required()) {
+                        throw new JsonToFailure(fieldPathOf(fieldPath, field.name()),
+                            ActualKind.canonicalToken(ActualKind.MISSING, null));
+                    }
+                    continue;
+                }
+                Value fieldValue = ((FieldState.Present) state).value();
+                String fieldPosition = fieldPathOf(fieldPath, field.name());
+                // Fields of the current instance encode at the current
+                // depth (only nested class/array containers consume a
+                // depth level, the K-D10 walk bound).
+                String encoded = encodeField(op, field.descriptor(), fieldValue,
+                    fieldPosition, layouts, stringifier, entered, depth);
+                if (!first) {
+                    out.append(',');
+                }
+                first = false;
+                out.append(jsonStringOf(field.name()));
+                out.append(':');
+                out.append(encoded);
+            }
+            out.append('}');
+            return out.toString();
+        } finally {
+            entered.remove(instance);
+        }
+    }
+
+    /**
+     * Encodes one present field value per its declared descriptor
+     * (K-D10 step 2): primitives encode per JSON kind (nonfinite
+     * numbers fail); present null serializes as JSON null on a nullable
+     * field and fails on a non-nullable one; class fields recurse with
+     * a nested identity check; array fields encode element-wise;
+     * {@code table} fields run the seam's finite-acyclic JSON-shape
+     * walk; every leaf/table text comes from the {@link JsonStringifier}
+     * seam (the E8 stringify algorithm — RFC-8259 escaping, shortest
+     * round-trippable decimals, first-insertion and index order).
+     */
+    private static String encodeField(
+            SemanticOp op, RuntimeDescriptor descriptor, Value value, String fieldPath,
+            Map<ClassId, ClassLayout> layouts, JsonStringifier stringifier,
+            Set<Object> entered, int depth) {
+        if (depth > JSON_MAX_DEPTH) {
+            throw new JsonToFailure(fieldPath, actualTokenOf(value));
+        }
+        return switch (descriptor) {
+            case RuntimeDescriptor.Null ignored -> {
+                if (!(value instanceof Value.Null)) {
+                    throw new JsonToFailure(fieldPath, actualTokenOf(value));
+                }
+                yield seamText(op, stringifier, value, fieldPath);
+            }
+            case RuntimeDescriptor.Boolean ignored -> {
+                if (!(value instanceof Value.Bool)) {
+                    throw new JsonToFailure(fieldPath, actualTokenOf(value));
+                }
+                yield seamText(op, stringifier, value, fieldPath);
+            }
+            case RuntimeDescriptor.Int ignored -> {
+                if (!(value instanceof Value.Int)) {
+                    throw new JsonToFailure(fieldPath, actualTokenOf(value));
+                }
+                yield seamText(op, stringifier, value, fieldPath);
+            }
+            case RuntimeDescriptor.Number ignored -> {
+                if (!(value instanceof Value.Number) && !(value instanceof Value.Int)) {
+                    throw new JsonToFailure(fieldPath, actualTokenOf(value));
+                }
+                // Nonfinite numbers fail inside the seam (the E8 row).
+                yield seamText(op, stringifier, value, fieldPath);
+            }
+            case RuntimeDescriptor.String ignored -> {
+                if (!(value instanceof Value.String string)) {
+                    throw new JsonToFailure(fieldPath, actualTokenOf(value));
+                }
+                if (!(string.scalar() instanceof UnicodeScalars.Valid)) {
+                    throw new JsonToFailure(fieldPath,
+                        ActualKind.canonicalToken(ActualKind.INVALID_UNICODE, null));
+                }
+                yield seamText(op, stringifier, value, fieldPath);
+            }
+            case RuntimeDescriptor.Table ignored -> {
+                if (!(value instanceof Value.Table)) {
+                    throw new JsonToFailure(fieldPath, actualTokenOf(value));
+                }
+                yield seamText(op, stringifier, value, fieldPath);
+            }
+            case RuntimeDescriptor.Array arrayDescriptor -> {
+                if (!(value instanceof Value.Array elements)) {
+                    throw new JsonToFailure(fieldPath, actualTokenOf(value));
+                }
+                yield encodeArrayElements(op, arrayDescriptor.element(), elements,
+                    fieldPath, layouts, stringifier, entered, depth);
+            }
+            case RuntimeDescriptor.Nullable nullable -> {
+                if (value instanceof Value.Null) {
+                    yield seamText(op, stringifier, value, fieldPath);
+                }
+                yield encodeField(op, nullable.inner(), value, fieldPath, layouts,
+                    stringifier, entered, depth);
+            }
+            case RuntimeDescriptor.Class classDescriptor -> {
+                if (value instanceof Value.Null) {
+                    throw new JsonToFailure(fieldPath, actualTokenOf(value));
+                }
+                if (!(value instanceof Value.Class nested)) {
+                    throw new JsonToFailure(fieldPath, actualTokenOf(value));
+                }
+                if (!nested.classId().equals(classDescriptor.classId())) {
+                    // The nested identity check: a wrong identity fails
+                    // with actual class:<other> at the nested position.
+                    throw new JsonToFailure(fieldPath, actualTokenOf(nested));
+                }
+                ClassLayout nestedLayout = layouts.get(classDescriptor.classId());
+                if (nestedLayout == null) {
+                    throw new Defect("JSON_TO_CLASS " + op.opId() + " nested class "
+                        + classDescriptor.classId() + " does not resolve in the "
+                        + "layout-resolution context — an unresolvable nested layout is "
+                        + "a producer defect, never executed");
+                }
+                yield encodeToJson(op, nestedLayout, nested, layouts, stringifier,
+                    entered, depth + 1, fieldPath);
+            }
+            case RuntimeDescriptor.Bytes ignored -> throw new Defect(
+                "a @jsonable field never carries a bytes descriptor (the checker's "
+                    + "E4007 allowlist) — a bytes-typed JSON field is a producer "
+                    + "defect, never executed");
+            case RuntimeDescriptor.Func ignored -> throw new Defect(
+                "a @jsonable field never carries a function descriptor (the checker's "
+                    + "E4007 allowlist) — a function-typed JSON field is a producer "
+                    + "defect, never executed");
+        };
+    }
+
+    /**
+     * Encodes one array value element-wise (K-D10 step 2): each element
+     * path appends the 0-based {@code [i]} segment; class-typed
+     * elements recurse with a nested identity check, array elements
+     * recurse the array walk, and every other element's text comes from
+     * the {@link JsonStringifier} seam.
+     */
+    private static String encodeArrayElements(
+            SemanticOp op, RuntimeDescriptor elementDescriptor, Value.Array elements,
+            String fieldPath, Map<ClassId, ClassLayout> layouts,
+            JsonStringifier stringifier, Set<Object> entered, int depth) {
+        StringBuilder out = new StringBuilder();
+        out.append('[');
+        for (int i = 0; i < elements.array().size(); i++) {
+            if (i > 0) {
+                out.append(',');
+            }
+            String elementPath = fieldPath + "[" + i + "]";
+            out.append(encodeField(op, elementDescriptor,
+                elements.array().elementAt(i), elementPath, layouts, stringifier,
+                entered, depth + 1));
+        }
+        out.append(']');
+        return out.toString();
+    }
+
+    /**
+     * Encodes one leaf/table value through the stringify seam and
+     * converts the seam's failure into the walk's own
+     * {@link JsonToFailure} (the seam reports the full pinned-convention
+     * path prefixed with the caller's field path).
+     */
+    private static String seamText(SemanticOp op, JsonStringifier stringifier,
+                                   Value value, String fieldPath) {
+        JsonStringify rendered = stringifier.stringify(value, fieldPath);
+        return switch (rendered) {
+            case JsonStringify.Success success -> success.text().carrier();
+            case JsonStringify.Failure failure ->
+                throw new JsonToFailure(failure.fieldPath(), failure.actual());
+        };
+    }
+
+    /** The canonical actual-kind token of one value (class values render {@code class:<ClassId>}). */
+    private static String actualTokenOf(Value value) {
+        if (value instanceof Value.Class instance) {
+            return ActualKind.canonicalToken(ActualKind.CLASS, instance.classId().text());
+        }
+        return ActualKind.canonicalToken(value.actualKind(), null);
+    }
+
+    /**
+     * The internal descriptor check of the two JSON walks (K-D8 step 7 /
+     * K-D10's per-kind encoding admission): {@code value} must conform
+     * to {@code descriptor} — null/bool/int/number/string(valid)/table/
+     * array(recursive)/nullable/class (nominal identity plus the
+     * layout's declaration-order field count) — fail closed on a
+     * function descriptor (the checker's E4007 allowlist excludes
+     * function-typed fields). A mismatch throws {@link JsonFromFailure}
+     * (the {@code JSON_FROM_NULL} projection).
+     */
+    private static void requireDescriptorConforming(SemanticOp op,
+                                                    RuntimeDescriptor descriptor,
+                                                    Value value,
+                                                    Map<ClassId, ClassLayout> layouts) {
+        switch (descriptor) {
+            case RuntimeDescriptor.Null ignored -> {
+                if (value instanceof Value.Null) {
+                    return;
+                }
+            }
+            case RuntimeDescriptor.Boolean ignored -> {
+                if (value instanceof Value.Bool) {
+                    return;
+                }
+            }
+            case RuntimeDescriptor.Int ignored -> {
+                if (value instanceof Value.Int) {
+                    return;
+                }
+            }
+            case RuntimeDescriptor.Number ignored -> {
+                if (value instanceof Value.Number || value instanceof Value.Int) {
+                    return;
+                }
+            }
+            case RuntimeDescriptor.String ignored -> {
+                if (value instanceof Value.String string
+                        && string.scalar() instanceof UnicodeScalars.Valid) {
+                    return;
+                }
+            }
+            case RuntimeDescriptor.Table ignored -> {
+                if (value instanceof Value.Table) {
+                    return;
+                }
+            }
+            case RuntimeDescriptor.Array arrayDescriptor -> {
+                if (value instanceof Value.Array elements) {
+                    for (Value element : elements.array().elements()) {
+                        requireDescriptorConforming(op, arrayDescriptor.element(),
+                            element, layouts);
+                    }
+                    return;
+                }
+            }
+            case RuntimeDescriptor.Nullable nullable -> {
+                if (value instanceof Value.Null) {
+                    return;
+                }
+                requireDescriptorConforming(op, nullable.inner(), value, layouts);
+                return;
+            }
+            case RuntimeDescriptor.Class classDescriptor -> {
+                if (value instanceof Value.Class instance) {
+                    if (!instance.classId().equals(classDescriptor.classId())) {
+                        break;
+                    }
+                    ClassLayout nested = layouts.get(classDescriptor.classId());
+                    if (nested != null
+                            && nested.fields().size() != instance.fields().size()) {
+                        break;
+                    }
+                    return;
+                }
+            }
+            case RuntimeDescriptor.Bytes ignored -> throw new Defect(
+                "a @jsonable field never carries a bytes descriptor (the checker's "
+                    + "E4007 allowlist) — a bytes-typed JSON field is a producer "
+                    + "defect, never executed");
+            case RuntimeDescriptor.Func ignored -> throw new Defect(
+                "a @jsonable field never carries a function descriptor (the checker's "
+                    + "E4007 allowlist) — a function-typed JSON field is a producer "
+                    + "defect, never executed");
+        }
+        throw new JsonFromFailure("value for " + descriptor.canonicalSpecText() + " is "
+            + actualTokenOf(value));
+    }
+
+    /**
+     * Requires one parsed-JSON value to sit in the closed JSON-shaped
+     * set of the seam's contract (null/bool/int/number/valid string/
+     * table/array). A value outside the set is a seam-contract
+     * violation and fails closed as a producer {@link Defect}, never as
+     * a walk failure.
+     */
+    private static void requireJsonShape(SemanticOp op, Value raw) {
+        switch (raw) {
+            case Value.Null ignored -> {
+            }
+            case Value.Bool ignored -> {
+            }
+            case Value.Int ignored -> {
+            }
+            case Value.Number ignored -> {
+            }
+            case Value.Table ignored -> {
+            }
+            case Value.Array ignored -> {
+            }
+            case Value.String string -> {
+                if (!(string.scalar() instanceof UnicodeScalars.Valid)) {
+                    throw new Defect("JSON_FROM_CLASS " + op.opId() + ": the JSON "
+                        + "algorithm seam produced an invalid-scalar string carrier: "
+                        + "the closed parsed-JSON value model carries valid scalar "
+                        + "strings only — a seam-contract violation is a producer "
+                        + "defect, never executed");
+                }
+            }
+            default -> throw new Defect("JSON_FROM_CLASS " + op.opId() + ": the JSON "
+                + "algorithm seam produced a non-JSON-shaped value "
+                + raw.actualKind() + ": the closed parsed-JSON value model carries "
+                + "null/bool/int/number/string/object/array only — a seam-contract "
+                + "violation is a producer defect, never executed");
+        }
+    }
+
+    /**
+     * The pinned fieldPath append of the two JSON walks (K-D10): the
+     * root is {@code ""}, a declared field {@code f} appends
+     * {@code "f"} (the first segment) or {@code ".f"}, a nested class
+     * field under {@code f} becomes {@code "f.g"}, an array element
+     * appends {@code "[i]"} (0-based), and a table object key appends
+     * {@code ".k"} (the seam's convention inside table fields).
+     */
+    private static String fieldPathOf(String parent, String fieldName) {
+        return parent.isEmpty() ? fieldName : parent + "." + fieldName;
+    }
+
+    /** A fresh empty table value (the {@code {}} document shape). */
+    private static Value.Table emptyTable() {
+        return new Value.Table(new SemanticTable<>());
+    }
+
+    /** Tags one decoded instance in declaration order (K-D8 step 8). */
+    private static Value taggedInstance(ClassLayout layout,
+                                        LinkedHashMap<String, Value> instanceFields) {
+        List<FieldState> states = new ArrayList<>(layout.fields().size());
+        for (ClassLayout.FieldLayout field : layout.fields()) {
+            Value value = instanceFields.get(field.name());
+            states.add(value == null ? FieldState.Missing.INSTANCE
+                : new FieldState.Present(value));
+        }
+        return new Value.Class(layout.classId(), List.copyOf(states));
+    }
+
+    /** The RFC-8259 text of one declared field name (an identifier scalar sequence). */
+    private static String jsonStringOf(String name) {
+        // Field names are checker-pinned identifiers: quote, backslash,
+        // and control scalars cannot appear, so the exact RFC-8259 text
+        // is the quoted name itself.
+        return "\"" + name + "\"";
     }
 
     // =========================================================================
