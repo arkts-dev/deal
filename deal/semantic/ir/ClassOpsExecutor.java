@@ -3,6 +3,8 @@ package deal.semantic.ir;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.LinkedHashSet;
+import java.util.Set;
 import java.util.Map;
 import java.util.Objects;
 
@@ -23,10 +25,16 @@ import java.util.Objects;
  * the field-operation surface — {@code FIELD_READ}/{@code FIELD_WRITE}/
  * {@code FIELD_DELETE} with the nominal receiver boundary first and the
  * presence-aware read/commit/idempotent-delete semantics (K-D6) and
- * {@code HAS_FIELD} with the presence boolean (K-D7). The
- * {@code CLASS_FACTORY} (SHARED_FACTORY transfer) and {@code JSON_*}
- * surfaces complete the assembled executor in the later children
- * (sequencing items 4-6).
+ * {@code HAS_FIELD} with the presence boolean (K-D7). The sequencing
+ * item 4 child (ISSUE-0514) completes the cross-unit default filling —
+ * {@code CLASS_FACTORY} with the K-D5 execution contract (the
+ * {@code CLASS_NEW(SHARED_FACTORY)} trigger, the skip-provided rule,
+ * the untagged internal transfer, the executed cross-unit
+ * {@code parentOpId} pin) and {@code CLASS_NEW(SHARED_FACTORY)} with
+ * the K-D4 transfer order, the overlay reorder pin, the
+ * {@code CLASS_DEFAULT_FIELD} extraction rule, and the tag-last
+ * publication. The {@code JSON_*} surfaces complete the assembled
+ * executor in the later children (sequencing items 5-6).
  *
  * <p><b>Interpretation surface.</b> The executor interprets only
  * validated op shapes ({@link SemanticOp} records whose kind/payload
@@ -661,17 +669,17 @@ public final class ClassOpsExecutor {
         Objects.requireNonNull(checkRunner, "checkRunner must not be null");
         Objects.requireNonNull(bodyRunner, "bodyRunner must not be null");
         KindPayload.ClassNewPayload payload = (KindPayload.ClassNewPayload) op.payload();
-
         // This child's surface: LOCAL execution only. SHARED_FACTORY
-        // execution is sequencing item 4's; RETAINED_ABI is E10's — both
-        // fail closed here, never silently executed as LOCAL.
+        // execution is executeClassNewSharedFactory's; RETAINED_ABI is
+        // E10's — both fail closed here, never silently executed as
+        // LOCAL.
         if (payload.defaultOwner() != DefaultOwner.LOCAL) {
             throw new Defect("CLASS_NEW " + op.opId() + " carries defaultOwner "
-                + payload.defaultOwner() + ": this child's executor surface is LOCAL "
-                + "execution — SHARED_FACTORY transfer is the later epic child's "
-                + "(sequencing item 4) and RETAINED_ABI transfer is E10's; a non-LOCAL "
-                + "owner reaching executeClassNewLocal is a producer defect, never "
-                + "executed");
+                + payload.defaultOwner() + ": this executor surface is LOCAL "
+                + "execution — SHARED_FACTORY transfer is "
+                + "executeClassNewSharedFactory's and RETAINED_ABI transfer is E10's; "
+                + "a non-LOCAL owner reaching executeClassNewLocal is a producer "
+                + "defect, never executed");
         }
         if (payload.classFactoryRef() != null) {
             throw new Defect("CLASS_NEW " + op.opId() + " carries a non-null classFactoryRef "
@@ -925,6 +933,642 @@ public final class ClassOpsExecutor {
         }
         return new Outcome.Success<Value>(
             new Value.Class(payload.classId(), List.copyOf(states)));
+    }
+
+
+    // =========================================================================
+    // CLASS_FACTORY (the SHARED_FACTORY transfer)
+    // =========================================================================
+
+    /**
+     * Executes one validated {@code CLASS_FACTORY} op (K-D5): the
+     * declaring module's default-application op, one per exported class,
+     * triggered by a caller's {@code CLASS_NEW} with
+     * {@code defaultOwner: SHARED_FACTORY} (this child's trigger; the
+     * {@code JSON_FROM_CLASS} nested-class decode is the later JSON
+     * child's trigger of the same closed trigger set). The factory runs
+     * its {@code CLASS_DEFAULT} children in declaration order through
+     * the {@link BodyRunner} seam — defaults evaluate per construction
+     * in the declaring module's scope (the owner-side body runner
+     * executes the owner unit's detached default blocks; mutable default
+     * arrays/tables/nested classes allocate freshly per execution by
+     * block re-execution) — skipping any child whose field the
+     * triggering context records as provided (the caller's static
+     * {@code providedFields}); fills an internal default-filled instance
+     * (the untagged transfer — never published by the factory, never
+     * passed through any boundary) and returns it as its result. The
+     * factory runs zero boundaries and zero return boundaries; its
+     * failure policy is {@code CLASS_CONSTRUCTION}; a failing default
+     * child fails the triggering caller's op (the body runner's throw
+     * propagates out of the caller's transfer — no caller instance is
+     * published and the completed children's effects remain). The
+     * executed {@code parentOpId} the trace records is the triggering
+     * caller op's id (K-D12, cross-unit): {@code triggeringCaller} is
+     * the caller op this execution parents to, and the factory never
+     * constructs directly and never checks a return.
+     *
+     * <p>The factory's children are the detached structural
+     * {@code CLASS_DEFAULT} ops named by the payload's
+     * {@code classDefaultOpIds} (K-D12: the payload membership records
+     * their nesting, not a static {@code parentOpId}); each is
+     * shape-checked fail closed before its block runs (kind, policy,
+     * classId coherence, a declared required-present field, no
+     * duplicates). The payload's {@code callerOpRef} is the
+     * deterministic pre-allocated execution-wiring slot (K-D2): the
+     * executed parent is the triggering caller op this API pins, and a
+     * non-{@code CLASS_NEW} caller reaching this child's surface is a
+     * producer defect.</p>
+     *
+     * @param op              the validated owner-side {@code CLASS_FACTORY}
+     *                        op carrying {@code CLASS_CONSTRUCTION};
+     *                        non-null
+     * @param triggeringCaller the triggering caller {@code CLASS_NEW} op
+     *                        whose id is the factory's executed
+     *                        {@code parentOpId} (cross-unit); non-null,
+     *                        never the factory op itself
+     * @param defaultOps      the owner unit's {@code CLASS_DEFAULT} ops
+     *                        by {@link OpId}; every id of
+     *                        {@code classDefaultOpIds} must resolve to a
+     *                        {@code CLASS_DEFAULT} op of this classId
+     *                        carrying {@code NO_DEAL_FAILURE}; non-null
+     * @param layouts         the layout-resolution context
+     *                        {@code ClassId → ClassLayout} (the owner's
+     *                        {@code classLayouts} plus the project
+     *                        interface facts); the payload's classId must
+     *                        resolve; non-null
+     * @param providedFields  the triggering context's provided-field name
+     *                        set (a {@code CLASS_NEW}'s static
+     *                        {@code providedFields} names) — every child
+     *                        whose field is provided is skipped (a
+     *                        provided field's default never runs); non-null
+     * @param bodyRunner      the owner-side default-block callback
+     *                        (defaults evaluate in the declaring module's
+     *                        scope); non-null
+     * @return {@code Success} with the internal default-filled transfer
+     *         instance (untagged — declaration-order states, defaulted
+     *         fields present, every other field missing)
+     * @throws Defect               on a shape outside the pinned
+     *                              contracts — a wrong op kind/policy, a
+     *                              non-{@code CLASS_NEW} trigger, a
+     *                              self-trigger, an unresolvable layout, a
+     *                              default child of the wrong
+     *                              kind/policy/class, a defaulted field
+     *                              outside the layout or optional, or a
+     *                              duplicate default child
+     * @throws NullPointerException if any argument is null
+     */
+    public static Outcome<Value> executeClassFactory(
+            SemanticOp op,
+            SemanticOp triggeringCaller,
+            Map<OpId, SemanticOp> defaultOps,
+            Map<ClassId, ClassLayout> layouts,
+            Set<String> providedFields,
+            BodyRunner bodyRunner) {
+        requireOp(op, SemanticOpKind.CLASS_FACTORY, FailurePolicyId.CLASS_CONSTRUCTION);
+        Objects.requireNonNull(triggeringCaller, "triggeringCaller must not be null");
+        Objects.requireNonNull(defaultOps, "defaultOps must not be null");
+        Objects.requireNonNull(layouts, "layouts must not be null");
+        Objects.requireNonNull(providedFields, "providedFields must not be null");
+        Objects.requireNonNull(bodyRunner, "bodyRunner must not be null");
+        // The executed parentOpId pin (K-D5/K-D12): the factory's events
+        // parent to the triggering caller op — a caller CLASS_NEW for this
+        // child's surface (the JSON_FROM_CLASS nested-decode trigger is
+        // the later JSON child's). The factory never parents to itself.
+        if (triggeringCaller.kind() != SemanticOpKind.CLASS_NEW) {
+            throw new Defect("CLASS_FACTORY " + op.opId() + " triggered by an op of kind "
+                + triggeringCaller.kind() + ": the closed trigger set is {CLASS_NEW (this "
+                + "child's trigger), JSON_FROM_CLASS (the later JSON child's trigger)} and "
+                + "the factory's executed parentOpId is the triggering caller op's id "
+                + "(K-D5/K-D12) — a non-CLASS_NEW caller reaching this child's surface is "
+                + "a producer defect, never executed");
+        }
+        if (triggeringCaller.opId().equals(op.opId())) {
+            throw new Defect("CLASS_FACTORY " + op.opId() + " triggered by itself: the "
+                + "factory is the declaring module's default-application op and its "
+                + "executed parentOpId is the triggering caller op (cross-unit) — a "
+                + "factory as its own caller is a producer defect, never executed");
+        }
+        KindPayload.ClassFactoryPayload payload =
+            (KindPayload.ClassFactoryPayload) op.payload();
+
+        // Layout resolution (K-D11): the factory fills the declared
+        // layout of its own classId, never a foreign layout.
+        ClassLayout layout = layouts.get(payload.classId());
+        if (layout == null) {
+            throw new Defect("CLASS_FACTORY " + op.opId() + " classId " + payload.classId()
+                + " does not resolve in the layout-resolution context: the factory fills "
+                + "its class's declared layout (the owner unit's classLayouts) — an "
+                + "unresolvable layout is a producer defect, never executed");
+        }
+
+        // Declaration-order default application (K-D5): the CLASS_DEFAULT
+        // children in declaration order, skipping any child whose field
+        // the triggering context records as provided (a provided field's
+        // default never runs); defaults evaluate per construction in the
+        // declaring module's scope through the owner-side body runner.
+        LinkedHashMap<String, Value> filled = new LinkedHashMap<>();
+        for (OpId defaultOpId : payload.classDefaultOpIds()) {
+            SemanticOp defaultOp = requireDefaultChild(defaultOps, defaultOpId,
+                payload.classId(), op);
+            KindPayload.ClassDefaultPayload defaultPayload =
+                (KindPayload.ClassDefaultPayload) defaultOp.payload();
+            if (providedFields.contains(defaultPayload.field())) {
+                // The skip-provided rule (K-D5): the caller's provided
+                // fields overlay after the transfer, so their defaults
+                // are never executed by this construction attempt.
+                continue;
+            }
+            ClassLayout.FieldLayout fieldLayout = fieldOf(layout, defaultPayload.field());
+            if (fieldLayout == null) {
+                throw new Defect("CLASS_FACTORY " + op.opId() + " names CLASS_DEFAULT "
+                    + "child " + defaultOpId + " for field '" + defaultPayload.field()
+                    + "' which is not a declared field of " + payload.classId()
+                    + ": a default child of an undeclared field is a producer defect, "
+                    + "never executed");
+            }
+            if (!fieldLayout.required()) {
+                throw new Defect("CLASS_FACTORY " + op.opId() + " names CLASS_DEFAULT "
+                    + "child " + defaultOpId + " for optional field '"
+                    + defaultPayload.field() + "': the factory payload lists "
+                    + "required-present defaulted fields only (an optional-with-default "
+                    + "field's default never runs and its op id never enters the "
+                    + "payload) — a listed optional default is a producer defect, never "
+                    + "executed");
+            }
+            if (filled.containsKey(defaultPayload.field())) {
+                throw new Defect("CLASS_FACTORY " + op.opId() + " names two CLASS_DEFAULT "
+                    + "children for field '" + defaultPayload.field() + "': the pinned "
+                    + "shape carries exactly one default child per defaulted field — a "
+                    + "duplicate is a producer defect, never executed");
+            }
+            Outcome<Value> produced = executeClassDefault(defaultOp, bodyRunner);
+            if (!(produced instanceof Outcome.Success<Value> success)) {
+                // executeClassDefault cannot fail by itself: a default-block
+                // failure propagates as the callback's own throw (a failing
+                // child fails the triggering caller's op — no instance).
+                throw new Defect("CLASS_FACTORY " + op.opId() + " CLASS_DEFAULT child "
+                    + defaultOpId + " returned a failure terminal from the default "
+                    + "execution: the default op's policy is NO_DEAL_FAILURE and only "
+                    + "already-started child/operand failures may propagate — a "
+                    + "producer defect, never executed");
+            }
+            filled.put(defaultPayload.field(), success.value());
+        }
+
+        // The internal default-filled transfer instance (K-D5, untagged):
+        // declaration-order states — the defaulted fields present, every
+        // other field missing. The factory never publishes this instance:
+        // the caller's CLASS_NEW overlays provided fields, validates, and
+        // tags its own fresh published instance.
+        List<FieldState> states = new ArrayList<>(layout.fields().size());
+        for (ClassLayout.FieldLayout fieldLayout : layout.fields()) {
+            Value value = filled.get(fieldLayout.name());
+            states.add(value == null ? FieldState.Missing.INSTANCE
+                : new FieldState.Present(value));
+        }
+        return new Outcome.Success<Value>(
+            new Value.Class(payload.classId(), List.copyOf(states)));
+    }
+
+    // =========================================================================
+    // CLASS_NEW(SHARED_FACTORY)
+    // =========================================================================
+
+    /**
+     * Executes one validated {@code CLASS_NEW} op with
+     * {@code defaultOwner: SHARED_FACTORY} in the closed K-D4/D16 order
+     * with the K-D5 cross-unit transfer:
+     *
+     * <ol>
+     *   <li>provided values resolve from the lookup in literal order in
+     *       the caller before the transfer (the
+     *       {@code jvm-xmod-class-construction-eval-order} pin — the
+     *       provided-field evaluation crosses the module boundary in
+     *       literal order);</li>
+     *   <li>default application transfers to the owner unit's
+     *       {@code CLASS_FACTORY} op — resolved by the payload's
+     *       {@code classFactoryRef} {@link ClassFactoryId} through the
+     *       caller-supplied {@link ClassFactoryRegistry} (K-D5) — which
+     *       fills the omitted required-present fields' defaults in the
+     *       declaring module's scope (skipping provided fields) and
+     *       returns the default-filled transfer instance;</li>
+     *   <li>extra-key rejection first in provided-source order: the
+     *       first provided name not in the layout fails
+     *       {@code CLASS_CONSTRUCTION} — E8007
+     *       {@code extra field '{field}' in class '{classId}'} at the op
+     *       origin — after the transfer (the default side effects have
+     *       completed) and before any provided-field application or
+     *       field validation;</li>
+     *   <li>provided-field application in declaration order: the overlay
+     *       of the provided values onto the transferred instance (the
+     *       {@code jvm-xmod-class-construction-defaults} reorder pin);</li>
+     *   <li>field validation in declaration order through the
+     *       {@link BoundaryCheckRunner} seam per {@code fieldBoundaries}
+     *       entry — {@code CLASS_LITERAL_FIELD} for provided fields with
+     *       input = the field's provided value; {@code CLASS_DEFAULT_FIELD}
+     *       for omitted required-present defaulted fields with the pinned
+     *       input wiring = the owner {@code CLASS_FACTORY} op's result
+     *       {@link ValueId} (the K-D4 cross-unit D4-global reference) and
+     *       the extraction rule — the executor reads the named field
+     *       from the transferred instance before running the boundary
+     *       (the checked value is the transferred instance's field);</li>
+     *   <li>the fresh caller-side instance is tagged with {@code classId}
+     *       ({@code class:<ClassId>} canonical identity) and SUCCESS
+     *       publishes it — a fresh instance record distinct from the
+     *       internal transfer instance.</li>
+     * </ol>
+     *
+     * A failure at any step publishes no partial instance (the
+     * {@link Value.Class} exists only on the success path, so the tag
+     * never runs); completed children's effects remain. A failing
+     * default child propagates as the owner body runner's own throw —
+     * the triggering caller's op fails and no caller instance exists.
+     * {@code CLASS_NEW} runs zero return boundaries — the executor never
+     * drives a {@code FUNCTION_RETURN} child.
+     *
+     * @param op              the validated caller-side {@code CLASS_NEW}
+     *                        op carrying {@code CLASS_CONSTRUCTION} with
+     *                        {@code defaultOwner: SHARED_FACTORY},
+     *                        non-null {@code classFactoryRef}, and empty
+     *                        {@code classDefaultOpIds}; non-null
+     * @param priorValues     the resolved provided-field prior-step values
+     *                        (the caller's); non-null, no null entries
+     * @param factories       the owner's {@link ClassFactoryRegistry} —
+     *                        the {@code classFactoryRef} must resolve to
+     *                        the owner {@code CLASS_FACTORY} op id
+     *                        (K-D5); non-null
+     * @param ownerOps        the owner unit's ops by {@link OpId} (the
+     *                        factory op, its result, and the owner's
+     *                        {@code CLASS_DEFAULT} ops); non-null
+     * @param boundaryOps     the caller unit's boundary ops by
+     *                        {@link OpId}; every {@code fieldBoundaries}
+     *                        id must resolve to a {@code BOUNDARY} op
+     *                        parented to this op; non-null
+     * @param layouts         the layout-resolution context
+     *                        {@code ClassId → ClassLayout} (the caller's
+     *                        {@code classLayouts} plus the owner unit's);
+     *                        the payload's classId must resolve to exactly
+     *                        the payload's layout; non-null
+     * @param checkRunner     the boundary-check delegate; non-null
+     * @param ownerBodyRunner the owner-side default-block callback
+     *                        (defaults evaluate in the declaring module's
+     *                        scope); non-null
+     * @return {@code Success} with the fresh tagged caller-side instance
+     *         after every field boundary passed, or {@code Failure} with
+     *         the E8007 extra-key projection or the first failing
+     *         boundary's failure
+     * @throws Defect               on a shape outside the pinned
+     *                              contracts — a wrong op kind/policy, a
+     *                              non-{@code SHARED_FACTORY} owner, a
+     *                              null factory ref or non-empty
+     *                              {@code classDefaultOpIds}, a layout
+     *                              resolution failure, an unresolvable
+     *                              factory binding or factory op, a
+     *                              factory of the wrong kind/policy/class,
+     *                              a non-{@link ValueId} factory result,
+     *                              a provided value that does not resolve
+     *                              or resolves to {@code Missing}, a
+     *                              boundary child or field-boundary entry
+     *                              outside the pinned shape, an
+     *                              input-wiring mismatch (including the
+     *                              {@code CLASS_DEFAULT_FIELD} input not
+     *                              naming the factory result), or a
+     *                              transferred instance missing a field
+     *                              the boundary list names
+     * @throws NullPointerException if any argument is null
+     */
+    public static Outcome<Value> executeClassNewSharedFactory(
+            SemanticOp op,
+            Map<ValueId, Value> priorValues,
+            ClassFactoryRegistry factories,
+            Map<OpId, SemanticOp> ownerOps,
+            Map<OpId, SemanticOp> boundaryOps,
+            Map<ClassId, ClassLayout> layouts,
+            BoundaryCheckRunner checkRunner,
+            BodyRunner ownerBodyRunner) {
+        requireOp(op, SemanticOpKind.CLASS_NEW, FailurePolicyId.CLASS_CONSTRUCTION);
+        Objects.requireNonNull(priorValues, "priorValues must not be null");
+        Objects.requireNonNull(factories, "factories must not be null");
+        Objects.requireNonNull(ownerOps, "ownerOps must not be null");
+        Objects.requireNonNull(boundaryOps, "boundaryOps must not be null");
+        Objects.requireNonNull(layouts, "layouts must not be null");
+        Objects.requireNonNull(checkRunner, "checkRunner must not be null");
+        Objects.requireNonNull(ownerBodyRunner, "ownerBodyRunner must not be null");
+        KindPayload.ClassNewPayload payload = (KindPayload.ClassNewPayload) op.payload();
+
+        // This child's surface: SHARED_FACTORY execution. LOCAL execution
+        // is {@link #executeClassNewLocal}'s; RETAINED_ABI is E10's — a
+        // non-SHARED_FACTORY owner reaching this surface is a producer
+        // defect, never silently executed as a transfer.
+        if (payload.defaultOwner() != DefaultOwner.SHARED_FACTORY) {
+            throw new Defect("CLASS_NEW " + op.opId() + " carries defaultOwner "
+                + payload.defaultOwner() + ": this child's executor surface is "
+                + "SHARED_FACTORY transfer (executeClassNewLocal is the LOCAL surface and "
+                + "RETAINED_ABI transfer is E10's) — a non-SHARED_FACTORY owner reaching "
+                + "executeClassNewSharedFactory is a producer defect, never executed");
+        }
+        if (payload.classFactoryRef() == null) {
+            throw new Defect("CLASS_NEW " + op.opId() + " carries a null classFactoryRef: "
+                + "the pinned SHARED_FACTORY shape carries classFactoryRef = the "
+                + "interface's pre-allocated constructionEntry — a null factory ref is a "
+                + "producer defect, never executed");
+        }
+        if (!payload.classDefaultOpIds().isEmpty()) {
+            throw new Defect("CLASS_NEW " + op.opId() + " carries " + payload.classDefaultOpIds()
+                + ": the pinned SHARED_FACTORY shape carries classDefaultOpIds empty (the "
+                + "owner's CLASS_FACTORY carries the CLASS_DEFAULT child list) — a "
+                + "non-empty list is a producer defect, never executed");
+        }
+
+        // Layout resolution (K-D11): the payload is never interpreted
+        // against a foreign layout.
+        ClassLayout layout = layouts.get(payload.classId());
+        if (layout == null) {
+            throw new Defect("CLASS_NEW " + op.opId() + " classId " + payload.classId()
+                + " does not resolve in the layout-resolution context: every "
+                + "payload-referenced class resolves through the unit's classLayouts "
+                + "(plus the project interface index) — an unresolvable layout is a "
+                + "producer defect, never executed");
+        }
+        if (!layout.equals(payload.layout())) {
+            throw new Defect("CLASS_NEW " + op.opId() + " carries a layout that differs "
+                + "from the resolution context's layout of " + payload.classId()
+                + ": the payload's layout must be exactly the resolved layout — a "
+                + "mismatch is a producer defect, never executed");
+        }
+
+        // K-D4 step 1: provided values resolve in literal order in the
+        // caller before the transfer (the eval-order pin).
+        LinkedHashMap<String, Value> providedValues = new LinkedHashMap<>();
+        LinkedHashMap<String, ValueId> providedValueIds = new LinkedHashMap<>();
+        for (KindPayload.ProvidedField field : payload.providedFields()) {
+            Value value = resolve(priorValues, field.valueOpId());
+            if (value instanceof Value.Missing) {
+                throw new Defect("CLASS_NEW " + op.opId() + " provided field '" + field.name()
+                    + "' (" + field.valueOpId() + ") resolves to the internal Missing view: "
+                    + "a provided field always carries a present value (language null is "
+                    + "the explicit Null variant) — a wrong-kind value is a producer "
+                    + "defect, never executed");
+            }
+            // Duplicate provided names keep the last value (the checker's
+            // class-literal map rule); every entry still resolves in
+            // literal order so its effects complete.
+            providedValues.put(field.name(), value);
+            providedValueIds.put(field.name(), field.valueOpId());
+        }
+
+        // The factory resolution by ClassFactoryId (K-D5): the payload's
+        // classFactoryRef names the owner's CLASS_FACTORY op through the
+        // registry — a missing binding means an owner not on the shared
+        // route (its construction defers at lowering, RETAINED_ABI is
+        // E10's) and is never executed here.
+        OpId factoryOpId = factories.factoryFor(payload.classFactoryRef());
+        if (factoryOpId == null) {
+            throw new Defect("CLASS_NEW " + op.opId() + " classFactoryRef "
+                + payload.classFactoryRef() + " does not resolve in the owner's "
+                + "ClassFactoryRegistry: a SHARED_FACTORY op reaching execution without "
+                + "a registered factory is a producer defect (an owner on a retained "
+                + "route defers at lowering — RETAINED_ABI is E10's), never executed");
+        }
+        SemanticOp factoryOp = ownerOps.get(factoryOpId);
+        if (factoryOp == null) {
+            throw new Defect("CLASS_NEW " + op.opId() + " factory op id " + factoryOpId
+                + " does not resolve in the owner unit's op lookup: the registry binding "
+                + "names the owner unit's CLASS_FACTORY op — an unresolvable factory op "
+                + "is a producer defect, never executed");
+        }
+        requireOp(factoryOp, SemanticOpKind.CLASS_FACTORY,
+            FailurePolicyId.CLASS_CONSTRUCTION);
+        KindPayload.ClassFactoryPayload factoryPayload =
+            (KindPayload.ClassFactoryPayload) factoryOp.payload();
+        if (!factoryPayload.classId().equals(payload.classId())) {
+            throw new Defect("CLASS_NEW " + op.opId() + " resolves factory op "
+                + factoryOp.opId() + " of class " + factoryPayload.classId()
+                + ": the pinned factory fills the constructed class's defaults ("
+                + payload.classId() + ") — a classId mismatch is a producer defect, "
+                + "never executed");
+        }
+        if (!(factoryOp.result() instanceof ValueId factoryResult)) {
+            throw new Defect("CLASS_NEW " + op.opId() + " factory op " + factoryOp.opId()
+                + " publishes a non-ValueId result " + factoryOp.result()
+                + ": the pinned CLASS_DEFAULT_FIELD input is the CLASS_FACTORY op's "
+                + "result ValueId (K-D4 input wiring) — a producer defect, never "
+                + "executed");
+        }
+
+        // The owner-side CLASS_DEFAULT lookup (defaults evaluate in the
+        // declaring module's scope through the owner's ops).
+        Map<OpId, SemanticOp> ownerDefaultOps = new LinkedHashMap<>();
+        for (Map.Entry<OpId, SemanticOp> entry : ownerOps.entrySet()) {
+            if (entry.getValue().kind() == SemanticOpKind.CLASS_DEFAULT) {
+                ownerDefaultOps.put(entry.getKey(), entry.getValue());
+            }
+        }
+
+        // K-D4 step 2: the transfer to the owner's CLASS_FACTORY — the
+        // factory skips the caller's provided fields and returns the
+        // default-filled transfer instance (untagged). A failing default
+        // child propagates as the owner body runner's throw (the caller's
+        // op fails; no instance published; completed effects remain).
+        Set<String> providedNames = new LinkedHashSet<>(providedValues.keySet());
+        Outcome<Value> transferred = executeClassFactory(factoryOp, op, ownerDefaultOps,
+            layouts, providedNames, ownerBodyRunner);
+        if (!(transferred instanceof Outcome.Success<Value> transferSuccess
+                && transferSuccess.value() instanceof Value.Class transferredInstance)) {
+            throw new Defect("CLASS_NEW " + op.opId() + " factory transfer produced "
+                + transferred + ": the pinned factory returns exactly its internal "
+                + "default-filled transfer instance — a wrong outcome is a producer "
+                + "defect, never executed");
+        }
+        if (!transferredInstance.classId().equals(payload.classId())
+                || transferredInstance.fields().size() != layout.fields().size()) {
+            throw new Defect("CLASS_NEW " + op.opId() + " factory transfer produced an "
+                + "instance of " + transferredInstance.classId() + " with "
+                + transferredInstance.fields().size() + " field states: the pinned "
+                + "transfer carries the constructed class's declaration-order states ("
+                + payload.classId() + ", " + layout.fields().size() + " fields) — a "
+                + "mismatch is a producer defect, never executed");
+        }
+
+        // K-D4 step 3: extra-key rejection first in provided-source order —
+        // after the transfer, before any provided-field application or
+        // field validation (the completed default effects are observable).
+        for (KindPayload.ProvidedField field : payload.providedFields()) {
+            if (fieldOf(layout, field.name()) == null) {
+                BoundaryFailure failure = BoundaryFailure.fromRow(
+                    FailureContractRegistry.row(FailurePolicyId.CLASS_CONSTRUCTION), 0,
+                    null, null,
+                    metadataOf("field", field.name(), "classId", payload.classId().text()),
+                    null);
+                return new Outcome.Failure<Value>(new OpFailure(failure, op.origin()));
+            }
+        }
+
+        // The pinned field-boundary coverage (K-D4 step 5 shape): exactly
+        // one entry per provided field (CLASS_LITERAL_FIELD) and per
+        // defaulted field (CLASS_DEFAULT_FIELD) in declaration order;
+        // omitted optional fields get no boundary and stay missing.
+        List<String> expectedBoundaryFields = new ArrayList<>();
+        for (ClassLayout.FieldLayout fieldLayout : layout.fields()) {
+            if (providedValues.containsKey(fieldLayout.name())
+                    || defaultValueOf(transferredInstance, layout, fieldLayout.name()) != null) {
+                expectedBoundaryFields.add(fieldLayout.name());
+            }
+        }
+        List<KindPayload.FieldBoundary> boundaries = payload.fieldBoundaries();
+        if (boundaries.size() != expectedBoundaryFields.size()) {
+            throw new Defect("CLASS_NEW " + op.opId() + " carries " + boundaries.size()
+                + " field-boundary entries for " + expectedBoundaryFields.size()
+                + " present fields: the pinned shape carries exactly one boundary per "
+                + "provided field and per omitted required-present defaulted field in "
+                + "declaration order — a child-count mismatch is a producer defect, "
+                + "never executed");
+        }
+        for (int i = 0; i < boundaries.size(); i++) {
+            KindPayload.FieldBoundary entry = boundaries.get(i);
+            String expectedField = expectedBoundaryFields.get(i);
+            if (!entry.field().equals(expectedField)) {
+                throw new Defect("CLASS_NEW " + op.opId() + " field-boundary entry " + i
+                    + " names field '" + entry.field() + "': the pinned declaration order "
+                    + "names '" + expectedField + "' — a field-boundary order mismatch "
+                    + "is a producer defect, never executed");
+            }
+            BoundaryKind expectedKind = providedValues.containsKey(entry.field())
+                ? BoundaryKind.CLASS_LITERAL_FIELD : BoundaryKind.CLASS_DEFAULT_FIELD;
+            if (entry.kind() != expectedKind) {
+                throw new Defect("CLASS_NEW " + op.opId() + " field-boundary entry for '"
+                    + entry.field() + "' carries kind " + entry.kind() + ": the pinned "
+                    + "kind is " + expectedKind + " (CLASS_LITERAL_FIELD for provided "
+                    + "values, CLASS_DEFAULT_FIELD for defaulted values) — a kind "
+                    + "mismatch is a producer defect, never executed");
+            }
+        }
+
+        // K-D4 step 4: provided-field application in declaration order (the
+        // overlay onto the transferred instance; duplicate names keep the
+        // last provided value).
+        LinkedHashMap<String, Value> instanceFields = new LinkedHashMap<>();
+        for (ClassLayout.FieldLayout fieldLayout : layout.fields()) {
+            Value provided = providedValues.get(fieldLayout.name());
+            Value defaultValue = defaultValueOf(transferredInstance, layout, fieldLayout.name());
+            if (provided != null) {
+                instanceFields.put(fieldLayout.name(), provided);
+            } else if (defaultValue != null) {
+                instanceFields.put(fieldLayout.name(), defaultValue);
+            }
+        }
+
+        // K-D4 step 5: field validation in declaration order through the
+        // BoundaryCheckRunner seam; the first failing child fails the op
+        // and no instance is published.
+        for (KindPayload.FieldBoundary entry : boundaries) {
+            ClassLayout.FieldLayout fieldLayout = fieldOf(layout, entry.field());
+            if (fieldLayout == null) {
+                throw new Defect("CLASS_NEW " + op.opId() + " field-boundary entry names "
+                    + "field '" + entry.field() + "' which is not a declared field of "
+                    + payload.classId() + ": a boundary of an undeclared field is a "
+                    + "producer defect, never executed");
+            }
+            SemanticOp child = requireBoundaryChild(boundaryOps, entry.boundaryOpId(), op,
+                entry.kind());
+            KindPayload.BoundaryPayload boundaryPayload =
+                (KindPayload.BoundaryPayload) child.payload();
+            if (!boundaryPayload.descriptor().equals(fieldLayout.descriptor())) {
+                throw new Defect("CLASS_NEW " + op.opId() + " field boundary "
+                    + child.opId() + " carries descriptor "
+                    + boundaryPayload.descriptor().canonicalSpecText()
+                    + ": the pinned child descriptor is the field's declared descriptor "
+                    + fieldLayout.descriptor().canonicalSpecText() + " — a mismatch is a "
+                    + "producer defect, never executed");
+            }
+            requireDescriptorKindPolicy(child, boundaryPayload.descriptor());
+            Value input;
+            if (entry.kind() == BoundaryKind.CLASS_LITERAL_FIELD) {
+                Value provided = providedValues.get(entry.field());
+                ValueId providedId = providedValueIds.get(entry.field());
+                if (provided == null || providedId == null) {
+                    throw new Defect("CLASS_NEW " + op.opId() + " carries a "
+                        + "CLASS_LITERAL_FIELD boundary for field '" + entry.field()
+                        + "' without a provided value: the pinned kind names provided "
+                        + "values only — a producer defect, never executed");
+                }
+                if (!boundaryPayload.input().equals(providedId)) {
+                    throw new Defect("CLASS_NEW " + op.opId() + " field boundary "
+                        + child.opId() + " carries input " + boundaryPayload.input()
+                        + ": the pinned CLASS_LITERAL_FIELD input is the field's "
+                        + "provided value op " + providedId + " (K-D4 input wiring) — a "
+                        + "mismatch is a producer defect, never executed");
+                }
+                input = provided;
+            } else {
+                // The K-D4 extraction rule: the boundary's input naming
+                // the owner CLASS_FACTORY op's result ValueId is the
+                // wiring (the cross-unit D4-global reference); the checked
+                // value is the transferred instance's named field — the
+                // factory fills exactly the defaulted fields this list
+                // names, so the field must be present.
+                if (!boundaryPayload.input().equals(factoryResult)) {
+                    throw new Defect("CLASS_NEW " + op.opId() + " field boundary "
+                        + child.opId() + " carries input " + boundaryPayload.input()
+                        + ": the pinned CLASS_DEFAULT_FIELD input of a SHARED_FACTORY "
+                        + "CLASS_NEW is the owner CLASS_FACTORY op's result ValueId "
+                        + factoryResult + " (K-D4 input wiring, the cross-unit D4-global "
+                        + "reference) — a mismatch is a producer defect, never executed");
+                }
+                Value extracted = defaultValueOf(transferredInstance, layout, entry.field());
+                if (extracted == null) {
+                    throw new Defect("CLASS_NEW " + op.opId() + " carries a "
+                        + "CLASS_DEFAULT_FIELD boundary for field '" + entry.field()
+                        + "' whose transferred instance field is missing: the factory "
+                        + "fills exactly the omitted required-present defaulted fields "
+                        + "the boundary list names (the extraction rule reads the "
+                        + "transferred instance's named field) — a missing field is a "
+                        + "producer defect, never executed");
+                }
+                input = extracted;
+            }
+            BoundaryResult result = checkRunner.run(boundaryPayload, input);
+            if (result instanceof BoundaryResult.Pass pass) {
+                instanceFields.put(entry.field(), pass.value());
+                continue;
+            }
+            // The first failing child fails the op: no instance, no tag,
+            // and the later children never run.
+            BoundaryResult.Fail fail = (BoundaryResult.Fail) result;
+            return new Outcome.Failure<Value>(new OpFailure(fail.failure(), op.origin()));
+        }
+
+        // K-D4 step 6: tag the fresh caller-side instance with classId and
+        // SUCCESS publishes it — a fresh instance record distinct from the
+        // internal transfer instance (declaration-order field states;
+        // omitted optionals stay missing; present null stays present
+        // null).
+        List<FieldState> states = new ArrayList<>(layout.fields().size());
+        for (ClassLayout.FieldLayout fieldLayout : layout.fields()) {
+            Value value = instanceFields.get(fieldLayout.name());
+            states.add(value == null ? FieldState.Missing.INSTANCE
+                : new FieldState.Present(value));
+        }
+        return new Outcome.Success<Value>(
+            new Value.Class(payload.classId(), List.copyOf(states)));
+    }
+
+    /**
+     * The present value of the named declaration-order field of one class
+     * instance, or {@code null} when the field is missing (never a
+     * conflated state — present null is the explicit {@link Value.Null}
+     * variant and returns non-null). The instance's states parallel its
+     * layout's declaration order (checked fail closed by the callers).
+     */
+    private static Value defaultValueOf(Value.Class instance, ClassLayout layout,
+                                        String fieldName) {
+        for (int i = 0; i < layout.fields().size(); i++) {
+            if (layout.fields().get(i).name().equals(fieldName)) {
+                FieldState state = instance.fields().get(i);
+                return state instanceof FieldState.Present present ? present.value() : null;
+            }
+        }
+        return null;
     }
 
     // =========================================================================

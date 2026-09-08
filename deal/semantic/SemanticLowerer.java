@@ -89,6 +89,7 @@ import deal.semantic.ir.OperationContractSnapshot;
 import deal.semantic.ir.ResolvedImport;
 import deal.semantic.ir.RuntimeDescriptor;
 import deal.semantic.ir.ScalarValue;
+import deal.semantic.ir.SharedFactoryFacts;
 import deal.semantic.ir.SemanticCapability;
 import deal.semantic.ir.SemanticIdAllocator;
 import deal.semantic.ir.SemanticIrValidator;
@@ -650,6 +651,18 @@ public final class SemanticLowerer {
      * origin.
      */
     public static final String CLASS_DEFAULT_CAPTURE = "CLASS_DEFAULT_CAPTURE";
+    /**
+     * The fact-defect identifier of the E6005 imported-construction
+     * deferral arm (class-construction-jsonable-operations K-D4/K-D5;
+     * ISSUE-0514): a class-typed literal of an imported class whose
+     * owner has no shared factory facts (an owner on a retained route)
+     * defers to E10 (ISSUE-0239, the cross-module factory ABI transport)
+     * and fails E6005 with this {@code validatorRule} — never silently
+     * emitted as {@code SHARED_FACTORY} and never executed here. The
+     * detail carries capability {@code CLASSES}, the module, and the
+     * {@code SemanticLowerer} origin.
+     */
+    public static final String RETAINED_ABI_DEFERRED = "RETAINED_ABI_DEFERRED";
 
     // =========================================================================
     // The binding-core child (ISSUE-0444): incarnations, generations, cell kinds
@@ -1247,6 +1260,38 @@ public final class SemanticLowerer {
     }
 
     /**
+     * The imported-construction deferral defect of the class-literal arm
+     * (class-construction-jsonable-operations K-D4; ISSUE-0514): a
+     * class-typed literal of an imported class whose owner carries no
+     * shared factory facts — an owner not on the shared route — defers
+     * to E10 (ISSUE-0239, the cross-module factory ABI transport) and
+     * converts at the unit-production seam to the pinned E6005
+     * {@code RETAINED_ABI_DEFERRED} diagnostic (capability
+     * {@code CLASSES}) — never a silent {@code SHARED_FACTORY} emission,
+     * never a silent {@code RETAINED_ABI} emission, and never a crash.
+     * Same-module literals stay LOCAL (T2's arm).
+     */
+    public static final class RetainedAbiDeferred extends RuntimeException {
+
+        private static final long serialVersionUID = 1L;
+
+        /** The imported class identity carried into the E6005 origin. */
+        private final String classId;
+
+        public RetainedAbiDeferred(String classId) {
+            super("class-typed literal of imported class " + classId
+                + " whose owner carries no shared factory facts (the "
+                + "RETAINED_ABI derivation is E10's, ISSUE-0239)");
+            this.classId = Objects.requireNonNull(classId, "classId must not be null");
+        }
+
+        /** The imported class identity carried into the E6005 origin. */
+        public String classId() {
+            return classId;
+        }
+    }
+
+    /**
      * An int literal whose value is outside the closed signed32 scalar
      * set (D1's CONST contract — "a literal outside the closed scalar
      * set is a producer defect (E6005), never an invented op"): the
@@ -1324,6 +1369,13 @@ public final class SemanticLowerer {
                 SemanticCapability.CLASSES, CLASS_DEFAULT_CAPTURE,
                 SemanticProfile.DEAL_V1_2_INT32, LoweredModuleUnit.FORMAT_VERSION,
                 "SemanticLowerer " + CLASS_DEFAULT_CAPTURE + " (" + capture.getMessage() + ")");
+        }
+        if (defect instanceof RetainedAbiDeferred deferred) {
+            return new LoweringFailureDetail(module.path(),
+                SemanticCapability.CLASSES, RETAINED_ABI_DEFERRED,
+                SemanticProfile.DEAL_V1_2_INT32, LoweredModuleUnit.FORMAT_VERSION,
+                "SemanticLowerer " + RETAINED_ABI_DEFERRED + " (class "
+                    + deferred.classId() + " — the RETAINED_ABI derivation is E10's)");
         }
         if (defect instanceof ContainerPayloadDescriptors.Defect descriptorDefect) {
             return ContainerPayloadDescriptors.loweringFailureDetail(module, descriptorDefect);
@@ -2606,8 +2658,15 @@ public final class SemanticLowerer {
      * {@code classDefaultOpIds} for omitted required-present defaulted
      * fields in declaration order, field boundaries in declaration order with the
      * pinned input wiring, {@code CLASS_CONSTRUCTION}, tag-last result) —
-     * the same arm any class-typed literal of the walk uses; a literal of
-     * an imported class (no local layout) fails closed.</p>
+     * the same arm any class-typed literal of the walk uses. A literal of
+     * an imported class with the owner's shared-factory facts lowers
+     * {@code SHARED_FACTORY} (ISSUE-0514, K-D4/K-D5:
+     * {@code classFactoryRef} = the interface's {@code constructionEntry},
+     * empty {@code classDefaultOpIds}, {@code CLASS_DEFAULT_FIELD}
+     * boundaries wired to the owner {@code CLASS_FACTORY} op's result
+     * {@code ValueId}); a literal of an imported class without facts
+     * defers to E10 ({@code RETAINED_ABI_DEFERRED}, never silently
+     * emitted).</p>
      *
      * <p>The field-operation arms (ISSUE-0513, K-D6/K-D7) extend the same
      * window: class member reads lower to {@code FIELD_READ} with the
@@ -2665,12 +2724,55 @@ public final class SemanticLowerer {
             String capabilityRegistryHash,
             deal.semantic.ir.ExternalModuleInterface ownInterface,
             SemanticIdAllocator allocator) {
+        return lowerModuleClassCore(module, profile, constructCoverage, interfaceHash,
+            capabilityRegistryHash, ownInterface, Map.of(), allocator);
+    }
+
+    /**
+     * The shared-factory seam of the class walk (ISSUE-0514,
+     * class-construction-jsonable-operations K-D2/K-D4/K-D5): the
+     * full-fact overload of {@link #lowerModuleClassCore} receiving the
+     * imported-construction context — one {@link SharedFactoryFacts} per
+     * imported class (the owner's factory facts: the interface's
+     * pre-allocated {@code constructionEntry} {@link
+     * deal.semantic.ir.ClassFactoryId}, the owner
+     * {@link deal.semantic.ir.ClassFactoryRegistry} binding's
+     * {@code CLASS_FACTORY} op id, and the factory op's result
+     * {@link ValueId}, plus the owner unit's {@link
+     * deal.semantic.ir.ClassLayout} record and the interface entry) — so
+     * a class-typed literal of an imported class emits its
+     * {@code CLASS_NEW} with {@code defaultOwner: SHARED_FACTORY},
+     * {@code classFactoryRef} = the interface's {@code constructionEntry},
+     * empty {@code classDefaultOpIds}, and the {@code CLASS_DEFAULT_FIELD}
+     * boundaries wired to the owner factory op's result {@code ValueId}
+     * (the K-D4 cross-unit D4-global reference). The reference is emitted
+     * deterministically (byte-identical repeats) and is resolvable by the
+     * executor through the layout-resolution context (the unit's
+     * {@code classLayouts} plus the interface facts). A literal of an
+     * imported class without facts — an owner not on the shared route —
+     * defers to E10 (E6005 {@code RETAINED_ABI_DEFERRED}, never a silent
+     * {@code SHARED_FACTORY} emission); same-module literals stay LOCAL.
+     *
+     * @param sharedFactories the imported-construction facts by
+     *                        {@link ClassId} (empty for a module that
+     *                        constructs no imported classes); non-null
+     */
+    public static ClassDeclarationCoreResult lowerModuleClassCore(
+            CheckedModuleInput module,
+            SemanticProfile profile,
+            Map<ConstructKind, List<SemanticOpKind>> constructCoverage,
+            String interfaceHash,
+            String capabilityRegistryHash,
+            deal.semantic.ir.ExternalModuleInterface ownInterface,
+            Map<ClassId, SharedFactoryFacts> sharedFactories,
+            SemanticIdAllocator allocator) {
         Objects.requireNonNull(module, "module must not be null");
         Objects.requireNonNull(profile, "profile must not be null");
         Objects.requireNonNull(constructCoverage, "constructCoverage must not be null");
         Objects.requireNonNull(interfaceHash, "interfaceHash must not be null");
         Objects.requireNonNull(capabilityRegistryHash, "capabilityRegistryHash must not be null");
         Objects.requireNonNull(ownInterface, "ownInterface must not be null");
+        Objects.requireNonNull(sharedFactories, "sharedFactories must not be null");
         Objects.requireNonNull(allocator, "allocator must not be null");
         if (profile != SemanticProfile.DEAL_V1_2_INT32) {
             return new ClassDeclarationCoreResult(new LoweringResult(null, null,
@@ -2682,7 +2784,7 @@ public final class SemanticLowerer {
         }
         ModuleLowerer lowerer = new ModuleLowerer(module.moduleId(), module.sourceId(),
             module.checks(), allocator, true, true, true, false, false, false,
-            module.ast().span(), false, true, ownInterface);
+            module.ast().span(), false, true, ownInterface, sharedFactories);
         try {
             lowerer.lowerGroupModule(module.ast().statements());
         } catch (ConstructUnlowered unlowered) {
@@ -2708,6 +2810,11 @@ public final class SemanticLowerer {
             return new ClassDeclarationCoreResult(new LoweringResult(null, null,
                 List.of(FailureContractRegistry.e6005(
                     loweringFailureDetail(module.moduleId(), capture)))),
+                new deal.semantic.ir.ClassFactoryRegistry(Map.of()));
+        } catch (RetainedAbiDeferred deferred) {
+            return new ClassDeclarationCoreResult(new LoweringResult(null, null,
+                List.of(FailureContractRegistry.e6005(
+                    loweringFailureDetail(module.moduleId(), deferred)))),
                 new deal.semantic.ir.ClassFactoryRegistry(Map.of()));
         }
         LoweredModuleUnit unit = lowerer.buildUnit(constructCoverage,
@@ -3016,6 +3123,18 @@ public final class SemanticLowerer {
          * mode.
          */
         private final deal.semantic.ir.ExternalModuleInterface ownInterface;
+        /**
+         * The imported-construction facts of the session (class-core
+         * mode, ISSUE-0514): the {@link SharedFactoryFacts} per imported
+         * {@link ClassId} — the owner's factory facts (the interface's
+         * {@code constructionEntry}, the factory op id, and the factory
+         * result {@code ValueId}) plus the owner layout and interface
+         * entry the {@code CLASS_NEW} arm consumes for
+         * {@code SHARED_FACTORY} lowering (K-D4/K-D5). Empty by default;
+         * a literal of an imported class without facts defers to E10
+         * (never silently emitted).
+         */
+        private final Map<ClassId, SharedFactoryFacts> sharedFactories;
         /**
          * The produced class layouts keyed by {@link ClassId} in
          * declaration order (K-D2; the unit's {@code classLayouts} map,
@@ -3592,17 +3711,22 @@ public final class SemanticLowerer {
                              boolean fullProgram) {
             this(module, sourceId, checks, ids, bindingCore, closureCore, groupCore,
                 proofAnalysis, creationRuleAnalysis, shapeMapAnalysis, programSpan,
-                fullProgram, false, null);
+                fullProgram, false, null, Map.of());
         }
 
         /**
-         * The class-declaration session constructor (ISSUE-0511): the
-         * {@code classCore} flag activates the class-declaration arms on
-         * top of the walk flags (the class walk is the group walk plus
-         * the class arms), and {@code ownInterface} supplies the
-         * module's own interface index entry — the pre-allocated
+         * The class-declaration session constructor (ISSUE-0511, extended
+         * by the ISSUE-0514 shared-factory child): the {@code classCore}
+         * flag activates the class-declaration arms on top of the walk
+         * flags (the class walk is the group walk plus the class arms),
+         * {@code ownInterface} supplies the module's own interface index
+         * entry — the pre-allocated
          * {@code ClassInterface.constructionEntry} ids the exported
-         * classes' {@code CLASS_FACTORY} ops register under (K-D2).
+         * classes' {@code CLASS_FACTORY} ops register under (K-D2) —
+         * and {@code sharedFactories} supplies the imported-construction
+         * facts ({@link SharedFactoryFacts} per imported {@link ClassId})
+         * the {@code CLASS_NEW} arm consumes for SHARED_FACTORY lowering
+         * (K-D4/K-D5).
          */
         public ModuleLowerer(ModuleId module, String sourceId, CheckResult checks,
                              SemanticIdAllocator ids, boolean bindingCore,
@@ -3610,7 +3734,8 @@ public final class SemanticLowerer {
                              boolean proofAnalysis, boolean creationRuleAnalysis,
                              boolean shapeMapAnalysis, Span programSpan,
                              boolean fullProgram, boolean classCore,
-                             deal.semantic.ir.ExternalModuleInterface ownInterface) {
+                             deal.semantic.ir.ExternalModuleInterface ownInterface,
+                             Map<ClassId, SharedFactoryFacts> sharedFactories) {
 
             this.module = Objects.requireNonNull(module, "module must not be null");
             this.sourceId = Objects.requireNonNull(sourceId, "sourceId must not be null");
@@ -3625,6 +3750,7 @@ public final class SemanticLowerer {
             this.fullProgram = fullProgram && bindingCore;
             this.classCore = classCore;
             this.ownInterface = ownInterface;
+            this.sharedFactories = Map.copyOf(sharedFactories);
             this.statementWalk = fullProgram
                 ? this::lowerFullStatements
                 : (bindingCore ? this::lowerBindingStatements
@@ -4574,33 +4700,44 @@ public final class SemanticLowerer {
 
         /**
          * {@code CLASS_NEW} — the class-typed object-literal arm of the
-         * class walk (K-D4's closed LOCAL payload shape; ISSUE-0511): the
-         * provided-value operands complete in literal order before the op,
-         * the payload records {@code providedFields} in literal order,
+         * class walk (K-D4's closed payload shape; ISSUE-0511, extended
+         * by the ISSUE-0514 SHARED_FACTORY arm): the provided-value
+         * operands complete in literal order before the op, the payload
+         * records {@code providedFields} in literal order,
          * {@code classDefaultOpIds} for omitted required-present
          * defaulted fields in declaration order (LOCAL default
-         * application, K-D4 step 2), and {@code fieldBoundaries} in
-         * declaration order — {@code CLASS_LITERAL_FIELD} per provided
-         * field with input = the provided value,
-         * {@code CLASS_DEFAULT_FIELD} per omitted required-present
-         * defaulted field with input = the field's {@code CLASS_DEFAULT}
-         * child result (K-D4 input wiring); omitted optional fields get no
+         * application, K-D4 step 2 — empty under SHARED_FACTORY, whose
+         * defaults transfer to the owner's {@code CLASS_FACTORY}), and
+         * {@code fieldBoundaries} in declaration order —
+         * {@code CLASS_LITERAL_FIELD} per provided field with input =
+         * the provided value, {@code CLASS_DEFAULT_FIELD} per omitted
+         * required-present defaulted field with input = the field's
+         * {@code CLASS_DEFAULT} child result (LOCAL, K-D4 input wiring)
+         * or the owner {@code CLASS_FACTORY} op's result {@code ValueId}
+         * (SHARED_FACTORY, the K-D4 cross-unit D4-global reference —
+         * the executor's extraction rule reads the transferred
+         * instance's named field); omitted optional fields get no
          * boundary and no default op id, defaulted or not — an
-         * optional-with-default field's default never runs at construction
-         * and the field stays missing.
+         * optional-with-default field's default never runs at
+         * construction and the field stays missing.
          * The op carries policy {@code CLASS_CONSTRUCTION} and publishes a
          * fresh tagged-instance value ({@code class:<ClassId>}); the
          * boundary children record the {@code CLASS_NEW} op as
-         * {@code parentOpId}. A literal of an imported class (no local
-         * layout) fails closed — the SHARED_FACTORY/RETAINED_ABI arms are
-         * the later epic children's.
+         * {@code parentOpId}. A literal of an imported class with the
+         * owner's shared-factory facts lowers {@code defaultOwner:
+         * SHARED_FACTORY} with {@code classFactoryRef} = the interface's
+         * pre-allocated {@code constructionEntry} (K-D4/K-D5); a literal
+         * of an imported class without facts defers to E10
+         * ({@code RETAINED_ABI_DEFERRED}) and is never silently emitted
+         * as SHARED_FACTORY. Same-module literals stay LOCAL.
          *
          * @param literal the checked class-typed object literal; non-null
          * @param slot    the result slot of the final producing op, or
          *                {@code null} to allocate one
          * @return the produced {@code ValueId} (the slot when given)
-         * @throws ConstructUnlowered on a class without a local layout or
-         *         any other shape outside this arm
+         * @throws ConstructUnlowered on a shape outside this arm
+         * @throws RetainedAbiDeferred on an imported class without the
+         *         owner's shared-factory facts (the E10 deferral)
          */
         private ValueId lowerClassLiteral(ObjectLiteralExpr literal, ValueId slot) {
             Type type = checkedType(literal);
@@ -4611,11 +4748,26 @@ public final class SemanticLowerer {
             }
             ClassId classId = new ClassId(
                 DescriptorService.semanticModulePath(classType.identity()), classType.name());
+            // The construction mode: a locally declared class stays LOCAL
+            // (T2's arm); an imported class with the owner's shared-factory
+            // facts lowers SHARED_FACTORY (K-D4/K-D5); an imported class
+            // without facts — an owner not on the shared route — defers to
+            // E10 (never silently emitted as SHARED_FACTORY and never
+            // executed here).
             deal.semantic.ir.ClassLayout layout = classLayouts.get(classId);
+            DefaultOwner defaultOwner = DefaultOwner.LOCAL;
+            deal.semantic.ir.ClassFactoryId classFactoryRef = null;
+            ValueId sharedFactoryResult = null;
+            SharedFactoryFacts sharedFacts = null;
             if (layout == null) {
-                throw new ConstructUnlowered("class-typed literal " + classId
-                    + " without a local layout (the unit's classLayouts carry locally "
-                    + "declared classes; imported-class construction is a later epic arm)");
+                sharedFacts = sharedFactories.get(classId);
+                if (sharedFacts == null) {
+                    throw new RetainedAbiDeferred(classId.text());
+                }
+                layout = sharedFacts.layout();
+                defaultOwner = DefaultOwner.SHARED_FACTORY;
+                classFactoryRef = sharedFacts.interfaceEntry().constructionEntry();
+                sharedFactoryResult = sharedFacts.factoryResult();
             }
             // Provided values complete in literal order (K-D4 step 1).
             List<KindPayload.ProvidedField> providedFields = new ArrayList<>();
@@ -4633,6 +4785,10 @@ public final class SemanticLowerer {
             // Default application and field validation in declaration order
             // (K-D4 steps 2 and 5): the boundary children are built first so
             // the payload names their op ids, then emitted as children.
+            // LOCAL wires the field's CLASS_DEFAULT child result;
+            // SHARED_FACTORY wires the owner CLASS_FACTORY op's result
+            // ValueId (the K-D4 cross-unit D4-global reference) and records
+            // no classDefaultOpIds (the owner's factory carries them).
             List<OpId> classDefaultOpIds = new ArrayList<>();
             List<KindPayload.FieldBoundary> boundaries = new ArrayList<>();
             List<SemanticOp> children = new ArrayList<>();
@@ -4645,6 +4801,32 @@ public final class SemanticLowerer {
                     boundaries.add(new KindPayload.FieldBoundary(field.name(),
                         BoundaryKind.CLASS_LITERAL_FIELD, child.opId()));
                     children.add(child);
+                    continue;
+                }
+                if (defaultOwner == DefaultOwner.SHARED_FACTORY) {
+                    // An omitted required-present field of an imported class
+                    // is always defaulted (the checker's E4001 rejects a
+                    // no-default omitted required field); the owner's factory
+                    // fills exactly those fields, so the boundary wires the
+                    // factory result (the K-D4 extraction rule). The
+                    // interface fact is re-checked fail closed — never
+                    // inferred.
+                    if (field.required()) {
+                        if (!sharedFacts.hasDeclaredDefault(field.name())) {
+                            throw new ConstructUnlowered("omitted required-present field '"
+                                + field.name() + "' of imported class " + classId
+                                + " without a declared default (the checker's E4001 "
+                                + "rejects the shape — a fact defect, never an invented "
+                                + "default)");
+                        }
+                        SemanticOp child = buildFieldBoundary(
+                            BoundaryKind.CLASS_DEFAULT_FIELD, field.descriptor(),
+                            sharedFactoryResult, literal.span(), opId);
+                        boundaries.add(new KindPayload.FieldBoundary(field.name(),
+                            BoundaryKind.CLASS_DEFAULT_FIELD, child.opId()));
+                        children.add(child);
+                    }
+                    // An omitted optional field stays missing: no boundary.
                     continue;
                 }
                 ClassDefaultFact fact = facts == null ? null : facts.get(field.name());
@@ -4662,7 +4844,7 @@ public final class SemanticLowerer {
                 SourceOriginKind.USER, anchor, currentParent());
             emit(buildOp(opId, SemanticOpKind.CLASS_NEW,
                 new KindPayload.ClassNewPayload(classId, layout, providedFields,
-                    DefaultOwner.LOCAL, classDefaultOpIds, null, boundaries),
+                    defaultOwner, classDefaultOpIds, classFactoryRef, boundaries),
                 result, ContainerPayloadDescriptors.resultDescriptorOf(classType),
                 FailurePolicyId.CLASS_CONSTRUCTION, origin));
             for (SemanticOp child : children) {

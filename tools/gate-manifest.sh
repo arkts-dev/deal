@@ -232,6 +232,21 @@ TEST_SOURCES=(
   # read/write/delete/has arms, the cross-module nullable read shape,
   # the combined T1+T2+T3 executor drive, and determinism).
   'test/FieldOpsLoweringTest.java'
+  # ISSUE-0514 registration: the shared-factory executor battery
+  # (class-construction-jsonable-operations K-D4/K-D5, Verification 2 —
+  # the CLASS_FACTORY execution contract, the ClassFactoryId-resolved
+  # transfer, the skip-provided rule, the untagged transfer instance,
+  # the executed cross-unit parentOpId pin, the owner-scope default
+  # evaluation, the extraction rule, and the fail-closed discipline).
+  'test/SharedFactoryExecutorTest.java'
+  # ISSUE-0514 registration: the shared-factory lowering battery
+  # (class-construction-jsonable-operations K-D4/K-D5 — the pinned
+  # SHARED_FACTORY payloads, the literal-order eval-order pin, the
+  # combined T1+T2+T3+T4 cross-unit executor drive reproducing the
+  # jvm-xmod-class-construction-* pin shapes at the unit level, the
+  # RETAINED_ABI deferral negative, same-module LOCAL preservation, and
+  # determinism).
+  'test/SharedFactoryLoweringTest.java'
   # ISSUE-0162 registration: the C FFI declaration validation and
   # forward binding generation battery.
   'test/FfiDeclarationValidatorTest.java'
@@ -418,4 +433,10 @@ WARNING: luajit not found, skipping async nesting stress tests'
   # (class-construction-jsonable-operations K-D6/K-D7; sequencing
   # item 3).
   'fg|=== Running Field Ops Lowering Tests (ISSUE-0513 K-D6/K-D7 arms) ===|java -ea -cp build deal.test.FieldOpsLoweringTest'
+  # ISSUE-0514 registration: the shared-factory executor battery —
+  # driven through the assembled ClassOpsExecutor (K-D4/K-D5).
+  'fg|=== Running Shared Factory Executor Tests (ISSUE-0514 K-D4/K-D5) ===|java -ea -cp build deal.test.SharedFactoryExecutorTest'
+  # ISSUE-0514 registration: the shared-factory lowering battery — the
+  # imported-construction slice through the extended two-module seam.
+  'fg|=== Running Shared Factory Lowering Tests (ISSUE-0514 SHARED_FACTORY arm) ===|java -ea -cp build deal.test.SharedFactoryLoweringTest'
 )
