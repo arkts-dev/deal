@@ -507,7 +507,22 @@ public final class ContractSnapshotCanonicalizer {
             case KindPayload.CallCallee.Indirect i -> CanonicalJson.obj(
                 CanonicalJson.e("callee", semanticIdJson(i.callee())),
                 CanonicalJson.e("type", CanonicalJson.str("indirect")));
+            case KindPayload.CallCallee.Dynamic d -> CanonicalJson.obj(
+                CanonicalJson.e("callee", semanticIdJson(d.callee())),
+                CanonicalJson.e("type", CanonicalJson.str("dynamic")));
         };
+    }
+
+    /** Renders the dynamic return-boundary set as its pinned three-entry object. */
+    public static CanonicalJson.Value dynamicReturnBoundaryJson(
+            KindPayload.DynamicReturnBoundary boundary) {
+        Objects.requireNonNull(boundary, "boundary must not be null");
+        return CanonicalJson.obj(
+            CanonicalJson.e("dealBodyBoundaryOpId",
+                semanticIdJson(boundary.dealBodyBoundaryOpId())),
+            CanonicalJson.e("externalBoundaryOpId",
+                semanticIdJson(boundary.externalBoundaryOpId())),
+            CanonicalJson.e("hostBoundaryOpId", semanticIdJson(boundary.hostBoundaryOpId())));
     }
 
     /** Renders an adapter source reference as its pinned discriminated object. */
@@ -751,6 +766,8 @@ public final class ContractSnapshotCanonicalizer {
                 CanonicalJson.e("bodyBlock", p.bodyBlock() == null
                     ? CanonicalJson.nullValue() : semanticIdJson(p.bodyBlock())),
                 CanonicalJson.e("callee", calleeJson(p.callee())),
+                CanonicalJson.e("dynamicReturnBoundary", p.dynamicReturnBoundary() == null
+                    ? CanonicalJson.nullValue() : dynamicReturnBoundaryJson(p.dynamicReturnBoundary())),
                 CanonicalJson.e("externalEntryRef", p.externalEntryRef() == null
                     ? CanonicalJson.nullValue() : semanticIdJson(p.externalEntryRef())),
                 CanonicalJson.e("mode", CanonicalJson.str(p.mode().name())),
@@ -1134,6 +1151,9 @@ public final class ContractSnapshotCanonicalizer {
             case "hostFunctionValue" -> CanonicalJson.obj(
                 CanonicalJson.e("descriptor", CanonicalJson.str(binding.descriptor())),
                 CanonicalJson.e("hostModuleId", moduleIdJson(binding.modulePath())),
+                CanonicalJson.e("materializingBoundaryOpId", binding.materializingBoundaryOpId() == null
+                    ? CanonicalJson.nullValue()
+                    : semanticIdJson(binding.materializingBoundaryOpId())),
                 CanonicalJson.e("type", CanonicalJson.str("hostFunctionValue")));
             case "externalFunction" -> CanonicalJson.obj(
                 CanonicalJson.e("descriptor", CanonicalJson.str(binding.descriptor())),
@@ -1154,6 +1174,7 @@ public final class ContractSnapshotCanonicalizer {
         String captureMode = null;
         String descriptor = null;
         String targetSignature = null;
+        OpId materializingBoundaryOpId = null;
         switch (shape) {
             case "loweredBody" -> {
                 // functionId + blockId; no enum positions the rules consult.
@@ -1170,6 +1191,14 @@ public final class ContractSnapshotCanonicalizer {
             case "hostFunctionValue" -> {
                 modulePath = modulePathOf(requireObject(binding, "hostModuleId"));
                 descriptor = requireString(binding, "descriptor");
+                CanonicalJson.Value materializing = entryValue(binding, "materializingBoundaryOpId");
+                if (materializing instanceof CanonicalJson.Obj materializingObj) {
+                    materializingBoundaryOpId = parseOpId(materializingObj);
+                } else if (!(materializing instanceof CanonicalJson.Null)) {
+                    throw new SemanticIrTextDecodeException(
+                        "functionBindings \"materializingBoundaryOpId\" must be null or an "
+                            + "op-id object, got " + jsonKindName(materializing));
+                }
             }
             case "externalFunction" -> {
                 modulePath = modulePathOf(requireObject(binding, "moduleId"));
@@ -1183,7 +1212,7 @@ public final class ContractSnapshotCanonicalizer {
             }
         }
         return new RawBinding(allocationId, shape, modulePath, exportName, executionOwner,
-            captureMode, descriptor, targetSignature);
+            captureMode, descriptor, targetSignature, materializingBoundaryOpId);
     }
 
     private static CanonicalJson.Value opJson(RawOp op) {

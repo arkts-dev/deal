@@ -82,6 +82,16 @@ public final class ChainOperandCompletion {
                     if (call.returnBoundaryOpId() != null) {
                         owned.add(call.returnBoundaryOpId());
                     }
+                    // ISSUE-0531: the dynamic return-boundary set's three
+                    // recorded cells are payload-owned exactly like the
+                    // single return boundary (the runtime executes exactly
+                    // the selected cell; the block walk never executes any
+                    // of them directly).
+                    if (call.dynamicReturnBoundary() != null) {
+                        owned.add(call.dynamicReturnBoundary().dealBodyBoundaryOpId());
+                        owned.add(call.dynamicReturnBoundary().hostBoundaryOpId());
+                        owned.add(call.dynamicReturnBoundary().externalBoundaryOpId());
+                    }
                 }
                 case KindPayload.AsyncStartPayload start -> {
                     owned.addAll(start.parameterBoundaryOpIds());

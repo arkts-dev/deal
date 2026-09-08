@@ -264,6 +264,13 @@ TEST_SOURCES=(
   # wiring only: the production carriers compile from the
   # deal/module glob.
   'deal/module/DefaultPlanCarriersTest.java'
+  # ISSUE-0531 registration: the dynamically-resolved-invocation IR
+  # battery (the closed Dynamic callee and dynamic return-boundary set,
+  # the runtime selection protocol, the validator positives/negatives on
+  # both surfaces, and the callback-delivered HostFunctionValue
+  # registration closure with the materializingBoundaryOpId
+  # correlation).
+  'test/DynamicResolutionIrTest.java'
 )
 
 # TEST_MAINS: ordered "<class>|<banner>|<command>" records reproducing
@@ -302,6 +309,7 @@ TEST_MAINS=(
   'fg|=== Running Failure Contract Registry Tests (ISSUE-0285) ===|java -ea -cp build deal.test.FailureContractRegistryTest'
   'fg|=== Running Canonical JSON / Snapshot Digest Tests (ISSUE-0283) ===|java -ea -cp build deal.test.CanonicalJsonTest'
   'fg|=== Running Semantic IR Validator Tests (ISSUE-0286) ===|java -ea -cp build deal.test.SemanticIrValidatorTest'
+  'fg|=== Running Dynamic Resolution IR Tests (ISSUE-0531) ===|java -ea -cp build deal.test.DynamicResolutionIrTest'
   'fg|=== Running Boundary Table Corpus Tests (ISSUE-0366, wiki Verification 4) ===|java -ea -cp build deal.test.BoundaryTableCorpusTest'
   'fg|=== Running Boundary Integration Tests (ISSUE-0367, decomposition tail) ===|java -ea -cp build deal.test.BoundaryIntegrationTest'
   'fg|=== Running Control Flow Validator Tests (ISSUE-0408) ===|java -ea -cp build deal.test.ControlFlowValidatorTest'

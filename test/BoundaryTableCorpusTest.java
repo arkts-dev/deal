@@ -577,7 +577,7 @@ public class BoundaryTableCorpusTest {
         ops.add(opWith(callOp, SemanticOpKind.CALL,
             new KindPayload.CallPayload(CallMode.HOST,
                 new KindPayload.CallCallee.Static(binding),
-                F_IIS, List.of(pb1, pb2), rb, null, null),
+                F_IIS, List.of(pb1, pb2), rb, null, null, null),
             nextValue(), STRING, FailurePolicyId.NO_DEAL_FAILURE, null));
         return single("b.CALL_HOST", "b", unit(ops));
     }
@@ -611,7 +611,7 @@ public class BoundaryTableCorpusTest {
             ops.add(opWith(callOp, SemanticOpKind.CALL,
                 new KindPayload.CallPayload(CallMode.INDIRECT,
                     new KindPayload.CallCallee.Indirect(new ValueId(calleeId)),
-                    F_IIS, List.of(pb1, pb2), rb, null, null),
+                    F_IIS, List.of(pb1, pb2), rb, null, null, null),
                 nextValue(), STRING, FailurePolicyId.NO_DEAL_FAILURE, null));
             rows.add(single("c.adapter.dealBody", "c",
                 unit(Map.of(new FunctionAllocationIdentity(calleeId), binding), ops)));
@@ -637,7 +637,7 @@ public class BoundaryTableCorpusTest {
             ops.add(opWith(callOp, SemanticOpKind.CALL,
                 new KindPayload.CallPayload(CallMode.INDIRECT,
                     new KindPayload.CallCallee.Indirect(new ValueId(calleeId)),
-                    F_IIS, List.of(pb1, pb2), rb, null, null),
+                    F_IIS, List.of(pb1, pb2), rb, null, null, null),
                 nextValue(), STRING, FailurePolicyId.NO_DEAL_FAILURE, null));
             rows.add(single("c.adapter.hostSource", "c",
                 unit(Map.of(new FunctionAllocationIdentity(calleeId), binding), ops)));
@@ -663,7 +663,7 @@ public class BoundaryTableCorpusTest {
             ops.add(opWith(callOp, SemanticOpKind.CALL,
                 new KindPayload.CallPayload(CallMode.INDIRECT,
                     new KindPayload.CallCallee.Indirect(new ValueId(calleeId)),
-                    F_IIS, List.of(pb1, pb2), rb, null, null),
+                    F_IIS, List.of(pb1, pb2), rb, null, null, null),
                 nextValue(), STRING, FailurePolicyId.NO_DEAL_FAILURE, null));
             rows.add(single("c.adapter.externalRetained", "c",
                 unit(Map.of(new FunctionAllocationIdentity(calleeId), binding), ops)));
@@ -702,7 +702,7 @@ public class BoundaryTableCorpusTest {
             callerOps.add(opWith(callOp, SemanticOpKind.CALL,
                 new KindPayload.CallPayload(CallMode.INDIRECT,
                     new KindPayload.CallCallee.Indirect(new ValueId(calleeId)),
-                    F_IIS, List.of(pb1, pb2), rb, null, null),
+                    F_IIS, List.of(pb1, pb2), rb, null, null, null),
                 nextValue(), STRING, FailurePolicyId.NO_DEAL_FAILURE, null));
             LoweredModuleUnit caller =
                 unit(MOD, Set.of(), Map.of(new FunctionAllocationIdentity(calleeId), binding),
@@ -730,8 +730,7 @@ public class BoundaryTableCorpusTest {
                 new AdaptSourceRef.SharedCell(new BindingId(7), 0), F_II, F_IIS), false));
         rows.add(callbackRow("d.callback.hostFunction", 205,
             new FunctionExecutionBinding.HostFunction(MOD_HOST, "cb", F_IIS), false));
-        rows.add(callbackRow("d.callback.hostFunctionValue", 206,
-            new FunctionExecutionBinding.HostFunctionValue(MOD_HOST, nextOpId(), F_IIS), false));
+        rows.add(callbackHostFunctionValueRow());
         rows.add(callbackRow("d.callback.externalFunction", 207,
             new FunctionExecutionBinding.ExternalFunction(MOD_B, "cb", F_IIS,
                 ExternalExecutionOwner.RETAINED_ABI), false));
@@ -768,6 +767,49 @@ public class BoundaryTableCorpusTest {
             null, null, FailurePolicyId.NO_DEAL_FAILURE, null));
         return single(name, "d",
             unit(Map.of(new FunctionAllocationIdentity(allocationId), binding), ops));
+    }
+
+    /**
+     * The {@code d.callback.hostFunctionValue} row: the bound function's
+     * {@code HostFunctionValue} registration carries its real correlation
+     * id — the producing host crossing, a {@code CALL(HOST)} whose single
+     * {@code HOST_TO_DEAL} + {@code HOST_SYNC_RETURN} sync-return boundary
+     * materializes the function value (input identity 206, the call's
+     * result identity) with the registration's checked descriptor.
+     */
+    private static Row callbackHostFunctionValueRow() {
+        OpId callbackOp = nextOpId();
+        OpId cbPb1 = nextOpId();
+        OpId cbPb2 = nextOpId();
+        OpId cbRb = nextOpId();
+        OpId hostCallOp = nextOpId();
+        OpId hostCallRb = nextOpId();
+        RuntimeDescriptor.Func zeroToFunc = new RuntimeDescriptor.Func(List.of(), F_IIS);
+        List<SemanticOp> ops = new ArrayList<>();
+        ops.add(boundaryWith(cbPb1, BoundaryKind.HOST_TO_DEAL, INT,
+            FailurePolicyId.TYPE_DESCRIPTOR, callbackOp));
+        ops.add(boundaryWith(cbPb2, BoundaryKind.HOST_TO_DEAL, INT,
+            FailurePolicyId.TYPE_DESCRIPTOR, callbackOp));
+        ops.add(boundaryWith(cbRb, BoundaryKind.DEAL_TO_HOST, STRING,
+            FailurePolicyId.TYPE_DESCRIPTOR, callbackOp));
+        ops.add(opWith(hostCallRb, SemanticOpKind.BOUNDARY,
+            new KindPayload.BoundaryPayload(BoundaryKind.HOST_TO_DEAL, F_IIS,
+                new ValueId(206), new BoundaryRealization.RuntimeValidation("check-206")),
+            null, null, FailurePolicyId.HOST_SYNC_RETURN, hostCallOp));
+        ops.add(opWith(hostCallOp, SemanticOpKind.CALL,
+            new KindPayload.CallPayload(CallMode.HOST,
+                new KindPayload.CallCallee.Static(new FunctionExecutionBinding.HostFunction(
+                    MOD_HOST, "materialize", zeroToFunc)),
+                zeroToFunc, List.of(), hostCallRb, null, null, null),
+            new ValueId(206), F_IIS, FailurePolicyId.NO_DEAL_FAILURE, null));
+        ops.add(opWith(callbackOp, SemanticOpKind.CALLBACK_INVOKE,
+            new KindPayload.CallbackInvokePayload(new ValueId(206), F_IIS,
+                List.of(cbPb1, cbPb2), cbRb),
+            null, null, FailurePolicyId.NO_DEAL_FAILURE, null));
+        return single("d.callback.hostFunctionValue", "d",
+            unit(Map.of(new FunctionAllocationIdentity(206),
+                    new FunctionExecutionBinding.HostFunctionValue(MOD_HOST, hostCallRb, F_IIS)),
+                ops));
     }
 
     /** (e) The core array element cells, each under its pinned parent. */
@@ -892,7 +934,7 @@ public class BoundaryTableCorpusTest {
             callerOps.add(opWith(callOp, SemanticOpKind.CALL,
                 new KindPayload.CallPayload(CallMode.EXTERNAL,
                     new KindPayload.CallCallee.Static(binding),
-                    F_IIS, List.of(pb1, pb2), null, null, entryOp),
+                    F_IIS, List.of(pb1, pb2), null, null, null, entryOp),
                 nextValue(), STRING, FailurePolicyId.NO_DEAL_FAILURE, null));
             LoweredModuleUnit caller = unit(MOD, Set.of(),
                 Map.of(new FunctionAllocationIdentity(301), binding), callerOps);
@@ -918,7 +960,7 @@ public class BoundaryTableCorpusTest {
             ops.add(opWith(callOp, SemanticOpKind.CALL,
                 new KindPayload.CallPayload(CallMode.EXTERNAL,
                     new KindPayload.CallCallee.Static(binding),
-                    F_IIS, List.of(pb1, pb2), rb, null, null),
+                    F_IIS, List.of(pb1, pb2), rb, null, null, null),
                 nextValue(), STRING, FailurePolicyId.NO_DEAL_FAILURE, null));
             rows.add(single("f.externalRetainedAbi", "f",
                 unit(Map.of(new FunctionAllocationIdentity(302), binding), ops)));
@@ -1826,7 +1868,7 @@ public class BoundaryTableCorpusTest {
                 new KindPayload.CallPayload(CallMode.HOST,
                     new KindPayload.CallCallee.Static(
                         new FunctionExecutionBinding.HostFunction(MOD_HOST, "add", F_IIS)),
-                    F_IIS, List.of(pb1, pb2), rb, null, null),
+                    F_IIS, List.of(pb1, pb2), rb, null, null, null),
                 nextValue(), STRING, FailurePolicyId.NO_DEAL_FAILURE, null));
             negative("b.hostParameter.wrongPolicy", "b",
                 SemanticIrValidator.validate(unit(ops), FACTS),
@@ -1845,7 +1887,7 @@ public class BoundaryTableCorpusTest {
                 new KindPayload.CallPayload(CallMode.HOST,
                     new KindPayload.CallCallee.Static(
                         new FunctionExecutionBinding.HostFunction(MOD_HOST, "f", F_IS)),
-                    F_IS, List.of(pb), rb, null, null),
+                    F_IS, List.of(pb), rb, null, null, null),
                 nextValue(), STRING, FailurePolicyId.NO_DEAL_FAILURE, null));
             negative("b.hostReturn.wrongPolicy", "b",
                 SemanticIrValidator.validate(unit(ops), FACTS),
@@ -1866,7 +1908,7 @@ public class BoundaryTableCorpusTest {
             ops.add(opWith(callOp, SemanticOpKind.CALL,
                 new KindPayload.CallPayload(CallMode.INDIRECT,
                     new KindPayload.CallCallee.Indirect(new ValueId(calleeId)),
-                    F_IIS, List.of(pb), rb, null, null),
+                    F_IIS, List.of(pb), rb, null, null, null),
                 nextValue(), STRING, FailurePolicyId.NO_DEAL_FAILURE, null));
             negative("c.adapterParameter.wrongKind", "c",
                 SemanticIrValidator.validate(unit(Map.of(
@@ -1890,7 +1932,7 @@ public class BoundaryTableCorpusTest {
             ops.add(opWith(callOp, SemanticOpKind.CALL,
                 new KindPayload.CallPayload(CallMode.INDIRECT,
                     new KindPayload.CallCallee.Indirect(new ValueId(calleeId)),
-                    F_IIS, List.of(pb), rb, null, null),
+                    F_IIS, List.of(pb), rb, null, null, null),
                 nextValue(), STRING, FailurePolicyId.NO_DEAL_FAILURE, null));
             negative("c.adapterReturn.outOfTableKind", "c",
                 SemanticIrValidator.validate(unit(Map.of(
@@ -2007,7 +2049,7 @@ public class BoundaryTableCorpusTest {
                     new KindPayload.CallCallee.Static(
                         new FunctionExecutionBinding.ExternalFunction(MOD_B, "f", F_IS,
                             ExternalExecutionOwner.RETAINED_ABI)),
-                    F_IS, List.of(pb), rb, null, null),
+                    F_IS, List.of(pb), rb, null, null, null),
                 nextValue(), STRING, FailurePolicyId.NO_DEAL_FAILURE, null));
             negative("f.externalParameter.wrongPolicy", "f",
                 SemanticIrValidator.validate(unit(ops), FACTS),
@@ -2198,7 +2240,7 @@ public class BoundaryTableCorpusTest {
                     new KindPayload.CallCallee.Static(
                         new FunctionExecutionBinding.LoweredBody(new FunctionId(1),
                             new BlockId(1))),
-                    F_IS, List.of(pb), rb, new BlockId(1), null),
+                    F_IS, List.of(pb), rb, null, new BlockId(1), null),
                 nextValue(), STRING, FailurePolicyId.NO_DEAL_FAILURE, null));
             ops.add(opWith(nestedOp, SemanticOpKind.ASYNC_START,
                 new KindPayload.AsyncStartPayload(
@@ -2284,7 +2326,7 @@ public class BoundaryTableCorpusTest {
                     new KindPayload.CallCallee.Static(
                         new FunctionExecutionBinding.LoweredBody(new FunctionId(1),
                             new BlockId(1))),
-                    F_IS, List.of(pb), rb, new BlockId(1), null),
+                    F_IS, List.of(pb), rb, null, new BlockId(1), null),
                 nextValue(), STRING, FailurePolicyId.NO_DEAL_FAILURE, null));
             negative("i.completion.outsideParent", "i",
                 SemanticIrValidator.validate(unit(ops), FACTS),
@@ -2393,7 +2435,7 @@ public class BoundaryTableCorpusTest {
                     new KindPayload.CallCallee.Static(
                         new FunctionExecutionBinding.LoweredBody(new FunctionId(1),
                             new BlockId(1))),
-                    F_IS, List.of(pb), rb, new BlockId(1), null),
+                    F_IS, List.of(pb), rb, null, new BlockId(1), null),
                 nextValue(), STRING, FailurePolicyId.NO_DEAL_FAILURE, null));
             negative("call.parameterOutsideList", "call",
                 SemanticIrValidator.validate(unit(ops), FACTS),
@@ -2413,7 +2455,7 @@ public class BoundaryTableCorpusTest {
                     new KindPayload.CallCallee.Static(
                         new FunctionExecutionBinding.LoweredBody(new FunctionId(1),
                             new BlockId(1))),
-                    F_IS, List.of(pb), rb, new BlockId(1), null),
+                    F_IS, List.of(pb), rb, null, new BlockId(1), null),
                 nextValue(), STRING, FailurePolicyId.NO_DEAL_FAILURE, null));
             negative("call.parameterDescriptorMismatch", "call",
                 SemanticIrValidator.validate(unit(ops), FACTS),
@@ -2434,7 +2476,7 @@ public class BoundaryTableCorpusTest {
                     new KindPayload.CallCallee.Static(
                         new FunctionExecutionBinding.LoweredBody(new FunctionId(1),
                             new BlockId(1))),
-                    F_IIS, List.of(pb), rb, new BlockId(1), null),
+                    F_IIS, List.of(pb), rb, null, new BlockId(1), null),
                 nextValue(), STRING, FailurePolicyId.NO_DEAL_FAILURE, null));
             negative("call.wrongParameterCount", "call",
                 SemanticIrValidator.validate(unit(ops), FACTS),
@@ -2452,7 +2494,7 @@ public class BoundaryTableCorpusTest {
                     new KindPayload.CallCallee.Static(
                         new FunctionExecutionBinding.LoweredBody(new FunctionId(1),
                             new BlockId(1))),
-                    F_IS, List.of(pb), null, new BlockId(1), null),
+                    F_IS, List.of(pb), null, null, new BlockId(1), null),
                 nextValue(), STRING, FailurePolicyId.NO_DEAL_FAILURE, null));
             negative("call.missingReturnBoundary", "call",
                 SemanticIrValidator.validate(unit(ops), FACTS),
@@ -2484,7 +2526,7 @@ public class BoundaryTableCorpusTest {
             ops.add(opWith(callOp, SemanticOpKind.CALL,
                 new KindPayload.CallPayload(CallMode.EXTERNAL,
                     new KindPayload.CallCallee.Static(binding),
-                    F_IS, List.of(pb), rb, null, entryOp),
+                    F_IS, List.of(pb), rb, null, null, entryOp),
                 nextValue(), STRING, FailurePolicyId.NO_DEAL_FAILURE, null));
             negative("call.sharedBody.callerSideReturn", "call",
                 SemanticIrValidator.validate(unit(Map.of(new FunctionAllocationIdentity(303),

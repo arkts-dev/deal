@@ -281,6 +281,9 @@ public class SemanticIrSchemaTest {
             "DefaultOwner");
         testClosedEnum(ExternalExecutionOwner.class, List.of("SHARED_BODY", "RETAINED_ABI"),
             "ExternalExecutionOwner");
+        testClosedEnum(deal.semantic.ir.DynamicResolutionKind.class,
+            List.of("DEAL_BODY", "HOST", "EXTERNAL", "SHARED_BODY"),
+            "DynamicResolutionKind");
         testClosedEnum(ModuleImportKind.class, List.of("COMPILED", "STDLIB", "HOST"),
             "ModuleImportKind");
         testClosedEnum(ExternalModuleKind.class,
@@ -314,6 +317,7 @@ public class SemanticIrSchemaTest {
             BindingCellKind.class, AssignTargetKind.class, DeleteTargetKind.class,
             DefaultOwner.class, ExternalExecutionOwner.class, ModuleImportKind.class,
             ExternalModuleKind.class, InitializationMode.class, InternalResultType.class,
+            deal.semantic.ir.DynamicResolutionKind.class,
             SemanticProfile.class, InvocationPurpose.class, ReleaseState.class,
             SemanticCapability.class, ConstructKind.class);
         for (Class<?> c : all) {
@@ -748,7 +752,7 @@ public class SemanticIrSchemaTest {
             case CALL -> new KindPayload.CallPayload(CallMode.DIRECT,
                 new KindPayload.CallCallee.Static(
                     new FunctionExecutionBinding.LoweredBody(new FunctionId(0), b0)),
-                SIG, List.of(), null, b0, null);
+                SIG, List.of(), null, null, b0, null);
             case EXTERNAL_ENTRY -> new KindPayload.ExternalEntryPayload(
                 "export", new FunctionId(0), SIG, false, o0, null);
             case CALLBACK_INVOKE -> new KindPayload.CallbackInvokePayload(
@@ -819,11 +823,14 @@ public class SemanticIrSchemaTest {
         expectRejected(() -> new KindPayload.CallPayload(null,
                 new KindPayload.CallCallee.Static(
                     new FunctionExecutionBinding.LoweredBody(new FunctionId(0), new BlockId(0))),
-                SIG, List.of(), null, null, null),
+                SIG, List.of(), null, null, null, null),
             "CALL without CallMode cannot be constructed (null mode rejected)");
-        check(KindPayload.CallPayload.class.getRecordComponents().length == 7
-                && KindPayload.CallPayload.class.getRecordComponents()[0].getType() == CallMode.class,
-            "CALL payload's first mandatory component is the CallMode (no constructor without it)");
+        check(KindPayload.CallPayload.class.getRecordComponents().length == 8
+                && KindPayload.CallPayload.class.getRecordComponents()[0].getType() == CallMode.class
+                && KindPayload.CallPayload.class.getRecordComponents()[5].getType()
+                    == KindPayload.DynamicReturnBoundary.class,
+            "CALL payload's first mandatory component is the CallMode and its sixth is the "
+                + "closed DynamicReturnBoundary set (no constructor without either)");
 
         expectRejected(() -> new KindPayload.BoundaryPayload(BoundaryKind.MODULE_EXPORT,
                 RuntimeDescriptor.Int.INSTANCE, new ValueId(0), null),

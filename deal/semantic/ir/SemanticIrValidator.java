@@ -120,7 +120,15 @@ public final class SemanticIrValidator {
     /** The R-ELIDED-PLACEMENT rule: ELIDED_BY_ADAPTER outside an adapter-over-async task. */
     public static final String R_ELIDED_PLACEMENT = "R-ELIDED-PLACEMENT";
 
-    /** The R-FUNCTION-BINDING rule: a function-typed result without exactly one binding. */
+    /**
+     * The R-FUNCTION-BINDING rule: a function-typed result ValueId or a
+     * function-typed {@code HOST_TO_DEAL} crossing input without exactly
+     * one registration — including the closed {@code HostFunctionValue}
+     * correlation (ISSUE-0531): the materializing crossing op id must
+     * name exactly the producing host crossing whose input identity keys
+     * the registration and whose checked descriptor the registration
+     * carries.
+     */
     public static final String R_FUNCTION_BINDING = "R-FUNCTION-BINDING";
 
     /** The R-EXTERNAL-ENTRY rule: a SHARED_BODY ExternalFunction without a recorded EXTERNAL_ENTRY. */
@@ -906,7 +914,8 @@ public final class SemanticIrValidator {
             return Optional.empty();
         }
         String calleeType = optionalString(callee, "type");
-        if (!"static".equals(calleeType) && !"indirect".equals(calleeType)) {
+        if (!"static".equals(calleeType) && !"indirect".equals(calleeType)
+                && !"dynamic".equals(calleeType)) {
             return fail(unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
                 origin(R_ENUM, "open value \"" + calleeType
                     + "\" in a closed CallCallee position"));
@@ -1478,12 +1487,22 @@ public final class SemanticIrValidator {
         OpId ret = parseOptionalOpId(call.payload(), "returnBoundaryOpId");
         int index = params.indexOf(boundary.opId());
         boolean isReturn = boundary.opId().equals(ret);
-        if (!isReturn && index < 0) {
-            return Optional.of("boundary not part of the invocation's parameter/return lists");
-        }
         FailurePolicyId policy = enumByName(FailurePolicyId.class, boundary.failurePolicy());
         RuntimeDescriptor descriptor = parseDescriptorQuiet(
             optionalString(boundary.payload(), "descriptor"));
+        if (isDynamicCallee(call)) {
+            // The dynamic set replaces the single return id: a boundary is
+            // "part of" the invocation when it is a parameter boundary or
+            // one of the three recorded return cells.
+            return dynamicCallCell(call, boundary, mode, signature, index, isReturn, policy,
+                descriptor);
+        }
+        if (parseDynamicReturnBoundary(call) != null) {
+            return Optional.of("only a DYNAMIC callee records the dynamic return-boundary set");
+        }
+        if (!isReturn && index < 0) {
+            return Optional.of("boundary not part of the invocation's parameter/return lists");
+        }
         return switch (mode) {
             case DIRECT -> directCallCell(call, boundary, signature, index, isReturn, policy,
                 descriptor);
@@ -1515,6 +1534,78 @@ public final class SemanticIrValidator {
                     descriptor, binding.executionOwner());
             }
         };
+    }
+
+    /**
+     * The DYNAMIC-callee arm of the closed table (ISSUE-0531): the
+     * recorded return-boundary set replaces the single
+     * {@code returnBoundaryOpId}, and each recorded cell must carry the
+     * closed cell of its runtime resolution class —
+     * {@code FUNCTION_RETURN} (DEAL body, executed by the callee's
+     * source RETURN), {@code HOST_TO_DEAL} + {@code HOST_SYNC_RETURN}
+     * (host, executed by the call op), or {@code EXTERNAL_RETURN}
+     * (retained-ABI external, executed by the call op). A
+     * {@code SHARED_BODY} external resolution executes zero caller-side
+     * return boundaries (the callee's RETURN under its
+     * {@code EXTERNAL_ENTRY} runs the single {@code EXTERNAL_RETURN} in
+     * the callee unit), so the set records no entry for it. Parameter
+     * boundaries of a dynamically resolved site are selected by the
+     * runtime resolution as well and stay outside the return-boundary
+     * reconciliation.
+     */
+    private static Optional<String> dynamicCallCell(RawOp call, RawOp boundary, CallMode mode,
+                                                    RuntimeDescriptor.Func signature, int index,
+                                                    boolean isReturn, FailurePolicyId policy,
+                                                    RuntimeDescriptor descriptor) {
+        if (mode != CallMode.INDIRECT) {
+            return Optional.of("a DYNAMIC callee is admissible only under CallMode INDIRECT");
+        }
+        KindPayload.DynamicReturnBoundary recorded = parseDynamicReturnBoundary(call);
+        if (recorded == null) {
+            return Optional.empty(); // checkCallCells owns the record-presence defect.
+        }
+        isReturn = isReturn
+            || boundary.opId().equals(recorded.dealBodyBoundaryOpId())
+            || boundary.opId().equals(recorded.hostBoundaryOpId())
+            || boundary.opId().equals(recorded.externalBoundaryOpId());
+        if (!isReturn) {
+            if (index >= 0) {
+                return Optional.empty(); // parameters: runtime-selected boundary family.
+            }
+            return Optional.of("boundary not part of the invocation's parameter/return lists");
+        }
+        if (boundary.opId().equals(recorded.dealBodyBoundaryOpId())) {
+            if (!isKind(boundary, BoundaryKind.FUNCTION_RETURN)) {
+                return Optional.of("the DYNAMIC CALL's DEAL-body return boundary must be "
+                    + "FUNCTION_RETURN");
+            }
+            if (!signature.returnType().equals(descriptor)
+                    || !matchesDescriptorKind(descriptor, policy)) {
+                return Optional.of("the DYNAMIC CALL's DEAL-body FUNCTION_RETURN boundary must "
+                    + "check the declared return descriptor under the descriptor-kind rule");
+            }
+            return Optional.empty();
+        }
+        if (boundary.opId().equals(recorded.hostBoundaryOpId())) {
+            if (!isKind(boundary, BoundaryKind.HOST_TO_DEAL)
+                    || policy != FailurePolicyId.HOST_SYNC_RETURN
+                    || !signature.returnType().equals(descriptor)) {
+                return Optional.of("the DYNAMIC CALL's host return boundary must be "
+                    + "HOST_TO_DEAL + HOST_SYNC_RETURN on the declared return descriptor");
+            }
+            return Optional.empty();
+        }
+        if (boundary.opId().equals(recorded.externalBoundaryOpId())) {
+            if (!isKind(boundary, BoundaryKind.EXTERNAL_RETURN)
+                    || !signature.returnType().equals(descriptor)
+                    || !matchesDescriptorKind(descriptor, policy)) {
+                return Optional.of("the DYNAMIC CALL's retained-ABI return boundary must be "
+                    + "EXTERNAL_RETURN under the descriptor-kind rule on the declared return "
+                    + "descriptor");
+            }
+            return Optional.empty();
+        }
+        return Optional.of("boundary not part of the invocation's parameter/return lists");
     }
 
     private static Optional<String> directCallCell(RawOp call, RawOp boundary,
@@ -1667,15 +1758,19 @@ public final class SemanticIrValidator {
         OpId ret = parseOptionalOpId(start.payload(), "returnBoundaryOpId");
         int index = params.indexOf(boundary.opId());
         boolean isReturn = boundary.opId().equals(ret);
-        if (!isReturn && index < 0) {
-            return Optional.of("boundary not part of the ASYNC_START parameter/return lists");
-        }
         FailurePolicyId policy = enumByName(FailurePolicyId.class, boundary.failurePolicy());
         RuntimeDescriptor descriptor = parseDescriptorQuiet(
             optionalString(boundary.payload(), "descriptor"));
         BindingInfo binding = resolveCalleeBinding(unit, start, closure);
         if (binding == null) {
+            if (isDynamicCallee(start)) {
+                return dynamicAsyncCell(start, boundary, source, completion, index, isReturn,
+                    ret != null, policy, descriptor);
+            }
             return Optional.empty();
+        }
+        if (!isReturn && index < 0) {
+            return Optional.of("boundary not part of the ASYNC_START parameter/return lists");
         }
         return switch (binding.shape()) {
             case "loweredBody" -> {
@@ -1734,6 +1829,45 @@ public final class SemanticIrValidator {
             }
             default -> Optional.empty();
         };
+    }
+
+    /**
+     * The DYNAMIC-callee arm of the ASYNC_START cells (ISSUE-0531): the
+     * recorded {@code source} is the closed {@code DEAL_BODY} projection
+     * (the only resolution whose caller-recorded return boundary
+     * executes) and the recorded return boundary is that resolution's
+     * single {@code FUNCTION_RETURN} task cell; the runtime derives the
+     * effective source from the resolved binding exactly like
+     * {@code CALL(INDIRECT)}, and HOST/EXTERNAL/adapter-over-async
+     * resolutions execute zero caller-side return boundaries.
+     */
+    private static Optional<String> dynamicAsyncCell(RawOp start, RawOp boundary,
+                                                     AsyncStartSource source,
+                                                     RuntimeDescriptor completion, int index,
+                                                     boolean isReturn, boolean returnRecorded,
+                                                     FailurePolicyId policy,
+                                                     RuntimeDescriptor descriptor) {
+        if (!returnRecorded) {
+            return Optional.empty(); // checkAsyncStartCells owns the record-presence defect.
+        }
+        if (source != AsyncStartSource.DEAL_BODY) {
+            return Optional.of("a DYNAMIC ASYNC_START records source DEAL_BODY (the only "
+                + "resolution whose caller-recorded return boundary executes); the runtime "
+                + "derives the effective source from the resolved binding");
+        }
+        if (!isReturn) {
+            if (index >= 0) {
+                return Optional.empty(); // parameters: runtime-selected boundary family.
+            }
+            return Optional.of("boundary not part of the ASYNC_START parameter/return lists");
+        }
+        return isKind(boundary, BoundaryKind.FUNCTION_RETURN)
+                && completion.equals(descriptor)
+                && matchesDescriptorKind(descriptor, policy)
+            ? Optional.empty()
+            : Optional.of("the DYNAMIC ASYNC_START's recorded task return boundary must be "
+                + "FUNCTION_RETURN under the descriptor-kind rule on the completion "
+                + "descriptor");
     }
 
     private static Optional<String> callbackCell(RawUnit unit, RawOp callback, RawOp boundary) {
@@ -1881,6 +2015,42 @@ public final class SemanticIrValidator {
             }
         }
         OpId ret = parseOptionalOpId(call.payload(), "returnBoundaryOpId");
+        KindPayload.DynamicReturnBoundary dynamic = parseDynamicReturnBoundary(call);
+        boolean dynamicCallee = isDynamicCallee(call);
+        if (dynamicCallee) {
+            if (dynamic == null) {
+                return Optional.of("a DYNAMIC callee must record its dynamic return-boundary "
+                    + "set (dealBodyBoundaryOpId, hostBoundaryOpId, externalBoundaryOpId)");
+            }
+            if (mode != CallMode.INDIRECT) {
+                return Optional.of("a DYNAMIC callee is admissible only under CallMode "
+                    + "INDIRECT");
+            }
+            if (ret != null) {
+                return Optional.of("a DYNAMIC CALL records no single returnBoundaryOpId (the "
+                    + "dynamic return-boundary set replaces it)");
+            }
+            for (OpId entry : List.of(dynamic.dealBodyBoundaryOpId(),
+                    dynamic.hostBoundaryOpId(), dynamic.externalBoundaryOpId())) {
+                RawOp resolved = resolveOp(entry, unit, closure);
+                if (resolved == null) {
+                    if (closure.isEmpty()
+                            && !entry.module().path().equals(unit.modulePath())) {
+                        continue; // unit-level: foreign-module entries are indeterminate.
+                    }
+                    return Optional.of("dynamic return boundary " + entry + " does not resolve");
+                }
+                if (enumByName(SemanticOpKind.class, resolved.kind())
+                        != SemanticOpKind.BOUNDARY) {
+                    return Optional.of("dynamic return boundary " + entry
+                        + " is not a BOUNDARY op");
+                }
+            }
+            return Optional.empty();
+        }
+        if (dynamic != null) {
+            return Optional.of("only a DYNAMIC callee records the dynamic return-boundary set");
+        }
         BindingInfo binding = resolveCalleeBinding(unit, call, closure);
         boolean sharedBodyExternal = binding != null
             && "externalFunction".equals(binding.shape())
@@ -1938,6 +2108,27 @@ public final class SemanticIrValidator {
         }
         OpId ret = parseOptionalOpId(start.payload(), "returnBoundaryOpId");
         if (binding == null) {
+            if (isDynamicCallee(start)) {
+                if (ret == null) {
+                    return Optional.of("a DYNAMIC ASYNC_START must record its DEAL_BODY task "
+                        + "return boundary (the DEAL_BODY resolution executes exactly one "
+                        + "FUNCTION_RETURN; host/external/adapter resolutions execute zero "
+                        + "caller-side return boundaries)");
+                }
+                RawOp resolved = resolveOp(ret, unit, closure);
+                if (resolved == null) {
+                    if (closure.isEmpty()
+                            && !ret.module().path().equals(unit.modulePath())) {
+                        return Optional.empty(); // unit-level: foreign entries indeterminate.
+                    }
+                    return Optional.of("return boundary " + ret + " does not resolve");
+                }
+                if (enumByName(SemanticOpKind.class, resolved.kind())
+                        != SemanticOpKind.BOUNDARY) {
+                    return Optional.of("return boundary " + ret
+                        + " does not resolve to a BOUNDARY op");
+                }
+            }
             return Optional.empty();
         }
         boolean expectsReturn = "loweredBody".equals(binding.shape());
@@ -2099,6 +2290,60 @@ public final class SemanticIrValidator {
 
     // Shared resolution helpers for the boundary rule.
 
+    /** True iff the invocation's callee reference is the closed {@code dynamic} shape. */
+    private static boolean isDynamicCallee(RawOp invocation) {
+        CanonicalJson.Value calleeValue = payloadValue(invocation.payload(), "callee");
+        if (!(calleeValue instanceof CanonicalJson.Obj callee)) {
+            return false;
+        }
+        return "dynamic".equals(optionalString(callee, "type"));
+    }
+
+    /**
+     * Parses the recorded dynamic return-boundary set of a CALL
+     * ({@code null} when absent or malformed — the per-cell and
+     * record-presence defects then fall to the rule arms that own them).
+     */
+    private static KindPayload.DynamicReturnBoundary parseDynamicReturnBoundary(RawOp call) {
+        CanonicalJson.Value value = payloadValue(call.payload(), "dynamicReturnBoundary");
+        if (!(value instanceof CanonicalJson.Obj record)) {
+            return null;
+        }
+        OpId deal = parseRecordOpId(record, "dealBodyBoundaryOpId");
+        OpId host = parseRecordOpId(record, "hostBoundaryOpId");
+        OpId external = parseRecordOpId(record, "externalBoundaryOpId");
+        if (deal == null || host == null || external == null) {
+            return null;
+        }
+        return new KindPayload.DynamicReturnBoundary(deal, host, external);
+    }
+
+    /** Parses one op-id entry of a payload record object ({@code null} when absent/malformed). */
+    private static OpId parseRecordOpId(CanonicalJson.Obj record, String key) {
+        CanonicalJson.Value value = payloadValue(record, key);
+        if (!(value instanceof CanonicalJson.Obj idObj)) {
+            return null;
+        }
+        try {
+            return parseOpId(idObj);
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    /** Parses a BOUNDARY payload's input identity ({@code null} when absent/malformed). */
+    private static ValueId parseBoundaryInput(RawOp boundary) {
+        CanonicalJson.Value value = payloadValue(boundary.payload(), "input");
+        if (!(value instanceof CanonicalJson.Obj inputObj)) {
+            return null;
+        }
+        try {
+            return parseValueId(inputObj);
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
     /** The callee binding resolved like CALL(INDIRECT)/ASYNC_START: static inline or via functionBindings. */
     private static BindingInfo resolveCalleeBinding(RawUnit unit, RawOp invocation,
                                                     Map<String, RawUnit> closure) {
@@ -2227,6 +2472,109 @@ public final class SemanticIrValidator {
                 return fail(unit, facts, R_FUNCTION_BINDING, SemanticCapability.FOUNDATION_VALUES,
                     origin(R_FUNCTION_BINDING, "function-typed result ValueId " + id
                         + " without exactly one FunctionExecutionBinding"));
+            }
+        }
+        // ISSUE-0531 reconciliation — callback-delivered and host-response
+        // materialized function identities. Direction (i): every
+        // HostFunctionValue registration's correlation id must resolve to
+        // its producing host crossing (a function-typed HOST_TO_DEAL
+        // boundary op carrying the registered key as its input identity
+        // and the registered descriptor as its checked descriptor).
+        for (RawBinding binding : unit.bindings()) {
+            if (!"hostFunctionValue".equals(binding.shape())) {
+                continue;
+            }
+            if (binding.materializingBoundaryOpId() == null) {
+                return fail(unit, facts, R_FUNCTION_BINDING,
+                    SemanticCapability.FOUNDATION_VALUES,
+                    origin(R_FUNCTION_BINDING, "the HostFunctionValue registration key "
+                        + binding.allocationId() + " carries no materializingBoundaryOpId "
+                        + "(the correlation id naming its producing host crossing)"));
+            }
+            RawOp crossing = null;
+            for (RawOp op : unit.ops()) {
+                if (op.opId().equals(binding.materializingBoundaryOpId())) {
+                    crossing = op;
+                    break;
+                }
+            }
+            if (crossing == null
+                    || enumByName(SemanticOpKind.class, crossing.kind()) != SemanticOpKind.BOUNDARY
+                    || enumByName(BoundaryKind.class, optionalString(crossing.payload(), "kind"))
+                        != BoundaryKind.HOST_TO_DEAL) {
+                return fail(unit, facts, R_FUNCTION_BINDING,
+                    SemanticCapability.FOUNDATION_VALUES,
+                    origin(R_FUNCTION_BINDING, "the HostFunctionValue registration key "
+                        + binding.allocationId() + " names materializingBoundaryOpId "
+                        + binding.materializingBoundaryOpId() + ", which does not resolve to "
+                        + "a HOST_TO_DEAL boundary op of the unit"));
+            }
+            RuntimeDescriptor descriptor = parseDescriptorQuiet(
+                optionalString(crossing.payload(), "descriptor"));
+            if (!(descriptor instanceof RuntimeDescriptor.Func)
+                    || !descriptor.canonicalSpecText().equals(binding.descriptor())) {
+                return fail(unit, facts, R_FUNCTION_BINDING,
+                    SemanticCapability.FOUNDATION_VALUES,
+                    origin(R_FUNCTION_BINDING, "the HostFunctionValue registration key "
+                        + binding.allocationId() + " descriptor does not equal its "
+                        + "materializing crossing's function descriptor"));
+            }
+            ValueId input = parseBoundaryInput(crossing);
+            if (input == null || input.id() != binding.allocationId()) {
+                return fail(unit, facts, R_FUNCTION_BINDING,
+                    SemanticCapability.FOUNDATION_VALUES,
+                    origin(R_FUNCTION_BINDING, "the HostFunctionValue registration key "
+                        + binding.allocationId() + " materializing crossing does not carry "
+                        + "the registered allocation identity as its input"));
+            }
+        }
+        // Direction (ii): every function-typed HOST_TO_DEAL crossing (a
+        // CALLBACK_INVOKE parameter or a host call's sync return)
+        // registers exactly one HostFunctionValue binding keyed by the
+        // crossing's input allocation identity, with
+        // materializingBoundaryOpId naming the producing crossing op and
+        // the registration descriptor equal to the crossing's checked
+        // descriptor. The runtime resolves later calls through the same
+        // identity on exactly that registration — a missing correlation
+        // is invalid IR.
+        for (RawOp op : unit.ops()) {
+            if (enumByName(SemanticOpKind.class, op.kind()) != SemanticOpKind.BOUNDARY) {
+                continue;
+            }
+            if (enumByName(BoundaryKind.class, optionalString(op.payload(), "kind"))
+                    != BoundaryKind.HOST_TO_DEAL) {
+                continue;
+            }
+            RuntimeDescriptor descriptor = parseDescriptorQuiet(
+                optionalString(op.payload(), "descriptor"));
+            if (!(descriptor instanceof RuntimeDescriptor.Func)) {
+                continue;
+            }
+            ValueId input = parseBoundaryInput(op);
+            if (input == null) {
+                return fail(unit, facts, R_FUNCTION_BINDING,
+                    SemanticCapability.FOUNDATION_VALUES,
+                    origin(R_FUNCTION_BINDING, "the function-typed HOST_TO_DEAL crossing op "
+                        + op.opId() + " carries no input allocation identity"));
+            }
+            long matches = 0;
+            for (RawBinding binding : unit.bindings()) {
+                if (binding.allocationId() == input.id()
+                        && "hostFunctionValue".equals(binding.shape())
+                        && op.opId().equals(binding.materializingBoundaryOpId())
+                        && descriptor.canonicalSpecText().equals(binding.descriptor())) {
+                    matches++;
+                }
+            }
+            if (matches != 1) {
+                return fail(unit, facts, R_FUNCTION_BINDING,
+                    SemanticCapability.FOUNDATION_VALUES,
+                    origin(R_FUNCTION_BINDING, "the function-typed HOST_TO_DEAL crossing op "
+                        + op.opId() + " materializing input identity " + input
+                        + " has no matching HostFunctionValue registration (exactly one "
+                        + "registration keyed by the crossing input with "
+                        + "materializingBoundaryOpId == the crossing op and the crossing's "
+                        + "descriptor)"));
             }
         }
         return Optional.empty();

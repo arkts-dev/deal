@@ -8616,7 +8616,7 @@ public final class SemanticLowerer {
                     new KindPayload.CallCallee.Static(new FunctionExecutionBinding.LoweredBody(
                         context.functionId, context.bodyBlock)),
                     context.signature, parameterBoundaryIds, context.returnBoundaryOpId,
-                    context.bodyBlock, null),
+                    null, context.bodyBlock, null),
                 result, resultType, args, argTypes,
                 FailurePolicyId.NO_DEAL_FAILURE, origin));
             for (SemanticOp boundary : parameterBoundaryOps) {
@@ -10012,7 +10012,7 @@ public final class SemanticLowerer {
                     new KindPayload.CallCallee.Static(new FunctionExecutionBinding.LoweredBody(
                         main.functionId, main.bodyBlock)),
                     main.signature, List.of(), main.returnBoundaryOpId,
-                    main.bodyBlock, null),
+                    null, main.bodyBlock, null),
                 result, ContainerPayloadDescriptors.resultDescriptorOf(
                     Type.Null.INSTANCE), List.of(), List.of(),
                 FailurePolicyId.NO_DEAL_FAILURE, origin));
