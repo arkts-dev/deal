@@ -653,6 +653,22 @@ for record in "${TEST_MAINS[@]}"; do
   esac
 done
 
+# =========================================================================
+# ISSUE-0455 (luajit-ffigen-boundary-integration D3/D7; Architecture item
+# 4): the committed FFI integration driver runs after the manifest-driven
+# run phase, adjacent to the LuaJIT suites, and is fail-closed — no
+# `command -v` guard, no skip path. The driver bootstraps the T2 native
+# fixture with GCC, compiles the three committed extern-c fixture projects
+# through the production CLI, runs the generated-artifact surface scan
+# (gate half 3), and executes the eight-phase scenario matrix under real
+# LuaJIT. Any bootstrap failure, scan mismatch, or assertion failure exits
+# nonzero; `set -e` (line 2) propagates it and fails the gate, and a
+# missing luajit/gcc/java/build/ fails the gate, never a warning.
+# =========================================================================
+echo ""
+echo "=== Running FFI Integration Driver (ISSUE-0455) ==="
+luajit test/ffigen_integration.lua
+
 echo ""
 echo "=== Waiting for background suites ==="
 BACKGROUND_FAILED=0
