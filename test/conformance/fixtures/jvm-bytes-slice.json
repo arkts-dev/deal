@@ -1,0 +1,328 @@
+{
+  "version": "1.0",
+  "description": "JVM bytes ops/identity slice (jvm-v12-int32-bytes D3/D4; the BackendConformanceTest passing pins the lane contract names): the v1.2 bytes core on the retained JVM backend — bytes(length) lowers to a fresh zero-filled $DealRt.Bytes wrapper, b.length is the immutable signed-int32 logical allocation length, reads yield the unsigned 0..255 byte, a write mutates exactly one byte and returns the written value, reference-copy assignment/aliasing with reference identity equality (alias ===, distinct buffers !==, nullable-vs-null), E8012 for negative allocation length and out-of-bounds indexes (bytes never append), E8013 for values outside 0..255 after the receiver/index/RHS all evaluated, failed writes changing no storage, and the empty buffer. Every case runs the real frontend (lexer → parser → name resolver → type checker) under the A5 per-case invocation (COMMON_SHADOW + DEAL_V1_2_INT32 — no case is catalogued as legacy-dependent) → real JvmBackend codegen → javac → java executing the emitted artifact; a bypassed codegen or JVM execution produces no output and fails the fixture. Result-value assertions are JVM-only (the runner prints the test export's return value).",
+  "tests": [
+    {
+      "name": "jvm-bytes-zero-fill-alloc",
+      "description": "v1.2 bytes: bytes(4) allocates a fresh buffer whose four bytes all read 0 and whose length is the immutable signed-int32 allocation length 4",
+      "source": "export function test(): int {\n  let b: bytes = bytes(4);\n  if (b.length !== 4) { throw { code: \"TEST_FAIL\", message: \"bytes: initial length mismatch\" }; }\n  if (b[0] !== 0 || b[1] !== 0 || b[2] !== 0 || b[3] !== 0) { throw { code: \"TEST_FAIL\", message: \"bytes: zero-fill mismatch\" }; }\n  return b.length;\n}",
+      "expectedOutput": "4",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-bytes-unsigned-roundtrip",
+      "description": "v1.2 bytes: writes of 255, 128, and 0 store exactly those bytes and reads yield the unsigned 0..255 values (255 + 128 + 0 = 383)",
+      "source": "export function test(): int {\n  let b: bytes = bytes(3);\n  b[0] = 255;\n  b[1] = 128;\n  b[2] = 0;\n  if (b[0] !== 255 || b[1] !== 128 || b[2] !== 0) { throw { code: \"TEST_FAIL\", message: \"bytes: unsigned roundtrip mismatch\" }; }\n  return b[0] + b[1] + b[2];\n}",
+      "expectedOutput": "383",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-bytes-write-returns-value",
+      "description": "v1.2 bytes: an expression-position write returns the written unsigned value (200)",
+      "source": "export function test(): int {\n  let b: bytes = bytes(1);\n  let v: int = (b[0] = 200);\n  return v;\n}",
+      "expectedOutput": "200",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-bytes-write-exactly-one-byte",
+      "description": "v1.2 bytes: a successful write mutates exactly one byte — writing 7 at index 2 leaves the other three bytes at zero",
+      "source": "export function test(): int {\n  let b: bytes = bytes(4);\n  b[2] = 7;\n  if (b[0] !== 0 || b[1] !== 0 || b[2] !== 7 || b[3] !== 0) { throw { code: \"TEST_FAIL\", message: \"bytes: write changed more than one byte\" }; }\n  return 1;\n}",
+      "expectedOutput": "1",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-bytes-immutable-length",
+      "description": "v1.2 bytes: b.length reads the immutable logical allocation length as int through an alias, and bytes(0) allocates a zero-length buffer (3 - 3 + 0 = 0)",
+      "source": "export function test(): int {\n  let b: bytes = bytes(3);\n  let alias: bytes = b;\n  if (b.length !== 3 || alias.length !== 3) { throw { code: \"TEST_FAIL\", message: \"bytes: length mismatch\" }; }\n  let zero: bytes = bytes(0);\n  if (zero.length !== 0) { throw { code: \"TEST_FAIL\", message: \"bytes: empty length mismatch\" }; }\n  return b.length - alias.length + zero.length;\n}",
+      "expectedOutput": "0",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-bytes-length-int-arithmetic",
+      "description": "v1.2 bytes: the compiler-resolved b.length is a signed-int32 int operand — a length read of 3 computes 3 * 2 + 1 = 7 through int arithmetic",
+      "source": "export function test(): int {\n  let b: bytes = bytes(3);\n  let l: int = b.length;\n  return l * 2 + 1;\n}",
+      "expectedOutput": "7",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-bytes-alias-mutation",
+      "description": "v1.2 bytes: assignment copies the reference — alias[2] = 7 is visible through the original binding b as b[2] === 7",
+      "source": "export function test(): int {\n  let b: bytes = bytes(4);\n  let alias: bytes = b;\n  alias[2] = 7;\n  return b[2];\n}",
+      "expectedOutput": "7",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-bytes-identity-alias-eq",
+      "description": "v1.2 bytes: equality is reference identity — a reference copy of the same allocation compares equal",
+      "source": "export function test(): int {\n  let a: bytes = bytes(2);\n  let b: bytes = a;\n  if (!(a === b)) { throw { code: \"TEST_FAIL\", message: \"bytes: alias identity mismatch\" }; }\n  return 1;\n}",
+      "expectedOutput": "1",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-bytes-identity-distinct-ne",
+      "description": "v1.2 bytes: two fresh allocations of the same length are distinct references — === is false and !== is true",
+      "source": "export function test(): int {\n  let a: bytes = bytes(2);\n  let c: bytes = bytes(2);\n  if (a === c) { throw { code: \"TEST_FAIL\", message: \"bytes: distinct buffers compare equal\" }; }\n  if (!(a !== c)) { throw { code: \"TEST_FAIL\", message: \"bytes: distinct buffers neq mismatch\" }; }\n  return 1;\n}",
+      "expectedOutput": "1",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-bytes-identity-nullable-null",
+      "description": "v1.2 bytes: nullable-vs-null reference equality in both directions — a null bytes | null binding equals null, a non-null value does not, and null === nothing holds on the right",
+      "source": "export function test(): int {\n  let nothing: bytes | null = null;\n  if (!(nothing === null)) { throw { code: \"TEST_FAIL\", message: \"bytes: nullable null equality mismatch\" }; }\n  if (nothing !== null) { throw { code: \"TEST_FAIL\", message: \"bytes: nullable null neq mismatch\" }; }\n  let some: bytes | null = bytes(1);\n  if (some === null) { throw { code: \"TEST_FAIL\", message: \"bytes: nullable value equality mismatch\" }; }\n  if (!(null === nothing)) { throw { code: \"TEST_FAIL\", message: \"bytes: null-nullable equality mismatch\" }; }\n  return 1;\n}",
+      "expectedOutput": "1",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-bytes-fresh-instances",
+      "description": "v1.2 bytes: two fresh allocations own independent storage — writing 9 into the first leaves the second's byte at zero",
+      "source": "export function test(): int {\n  let a: bytes = bytes(2);\n  let c: bytes = bytes(2);\n  a[0] = 9;\n  return c[0];\n}",
+      "expectedOutput": "0",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-bytes-fn-param-return",
+      "description": "v1.2 bytes: buffers flow through function parameters and returns by reference — fill writes 200 into the shared allocation, the caller reads it back (200 + 3 = 203)",
+      "source": "function first(b: bytes): int { return b[0]; }\nfunction fill(b: bytes, v: int): bytes { b[0] = v; return b; }\nexport function test(): int {\n  let x: bytes = fill(bytes(3), 200);\n  return first(x) + x.length;\n}",
+      "expectedOutput": "203",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-bytes-negative-length-e8012",
+      "description": "v1.2 bytes: bytes(-1) raises E8012 (the negative allocation length) before any object is published",
+      "source": "export function test(): int {\n  let b: bytes = bytes(-1);\n  return 0;\n}",
+      "expectedOutput": null,
+      "expectedError": "E8012",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-bytes-read-bounds-high-e8012",
+      "description": "v1.2 bytes: a read at the index equal to the length (b[4] on a 4-byte buffer) is out of bounds and raises E8012",
+      "source": "export function test(): int {\n  let b: bytes = bytes(4);\n  return b[4];\n}",
+      "expectedOutput": null,
+      "expectedError": "E8012",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-bytes-read-bounds-low-e8012",
+      "description": "v1.2 bytes: a negative index read (b[-1]) is out of bounds and raises E8012",
+      "source": "export function test(): int {\n  let b: bytes = bytes(4);\n  return b[-1];\n}",
+      "expectedOutput": null,
+      "expectedError": "E8012",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-bytes-write-bounds-high-e8012",
+      "description": "v1.2 bytes: a write at the index equal to the length (b[2] on a 2-byte buffer) is out of bounds and raises E8012 — bytes writes never append",
+      "source": "export function test(): int {\n  let b: bytes = bytes(2);\n  b[2] = 7;\n  return 0;\n}",
+      "expectedOutput": null,
+      "expectedError": "E8012",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-bytes-write-bounds-low-e8012",
+      "description": "v1.2 bytes: a negative index write (b[-1] = 7) is out of bounds and raises E8012",
+      "source": "export function test(): int {\n  let b: bytes = bytes(2);\n  b[-1] = 7;\n  return 0;\n}",
+      "expectedOutput": null,
+      "expectedError": "E8012",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-bytes-empty-read-e8012",
+      "description": "v1.2 bytes: reading b[0] of a bytes(0) empty buffer is out of bounds and raises E8012",
+      "source": "export function test(): int {\n  let b: bytes = bytes(0);\n  return b[0];\n}",
+      "expectedOutput": null,
+      "expectedError": "E8012",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-bytes-empty-write-e8012",
+      "description": "v1.2 bytes: writing b[0] = 1 on a bytes(0) empty buffer is out of bounds and raises E8012 (never an append)",
+      "source": "export function test(): int {\n  let b: bytes = bytes(0);\n  b[0] = 1;\n  return 0;\n}",
+      "expectedOutput": null,
+      "expectedError": "E8012",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-bytes-write-value-high-e8013",
+      "description": "v1.2 bytes: writing 256 (above the unsigned byte range) raises E8013",
+      "source": "export function test(): int {\n  let b: bytes = bytes(1);\n  b[0] = 256;\n  return 0;\n}",
+      "expectedOutput": null,
+      "expectedError": "E8013",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-bytes-write-value-low-e8013",
+      "description": "v1.2 bytes: writing -1 (below the unsigned byte range) raises E8013",
+      "source": "export function test(): int {\n  let b: bytes = bytes(1);\n  b[0] = -1;\n  return 0;\n}",
+      "expectedOutput": null,
+      "expectedError": "E8013",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-bytes-eval-order-single",
+      "description": "v1.2 bytes: a write evaluates the receiver, the index, and the RHS exactly once each and strictly left to right — pick records 1, the index records 2, the RHS records 3, and the value lands at buf[2]",
+      "source": "class Log {\n  seq: int[] = [];\n  buf: bytes = bytes(4);\n}\n\nfunction record(l: Log, tag: int): int {\n  l.seq[l.seq.length] = tag;\n  return tag;\n}\n\nfunction pick(l: Log, tag: int): bytes {\n  record(l, tag);\n  return l.buf;\n}\n\nexport function test(): int {\n  let l: Log = { seq: [], buf: bytes(4) };\n  pick(l, 1)[record(l, 2)] = record(l, 3);\n  if (l.seq.length !== 3) { throw { code: \"TEST_FAIL\", message: \"bytes write must evaluate receiver, index, and RHS once each\" }; }\n  if (l.seq[0] !== 1 || l.seq[1] !== 2 || l.seq[2] !== 3) { throw { code: \"TEST_FAIL\", message: \"bytes write operand order mismatch\" }; }\n  if (l.buf[2] !== 3) { throw { code: \"TEST_FAIL\", message: \"bytes write value mismatch\" }; }\n  return 1;\n}",
+      "expectedOutput": "1",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-bytes-write-validation-after-rhs",
+      "description": "v1.2 bytes: write validation runs only after every operand completed — the receiver (1), index (2), and a side-effecting RHS (3) all record before the RHS's out-of-range 300 raises E8013, and the failed write changes no storage (buf[1] stays zero)",
+      "source": "class Log {\n  seq: int[] = [];\n  buf: bytes = bytes(4);\n}\n\nfunction record(l: Log, tag: int): int {\n  l.seq[l.seq.length] = tag;\n  return tag;\n}\n\nfunction pick(l: Log, tag: int): bytes {\n  record(l, tag);\n  return l.buf;\n}\n\nfunction badValue(l: Log): int {\n  record(l, 3);\n  return 300;\n}\n\nexport function test(): int {\n  let l: Log = { seq: [], buf: bytes(4) };\n  try {\n    pick(l, 1)[record(l, 2)] = badValue(l);\n    throw { code: \"TEST_FAIL\", message: \"expected E8013 before completing\" };\n  } catch (e) {\n    if (e.code !== \"E8013\") { throw { code: \"TEST_FAIL\", message: \"expected E8013, got \" + e.code }; }\n    if (l.seq.length !== 3 || l.seq[0] !== 1 || l.seq[1] !== 2 || l.seq[2] !== 3) { throw { code: \"TEST_FAIL\", message: \"write validation must run after all operand side effects\" }; }\n  }\n  if (l.buf[1] !== 0) { throw { code: \"TEST_FAIL\", message: \"failed write must not change storage\" }; }\n  return 1;\n}",
+      "expectedOutput": "1",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    }
+  ]
+}

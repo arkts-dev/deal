@@ -218,7 +218,30 @@ import javax.tools.ToolProvider;
  * imported-class field whose deserialized instance carries its
  * declaring module's nominal identity, the same-name sibling identity
  * E8001 failure naming both module-qualified identities, and an E4007
- * frontend compile-error gate rejected before any backend).
+ * frontend compile-error gate rejected before any backend), the
+ * signed-int32 two-backend slice fixtures live in
+ * {@code test/conformance/fixtures/jvm-int32-slice.json} (the v1.2
+ * 32-bit overflow matrix through the real retained backends under
+ * COMMON_SHADOW + DEAL_V1_2_INT32: add/sub/mul overflow E8004, the
+ * negated minimum E8004, {@code MIN_VALUE / -1} E8004, conversion
+ * range E8004, the literal boundaries, the both-raise precedence
+ * parity, the table-read int boundary, {@code std/math.absInt(MIN)}
+ * E8004, the async completion int boundary, the standalone overflow
+ * expression, the number-pow IEEE band, and the JVM-only declared
+ * host int return boundary), and the JVM bytes ops/identity slice
+ * fixtures live in
+ * {@code test/conformance/fixtures/jvm-bytes-slice.json}
+ * (the v1.2 bytes core through the real JVM pipeline under
+ * COMMON_SHADOW + DEAL_V1_2_INT32: fresh zero-filled
+ * {@code bytes(n)} allocation, unsigned 0..255 roundtrips, the
+ * immutable signed-int32 {@code b.length}, exactly-one-byte writes
+ * returning the written value, reference-copy aliasing and reference
+ * identity equality — alias ===, distinct buffers !==,
+ * nullable-vs-null —, E8012 negative allocation length and
+ * out-of-bounds indexes with no append, E8013 values outside 0..255,
+ * the receiver/index/RHS single-evaluation write order with
+ * validation after the RHS and no storage change on a failed write,
+ * the empty buffer, and function parameter/return flow).
  *
  *
  * <h2>Multi-module fixtures (ISSUE-0096)</h2>
