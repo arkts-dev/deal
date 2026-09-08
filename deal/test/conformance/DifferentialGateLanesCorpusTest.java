@@ -33,9 +33,11 @@ import java.util.Set;
  *       {@code error-handling/try-catch.deal} plus two more converged
  *       cases) passes byte-exact on all three lanes;</li>
  *   <li>the failure set is exactly the tracked non-fatal set (the
- *       44 JVM registry entries, including the eight ISSUE-0504
- *       host-boundary E8011 carrier mismatches) plus the enumerated differential
- *       failures — every one naming fixture,
+ *       30 JVM registry entries — the eight ISSUE-0504
+ *       host-boundary E8011 carrier mismatches retained and the
+ *       fourteen ISSUE-0303 host ABI shape promotions applied) plus
+ *       the enumerated differential failures — every one naming
+ *       fixture,
  *       backend, and the closed mismatch class with the first differing
  *       byte/field detail;</li>
  *   <li>no {@code SKIP} verdict class appears anywhere (the gate has no
@@ -124,14 +126,20 @@ public class DifferentialGateLanesCorpusTest {
      * so the count dropped to 45; ISSUE-0544 (the lowering epic) then
      * lifted the imported-non-literal-default plan-shape guard, so
      * plan-imported-provider-scope passed the lane and its registry
-     * entry was removed — so the count is the landed 44). */
+     * entry was removed — so the count is the landed 44; the JVM host
+     * ABI shapes lane (ISSUE-0303) then promoted the fourteen host-abi
+     * registry entries — the 12 pinned fixtures plus the three
+     * host-class companions, minus the already-absent prewrapped-ok —
+     * while the eight ISSUE-0504 host-boundary E8011 carrier
+     * mismatches stay tracked, so the landed registry count is 44
+     * minus the fourteen ISSUE-0303 promotions). */
     private static final int KNOWN_FAILURES_TRACKED = 0;
-    private static final int SKIP_REGISTRY_ENTRIES = 44;
+    private static final int SKIP_REGISTRY_ENTRIES = 30;
 
     /** The per-backend pass/fail counters of the full run. */
     private static final Map<String, int[]> PER_BACKEND = Map.of(
         "luajit", new int[] {322, 32},
-        "jvm", new int[] {242, 112},
+        "jvm", new int[] {251, 103},
         "js", new int[] {324, 30});
 
     /** The designated converged subset (task criterion (a)): every lane
@@ -154,11 +162,8 @@ public class DifferentialGateLanesCorpusTest {
         "backend-runtime/class-runtime-errors/dynamic-bad-class-return-e8001.deal",
         "backend-runtime/class-runtime-errors/dynamic-bad-imported-class-param-e8001.deal",
         "backend-runtime/class-runtime-errors/dynamic-bad-nullable-class-e8001.deal",
-        "backend-runtime/defaults/plan-host-discriminator.deal",
         "backend-runtime/defaults/plan-phase-order-provided-before-defaults.deal",
-        "backend-runtime/host-abi/host-array-return-ok.deal",
         "backend-runtime/host-abi/host-async-shape-value.deal",
-        "backend-runtime/host-abi/host-boundary-apply-function.deal",
         "backend-runtime/host-abi/host-boundary-boolean-roundtrip.deal",
         "backend-runtime/host-abi/host-boundary-int-minimum-param.deal",
         "backend-runtime/host-abi/host-boundary-null-narrowing.deal",
@@ -167,17 +172,6 @@ public class DifferentialGateLanesCorpusTest {
         "backend-runtime/host-abi/host-boundary-number-roundtrip.deal",
         "backend-runtime/host-abi/host-boundary-repeat-call.deal",
         "backend-runtime/host-abi/host-boundary-unicode-string-roundtrip.deal",
-        "backend-runtime/host-abi/host-class-default-isolation.deal",
-        "backend-runtime/host-abi/host-class-export.deal",
-        "backend-runtime/host-abi/host-class-extra-field.deal",
-        "backend-runtime/host-abi/host-export-presence.deal",
-        "backend-runtime/host-abi/host-nullable-function-param-bad.deal",
-        "backend-runtime/host-abi/host-nullable-function-param.deal",
-        "backend-runtime/host-abi/host-nullable-function-return-bad.deal",
-        "backend-runtime/host-abi/host-nullable-function-return-ok.deal",
-        "backend-runtime/host-abi/host-prewrapped-bad.deal",
-        "backend-runtime/host-abi/host-rest-bad.deal",
-        "backend-runtime/host-abi/host-rest-ok.deal",
         "backend-runtime/runtime-errors/json-stringify-function-e8001.deal",
         "backend-runtime/source-location-precision/class-param-error-source.deal",
         "backend-runtime/source-location/bytes-index-bounds-source.deal",
@@ -237,6 +231,11 @@ public class DifferentialGateLanesCorpusTest {
         "backend-runtime/host-abi/host-async-shape-value.deal | luajit | PROCESS_FAILURE",
         "backend-runtime/host-abi/host-bad-return.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/host-abi/host-bad-return.deal | luajit | PROCESS_FAILURE",
+        "backend-runtime/host-abi/host-class-extra-field.deal | jvm | PROCESS_FAILURE",
+        "backend-runtime/host-abi/host-nullable-function-param-bad.deal | jvm | PROCESS_FAILURE",
+        "backend-runtime/host-abi/host-nullable-function-return-bad.deal | jvm | PROCESS_FAILURE",
+        "backend-runtime/host-abi/host-prewrapped-bad.deal | jvm | PROCESS_FAILURE",
+        "backend-runtime/host-abi/host-rest-bad.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/host-abi/host-class-default-isolation.deal | js | PROCESS_FAILURE",
         "backend-runtime/host-abi/host-class-export.deal | js | PROCESS_FAILURE",
         "backend-runtime/host-abi/host-class-extra-field.deal | js | PROCESS_FAILURE",

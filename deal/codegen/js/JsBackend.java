@@ -53,6 +53,7 @@ import deal.ast.WhileStatement;
 import deal.checker.CheckResult;
 import deal.checker.Symbol;
 import deal.checker.SymbolTable;
+import deal.codegen.HostModuleDeclarations;
 import deal.codegen.SourceMapGenerator;
 import deal.descriptors.CanonicalRuntimeTypeDescriptor;
 import deal.diagnostics.CompilerDiagnostic;

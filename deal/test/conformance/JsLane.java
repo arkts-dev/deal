@@ -17,7 +17,7 @@ import deal.checker.NameResolver;
 import deal.checker.Symbol;
 import deal.checker.SymbolTable;
 import deal.checker.TypeChecker;
-import deal.codegen.js.HostModuleDeclarations;
+import deal.codegen.HostModuleDeclarations;
 import deal.codegen.js.JsBackend;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.identity.CanonicalClassIdentity;

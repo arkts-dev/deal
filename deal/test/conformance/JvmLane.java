@@ -1801,20 +1801,6 @@ public class JvmLane implements Lane {
                 + "both code and message fields (LuaJIT-owned default "
                 + "filling).", "JVM-GAP-ERROR-LITERAL-DEFAULTS");
 
-        // ---- JVM-GAP-HOST-ABI-SHAPES: unsupported declared host shapes ----
-        skip("backend-runtime/host-abi/host-array-return-ok.deal",
-            "E6000: declared array-typed host return (the JVM host ABI "
-                + "slice supports primitive/string/nullable returns "
-                + "only).", "JVM-GAP-HOST-ABI-SHAPES");
-        skip("backend-runtime/host-abi/host-rest-ok.deal",
-            "E6000: declared array-typed host parameter (v1.2 fixed-array "
-                + "host form).", "JVM-GAP-HOST-ABI-SHAPES");
-        skip("backend-runtime/host-abi/host-rest-bad.deal",
-            "E6000: declared array-typed host parameter (v1.2 fixed-array "
-                + "host form).", "JVM-GAP-HOST-ABI-SHAPES");
-        skip("backend-runtime/host-abi/host-boundary-apply-function.deal",
-            "E6000: declared function-typed host parameter.",
-            "JVM-GAP-HOST-ABI-SHAPES");
         // ---- ISSUE-0504: the eight converted host-boundary fixtures
         // (v12-gap-suite-integration D9) import host/boundary, whose
         // verbatim gap HostBoundary.java declares the legacy long/Long
@@ -1870,49 +1856,30 @@ public class JvmLane implements Lane {
                 + "HostBoundary echoInt(long)/nullableInt(Long) vs the "
                 + "int32-activated int/Integer parameter resolution).",
             "JVM-GAP-HOST-ABI-SHAPES");
-        skip("backend-runtime/host-abi/host-nullable-function-param.deal",
-            "E6000: declared function | null host parameter.",
-            "JVM-GAP-HOST-ABI-SHAPES");
-        skip("backend-runtime/host-abi/host-nullable-function-param-bad.deal",
-            "E6000: declared function | null host parameter.",
-            "JVM-GAP-HOST-ABI-SHAPES");
-        skip("backend-runtime/host-abi/host-nullable-function-return-ok.deal",
-            "E6000: declared function | null host return.",
-            "JVM-GAP-HOST-ABI-SHAPES");
-        skip("backend-runtime/host-abi/host-nullable-function-return-bad.deal",
-            "E6000: declared function | null host return.",
-            "JVM-GAP-HOST-ABI-SHAPES");
-        skip("backend-runtime/host-abi/host-class-export.deal",
-            "host class exports unsupported on JVM: E3004 \"Unknown "
-                + "class 'ServerConfig'\" (the JVM externals path "
-                + "synthesizes no host class symbols and the backend "
-                + "rejects host class exports).", "JVM-GAP-HOST-ABI-SHAPES");
-        skip("backend-runtime/host-abi/host-export-presence.deal",
-            "host class exports unsupported on JVM: E3004 \"Unknown "
-                + "class 'Config'\" (same root cause).",
-            "JVM-GAP-HOST-ABI-SHAPES");
-        skip("backend-runtime/host-abi/host-class-default-isolation.deal",
-            "host class exports unsupported on JVM: E3004 \"Unknown "
-                + "class 'ServerConfig'\" (same root cause as "
-                + "host-class-export).", "JVM-GAP-HOST-ABI-SHAPES");
-        skip("backend-runtime/host-abi/host-class-extra-field.deal",
-            "host class exports unsupported on JVM: E3004 \"Unknown "
-                + "class 'Config'\" (same root cause as "
-                + "host-export-presence).", "JVM-GAP-HOST-ABI-SHAPES");
-        // host-prewrapped-ok.deal is deliberately NOT registered: the
-        // host triplet host-fixtures/prewrapped_ok.java landed, so the
-        // fixture passes the real pipeline and a skip entry would be
-        // stale and fail the stale-skip gate deterministically
-        // (promoted by the gate-integration child, ISSUE-0357).
-        skip("backend-runtime/host-abi/host-prewrapped-bad.deal",
-            "the Lua pre-wrapped export form; no JVM analog.",
-            "JVM-GAP-HOST-ABI-SHAPES");
-        skip("backend-runtime/defaults/plan-host-discriminator.deal",
-            "host class exports unsupported on JVM: E3004 \"Unknown "
-                + "class 'ServerConfig'\" (the JVM externals path "
-                + "synthesizes no host class symbols and the backend "
-                + "rejects host class exports — same root cause as "
-                + "host-class-export).", "JVM-GAP-HOST-ABI-SHAPES");
+        // ---- JVM-GAP-HOST-ABI-SHAPES: retired with the host ABI shapes
+        // lane (ISSUE-0303, jvm-v12-host-abi-completion) ----
+        // The 12 pinned fixtures — host-array-return-ok, host-rest-ok,
+        // host-rest-bad (E8010), host-boundary-apply-function,
+        // host-nullable-function-param, host-nullable-function-param-bad
+        // (E8010), host-nullable-function-return-ok,
+        // host-nullable-function-return-bad (E8010), host-class-export,
+        // host-export-presence, host-prewrapped-ok, host-prewrapped-bad
+        // (E8010 on the discard path) — pass the real pipeline on the
+        // shared carriers and the declared-shape host triplets:
+        // array parameters/returns flow on the shared wrappers,
+        // function parameters arrive as the typed $DealRt wrapper,
+        // function-typed returns are never wrapped, declared host
+        // classes synthesize shared $DealRt records with the canonical
+        // externals identity and the preserved defaults-map seam, and
+        // the prewrapped pair executes against declared-shape hosts
+        // whose declared-descriptor enforcement raises E8010 on the
+        // junk return. The three host-class companions
+        // (host-class-default-isolation, host-class-extra-field E8007,
+        // plan-host-discriminator) went green with the synthesized
+        // records and were removed with their promotion; the
+        // stale-skip gate forced the removals. The remaining entry pins
+        // the alias-as-value shape (a host export used as a first-class
+        // function value), which stays E6000.
 
         // ---- JVM-GAP-DEFAULTS-PLANS: the v1.2 default-plan lane
         // (ISSUE-0340, LuaJIT-owned) ----

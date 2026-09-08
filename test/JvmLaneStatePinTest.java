@@ -40,8 +40,9 @@ import java.util.List;
 
  *       outputs field-exactly: both exit codes, the verbatim
  *       passing-fixture lines, the exact {@code ] FAIL (} line set
- *       (post-unit: only the two pre-existing host-prewrapped
- *       skip-probe exception lines on the JVM lane), zero GATE
+ *       (post-ISSUE-0303: EMPTY on the JVM lane — the host ABI shapes
+ *       lane retired its 15 green entries, the prewrapped pair
+ *       included), zero GATE
  *       FAILURE lines, no STAGED-FAIL line on either lane, the green
  *       {@code Gates PASSED} banner on the JVM lane, and the pinned
  *       summary numbers. Every assertion matches captured real-run
@@ -53,9 +54,9 @@ import java.util.List;
  * activated profile with {@code OK (found DEAL_ERROR_CODE: E8004)},
  * and the promoted
  * {@code backend-runtime/arithmetic/int-add-overflow.deal} passes the
- * same way, so the stale-known-fail gate no longer names it; only the
- * two host-prewrapped skip-probe exception lines remain in the
- * {@code ] FAIL (} set. ISSUE-0158
+ * same way, so the stale-known-fail gate no longer names it, and the
+ * {@code ] FAIL (} set is EMPTY (ISSUE-0303 retired the 15 host ABI
+ * shapes entries, the prewrapped pair included). ISSUE-0158
  * (the JVM bytes core lane) then promoted the nine bytes skip
  * entries — the direct bytes surface passes the real pipeline and
  * the stale-skip gate forced the entries out — so the summary moved
@@ -68,7 +69,22 @@ import java.util.List;
  * — passing the real pipeline on every lane, so the summary moved to
  * {@code passed 267, failed 0, skipped 36 ... pass rate 88.1%} over
  * the 303-fixture denominator with the single retained bytes skip
- * unchanged. The LuaJIT lane
+ * unchanged. ISSUE-0502 (the gap-suite runtime population landing)
+ * then adds forty runtime fixtures on top (30 runtime-ok — the
+ * promoted gap bytes-boundary-order included — and 10
+ * runtime-error; the one companion is never counted). Thirty-four of
+ * them pass the real JVM pipeline; five — the E8012/E8013 gap bytes
+ * runtime-error fixtures — also pass this lane (its code-level
+ * DEAL_ERROR_CODE needle matches their real JVM emissions) and only
+ * the rtc-015 Error-literal-defaults probe needs the one new skip
+ * entry, so the summary moved to {@code passed 306, failed 0,
+ * skipped 37 ... pass rate 89.2%} over the 343-fixture denominator.
+ * ISSUE-0303 (jvm-v12-host-abi-completion) then retired the 15 host
+ * ABI shapes entries — the 12 pinned fixtures plus the three
+ * host-class companions — so the summary moved again to
+ * {@code passed 321, failed 0, skipped 22 ... pass rate 93.6%} over
+ * the 343-fixture denominator with the single retained
+ * alias-as-value entry (host-async-shape-value, E6000). The LuaJIT lane
  * (consequence, pinned): exit code 0 — the flipped time fixture
  * passes as {@code runtime-error E8004} under its legacy-authority
  * catalog row (zero v1.2 credit), the staged registry entry is
@@ -96,12 +112,7 @@ import java.util.List;
  * JVM-GAP-JSONABLE-RESIDUAL entries — json.parse/json.stringify
  * run through the shared JSON runtime, the fromJson top-level gate
  * and the provided-fields-before-defaults phase order land, and
- * nested array fields and table-field nested arrays roundtrip — so
- * the JVM summary moved again to {@code passed 323, failed 0,
- * skipped 20 ... pass rate 94.2%} over the 343-fixture denominator
- * (the retained skips: the recursive bytes-bearing wrapper
- * closure, the two default-plan fixtures, the sixteen host-ABI
- * shapes, and the rtc-015 Error-literal-defaults probe).
+ * nested array fields and table-field nested arrays roundtrip.
  * ISSUE-0504 (the host ABI conversion leaf) then lands the eight
  * host-boundary fixtures, so the JVM summary moves to {@code passed
  * 323, failed 0, skipped 28 ... pass rate 92.0%} over the
@@ -117,10 +128,15 @@ import java.util.List;
  * plan-shape guard (plan-imported-provider-scope passes the real
  * pipeline), so the summary moves to {@code passed 328, failed 0,
  * skipped 26 ... pass rate 92.7%} over the same denominator, and
- * the LuaJIT summary
- * reads {@code Total: 549, Passed: 549} with zero tracked
- * known-fails and zero staged failures.
- * failures.
+ * the LuaJIT summary reads {@code Total: 549, Passed: 549} with
+ * zero tracked known-fails and zero staged failures. ISSUE-0303
+ * (jvm-v12-host-abi-completion) then retires the host ABI shapes lane
+ * on the same base: the fourteen promoted host-abi fixtures pass the
+ * real pipeline (twelve pinned fixtures plus three host-class
+ * companions, minus the already-absent prewrapped-ok), so the JVM
+ * summary moves again to the re-pinned numbers below over the
+ * 354-fixture denominator (denominator 354, passed 342, skipped 12,
+ * pass rate 96.6%).
  *
  * <p>The test runs from the repository root (the {@code run_tests.sh}
  * contract, like {@code ConformanceTest}); {@code run_tests.sh}
@@ -146,16 +162,6 @@ public class JvmLaneStatePinTest {
 
         "  [backend-runtime/arithmetic/int-add-overflow.deal] OK "
             + "(found DEAL_ERROR_CODE: E8004)";
-
-    private static final String JVM_PREWRAPPED_OK =
-        "  [backend-runtime/host-abi/host-prewrapped-ok.deal] FAIL "
-            + "(execution exception): no JVM host implementation for "
-            + "prewrapped_ok";
-
-    private static final String JVM_PREWRAPPED_BAD =
-        "  [backend-runtime/host-abi/host-prewrapped-bad.deal] FAIL "
-            + "(execution exception): no JVM host implementation for "
-            + "prewrapped_bad";
 
     private static final String JVM_GATES_PASSED =
         "Gates PASSED: frontend 100%; backend-runtime zero applicable "
@@ -213,11 +219,17 @@ public class JvmLaneStatePinTest {
     // re-pinned numbers below. ISSUE-0544 (the lowering epic) then
     // lifted the imported-non-literal-default plan-shape guard, so
     // plan-imported-provider-scope passed the lane (passed 327 ->
-    // 328, skipped 27 -> 26) — the final re-pinned numbers below.
+    // 328, skipped 27 -> 26). ISSUE-0303 (jvm-v12-host-abi-completion)
+    // then retires the host ABI shapes lane on the same base: the
+    // fourteen promoted host-abi fixtures pass the real pipeline
+    // (twelve pinned fixtures plus three host-class companions, minus
+    // the already-absent prewrapped-ok), so the summary moves again to
+    // the re-pinned numbers below (denominator 354, passed 342,
+    // skipped 12, pass rate 96.6%).
     private static final String JVM_SUMMARY =
         "Backend-runtime on JVM: denominator 354 (every on-disk runtime "
-            + "test, unchanged), passed 328, failed 0, skipped 26 "
-            + "(classified), known-fail 0 (tracked) \u2014 pass rate 92.7%";
+            + "test, unchanged), passed 342, failed 0, skipped 12 "
+            + "(classified), known-fail 0 (tracked) \u2014 pass rate 96.6%";
 
     private static final String JVM_PROFILE_AUTHORITY =
         "Profile-authority accounting: 0 legacy-authority fixture(s) "
@@ -427,8 +439,7 @@ public class JvmLaneStatePinTest {
                 + "the activated profile), got " + run.exitCode());
 
         String out = run.output();
-        checkFailLineSet(out, List.of(
-            JVM_PREWRAPPED_OK, JVM_PREWRAPPED_BAD), "JVM lane");
+        checkFailLineSet(out, List.of(), "JVM lane");
         checkGateLineSet(out, List.of(), "JVM lane");
         checkContains(out, JVM_TIME_OK, "JVM lane");
 

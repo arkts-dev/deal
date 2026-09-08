@@ -6,3 +6,7 @@ build/
 # release/evidence/ (the E8 retention directory) stays commit-visible.
 dist/
 release/deal-*.tar
+# Publication-stager OS lock files (PublicationStager.ensureStaging):
+# transient local artifacts created next to any publication root, never
+# committed (they persist until the next staging run reuses them).
+*.deal-publish.lock

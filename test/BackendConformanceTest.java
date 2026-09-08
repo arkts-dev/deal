@@ -5,7 +5,7 @@ import deal.checker.*;
 import deal.codegen.Backend;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.codegen.jvm.JvmBackend;
-import deal.codegen.js.HostModuleDeclarations;
+import deal.codegen.HostModuleDeclarations;
 import deal.codegen.js.JsBackend;
 import deal.codegen.lua.LuaBackend;
 import deal.identity.CanonicalClassIdentity;

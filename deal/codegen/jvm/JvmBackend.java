@@ -8,6 +8,7 @@ import deal.checker.CheckResult;
 import deal.descriptors.CanonicalRuntimeTypeDescriptor;
 import deal.checker.Symbol;
 import deal.checker.SymbolTable;
+import deal.codegen.HostModuleDeclarations;
 import deal.identity.CanonicalClassIdentity;
 import deal.identity.CanonicalClassIdentityIndex;
 import deal.identity.CanonicalModuleIdentity;
@@ -211,9 +212,29 @@ import java.util.function.Function;
  * otherwise) whose completion value is checked at the await site
  * (E8001). Async function DECLARATIONS emit as plain blocking methods
  * (the spec-permitted JVM async lowering); await of a host async call
- * blocks on the operation. Host class exports and
- * array/table/function-typed host parameters and returns stay E6000 at
- * the import statement. ISSUE-0106 adds Unicode scalar-value STRING
+ * blocks on the operation. ISSUE-0303 (jvm-v12-host-abi-completion
+ * D1\u2013D6) extends the wrapper surface to the array/function/class
+ * shapes: declared array parameters/returns flow on the shared
+ * {@code $DealRt} wrappers, function-typed parameters arrive as the
+ * typed {@code $DealRt} wrapper (the host invokes it through the
+ * wrapper's typed {@code invoke}; no lambda conversion),
+ * function-typed returns are never wrapped (a raw value fails E8010,
+ * a properly wrapped {@code $DealRt.FnValue} with a byte-equal
+ * descriptor passes), nullable forms pass Java null as the DEAL
+ * null, every wrapper parameter is checked against the declared
+ * descriptor at the call (E8010 {@code parameter {i} type mismatch},
+ * never a masking read-site error — a typed table read materializing
+ * a host argument yields the raw value), declared host classes emit
+ * one synthesized record per class in the shared {@code $DealRt}
+ * scope (canonical externals identity, per-field storage, presence
+ * bits, the preserved defaults-map construction seam with E8007 for
+ * an extra provided name), and class-typed parameters/returns
+ * validate nominal identity (E8001 for a foreign identity). The Lua
+ * pre-wrapped sig-table form stays a LuaJIT host-loader mechanism;
+ * the JVM prewrapped fixtures execute against declared-shape Java
+ * hosts whose declared-descriptor enforcement raises E8010 on the
+ * junk return. Table-typed and bytes-bearing host shapes stay E6000.
+ * ISSUE-0106 adds Unicode scalar-value STRING
  * for-of — one string containing exactly one scalar value per
  * iteration, a fresh binding per iteration (spec-v1.2 §For-of) — and
  * moves the std/string length/substring/split helpers to scalar-value
@@ -1315,6 +1336,42 @@ public final class JvmBackend {
      * module-level calls that transitively read later-declared fields. */
     private int currentModuleStatementIndex = -1;
 
+    /**
+     * ISSUE-0303 D2 read-site deferral: {@code > 0} while a host-call's
+     * arguments are being emitted. A typed table read whose value
+     * materializes a host argument must not pre-raise its own E8001 —
+     * the read yields the raw value and the host-call boundary raises
+     * E8010 (the only read-shape in the corpus with a changed check
+     * site; let/assignment/return-boundary typed reads keep their
+     * pinned read-site checks).
+     */
+    private int hostArgDeferDepth = 0;
+
+    /** The host-class identity descriptors whose nominal {@code $check}
+     * branches were already appended to {@link #classCheckBranches}
+     * (ISSUE-0303 D4 — one branch per class identity per module). */
+    private final Set<String> emittedHostClassBranches =
+        new LinkedHashSet<>();
+
+    /**
+     * Host-class declarations (ISSUE-0303, jvm-v12-host-abi-completion
+     * D4): raw import specifier → class export name → declared field
+     * records (declaration order) with their orchestrator-resolved
+     * types. The JVM backend synthesizes one shared record class per
+     * declared host class from these records.
+     */
+    private final Map<String, Map<String,
+        List<HostModuleDeclarations.HostField>>> hostClassDeclarations;
+
+    /**
+     * The project-wide host-class declaration union (raw import
+     * specifier → class export name → declared field records). The
+     * entry module's shared {@code $DealRt} scope emits every declared
+     * host class record from this union (the single emission point).
+     */
+    private final Map<String, Map<String,
+        List<HostModuleDeclarations.HostField>>> sharedHostClasses;
+
     /** Import alias → statement index of its import statement (project
      * modules only; {@code std/console} has no load-time trigger and no
      * entry). Used to reject module-level uses of an alias before its
@@ -1330,12 +1387,18 @@ public final class JvmBackend {
                        Map<String, String> importResolutions,
                        Map<String, Map<String, ClassDeclaration>> importedClasses,
                        Map<String, Map<String, Type>> hostModules,
+                       Map<String, Map<String,
+                           List<HostModuleDeclarations.HostField>>>
+                           hostClassDeclarations,
                        boolean isEntry, boolean emitSharedTable,
                        SemanticProfile semanticProfile,
                        List<Type> sharedShapes,
                        CanonicalClassIdentityIndex identityIndex,
                        Function<String, CanonicalModuleIdentity> moduleIdentities,
-                       Map<CanonicalClassIdentity, String> sharedClassDeclarations) {
+                       Map<CanonicalClassIdentity, String> sharedClassDeclarations,
+                       Map<String, Map<String,
+                           List<HostModuleDeclarations.HostField>>>
+                           sharedHostClasses) {
         this.typeMap = typeMap;
         this.symbols = symbols;
         this.sourcePath = sourcePath;
@@ -1364,6 +1427,32 @@ public final class JvmBackend {
                 ? Map.of() : new LinkedHashMap<>(entry.getValue()));
         }
         this.hostModules = hostCopy;
+        Map<String, Map<String, List<HostModuleDeclarations.HostField>>>
+            hostClassCopy = new LinkedHashMap<>();
+        for (Map.Entry<String, Map<String,
+                List<HostModuleDeclarations.HostField>>> entry
+                : (hostClassDeclarations == null
+                    ? Map.<String, Map<String,
+                        List<HostModuleDeclarations.HostField>>>of()
+                    : hostClassDeclarations).entrySet()) {
+            hostClassCopy.put(entry.getKey(), entry.getValue() == null
+                ? Map.of()
+                : new LinkedHashMap<>(entry.getValue()));
+        }
+        this.hostClassDeclarations = hostClassCopy;
+        Map<String, Map<String, List<HostModuleDeclarations.HostField>>>
+            sharedHostCopy = new LinkedHashMap<>();
+        for (Map.Entry<String, Map<String,
+                List<HostModuleDeclarations.HostField>>> entry
+                : (sharedHostClasses == null
+                    ? Map.<String, Map<String,
+                        List<HostModuleDeclarations.HostField>>>of()
+                    : sharedHostClasses).entrySet()) {
+            sharedHostCopy.put(entry.getKey(), entry.getValue() == null
+                ? Map.of()
+                : new LinkedHashMap<>(entry.getValue()));
+        }
+        this.sharedHostClasses = sharedHostCopy;
         localScopes.push(new LinkedHashMap<>());
         localTypeScopes.push(new LinkedHashMap<>());
         // ISSUE-0301 D4: the orchestrator's project-wide shape set
@@ -1437,67 +1526,19 @@ public final class JvmBackend {
             Map<String, String> importResolutions,
             Map<String, Map<String, ClassDeclaration>> importedClasses,
             Map<String, Map<String, Type>> hostModules,
+            Map<String, Map<String,
+                List<HostModuleDeclarations.HostField>>>
+                hostClassDeclarations,
             SemanticProfile semanticProfile,
             CanonicalClassIdentityIndex identityIndex,
             Function<String, CanonicalModuleIdentity> moduleIdentities) {
         JvmBackend collector = new JvmBackend(result.typeMap(),
             result.symbolTable(), sourcePath, modulePath,
-            importResolutions, importedClasses, hostModules, false, false,
+            importResolutions, importedClasses, hostModules,
+            hostClassDeclarations, false, false,
             semanticProfile, null, identityIndex, moduleIdentities,
-            Map.of());
+            Map.of(), Map.of());
         return collector.collectModuleShapes(program);
-    }
-
-    /**
-     * True when the given collected shape transitively references a
-     * class whose declaring module is a HOST module of the compiled
-     * project ({@code hostPaths}: the raw import specifiers, e.g.
-     * {@code host/cfg}, that any project module imports). Host class
-     * exports keep their import-time E6000s (the host ABI lane's
-     * carriers — jvm-v12-host-abi-completion): the shared {@code
-     * $DealRt} scope must never carry a wrapper whose invoke signature
-     * references a host Java class the backend never emits, so the
-     * orchestrator's collection seam drops such shapes from the
-     * project-wide union before any module pre-registers them. A class
-     * whose carried module identity classifies as an externals
-     * declaration module (the identity layer's
-     * {@code ExternalModule(rawImportSpecifier)}) matches when its raw
-     * specifier (or its dotted/raw converted spelling) is one of the
-     * project's host import paths.
-     */
-    public static boolean shapeReferencesHostModule(Type t,
-            Set<String> hostPaths) {
-        if (t instanceof Type.Class c) {
-            CanonicalModuleIdentity mi = c.identity().moduleIdentity();
-            if (mi instanceof CanonicalModuleIdentity.ExternalModule em) {
-                String raw = em.rawImportSpecifier();
-                if (hostPaths.contains(raw)) {
-                    return true;
-                }
-                if (hostPaths.contains(raw.replace('.', '/'))) {
-                    return true;
-                }
-                if (hostPaths.contains(raw.replace('/', '.'))) {
-                    return true;
-                }
-            }
-            return false;
-        }
-        if (t instanceof Type.Func f) {
-            for (Type p : f.paramTypes()) {
-                if (shapeReferencesHostModule(p, hostPaths)) {
-                    return true;
-                }
-            }
-            return shapeReferencesHostModule(f.returnType(), hostPaths);
-        }
-        if (t instanceof Type.Array a) {
-            return shapeReferencesHostModule(a.element(), hostPaths);
-        }
-        if (t instanceof Type.Nullable n) {
-            return shapeReferencesHostModule(n.inner(), hostPaths);
-        }
-        return false;
     }
 
     private List<Type> collectModuleShapes(ProgramNode program) {
@@ -1515,6 +1556,11 @@ public final class JvmBackend {
                     if (hostExports != null) {
                         importAliases.put(imp.alias(),
                             imp.modulePath().replace('/', '.'));
+                        // ISSUE-0303 D4: the silent context mirrors the
+                        // real pre-scan's host-alias table too, so a
+                        // qualified host-class type annotation resolves
+                        // through the declared export map.
+                        hostAliases.put(imp.alias(), imp.modulePath());
                     } else {
                         String resolved = importResolutions.get(
                             imp.modulePath());
@@ -1633,6 +1679,21 @@ public final class JvmBackend {
                 }
             };
             case QualifiedType qt -> {
+                // ISSUE-0303 D4: a qualified type through a host-module
+                // alias names a declared host class — resolve to the
+                // export map's class type (the canonical externals
+                // identity), so the collected shape set carries the
+                // shared-record reference.
+                String hostRaw = hostAliases.get(qt.moduleName());
+                if (hostRaw != null) {
+                    Map<String, Type> exports = hostModules.get(hostRaw);
+                    Type exportType = exports == null ? null
+                        : exports.get(qt.typeName());
+                    if (exportType instanceof Type.Class c) {
+                        yield c;
+                    }
+                    yield Type.Error.INSTANCE;
+                }
                 // The alias-keyed importAliases table — the same table
                 // the real resolver and the collection pre-scan populate
                 // — names the declaring module. importResolutions is
@@ -1938,7 +1999,8 @@ public final class JvmBackend {
         // but its artifact must be self-contained, so it emits the
         // shared $DealRt table class (ISSUE-0102).
         return generate(program, result, sourcePath, modulePath,
-            importResolutions, importedClasses, Map.of(), false, true);
+            importResolutions, importedClasses, Map.of(), Map.of(),
+            false, true);
     }
 
     /**
@@ -1985,15 +2047,109 @@ public final class JvmBackend {
                                             Map<String, Map<String, ClassDeclaration>> importedClasses,
                                             Map<String, Map<String, Type>> hostModules,
                                             boolean isEntry) {
-        // The pre-plumb per-module path: only the selected ENTRY module
-        // emits the shared $DealRt runtime scope (one per compiled
-        // project). The unchanged signature defaults to the
-        // LEGACY_SAFE_INT semantic profile (ISSUE-0374 profile plumb),
-        // so untouched direct callers keep legacy behavior by
-        // construction.
         return generate(program, result, sourcePath, modulePath,
-            importResolutions, importedClasses, hostModules, isEntry,
-            isEntry, SemanticProfile.LEGACY_SAFE_INT);
+            importResolutions, importedClasses, hostModules, Map.of(),
+            isEntry);
+    }
+
+    /**
+     * The ISSUE-0303 host-declaration-aware full entry: {@code isEntry}
+     * gates the v1.2 entry surface, {@code emitSharedTable} gates the
+     * shared {@code $DealRt} runtime scope, and the default
+     * {@code LEGACY_SAFE_INT} semantic profile keeps the unchanged
+     * callers on legacy behavior.
+     */
+    public static JvmCodegenResult generate(ProgramNode program, CheckResult result,
+                                            String sourcePath, String modulePath,
+                                            Map<String, String> importResolutions,
+                                            Map<String, Map<String, ClassDeclaration>> importedClasses,
+                                            Map<String, Map<String, Type>> hostModules,
+                                            Map<String, Map<String,
+                                                List<HostModuleDeclarations.HostField>>>
+                                                hostClassDeclarations,
+                                            boolean isEntry,
+                                            boolean emitSharedTable) {
+        return generate(program, result, sourcePath, modulePath,
+            importResolutions, importedClasses, hostModules,
+            hostClassDeclarations, isEntry, emitSharedTable,
+            SemanticProfile.LEGACY_SAFE_INT);
+    }
+
+    /**
+     * The ISSUE-0303 host-declaration-aware profile entry: the declared
+     * host-class field records join the declared export map, and the
+     * backend derives its int mode from the invocation's project-wide
+     * semantic profile (ISSUE-0374 profile plumb).
+     */
+    public static JvmCodegenResult generate(ProgramNode program, CheckResult result,
+                                            String sourcePath, String modulePath,
+                                            Map<String, String> importResolutions,
+                                            Map<String, Map<String, ClassDeclaration>> importedClasses,
+                                            Map<String, Map<String, Type>> hostModules,
+                                            Map<String, Map<String,
+                                                List<HostModuleDeclarations.HostField>>>
+                                                hostClassDeclarations,
+                                            boolean isEntry,
+                                            boolean emitSharedTable,
+                                            SemanticProfile semanticProfile) {
+        return generate(program, result, sourcePath, modulePath,
+            importResolutions, importedClasses, hostModules,
+            hostClassDeclarations, isEntry, emitSharedTable,
+            semanticProfile, null);
+    }
+
+    /**
+     * The ISSUE-0303 host-declaration-aware standalone shapes entry:
+     * like the shared-shapes overload but with the declared host-class
+     * field records (the standalone single-module adapter passes
+     * {@code null} shapes and empty class maps).
+     */
+    public static JvmCodegenResult generate(ProgramNode program, CheckResult result,
+                                            String sourcePath, String modulePath,
+                                            Map<String, String> importResolutions,
+                                            Map<String, Map<String, ClassDeclaration>> importedClasses,
+                                            Map<String, Map<String, Type>> hostModules,
+                                            Map<String, Map<String,
+                                                List<HostModuleDeclarations.HostField>>>
+                                                hostClassDeclarations,
+                                            boolean isEntry,
+                                            boolean emitSharedTable,
+                                            SemanticProfile semanticProfile,
+                                            List<Type> sharedShapes) {
+        Function<String, CanonicalModuleIdentity> classification =
+            standaloneClassification(modulePath, sourcePath);
+        ModuleIdentityResolver.IdentityIndex standalone =
+            ModuleIdentityResolver.buildIndex(
+                classificationMap(modulePath, sourcePath));
+        return generate(program, result, sourcePath, modulePath,
+            importResolutions, importedClasses, hostModules,
+            hostClassDeclarations, isEntry, emitSharedTable, standalone,
+            classification, semanticProfile, sharedShapes, Map.of(),
+            Map.of());
+    }
+
+    /**
+     * The ISSUE-0303 host-declaration-aware per-module path: the
+     * declared host-class field records join the declared export map.
+     * Only the selected ENTRY module emits the shared $DealRt runtime
+     * scope (one per compiled project). The unchanged signature
+     * defaults to the LEGACY_SAFE_INT semantic profile (ISSUE-0374
+     * profile plumb), so untouched direct callers keep legacy behavior
+     * by construction.
+     */
+    public static JvmCodegenResult generate(ProgramNode program, CheckResult result,
+                                            String sourcePath, String modulePath,
+                                            Map<String, String> importResolutions,
+                                            Map<String, Map<String, ClassDeclaration>> importedClasses,
+                                            Map<String, Map<String, Type>> hostModules,
+                                            Map<String, Map<String,
+                                                List<HostModuleDeclarations.HostField>>>
+                                                hostClassDeclarations,
+                                            boolean isEntry) {
+        return generate(program, result, sourcePath, modulePath,
+            importResolutions, importedClasses, hostModules,
+            hostClassDeclarations, isEntry, isEntry,
+            SemanticProfile.LEGACY_SAFE_INT);
     }
 
     /**
@@ -2020,8 +2176,8 @@ public final class JvmBackend {
                                             boolean isEntry,
                                             SemanticProfile semanticProfile) {
         return generate(program, result, sourcePath, modulePath,
-            importResolutions, importedClasses, hostModules, isEntry,
-            isEntry, semanticProfile);
+            importResolutions, importedClasses, hostModules, Map.of(),
+            isEntry, isEntry, semanticProfile);
     }
 
     /**
@@ -2041,8 +2197,8 @@ public final class JvmBackend {
                                             boolean isEntry,
                                             boolean emitSharedTable) {
         return generate(program, result, sourcePath, modulePath,
-            importResolutions, importedClasses, hostModules, isEntry,
-            emitSharedTable, SemanticProfile.LEGACY_SAFE_INT);
+            importResolutions, importedClasses, hostModules, Map.of(),
+            isEntry, emitSharedTable, SemanticProfile.LEGACY_SAFE_INT);
     }
 
     /**
@@ -2069,8 +2225,8 @@ public final class JvmBackend {
                                             boolean emitSharedTable,
                                             SemanticProfile semanticProfile) {
         return generate(program, result, sourcePath, modulePath,
-            importResolutions, importedClasses, hostModules, isEntry,
-            emitSharedTable, semanticProfile, null);
+            importResolutions, importedClasses, hostModules, Map.of(),
+            isEntry, emitSharedTable, semanticProfile, null);
     }
 
     /** Full generate entry with the orchestrator's collected
@@ -2102,9 +2258,9 @@ public final class JvmBackend {
             ModuleIdentityResolver.buildIndex(
                 classificationMap(modulePath, sourcePath));
         return generate(program, result, sourcePath, modulePath,
-            importResolutions, importedClasses, hostModules, isEntry,
-            emitSharedTable, standalone, classification, semanticProfile,
-            sharedShapes, Map.of());
+            importResolutions, importedClasses, hostModules, Map.of(),
+            isEntry, emitSharedTable, standalone, classification,
+            semanticProfile, sharedShapes, Map.of(), Map.of());
     }
 
     /**
@@ -2132,24 +2288,36 @@ public final class JvmBackend {
      *                     through it when the declaring module is one
      *                     the entry does not import directly (empty for
      *                     the standalone single-module adapter)
+     * @param sharedHostClasses the project-wide declared host-class
+     *                     union (raw externals specifier &rarr; class
+     *                     name &rarr; declared field records,
+     *                     ISSUE-0303 D4): the entry module's shared
+     *                     {@code $DealRt} scope emits one synthesized
+     *                     record class per declared host class from it
      */
     public static JvmCodegenResult generate(ProgramNode program, CheckResult result,
                                             String sourcePath, String modulePath,
                                             Map<String, String> importResolutions,
                                             Map<String, Map<String, ClassDeclaration>> importedClasses,
                                             Map<String, Map<String, Type>> hostModules,
+                                            Map<String, Map<String,
+                                                List<HostModuleDeclarations.HostField>>>
+                                                hostClassDeclarations,
                                             boolean isEntry,
                                             boolean emitSharedTable,
                                             CanonicalClassIdentityIndex identityIndex,
                                             Function<String, CanonicalModuleIdentity> moduleIdentities,
                                             SemanticProfile semanticProfile,
                                             List<Type> sharedShapes,
-                                            Map<CanonicalClassIdentity, String> sharedClassDeclarations) {
+                                            Map<CanonicalClassIdentity, String> sharedClassDeclarations,
+                                            Map<String, Map<String,
+                                                List<HostModuleDeclarations.HostField>>>
+                                                sharedHostClasses) {
         return generate(program, result, sourcePath, modulePath,
-            importResolutions, importedClasses, hostModules, isEntry,
-            emitSharedTable, identityIndex, moduleIdentities,
-            semanticProfile, sharedShapes, sharedClassDeclarations,
-            Map.of());
+            importResolutions, importedClasses, hostModules,
+            hostClassDeclarations, isEntry, emitSharedTable, identityIndex,
+            moduleIdentities, semanticProfile, sharedShapes,
+            sharedClassDeclarations, sharedHostClasses, Map.of());
     }
 
     /**
@@ -2170,6 +2338,9 @@ public final class JvmBackend {
                                             Map<String, String> importResolutions,
                                             Map<String, Map<String, ClassDeclaration>> importedClasses,
                                             Map<String, Map<String, Type>> hostModules,
+                                            Map<String, Map<String,
+                                                List<HostModuleDeclarations.HostField>>>
+                                                hostClassDeclarations,
                                             boolean isEntry,
                                             boolean emitSharedTable,
                                             CanonicalClassIdentityIndex identityIndex,
@@ -2177,15 +2348,18 @@ public final class JvmBackend {
                                             SemanticProfile semanticProfile,
                                             List<Type> sharedShapes,
                                             Map<CanonicalClassIdentity, String> sharedClassDeclarations,
+                                            Map<String, Map<String,
+                                                List<HostModuleDeclarations.HostField>>>
+                                                sharedHostClasses,
                                             Map<String, List<PlannedDefaultClass>>
                                                 plansByModulePath) {
         Objects.requireNonNull(semanticProfile,
             "semanticProfile must not be null");
         JvmBackend backend = new JvmBackend(result.typeMap(), result.symbolTable(),
             sourcePath, modulePath, importResolutions, importedClasses,
-            hostModules, isEntry, emitSharedTable, semanticProfile,
-            sharedShapes, identityIndex, moduleIdentities,
-            sharedClassDeclarations);
+            hostModules, hostClassDeclarations, isEntry, emitSharedTable,
+            semanticProfile, sharedShapes, identityIndex, moduleIdentities,
+            sharedClassDeclarations, sharedHostClasses);
         backend.plansByModulePath = Map.copyOf(plansByModulePath);
         return backend.generateProgram(program);
     }
@@ -4522,12 +4696,28 @@ public final class JvmBackend {
         emitLine("// (spec-v1.2 \u00a7JVM value mapping): it passes only where the declared");
         emitLine("// descriptor permits it (?T or null), and every other context rejects");
         emitLine("// it — the spec forbids exposing Java null as DEAL null across an");
-        emitLine("// untyped boundary without validation.");
+        emitLine("// untyped boundary without validation. ISSUE-0303 (D1/D2/D4) extends");
+        emitLine("// the checked rows: array returns validate the carrier and elements");
+        emitLine("// (E8010 on any inner failure — never an internal E8001/E8003);");
+        emitLine("// function-typed returns are never wrapped — a raw or foreign value");
+        emitLine("// fails E8010 and a properly wrapped $DealRt.FnValue with a");
+        emitLine("// byte-equal descriptor passes; class-typed returns validate nominal");
+        emitLine("// identity through the shared seam (E8001 for a foreign identity).");
         emitLine("static java.lang.Object __hostCheck(java.lang.String desc, java.lang.Object v, java.lang.String fn, boolean completion) {");
         emitLine("    java.lang.String d = desc;");
         emitLine("    while (d.startsWith(\"?\")) {");
         emitLine("        if (v == null) return null;");
         emitLine("        d = d.substring(1);");
+        emitLine("    }");
+        emitLine("    if (d.startsWith(\"[\")) {");
+        emitLine("        try { return $checkArray(d, v); }");
+        emitLine("        catch (DealError inner) {");
+        emitLine("            throw new DealError(completion ? \"E8001\" : \"E8010\", (completion ? \"expected \" : \"host function '\" + fn + \"' return value 1 type mismatch: expected \") + desc + \", got \" + inner.getMessage());");
+        emitLine("        }");
+        emitLine("    }");
+        emitLine("    if (d.startsWith(\"(\") || d.startsWith(\"async(\")) {");
+        emitLine("        if (v instanceof $DealRt.FnValue f && checkSig(d, f.descriptor())) return f;");
+        emitLine("        throw new DealError(completion ? \"E8001\" : \"E8010\", (completion ? \"expected \" : \"host function '\" + fn + \"' return value 1 type mismatch: expected \") + desc + \", got \" + $describe(v));");
         emitLine("    }");
         emitLine("    switch (d) {");
         emitLine("        case \"int\":");
@@ -4564,11 +4754,62 @@ public final class JvmBackend {
         emitLine("        case \"null\":");
         emitLine("            if (v == null) return null;");
         emitLine("            break;");
-        emitLine("        default:");
-        emitLine("            throw new DealError(\"E8001\", \"unsupported host boundary descriptor \" + desc);");
         emitLine("    }");
+        emitLine("    if (d.startsWith(\"@\")) return $check(desc, v);");
         emitLine("    if (completion) throw new DealError(\"E8001\", \"expected \" + desc + \", got \" + $describe(v));");
         emitLine("    throw new DealError(\"E8010\", \"host function '\" + fn + \"' return value 1 type mismatch: expected \" + desc + \", got \" + $describe(v));");
+        emitLine("}");
+        emitLine("// Host-boundary parameter check (ISSUE-0303 D2): every wrapper");
+        emitLine("// parameter is validated against the declared parameter descriptor");
+        emitLine("// at the call. Any inner failure — scalar/string/nullable kinds,");
+        emitLine("// array carrier/element mismatches, function descriptor deltas —");
+        emitLine("// raises E8010 \"parameter {i} type mismatch\" (never E8001/E8003");
+        emitLine("// from the boundary, the LuaJIT reference wrap shape); class-typed");
+        emitLine("// parameters keep the nominal E8001 identity check unwrapped (D4).");
+        emitLine("// The DEAL null (Java null here) passes a nullable descriptor's ?");
+        emitLine("// prefix through. The checked value crosses to the host method as");
+        emitLine("// the shared carrier (array wrapper / typed $DealRt function");
+        emitLine("// wrapper / synthesized record), never a converted or lambda");
+        emitLine("// value.");
+        emitLine("static java.lang.Object __hostParamCheck(int i, java.lang.String desc, java.lang.Object v) {");
+        emitLine("    java.lang.String d = desc;");
+        emitLine("    while (d.startsWith(\"?\")) {");
+        emitLine("        if (v == null) return null;");
+        emitLine("        d = d.substring(1);");
+        emitLine("    }");
+        emitLine("    if (d.startsWith(\"@\")) return $check(desc, v);");
+        emitLine("    try { return $check(desc, v); }");
+        emitLine("    catch (DealError inner) {");
+        emitLine("        throw new DealError(\"E8010\", \"parameter \" + i + \" type mismatch: \" + inner.getMessage());");
+        emitLine("    }");
+        emitLine("}");
+        emitLine("// Load-time capture of a declared host class's <C>_defaults map");
+        emitLine("// (ISSUE-0303 D4): the synthesized record construction depends on");
+        emitLine("// the host's mandatory defaults field; a missing or non-map field");
+        emitLine("// raises the load-time E8011.");
+        emitLine("static java.util.Map<java.lang.String, java.lang.Object> __hostDefaults(java.lang.Class<?> h, java.lang.String module, java.lang.String name) {");
+        emitLine("    try {");
+        emitLine("        java.lang.reflect.Field f = h.getDeclaredField(name + \"_defaults\");");
+        emitLine("        f.setAccessible(true);");
+        emitLine("        java.lang.Object v = f.get(null);");
+        emitLine("        if (v instanceof java.util.Map m) return m;");
+        emitLine("        throw new DealError(\"E8011\", \"host class '\" + name + \"' in module '\" + module + \"' has a non-map defaults value\");");
+        emitLine("    } catch (java.lang.NoSuchFieldException e) {");
+        emitLine("        throw new DealError(\"E8011\", \"host class '\" + name + \"' in module '\" + module + \"' is missing its defaults field (\" + name + \"_defaults)\");");
+        emitLine("    } catch (java.lang.IllegalAccessException e) {");
+        emitLine("        throw new DealError(\"E8011\", \"host class '\" + name + \"' in module '\" + module + \"' defaults are inaccessible\");");
+        emitLine("    }");
+        emitLine("}");
+        emitLine("// Defensive missing-default lookup for a host-class construction");
+        emitLine("// omitting a required field (checker-gated unreachable: the");
+        emitLine("// checker rejects omissions of required fields without a");
+        emitLine("// declaration default, and host declarations carry no default");
+        emitLine("// expressions in the corpus). Raises E8001 instead of storing");
+        emitLine("// a silent zero value.");
+        emitLine("static java.lang.Object __hostMissingDefault(java.util.Map<java.lang.String, java.lang.Object> defaults, java.lang.String name, java.lang.String cls) {");
+        emitLine("    java.lang.Object v = defaults.get(name);");
+        emitLine("    if (v == null) throw new DealError(\"E8001\", \"missing default for field '\" + name + \"' of class '\" + cls + \"'\");");
+        emitLine("    return v;");
         emitLine("}");
         emitLine("// ---- DEAL classes and tables (ISSUE-0095) ----");
         emitLine("// Nominal identity base: every generated DEAL class extends $Base and");
@@ -5011,6 +5252,29 @@ public final class JvmBackend {
                 + refArrayWrapperId(element)
                 + "(java.lang.Object[] data) { super(data); } }");
         }
+        // ISSUE-0303 D4: one synthesized record class per declared
+        // host class — the project-wide union (raw externals specifier
+        // \u2192 class name \u2192 declared fields), emitted once in the
+        // shared scope. The record carries the canonical externals
+        // identity text, per-field storage in declaration order,
+        // presence bits for optional fields, and a constructor matching
+        // the project-class construction shape; per-construction
+        // defaults apply in the parent D5 phase order at the
+        // construction site (emitHostClassConstruction). The identity
+        // field is read structurally by every module's $identityOf, so
+        // nominal checks and $describe reporting work across module
+        // boundaries. A per-class array wrapper extends __RefArray for
+        // host-class element arrays (e.g. the optional peers field of
+        // presence.Config).
+        for (Map.Entry<String, Map<String,
+                List<HostModuleDeclarations.HostField>>> e
+                : sharedHostClasses.entrySet()) {
+            String specifier = e.getKey();
+            for (Map.Entry<String, List<HostModuleDeclarations.HostField>>
+                    c : e.getValue().entrySet()) {
+                emitHostClassRecord(specifier, c.getKey(), c.getValue());
+            }
+        }
         // The per-signature function wrapper classes accumulate during
         // module emission and are spliced here, inside the shared scope.
         int dealRtInsertion = out.length();
@@ -5018,6 +5282,92 @@ public final class JvmBackend {
         if (sharedWrapperClasses.length() > 0) {
             out.insert(dealRtInsertion, sharedWrapperClasses.toString());
         }
+    }
+
+    /**
+     * Emits one synthesized host-class record inside the shared
+     * {@code $DealRt} scope (ISSUE-0303 D4): the canonical externals
+     * identity text, per-field storage in declared order (optional
+     * fields carry the boxed slot plus a presence flag), and a
+     * constructor in the project-class shape. Field storage types map
+     * through the diagnostic-free shared-scope mappers, so nested
+     * host-class references (cfg.ServerConfig.endpoint) resolve to the
+     * sibling synthesized records, and the per-class array wrapper
+     * extends the shared {@code __RefArray} for host-class element
+     * arrays (the presence fixture's optional peers field). The
+     * {@code $identity} field is read structurally by every module's
+     * {@code $identityOf}, so nominal checks and {@code $describe}
+     * reporting work across module boundaries. The records are never
+     * bound to the Java host's own classes.
+     */
+    private void emitHostClassRecord(String specifier, String className,
+            List<HostModuleDeclarations.HostField> fields) {
+        String simple = hostRecordSimpleName(specifier, className);
+        CanonicalClassIdentity identity = new CanonicalClassIdentity(
+            new CanonicalModuleIdentity.ExternalModule(specifier),
+            className);
+        String identityText = identityIndex.descriptorTextFor(identity);
+        emitLine("    // Synthesized host-class record " + identityText
+            + " (declared by the externals entry '" + specifier + "').");
+        emitLine("    static final class " + simple + " {");
+        emitLine("        final java.lang.String $identity;");
+        List<String> storageTypes = new ArrayList<>();
+        List<String> storageNames = new ArrayList<>();
+        List<Boolean> optionalFlags = new ArrayList<>();
+        for (HostModuleDeclarations.HostField hf : fields) {
+            ClassField cf = hf.declaration();
+            Type inner = hf.type() instanceof Type.Nullable nn
+                ? nn.inner() : hf.type();
+            String storage = hostRecordFieldJavaType(inner, cf.optional());
+            if (storage == null) {
+                throw new IllegalStateException(
+                    "host class field '" + className + "." + cf.name()
+                        + "' of type " + typeDescriptor(hf.type())
+                        + " has no shared-scope storage type (internal "
+                        + "invariant violation — validateHostExports "
+                        + "gated the shape)");
+            }
+            storageTypes.add(storage);
+            storageNames.add(javaName(cf.name()));
+            optionalFlags.add(cf.optional());
+            emitLine("        " + storage + " " + javaName(cf.name()) + ";");
+            if (cf.optional()) {
+                emitLine("        boolean " + javaName(cf.name())
+                    + "$present;");
+            }
+        }
+        StringBuilder params = new StringBuilder();
+        for (int i = 0; i < storageNames.size(); i++) {
+            if (i > 0) params.append(", ");
+            params.append(storageTypes.get(i)).append(' ')
+                .append(storageNames.get(i));
+            if (optionalFlags.get(i)) {
+                params.append(", boolean ").append(storageNames.get(i))
+                    .append("$present");
+            }
+        }
+        emitLine("        " + simple + "(" + params + ") {");
+        emitLine("            this.$identity = "
+            + quoteJavaString(identityText) + ";");
+        for (int i = 0; i < storageNames.size(); i++) {
+            emitLine("            this." + storageNames.get(i) + " = "
+                + storageNames.get(i) + ";");
+            if (optionalFlags.get(i)) {
+                emitLine("            this." + storageNames.get(i)
+                    + "$present = " + storageNames.get(i) + "$present;");
+            }
+        }
+        emitLine("        }");
+        emitLine("    }");
+        emitLine("    // Per-class array wrapper for " + className
+            + "[] / nullable-element arrays (shared __RefArray storage).");
+        emitLine("    static final class $HostArr$"
+            + escapedIdentifier(specifier) + "$" + javaName(className)
+            + " extends __RefArray {");
+        emitLine("        $HostArr$" + escapedIdentifier(specifier) + "$"
+            + javaName(className)
+            + "(java.lang.Object[] data) { super(data); }");
+        emitLine("    }");
     }
 
     /**
@@ -5458,8 +5808,11 @@ public final class JvmBackend {
         String wrapper = orNull
             ? classOrNullArrayWrapperName(c.name())
             : classArrayWrapperName(c.name());
+        // ISSUE-0303 D4: arrays of declared host classes map to the
+        // shared per-class __RefArray subclass emitted beside the
+        // synthesized record.
         if (isHostModuleClass(c)) {
-            return null;
+            return hostClassArrayWrapperRef(c);
         }
         if (isLocalClassType(c) && moduleClasses.containsKey(c.name())) {
             return classNameFor(modulePath) + "." + wrapper;
@@ -5491,8 +5844,11 @@ public final class JvmBackend {
         if (isBuiltinErrorType(c)) {
             return "java.lang.RuntimeException";
         }
+        // ISSUE-0303 D4: a declared host class references the
+        // synthesized shared record class (emitted once per compiled
+        // project from the project-wide host-class union).
         if (isHostModuleClass(c)) {
-            return null;
+            return hostRecordJavaRef(c);
         }
         if (isLocalClassType(c) && moduleClasses.containsKey(c.name())) {
             return classNameFor(modulePath) + "."
@@ -5527,6 +5883,21 @@ public final class JvmBackend {
                 return true;
             }
             if (hostModules.containsKey(raw.replace('/', '.'))) {
+                return true;
+            }
+            // ISSUE-0303 D4: the project-wide host-class union covers
+            // host classes ANY project module imports — the entry
+            // module's shared-scope pre-registration resolves wrapper
+            // shapes referencing host classes the entry itself does
+            // not import directly (their synthesized records still
+            // exist in the shared scope).
+            if (sharedHostClasses.containsKey(raw)) {
+                return true;
+            }
+            if (sharedHostClasses.containsKey(raw.replace('.', '/'))) {
+                return true;
+            }
+            if (sharedHostClasses.containsKey(raw.replace('/', '.'))) {
                 return true;
             }
         }
@@ -5805,30 +6176,49 @@ public final class JvmBackend {
      */
     private void emitHostBindings() {
         if (hostAliases.isEmpty()) return;
-        emitLine("// ---- Host module bindings (ISSUE-0100 JVM host ABI slice) ----");
+        emitLine("// ---- Host module bindings (ISSUE-0100 JVM host ABI slice; ISSUE-0303");
+        emitLine("// array/function/class shapes) ----");
         emitLine("// A host module is a Java class named by the module path");
         emitLine("// (host/http -> HostHttp) whose static methods implement the");
-        emitLine("// declared function exports (spec-v1.2 §JVM value mapping:");
-        emitLine("// int -> long, number -> double, boolean -> boolean, string ->");
+        emitLine("// declared function exports (spec-v1.2 \u00a7JVM value mapping:");
+        emitLine("// int -> int/long, number -> double, boolean -> boolean, string ->");
         emitLine("// java.lang.String, T | null -> the boxed reference, null -> Java");
-        emitLine("// null). Return values arrive as java.lang.Object across the");
-        emitLine("// untyped host boundary and are runtime-checked against the");
-        emitLine("// declared return descriptor on every call (E8010 mismatch; the");
-        emitLine("// spec forbids exposing Java null as DEAL null without");
-        emitLine("// validation). Async exports must return a");
+        emitLine("// null; arrays arrive as the shared $DealRt wrapper classes,");
+        emitLine("// function-typed parameters arrive as their typed $DealRt");
+        emitLine("// wrapper, class-typed parameters/returns arrive as the");
+        emitLine("// synthesized shared record). Return values arrive as");
+        emitLine("// java.lang.Object across the untyped host boundary and are");
+        emitLine("// runtime-checked against the declared return descriptor on every");
+        emitLine("// call (E8010 mismatch; the spec forbids exposing Java null as");
+        emitLine("// DEAL null without validation). Async exports must return a");
         emitLine("// java.util.concurrent.CompletableFuture (E8010 otherwise); the");
         emitLine("// await site joins it and checks the completion value (E8001).");
+        emitLine("// ISSUE-0303 D2: every wrapper parameter is java.lang.Object and");
+        emitLine("// the wrapper checks each argument against the declared");
+        emitLine("// parameter descriptor at the call (E8010 'parameter {i} type");
+        emitLine("// mismatch', never a masking read-site error; class-typed");
+        emitLine("// parameters keep the nominal E8001).");
         for (Map.Entry<String, String> e : hostAliases.entrySet()) {
             String alias = e.getKey();
             String raw = e.getValue();
             Map<String, Type> exports = hostModules.get(raw);
-            // The Method field per export is written by the load method's
-            // presence check before any wrapper can run (the import's
-            // static block precedes every later module-level use, and
-            // function bodies run after module load).
+            // The Method field per function export is written by the load
+            // method's presence check before any wrapper can run (the
+            // import's static block precedes every later module-level use,
+            // and function bodies run after module load). Class exports
+            // capture the host's <C>_defaults map instead (D4 — the
+            // synthesized record construction depends on it; a missing
+            // defaults field is a load-time E8011).
             for (Map.Entry<String, Type> ex : exports.entrySet()) {
-                emitLine("static java.lang.reflect.Method "
-                    + hostMethodFieldName(alias, ex.getKey()) + ";");
+                if (ex.getValue() instanceof Type.Func) {
+                    emitLine("static java.lang.reflect.Method "
+                        + hostMethodFieldName(alias, ex.getKey()) + ";");
+                } else if (ex.getValue() instanceof Type.Class c) {
+                    emitLine("static java.util.Map<java.lang.String,"
+                        + " java.lang.Object> "
+                        + hostDefaultsFieldName(alias, c.name()) + ";");
+                    registerHostClassCheckBranch(c);
+                }
             }
             emitHostLoadMethod(alias, raw, exports);
         }
@@ -5837,8 +6227,9 @@ public final class JvmBackend {
             String raw = e.getValue();
             Map<String, Type> exports = hostModules.get(raw);
             for (Map.Entry<String, Type> ex : exports.entrySet()) {
-                emitHostWrapperMethod(alias, raw, ex.getKey(),
-                    (Type.Func) ex.getValue());
+                if (ex.getValue() instanceof Type.Func f) {
+                    emitHostWrapperMethod(alias, raw, ex.getKey(), f);
+                }
             }
         }
     }
@@ -5862,17 +6253,50 @@ public final class JvmBackend {
         return "__host$" + javaName(alias) + "$" + javaName(exportName);
     }
 
+    /** Emitted name of the load-time-captured {@code <C>_defaults} map
+     * field for one declared host class export
+     * ({@code $hostDefaults$<alias>$<Class>}). */
+    private String hostDefaultsFieldName(String alias, String className) {
+        return "$hostDefaults$" + javaName(alias) + "$" + javaName(className);
+    }
+
+    /**
+     * Registers the shared-seam nominal branch for one declared host
+     * class (ISSUE-0303 D4): the emitted {@code $check(descriptor, v)}
+     * helper accepts exactly the synthesized shared record class and
+     * raises E8001 with the pinned expected/got identity messages for a
+     * foreign-identity or non-class value — the same branch shape
+     * {@link #emitClass} appends for project classes. Registered once
+     * per class identity.
+     */
+    private void registerHostClassCheckBranch(Type.Class c) {
+        String identity = classCheckDescriptor(c);
+        if (!emittedHostClassBranches.add(identity)) return;
+        String record = hostRecordJavaRef(c);
+        classCheckBranches.add("if (descriptor.equals("
+            + quoteJavaString(identity) + ")) {");
+        classCheckBranches.add("    if (v instanceof " + record + " b) return b;");
+        classCheckBranches.add("    java.lang.String actualIdentity = $identityOf(v);");
+        classCheckBranches.add("    if (actualIdentity != null) throw new DealError(\"E8001\", \"expected instance of "
+            + identity + ", got \" + actualIdentity);");
+        classCheckBranches.add("    throw new DealError(\"E8001\", \"expected class instance, got \" + $describe(v));");
+        classCheckBranches.add("}");
+    }
+
     /**
      * Emits the load-time presence-check method for one host import alias
-     * (ISSUE-0100, spec §Host ABI): the host module runtime object must
-     * expose every declared export (missing → load-time error), and extra
+     * (ISSUE-0100, spec \u00a7Host ABI): the host module runtime object must
+     * expose every declared export (missing \u2192 load-time error), and extra
      * host exports are ignored. The JVM host module object is a Java class
      * (named {@link #classNameFor} of the module path) whose static
      * methods are the exports: {@code Class.forName} loads it (missing
-     * class → E8011), and {@code getDeclaredMethod} with the
+     * class \u2192 E8011), and {@code getDeclaredMethod} with the
      * descriptor-derived parameter classes validates each declared export
-     * (missing or signature-mismatched method → E8011). Only declared
-     * exports are ever looked up, so extra methods on the host class are
+     * (missing or signature-mismatched method \u2192 E8011). Declared host
+     * class exports capture the host's mandatory {@code <C>_defaults}
+     * map (missing or non-map \u2192 E8011) — the synthesized record
+     * construction depends on it (ISSUE-0303 D4). Only declared exports
+     * are ever looked up, so extra methods on the host class are
      * structurally dropped. The cached {@code Method} values make the
      * wrapper calls re-execute the load-time validation result without
      * repeating the lookup.
@@ -5890,18 +6314,23 @@ public final class JvmBackend {
             + " throw new DealError(\"E8011\", \"host module '" + raw
             + "' not found (class " + clsName + ")\"); }");
         for (Map.Entry<String, Type> ex : exports.entrySet()) {
-            Type.Func f = (Type.Func) ex.getValue();
-            StringBuilder pcs = new StringBuilder();
-            for (int i = 0; i < f.paramTypes().size(); i++) {
-                if (i > 0) pcs.append(", ");
-                pcs.append(hostParamClassLiteral(f.paramTypes().get(i)));
+            if (ex.getValue() instanceof Type.Func f) {
+                StringBuilder pcs = new StringBuilder();
+                for (int i = 0; i < f.paramTypes().size(); i++) {
+                    if (i > 0) pcs.append(", ");
+                    pcs.append(hostParamClassLiteral(f.paramTypes().get(i)));
+                }
+                emitLine(hostMethodFieldName(alias, ex.getKey())
+                    + " = __hostMethod(__h, \"" + raw + "\", "
+                    + quoteJavaString(ex.getKey()) + ", "
+                    + quoteJavaString(typeDescriptor(f)) + ","
+                    + " new java.lang.Class[]{ "
+                    + pcs + " });");
+            } else if (ex.getValue() instanceof Type.Class c) {
+                emitLine(hostDefaultsFieldName(alias, c.name())
+                    + " = __hostDefaults(__h, \"" + raw + "\", "
+                    + quoteJavaString(c.name()) + ");");
             }
-            emitLine(hostMethodFieldName(alias, ex.getKey())
-                + " = __hostMethod(__h, \"" + raw + "\", "
-                + quoteJavaString(ex.getKey()) + ", "
-                + quoteJavaString(typeDescriptor(f)) + ","
-                + " new java.lang.Class[]{ "
-                + pcs + " });");
         }
         indent--;
         emitLine("}");
@@ -5909,32 +6338,28 @@ public final class JvmBackend {
 
     /**
      * Emits the wrapper method for one declared host function export
-     * (ISSUE-0100). The wrapper's Java signature is the declared DEAL
-     * signature's JVM mapping (spec §JVM value mapping), so DEAL call
-     * sites pass statically-typed arguments — the JVM backend contract
-     * permits method signatures to prove DEAL→host parameter checks
-     * redundant. The host method is invoked reflectively, which keeps the
-     * artifact independent of the host class's compile-time presence (a
-     * missing host class is a LOAD-TIME E8011, never a javac failure) and
-     * yields the host return as {@code java.lang.Object} — the untyped
-     * boundary the return check validates:
-     * <ul>
-     *   <li>sync returns: {@code __hostCheck} validates the dynamic value
-     *       against the declared return descriptor — wrong runtime kind →
-     *       E8010, Java null for a non-nullable return → E8010 (the spec's
-     *       "must not expose Java null as DEAL null without validation"),
-     *       {@code T | null} accepts Java null as the DEAL null (the JVM
-     *       null sentinel), an out-of-safe-range int → E8004;</li>
-     *   <li>async exports: the host must return a
-     *       {@code java.util.concurrent.CompletableFuture} — the backend
-     *       async operation the await lowering accepts (spec §Host ABI
-     *       and §Async/await: "A JVM backend may implement async
-     *       lowering with ... blocking calls") — anything else → E8010;
-     *       the wrapper joins it (the blocking await lowering) and checks
-     *       the completion value against the declared return descriptor →
-     *       E8001 at the await site, matching LuaJIT's await-site
-     *       completion check.</li>
-     * </ul>
+     * (ISSUE-0100; ISSUE-0303 D1\u2013D3). The wrapper's parameters are
+     * {@code java.lang.Object} — every argument is runtime-checked at
+     * the call against the declared parameter descriptor (the
+     * {@code HOST_PARAMETER} boundary, common-semantic-lowering-layer
+     * D13): scalar/string/nullable mismatches, array carrier/element
+     * mismatches, and function descriptor deltas all raise E8010
+     * {@code parameter {i} type mismatch} (never E8001/E8003 from the
+     * boundary); class-typed parameters validate nominal identity
+     * (E8001 for a foreign identity); a typed table read materializing
+     * a host argument yields the raw value, so the boundary check here
+     * is the only check (the corpus's read-site deferral shape). The
+     * checked values cross to the host method reflectively — arrays as
+     * the shared wrapper, function values as the typed {@code $DealRt}
+     * wrapper (no lambda conversion), class values as the synthesized
+     * record, Java null as the DEAL null on nullable parameters — and
+     * the return value is checked against the declared return
+     * descriptor on every call (E8010 wrong kind incl. Java null
+     * crossing non-nullable; E8004 int range; unpaired surrogates;
+     * array carrier/elements; function-typed returns are never
+     * wrapped — a properly wrapped {@code $DealRt.FnValue} with a
+     * byte-equal descriptor passes; nullable returns accept Java null;
+     * class returns validate nominal identity with E8001).
      */
     private void emitHostWrapperMethod(String alias, String raw,
                                        String exportName, Type.Func f) {
@@ -5946,13 +6371,17 @@ public final class JvmBackend {
         List<String> argNames = new ArrayList<>();
         for (int i = 0; i < f.paramTypes().size(); i++) {
             if (i > 0) sig.append(", ");
-            sig.append(hostParamJavaType(f.paramTypes().get(i)))
-                .append(" __a").append(i);
+            sig.append("java.lang.Object __a").append(i);
             argNames.add("__a" + i);
         }
         sig.append(") {");
         emitLine(sig.toString());
         indent++;
+        for (int i = 0; i < f.paramTypes().size(); i++) {
+            emitLine(argNames.get(i) + " = __hostParamCheck(" + (i + 1) + ", "
+                + quoteJavaString(typeDescriptor(f.paramTypes().get(i)))
+                + ", " + argNames.get(i) + ");");
+        }
         StringBuilder args = new StringBuilder();
         for (int i = 0; i < argNames.size(); i++) {
             if (i > 0) args.append(", ");
@@ -5989,7 +6418,9 @@ public final class JvmBackend {
     /**
      * The return statement of a host wrapper: {@code null} returns run the
      * check and return nothing (a {@code void} method), value returns cast
-     * the checked {@code __hostCheck} result to the boxed JVM mapping.
+     * the checked {@code __hostCheck} result to the boxed JVM mapping
+     * (shared array wrappers, the typed {@code $DealRt} function wrapper,
+     * and the synthesized host-class record join the primitive casts).
      * {@code completion} selects the error code — E8001 at the await site
      * for async completion values (LuaJIT's await-site check), E8010 for
      * sync returns (host-module-abi D3 case 2).
@@ -6000,7 +6431,26 @@ public final class JvmBackend {
             return "__hostCheck(\"null\", " + valueCode + ", "
                 + quoteJavaString(fn) + ", " + completion + ");";
         }
-        String cast = switch (ret) {
+        String cast = hostReturnCast(ret);
+        return "return (" + cast + ") __hostCheck("
+            + quoteJavaString(typeDescriptor(ret)) + ", " + valueCode + ", "
+            + quoteJavaString(fn) + ", " + completion + ");";
+    }
+
+    /** The boxed Java cast of a checked host return value for the
+     * declared return type (the DEAL-side JVM mapping). */
+    private String hostReturnCast(Type ret) {
+        Type inner = ret instanceof Type.Nullable n ? n.inner() : ret;
+        if (inner instanceof Type.Array a) {
+            return arrayWrapperName(a.element());
+        }
+        if (inner instanceof Type.Func f) {
+            return registerWrapperShape(f);
+        }
+        if (inner instanceof Type.Class c) {
+            return hostRecordJavaRef(c);
+        }
+        return switch (inner) {
             case Type.Int ignored ->
                 int32Mode ? "java.lang.Integer" : "java.lang.Long";
             case Type.Number ignored -> "java.lang.Double";
@@ -6018,19 +6468,19 @@ public final class JvmBackend {
             };
             default -> "java.lang.Object";
         };
-        return "return (" + cast + ") __hostCheck("
-            + quoteJavaString(typeDescriptor(ret)) + ", " + valueCode + ", "
-            + quoteJavaString(fn) + ", " + completion + ");";
     }
 
     /**
-     * Validates every declared export of a host module against the slice's
-     * supported shapes (ISSUE-0100). Supported: function exports with
-     * parameter types from int/number/boolean/string and their nullable
-     * forms, and return types from the same set plus {@code null} (sync or
-     * async). Everything else — class exports, array/table/function-typed
-     * parameters or returns, nullable-of-unsupported, function-typed
-     * returns — is an E6000 at the import statement, never a silently
+     * Validates every declared export of a host module against the
+     * supported shapes (ISSUE-0100; ISSUE-0303 D1/D4 lifts the
+     * array/function/class shapes — jvm-v12-host-abi-completion).
+     * Supported: function exports whose parameters and returns are
+     * int/number/boolean/string/null, arrays of supported element
+     * shapes, function types, declared host classes, and their nullable
+     * forms; class exports (declared host classes) whose field types
+     * are supported shapes. Everything else — table/bytes carriers and
+     * class-typed positions naming anything but a declared host class —
+     * is an E6000 at the import statement, never a silently
      * miscompiled artifact. Returns true when every declared export is
      * supported.
      */
@@ -6042,84 +6492,185 @@ public final class JvmBackend {
             Type t = e.getValue();
             if (t instanceof Type.Func f) {
                 for (Type pt : f.paramTypes()) {
-                    if (hostParamJavaType(pt) == null) {
+                    if (!hostShapeSupported(pt)) {
                         unsupported("host export '" + name + "' of module '"
                             + raw + "' declares unsupported parameter type '"
-                            + typeName(pt) + "' (the JVM host ABI slice "
-                            + "supports int, number, boolean, string, bytes, "
-                            + "and their nullable forms as parameters)", span);
+                            + typeName(pt) + "'", span);
                         ok = false;
                     }
                 }
                 Type ret = f.returnType();
-                if (!hostReturnSupported(ret)) {
+                if (!hostShapeSupported(ret)) {
                     unsupported("host export '" + name + "' of module '"
                         + raw + "' declares unsupported return type '"
-                        + typeName(ret) + "' (the JVM host ABI slice "
-                        + "supports int, number, boolean, string, bytes, "
-                        + "null, and their nullable forms as returns)", span);
+                        + typeName(ret) + "'", span);
                     ok = false;
+                }
+            } else if (t instanceof Type.Class c) {
+                if (!isDeclaredHostClass(c)) {
+                    unsupported("host export '" + name + "' of module '"
+                        + raw + "' is not a declared host class", span);
+                    ok = false;
+                    continue;
+                }
+                List<HostModuleDeclarations.HostField> fields =
+                    hostFieldsFor(c);
+                if (fields == null) {
+                    unsupported("host class export '" + name + "' of module '"
+                        + raw + "' (its declaration is unavailable)", span);
+                    ok = false;
+                    continue;
+                }
+                for (HostModuleDeclarations.HostField hf : fields) {
+                    if (!hostShapeSupported(hf.type())) {
+                        unsupported("host class '" + name + "' field '"
+                            + hf.declaration().name() + "' of type "
+                            + typeName(hf.type()), span);
+                        ok = false;
+                    }
                 }
             } else {
                 unsupported("host export '" + name + "' of module '" + raw
-                    + "' (only function exports are in the JVM host ABI "
-                    + "slice; host class exports are not supported yet)",
-                    span);
+                    + "' (only function and declared class exports are in "
+                    + "the JVM host ABI)", span);
                 ok = false;
             }
         }
         return ok;
     }
 
-    /** True when the declared return type of a host function is one the
-     * slice's return boundary checks can validate. */
-    private boolean hostReturnSupported(Type ret) {
-        if (ret instanceof Type.Null) return true;
-        if (ret instanceof Type.Nullable n) return hostReturnSupported(n.inner());
-        return switch (ret) {
+    /** True when the declared shape is one the extended host boundary
+     * can validate (ISSUE-0303 D1): primitives/string/null, declared
+     * host classes, arrays of supported elements, function signatures
+     * over supported shapes, and their nullable forms. Table and bytes
+     * carriers stay out (E6000 — the recursive bytes closure is
+     * ISSUE-0160's; C FFI host entries stay E6003). */
+    private boolean hostShapeSupported(Type t) {
+        if (t instanceof Type.Null) return true;
+        if (t instanceof Type.Nullable n) return hostShapeSupported(n.inner());
+        if (t instanceof Type.Array a) return hostShapeSupported(a.element());
+        if (t instanceof Type.Func f) {
+            for (Type pt : f.paramTypes()) {
+                if (!hostShapeSupported(pt)) return false;
+            }
+            return hostShapeSupported(f.returnType());
+        }
+        if (t instanceof Type.Class c) return isDeclaredHostClass(c);
+        return switch (t) {
             case Type.Int ignored -> true;
             case Type.Number ignored -> true;
             case Type.Boolean ignored -> true;
             case Type.String ignored -> true;
             case Type.Bytes ignored -> true;
+            case Type.Table ignored -> false;
             default -> false;
         };
     }
 
-    /** Java parameter type for a host function parameter of the given
-     * declared DEAL type; {@code null} when unsupported. */
+    /**
+     * True when the class is a declared host-class export of a host
+     * module this module imports (ISSUE-0303 D4): its carried identity
+     * is an externals projection whose raw specifier keys
+     * {@link #hostModules} AND the export map carries the class under
+     * its name.
+     */
+    private boolean isDeclaredHostClass(Type.Class c) {
+        if (!isHostModuleClass(c)) return false;
+        String specifier = hostSpecifierOf(c);
+        Map<String, Type> exports = hostModules.get(specifier);
+        return exports != null && exports.get(c.name()) instanceof Type.Class;
+    }
+
+    /** The raw import specifier of a host-class type (the externals
+     * projection's raw specifier, verbatim — the manifest key as
+     * written). */
+    private String hostSpecifierOf(Type.Class c) {
+        CanonicalModuleIdentity mi = c.identity().moduleIdentity();
+        return mi instanceof CanonicalModuleIdentity.ExternalModule em
+            ? em.rawImportSpecifier() : null;
+    }
+
+    /** The declared field records of a host class (declaration order),
+     * or {@code null} when unavailable. */
+    private List<HostModuleDeclarations.HostField> hostFieldsFor(Type.Class c) {
+        String specifier = hostSpecifierOf(c);
+        if (specifier == null) return null;
+        Map<String, List<HostModuleDeclarations.HostField>> classes =
+            hostClassDeclarations.get(specifier);
+        if (classes == null) {
+            // Dotted/slash converted spelling fallback (the retired
+            // shapeReferencesHostModule three-way matching precedent).
+            classes = hostClassDeclarations.get(specifier.replace('.', '/'));
+            if (classes == null) {
+                classes = hostClassDeclarations.get(
+                    specifier.replace('/', '.'));
+            }
+        }
+        return classes == null ? null : classes.get(c.name());
+    }
+
+    /** The declared {@link ClassField} of a host class field, or
+     * {@code null} when unavailable. */
+    private ClassField hostClassField(Type.Class cls, String fieldName) {
+        List<HostModuleDeclarations.HostField> fields = hostFieldsFor(cls);
+        if (fields == null) return null;
+        for (HostModuleDeclarations.HostField hf : fields) {
+            if (hf.declaration().name().equals(fieldName)) {
+                return hf.declaration();
+            }
+        }
+        return null;
+    }
+
+    /** The import alias of this module that imports the host module
+     * declaring {@code c}, or {@code null} when none matches. */
+    private String hostAliasForClass(Type.Class c) {
+        String specifier = hostSpecifierOf(c);
+        for (Map.Entry<String, String> e : hostAliases.entrySet()) {
+            String raw = e.getValue();
+            if (raw.equals(specifier)
+                    || raw.equals(specifier == null ? null
+                        : specifier.replace('.', '/'))
+                    || raw.equals(specifier == null ? null
+                        : specifier.replace('/', '.'))) {
+                return e.getKey();
+            }
+        }
+        return null;
+    }
+
+    /** Java parameter type for a host wrapper parameter (ISSUE-0303
+     * D2): every parameter is {@code java.lang.Object} — the wrapper
+     * checks each argument against the declared descriptor at the call,
+     * so no statically-typed signature can mask the boundary error. */
     private String hostParamJavaType(Type t) {
-        return switch (t) {
-            case Type.Int ignored -> int32Mode ? "int" : "long";
-            case Type.Number ignored -> "double";
-            case Type.Boolean ignored -> "boolean";
-            case Type.String ignored -> "java.lang.String";
-            // ISSUE-0160 D5: bytes-typed host parameters arrive as the
-            // shared $DealRt.Bytes carrier (the load-time
-            // getDeclaredMethod class literal, the call-time parameter
-            // boundary — a failed load-time resolution raises the
-            // pinned E8010 "parameter {i} type mismatch", never a
-            // masking read-site error); nullable forms pass Java null
-            // as the DEAL null.
-            case Type.Bytes ignored -> "$DealRt.Bytes";
-            case Type.Nullable n -> switch (n.inner()) {
-                case Type.Int ignored ->
-                    int32Mode ? "java.lang.Integer" : "java.lang.Long";
-                case Type.Number ignored -> "java.lang.Double";
-                case Type.Boolean ignored -> "java.lang.Boolean";
-                case Type.String ignored -> "java.lang.String";
-                case Type.Bytes ignored -> "$DealRt.Bytes";
-                default -> null;
-            };
-            default -> null;
-        };
+        return "java.lang.Object";
     }
 
     /** Java {@code Class} literal for a host function parameter of the
      * given declared DEAL type (the load-time
-     * {@code getDeclaredMethod} signature check). */
+     * {@code getDeclaredMethod} signature check): the declared JVM
+     * mapping — primitive carriers, the shared array wrappers, the
+     * typed {@code $DealRt} function wrapper class, and the synthesized
+     * host-class record. */
     private String hostParamClassLiteral(Type t) {
-        return switch (t) {
+        Type inner = t instanceof Type.Nullable n ? n.inner() : t;
+        if (inner instanceof Type.Array a) {
+            String wrapper = arrayWrapperName(a.element());
+            return wrapper == null ? "java.lang.Object.class"
+                : wrapper + ".class";
+        }
+        if (inner instanceof Type.Func f) {
+            String shape = registerWrapperShape(f);
+            return shape == null ? "java.lang.Object.class"
+                : shape + ".class";
+        }
+        if (inner instanceof Type.Class c) {
+            String record = hostRecordJavaRef(c);
+            return record == null ? "java.lang.Object.class"
+                : record + ".class";
+        }
+        return switch (inner) {
             case Type.Int ignored -> int32Mode ? "int.class" : "long.class";
             case Type.Number ignored -> "double.class";
             case Type.Boolean ignored -> "boolean.class";
@@ -6139,14 +6690,74 @@ public final class JvmBackend {
     }
 
     /** Java return type of a host wrapper method ({@code null} declares a
-     * {@code void} method, mirroring {@link #javaReturnType}). */
+     * {@code void} method, mirroring {@link #javaReturnType}); array
+     * returns map to the shared array wrapper, function returns to the
+     * typed {@code $DealRt} wrapper, class returns to the synthesized
+     * record. */
     private String hostReturnJavaType(Type t) {
         if (t instanceof Type.Null) return "void";
-        return switch (t) {
-            case Type.Nullable n -> hostParamJavaType(n);
-            case Type.Bytes ignored -> hostParamJavaType(t);
-            default -> hostParamJavaType(t);
+        // A nullable return keeps the BOXED reference — the wrapper
+        // never unboxes (Java null is the DEAL null; unboxing would
+        // raise an NPE before the caller's nullable position ever sees
+        // the value).
+        if (t instanceof Type.Nullable n) {
+            return hostReturnCast(n);
+        }
+        Type inner = t;
+        if (inner instanceof Type.Array a) {
+            return arrayWrapperName(a.element());
+        }
+        if (inner instanceof Type.Func f) {
+            return registerWrapperShape(f);
+        }
+        if (inner instanceof Type.Class c) {
+            return hostRecordJavaRef(c);
+        }
+        return switch (inner) {
+            case Type.Int ignored -> int32Mode ? "int" : "long";
+            case Type.Number ignored -> "double";
+            case Type.Boolean ignored -> "boolean";
+            case Type.String ignored -> "java.lang.String";
+            case Type.Bytes ignored -> "$DealRt.Bytes";
+            default -> "java.lang.Object";
         };
+    }
+
+    /** The shared {@code $DealRt} synthesized record class simple name
+     * for one declared host class (ISSUE-0303 D4: deterministic from
+     * the externals specifier and the class name — single emission
+     * point in the shared scope, never bound to the Java host's own
+     * classes). */
+    static String hostRecordSimpleName(String rawSpecifier,
+                                       String className) {
+        return "$Host$" + escapedIdentifier(rawSpecifier) + "$"
+            + javaName(className);
+    }
+
+    /** The fully qualified shared record reference for one declared
+     * host class ({@code $DealRt.$Host$...}). */
+    private String hostRecordJavaRef(String rawSpecifier, String className) {
+        return "$DealRt." + hostRecordSimpleName(rawSpecifier, className);
+    }
+
+    /** The fully qualified shared record reference for a host-class
+     * type, or {@code null} when the identity is not an externals
+     * projection. */
+    private String hostRecordJavaRef(Type.Class c) {
+        String specifier = hostSpecifierOf(c);
+        return specifier == null ? null
+            : hostRecordJavaRef(specifier, c.name());
+    }
+
+    /** The shared per-class array wrapper reference for a host-class
+     * element shape ({@code $DealRt.$HostArr$...} extending the shared
+     * {@code __RefArray}), or {@code null} when the identity is not an
+     * externals projection. */
+    private String hostClassArrayWrapperRef(Type.Class c) {
+        String specifier = hostSpecifierOf(c);
+        if (specifier == null) return null;
+        return "$DealRt.$HostArr$" + escapedIdentifier(specifier) + "$"
+            + javaName(c.name());
     }
 
     // Host-boundary descriptors reuse the canonical ISSUE-0110 static
@@ -10258,6 +10869,13 @@ public final class JvmBackend {
             return emitErrorLiteral(ol);
         }
         if (t instanceof Type.Class cls) {
+            // ISSUE-0303 D4: a declared host class constructs the
+            // synthesized shared record through the host's captured
+            // defaults map (the preserved defaults-map entry, D5 phase
+            // order).
+            if (isHostModuleClass(cls)) {
+                return emitHostClassConstruction(cls, ol);
+            }
             return emitClassConstruction(cls, ol);
         }
         if (t instanceof Type.Table) {
@@ -10328,6 +10946,147 @@ public final class JvmBackend {
         }
         return emitClassConstructorCall(cd, classNameForClass(cd.name()),
             obj, true, null, publishedPlanFor(cd));
+    }
+
+    /**
+     * Emits construction of a declared HOST class (ISSUE-0303 D4): the
+     * synthesized shared {@code $DealRt} record built through the
+     * host's load-time-captured {@code <C>_defaults} map with the
+     * parent D5 phase order — provided fields evaluate left-to-right in
+     * literal order, an extra provided name (absent from the defaults
+     * map) raises E8007 before any default evaluation, omitted required
+     * fields fill from the defaults map (validated against the declared
+     * field type), optional omissions stay absent, and the published
+     * record carries the canonical externals identity. Construction
+     * uses the same materialization machinery as project-class
+     * construction, so a side-effecting provided value runs in literal
+     * order regardless of declaration order. A failed construction
+     * publishes no instance.
+     */
+    private String emitHostClassConstruction(Type.Class cls,
+                                             ObjectLiteralExpr obj) {
+        List<HostModuleDeclarations.HostField> fields = hostFieldsFor(cls);
+        if (fields == null) {
+            unsupported("construction of host class '" + cls.name()
+                + "' (its declaration is unavailable)", obj.span());
+            return "null";
+        }
+        String alias = hostAliasForClass(cls);
+        if (alias == null) {
+            unsupported("construction of host class '" + cls.name()
+                + "' (no import alias maps the declaring host module)",
+                obj.span());
+            return "null";
+        }
+        String record = hostRecordJavaRef(cls);
+        if (record == null) return "null";
+        String defaultsRef = hostDefaultsFieldName(alias, cls.name());
+        String identity = classCheckDescriptor(cls);
+        // Provided values evaluate left-to-right in literal order with
+        // the field-declared read-site targets (the same machinery the
+        // project-class constructor call uses).
+        List<ExpressionNode> valueNodes = new ArrayList<>();
+        List<Type> valueTargets = new ArrayList<>();
+        for (Property prop : obj.properties()) {
+            valueNodes.add(prop.value());
+            Type fieldType = null;
+            for (HostModuleDeclarations.HostField hf : fields) {
+                if (hf.declaration().name().equals(prop.name())) {
+                    fieldType = hf.type();
+                    break;
+                }
+            }
+            valueTargets.add(fieldType);
+        }
+        List<String> codes = emitOperandsInOrder(valueNodes, valueTargets);
+        for (int i = 0; i < valueNodes.size(); i++) {
+            String code = codes.get(i);
+            if (code.startsWith("__t")) continue; // already materialized
+            if (isPureAfterEmission(valueNodes.get(i))) continue;
+            String javaType = materializationTempType(valueNodes.get(i),
+                valueTargets.get(i));
+            if (javaType == null) continue; // diagnostic already recorded
+            String temp = nextEvalTempName();
+            preStatements.add(new PreLine(
+                javaType + " " + temp + " = " + code + ";", 0));
+            preStatementsDeclareTemps = true;
+            codes.set(i, temp);
+        }
+        Map<String, ExpressionNode> providedNodes = new LinkedHashMap<>();
+        Map<String, String> provided = new LinkedHashMap<>();
+        for (int i = 0; i < obj.properties().size(); i++) {
+            providedNodes.put(obj.properties().get(i).name(),
+                valueNodes.get(i));
+            provided.put(obj.properties().get(i).name(), codes.get(i));
+        }
+        // Phase 1 (parent D5): an extra provided name — a name the
+        // host's defaults map does not carry — raises E8007 before any
+        // default evaluation or field validation runs.
+        for (Property prop : obj.properties()) {
+            preStatements.add(new PreLine("if (!" + defaultsRef
+                + ".containsKey(" + quoteJavaString(prop.name())
+                + ")) throw new DealError(\"E8007\", \"extra field '"
+                + prop.name() + "' in class '" + identity + "'\");", 0));
+        }
+        // Phases 2\u20134: constructor arguments in field declaration
+        // order — provided values, defaults-map fills for omitted
+        // required fields, absent optional fields, per-field validation,
+        // and the published identity-carrying record.
+        List<String> args = new ArrayList<>();
+        for (HostModuleDeclarations.HostField hf : fields) {
+            ClassField cf = hf.declaration();
+            Type fieldType = hf.type();
+            String code = provided.get(cf.name());
+            ExpressionNode valueNode = providedNodes.get(cf.name());
+            Type inner = fieldType instanceof Type.Nullable nn
+                ? nn.inner() : fieldType;
+            boolean optional = cf.optional();
+            if (code != null && valueNode != null
+                    && needsBooleanBoundary(valueNode, fieldType)) {
+                code = "booleanNotNull(" + code + ")";
+            }
+            if (code == null && !optional) {
+                // Omitted required field: the host defaults map fills it
+                // and the raw map value validates against the declared
+                // field type (checker-gated defensive: the checker
+                // rejects omissions of fields without a declaration
+                // default, and host declarations carry no default
+                // expressions in the corpus).
+                String desc = typeDescriptor(fieldType);
+                code = "(" + hostRecordFieldJavaType(inner, optional)
+                    + ") $check("
+                    + quoteJavaString(desc)
+                    + ", __hostMissingDefault(" + defaultsRef + ", "
+                    + quoteJavaString(cf.name()) + ", "
+                    + quoteJavaString(identity) + "))";
+            } else if (code == null) {
+                // Omitted optional field: absent (the DEAL null, not
+                // present).
+                code = "null";
+            } else if (valueNode != null) {
+                code = coerceNullValueCode(code, valueNode,
+                    hostRecordFieldJavaType(inner, optional),
+                    valueNode.span());
+                code = adaptIntBoundary(valueNode, code, fieldType);
+            }
+            args.add(code);
+            if (optional) {
+                args.add(provided.containsKey(cf.name()) ? "true" : "false");
+            }
+        }
+        return "new " + record + "(" + String.join(", ", args) + ")";
+    }
+
+    /** The Java storage type of one declared host-class record field
+     * (ISSUE-0303 D4): the diagnostic-free shared-scope mapping —
+     * optional fields store the nullable reference of the inner type
+     * (the DEAL null is the absent value, presence is the separate
+     * flag), required fields store the declared type's JVM mapping. */
+    private String hostRecordFieldJavaType(Type inner, boolean optional) {
+        if (optional) {
+            return silentNullableJavaType(inner);
+        }
+        return silentJavaLocalType(inner);
     }
 
     /**
@@ -12939,23 +13698,33 @@ public final class JvmBackend {
                     + hostRaw + "'", mae.span());
                 return "null";
             }
-            // The wrapper's Java parameter types are the declared DEAL
-            // parameter types' JVM mapping (visible to this backend), so
-            // each argument routes through the same boundaryArgCode
-            // adaptation every direct call uses — including the
-            // Object-mediated coercion of null-typed assignment arguments
-            // into the wrapper parameter's Java type.
+            // ISSUE-0303 D2: the wrapper's parameters are
+            // java.lang.Object and the wrapper checks each argument
+            // against the declared parameter descriptor at the call
+            // (E8010 'parameter {i} type mismatch' — the HOST_PARAMETER
+            // boundary). The read-site target stays the declared
+            // parameter type, but a typed table read materializing a
+            // host argument yields the raw value (the deferral flag
+            // below), so the boundary — never the read site — raises
+            // the mismatch.
             List<Type> argTargets = new ArrayList<>(call.args().size());
             for (int i = 0; i < call.args().size(); i++) {
                 argTargets.add(f.paramTypes().get(i));
             }
-            List<String> argCodes = emitOperandsInOrder(call.args(), argTargets);
+            hostArgDeferDepth++;
+            List<String> argCodes;
+            try {
+                argCodes = emitOperandsInOrder(call.args(), argTargets);
+            } finally {
+                hostArgDeferDepth--;
+            }
             StringBuilder sb = new StringBuilder(
                 hostWrapperName(id.name(), mae.field())).append('(');
             for (int i = 0; i < argCodes.size(); i++) {
                 if (i > 0) sb.append(", ");
-                sb.append(boundaryArgCode(call.args().get(i),
-                    argCodes.get(i), f.paramTypes().get(i)));
+                sb.append(coerceNullValueCode(argCodes.get(i),
+                    call.args().get(i), "java.lang.Object",
+                    call.args().get(i).span()));
             }
             return sb.append(')').toString();
         }
@@ -13240,7 +14009,9 @@ public final class JvmBackend {
         Type objType = typeOf(he.object());
         if (objType instanceof Type.Class cls
                 && !isBuiltinErrorType(cls)) {
-            ClassField cf = backendClassField(cls, he.field());
+            ClassField cf = isHostModuleClass(cls)
+                ? hostClassField(cls, he.field())
+                : backendClassField(cls, he.field());
             if (cf == null || !cf.optional()) {
                 unsupported("has() on a non-optional field", he.span());
                 return "false";
@@ -13256,6 +14027,12 @@ public final class JvmBackend {
                 preStatements.add(new PreLine(clsRef + " " + tmp
                     + " = " + obj + ";", 0));
                 recv = tmp;
+            }
+            // ISSUE-0303 D4: a declared host class stores the boxed
+            // slot plus the presence flag exactly like a project class.
+            if (isHostModuleClass(cls)) {
+                return "(" + recv + ")." + javaName(he.field())
+                    + "$present";
             }
             ClassDeclaration cd = classDeclFor(cls);
             if (cd != null && cd.isJsonable()) {
@@ -13349,6 +14126,34 @@ public final class JvmBackend {
             }
             unsupported("Error member other than code/message", mae.span());
             return "null";
+        }
+        if (objType instanceof Type.Class cls
+                && isHostModuleClass(cls)) {
+            // ISSUE-0303 D4: a declared host-class field read on the
+            // synthesized shared record — the checker guaranteed the
+            // field is declared and typed the read as its declared type
+            // (optional reads wrap as T | null and read the boxed slot
+            // directly: absent and present-null both yield the DEAL
+            // null, presence stays distinguishable through has()). The
+            // receiver evaluates exactly once.
+            ClassField cf = hostClassField(cls, mae.field());
+            if (cf == null) {
+                unsupported("host class member other than a declared "
+                    + "field", mae.span());
+                return "null";
+            }
+            String obj = emitExpression(mae.object());
+            String recv;
+            if (isPureAfterEmission(mae.object())) {
+                recv = "(" + obj + ")";
+            } else {
+                String tmp = nextEvalTempName();
+                preStatements.add(new PreLine(
+                    javaLocalType(cls, mae.span()) + " " + tmp
+                        + " = " + obj + ";", 0));
+                recv = tmp;
+            }
+            return "(" + recv + ")." + javaName(mae.field());
         }
         if (objType instanceof Type.Class cls) {
             ClassField cf = backendClassField(cls, mae.field());
@@ -13983,6 +14788,20 @@ public final class JvmBackend {
         String obj = emitExpression(mae.object());
         Type target = typeOf(mae);
         String get = "(" + obj + ").get(" + quoteJavaString(mae.field()) + ")";
+        if (hostArgDeferDepth > 0) {
+            // ISSUE-0303 D2 read-site deferral: a typed table read
+            // whose value materializes a host-call argument yields the
+            // raw value — the host-call boundary raises E8010 at the
+            // call, never a masking read-site E8001/E8003 (the only
+            // read-shape in the corpus with a changed check site). The
+            // receiver evaluates exactly once in order, exactly like
+            // the checked nullable/array branches below.
+            String temp = nextEvalTempName();
+            preStatements.add(new PreLine(
+                "java.lang.Object " + temp + " = " + get + ";", 0));
+            preStatementsDeclareTemps = true;
+            return temp;
+        }
         if (target instanceof Type.Class cls) {
             // Locality is decided from the Type.Class MODULE PATH, then
             // the name-keyed lookup — a same-named local class must not
@@ -13995,7 +14814,16 @@ public final class JvmBackend {
             // the declaring module's generated class, so a genuine
             // instance passes and a same-name sibling from another
             // module reports E8001 "expected instance of @lib/C, got
-            // @other/C".
+            // @other/C". A declared host class (ISSUE-0303 D4)
+            // dispatches on THIS module's seam against the synthesized
+            // shared record.
+            if (isHostModuleClass(cls)) {
+                String record = hostRecordJavaRef(cls);
+                if (record == null) return "null";
+                return "((" + record + ") $check("
+                    + quoteJavaString(classCheckDescriptor(cls)) + ", "
+                    + get + "))";
+            }
             if (!isLocalClassType(cls)) {
                 String importedModule = importedClassModuleRef(cls, mae.span());
                 if (importedModule == null) return "null";
@@ -14783,6 +15611,24 @@ public final class JvmBackend {
                 }
             };
             case QualifiedType qt -> {
+                // ISSUE-0303 D4: a qualified type through a host-module
+                // alias names a DECLARED host class — resolve to the
+                // export map's class type carrying the canonical
+                // externals identity (the synthesized shared record),
+                // never a compiled-module class.
+                String hostRaw = hostAliases.get(qt.moduleName());
+                if (hostRaw != null) {
+                    Map<String, Type> exports = hostModules.get(hostRaw);
+                    Type exportType = exports == null ? null
+                        : exports.get(qt.typeName());
+                    if (exportType instanceof Type.Class c) {
+                        yield c;
+                    }
+                    unsupported("qualified type '" + qt.moduleName() + "."
+                        + qt.typeName() + "' (not a declared host class "
+                        + "export)", qt.span());
+                    yield Type.Error.INSTANCE;
+                }
                 // ISSUE-0109: `alias.Class` annotations name the imported
                 // module's exported class. The alias maps through the
                 // same importAliases table every imported member call
@@ -14937,6 +15783,20 @@ public final class JvmBackend {
                 if (isBuiltinErrorType(c)) {
                     yield "java.lang.RuntimeException";
                 }
+                // ISSUE-0303 D4: a declared host class maps to the
+                // synthesized shared $DealRt record class (single
+                // emission point, canonical externals identity) — never
+                // to the Java host's own class.
+                if (isHostModuleClass(c)) {
+                    String record = hostRecordJavaRef(c);
+                    if (record == null) {
+                        unsupported("values of class type '" + c.name()
+                            + "' (the externals identity is "
+                            + "unrepresentable)", span);
+                        yield null;
+                    }
+                    yield record;
+                }
                 // Locality is decided from the Type.Class MODULE PATH —
                 // a same-named local class must not satisfy the guard
                 // for a foreign path (lib.C would then be declared as
@@ -15056,7 +15916,17 @@ public final class JvmBackend {
                 // The @jsonable slice depends on this: the spec's
                 // generated {@code C$fromJson} returns {@code C | null},
                 // and an imported class's helper returns the imported
-                // nullable class reference here.
+                // nullable class reference here. A declared host class
+                // (ISSUE-0303 D4) maps to the synthesized shared record.
+                if (isHostModuleClass(c)) {
+                    String record = hostRecordJavaRef(c);
+                    if (record == null) {
+                        unsupported("values of class type '" + c.name()
+                            + "' | null", span);
+                        yield null;
+                    }
+                    yield record;
+                }
                 if (isLocalClassType(c)) {
                     yield localClassJavaType(c, span);
                 }

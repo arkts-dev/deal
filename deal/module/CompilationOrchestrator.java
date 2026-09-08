@@ -6,7 +6,7 @@ import deal.codegen.Backend;
 import deal.codegen.SourceMapGenerator;
 import deal.codegen.jvm.JvmBackend;
 import deal.codegen.jvm.JvmSemanticEmitter;
-import deal.codegen.js.HostModuleDeclarations;
+import deal.codegen.HostModuleDeclarations;
 import deal.codegen.js.JsBackend;
 import deal.codegen.lua.LuaBackend;
 import deal.codegen.lua.LuaSemanticEmitter;
@@ -3017,7 +3017,9 @@ public final class CompilationOrchestrator {
     private record JvmImportContext(
             Map<String, String> importResolutions,
             Map<String, Map<String, ClassDeclaration>> importedClasses,
-            Map<String, Map<String, Type>> hostModules) {}
+            Map<String, Map<String, Type>> hostModules,
+            Map<String, Map<String, List<HostModuleDeclarations.HostField>>>
+                hostClassDeclarations) {}
 
     /** Builds the per-module JVM import context for {@code info}. */
     private JvmImportContext jvmImportContextOf(ModuleInfo info) {
@@ -3030,6 +3032,12 @@ public final class CompilationOrchestrator {
         Map<String, Map<String, ClassDeclaration>> importedClasses =
             new HashMap<>();
         Map<String, Map<String, Type>> hostModules = new HashMap<>();
+        // Host-class declarations (ISSUE-0303, jvm-v12-host-abi-completion
+        // D4): the declared class exports' field records with their
+        // orchestrator-resolved types — the JVM backend synthesizes the
+        // shared $DealRt record classes from them.
+        Map<String, Map<String, List<HostModuleDeclarations.HostField>>>
+            hostClassDeclarations = new HashMap<>();
         for (StatementNode stmt : info.rawAst.statements()) {
             if (stmt instanceof ImportDeclaration imp) {
                 String resolvedSource = resolveImportPath(imp.modulePath(),
@@ -3041,9 +3049,12 @@ public final class CompilationOrchestrator {
                     }
                     if (imported.isDeclarationFile) {
                         if (!isSpecStdlibModuleInfo(imported)) {
+                            HostModuleDeclarations declared =
+                                hostDeclarationsOf(imported);
                             hostModules.put(imp.modulePath(),
-                                imported.exports != null
-                                    ? imported.exports : Map.of());
+                                declared.exports());
+                            hostClassDeclarations.put(imp.modulePath(),
+                                declared.classFields());
                         }
                     } else {
                         importResolutions.put(imp.modulePath(),
@@ -3069,7 +3080,7 @@ public final class CompilationOrchestrator {
             }
         }
         return new JvmImportContext(importResolutions, importedClasses,
-            hostModules);
+            hostModules, hostClassDeclarations);
     }
 
     private void codegenAllJvm() throws IOException {
@@ -3105,10 +3116,10 @@ public final class CompilationOrchestrator {
         // the real declaring module's emitted class. Deterministic:
         // module order, then source order per module; the first
         // declaration of an identity wins. Host declarations are
-        // excluded (their class exports keep the host ABI lane's
-        // import-time E6000s, and the union filter below drops
-        // host-referencing shapes before any module pre-registers
-        // them).
+        // excluded (their class exports resolve to the shared
+        // $DealRt synthesized records — jvm-v12-host-abi-completion
+        // D4 — collected in the projectHostClasses union below, never
+        // through a module-emitted class).
         Map<CanonicalClassIdentity, String> classDeclaringModules =
             new LinkedHashMap<>();
         for (ModuleInfo info : modules.values()) {
@@ -3140,18 +3151,12 @@ public final class CompilationOrchestrator {
         // shape any module references. Deterministic: module dependency
         // order (the modules map), then source order per module.
         //
-        // Host-class-typed shapes never enter the union: the project's
-        // host modules (the raw specifiers any module imports) name
-        // declarations whose class exports keep their import-time
-        // E6000s (the host ABI lane's carriers), so a shared-scope
-        // wrapper referencing a never-emitted host Java class must not
-        // be pre-registered by the entry's emission.
-        Set<String> projectHostPaths = new LinkedHashSet<>();
-        for (ModuleInfo info : modules.values()) {
-            if (info.isDeclarationFile) continue;
-            projectHostPaths.addAll(jvmImportContextOf(info)
-                .hostModules.keySet());
-        }
+        // ISSUE-0303 (jvm-v12-host-abi-completion D4): host-class-typed
+        // shapes join the union — the declared host classes emit their
+        // synthesized record classes in the shared $DealRt scope (the
+        // project-wide host-class union collected right below), so a
+        // wrapper may reference a host-class record exactly like any
+        // other shared carrier.
         List<Type> sharedShapes = new ArrayList<>();
         Set<Type> seenShapes = new LinkedHashSet<>();
         for (ModuleInfo info : modules.values()) {
@@ -3160,18 +3165,42 @@ public final class CompilationOrchestrator {
             for (Type shape : JvmBackend.collectShapes(info.rawAst,
                     info.checkResult, info.sourcePath, info.modulePath,
                     ctx.importResolutions, ctx.importedClasses,
-                    ctx.hostModules, invocation.semanticProfile(),
+                    ctx.hostModules, ctx.hostClassDeclarations,
+                    invocation.semanticProfile(),
                     identityIndex, identityIndex.moduleIdentityLookup())) {
-                if (JvmBackend.shapeReferencesHostModule(shape,
-                        projectHostPaths)) {
-                    continue;
-                }
                 if (seenShapes.add(shape)) {
                     sharedShapes.add(shape);
                 }
             }
         }
         List<Type> projectShapes = List.copyOf(sharedShapes);
+
+        // Project-wide host-class declaration union (ISSUE-0303,
+        // jvm-v12-host-abi-completion D4): raw import specifier → class
+        // name → declared field records, deterministic (module order,
+        // then per-module import order, then declaration order). The
+        // entry module's shared $DealRt scope emits one synthesized
+        // record class per declared host class — the single emission
+        // point, keyed by the specifier + class name, never by a hash
+        // iteration.
+        Map<String, Map<String, List<HostModuleDeclarations.HostField>>>
+            projectHostClasses = new LinkedHashMap<>();
+        for (ModuleInfo info : modules.values()) {
+            if (info.isDeclarationFile) continue;
+            JvmImportContext ctx = jvmImportContextOf(info);
+            for (Map.Entry<String,
+                    Map<String, List<HostModuleDeclarations.HostField>>> e
+                    : ctx.hostClassDeclarations.entrySet()) {
+                Map<String, List<HostModuleDeclarations.HostField>>
+                    classes = projectHostClasses.computeIfAbsent(
+                        e.getKey(), k -> new LinkedHashMap<>());
+                for (Map.Entry<String,
+                        List<HostModuleDeclarations.HostField>> c
+                        : e.getValue().entrySet()) {
+                    classes.putIfAbsent(c.getKey(), c.getValue());
+                }
+            }
+        }
 
         // Pass 1: generate every module and merge diagnostics. Rejected
         // modules write no artifact.
@@ -3195,10 +3224,12 @@ public final class CompilationOrchestrator {
             JvmBackend.JvmCodegenResult res = JvmBackend.generate(
                 info.rawAst, info.checkResult, info.sourcePath, info.modulePath,
                 ctx.importResolutions, ctx.importedClasses, ctx.hostModules,
+                ctx.hostClassDeclarations,
                 isEntry, isEntry, identityIndex,
                 identityIndex.moduleIdentityLookup(),
                 invocation.semanticProfile(), projectShapes,
-                classDeclaringModules, completedPlansByModulePath());
+                classDeclaringModules, projectHostClasses,
+                completedPlansByModulePath());
             for (CompilerDiagnostic d : res.diagnostics()) {
                 diagnostics.add(d);
                 hasErrors = true;
@@ -3494,8 +3525,15 @@ public final class CompilationOrchestrator {
                 }
             }
         }
+        // v1.2 identity carriage (ISSUE-0303 D4): the extractor is
+        // seeded with the compilation's module-path classification, so
+        // the host-class field types carry the canonical externals
+        // identity (ExternalModule(rawImportSpecifier) — the manifest
+        // key as written), never the standalone dotted-path default.
+        // The JVM synthesized record emission keys on the externals
+        // projection, exactly like the checker's host-class symbols.
         ExportExtractor extractor = new ExportExtractor(
-            imported.modulePath, true);
+            imported.modulePath, true, modulePathClassification()::get);
         extractor.setImportModulePaths(importAliasMap);
         extractor.extract(imported.rawAst);
         for (StatementNode stmt : imported.rawAst.statements()) {

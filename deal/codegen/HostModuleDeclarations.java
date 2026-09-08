@@ -1,4 +1,4 @@
-package deal.codegen.js;
+package deal.codegen;
 
 import deal.ast.ClassField;
 import deal.types.Type;
@@ -9,11 +9,13 @@ import java.util.Objects;
 
 /**
  * One host-module declaration record (ISSUE-0328,
- * js-v12-host-abi-completion D1): the declared export map plus the
+ * js-v12-host-abi-completion D1; ISSUE-0303,
+ * jvm-v12-host-abi-completion D4): the declared export map plus the
  * declaration AST's class-field records with their orchestrator-resolved
  * declared types, carried from the orchestrator's hostModules gather
- * ({@code CompilationOrchestrator.codegenAllJs}) to the JS emitter's
- * declared-map rendering ({@code JsBackend}).
+ * ({@code CompilationOrchestrator.codegenAllJs}/{@code codegenAllJvm})
+ * to the emitters' declared-map rendering ({@code JsBackend},
+ * {@code JvmBackend}).
  *
  * <p>The {@code exports} map is the host declaration's public surface —
  * export name &rarr; declared {@link Type} — exactly the map the

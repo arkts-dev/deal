@@ -5898,7 +5898,7 @@ public class JvmBackendTest {
             ModuleIdentityResolver.buildIndex(classification);
         List<Type> shapes = JvmBackend.collectShapes(f.program(),
             f.checkResult(), "jvmtest-shape-order.deal", "main",
-            Map.of(), Map.of(), hostModules,
+            Map.of(), Map.of(), hostModules, Map.of(),
             SemanticProfile.LEGACY_SAFE_INT, idx,
             idx.moduleIdentityLookup());
         List<Type> expected = List.of(
@@ -6275,25 +6275,24 @@ public class JvmBackendTest {
     }
 
     /**
-     * ISSUE-0301 host-class-typed shapes stay out of the shared scope:
-     * a project whose non-entry module imports a host module with a
-     * class export must not pre-register a shared-scope wrapper whose
-     * invoke signature references the never-emitted host Java class —
-     * the pre-fix entry artifact carried
-     * {@code abstract HostCfg.$C_ServerConfig invoke();} inside
-     * {@code $DealRt}, which javac rejected ("package HostCfg does not
-     * exist"), violating the self-contained single-source-Java
-     * post-state. The host ABI lane's import-time E6000s stay, and the
-     * transactional publication contract
-     * (whole-project-artifact-publication D3/D4) publishes nothing for
-     * the failed whole compilation — the clean entry's staged artifact
-     * is discarded with the stage tree, so no host-class-referencing
-     * artifact can ever reach the live root. Runs the real orchestrator
-     * pipeline (collection seam → codegen → transactional publish).
+     * ISSUE-0301 host-class-typed shapes now flow on the ISSUE-0303
+     * synthesized shared records: a project whose non-entry module
+     * imports a host module with a class export pre-registers
+     * shared-scope wrappers whose invoke signatures reference the
+     * synthesized {@code $DealRt.$Host$...} record classes (single
+     * emission point, canonical externals identity) — the pre-0303
+     * state rejected the project at the import (the retired E6000
+     * exclusion), and the pre-fix shared-scope wrapper over the
+     * never-emitted host Java class can no longer exist. The project
+     * compiles through the real orchestrator pipeline (collection seam
+     * → codegen → publish), the entry artifact carries the synthesized
+     * record and the wrapper reference, and the artifact set runs
+     * against a real host implementation class.
      */
     private static void testSharedCarrierHostClassShapes()
             throws Exception {
-        System.out.println("-- Shared carrier host-class shape exclusion (ISSUE-0301) --");
+        System.out.println("-- Shared carrier host-class shapes on the "
+            + "synthesized records (ISSUE-0303) --");
 
         writeFile("deal.json", """
             {
@@ -6315,13 +6314,22 @@ public class JvmBackendTest {
             export function load(): Cfg.ServerConfig {
               return Cfg.load();
             }
-            export function ports(cfgs: Cfg.ServerConfig[]): int[] {
-              return [cfgs[0].port];
-            }
             """);
         writeFile("src/hostshape_entry.deal", """
             import * as Lib from "./hostshape_lib"
             export function main(): null { return null; }
+            """);
+        // The host implementation class: the declared class's defaults
+        // map (load-time capture) and a load() returning a synthesized
+        // record instance.
+        writeFile("HostCfg.java", """
+            public final class HostCfg {
+                public static final java.util.Map<String, Object> ServerConfig_defaults =
+                    java.util.Map.of("port", Integer.valueOf(8080));
+                public static Object load() {
+                    return new $DealRt.$Host$host$scfg$ServerConfig(8080);
+                }
+            }
             """);
 
         Path entryFile = tmpDir.get().resolve("src/hostshape_entry.deal")
@@ -6338,25 +6346,32 @@ public class JvmBackendTest {
             entryFile, outputRoot, false, false, false, Backend.JVM,
             externals, roots, Path.of(".").toAbsolutePath().normalize());
         boolean ok = orchestrator.compile();
-        check(!ok, "the host-class project fails as a whole (the host "
-            + "ABI lane's import-time E6000s stay): "
+        check(ok, "the host-class project compiles (the synthesized "
+            + "records replace the retired import-time E6000): "
             + orchestrator.diagnostics());
-        check(orchestrator.diagnostics().stream().anyMatch(d ->
-                d.toString().contains("host export 'ServerConfig'")),
-            "the host class export keeps its import-time E6000: "
-                + orchestrator.diagnostics());
-        // Transactional publication (whole-project-artifact-
-        // publication D3/D4): the host-class rejection fails the whole
-        // compilation, so nothing is published — no artifact (clean
-        // entry included) reaches the live root, and the pre-fix
-        // 'abstract HostCfg.$C_ServerConfig invoke();' entry artifact
-        // can never be published at all.
         Path entryArtifact = outputRoot.resolve("Hostshape_entry.java");
-        check(!Files.exists(entryArtifact),
-            "no artifact is published for the host-class rejection "
-                + "(whole-set failure contract)");
-        check(!Files.exists(outputRoot),
-            "the failed compilation publishes no live root at all");
+        check(Files.exists(entryArtifact),
+            "the entry artifact is published for the host-class project");
+        if (Files.exists(entryArtifact)) {
+            String java = Files.readString(entryArtifact);
+            check(java.contains("$Host$host$scfg$ServerConfig"),
+                "the shared $DealRt scope synthesizes the declared host "
+                    + "class record (deterministic specifier + class name)");
+            check(java.contains("interface FnValue"),
+                "the shared $DealRt scope still carries the function "
+                    + "carrier interface");
+        }
+        // The artifact set runs against the real host class: the load
+        // method captures the defaults map reflectively and the
+        // synthesized-record return crosses the class-typed boundary.
+        Files.copy(tmpDir.get().resolve("HostCfg.java"),
+            outputRoot.resolve("HostCfg.java"));
+        ExecResult exec = runJvmArtifacts(outputRoot,
+            parseProgram("export function main(): null { return null; }"),
+            "Hostshape_entry");
+        check(exec.exitCode() == 0,
+            "the host-class artifact set runs against the real host "
+                + "class (exit 0): " + exec.output());
     }
 
     /**
@@ -13756,8 +13771,15 @@ public class JvmBackendTest {
             "the load method loads the module-path-derived host class");
         check(java.contains("__hostMethod(__h, \"host/log\", \"add\", \"(int,int)->int\""),
             "the presence check carries the declared descriptor");
-        check(java.contains("static long __host$log$add(long __a0, long __a1)"),
-            "the wrapper signature maps the declared parameter types");
+        check(java.contains(
+                "static long __host$log$add(java.lang.Object __a0, java.lang.Object __a1)"),
+            "the wrapper signature takes java.lang.Object parameters "
+                + "(ISSUE-0303 D2: the wrapper checks each argument "
+                + "against the declared descriptor at the call)");
+        check(java.contains("__a0 = __hostParamCheck(1, \"int\", __a0);"),
+            "the wrapper checks each argument at the call "
+                + "(HOST_PARAMETER boundary, E8010 'parameter {i} type "
+                + "mismatch')");
         check(java.contains("__hostCheck(\"int\", __r, \"host/log.add\", false)"),
             "the sync wrapper checks the return boundary (E8010 path)");
         check(java.contains("__hostCheck(\"string\", __v, \"host/log.fetch\", true)"),

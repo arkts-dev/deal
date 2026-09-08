@@ -139,12 +139,17 @@ import java.util.concurrent.atomic.AtomicInteger;
  *       {@code jsonable-tojson-rejects-cyclic-table.deal} stays
  *       unregistered — it passes on JVM (the cycle detection raises
  *       E8001), so a skip entry would be stale by construction.</li>
- *   <li><b>JVM-GAP-HOST-ABI-SHAPES</b> (24 entries, ISSUE-0504 +8) — JVM host ABI
- *       unsupported declared shapes: host class exports,
- *       array/function-typed parameters and returns (E6000), the
- *       Lua pre-wrapped export form, and the host async export used as
- *       a function value (relabeled from JVM-GAP-XMOD-FNVALUE with the
- *       shared-carrier lane).</li>
+ *   <li><b>JVM-GAP-HOST-ABI-SHAPES</b> (9 entries) — the array/
+ *       function/class/prewrapped shapes retired with ISSUE-0303
+ *       (jvm-v12-host-abi-completion): declared array/function-typed
+ *       host parameters and returns, declared host class exports with
+ *       synthesized shared records, and the pre-wrapped fixtures via
+ *       declared-shape Java hosts all pass the real pipeline (15
+ *       entries removed with their promotions). The retained entries
+ *       pin the host async export used as a first-class function
+ *       value (module aliases as values stay E6000) and the eight
+ *       ISSUE-0504 host-boundary E8011 legacy long/Long carrier
+ *       signature mismatches under the int32-activated profile.</li>
  *   <li><b>JVM-GAP-XMOD-FNVALUE</b> — RETIRED with the shared runtime
  *       value surface (ISSUE-0301): the four cross-module function-value
  *       fixtures pass the real pipeline on the shared $DealRt wrapper
@@ -337,20 +342,6 @@ public class JvmConformanceTest {
                 + "both code and message fields (LuaJIT-owned default "
                 + "filling).", "JVM-GAP-ERROR-LITERAL-DEFAULTS");
 
-        // ---- JVM-GAP-HOST-ABI-SHAPES: unsupported declared host shapes ----
-        skip("backend-runtime/host-abi/host-array-return-ok.deal",
-            "E6000: declared array-typed host return (the JVM host ABI "
-                + "slice supports primitive/string/nullable returns "
-                + "only).", "JVM-GAP-HOST-ABI-SHAPES");
-        skip("backend-runtime/host-abi/host-rest-ok.deal",
-            "E6000: declared array-typed host parameter (v1.2 fixed-array "
-                + "host form).", "JVM-GAP-HOST-ABI-SHAPES");
-        skip("backend-runtime/host-abi/host-rest-bad.deal",
-            "E6000: declared array-typed host parameter (v1.2 fixed-array "
-                + "host form).", "JVM-GAP-HOST-ABI-SHAPES");
-        skip("backend-runtime/host-abi/host-boundary-apply-function.deal",
-            "E6000: declared function-typed host parameter.",
-            "JVM-GAP-HOST-ABI-SHAPES");
         // ---- ISSUE-0504: the eight converted host-boundary fixtures
         // (v12-gap-suite-integration D9) import host/boundary, whose
         // verbatim gap HostBoundary.java declares the legacy long/Long
@@ -406,49 +397,32 @@ public class JvmConformanceTest {
                 + "HostBoundary echoInt(long)/nullableInt(Long) vs the "
                 + "int32-activated int/Integer parameter resolution).",
             "JVM-GAP-HOST-ABI-SHAPES");
-        skip("backend-runtime/host-abi/host-nullable-function-param.deal",
-            "E6000: declared function | null host parameter.",
-            "JVM-GAP-HOST-ABI-SHAPES");
-        skip("backend-runtime/host-abi/host-nullable-function-param-bad.deal",
-            "E6000: declared function | null host parameter.",
-            "JVM-GAP-HOST-ABI-SHAPES");
-        skip("backend-runtime/host-abi/host-nullable-function-return-ok.deal",
-            "E6000: declared function | null host return.",
-            "JVM-GAP-HOST-ABI-SHAPES");
-        skip("backend-runtime/host-abi/host-nullable-function-return-bad.deal",
-            "E6000: declared function | null host return.",
-            "JVM-GAP-HOST-ABI-SHAPES");
-        skip("backend-runtime/host-abi/host-class-export.deal",
-            "host class exports unsupported on JVM: E3004 \"Unknown "
-                + "class 'ServerConfig'\" (the JVM externals path "
-                + "synthesizes no host class symbols and the backend "
-                + "rejects host class exports).", "JVM-GAP-HOST-ABI-SHAPES");
-        skip("backend-runtime/host-abi/host-export-presence.deal",
-            "host class exports unsupported on JVM: E3004 \"Unknown "
-                + "class 'Config'\" (same root cause).",
-            "JVM-GAP-HOST-ABI-SHAPES");
-        skip("backend-runtime/host-abi/host-class-default-isolation.deal",
-            "host class exports unsupported on JVM: E3004 \"Unknown "
-                + "class 'ServerConfig'\" (same root cause as "
-                + "host-class-export).", "JVM-GAP-HOST-ABI-SHAPES");
-        skip("backend-runtime/host-abi/host-class-extra-field.deal",
-            "host class exports unsupported on JVM: E3004 \"Unknown "
-                + "class 'Config'\" (same root cause as "
-                + "host-export-presence).", "JVM-GAP-HOST-ABI-SHAPES");
-        skip("backend-runtime/host-abi/host-prewrapped-ok.deal",
-            "the Lua pre-wrapped export form (sig-annotated tables) is a "
-                + "LuaJIT host-loader mechanism with no JVM analog (no "
-                + "Java host implementation can express it).",
-            "JVM-GAP-HOST-ABI-SHAPES");
-        skip("backend-runtime/host-abi/host-prewrapped-bad.deal",
-            "the Lua pre-wrapped export form; no JVM analog.",
-            "JVM-GAP-HOST-ABI-SHAPES");
-        skip("backend-runtime/defaults/plan-host-discriminator.deal",
-            "host class exports unsupported on JVM: E3004 \"Unknown "
-                + "class 'ServerConfig'\" (the JVM externals path "
-                + "synthesizes no host class symbols and the backend "
-                + "rejects host class exports — same root cause as "
-                + "host-class-export).", "JVM-GAP-HOST-ABI-SHAPES");
+        // ---- JVM-GAP-HOST-ABI-SHAPES: retired with the host ABI shapes
+        // lane (ISSUE-0303, jvm-v12-host-abi-completion) ----
+        // The 12 pinned fixtures — host-array-return-ok, host-rest-ok,
+        // host-rest-bad (E8010), host-boundary-apply-function,
+        // host-nullable-function-param, host-nullable-function-param-bad
+        // (E8010), host-nullable-function-return-ok,
+        // host-nullable-function-return-bad (E8010), host-class-export,
+        // host-export-presence, host-prewrapped-ok, host-prewrapped-bad
+        // (E8010 on the discard path) — pass the real pipeline on the
+        // nine HOST_JAVA implementations: array parameters/returns flow
+        // on the shared wrappers, function parameters arrive as the
+        // typed $DealRt wrapper (the host invokes through the typed
+        // invoke; no lambda conversion), function-typed returns are
+        // never wrapped (a raw value fails E8010, a byte-equal
+        // descriptor passes), declared host classes synthesize shared
+        // $DealRt records with canonical externals identity and the
+        // preserved defaults-map construction seam, and the prewrapped
+        // pair executes against declared-shape hosts whose
+        // declared-descriptor enforcement raises E8010 on the junk
+        // return. The three host-class companions
+        // (host-class-default-isolation, host-class-extra-field E8007,
+        // plan-host-discriminator) went green with the synthesized
+        // records and were removed with their promotion; the
+        // stale-skip gate forced the removals. The remaining entry pins
+        // the alias-as-value shape (a host export used as a first-class
+        // function value), which stays E6000.
 
         // ---- JVM-GAP-DEFAULTS-PLANS: the v1.2 default-plan lane
         // (ISSUE-0340, LuaJIT-owned) ----
@@ -511,10 +485,11 @@ public class JvmConformanceTest {
     /** Gap id → human-readable lane description, for the summary's
      * skip-group report. */
     private static final Map<String, String> FOLLOW_UP_GAPS = Map.of(
-        "JVM-GAP-HOST-ABI-SHAPES", "JVM host ABI unsupported declared "
-            + "shapes — host class exports, array/function-typed "
-            + "parameters and returns (E6000), the Lua pre-wrapped "
-            + "export form, and the E8011 legacy long/Long carrier "
+        "JVM-GAP-HOST-ABI-SHAPES", "JVM host ABI residual — the host "
+            + "async export used as a first-class function value "
+            + "(module aliases as values stay E6000; the array/"
+            + "function/class/prewrapped shapes retired with "
+            + "ISSUE-0303) and the E8011 legacy long/Long carrier "
             + "signature mismatches of the verbatim gap host "
             + "implementations under the int32-activated profile",
         "JVM-GAP-DEFAULTS-PLANS", "v1.2 default-plan lane — the "
@@ -633,6 +608,76 @@ public class JvmConformanceTest {
                 + "    if (\"__BAD__\".equals(s)) return Long.valueOf(42L);\n"
                 + "    if (\"__NULL__\".equals(s)) return null;\n"
                 + "    return s;\n"
+                + "  }\n"
+                + "}\n"),
+        Map.entry("array_return",
+            "public final class HostArray_return {\n"
+                + "  public static Object split(String s) {\n"
+                + "    return new $DealRt.__StringArray(new String[] {\"a\", \"b\", \"c\"});\n"
+                + "  }\n"
+                + "}\n"),
+        Map.entry("rest_join",
+            "public final class HostRest_join {\n"
+                + "  public static Object join(String sep, $DealRt.__StringArray parts) {\n"
+                + "    return String.join(sep, parts.data);\n"
+                + "  }\n"
+                + "}\n"),
+        Map.entry("boundary_apply",
+            "public final class HostBoundary_apply {\n"
+                + "  public static Object apply($DealRt.Fn1_I_R_I f, int v) {\n"
+                + "    return Integer.valueOf(f.invoke(v) + 100);\n"
+                + "  }\n"
+                + "}\n"),
+        Map.entry("nullable_fn",
+            "public final class HostNullable_fn {\n"
+                + "  public static Object register($DealRt.Fn1_I_R_I cb) {\n"
+                + "    if (cb == null) return Integer.valueOf(0);\n"
+                + "    return Integer.valueOf(cb.invoke(41));\n"
+                + "  }\n"
+                + "}\n"),
+        Map.entry("nullable_fn_return",
+            "public final class HostNullable_fn_return {\n"
+                + "  public static Object getCallback(String mode) {\n"
+                + "    if (\"bad\".equals(mode)) {\n"
+                + "      java.util.function.IntUnaryOperator raw = (x) -> x;\n"
+                + "      return raw;\n"
+                + "    }\n"
+                + "    return null;\n"
+                + "  }\n"
+                + "}\n"),
+        Map.entry("cfg",
+            "public final class HostCfg {\n"
+                + "  public static final java.util.Map<String, Object> Endpoint_defaults =\n"
+                + "      java.util.Map.of(\"path\", \"/\");\n"
+                + "  public static final java.util.Map<String, Object> ServerConfig_defaults =\n"
+                + "      java.util.Map.of(\"port\", Integer.valueOf(8080),\n"
+                + "          \"endpoint\", new Object(), \"tags\", new Object(),\n"
+                + "          \"note\", new Object());\n"
+                + "  public static Object describe($DealRt.$Host$host$scfg$ServerConfig s) {\n"
+                + "    return s.endpoint.path + \":\" + s.port;\n"
+                + "  }\n"
+                + "}\n"),
+        Map.entry("presence",
+            "public final class HostPresence {\n"
+                + "  public static final java.util.Map<String, Object> Config_defaults =\n"
+                + "      java.util.Map.of(\"port\", Integer.valueOf(8080));\n"
+                + "  public static Object ping() {\n"
+                + "    return \"pong\";\n"
+                + "  }\n"
+                + "}\n"),
+        Map.entry("prewrapped_ok",
+            "public final class HostPrewrapped_ok {\n"
+                + "  public static Object greet(String name) {\n"
+                + "    return \"hello \" + name;\n"
+                + "  }\n"
+                + "  public static Object ping() {\n"
+                + "    return null;\n"
+                + "  }\n"
+                + "}\n"),
+        Map.entry("prewrapped_bad",
+            "public final class HostPrewrapped_bad {\n"
+                + "  public static Object ping() {\n"
+                + "    return \"junk\";\n"
                 + "  }\n"
                 + "}\n"),
         Map.entry("planprobe",

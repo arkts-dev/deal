@@ -124,7 +124,12 @@ public class JvmLaneTest {
     // ISSUE-0544 (the lowering epic) lifts the imported-non-literal-
     // default plan-shape guard, so plan-imported-provider-scope passes
     // the real pipeline and its registry entry is removed.
-    private static final int SKIP_REGISTRY_ENTRIES = 44;
+    // ISSUE-0303 (jvm-v12-host-abi-completion) then retired the 14
+    // host ABI shapes entries absorbed in the JVM lane registry
+    // (44 - 14 = 30: the single retained alias-as-value entry plus the
+    // eight ISSUE-0504 host-boundary entries keep JVM-GAP-HOST-ABI-SHAPES
+    // live).
+    private static final int SKIP_REGISTRY_ENTRIES = 30;
 
     public static void main(String[] args) throws Exception {
         System.out.println("=== JVM Lane Tests (ISSUE-0355) ===\n");
