@@ -930,6 +930,79 @@ public class JsonClassExecutorTest {
                 && failure.fieldPath().equals("f")
                 && failure.actual().equals(ActualKind.NUMBER.token()),
             "the adapter fails a nonfinite number at the caller's prefix");
+
+        // Unsupported carriers inside a table-typed runtime value: the
+        // seam's pinned Failure terminal (never a producer throw) with
+        // the exact pinned-convention fieldPath and the canonical
+        // actual-kind tokens — fixture and production adapter agree.
+        SemanticTable<Value> functionTable = new SemanticTable<>();
+        functionTable.put("k", new Value.Function(new RuntimeDescriptor.Func(List.of(),
+            RuntimeDescriptor.Null.INSTANCE, false)));
+        JsonStringify fixtureFunction = FixtureJson.stringify(
+            new Value.Table(functionTable), "data");
+        JsonStringify adapterFunction = adapterStringifier.stringify(
+            new Value.Table(functionTable), "data");
+        check(fixtureFunction instanceof JsonStringify.Failure failure
+                && failure.fieldPath().equals("data.k")
+                && failure.actual().equals(ActualKind.FUNCTION.token()),
+            "the fixture fails a function inside a table at data.k with the function token");
+        check(adapterFunction instanceof JsonStringify.Failure failure
+                && failure.fieldPath().equals("data.k")
+                && failure.actual().equals(ActualKind.FUNCTION.token()),
+            "the adapter fails a function inside a table at data.k with the function token");
+
+        SemanticTable<Value> classTable = new SemanticTable<>();
+        classTable.put("k", instanceOf(layoutOf(POINT, field("x", INT, true)),
+            Map.of("x", new Value.Int(1))));
+        String classToken = ActualKind.canonicalToken(ActualKind.CLASS, POINT.text());
+        JsonStringify fixtureClass = FixtureJson.stringify(
+            new Value.Table(classTable), "data");
+        JsonStringify adapterClass = adapterStringifier.stringify(
+            new Value.Table(classTable), "data");
+        check(fixtureClass instanceof JsonStringify.Failure failure
+                && failure.fieldPath().equals("data.k")
+                && failure.actual().equals(classToken),
+            "the fixture fails a class instance inside a table at data.k with the "
+                + "class token");
+        check(adapterClass instanceof JsonStringify.Failure failure
+                && failure.fieldPath().equals("data.k")
+                && failure.actual().equals(classToken),
+            "the adapter fails a class instance inside a table at data.k with the "
+                + "class token");
+
+        SemanticTable<Value> invalidTable = new SemanticTable<>();
+        invalidTable.put("k", Value.string("\uD800"));
+        JsonStringify fixtureInvalid = FixtureJson.stringify(
+            new Value.Table(invalidTable), "data");
+        JsonStringify adapterInvalid = adapterStringifier.stringify(
+            new Value.Table(invalidTable), "data");
+        check(fixtureInvalid instanceof JsonStringify.Failure failure
+                && failure.fieldPath().equals("data.k")
+                && failure.actual().equals(ActualKind.INVALID_UNICODE.token()),
+            "the fixture fails an invalid-scalar string inside a table at data.k with the "
+                + "invalid-unicode token");
+        check(adapterInvalid instanceof JsonStringify.Failure failure
+                && failure.fieldPath().equals("data.k")
+                && failure.actual().equals(ActualKind.INVALID_UNICODE.token()),
+            "the adapter fails an invalid-scalar string inside a table at data.k with the "
+                + "invalid-unicode token");
+
+        SemanticTable<Value> missingTable = new SemanticTable<>();
+        missingTable.put("k", Value.Missing.INSTANCE);
+        JsonStringify fixtureMissing = FixtureJson.stringify(
+            new Value.Table(missingTable), "data");
+        JsonStringify adapterMissing = adapterStringifier.stringify(
+            new Value.Table(missingTable), "data");
+        check(fixtureMissing instanceof JsonStringify.Failure failure
+                && failure.fieldPath().equals("data.k")
+                && failure.actual().equals(ActualKind.MISSING.token()),
+            "the fixture fails the internal missing view inside a table at data.k with "
+                + "the missing token");
+        check(adapterMissing instanceof JsonStringify.Failure failure
+                && failure.fieldPath().equals("data.k")
+                && failure.actual().equals(ActualKind.MISSING.token()),
+            "the adapter fails the internal missing view inside a table at data.k with "
+                + "the missing token");
     }
 
     /** The carrier text of one valid-scalar string view (test-local). */
@@ -1471,6 +1544,77 @@ public class JsonClassExecutorTest {
                 && failure.failure().failure().message().equals(
                     "value at data.k is not JSON serializable: function"),
             "a table-key failure pins the f.k path with the function token");
+
+        // The production delegate over the same walk: the adapter maps
+        // the unsupported table-content carriers to E8's projections,
+        // so the generated C$toJson production walk reports the pinned
+        // failure at the call origin (never an uncaught producer
+        // throw) — function, class, and invalid-scalar-string carriers.
+        Outcome<Value> productionTableFailure = ClassOpsExecutor.executeJsonToClass(op,
+            Map.of(classId, badTable), layouts, JsonClassAlgorithmAdapter.stringifier(),
+            callOrigin);
+        check(productionTableFailure instanceof Outcome.Failure<Value> failure
+                && failure.failure().failure().message().equals(
+                    "value at data.k is not JSON serializable: function")
+                && failure.failure().origin().equals(callOrigin),
+            "the production adapter's walk projects the function-in-table failure at "
+                + "data.k with the call origin");
+
+        SemanticTable<Value> badClassData = new SemanticTable<>();
+        badClassData.put("k", instanceOf(layoutOf(OTHER, field("x", INT, true)),
+            Map.of("x", new Value.Int(1))));
+        Value.Class classInTable = instanceOf(point, Map.of(
+            "name", Value.string("n"),
+            "age", new Value.Int(1),
+            "home", instanceOf(nested, Map.of("city", Value.string("c"))),
+            "tags", new Value.Array(SemanticArray.of(new Value.Int(0))),
+            "data", new Value.Table(badClassData)));
+        Outcome<Value> productionClassFailure = ClassOpsExecutor.executeJsonToClass(op,
+            Map.of(classId, classInTable), layouts,
+            JsonClassAlgorithmAdapter.stringifier(), callOrigin);
+        check(productionClassFailure instanceof Outcome.Failure<Value> failure
+                && failure.failure().failure().message().equals(
+                    "value at data.k is not JSON serializable: class:@" + MOD.path()
+                        + "/Other")
+                && failure.failure().origin().equals(callOrigin),
+            "the production adapter's walk projects the class-in-table failure at data.k "
+                + "with the class token and the call origin");
+
+        SemanticTable<Value> badInvalidData = new SemanticTable<>();
+        badInvalidData.put("k", Value.string("\uD800"));
+        Value.Class invalidInTable = instanceOf(point, Map.of(
+            "name", Value.string("n"),
+            "age", new Value.Int(1),
+            "home", instanceOf(nested, Map.of("city", Value.string("c"))),
+            "tags", new Value.Array(SemanticArray.of(new Value.Int(0))),
+            "data", new Value.Table(badInvalidData)));
+        Outcome<Value> productionInvalidFailure = ClassOpsExecutor.executeJsonToClass(op,
+            Map.of(classId, invalidInTable), layouts,
+            JsonClassAlgorithmAdapter.stringifier(), callOrigin);
+        check(productionInvalidFailure instanceof Outcome.Failure<Value> failure
+                && failure.failure().failure().message().equals(
+                    "value at data.k is not JSON serializable: invalid-unicode")
+                && failure.failure().origin().equals(callOrigin),
+            "the production adapter's walk projects the invalid-string-in-table failure "
+                + "at data.k with the invalid-unicode token and the call origin");
+
+        SemanticTable<Value> badMissingData = new SemanticTable<>();
+        badMissingData.put("k", Value.Missing.INSTANCE);
+        Value.Class missingInTable = instanceOf(point, Map.of(
+            "name", Value.string("n"),
+            "age", new Value.Int(1),
+            "home", instanceOf(nested, Map.of("city", Value.string("c"))),
+            "tags", new Value.Array(SemanticArray.of(new Value.Int(0))),
+            "data", new Value.Table(badMissingData)));
+        Outcome<Value> productionMissingFailure = ClassOpsExecutor.executeJsonToClass(op,
+            Map.of(classId, missingInTable), layouts,
+            JsonClassAlgorithmAdapter.stringifier(), callOrigin);
+        check(productionMissingFailure instanceof Outcome.Failure<Value> failure
+                && failure.failure().failure().message().equals(
+                    "value at data.k is not JSON serializable: missing")
+                && failure.failure().origin().equals(callOrigin),
+            "the production adapter's walk projects the missing-in-table failure at "
+                + "data.k with the missing token and the call origin");
 
         // A nested-class-field failure under a path: path "home.city".
         Value.Class badNestedField = instanceOf(point, Map.of(

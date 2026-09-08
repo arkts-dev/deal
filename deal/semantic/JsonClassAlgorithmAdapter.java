@@ -49,7 +49,16 @@ import java.util.Objects;
  * key can never be empty, so no real key can collide), whose framing
  * is stripped off the emitted text ({@code {"":TEXT}} &#8594;
  * {@code TEXT} — E8's escaping of the wrapped value is exact, so the
- * unwrap adds no re-encoding). E8's internal failure path is the
+ * unwrap adds no re-encoding). Unsupported carriers are mapped, never
+ * thrown away: a function, class instance, or the internal missing
+ * view maps to E8's {@code Value.Other} carrier with its canonical
+ * actual kind (a class carries the canonical {@code class:<ClassId>}
+ * atom text), and an invalid-scalar string maps with its
+ * classification preserved — so E8's stringify walk projects each with
+ * the pinned {@code JSON_TO_ERROR} tokens (the seam contract:
+ * unsupported values, cycles, and nonfinite numbers fail here via the
+ * pinned {@link ClassOpsExecutor.JsonStringify.Failure} terminal,
+ * never a producer throw). E8's internal failure path is the
  * dot-separated pre-order path of its row ({@code "a.1"}; an array
  * element appends the 0-based index, a table key appends the key); the
  * adapter rewrites it into the epic's pinned {@code JSON_TO_CLASS}
@@ -246,7 +255,18 @@ public final class JsonClassAlgorithmAdapter {
             + "never a projection");
     }
 
-    /** Maps one executor JSON-shaped value into the E8 view, fail closed. */
+    /**
+     * Maps one executor value into the E8 view. JSON-shaped values map
+     * to the same carriers; the unsupported carriers a table-typed (or
+     * array-nested) runtime value may contain map to E8's projections
+     * instead of throwing: a function, a class instance, and the
+     * internal missing view become E8's {@code Value.Other} carriers
+     * with their canonical actual kinds (a class carries the canonical
+     * {@code class:<ClassId>} atom text), and an invalid-scalar string
+     * maps with its classification preserved — E8's stringify walk then
+     * projects each as the pinned {@code JSON_TO_ERROR} failure via the
+     * seam's {@code Failure(fieldPath, actual)} terminal.
+     */
     private static SharedStdlibSemantics.Value toStdlib(ClassOpsExecutor.Value value) {
         return switch (value) {
             case ClassOpsExecutor.Value.Null ignored ->
@@ -258,8 +278,10 @@ public final class JsonClassAlgorithmAdapter {
             case ClassOpsExecutor.Value.Number number ->
                 new SharedStdlibSemantics.Value.Number(number.value());
             case ClassOpsExecutor.Value.String string ->
-                SharedStdlibSemantics.Value.string(
-                    ((UnicodeScalars.Valid) string.scalar()).carrier());
+                // The closed scalar classification is preserved (never
+                // cast to Valid): E8's stringify walk projects an
+                // Invalid carrier with the pinned invalid-unicode token.
+                SharedStdlibSemantics.Value.string(string.scalar());
             case ClassOpsExecutor.Value.Table table -> {
                 SemanticTable<SharedStdlibSemantics.Value> mapped = new SemanticTable<>();
                 for (String key : table.table().keys()) {
@@ -283,11 +305,13 @@ public final class JsonClassAlgorithmAdapter {
                 }
                 yield SharedStdlibSemantics.Value.array(mapped);
             }
-            default -> throw new IllegalArgumentException("the stringify seam receives "
-                + "JSON-shaped values only; got " + value.actualKind() + " — a class, "
-                + "function, or missing value reaching the production delegate is a "
-                + "producer defect (the executor recurses over classes itself and fails "
-                + "non-JSON-shaped field values before the seam)");
+            case ClassOpsExecutor.Value.Function ignored ->
+                new SharedStdlibSemantics.Value.Other(ActualKind.FUNCTION, null);
+            case ClassOpsExecutor.Value.Class instance ->
+                new SharedStdlibSemantics.Value.Other(ActualKind.CLASS,
+                    instance.classId().text());
+            case ClassOpsExecutor.Value.Missing ignored ->
+                new SharedStdlibSemantics.Value.Other(ActualKind.MISSING, null);
         };
     }
 

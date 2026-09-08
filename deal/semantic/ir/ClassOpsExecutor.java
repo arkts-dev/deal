@@ -2245,8 +2245,14 @@ public final class ClassOpsExecutor {
          *
          * @param jsonShaped      the JSON-shaped value (null, boolean,
          *                        int, number, valid string, table, or
-         *                        array); non-null, never a class,
-         *                        function, or missing value
+         *                        array); non-null. Nested unsupported
+         *                        carriers inside a table or an array —
+         *                        a class instance, a function, the
+         *                        internal missing view, or an
+         *                        invalid-scalar string — are projected
+         *                        by the seam's pinned
+         *                        {@code Failure(fieldPath, actual)}
+         *                        terminal, never thrown by the delegate
          * @param fieldPathPrefix the caller's pinned-convention field
          *                        path prefix the seam appends its
          *                        relative failure path to; non-null
