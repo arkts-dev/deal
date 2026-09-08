@@ -106,7 +106,7 @@ public class DifferentialGateLanesCorpusTest {
     private static final Map<String, int[]> PER_BACKEND = Map.of(
         "luajit", new int[] {269, 32},
         "jvm", new int[] {199, 102},
-        "js", new int[] {269, 32});
+        "js", new int[] {270, 31});
 
     /** The designated converged subset (task criterion (a)): every lane
      * of every fixture here passes byte-exact. */
@@ -277,7 +277,6 @@ public class DifferentialGateLanesCorpusTest {
         "backend-runtime/stdlib-edge/string-length-dynamic-nonstring.deal | luajit | PROCESS_FAILURE",
         "backend-runtime/stdlib-edge/table-keys-dynamic-nontable.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/stdlib-edge/table-keys-dynamic-nontable.deal | luajit | PROCESS_FAILURE",
-        "backend-runtime/stdlib-edge/time-now-millis-positive.deal | js | TRANSCRIPT_MISMATCH",
         "backend-runtime/stdlib-edge/time-now-millis-positive.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/stdlib/json/json-stringify-bytes-error.deal | js | TRANSCRIPT_MISMATCH",
         "backend-runtime/stdlib/json/json-stringify-bytes-error.deal | luajit | PROCESS_FAILURE",
@@ -728,6 +727,29 @@ public class DifferentialGateLanesCorpusTest {
                     || triplePin.endsWith("| PROCESS_FAILURE"),
                 "the pinned class of " + triplePin
                     + " is a closed mismatch class");
+        }
+
+        // The shared time fixture's js leg passes after the
+        // disposition-application unit (ISSUE-0536 remediation): the
+        // lane suppresses the captured call-site span against the
+        // sanctioned span-less sidecar, so the transcript matches the
+        // pinned expectation field-exactly — the JS half of the
+        // combined-behavior proof on the differential gate.
+        GateDispatcher.CaseVerdict timeVerdict = verdictOf(run,
+            "backend-runtime/stdlib-edge/time-now-millis-positive.deal");
+        check(timeVerdict != null,
+            "the time fixture is dispatched, got: " + timeVerdict);
+        GateDispatcher.LaneOutcome timeJs = timeVerdict == null ? null
+            : timeVerdict.outcomes().stream()
+                .filter(o -> "js".equals(o.backend())).findFirst()
+                .orElse(null);
+        check(timeJs != null && timeJs.passed(),
+            "the time fixture's js leg passes byte-exact against the "
+                + "span-less sidecar, got: " + timeJs);
+        if (timeJs != null && timeJs.passed()) {
+            check(timeJs.mismatch().isEmpty(),
+                "the time fixture's js leg carries no mismatch, got: "
+                    + timeJs.mismatch());
         }
 
         // Representative first-difference spot pins (the gate's bounded

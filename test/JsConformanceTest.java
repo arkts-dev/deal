@@ -10,6 +10,11 @@ import deal.module.ExportExtractor;
 import deal.module.ModuleShapeValidator;
 import deal.module.StdlibModuleResolver;
 import deal.parser.*;
+import deal.semantic.CompilerInvocation;
+import deal.semantic.CompilerProfileProvider;
+import deal.semantic.ReleaseConfiguration;
+import deal.semantic.ir.ReleaseState;
+import deal.semantic.ir.SemanticProfile;
 import deal.types.Type;
 
 import java.io.*;
@@ -39,6 +44,31 @@ import java.util.regex.Pattern;
  * bypassed codegen leaves no {@code .js} artifact (asserted before node
  * runs); a bypassed node execution produces no output and no exit code
  * (asserted against the captured subprocess output).
+ *
+ * <h2>The lane-wide activated invocation (ISSUE-0536 remediation)</h2>
+ *
+ * <p>Every on-disk backend-runtime fixture compiles through the single
+ * lane-wide activated invocation {@link #LANE_INVOCATION} — the
+ * explicit {@code COMMON_SHADOW + DEAL_V1_2_INT32} invocation the
+ * {@link LegacyProfileRegressionCatalog} A5 seam resolves for every
+ * uncatalogued fixture (the invocation the LuaJIT lane resolves for
+ * the shared stdlib-edge time fixture) — passed through the
+ * {@link CompilationOrchestrator} constructor in
+ * {@link #runOrchestrator}. Under that invocation the emitted entry
+ * module calls {@code $rt.setInt32Mode(true)} immediately after the
+ * runtime {@code $require}, so {@code deal/runtime.js} gates
+ * {@code checkInt} at the signed-32 boundary and the retained
+ * {@code std/time.nowMillis} {@code ()->int} route raises E8004 for
+ * contemporary epoch milliseconds: the flipped shared fixture
+ * {@code backend-runtime/stdlib-edge/time-now-millis-positive.deal}
+ * passes as {@code runtime-error E8004} on this gate, and the gate
+ * validity condition {@code expectation(fixture) == landed
+ * std/time.js behavior} (js-v12-completion-architecture D5) holds by
+ * construction. The gate is launched by {@code run_tests.sh} on every
+ * gate run; the legacy safe-int default mode of the retained JS
+ * runtime stays the unselected direct-caller mode
+ * ({@code test_stdlib_js.js} keeps running the legacy range and stays
+ * green unchanged).</p>
  *
  * <h2>Classification policy (deterministic, documented)</h2>
  *
@@ -139,6 +169,38 @@ import java.util.regex.Pattern;
  * </ul>
  */
 public class JsConformanceTest {
+
+    // =========================================================================
+    // The lane-wide activated invocation (ISSUE-0536 remediation)
+    // =========================================================================
+
+    /**
+     * The single lane-wide activated invocation: every on-disk
+     * backend-runtime fixture compiles through this exact invocation
+     * via the {@link CompilationOrchestrator} constructor in
+     * {@link #runOrchestrator}. The {@code COMMON_SHADOW +
+     * DEAL_V1_2_INT32} invocation is the invocation the
+     * {@link LegacyProfileRegressionCatalog} A5 seam resolves for
+     * every uncatalogued fixture — the activated profile the LuaJIT
+     * lane resolves for the shared stdlib-edge time fixture — so the
+     * flipped fixture passes as {@code runtime-error E8004} on this
+     * gate and the gate validity condition
+     * {@code expectation(fixture) == landed std/time.js behavior}
+     * (js-v12-completion-architecture D5) holds by construction. The
+     * unselected direct-caller default mode of the retained JS
+     * runtime stays the legacy range ({@code test_stdlib_js.js} runs
+     * unselected and stays green unchanged).
+     */
+    private static final CompilerInvocation LANE_INVOCATION =
+        CompilerProfileProvider.resolveCommonShadow(
+            SemanticProfile.DEAL_V1_2_INT32, ReleaseState.PRE_ACTIVATION,
+            ReleaseConfiguration.releaseCapabilityRegistry());
+
+    /** The lane-wide activated invocation, exposed for pin tests to
+     * assert field-exactly. */
+    static CompilerInvocation laneInvocation() {
+        return LANE_INVOCATION;
+    }
 
     // =========================================================================
     // Host harness: one CommonJS implementation per host fixture
@@ -1171,6 +1233,14 @@ module.exports = {
             String source = Files.readString(file);
             String filename = file.toString();
 
+            // ISSUE-0272 D8 item 2a: in-memory seam site —
+            // classification headers are stripped before the lexer
+            // (the same seam ConformanceTest.compileAndGetDiagnostics
+            // applies), so the production directive gate never sees
+            // an @spec/@description/@expected/@features header line.
+            source = ConformanceHarnessMetadata
+                .stripClassificationHeaders(source);
+
             LexResult lex = new Lexer(source, filename).tokenize();
             all.addAll(lex.diagnostics());
             if (lex.hasErrors()) return all;
@@ -1242,7 +1312,12 @@ module.exports = {
             Path resolved = resolveRelativePath(modulePath);
             if (resolved != null && Files.exists(resolved)) {
                 try {
-                    String source = Files.readString(resolved);
+                    // ISSUE-0272 D8 item 2a: in-memory seam site —
+                    // the inner companion read strips classification
+                    // headers before the lexer.
+                    String source = ConformanceHarnessMetadata
+                        .stripClassificationHeaders(
+                            Files.readString(resolved));
                     boolean isDecl = resolved.toString().endsWith(".d.deal");
                     LexResult lex = new Lexer(source, resolved.toString())
                         .tokenize();
@@ -1287,7 +1362,12 @@ module.exports = {
             Path resolved = resolveRelativePath(modulePath);
             if (resolved == null || !Files.exists(resolved)) return null;
             try {
-                String source = Files.readString(resolved);
+                // ISSUE-0272 D8 item 2a: in-memory seam site —
+                // classification headers are stripped before the
+                // lexer.
+                String source = ConformanceHarnessMetadata
+                    .stripClassificationHeaders(
+                        Files.readString(resolved));
                 LexResult lex = new Lexer(source, resolved.toString())
                     .tokenize();
                 if (lex.hasErrors()) return null;
@@ -1308,7 +1388,11 @@ module.exports = {
         private Map<String, Symbol.ClassSymbol> classSymbolsOf(Path file) {
             Map<String, Symbol.ClassSymbol> symbols = new LinkedHashMap<>();
             try {
-                String source = Files.readString(file);
+                // ISSUE-0272 D8 item 2a: in-memory seam site —
+                // classification headers are stripped before the
+                // lexer.
+                String source = ConformanceHarnessMetadata
+                    .stripClassificationHeaders(Files.readString(file));
                 LexResult lex = new Lexer(source, file.toString()).tokenize();
                 if (lex.hasErrors()) return symbols;
                 Parser parser = new Parser(lex.tokens(), file.toString(), lex.directiveEvents());
@@ -1405,6 +1489,13 @@ module.exports = {
         try {
             String source = Files.readString(file);
             String filename = file.toString();
+
+            // ISSUE-0272 D8 item 2a: in-memory seam site —
+            // classification headers are stripped before the lexer
+            // (the same seam ConformanceTest.compileAndGetDiagnostics
+            // applies).
+            source = ConformanceHarnessMetadata
+                .stripClassificationHeaders(source);
 
             LexResult lex = new Lexer(source, filename).tokenize();
             if (lex.hasErrors()) {
@@ -1681,8 +1772,14 @@ module.exports = {
      * signature extraction, dependency ordering, name resolution, type
      * checking, and per-module JsBackend codegen into
      * {@code outputRoot}, with the repository root as the stdlib
-     * directory (the JsE2eTest production-pipeline pattern). Stdout/
-     * stderr is captured so per-test output stays clean.
+     * directory (the JsE2eTest production-pipeline pattern). The
+     * explicit {@link #LANE_INVOCATION}
+     * ({@code COMMON_SHADOW + DEAL_V1_2_INT32}) drives the
+     * compilation, so the emitted artifacts carry the
+     * {@code $rt.setInt32Mode(true)} selector and the shared
+     * stdlib-edge time fixture raises E8004 at the retained
+     * {@code nowMillis} exit check. Stdout/stderr is captured so
+     * per-test output stays clean.
      */
     private static OrchestratorRun runOrchestrator(Path projectRoot,
             Path entryFile, Path outputRoot,
@@ -1700,10 +1797,10 @@ module.exports = {
                     new CompilationOrchestrator(
                         entryFile.toAbsolutePath().normalize(),
                         outputRoot.toAbsolutePath().normalize(),
-                        false, false, false, Backend.JS,
+                        false, false, false, false, Backend.JS,
                         externalsDeclarations,
                         List.of(projectRoot.toAbsolutePath().normalize()),
-                        REPO_ROOT);
+                        REPO_ROOT, null, LANE_INVOCATION);
                 boolean success = orchestrator.compile();
                 return new OrchestratorRun(success,
                     orchestrator.diagnostics(),
@@ -1768,7 +1865,13 @@ module.exports = {
                 String declRel = "bindings/" + hostName + ".d.deal";
                 Files.createDirectories(projectRoot.resolve("bindings"));
                 Path declTarget = projectRoot.resolve(declRel);
-                Files.copy(decl, declTarget);
+                // ISSUE-0272 D8 item 2b: producer-side seam — the
+                // host declaration copy is written
+                // classification-header free, so the production
+                // orchestrator never lexes a header line.
+                Files.writeString(declTarget,
+                    ConformanceHarnessMetadata.stripClassificationHeaders(
+                        Files.readString(decl)));
                 dealJson.append("    \"host/").append(hostName)
                     .append("\": { \"declaration\": \"")
                     .append(declRel).append("\" }");
@@ -1841,7 +1944,12 @@ module.exports = {
         if (target.getParent() != null) {
             Files.createDirectories(target.getParent());
         }
-        Files.copy(normalized, target);
+        // ISSUE-0272 D8 item 2b: producer-side seam — the entry
+        // fixture and every transitive companion are written
+        // classification-header free, so the production orchestrator
+        // never lexes a header line (the E1044 directive rejection).
+        Files.writeString(target, ConformanceHarnessMetadata
+            .stripClassificationHeaders(Files.readString(normalized)));
         written.put(normalized.toString(), target);
         materializedCorpusFiles.add(corpusRelOf(normalized));
         for (String importPath : relativeImports(normalized)) {
@@ -1880,7 +1988,12 @@ module.exports = {
         }
         Path aliasTarget = projectRoot.resolve(aliasBase + ".deal");
         if (Files.exists(aliasTarget)) return;
-        Files.copy(resolved.toAbsolutePath().normalize(), aliasTarget);
+        // ISSUE-0272 D8 item 2b: producer-side seam — the
+        // explicit-.deal alias copy is written classification-header
+        // free; the written-map dedup/alias semantics are unchanged.
+        Files.writeString(aliasTarget, ConformanceHarnessMetadata
+            .stripClassificationHeaders(Files.readString(
+                resolved.toAbsolutePath().normalize())));
     }
 
     /** Relative import paths ({@code ./} / {@code ../}) appearing in the

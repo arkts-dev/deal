@@ -28,10 +28,17 @@ import java.util.List;
  * with their nowMillis cases, and the slice pins green
 
  * ({@code deal.test.BackendConformanceTest}) — is exercised on every gate
- * run by {@code run_tests.sh}. The JS lane has no corpus runner at this
- * state: {@code test/JsConformanceTest.java} is compiled but never launched
- * by {@code run_tests.sh} — a recorded fact
- * (js-v12-completion-architecture D5), not a failure.
+ * run by {@code run_tests.sh}. The JS corpus gate
+ * ({@code deal.test.JsConformanceTest}) runs on every gate run inside
+ * {@code deal.test.JsLaneStatePinTest} under its lane-wide activated
+ * invocation ({@code COMMON_SHADOW + DEAL_V1_2_INT32}), so the flipped
+ * shared fixture passes as {@code runtime-error E8004} on the JS gate
+ * and the gate validity condition
+ * {@code expectation(fixture) == landed std/time.js behavior}
+ * (js-v12-completion-architecture D5) holds on every gate run; the
+ * unselected direct-caller default mode of the retained JS runtime
+ * stays the legacy range, so {@code node test_stdlib_js.js} keeps its
+ * unchanged nowMillis cases green.
  *
 
  * <p>Lifecycle: the disposition-application unit (ISSUE-0380) flipped the

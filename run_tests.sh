@@ -184,6 +184,30 @@ TEST_MAINS+=(
 )
 
 # =========================================================================
+# ISSUE-0536 (ISSUE-0372 acceptance remediation): the JS corpus gate
+# launches on every gate run inside the JS lane state pin test. The pin
+# test launches the real JsConformanceTest as a subprocess and asserts
+# the captured state field-exactly: the lane-wide activated invocation
+# (COMMON_SHADOW + DEAL_V1_2_INT32 — the invocation the LuaJIT lane's
+# A5 seam resolves for uncatalogued fixtures) is pinned field-exactly,
+# the emitted entry module calls $rt.setInt32Mode(true), deal/runtime.js
+# checkInt gates at the signed-32 boundary, and the flipped shared
+# fixture backend-runtime/stdlib-edge/time-now-millis-positive.deal
+# passes as runtime-error E8004 on the JS gate — the gate validity
+# condition expectation(fixture) == landed std/time.js behavior
+# (js-v12-completion-architecture D5) — with the four owner-delegated
+# lane divergences pinned as the sanctioned pre-completion state (the
+# differential gate's committed full-run enumeration pins the same
+# set). The unselected direct-caller default mode of the retained JS
+# runtime stays the legacy range, so test_stdlib_js.js keeps running
+# unselected and stays green unchanged.
+# =========================================================================
+TEST_SOURCES+=( 'test/JsLaneStatePinTest.java' )
+TEST_MAINS+=(
+  'bg|=== Launching JS Lane State Pin Tests (ISSUE-0536: the real JS corpus gate runs inside the pin test under its activated invocation with field-exact state assertions) ===|java -ea -cp build deal.test.JsLaneStatePinTest'
+)
+
+# =========================================================================
 # ISSUE-0353 (differential gate core): the gate components and their unit
 # suites join the compile list and the run phase here. The gate's own
 # deal.test entry point (deal.test.conformance.DifferentialGate) is NOT

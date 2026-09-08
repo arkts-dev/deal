@@ -1805,8 +1805,11 @@ public class JsLane implements Lane {
      * built by the shared {@link ErrorSnapshot} canonical serializer with
      * the sidecar as the authoritative field set (the lane emits the
      * mandatory fields plus exactly the pinned optional fields and
-     * suppresses every unpinned one; a pinned field the captured error
-     * does not carry is never fabricated — the comparison fails
+     * suppresses every unpinned one; the span group is emitted only
+     * when the sidecar pins it — the sanctioned span-less shape omits
+     * all three, so a captured call-site span against a span-less
+     * sidecar is suppressed; a pinned field the captured error does
+     * not carry is never fabricated — the comparison fails
      * honestly). A non-zero exit without a complete DEAL error payload is
      * a subprocess failure outside the DEAL outcome surface.
      */
@@ -1852,13 +1855,24 @@ public class JsLane implements Lane {
             ? captured.line() + deployment.headerLinesStripped()
             : captured.line();
 
-        // The sidecar is the authoritative field set: emit exactly the
-        // pinned optional fields (no error expectation pins nothing).
+        // The sidecar is the authoritative field set (C2): the snapshot
+        // emits exactly the pinned fields. The span group is emitted
+        // only when the sidecar pins it — the sanctioned span-less
+        // shape (the locked time selector's retained nowMillis wrapper
+        // raising E8004 with no span) omits all three, so a captured
+        // call-site span against a span-less sidecar is suppressed
+        // (the serializer emits the span group exactly when pinned);
+        // a pinned span the captured error lacks was already reported
+        // as the honest never-fabricate PROCESS_FAILURE above. The
+        // optional fields are emitted only when pinned.
         SidecarExpectations.ErrorExpectation pinned = expectation.error();
+        boolean spanPinned = pinned != null && pinned.pinsSpan();
         SidecarExpectations.ErrorExpectation snapshot =
             new SidecarExpectations.ErrorExpectation(
-                captured.code(), captured.message(), sourceFile, line,
-                captured.column(),
+                captured.code(), captured.message(),
+                spanPinned ? sourceFile : null,
+                spanPinned ? line : null,
+                spanPinned ? captured.column() : null,
                 optionalField(pinned, "expected", captured.expected()),
                 optionalField(pinned, "actual", captured.actual()),
                 optionalField(pinned, "frames", captured.frames()),
