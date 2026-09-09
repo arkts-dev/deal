@@ -304,6 +304,7 @@ public class DefaultSemanticSerializerTest {
         testResourceCompletion();
         testFunctionProviderContent();
         testDeclaredWrapperAndHostClassSeams();
+        testSyntheticJsonableExportProvider();
         testDeclarationModuleCStructPlan();
         testOutOfRootProvider();
         testReentrantGuardFailsClosed();
@@ -1604,6 +1605,136 @@ public class DefaultSemanticSerializerTest {
                         "\"providerContractDigest\""),
                 "the host-declared class literal target serializes"
                     + " identity-only (never a placeholder digest)");
+        } finally {
+            deleteRecursively(compile.root);
+        }
+    }
+
+    // =========================================================================
+    // Synthetic @jsonable export providers: imported C$fromJson/C$toJson
+    // digests derive from the resolved export signature plus the resource
+    // identity digest (the declared-wrapper rule of D5) — never E6005 —
+    // and a demanded class provider's canonical plan content stays present
+    // in providerContents on the digest-memo fast-path.
+    // =========================================================================
+
+    private static void testSyntheticJsonableExportProvider()
+            throws Exception {
+        System.out.println("-- Imported synthetic @jsonable export"
+            + " providers (C$fromJson/C$toJson wrapper digests) --");
+        Compile compile = new Compile(Map.of(
+            "deal.json", MANIFEST,
+            "src/main.deal", """
+                import * as L from "./lib"
+
+                class Consumer {
+                  w: L.Widget | null = L.Widget$fromJson("{}");
+                  t: string = L.Widget$toJson({});
+                }
+
+                export function main(): null {
+                  return null;
+                }
+                """,
+            "src/lib.deal", """
+                // @jsonable
+                export class Widget {
+                  label: string = "";
+                  count: int = 0;
+                }
+                """), "src/main.deal");
+        try {
+            check(compile.success,
+                "the synthetic-jsonable-export fixture compiles: "
+                    + compile.diagnostics);
+            DefaultSemanticSerializer.Result result = compile.serialize();
+            check(!result.hasErrors(),
+                "the serializer completes the synthetic-jsonable-export"
+                    + " plans: " + result.diagnostics());
+            DefaultSemanticSerializer.SerializedDefaultClass consumer =
+                compile.serializedOf("main.deal", "Consumer");
+            check(consumer != null, "Consumer has a serialized plan");
+            if (consumer == null) {
+                return;
+            }
+
+            ResolvedDefaultExpression w = consumer.completedPlan()
+                .orderedFields().get(0).defaultExpression();
+            check(w.runtimeResources().size() == 1
+                    && w.runtimeResources().iterator().next().kind()
+                        == RuntimeResourceReference.Kind
+                            .IMPORTED_FUNCTION_WRAPPER
+                    && "Widget$fromJson".equals(w.runtimeResources()
+                        .iterator().next().semanticResourceIdentity()
+                        .lexicalDeclarationIdentity().declaredName()),
+                "field w completes the imported Widget$fromJson"
+                    + " wrapper");
+            RuntimeResourceReference wRef = w.runtimeResources()
+                .iterator().next();
+            check(isSha256Hex(wRef.providerContractDigest()),
+                "field w's resource carries a real provider digest");
+            String fromJsonDigest = compile.providerDigestOf("lib.deal",
+                "Widget$fromJson");
+            check(isSha256Hex(fromJsonDigest),
+                "the synthetic fromJson export has a real provider"
+                    + " digest");
+            check(wRef.providerContractDigest().equals(fromJsonDigest),
+                "field w's wrapper digest is the synthetic export's"
+                    + " provider digest");
+            String fromJsonContent = compile.providerContentOf(
+                "lib.deal", "Widget$fromJson");
+            check(fromJsonContent != null
+                    && fromJsonContent.contains(
+                        "\"kind\":\"SYNTHETIC_JSONABLE_EXPORT_SIGNATURE\"")
+                    && fromJsonContent.contains(
+                        "\"semanticResourceIdentityDigest\":\"")
+                    && !fromJsonContent.contains("file:"),
+                "the synthetic export content is the canonical resolved"
+                    + " signature plus the declaration identity (digest"
+                    + " only)");
+            check(fromJsonDigest.equals(digestOf(fromJsonContent)),
+                "the synthetic export digest derives from its content");
+            check(w.canonicalSemanticContent().contains(fromJsonDigest),
+                "the canonical target embeds the real provider digest");
+
+            ResolvedDefaultExpression t = consumer.completedPlan()
+                .orderedFields().get(1).defaultExpression();
+            check(t.runtimeResources().size() == 2,
+                "field t completes two resources (toJson wrapper,"
+                    + " Widget plan), got "
+                    + t.runtimeResources().size());
+            List<RuntimeResourceReference> tRefs = List.copyOf(
+                t.runtimeResources());
+            check(tRefs.get(0).kind()
+                        == RuntimeResourceReference.Kind
+                            .IMPORTED_FUNCTION_WRAPPER
+                    && "Widget$toJson".equals(tRefs.get(0)
+                        .semanticResourceIdentity()
+                        .lexicalDeclarationIdentity().declaredName()),
+                "first-occurrence order: the toJson wrapper precedes"
+                    + " the contextual class-literal plan");
+            check(tRefs.get(1).kind()
+                        == RuntimeResourceReference.Kind
+                            .IMPORTED_CLASS_DEFAULT_PLAN
+                    && "Widget".equals(tRefs.get(1)
+                        .semanticResourceIdentity()
+                        .lexicalDeclarationIdentity().declaredName()),
+                "the contextual Widget literal completes the class-plan"
+                    + " resource");
+            String widgetPlanContent = compile.serializedOf("lib.deal",
+                "Widget").canonicalPlanContent();
+            check(tRefs.get(1).providerContractDigest().equals(
+                    digestOf(widgetPlanContent)),
+                "the Widget plan resource carries the provider plan's"
+                    + " planDigest");
+            check(tRefs.get(1).providerContractDigest().equals(
+                    compile.providerDigestOf("lib.deal", "Widget")),
+                "the demanded class provider digest is published");
+            String demandedPlanContent = compile.providerContentOf(
+                "lib.deal", "Widget");
+            check(widgetPlanContent.equals(demandedPlanContent),
+                "providerContents carries the demanded class provider's"
+                    + " plan content (memo fast-path republish)");
         } finally {
             deleteRecursively(compile.root);
         }

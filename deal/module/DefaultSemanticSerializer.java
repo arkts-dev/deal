@@ -226,8 +226,13 @@ public final class DefaultSemanticSerializer {
         private final Map<SemanticResourceIdentity, String>
             providerContents = new LinkedHashMap<>();
 
-        /** The demand-driven digest memo, keyed by provider. */
-        private final Map<DigestKey, String> digestMemo =
+        /** The demand-driven digest memo, keyed by provider: the
+         * computed digest plus the canonical provider content it
+         * derives from, so the memo fast-path republishes both the
+         * digest and the content for a demanded provider identity
+         * (the {@code providerDigests} and {@code providerContents}
+         * projections always agree for a demanded provider). */
+        private final Map<DigestKey, DigestMemo> digestMemo =
             new LinkedHashMap<>();
         /** The already-serialized class plans, keyed by class. */
         private final Map<DigestKey, SerializedDefaultClass> classMemo =
@@ -254,6 +259,12 @@ public final class DefaultSemanticSerializer {
 
         private record DigestKey(String moduleSourcePath,
                                  String declaredName, ProviderKind kind) {
+        }
+
+        /** One memoized provider digest derivation: the digest and
+         * the canonical provider content it derives from (the content
+         * is republished verbatim on the memo fast-path). */
+        private record DigestMemo(String digest, String content) {
         }
 
         Serializer(Map<String, DefaultSerializerModuleInput> modules,
@@ -327,7 +338,9 @@ public final class DefaultSemanticSerializer {
                     planned);
                 if (result != null) {
                     classMemo.put(key, result);
-                    digestMemo.put(key, result.planDigest());
+                    digestMemo.put(key, new DigestMemo(
+                        result.planDigest(),
+                        result.canonicalPlanContent()));
                 }
                 return result;
             } finally {
@@ -1406,13 +1419,19 @@ public final class DefaultSemanticSerializer {
             DigestKey key = new DigestKey(input.sourcePath(),
                 identity.lexicalDeclarationIdentity().declaredName(),
                 kind);
-            String memo = digestMemo.get(key);
+            DigestMemo memo = digestMemo.get(key);
             if (memo != null) {
-                // The memo fast-path still publishes the digest for
-                // the demanded identity (the first demand of a
-                // provider serialized earlier as the main flow).
-                providerDigests.put(identity, memo);
-                return memo;
+                // The memo fast-path still publishes the digest and
+                // the canonical content for the demanded identity
+                // (the first demand of a provider serialized earlier
+                // as the main flow), so providerDigests and
+                // providerContents always agree for a demanded
+                // provider.
+                providerDigests.put(identity, memo.digest());
+                if (memo.content() != null) {
+                    providerContents.put(identity, memo.content());
+                }
+                return memo.digest();
             }
             if (inProgress.contains(key)) {
                 failReentrant(key);
@@ -1421,12 +1440,12 @@ public final class DefaultSemanticSerializer {
             inProgress.add(key);
             try {
                 String digest;
+                String content;
                 if (kind == ProviderKind.FUNCTION) {
-                    String content = functionContent(input, key);
+                    content = functionContent(input, key);
                     if (content == null) {
                         return null;
                     }
-                    providerContents.put(identity, content);
                     digest = RuntimeResourceReference
                         .providerContractDigestOf(content);
                 } else {
@@ -1435,11 +1454,11 @@ public final class DefaultSemanticSerializer {
                     if (serializedPlan == null) {
                         return null;
                     }
-                    providerContents.put(identity,
-                        serializedPlan.canonicalPlanContent());
+                    content = serializedPlan.canonicalPlanContent();
                     digest = serializedPlan.planDigest();
                 }
-                digestMemo.put(key, digest);
+                providerContents.put(identity, content);
+                digestMemo.put(key, new DigestMemo(digest, content));
                 providerDigests.put(identity, digest);
                 return digest;
             } finally {
@@ -1499,6 +1518,20 @@ public final class DefaultSemanticSerializer {
                 DefaultSerializerModuleInput input, DigestKey key) {
             FunctionDeclaration fd = topLevelFunction(input.program(),
                 key.declaredName());
+            if (fd == null) {
+                ClassDeclaration synthetic = jsonableClassForSynthetic(
+                    input.program(), key.declaredName());
+                if (synthetic != null) {
+                    // A synthetic @jsonable export (C$fromJson/
+                    // C$toJson): no FunctionDeclaration exists — the
+                    // provider contract content derives from the
+                    // resolved export signature plus the declaration's
+                    // semantic resource identity (the declared-wrapper
+                    // rule of D5), never a failure or a placeholder.
+                    return syntheticJsonableExportContent(input, key,
+                        synthetic);
+                }
+            }
             if (fd == null || fd.body() == null) {
                 fail("the provider function '" + key.declaredName()
                     + "' of module '" + input.modulePath()
@@ -1617,6 +1650,72 @@ public final class DefaultSemanticSerializer {
                     CanonicalJson.str(SERIALIZER_VERSION)),
                 CanonicalJson.e("kind",
                     CanonicalJson.str("DECLARED_FUNCTION_SIGNATURE")),
+                CanonicalJson.e("name",
+                    CanonicalJson.str(key.declaredName())),
+                CanonicalJson.e("isAsync",
+                    CanonicalJson.bool(funcType.isAsync())),
+                CanonicalJson.e("parameters",
+                    CanonicalJson.arr(parameterValues)),
+                CanonicalJson.e("returnDescriptor",
+                    CanonicalJson.str(returnDescriptor)),
+                CanonicalJson.e("semanticResourceIdentityDigest",
+                    CanonicalJson.str(SemanticIdentityContent
+                        .resourceIdentityDigest(identity)))));
+        }
+
+        /**
+         * The canonical provider contract content of a synthetic
+         * {@code @jsonable} export ({@code C$fromJson}/
+         * {@code C$toJson}): the resolved export signature — the
+         * exact Func type {@code input.exports()} carries — plus the
+         * declaration's semantic resource identity digest, mirroring
+         * the declared-wrapper rule of D5 (the generated binding/FFI
+         * plan semantics join the domain once binding generation
+         * lands). Identities participate through digests only, never
+         * raw URIs.
+         */
+        private String syntheticJsonableExportContent(
+                DefaultSerializerModuleInput input, DigestKey key,
+                ClassDeclaration syntheticClass) {
+            Type exportType = input.exports().get(key.declaredName());
+            if (!(exportType instanceof Type.Func funcType)) {
+                fail("the synthetic jsonable export '"
+                    + key.declaredName() + "' of module '"
+                    + input.modulePath() + "' has no resolved"
+                    + " exported signature",
+                    syntheticClass.span().range());
+                return null;
+            }
+            DiagnosticRange declarationRange =
+                syntheticClass.span().range();
+            SemanticResourceIdentity identity =
+                new SemanticResourceIdentity(
+                    input.location().semanticModuleIdentity(),
+                    LexicalDeclarationIdentity.DeclarationKind.FUNCTION,
+                    new LexicalDeclarationIdentity(
+                        LexicalDeclarationIdentity.DeclarationKind
+                            .FUNCTION,
+                        key.declaredName(), input.modulePath(),
+                        declarationRange));
+            List<CanonicalJson.Value> parameterValues = new ArrayList<>();
+            for (Type parameter : funcType.paramTypes()) {
+                parameterValues.add(CanonicalJson.str(
+                    descriptorOf(input, parameter, declarationRange)));
+                if (failed) {
+                    return null;
+                }
+            }
+            String returnDescriptor = descriptorOf(input,
+                funcType.returnType(), declarationRange);
+            if (failed) {
+                return null;
+            }
+            return CanonicalJson.serializeText(CanonicalJson.obj(
+                CanonicalJson.e("serializerVersion",
+                    CanonicalJson.str(SERIALIZER_VERSION)),
+                CanonicalJson.e("kind",
+                    CanonicalJson.str(
+                        "SYNTHETIC_JSONABLE_EXPORT_SIGNATURE")),
                 CanonicalJson.e("name",
                     CanonicalJson.str(key.declaredName())),
                 CanonicalJson.e("isAsync",
@@ -2157,6 +2256,25 @@ public final class DefaultSemanticSerializer {
             if (stmt instanceof ExportDeclaration ed
                     && ed.declaration() instanceof ClassDeclaration cd) {
                 return cd;
+            }
+            return null;
+        }
+
+        /**
+         * The class whose synthetic {@code C$fromJson}/
+         * {@code C$toJson} export carries the given name, or null
+         * (the planner's provisional-identity derivation mirror,
+         * {@link DefaultIrRecorder#jsonableClassForSynthetic}).
+         */
+        private static ClassDeclaration jsonableClassForSynthetic(
+                ProgramNode program, String name) {
+            for (StatementNode stmt : program.statements()) {
+                ClassDeclaration cd = classDeclarationOf(stmt);
+                if (cd != null && cd.isJsonable()
+                        && (name.equals(cd.name() + "$fromJson")
+                            || name.equals(cd.name() + "$toJson"))) {
+                    return cd;
+                }
             }
             return null;
         }
