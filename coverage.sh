@@ -216,6 +216,21 @@ TEST_MAINS+=(
   'fg|=== Running the Production V12 Feature/Native Gate (ISSUE-0165) ===|java -ea -cp build deal.test.feature.V12FeatureGate'
 )
 
+# =========================================================================
+# ISSUE-0507 (FFI candidate fixture conformance): the corpus C FFI
+# support component joins the coverage mirror exactly as in
+# run_tests.sh (the corpus-owned externals wiring, the GCC
+# native-library bootstrap, the production FfiDeclarationValidator /
+# FFIGEN boundary surface, and the checker-facing export/class-symbol
+# registry the lanes' module resolvers consume). CorpusFfi is also
+# registered in tools/gate-manifest.sh TEST_SOURCES (consumed by the
+# manifest-listed conformance runners at startup), so the strict
+# full-set compile list — the manifest exactly — is self-consistent.
+# =========================================================================
+TEST_SOURCES+=(
+  'deal/test/conformance/CorpusFfi.java'
+)
+
 JACOCO_DIR="/tmp/opencode/jacoco"
 JUNIT_CP="/usr/share/java/junit4.jar:/usr/share/java/hamcrest-core.jar"
 

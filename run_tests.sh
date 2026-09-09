@@ -416,9 +416,12 @@ TEST_MAINS+=(
 # native-library bootstrap, the production FfiDeclarationValidator /
 # FFIGEN boundary surface, and the checker-facing export/class-symbol
 # registry the lanes' module resolvers consume. It joins the compile
-# list here, next to the gate components it serves; the single
-# compile/test-list authority file (tools/gate-manifest.sh) stays
-# untouched.
+# list here, next to the gate components it serves, and is registered
+# in tools/gate-manifest.sh TEST_SOURCES (consumed by the
+# manifest-listed conformance runners at startup, so the strict
+# full-set compile list — the manifest exactly — is
+# self-consistent); coverage.sh carries the same script-local mirror
+# entry so both gates compile and run the identical set.
 # =========================================================================
 TEST_SOURCES+=(
   'deal/test/conformance/CorpusFfi.java'

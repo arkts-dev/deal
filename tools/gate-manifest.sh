@@ -269,6 +269,16 @@ TEST_SOURCES=(
   # JsonDefaultChildTable record, the combined T1..T5 two-module
   # end-to-end drive, and determinism).
   'test/JsonClassLoweringTest.java'
+  # ISSUE-0507 registration: the corpus C FFI support component
+  # (CorpusFfi — the corpus-owned externals wiring, the GCC
+  # native-library bootstrap, the production FfiDeclarationValidator /
+  # FFIGEN boundary surface, and the checker-facing export/class-symbol
+  # registry the lanes’ module resolvers consume) — consumed by the
+  # manifest-listed
+  # ConformanceTest/JvmConformanceTest/JsConformanceTest/
+  # SidecarCorpusValidationTest runners at startup, so the strict
+  # full-set compile list (the manifest exactly) is self-consistent.
+  'deal/test/conformance/CorpusFfi.java'
   # ISSUE-0162 registration: the C FFI declaration validation and
   # forward binding generation battery.
   'test/FfiDeclarationValidatorTest.java'
