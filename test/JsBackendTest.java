@@ -2233,11 +2233,12 @@ public class JsBackendTest {
         if (nodeAvailable) {
             writeFile("hostjs_proj/build/js/host/cfg.js", """
                 "use strict";
+                const $rt = require("../deal/runtime");
                 module.exports = {
                   Endpoint: { $kind: "class", $classname: "@$external/host/cfg/Endpoint" },
                   Endpoint_defaults: { path: "/" },
                   ServerConfig: { $kind: "class", $classname: "@$external/host/cfg/ServerConfig" },
-                  ServerConfig_defaults: { port: 8080 },
+                  ServerConfig_defaults: { port: 8080, endpoint: $rt.MISSING, tags: $rt.MISSING, note: $rt.MISSING },
                   describe: function (s) { return s.endpoint.path + ":" + s.port; },
                 };
                 """);

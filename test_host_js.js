@@ -667,7 +667,7 @@ function cfgRawExports() {
     Endpoint: { $kind: "class", $classname: ENDPOINT_IDENTITY },
     Endpoint_defaults: { path: "/" },
     ServerConfig: { $kind: "class", $classname: CFG_IDENTITY },
-    ServerConfig_defaults: { port: 8080 },
+    ServerConfig_defaults: { port: 8080, endpoint: rt.MISSING, tags: rt.MISSING, note: rt.MISSING },
     describe: function (s) { return s.endpoint.path + ":" + s.port; },
   };
 }
@@ -745,8 +745,38 @@ test("the synthesized constructor raises E8007 for an extra provided field", fun
   const surface = rt.loadHost(cfgRawExports(), cfgDeclaredMap());
   assertError(function() {
     surface["ServerConfig$new"]({ zzz: 1 }, "probe.js", 1, 1);
-  }, "E8007", "extra field 'zzz' in class 'ServerConfig'",
+  }, "E8007", "extra field 'zzz' in class '" + CFG_IDENTITY + "'",
     "the ordinary class machinery rejects undeclared provided fields");
+});
+
+test("the defaults-map seam rejects a provided declared optional absent from the host defaults", function() {
+  // The preserved defaults-map seam (host-module-abi D2, ISSUE-0331):
+  // the loader passes the host defaults through verbatim, so a host
+  // defaults table WITHOUT a MISSING mark for a declared optional
+  // rejects the provided value with E8007 naming the canonical
+  // identity — the corpus host-class-extra-field shape (the presence
+  // triplet's Config_defaults carries only port).
+  const raw = {
+    Config: { $kind: "class", $classname: "@$external/host.presence/Config" },
+    Config_defaults: { port: 8080 },
+    ping: function () { return "pong"; },
+  };
+  const declared = {
+    Config: classDecl("@$external/host.presence/Config", [
+      field("port", "int", false, false, true),
+      field("fallback", "@$external/host.presence/Config", true, true, false),
+    ]),
+    ping: fnDecl("()->string"),
+  };
+  const surface = rt.loadHost(raw, declared);
+  assertError(function() {
+    surface["Config$new"]({ port: 9000, fallback: null }, "probe.js", 9, 28);
+  }, "E8007", "extra field 'fallback' in class '@$external/host.presence/Config'",
+    "a provided declared optional absent from the unmarked host defaults raises E8007 with the canonical identity");
+  const kept = surface["Config$new"]({ port: 9000 }, "probe.js", 1, 1);
+  assertEqual(kept.port, 9000, "provided defaulted field overlaid");
+  assertNull(rt.optRead(kept.fallback), "the absent unmarked optional reads DEAL null through optRead");
+  assert(!rt.has(kept, "fallback"), "has() is false for the absent unmarked optional");
 });
 
 test("a zero-arg defaults function is accepted and re-evaluated per construction", function() {

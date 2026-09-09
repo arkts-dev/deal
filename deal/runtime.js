@@ -1380,21 +1380,48 @@ const $rt = {
   },
 
   // checkArray: the strict array split (D3) — Array.isArray via the T1
-  // $Array capture (never the bare spelling); a Map, class instance, or
-  // primitive is rejected with "expected array". Element extraction
-  // realizes the canonical "[D]" prefix form only
-  // ($arrayElementDescriptor); the legacy "T[]" suffix was retired with
-  // the dialect. The element walk is 0-based,
-  // mirroring the reference's 1..#v walk (deal/runtime.lua:256-285) with
-  // the 1-based message index; any element failure is wrapped in E8003
-  // with the inner DEALError's message embedded (the deliberate
-  // stabilization of the reference's tostring(err) of a Lua table —
-  // non-portable address text). Success returns the array unchanged.
+  // $Array capture (never the bare spelling), plus the json-array-marked
+  // Map table (the std/json decode of a JSON array, the D2 array mark —
+  // ISSUE-0331 gate closure): a plain Map, class instance, or primitive
+  // is rejected with "expected array". Element extraction realizes the
+  // canonical "[D]" prefix form only ($arrayElementDescriptor); the
+  // legacy "T[]" suffix was retired with the dialect. The marked-Map arm
+  // walks the table's array-form keys 1..n in order — the encode-side
+  // $arrayFormIndex walk mirrored, the reference's 1..#v walk over a
+  // decoded JSON array table (integer keys 1..n on the Lua side, the
+  // string keys "1".."n" of the marked Map here) — so a JSON array
+  // crossing an array boundary checks its elements exactly like a real
+  // Array. The real-Array walk is 0-based, mirroring the reference's
+  // 1..#v walk (deal/runtime.lua:256-285) with the 1-based message
+  // index; any element failure is wrapped in E8003 with the inner
+  // DEALError's message embedded (the deliberate stabilization of the
+  // reference's tostring(err) of a Lua table — non-portable address
+  // text). Success returns the value unchanged.
   checkArray: function $checkArray(descriptor, v, file, line, column) {
-    if (!$Array.isArray(v)) {
+    const $isJsonArrayMap = !$Array.isArray(v) && $rt.isJsonArrayTable(v);
+    if (!$Array.isArray(v) && !$isJsonArrayMap) {
       $rt.fail("E8001", "expected array", file, line, column, "array", $kindOf(v));
     }
     const $element = $arrayElementDescriptor(descriptor, file, line, column);
+    if ($isJsonArrayMap) {
+      let $max = 0;
+      for (const $key of v.keys()) {
+        const $index = $arrayFormIndex($key);
+        if ($index !== null && $index > $max) {
+          $max = $index;
+        }
+      }
+      for (let $i = 1; $i <= $max; $i++) {
+        const $value = v.get(String($i));
+        try {
+          $rt.checkType($element, $value, file, line, column);
+        } catch ($e) {
+          const $innerMessage = $e instanceof $DEALError ? $e.message : String($e);
+          $rt.fail("E8003", "array element " + $i + " type mismatch: " + $innerMessage, file, line, column, $element, $kindOf($value));
+        }
+      }
+      return v;
+    }
     for (let $i = 0; $i < v.length; $i++) {
       try {
         $rt.checkType($element, v[$i], file, line, column);
@@ -1666,19 +1693,26 @@ const $rt = {
   },
 
   // optRead: optional-field reads map MISSING -> null; every other value —
-  // a present null included — passes through unchanged (D6).
+  // a present null included — passes through unchanged (D6). Under the
+  // verbatim host defaults-map seam (ISSUE-0331 gate closure) an absent
+  // own property — an optional the host defaults table does not mark
+  // with $rt.MISSING — reads the nil-equivalent undefined, which maps
+  // to DEAL null exactly like MISSING (undefined is never a valid
+  // present field value: checkNull rejects it).
   optRead: function $optRead(v) {
-    return v === $MISSING ? null : v;
+    return v === $MISSING || v === $undefined ? null : v;
   },
 
   // has: field presence for the has() intrinsic, checker-restricted to
   // optional class fields (deal/checker/TypeChecker.java:1401-1441). An
-  // own-property read on a class instance whose every declared field is
-  // materialized (makeClass step 3): MISSING -> false; any present value
-  // including null -> true (the spec three-state). The Map branch is
-  // deliberately absent.
+  // own-property read on a class instance: MISSING -> false; an absent
+  // own property (a host-defaults table without a MISSING mark for the
+  // declared optional, the verbatim defaults-map seam) reads the
+  // nil-equivalent undefined -> false; any present value including
+  // null -> true (the spec three-state). The Map branch is deliberately
+  // absent.
   has: function $has(obj, field) {
-    return obj[field] !== $MISSING;
+    return obj[field] !== $MISSING && obj[field] !== $undefined;
   },
 
   // ===== @jsonable runtime walkers (js-v12-jsonable-completion D2-D5) =====
@@ -1939,10 +1973,14 @@ const $rt = {
   // "<C>$defaults" or the cross-backend "<C>_defaults" key — must be
   // present (else E8011, construction depends on it). The loader
   // synthesizes "<C>$new" (construction through $rt.makeClass in the
-  // parent D5 phase order, with the per-construction defaults thunk
-  // augmenting the host defaults with $MISSING for every declared
-  // field the defaults omit) and "<C>$fields" (the declared map's
-  // field metadata). The validated META stays under the declared name.
+  // parent D5 phase order, over the host defaults passed through
+  // verbatim — the preserved defaults-map seam, host-module-abi D2:
+  // makeClass's extra-key gate runs against the raw host defaults and
+  // raises E8007 with the canonical identity in the message, so the
+  // host owns the $rt.MISSING marks of its absent optionals exactly
+  // like the Lua triplet's __MISSING marks) and "<C>$fields" (the
+  // declared map's field metadata). The validated META stays under the
+  // declared name.
   //
   // Extra host exports are structurally dropped (the surface carries
   // only declared names plus the synthesized keys); the raw exports
@@ -2007,14 +2045,12 @@ const $rt = {
         if (!$Array.isArray($fields)) {
           $rt.fail("E8011", "host class '" + $name + "' has malformed field metadata");
         }
-        const $declaredNames = [];
         for (let $j = 0; $j < $fields.length; $j++) {
           const $field = $fields[$j];
           if ($field === null || typeof $field !== "object"
               || typeof $field.name !== "string") {
             $rt.fail("E8011", "host class '" + $name + "' has malformed field metadata");
           }
-          $declaredNames.push($field.name);
         }
         let $hostDefaults = rawExports[$name + "$defaults"];
         if ($hostDefaults === $undefined) {
@@ -2025,35 +2061,30 @@ const $rt = {
                 || $isPlainObject($hostDefaults))) {
           $rt.fail("E8011", "host class '" + $name + "' is missing its defaults", $undefined, $undefined, $undefined, "table", $kindOf($hostDefaults));
         }
-        // The per-construction defaults thunk (D3): the host defaults —
-        // the plain object, or the zero-arg function re-evaluated on
-        // every construction — augmented with $MISSING for every
-        // declared field the host defaults omit, so absent optional
-        // fields read the three-state MISSING and provided overlays
-        // pass makeClass's extra-key gate. A non-plain-object host
-        // defaults result fails inside makeClass with the pinned
-        // E8001 "class defaults must be a table" (construction-time,
-        // never load-time).
-        const $defaultsThunk = function() {
-          const $base = typeof $hostDefaults === "function"
-              ? $hostDefaults()
-              : $hostDefaults;
-          if (!$isPlainObject($base)) {
-            $rt.fail("E8001", "class defaults must be a table");
-          }
-          const $merged = {};
-          for (let $j = 0; $j < $declaredNames.length; $j++) {
-            const $field = $declaredNames[$j];
-            $rt.setProp($merged, $field,
-                Object.prototype.hasOwnProperty.call($base, $field)
-                    ? $base[$field]
-                    : $MISSING);
-          }
-          return $merged;
-        };
+        // The preserved defaults-map seam (host-module-abi D2, ISSUE-0331
+        // gate closure): the host defaults — the plain object, or the
+        // zero-arg function evaluated exactly once per construction —
+        // pass through VERBATIM as the construction defaults. makeClass's
+        // extra-key gate compares provided names against the raw host
+        // defaults, so a provided name the host defaults table does not
+        // carry raises E8007 with the canonical identity in the message
+        // (the reference's class_ first argument, deal/runtime.lua:1293+;
+        // the host owns which absent optionals its defaults table marks
+        // with $rt.MISSING, exactly like the Lua triplet's __MISSING
+        // marks). The former declared-optional $MISSING augmentation is
+        // retired: it widened the gate and let a provided declared
+        // optional absent from <C>_defaults pass where the shared
+        // fixture pins E8007. A non-plain-object host defaults result
+        // fails inside makeClass with the pinned E8001 "class defaults
+        // must be a table" (construction-time, never load-time).
         $surface[$name] = $v;
         $surface[$name + "$new"] = function(provided, $file, $line, $column) {
-          return $rt.makeClass($name, $desc, $defaultsThunk, provided, $file, $line, $column);
+          const $raw = typeof $hostDefaults === "function"
+              ? $hostDefaults()
+              : $hostDefaults;
+          return $rt.makeClass($desc, $desc, function() {
+            return $raw;
+          }, provided, $file, $line, $column);
         };
         $surface[$name + "$fields"] = $fields.slice();
       } else {

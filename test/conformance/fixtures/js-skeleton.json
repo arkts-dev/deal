@@ -432,7 +432,7 @@
       "hosts": {
         "host/cfg": {
           "declaration": "export class Endpoint {\n  path: string;\n}\nexport class ServerConfig {\n  port: int;\n  endpoint: Endpoint;\n  tags?: string[];\n  note?: string | null;\n}\nexport function describe(s: ServerConfig): string;",
-          "js": "\"use strict\";\nmodule.exports = {\n  Endpoint: { $kind: \"class\", $classname: \"@$external/host/cfg/Endpoint\" },\n  Endpoint_defaults: { path: \"/\" },\n  ServerConfig: { $kind: \"class\", $classname: \"@$external/host/cfg/ServerConfig\" },\n  ServerConfig_defaults: { port: 8080 },\n  describe: function (s) { return s.endpoint.path + \":\" + s.port; },\n};\n"
+          "js": "\"use strict\";\nconst $rt = require(\"../deal/runtime\");\nmodule.exports = {\n  Endpoint: { $kind: \"class\", $classname: \"@$external/host/cfg/Endpoint\" },\n  Endpoint_defaults: { path: \"/\" },\n  ServerConfig: { $kind: \"class\", $classname: \"@$external/host/cfg/ServerConfig\" },\n  ServerConfig_defaults: { port: 8080, endpoint: $rt.MISSING, tags: $rt.MISSING, note: $rt.MISSING },\n  describe: function (s) { return s.endpoint.path + \":\" + s.port; },\n};\n"
         }
       },
       "expectedOutput": "/api:9090"

@@ -297,8 +297,8 @@ public class DifferentialGateLanesCorpusTest {
     /** Representative pinned first-difference details (the gate's
      * bounded-context reports), asserted verbatim. */
     private static final String JS_E8003_DIVERGENCE_DETAIL =
-        "stdout differs at byte 21: expected 0x33, got 0x31; context "
-            + "expected \"DE: E8003\\nDEAL_E\", got \"DE: E8001\\nDEAL_E\"";
+        "stdout differs at byte 100: expected 0x22, got 0x3A; context "
+            + "expected \"mismatch\\\",\\\"sourc\", got \"mismatch: expect\"";
     private static final String LUA_ADD_OVERFLOW_LINE_DETAIL_PREFIX =
         "stdout differs at byte 165: expected 0x38, got 0x37";
     private static final String JVM_ADD_OVERFLOW_MISSING_COLUMN_PREFIX =

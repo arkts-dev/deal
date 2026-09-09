@@ -327,9 +327,16 @@ module.exports = {
 // Host fixture implementation for the host-class-export conformance
 // test (host-module-abi D6 + runtime-class-identity D1-D2). Each
 // declared class export carries its canonical externals identity META and
-// a <C>_defaults table (construction depends on both). Absent optional
-// fields are marked MISSING by the loader from the declared field
-// metadata, so the defaults tables carry only the defaulted values.
+// a <C>_defaults table (construction depends on both). The preserved
+// defaults-map seam (host-module-abi D2, ISSUE-0331 gate closure): the
+// loader passes the defaults table through verbatim, so the host owns
+// which absent optional fields its defaults table marks — the
+// $rt.MISSING marks below mirror the Lua triplet's __MISSING marks
+// (cfg.lua), and construction overlays provided optional fields over
+// the marked entries exactly like the reference's class_.
+
+const $rt = require("../deal/runtime");
+
 module.exports = {
   Endpoint: {
     $kind: "class",
@@ -347,6 +354,9 @@ module.exports = {
 
   ServerConfig_defaults: {
     port: 8080,
+    endpoint: $rt.MISSING,
+    tags: $rt.MISSING,
+    note: $rt.MISSING,
   },
 
   describe: function (s) {
@@ -506,8 +516,12 @@ module.exports = {
 // test (host-module-abi D6). The declared class export carries the
 // canonical externals identity descriptor (@$external/host/presence/Config) and a
 // <C>_defaults table — runtime construction through the synthesized
-// class symbol depends on both. Absent optional fields are marked
-// MISSING by the loader from the declared field metadata.
+// class symbol depends on both. The preserved defaults-map seam
+// (host-module-abi D2, ISSUE-0331): the loader passes the defaults
+// table through verbatim, and this host does NOT mark its absent
+// optional fields with $rt.MISSING — so a provided declared optional
+// absent from Config_defaults raises E8007 at construction (the
+// host-class-extra-field fixture).
 module.exports = {
   ping: function () {
     return "pong";

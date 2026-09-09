@@ -16,7 +16,8 @@ import java.util.List;
 
 /**
  * JS lane state pin test (ISSUE-0536 — the ISSUE-0372 acceptance
- * remediation) — the anti-hollow evidence owner for the JS corpus gate
+ * remediation; post-completion pins flipped by ISSUE-0331) — the
+ * anti-hollow evidence owner for the JS corpus gate
  * ({@code deal.test.JsConformanceTest}), launched on every gate run
  * under its lane-wide activated invocation.
  *
@@ -35,41 +36,23 @@ import java.util.List;
  *   <li><b>Exact-output pins</b>: the test runs the real JS corpus gate
  *       ({@code java -ea -cp build deal.test.JsConformanceTest
  *       test/conformance/}) as a subprocess and asserts the captured
- *       state field-exactly: the shared time fixture passes as
- *       {@code OK (found DEAL_ERROR_CODE: E8004)} under the activated
- *       invocation (the gate validity condition
+ *       state field-exactly: the gate is CLOSED (ISSUE-0331 — the JS
+ *       completion gate closure) — exit code 0, the shared time fixture
+ *       passes as {@code OK (found DEAL_ERROR_CODE: E8004)} under the
+ *       activated invocation (the gate validity condition
  *       {@code expectation(fixture) == landed std/time.js behavior}
  *       holds — js-v12-completion-architecture D5), the frontend and
- *       companion gates are green (6/6 and 28/28), and the exact
- *       failure set is the three owner-delegated lane divergences below —
- *       each pinned by the differential gate's committed full-run
- *       enumeration — with exit code 1 (the gate's own gates still fail
- *       on them; the sanctioned pre-completion state is visible, never
- *       greenwashed).</li>
+ *       companion gates are green (6/6 and 28/28), all 303
+ *       node-executed backend-runtime tests pass with zero failures and
+ *       zero skips (pass rate 100.0%), and the {@code Gates PASSED}
+ *       line prints. The three former owner-delegated lane divergences
+ *       closed in the same unit: the E8003 array-element walk over
+ *       json-array-marked Map tables and the E8007 defaults-map seam
+ *       ({@code deal/runtime.js} {@code checkArray}/{@code loadHost},
+ *       with the {@code cfg.js} triplet carrying the Lua-mirroring
+ *       {@code $rt.MISSING} marks), so no {@code ] FAIL (} line and no
+ *       {@code GATE FAILURE} line may appear.</li>
  * </ul>
- *
- * <p>The three owner-delegated divergences (each outside this
- * remediation's surface: {@code deal/runtime.js} stays byte-identical
- * under the resolution, and the JS lane contracts own them):
- * {@code arithmetic/int32-mod-min-neg-one.deal} remainder divergence
- * retired with the js-v12-int32-bytes lane closure (ISSUE-0324): the JS
- * runtime's {@code intMod} carries the I4 int32 branch, so
- * {@code MIN_VALUE % -1} computes 0 on the lane:
- * <ol>
- *   <li>{@code class-runtime-errors/dynamic-bad-class-array-element-e8001.deal}
- *       and {@code type-system/dynamic-array-element-e8003.deal} — the JS
- *       runtime's {@code checkArray} rejects a json-marked Map table with
- *       E8001 "expected array" where the shared fixtures pin the E8003
- *       element walk (the std/json → array boundary).</li>
- *   <li>{@code host-abi/host-class-extra-field.deal} — the JS
- *       {@code loadHost} defaults thunk augments the host defaults with
- *       {@code $MISSING} for declared optional fields, so a provided
- *       declared optional absent from {@code <C>_defaults} passes where
- *       the shared fixture pins E8007 (host-module-abi D2's preserved
- *       defaults-map seam).</li>
- * </ol>
- * Every other JS-applicable fixture passes; the printed summary pins
- * the exact counters.
  *
  * <p>The test runs from the repository root (the {@code run_tests.sh}
  * contract, like {@code ConformanceTest}); {@code run_tests.sh}
@@ -86,39 +69,35 @@ public class JsLaneStatePinTest {
     // =========================================================================
 
     /** The shared time fixture passes on the JS gate under the activated
-     * invocation — the required result of the ISSUE-0536 remediation. */
+     * invocation — the required result of the ISSUE-0536 remediation,
+     * unchanged by the ISSUE-0331 closure. */
     private static final String JS_TIME_OK =
         "  [backend-runtime/stdlib-edge/time-now-millis-positive.deal] "
             + "OK (found DEAL_ERROR_CODE: E8004)";
 
-    /** The three owner-delegated lane divergences (the exact
-     * {@code ] FAIL (} fixture-path multiset; each is pinned by the
-     * differential gate's committed full-run enumeration). */
-    private static final List<String> PINNED_FAIL_PATHS = List.of(
-        "backend-runtime/class-runtime-errors/dynamic-bad-class-array-element-e8001.deal",
-        "backend-runtime/host-abi/host-class-extra-field.deal",
-        "backend-runtime/type-system/dynamic-array-element-e8003.deal");
-
-    /** The gate's own failure lines — exactly these two, never more,
-     * never fewer (the sanctioned pre-completion state). */
-    private static final List<String> PINNED_GATE_FAILURES = List.of(
-        "GATE FAILURE: 3 applicable backend-runtime test(s) failed — "
-            + "zero applicable failures required",
-        "GATE FAILURE: node-executed pass rate 99.0% below the 100% "
-            + "threshold (denominator 303)");
-
+    /** The ISSUE-0331 closure summary lines — the gate is closed: every
+     * node-executed backend-runtime fixture passes, zero skips, 100%
+     * of the denominator, and the Gates PASSED line prints. */
     private static final String SUMMARY_FRONTEND =
         "Frontend (backend-neutral compile-ok/compile-error): total 6, "
             + "passed 6, failed 0";
     private static final String SUMMARY_RUNTIME =
         "Backend-runtime on Node: denominator 303 (every on-disk "
             + "runtime-ok/runtime-error test plus every known-fail "
-            + "probe), passed 300, failed 3, skipped 0 (no skip registry "
+            + "probe), passed 303, failed 0, skipped 0 (no skip registry "
             + "— zero skips by construction), known-fail 0 (tracked), "
-            + "node subprocess runs 303 — pass rate 99.0%";
+            + "node subprocess runs 303 — pass rate 100.0%";
     private static final String SUMMARY_COMPANIONS =
         "classified 28 (on-disk @expected: companion 28), passed 28, "
             + "failed 0";
+    private static final String GATES_PASSED_LINE =
+        "Gates PASSED: frontend 100%; backend-runtime on node zero "
+            + "applicable failures AND 100% of the node-executed 303-test"
+            + " denominator; zero skipped (no skip registry); zero stale "
+            + "known-fail markers; companion counts equal the on-disk "
+            + "corpus and every companion standalone-compiles and "
+            + "participates in its importers' temp projects; zero probe "
+            + "runner exceptions.";
 
     // =========================================================================
     // Assertion helpers
@@ -142,52 +121,21 @@ public class JsLaneStatePinTest {
         }
     }
 
-    /** The multiset of failing fixture paths (the {@code [...]} bracket
-     * content of every {@code ] FAIL (} line), compared exactly — an
-     * extra, missing, or renamed failure diverges from the pinned set
-     * and fails. */
-    private static void checkFailPathSet(String output,
-            List<String> expectedPaths) {
-        List<String> actual = new ArrayList<>();
+    /** The closed gate emits no {@code ] FAIL (} line and no
+     * {@code GATE FAILURE} line — exactly zero of each. */
+    private static void checkZeroFailureLines(String output) {
+        List<String> failLines = new ArrayList<>();
         for (String line : output.split("\n", -1)) {
-            int failIdx = line.indexOf("] FAIL (");
-            if (failIdx < 0) continue;
-            int openIdx = line.lastIndexOf('[', failIdx);
-            if (openIdx < 0) continue;
-            actual.add(line.substring(openIdx + 1, failIdx));
-        }
-        List<String> expected = new ArrayList<>(expectedPaths);
-        java.util.Collections.sort(actual);
-        java.util.Collections.sort(expected);
-        if (actual.equals(expected)) {
-            passed++;
-        } else {
-            failed++;
-            System.err.println("FAIL: JS gate ] FAIL ( path set diverges "
-                + "from the pinned set.\nexpected: " + expected
-                + "\nactual:   " + actual);
-        }
-    }
-
-    /** The multiset of {@code GATE FAILURE} lines, compared exactly. */
-    private static void checkGateFailureLineSet(String output,
-            List<String> expectedLines) {
-        List<String> actual = new ArrayList<>();
-        for (String line : output.split("\n", -1)) {
-            if (line.contains("GATE FAILURE")) {
-                actual.add(line);
+            if (line.contains("] FAIL (") || line.contains("GATE FAILURE")) {
+                failLines.add(line);
             }
         }
-        List<String> expected = new ArrayList<>(expectedLines);
-        java.util.Collections.sort(actual);
-        java.util.Collections.sort(expected);
-        if (actual.equals(expected)) {
+        if (failLines.isEmpty()) {
             passed++;
         } else {
             failed++;
-            System.err.println("FAIL: JS gate GATE FAILURE line set "
-                + "diverges from the pinned set.\nexpected: " + expected
-                + "\nactual:   " + actual);
+            System.err.println("FAIL: the closed JS gate must print zero "
+                + "] FAIL ( / GATE FAILURE lines, got: " + failLines);
         }
     }
 
@@ -271,19 +219,18 @@ public class JsLaneStatePinTest {
             + "run) --");
         RunResult run = runLane("deal.test.JsConformanceTest",
             "test/conformance/");
-        check(run.exitCode() == 1,
-            "the JS gate exits 1 in the sanctioned pre-completion state "
-                + "(the four owner-delegated lane divergences still fail "
-                + "its own gates; the state is visible, never "
-                + "greenwashed), got " + run.exitCode());
+        check(run.exitCode() == 0,
+            "the closed JS gate exits 0 (the ISSUE-0331 completion gate "
+                + "closure: all 303 node-executed fixtures pass, zero "
+                + "skips), got " + run.exitCode());
 
         String out = run.output();
-        checkFailPathSet(out, PINNED_FAIL_PATHS);
-        checkGateFailureLineSet(out, PINNED_GATE_FAILURES);
+        checkZeroFailureLines(out);
         checkContains(out, JS_TIME_OK, "JS gate");
         checkContains(out, SUMMARY_FRONTEND, "JS gate");
         checkContains(out, SUMMARY_RUNTIME, "JS gate");
         checkContains(out, SUMMARY_COMPANIONS, "JS gate");
+        checkContains(out, GATES_PASSED_LINE, "JS gate");
         check(!out.contains("FAIL (classification failure)"),
             "the JS gate prints no classification failure line");
         check(!out.contains("TOOL_MISSING"),
@@ -297,7 +244,7 @@ public class JsLaneStatePinTest {
 
     public static void main(String[] args) throws Exception {
         System.out.println("=== JS Lane State Pin Test (ISSUE-0536 "
-            + "anti-hollow evidence) ===\n");
+            + "anti-hollow evidence; ISSUE-0331 closure pins) ===\n");
 
         pinInvocation();
         pinJsGate();

@@ -203,27 +203,33 @@ TEST_MAINS+=(
 )
 
 # =========================================================================
-# ISSUE-0536 (ISSUE-0372 acceptance remediation): the JS corpus gate
-# launches on every gate run inside the JS lane state pin test. The pin
-# test launches the real JsConformanceTest as a subprocess and asserts
-# the captured state field-exactly: the lane-wide activated invocation
-# (COMMON_SHADOW + DEAL_V1_2_INT32 — the invocation the LuaJIT lane's
-# A5 seam resolves for uncatalogued fixtures) is pinned field-exactly,
-# the emitted entry module calls $rt.setInt32Mode(true), deal/runtime.js
-# checkInt gates at the signed-32 boundary, and the flipped shared
-# fixture backend-runtime/stdlib-edge/time-now-millis-positive.deal
-# passes as runtime-error E8004 on the JS gate — the gate validity
-# condition expectation(fixture) == landed std/time.js behavior
-# (js-v12-completion-architecture D5) — with the four owner-delegated
-# lane divergences pinned as the sanctioned pre-completion state (the
-# differential gate's committed full-run enumeration pins the same
-# set). The unselected direct-caller default mode of the retained JS
-# runtime stays the legacy range, so test_stdlib_js.js keeps running
-# unselected and stays green unchanged.
+# ISSUE-0536 (ISSUE-0372 acceptance remediation) with the ISSUE-0331
+# closure: the JS corpus gate launches on every gate run inside the JS
+# lane state pin test. The pin test launches the real JsConformanceTest
+# as a subprocess and asserts the captured state field-exactly: the
+# lane-wide activated invocation (COMMON_SHADOW + DEAL_V1_2_INT32 — the
+# invocation the LuaJIT lane's A5 seam resolves for uncatalogued
+# fixtures) is pinned field-exactly, the emitted entry module calls
+# $rt.setInt32Mode(true), deal/runtime.js checkInt gates at the
+# signed-32 boundary, and the flipped shared fixture
+# backend-runtime/stdlib-edge/time-now-millis-positive.deal passes as
+# runtime-error E8004 on the JS gate — the gate validity condition
+# expectation(fixture) == landed std/time.js behavior
+# (js-v12-completion-architecture D5). The JS completion gate closure
+# (ISSUE-0331) retired the last three owner-delegated lane divergences
+# (the E8003 array-element walk over json-array-marked Map tables and
+# the E8007 defaults-map seam in deal/runtime.js, with the cfg host
+# triplet carrying the Lua-mirroring $rt.MISSING marks), so the pin
+# test now asserts the closed state: exit 0, all 303 node-executed
+# backend-runtime fixtures passing with zero skips and a 100.0% pass
+# rate, zero ] FAIL ( / GATE FAILURE lines, and the Gates PASSED
+# summary. The unselected direct-caller default mode of the retained
+# JS runtime stays the legacy range, so test_stdlib_js.js keeps
+# running unselected and stays green unchanged.
 # =========================================================================
 TEST_SOURCES+=( 'test/JsLaneStatePinTest.java' )
 TEST_MAINS+=(
-  'bg|=== Launching JS Lane State Pin Tests (ISSUE-0536: the real JS corpus gate runs inside the pin test under its activated invocation with field-exact state assertions) ===|java -ea -cp build deal.test.JsLaneStatePinTest'
+  'bg|=== Launching JS Lane State Pin Tests (ISSUE-0536 with the ISSUE-0331 closure: the real JS corpus gate runs inside the pin test under its activated invocation and the closed-state output — 303/303, zero skips, exit 0 — is pinned field-exactly) ===|java -ea -cp build deal.test.JsLaneStatePinTest'
 )
 
 # =========================================================================
