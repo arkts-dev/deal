@@ -33,7 +33,7 @@ import java.util.Set;
  *       {@code error-handling/try-catch.deal} plus two more converged
  *       cases) passes byte-exact on all three lanes;</li>
  *   <li>the failure set is exactly the tracked non-fatal set (the
- *       53 JVM registry entries, including the eight ISSUE-0504
+ *       46 JVM registry entries, including the eight ISSUE-0504
  *       host-boundary E8011 carrier mismatches) plus the enumerated differential
  *       failures — every one naming fixture,
  *       backend, and the closed mismatch class with the first differing
@@ -111,14 +111,19 @@ public class DifferentialGateLanesCorpusTest {
      * counter and no differential triples — and the JVM bytes core
      * lane promoted the nine bytes registry entries, so the registry
      * count is the canonical 39 plus the six ISSUE-0502 additions
-     * plus the eight ISSUE-0504 host-boundary additions). */
+     * plus the eight ISSUE-0504 host-boundary additions, minus the
+     * seven runtime-ok std/json fixtures ISSUE-0302 promoted out of
+     * the registry (the four jsonable residuals and the three stdlib
+     * pins; the ten std/json runtime-error fixtures stay tracked with
+     * the ISSUE-0276 snapshot reason), so the count is the landed
+     * 46). */
     private static final int KNOWN_FAILURES_TRACKED = 0;
-    private static final int SKIP_REGISTRY_ENTRIES = 53;
+    private static final int SKIP_REGISTRY_ENTRIES = 46;
 
     /** The per-backend pass/fail counters of the full run. */
     private static final Map<String, int[]> PER_BACKEND = Map.of(
         "luajit", new int[] {319, 32},
-        "jvm", new int[] {230, 121},
+        "jvm", new int[] {237, 114},
         "js", new int[] {321, 30});
 
     /** The designated converged subset (task criterion (a)): every lane
@@ -167,19 +172,12 @@ public class DifferentialGateLanesCorpusTest {
         "backend-runtime/host-abi/host-prewrapped-bad.deal",
         "backend-runtime/host-abi/host-rest-bad.deal",
         "backend-runtime/host-abi/host-rest-ok.deal",
-        "backend-runtime/jsonable/jsonable-fromjson-top-level-scalar.deal",
-        "backend-runtime/jsonable/jsonable-optional-nullable-nested-class.deal",
-        "backend-runtime/jsonable/jsonable-table-field-nested-arrays.deal",
-        "backend-runtime/jsonable/nested-array-roundtrip.deal",
         "backend-runtime/runtime-errors/json-stringify-function-e8001.deal",
         "backend-runtime/source-location-precision/class-param-error-source.deal",
         "backend-runtime/source-location/bytes-index-bounds-source.deal",
         "backend-runtime/source-location/bytes-write-range-source.deal",
         "backend-runtime/source-location/json-error-source.deal",
-        "backend-runtime/stdlib/json/int32-boundary-parse.deal",
         "backend-runtime/stdlib/json/json-stringify-bytes-error.deal",
-        "backend-runtime/stdlib/json/json-stringify-roundtrip.deal",
-        "backend-runtime/stdlib/table/keys-nonstring-exclusion.deal",
         "backend-runtime/type-system/dynamic-array-element-e8003.deal",
         "backend-runtime/bytes/bytes-negative-length-error.deal",
         "backend-runtime/bytes/bytes-negative-read-error.deal",

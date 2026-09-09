@@ -177,9 +177,10 @@ import java.util.concurrent.atomic.AtomicInteger;
  *       {@code trim}, the negative-input {@code sqrt} E8001, the
  *       extreme-negative {@code absInt}, and the second-truncated
  *       {@code nowMillis()} — while {@code std/table}
- *       and {@code std/json} imports (used and unused) stay E6000 at the
- *       import statement because their functions require {@code table}
- *       values, all compiled and executed with {@code javac} +
+ *       and {@code std/json} (ISSUE-0302) also execute: {@code keys}
+ *       over the shared table carrier and {@code json.parse}/
+ *       {@code json.stringify} over the emitted shared JSON runtime,
+ *       all compiled and executed with {@code javac} +
  *       {@code java} subprocesses,</li>
  *   <li>observable-behavior preservation for null-typed side effects
  *       (null-typed returns/initializers/assignments/arguments — including
@@ -420,6 +421,7 @@ public class JvmBackendTest {
             new TestCase("testNullableSlice", () -> testNullableSlice()),
             new TestCase("testAsyncSlice", () -> testAsyncSlice()),
             new TestCase("testJsonableSlice", () -> testJsonableSlice()),
+            new TestCase("testJsonStdlibBoundary", () -> testJsonStdlibBoundary()),
             new TestCase("testImportedClassValues", () -> testImportedClassValues()),
             new TestCase("testFunctionValues", () -> testFunctionValues()),
             new TestCase("testSharedCarrierShapeEncoding", () -> testSharedCarrierShapeEncoding()),
@@ -460,7 +462,7 @@ public class JvmBackendTest {
             new TestCase("testOrchestratorJvmRejectsUnsupported", () -> testOrchestratorJvmRejectsUnsupported()),
             new TestCase("testOrchestratorJvmImportSupported", () -> testOrchestratorJvmImportSupported()),
             new TestCase("testStdlibCallEmission", () -> testStdlibCallEmission()),
-            new TestCase("testStdlibTableBoundaryRejected", () -> testStdlibTableBoundaryRejected()),
+            new TestCase("testStdlibTableBoundaryAccepted", () -> testStdlibTableBoundaryAccepted()),
             new TestCase("testStdlibExecution", () -> testStdlibExecution()),
             new TestCase("testStdlibSqrtNegativeRuntimeError", () -> testStdlibSqrtNegativeRuntimeError()),
             new TestCase("testStdlibScalarSemantics", () -> testStdlibScalarSemantics()),
@@ -1034,10 +1036,6 @@ public class JvmBackendTest {
                   return 1;
                 }
                 """),
-            new Case("unused stdlib module import whose functions need table values", """
-                import * as j from "std/json"
-                export function test(): int { return 1; }
-                """),
             new Case("unused non-console module import", """
                 import * as m from "./other"
                 export function test(): int { return 1; }
@@ -1099,6 +1097,10 @@ public class JvmBackendTest {
                   let rows: int[][] = [[1, 2], [3, 4]];
                   return rows[0][1];
                 }
+                """),
+            new Case("unused std/json import (ISSUE-0302)", """
+                import * as j from "std/json"
+                export function test(): int { return 1; }
                 """),
             new Case("array of function elements", """
                 function add1(x: int): int { return x + 1; }
@@ -8609,9 +8611,12 @@ public class JvmBackendTest {
                 + "the DEAL null (the gate ran at the boundary): "
                 + req.output());
         String reqJava = int32Artifact(reqSource, "jsonable_req_default_artifact");
-        check(reqJava.contains("int f0 = checkInt((java.lang.System.currentTimeMillis() / 1000L) * 1000L);"),
+        check(reqJava.contains("int f0 = 0;")
+                && reqJava.contains(
+                    "f0 = checkInt((java.lang.System.currentTimeMillis() / 1000L) * 1000L);"),
             "the jsonable required-int default field slot gates through "
-                + "checkInt: "
+                + "checkInt at the ISSUE-0302 omitted-default phase (the "
+                + "declaration carries the type-safe placeholder): "
                 + reqJava.lines().filter(l -> l.contains("f0 = "))
                 .findFirst().orElse("<missing>"));
         check(!reqJava.contains("int f0 = (java.lang.System.currentTimeMillis() / 1000L)"),
@@ -8642,9 +8647,12 @@ public class JvmBackendTest {
                 + nullableReq.output());
         String nullableReqJava = int32Artifact(nullableReqSource,
             "jsonable_nullable_req_default_artifact");
-        check(nullableReqJava.contains("java.lang.Integer f0 = checkInt((java.lang.System.currentTimeMillis() / 1000L) * 1000L);"),
+        check(nullableReqJava.contains("java.lang.Integer f0 = null;")
+                && nullableReqJava.contains(
+                    "f0 = checkInt((java.lang.System.currentTimeMillis() / 1000L) * 1000L);"),
             "the jsonable nullable-required int default Integer slot "
-                + "gates through checkInt: "
+                + "gates through checkInt at the ISSUE-0302 "
+                + "omitted-default phase: "
                 + nullableReqJava.lines().filter(l -> l.contains("f0 = "))
                 .findFirst().orElse("<missing>"));
         check(!nullableReqJava.contains("java.lang.Integer f0 = (java.lang.System.currentTimeMillis() / 1000L)"),
@@ -8676,9 +8684,11 @@ public class JvmBackendTest {
                 + "the DEAL null (no unchecked boxed-Long instance): "
                 + opt.output());
         String optJava = int32Artifact(optSource, "jsonable_opt_default_artifact");
-        check(optJava.contains("java.lang.Object f0 = checkInt((java.lang.System.currentTimeMillis() / 1000L) * 1000L);"),
+        check(optJava.contains("java.lang.Object f0 = 0;")
+                && optJava.contains(
+                    "f0 = checkInt((java.lang.System.currentTimeMillis() / 1000L) * 1000L);"),
             "the jsonable optional-int default Object slot gates through "
-                + "checkInt: "
+                + "checkInt at the ISSUE-0302 omitted-default phase: "
                 + optJava.lines().filter(l -> l.contains("f0 = "))
                 .findFirst().orElse("<missing>"));
 
@@ -11360,18 +11370,26 @@ public class JvmBackendTest {
                 + res.diagnostics());
             if (!res.hasErrors()) {
                 String java = res.source();
-                check(java.contains("$DealRt.Table f0 = new $DealRt.Table();"),
+                check(java.contains("$DealRt.Table f0 = null;")
+                        && java.contains("f0 = new $DealRt.Table();"),
                     "a required no-default table field defaults to a "
-                    + "fresh empty $DealRt.Table (never Java null)");
+                    + "fresh empty $DealRt.Table (never Java null) — "
+                    + "ISSUE-0302 phase order: the declaration carries "
+                    + "the type-safe placeholder and the omitted-default "
+                    + "phase assigns the fresh table");
                 check(java.contains(
-                        "$DealRt.__IntArray f1 = new $DealRt.__IntArray(new long[0]);"),
+                        "$DealRt.__IntArray f1 = null;")
+                        && java.contains(
+                        "f1 = new $DealRt.__IntArray(new long[0]);"),
                     "a required no-default array field defaults to a "
                     + "fresh empty wrapper (never Java null)");
                 check(java.contains(
-                        "if (!m.containsKey(\"c\")) return null;"),
+                        "if (!provided2) return null;"),
                     "a required no-default class field's absent key is "
                     + "a fromJson validation failure (the placeholder "
-                    + "never crosses the typed boundary)");
+                    + "never crosses the typed boundary) — the "
+                    + "ISSUE-0302 phase order guards on the provided "
+                    + "flag after the omitted-default phase");
             }
         }
 
@@ -11476,6 +11494,300 @@ public class JvmBackendTest {
         check(mod.errors().stream().anyMatch(d -> "E1049".equals(d.code())),
             "the v1.2 module top level rejects a load-time call of the "
             + "generated helper with E1049: " + mod.errors());
+    }
+
+    /**
+     * ISSUE-0302 (std/json boundary and @jsonable completion) unit
+     * surface: std/json import support with json.parse/json.stringify
+     * over the emitted shared JSON runtime, the fromJson top-level
+     * input gate, the provided-fields-before-defaults phase order,
+     * fresh per-level nested-array decoder locals (javac validity for
+     * int[][] and deeper shapes), recursive array serialization for
+     * table fields, the raw-control-character parse rejection, and the
+     * stringify-side unpaired-surrogate scan.
+     */
+    private static void testJsonStdlibBoundary() throws Exception {
+        System.out.println("-- ISSUE-0302: std/json boundary and @jsonable completion --");
+
+        // std/json joins the supported set: json.parse returns the
+        // shared $DealRt.Table (object mode for objects, array mode
+        // for arrays, integral numbers as the int carrier) and
+        // json.stringify roundtrips.
+        ExecResult roundtrip = compileAndRunJvm("""
+            import * as json from "std/json"
+            import * as str from "std/string"
+            export function test(): string {
+              let doc: table = { count: 42, ratio: 2.5, flag: true, nothing: null, name: "Ada" };
+              let encoded: string = json.stringify(doc);
+              if (!str.contains(encoded, "\\\"count\\\":42")) { return "enc:" + encoded; }
+              let back: table = json.parse(encoded);
+              let count: int = back.count;
+              let ratio: number = back.ratio;
+              let flag: boolean = back.flag;
+              let name: string = back.name;
+              if (count !== 42 || ratio !== 2.5 || !flag || name !== "Ada") { return "back"; }
+              return "ok";
+            }
+            """, "json-stdlib-roundtrip");
+        check(roundtrip.exitCode() == 0
+                && roundtrip.output().contains("ok"),
+            "std/json parse/stringify roundtrip through the shared "
+            + "runtime: " + roundtrip.output());
+
+        // Malformed input raises E8001 (the decoder's stored message),
+        // never a silent null and never a raw crash.
+        ExecResult malformed = compileAndRunJvm("""
+            import * as json from "std/json"
+            export function test(): string {
+              return json.parse("{oops").a;
+            }
+            """, "json-parse-malformed");
+        check(malformed.output().contains("DEAL_ERROR_CODE: E8001")
+                && malformed.output().contains("JSON parse error"),
+            "json.parse of malformed input raises E8001 with the "
+            + "decoder message: " + malformed.output());
+
+        // Raw U+0000-U+001F control characters inside JSON strings are
+        // rejected by json.parse with E8001 (std/json.lua parse_string
+        // parity), while C$fromJson collapses the same parse failure to
+        // the DEAL null.
+        ExecResult control = compileAndRunJvm("""
+            import * as json from "std/json"
+            // @jsonable
+            export class Wrap {
+              data: table = {};
+            }
+            export function test(): string {
+              let collapsed: Wrap | null = Wrap$fromJson("{\\"data\\":{\\"leaf\\":\\"<RAW_CTL>\\"}}");
+              if (collapsed !== null) { return "fromjson-accepted"; }
+              return json.parse("{\\"data\\":\\"<RAW_CTL>\\"}").data;
+            }
+            """.replace("<RAW_CTL>", "\u0001"),
+            "json-parse-raw-control");
+        check(control.output().contains("DEAL_ERROR_CODE: E8001")
+                && control.output().contains(
+                    "raw control character in string (must be escaped)"),
+            "raw control characters reject through json.parse with "
+            + "E8001 and collapse to the DEAL null through C$fromJson: "
+            + control.output());
+
+        // Top-level input gate: scalar / null / non-empty array -> the
+        // DEAL null; {} and [] both decode the defaulted instance and
+        // roundtrip identically.
+        ExecResult gate = compileAndRunJvm("""
+            // @jsonable
+            export class C {
+              x: int = 0;
+            }
+            export function test(): string {
+              if (C$fromJson("42") !== null) { return "42"; }
+              if (C$fromJson("\\\"x\\\"") !== null) { return "str"; }
+              if (C$fromJson("true") !== null) { return "true"; }
+              if (C$fromJson("null") !== null) { return "null"; }
+              if (C$fromJson("[1,2]") !== null) { return "arr"; }
+              let from_obj: C | null = C$fromJson("{}");
+              let from_arr: C | null = C$fromJson("[]");
+              if (from_obj !== null) {
+                if (from_arr !== null) {
+                  if (C$toJson(from_obj) !== C$toJson(from_arr)) { return "neq"; }
+                  return "ok";
+                }
+                return "arr-null";
+              }
+              return "obj-null";
+            }
+            """, "jsonable-top-level-gate");
+        check(gate.exitCode() == 0 && gate.output().contains("ok"),
+            "fromJson top-level gate: scalar/null/non-empty array -> "
+            + "the DEAL null and {}/[] collapse identically: "
+            + gate.output());
+
+        // Nested-array decoder javac validity: int[][] and int[][][]
+        // roundtrip — the emitted conversions allocate fresh local
+        // names per nesting level (no l0/a0/i0/e0 redeclaration).
+        ExecResult nested = compileAndRunJvm("""
+            // @jsonable
+            export class Matrix {
+              values: int[][] = [];
+            }
+            // @jsonable
+            export class Cube {
+              values: int[][][] = [];
+            }
+            export function test(): string {
+              let m: Matrix = { values: [[1, 2], [3, 4]] };
+              let m2: Matrix | null = Matrix$fromJson(Matrix$toJson(m));
+              if (m2 !== null) {
+                if (m2.values[0][0] !== 1 || m2.values[1][1] !== 4) { return "m"; }
+              } else { return "m-null"; }
+              let c: Cube = { values: [[[1, 2], [3, 4]], [[5, 6], [7, 8]]] };
+              let c2: Cube | null = Cube$fromJson(Cube$toJson(c));
+              if (c2 !== null) {
+                if (c2.values[0][0][0] !== 1 || c2.values[1][1][1] !== 8) { return "c"; }
+              } else { return "c-null"; }
+              return "ok";
+            }
+            """, "jsonable-nested-arrays-deep");
+        check(nested.exitCode() == 0 && nested.output().contains("ok"),
+            "nested array fields (int[][] and int[][][]) roundtrip with "
+            + "fresh per-level decoder locals: " + nested.output());
+
+        // Table fields holding nested arrays roundtrip recursively.
+        ExecResult tableArrays = compileAndRunJvm("""
+            // @jsonable
+            export class Wrap {
+              data: table = {};
+            }
+            export function test(): string {
+              let w: Wrap = { data: { values: [[1, 2], [3, 4]] } };
+              let w2: Wrap | null = Wrap$fromJson(Wrap$toJson(w));
+              if (w2 !== null) {
+                let w3: Wrap | null = Wrap$fromJson(Wrap$toJson(w2));
+                if (w3 !== null) {
+                  let t: table = w3.data;
+                  let values: int[][] = t.values;
+                  if (values[0][0] !== 1 || values[1][1] !== 4) { return "bad"; }
+                  return "ok";
+                }
+                return "w3-null";
+              }
+              return "w2-null";
+            }
+            """, "jsonable-table-field-nested-arrays");
+        check(tableArrays.exitCode() == 0
+                && tableArrays.output().contains("ok"),
+            "table fields holding [[1,2],[3,4]] roundtrip through "
+            + "C$toJson/C$fromJson without E8001: "
+            + tableArrays.output());
+
+        // Phase order: provided fields decode and validate in class
+        // source order BEFORE any omitted default evaluates — a
+        // provided-value failure returns the DEAL null with zero
+        // default side effects.
+        ExecResult phase = compileAndRunJvm("""
+            import * as console from "std/console"
+            function markDefault(): int {
+              console.log("DEFAULT-RAN");
+              return 1;
+            }
+            // @jsonable
+            export class Rec {
+              a: int = 0;
+              b: int = markDefault();
+            }
+            export function test(): string {
+              let bad: Rec | null = Rec$fromJson("{\\"a\\":\\"x\\"}");
+              if (bad !== null) { return "bad-not-null"; }
+              let good: Rec | null = Rec$fromJson("{\\"a\\":7}");
+              if (good !== null) {
+                if (good.a !== 7) { return "a"; }
+                if (good.b !== 1) { return "b"; }
+              } else {
+                return "good-null";
+              }
+              return "ok";
+            }
+            """, "jsonable-provided-before-defaults");
+        check(phase.exitCode() == 0 && phase.output().contains("ok"),
+            "fromJson decodes provided fields before evaluating omitted "
+            + "defaults: " + phase.output());
+        check(countOccurrences(phase.output(), "DEFAULT-RAN") == 1,
+            "a provided-value failure runs no defaults (the default "
+            + "side effect runs exactly once, for the successful "
+            + "decode): " + phase.output());
+
+        // Stringify-side unpaired-surrogate scan: a string value or a
+        // map key carrying a lone surrogate through C$toJson /
+        // json.stringify raises E8001 "cannot encode invalid UTF-8 as
+        // JSON" and emits no JSON output (std/json.lua escape parity).
+        ExecResult surrogateValue = compileAndRunJvm("""
+            // @jsonable
+            export class User {
+              name: string = "";
+            }
+            export function test(): string {
+              let u: User = { name: "<LONE_HIGH>" };
+              return User$toJson(u);
+            }
+            """.replace("<LONE_HIGH>", "\ud800"),
+            "jsonable-tojson-lone-surrogate");
+        check(surrogateValue.output().contains("DEAL_ERROR_CODE: E8001")
+                && surrogateValue.output().contains(
+                    "cannot encode invalid UTF-8 as JSON")
+                && !surrogateValue.output().contains("{"),
+            "C$toJson of a lone-surrogate string value raises E8001 "
+            + "with no JSON output: " + surrogateValue.output());
+
+        Frontend keyPathPin = compileFrontend("""
+            import * as json from "std/json"
+            export function test(): string {
+              let t: table = { a: 1 };
+              return json.stringify(t);
+            }
+            """, "jvmtest-json-stringify-key-path.deal");
+        check(keyPathPin.errors().isEmpty(),
+            "key-path pin frontend clean: " + keyPathPin.errors());
+        if (keyPathPin.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                keyPathPin.program(), keyPathPin.checkResult(),
+                "jvmtest-json-stringify-key-path.deal", "Main");
+            check(!res.hasErrors(),
+                "key-path pin codegen clean: " + res.diagnostics());
+            if (!res.hasErrors()) {
+                String java = res.source();
+                check(java.contains(
+                        "sb.append(__jsonQuote(java.lang.String.valueOf(e.getKey())))"),
+                    "the JSON-object branch quotes map keys through the "
+                    + "scanning __jsonQuote helper");
+                check(java.contains(
+                        "sb.append(__jsonQuote(e.getKey()))"),
+                    "the $DealRt.Table object branch quotes table keys "
+                    + "through the scanning __jsonQuote helper");
+            }
+        }
+
+        // Emission pins: std/json imports emit the shared JSON runtime
+        // (even without @jsonable classes), json.parse lowers to the
+        // $jsonParse helper, and the stringify-side scan + raw-control
+        // rejection sit in the emitted text.
+        Frontend stdlibPin = compileFrontend("""
+            import * as json from "std/json"
+            export function test(): table {
+              return json.parse("{\\"a\\":1}");
+            }
+            """, "jvmtest-json-stdlib-pin.deal");
+        check(stdlibPin.errors().isEmpty(),
+            "std/json pin frontend clean: " + stdlibPin.errors());
+        if (stdlibPin.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                stdlibPin.program(), stdlibPin.checkResult(),
+                "jvmtest-json-stdlib-pin.deal", "Main");
+            check(!res.hasErrors(),
+                "std/json import is not an E6000: " + res.diagnostics());
+            if (!res.hasErrors()) {
+                String java = res.source();
+                check(java.contains("static java.lang.Object __jsonParse("),
+                    "a std/json-importing module emits the shared JSON "
+                    + "runtime even without @jsonable classes");
+                check(java.contains(
+                        "static $DealRt.Table $jsonParse(java.lang.String s) {"),
+                    "the emitted $jsonParse helper backs json.parse");
+                check(java.contains("return $jsonParse("),
+                    "json.parse call sites lower to the $jsonParse helper");
+                check(java.contains(
+                        "if (__hasUnpairedSurrogate(s)) throw new "
+                        + "DealError(\"E8001\", \"cannot encode "
+                        + "invalid UTF-8 as JSON\");"),
+                    "the emitted __jsonQuote carries the stringify-side "
+                    + "unpaired-surrogate scan");
+                check(java.contains(
+                        "if (c < 0x20) throw new "
+                        + "java.lang.RuntimeException(\"raw control "
+                        + "character in string (must be escaped)\");"),
+                    "the emitted parser rejects raw U+0000-U+001F "
+                    + "control characters");
+            }
+        }
     }
 
     /**
@@ -12439,10 +12751,12 @@ public class JvmBackendTest {
     }
 
     /** {@code std/table} and {@code std/json} imports — used and unused —
-     * are E6000 at the import statement: their only functions require
-     * {@code table} values, which the JVM slice does not support. */
-    private static void testStdlibTableBoundaryRejected() throws Exception {
-        System.out.println("-- Stdlib table-boundary imports → E6000 --");
+     * compile through the supported-stdlib seam (ISSUE-0102 for
+     * {@code std/table}, ISSUE-0302 for {@code std/json}): their
+     * functions execute over the shared table carrier and the emitted
+     * shared JSON runtime, and the import is never an E6000. */
+    private static void testStdlibTableBoundaryAccepted() throws Exception {
+        System.out.println("-- Stdlib table-boundary imports compile (std/table, std/json) --");
 
         record Case(String what, String source, String module) {}
         List<Case> cases = List.of(
@@ -12473,33 +12787,36 @@ public class JvmBackendTest {
             Frontend f = compileFrontend(c.source(), "jvmtest-stdlib-boundary.deal");
             if (!f.errors().isEmpty()) {
                 fail("frontend must accept the table-boundary stdlib import '"
-                    + c.what() + "' (the backend rejects it): " + f.errors());
+                    + c.what() + "' (the backend compiles it): " + f.errors());
                 continue;
             }
             JvmBackend.JvmCodegenResult res = JvmBackend.generate(f.program(),
                 f.checkResult(), "jvmtest-stdlib-boundary.deal", "main");
+            check(!res.hasErrors(),
+                "backend accepts " + c.what() + ": " + res.diagnostics());
             if (c.module().equals("std/table")) {
-                // ISSUE-0102: std/table.keys now executes — tables map as
+                // ISSUE-0102: std/table.keys executes — tables map as
                 // first-class values, so the import compiles (the emitted
                 // artifact carries the __tableKeys helper).
-                check(!res.hasErrors(),
-                    "backend accepts " + c.what() + ": " + res.diagnostics());
                 check(res.source().contains("__tableKeys"),
                     "std/table import emits the keys helper");
                 continue;
             }
-            check(res.hasErrors(), "backend rejects " + c.what());
-            check(res.diagnostics().stream().anyMatch(d ->
-                    "E6000".equals(d.code())
-                        && d.message().contains("table values")
-                        && d.message().contains(c.module())),
-                "E6000 names the table boundary for " + c.what() + ": "
-                    + res.diagnostics());
+            // ISSUE-0302: a std/json-importing module emits the shared
+            // JSON runtime — the parse/stringify helpers back
+            // json.parse/json.stringify even without @jsonable classes.
+            check(res.source().contains("static java.lang.Object __jsonParse("),
+                "std/json import emits the shared JSON parser");
+            check(res.source().contains(
+                    "static $DealRt.Table $jsonParse(java.lang.String s) {"),
+                "std/json import emits the $jsonParse helper");
+            check(res.source().contains("static java.lang.String __jsonStringify("),
+                "std/json import emits the __jsonStringify helper");
         }
 
-        // The orchestrator's JVM path reports the same E6000 at the import
-        // statement and writes no artifact for the std/json-importing
-        // module (the backend is the single rejection site).
+        // The orchestrator's JVM path compiles the std/json-importing
+        // module and writes its artifact (the import is never a
+        // rejection site).
         writeFile("src/table_import.deal", """
             import * as j from "std/json"
             export function main(): null { return null; }
@@ -12512,13 +12829,10 @@ public class JvmBackendTest {
             entryFile, outputDir, false, false, false, Backend.JVM,
             null, roots, Path.of(".").toAbsolutePath().normalize());
         boolean success = orchestrator.compile();
-        check(!success, "orchestrator JVM path rejects std/json imports");
-        check(orchestrator.diagnostics().stream().anyMatch(d ->
-                "E6000".equals(d.code()) && d.message().contains("table values")),
-            "orchestrator reports the table boundary: "
-                + orchestrator.diagnostics());
-        check(!Files.exists(outputDir.resolve("Table_import.java")),
-            "no artifact written for the std/json-importing module");
+        check(success, "orchestrator JVM path compiles std/json imports: "
+            + orchestrator.diagnostics());
+        check(Files.exists(outputDir.resolve("Table_import.java")),
+            "the artifact is written for the std/json-importing module");
     }
 
     /** Real stdlib execution through the emitted artifact: every supported

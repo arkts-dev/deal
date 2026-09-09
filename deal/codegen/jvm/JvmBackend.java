@@ -109,8 +109,13 @@ import java.util.function.Function;
  * {@code nowMillis()} → second-truncated epoch milliseconds like
  * {@code os.time() * 1000}), plus {@code std/table.keys}
  * (ISSUE-0102 — tables now map as first-class values).
- * {@code std/json} stays rejected with {@code E6000} at the import
- * statement (the @jsonable slice embeds its own JSON runtime instead).
+ * {@code std/json} joins the supported set (ISSUE-0302): {@code
+ * json.parse(s)} lowers to the emitted {@code __jsonParse} +
+ * {@code __jsonTableValue} pair returning a fresh {@code
+ * $DealRt.Table} (object mode for JSON objects, array mode for JSON
+ * arrays, integral numbers as the int carrier), {@code
+ * json.stringify(t)} lowers to {@code __jsonStringify}, and both
+ * share the runtime the @jsonable slice embeds.
  *
  * <p>ISSUE-0102 (the JVM conformance promotion gate) lifts the
  * remaining imperative surface: C-style {@code for} loops (plain and
@@ -142,10 +147,9 @@ import java.util.function.Function;
  * {@code JVM-GAP-XMOD-FNVALUE}/{@code JVM-GAP-XMOD-ARRAY} surfaces are
  * retired). Anything outside this scope — nested class
  * declarations, {@code table | null} values, nullable tables, arrays of
- * table elements, async/await, stdlib imports other than the five
- * supported
- * modules — is rejected with a backend {@code E6000} diagnostic, never
- * silently miscompiled.
+ * table elements, async/await, stdlib imports other than the six
+ * supported modules — is rejected with a backend {@code E6000}
+ * diagnostic, never silently miscompiled.
  *
  * <p>The @jsonable slice (JSON serialization) extends the class
  * surface: an exported {@code // @jsonable} class emits the spec's
@@ -173,15 +177,15 @@ import java.util.function.Function;
  * has()} presence checks, table fields map JSON objects to the shared
  * {@code $DealRt.Table} data (nested JSON arrays become array-mode
  * tables) with finite-acyclic JSON-shape validation in toJson, and
- * {@code std/json} imports stay E6000 (the helpers embed the JSON
- * runtime instead). Anything outside this scope — optional table
+ * {@code std/json} shares that JSON runtime. Anything outside this
+ * scope — optional table
  * fields of @jsonable classes (their reads yield {@code table | null}),
  * nested class declarations, non-literal default expressions on
  * imported classes (their defaults evaluate in the declaring module's
  * scope under LuaJIT), arrays of non-primitive non-class elements,
  * {@code table | null} values, nullable tables, nested
  * (multi-dimensional) array fields, function-typed fields, stdlib
- * imports other than the five supported modules — is rejected with a
+ * imports other than the six supported modules — is rejected with a
  * backend {@code E6000} diagnostic, never silently miscompiled. The
  * ISSUE-0100 host ABI
  * slice lifts declaration/host-module imports and async/await from
@@ -788,10 +792,12 @@ public final class JvmBackend {
      * records an alias only for the supported stdlib modules
      * ({@link #SUPPORTED_STDLIB_MODULES}) and for imports present in
      * {@link #importResolutions}; every other import — a spec stdlib
-     * module whose functions need {@code table} values
-     * ({@code std/table}, {@code std/json}) or a declaration/host module
-     * — is rejected with E6000 at the import statement (ISSUE-0091
-     * rework, ISSUE-0096, ISSUE-0097).
+     * module outside the supported set or a declaration/host module —
+     * is rejected with E6000 at the import statement (ISSUE-0091
+     * rework, ISSUE-0096, ISSUE-0097). {@code std/json} joined the
+     * supported set with the ISSUE-0302 boundary: {@code json.parse}
+     * and {@code json.stringify} route through the emitted shared JSON
+     * runtime over the {@code $DealRt.Table} carrier.
      */
     private final Map<String, String> importAliases = new LinkedHashMap<>();
 
@@ -804,17 +810,7 @@ public final class JvmBackend {
      * {@code std/math}, and {@code std/time} join it.
      */
     private static final Set<String> SUPPORTED_STDLIB_MODULES = Set.of(
-        "std/console", "std/string", "std/math", "std/time", "std/table");
-
-    /**
-     * The spec-listed stdlib modules whose only functions take or return
-     * a {@code table} — a value type the JVM slice does not support
-     * (tables are E6000). Importing one is rejected at the import
-     * statement with E6000, even when unused: none of its functions can
-     * ever execute in this slice, and its require-time module object has
-     * no JVM equivalent.
-     */
-    private static final Set<String> TABLE_BOUNDARY_STDLIB_MODULES = Set.of(
+        "std/console", "std/string", "std/math", "std/time", "std/table",
         "std/json");
 
     /**
@@ -995,6 +991,17 @@ public final class JvmBackend {
      * Unreachable from {@link #javaName} for the same reason as the other
      * generated names. */
     private int loopLabelCounter = 0;
+
+    /** Counter for jsonable conversion locals ({@code l0}/{@code a0}/
+     * {@code i0}/{@code e0}/{@code cv0}/…): each nesting level of a
+     * nested-array fromJson/toJson conversion allocates a FRESH value
+     * per emitted {@code $fromJsonValue}/{@code $toJsonValue} method
+     * (Java forbids redeclaring a local inside the scope of an
+     * enclosing local — the pre-fix emission reused the outer level's
+     * suffix and javac rejected the artifact). Reset by each method
+     * emission; top-level field conversions keep their field-index
+     * suffixes. */
+    private int jsonLocalCounter = 0;
 
     /**
      * Per-function closure-capture state (ISSUE-0102): DEAL names of the
@@ -2310,16 +2317,16 @@ public final class JvmBackend {
                 // module path, and alias.fn(args) emits a static call on
                 // the imported module's emitted class. ISSUE-0097: the
                 // stdlib modules whose functions use only supported value
-                // types (std/console, std/string, std/math, std/time) are
-                // accepted as builtins. Any other import — a spec stdlib
-                // module whose functions need table values (std/table,
-                // std/json), a declaration/host module (never an
-                // importResolutions entry: the orchestrator skips
-                // declaration files in JVM codegen) — is out of scope and
-                // rejected AT THE IMPORT STATEMENT itself, even when
-                // unused, because the imported module's require-time side
-                // effects have no JVM slice equivalent and must fail
-                // loudly rather than be silently dropped.
+                // types (std/console, std/string, std/math, std/time,
+                // std/table, std/json) are accepted as builtins. Any other import — a spec stdlib
+                // module outside the supported set, a declaration/host
+                // module (never an importResolutions entry: the
+                // orchestrator skips declaration files in JVM codegen)
+                // — is out of scope and rejected AT THE IMPORT
+                // STATEMENT itself, even when unused, because the
+                // imported module's require-time side effects have no
+                // JVM slice equivalent and must fail loudly rather than
+                // be silently dropped.
                 if (SUPPORTED_STDLIB_MODULES.contains(imp.modulePath())) {
                     importAliases.put(imp.alias(), imp.modulePath());
                     continue;
@@ -2350,16 +2357,12 @@ public final class JvmBackend {
                 if (resolved != null) {
                     importAliases.put(imp.alias(), resolved);
                     importAliasStatementIndices.put(imp.alias(), i);
-                } else if (TABLE_BOUNDARY_STDLIB_MODULES.contains(
-                        imp.modulePath())) {
-                    unsupported("import of '" + imp.modulePath() + "' "
-                        + "(its functions require table values, which the "
-                        + "JVM slice does not support yet)", imp.span());
                 } else {
                     unsupported("module imports other than compiled "
                         + "project modules and the supported stdlib "
                         + "modules (std/console, std/string, std/math, "
-                        + "std/time) and host modules listed in the "
+                        + "std/time, std/table, std/json) and host "
+                        + "modules listed in the "
                         + "orchestrator's host-module map ('" + imp.modulePath() + "')",
                         imp.span());
                 }
@@ -2418,7 +2421,13 @@ public final class JvmBackend {
         indent++;
         emitRuntimeSupport();
         emitHostBindings();
-        if (!jsonableClasses.isEmpty()) {
+        // The shared JSON runtime serves both the @jsonable helpers and
+        // the std/json stdlib boundary (ISSUE-0302): a module that
+        // imports std/json emits the parser/stringifier helpers even
+        // without @jsonable classes, so json.parse/json.stringify call
+        // sites resolve to real emitted code.
+        if (!jsonableClasses.isEmpty()
+                || importAliases.containsValue("std/json")) {
             emitJsonRuntimeSupport();
         }
 
@@ -4886,10 +4895,15 @@ public final class JvmBackend {
         emitLine("    // same injective encoding as function shapes, so distinct");
         emitLine("    // element types map to distinct classes (ISSUE-0301 D3).");
         for (Type element : refArrayCheckElements) {
+            // ISSUE-0302: the per-element-shape carriers extend the
+            // shared __RefArray base so __jsonAppend serializes every
+            // nested-array wrapper recursively by element type at any
+            // depth (the generic __RefArray branch iterates data and
+            // recurses).
             emitLine("    static final class " + refArrayWrapperId(element)
-                + " { java.lang.Object[] data; "
+                + " extends __RefArray { "
                 + refArrayWrapperId(element)
-                + "(java.lang.Object[] data) { this.data = data; } }");
+                + "(java.lang.Object[] data) { super(data); } }");
         }
         // The per-signature function wrapper classes accumulate during
         // module emission and are spliced here, inside the shared scope.
@@ -6728,6 +6742,25 @@ public final class JvmBackend {
             + quoteJavaString("[" + identity + "]") + ")) {");
         classCheckBranches.add("    if (v instanceof " + classArrayWrapperName(cd.name())
             + " a) return a;");
+        // ISSUE-0302 dynamic boundary (jvm-v12-json-completion D2): an
+        // array-mode $DealRt.Table — the __jsonTableValue output of
+        // json.parse — crosses a C[]-typed table read through the
+        // canonical seam: its elements are checked recursively in index
+        // order with E8003 "array element {i} type mismatch" at the
+        // first failing index (the inner nominal failure is suppressed
+        // exactly like LuaJIT's pcall-wrapped element checks), and a
+        // passing table converts into fresh per-class wrapper storage.
+        classCheckBranches.add("    if (v instanceof $DealRt.Table t && t.$array() != null) {");
+        classCheckBranches.add("        java.util.ArrayList<java.lang.Object> a = t.$array();");
+        classCheckBranches.add("        java.lang.Object[] data = new java.lang.Object[a.size()];");
+        classCheckBranches.add("        for (int i = 0; i < a.size(); i++) {");
+        classCheckBranches.add("            try { data[i] = $check("
+            + quoteJavaString(identity) + ", a.get(i)); }");
+        classCheckBranches.add("            catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); }");
+        classCheckBranches.add("        }");
+        classCheckBranches.add("        return new " + classArrayWrapperName(cd.name())
+            + "(data);");
+        classCheckBranches.add("    }");
         classCheckBranches.add("    throw new DealError(\"E8001\", \"expected array, got \" + $describe(v));");
         classCheckBranches.add("}");
         classCheckBranches.add("if (descriptor.equals("
@@ -6737,6 +6770,17 @@ public final class JvmBackend {
         classCheckBranches.add("    if (v instanceof " + classArrayWrapperName(cd.name())
             + " a) return new " + classOrNullArrayWrapperName(cd.name())
             + "(a.data);");
+        classCheckBranches.add("    if (v instanceof $DealRt.Table t && t.$array() != null) {");
+        classCheckBranches.add("        java.util.ArrayList<java.lang.Object> a = t.$array();");
+        classCheckBranches.add("        java.lang.Object[] data = new java.lang.Object[a.size()];");
+        classCheckBranches.add("        for (int i = 0; i < a.size(); i++) {");
+        classCheckBranches.add("            try { data[i] = $check("
+            + quoteJavaString("?" + identity) + ", a.get(i)); }");
+        classCheckBranches.add("            catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); }");
+        classCheckBranches.add("        }");
+        classCheckBranches.add("        return new " + classOrNullArrayWrapperName(cd.name())
+            + "(data);");
+        classCheckBranches.add("    }");
         classCheckBranches.add("    throw new DealError(\"E8001\", \"expected array, got \" + $describe(v));");
         classCheckBranches.add("}");
         emitLine("static " + gen + " " + classArrayReadName(cd.name())
@@ -6961,6 +7005,9 @@ public final class JvmBackend {
         emitLine("static java.util.LinkedHashMap<java.lang.String, java.lang.Object> $toJsonValue("
             + gen + " v) {");
         indent++;
+        // Fresh conversion-level suffixes past the field-index namespace
+        // (arr{}/e{} names of the field serializers).
+        jsonLocalCounter = types.size();
         emitLine("java.util.LinkedHashMap<java.lang.String, java.lang.Object> out = new java.util.LinkedHashMap<>();");
         for (int i = 0; i < types.size(); i++) {
             ClassField cf = cd.fields().get(i);
@@ -7138,6 +7185,40 @@ public final class JvmBackend {
                 emitLine(arrVar + ".add(" + ref + ".$toJsonValue((" + ref
                     + ") " + eVar + "));");
             }
+            case Type.Array innerArr -> {
+                // ISSUE-0302 recursive array serialization (toJson side):
+                // a nested array element converts recursively into a
+                // JSON List of its own converted elements, with FRESH
+                // per-level local names (arr{level}/e{level}) so javac
+                // never sees a redeclaration at any depth. The inner
+                // wrapper reference is the shared per-element-shape
+                // carrier; its data holds the next level's wrappers.
+                int level = nextJsonLocalIdx();
+                String innerRef = arrayWrapperName(innerArr.element());
+                if (innerRef == null) {
+                    unsupportedSynthetic("@jsonable toJson value "
+                        + "conversion of nested array element type "
+                        + typeName(innerArr.element()),
+                        "missing anchor: nested array element type '"
+                            + typeName(innerArr.element()) + "'");
+                    emitLine(arrVar + ".add(null);");
+                } else {
+                    String iterRef = jsonArrayIterType(
+                        innerArr.element());
+                    String subArr = "arr" + level;
+                    String subE = "e" + level;
+                    emitLine("java.util.ArrayList<java.lang.Object> "
+                        + subArr + " = new java.util.ArrayList<>();");
+                    emitLine("for (" + iterRef + " " + subE + " : (("
+                        + innerRef + ") " + eVar + ").data) {");
+                indent++;
+                    emitToJsonArrayElement(innerArr.element(), subArr,
+                        subE, level);
+                    indent--;
+                    emitLine("}");
+                    emitLine(arrVar + ".add(" + subArr + ");");
+                }
+            }
             case Type.Bytes ignored -> emitLine(arrVar + ".add(null);");
             default -> emitLine(arrVar + ".add(null);");
         }
@@ -7157,12 +7238,32 @@ public final class JvmBackend {
     private void emitJsonableFromJsonValue(ClassDeclaration cd, String gen,
                                            List<String> fieldTypes,
                                            List<Type> types) {
+        // Allocated conversion-level suffixes start PAST the field-index
+        // namespace (fv{}/cv{}/tm{} names of the field overlays), so a
+        // nested conversion can never reuse a sibling field's suffix.
+        jsonLocalCounter = types.size();
         emitLine("// @jsonable fromJson validation (declared-field order; null on any");
         emitLine("// validation failure — the public C$fromJson wrapper converts");
         emitLine("// the depth-guard and stack-exhaustion shapes to the DEAL");
         emitLine("// null too, so the export never throws).");
+        emitLine("// ISSUE-0302 phase order (parent D5): top-level input gate →");
+        emitLine("// provided-field decode in class source order → omitted");
+        emitLine("// required defaults → final validation → publish. A");
+        emitLine("// provided-value failure returns the DEAL null with zero");
+        emitLine("// default side effects.");
         emitLine("static " + gen + " $fromJsonValue(java.lang.Object raw) {");
         indent++;
+        emitLine("// Top-level input gate (ISSUE-0302 D3): a document that");
+        emitLine("// parses to a scalar, null, or a non-empty array returns the");
+        emitLine("// DEAL null (never throws); an empty array [] collapses to");
+        emitLine("// the defaulted instance exactly like {} (the documented");
+        emitLine("// parse collapse — both roundtrip identically).");
+        emitLine("if (raw instanceof java.util.List<?> l) {");
+        indent++;
+        emitLine("if (!l.isEmpty()) return null;");
+        emitLine("raw = java.util.Map.of();");
+        indent--;
+        emitLine("}");
         emitLine("if (!(raw instanceof java.util.Map<?, ?> m)) return null;");
         emitLine("for (java.util.Map.Entry<?, ?> e : m.entrySet()) {");
         indent++;
@@ -7172,14 +7273,38 @@ public final class JvmBackend {
         emitLine("if (!known) return null;");
         indent--;
         emitLine("}");
-        // Defaults first, in declared-field order (LuaJIT's defaults-then-
-        // overlay model); each default evaluates inline at the call. An
-        // optional field starts ABSENT ($MISSING) — or present with its
-        // inline-evaluated default when one is declared (LuaJIT keeps the
-        // defaults-table entry for optional-with-default fields, exactly
-        // like construction).
+        // Phase 1: provided-field decode in class source order. Every
+        // field local starts at a type-safe placeholder (the Missing
+        // sentinel for an optional-no-default field, zeroValueFor for
+        // every other slot) and a provided key overlays the validated
+        // converted value. A conversion failure returns null
+        // IMMEDIATELY — no default has evaluated yet, so a
+        // provided-value failure carries zero default side effects.
         for (int i = 0; i < types.size(); i++) {
             ClassField cf = cd.fields().get(i);
+            String placeholder = cf.optional() && cf.defaultExpr().isEmpty()
+                ? jsonableMissingRef(cd) : zeroValueFor(cf.type());
+            emitLine(fieldTypes.get(i) + " f" + i + " = " + placeholder
+                + ";");
+            emitLine("boolean provided" + i + " = false;");
+            emitLine("if (m.containsKey(" + quoteJavaString(cf.name())
+                + ")) {");
+            indent++;
+            emitFromJsonOverlay(cf, types.get(i), "f" + i, i);
+            emitLine("provided" + i + " = true;");
+            indent--;
+            emitLine("}");
+        }
+        // Phase 2: omitted defaults, in declared-field order, evaluated
+        // inline at the call (the same per-construction default
+        // freshness the constructor path implements). An optional
+        // field stays ABSENT ($MISSING) — or present with its
+        // inline-evaluated default when one is declared (LuaJIT keeps
+        // the defaults-table entry for optional-with-default fields).
+        for (int i = 0; i < types.size(); i++) {
+            ClassField cf = cd.fields().get(i);
+            emitLine("if (!provided" + i + ") {");
+            indent++;
             String defaultCode;
             if (cf.optional() && cf.defaultExpr().isEmpty()) {
                 defaultCode = jsonableMissingRef(cd);
@@ -7245,37 +7370,31 @@ public final class JvmBackend {
                 }
             }
             if (!preStatements.isEmpty()) flushPreStatements();
-            emitLine(fieldTypes.get(i) + " f" + i + " = " + defaultCode + ";");
+            emitLine("f" + i + " = " + defaultCode + ";");
+            indent--;
+            emitLine("}");
         }
         flushPreStatements(); // defensive: empty at a statement boundary
-        // Required class-typed fields with NO declared default: the
-        // reference defaults table holds a raw {} placeholder (a plain
-        // Lua table, never a class instance) which the typed Java field
-        // slot cannot represent — Java null there would silently cross
-        // the non-nullable class boundary (the reviewed defect: a raw
-        // NPE or a silent null read where LuaJIT's check_type raises
-        // E8001 at the typed read). A present key overlays a validated
-        // nested instance below, so only the ABSENT key fails: a fromJson
-        // validation failure (the DEAL null, the spec's never-throw
-        // contract). The guard evaluates after every default so
-        // default-expression side effects keep LuaJIT's
-        // defaults-then-overlay order.
+        // Phase 3: final validation. Required class-typed fields with NO
+        // declared default: the reference defaults table holds a raw {}
+        // placeholder (a plain Lua table, never a class instance) which
+        // the typed Java field slot cannot represent — Java null there
+        // would silently cross the non-nullable class boundary (the
+        // reviewed defect: a raw NPE or a silent null read where
+        // LuaJIT's check_type raises E8001 at the typed read). A
+        // provided key overlays a validated nested instance in phase 1,
+        // so only the ABSENT key fails: a fromJson validation failure
+        // (the DEAL null, the spec's never-throw contract). The guard
+        // runs after the omitted defaults so default-expression side
+        // effects keep their phase-2 order.
         for (int i = 0; i < types.size(); i++) {
             ClassField cf = cd.fields().get(i);
             if (!cf.optional() && cf.defaultExpr().isEmpty()
                     && types.get(i) instanceof Type.Class) {
-                emitLine("if (!m.containsKey(" + quoteJavaString(cf.name())
-                    + ")) return null;");
+                emitLine("if (!provided" + i + ") return null;");
             }
         }
-        // Overlay the present keys with validated values.
-        for (int i = 0; i < types.size(); i++) {
-            ClassField cf = cd.fields().get(i);
-            emitFromJsonOverlay(cf, types.get(i), "f" + i, i);
-        }
-        // Optional fields whose overlay stayed absent keep $MISSING —
-        // their three states (absent / present null / present value) are
-        // exactly the storage states the constructor receives.
+        // Phase 4: publish the validated instance.
         StringBuilder args = new StringBuilder("new " + gen + "(");
         for (int i = 0; i < types.size(); i++) {
             if (i > 0) args.append(", ");
@@ -7311,6 +7430,13 @@ public final class JvmBackend {
         }
         indent--;
         emitLine("}");
+    }
+
+    /** Allocates the next fresh conversion-local suffix for the current
+     * {@code $fromJsonValue}/{@code $toJsonValue} emission (see {@link
+     * #jsonLocalCounter}). */
+    private int nextJsonLocalIdx() {
+        return jsonLocalCounter++;
     }
 
     /** Emits the validation + assignment lines converting a raw JSON value
@@ -7364,18 +7490,26 @@ public final class JvmBackend {
                 emitLine(targetVar + " = cv" + idx + ";");
             }
             case Type.Array a -> {
+                // ISSUE-0302 nested-array decoder javac validity: every
+                // conversion level allocates a FRESH local-name suffix
+                // through the per-method counter, so nested arrays
+                // (int[][] and deeper) never redeclare l{}/a{}/i{}/e{}
+                // inside the enclosing scope (Java forbids shadowing a
+                // local; the pre-fix emission reused the outer level's
+                // suffix and javac rejected the artifact).
+                int level = nextJsonLocalIdx();
                 String storage = jsonArrayStorageType(a.element());
-                emitLine("if (!(" + rawVar + " instanceof java.util.List<?> l" + idx + ")) return null;");
-                emitLine(storage + "[] a" + idx + " = new " + storage
-                    + "[l" + idx + ".size()];");
-                emitLine("int i" + idx + " = 0;");
-                emitLine("for (java.lang.Object e" + idx + " : l" + idx + ") {");
+                emitLine("if (!(" + rawVar + " instanceof java.util.List<?> l" + level + ")) return null;");
+                emitLine(storage + "[] a" + level + " = new " + storage
+                    + "[l" + level + ".size()];");
+                emitLine("int i" + level + " = 0;");
+                emitLine("for (java.lang.Object e" + level + " : l" + level + ") {");
                 indent++;
-                emitJsonArrayElementConvert(a.element(), idx);
+                emitJsonArrayElementConvert(a.element(), level);
                 indent--;
                 emitLine("}");
                 emitLine(targetVar + " = new " + arrayWrapperName(a.element())
-                    + "(a" + idx + ");");
+                    + "(a" + level + ");");
             }
             case Type.Bytes ignored -> {
                 // bytes is not jsonable (the E4007 checker rule is a
@@ -7510,10 +7644,16 @@ public final class JvmBackend {
         emitLine("// for arrays, Double for numbers, Boolean, String, and null for");
         emitLine("// JSON null. Parse failure returns null (the DEAL null of the");
         emitLine("// C$fromJson contract — never a throw).");
+        emitLine("// The last decoder error message (ISSUE-0302): __jsonParse");
+        emitLine("// collapses every parse failure to the DEAL null for the");
+        emitLine("// C$fromJson never-throw contract; the std/json json.parse");
+        emitLine("// boundary re-raises the stored message as E8001, mirroring");
+        emitLine("// std/json.lua's parse_error inside the pcall-equivalent.");
+        emitLine("static java.lang.String $jsonLastError = null;");
         emitLine("static java.lang.Object __jsonParse(java.lang.String s) {");
         indent++;
         emitLine("try { __JsonParser p = new __JsonParser(s); java.lang.Object v = p.parseValue(); p.skipWs(); return p.atEnd() ? v : null; }");
-        emitLine("catch (java.lang.RuntimeException e) { return null; }");
+        emitLine("catch (java.lang.RuntimeException e) { $jsonLastError = e.getMessage(); return null; }");
         emitLine("// Deeply nested JSON (hostile ~10 KB payloads) overflows the");
         emitLine("// recursive parser's stack: the StackOverflowError converts to");
         emitLine("// the DEAL null exactly like LuaJIT's pcall(__json_parse, s)");
@@ -7600,6 +7740,13 @@ public final class JvmBackend {
             + " (or a raw lone surrogate) is a parse failure (the DEAL"
             + " null), exactly like LuaJIT's std/json.lua decoder error"
             + " inside pcall(__json_parse, s).");
+        emitLine("// RFC 8259 section 7: a raw U+0000-U+001F character"
+            + " must be escaped — std/json.lua parse_string rejects"
+            + " it with \"raw control character in string (must be"
+            + " escaped)\", so a document carrying one is a parse"
+            + " failure (the DEAL null via __jsonParse, E8001 via"
+            + " json.parse).");
+        emitLine("if (c < 0x20) throw new java.lang.RuntimeException(\"raw control character in string (must be escaped)\");");
         emitLine("if (c != '\\\\') { sb.append(c); i++; continue; }");
         emitLine("i++;");
         emitLine("char e = peek();");
@@ -7716,6 +7863,22 @@ public final class JvmBackend {
         indent--;
         emitLine("}");
         emitLine("return raw;");
+        indent--;
+        emitLine("}");
+        emitLine("// std/json boundary (ISSUE-0302): json.parse lowers here. A");
+        emitLine("// malformed document (bad escapes, lone surrogates, raw");
+        emitLine("// control characters, invalid numbers, trailing bytes) is the");
+        emitLine("// __jsonParse null and re-raises as E8001 with the decoder's");
+        emitLine("// stored message — std/json.lua's parse_error inside the");
+        emitLine("// pcall-equivalent. Hostile deep nesting past the bounded");
+        emitLine("// table-value depth guard raises E8001 too, never a raw");
+        emitLine("// stack exhaustion.");
+        emitLine("static $DealRt.Table $jsonParse(java.lang.String s) {");
+        indent++;
+        emitLine("java.lang.Object v = __jsonParse(s);");
+        emitLine("if (v == null) throw new DealError(\"E8001\", \"JSON parse error\" + ($jsonLastError == null ? \"\" : \": \" + $jsonLastError));");
+        emitLine("try { return ($DealRt.Table) __jsonTableValue(v, 0); }");
+        emitLine("catch (java.lang.RuntimeException e) { throw new DealError(\"E8001\", \"JSON nesting too deep\"); }");
         indent--;
         emitLine("}");
         emitLine("// JSON stringify (std/json.lua contract): null, Boolean, String, Long");
@@ -7887,11 +8050,39 @@ public final class JvmBackend {
         emitLine("return;");
         indent--;
         emitLine("}");
-        emitLine("throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
+        emitLine("// ISSUE-0302 recursive array serialization: every shared");
+        emitLine("// __RefArray subclass (nested-array per-element-shape");
+        emitLine("// carriers and per-class array wrappers) serializes its");
+        emitLine("// elements recursively through __jsonAppend, so a table");
+        emitLine("// field holding [[1,2],[3,4]] roundtrips — the inner");
+        emitLine("// wrappers hit their own branches at any depth, and a");
+        emitLine("// class element fails JSON-shape validation exactly like");
+        emitLine("// any other non-JSON-shaped value.");
+        emitLine("if (v instanceof $DealRt.__RefArray a) {");
+        indent++;
+        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
+        emitLine("sb.append('[');");
+        emitLine("boolean first = true;");
+        emitLine("for (java.lang.Object e : a.data) { if (!first) sb.append(','); first = false; __jsonAppend(sb, e, stack); }");
+        emitLine("sb.append(']');");
+        emitLine("stack.remove(v);");
+        emitLine("return;");
+        indent--;
+        emitLine("}");
+        emitLine("// std/json.lua encode_value parity (ISSUE-0302): a value");
+        emitLine("// outside the JSON-shaped set — a function, a bytes");
+        emitLine("// carrier, an unknown object — raises the unsupported-");
+        emitLine("// type E8001 with the Lua type name.");
+        emitLine("throw new DealError(\"E8001\", \"unsupported type for JSON encoding: \" + (v instanceof $DealRt.FnValue ? \"function\" : v instanceof $DealRt.Bytes ? \"bytes\" : v.getClass().getSimpleName()));");
         indent--;
         emitLine("}");
         emitLine("static java.lang.String __jsonQuote(java.lang.String s) {");
         indent++;
+        emitLine("// ISSUE-0302 stringify-side unpaired-surrogate scan");
+        emitLine("// (std/json.lua escape parity): a string that is not");
+        emitLine("// scalar-valid UTF-8 raises E8001 BEFORE any character");
+        emitLine("// is emitted, so no partial output ever escapes.");
+        emitLine("if (__hasUnpairedSurrogate(s)) throw new DealError(\"E8001\", \"cannot encode invalid UTF-8 as JSON\");");
         emitLine("java.lang.StringBuilder sb = new java.lang.StringBuilder(\"\\\"\");");
         emitLine("for (int i = 0; i < s.length(); i++) {");
         indent++;
@@ -12243,6 +12434,30 @@ public final class JvmBackend {
                 mae.span());
             return "null";
         }
+        if ("std/json".equals(module)) {
+            // ISSUE-0302: std/json joins the supported stdlib set over
+            // the emitted shared JSON runtime. json.parse(s) lowers to
+            // __jsonParse + __jsonTableValue and returns the DEAL table
+            // ($DealRt.Table: object mode for JSON objects, array mode
+            // for JSON arrays, integral numbers as the int carrier);
+            // json.stringify(t) lowers to __jsonStringify. A parse
+            // failure raises E8001 with the decoder's message (the
+            // pcall-equivalent inside the emitted $jsonParse helper),
+            // and stringify rejections raise the std/json.lua E8001
+            // family (NaN/Infinity, non-scalar-valid UTF-8, unsupported
+            // types, cycles).
+            if ("parse".equals(mae.field())) {
+                List<String> argCodes = emitOperandsInOrder(call.args());
+                return "$jsonParse(" + argCodes.get(0) + ")";
+            }
+            if ("stringify".equals(mae.field())) {
+                List<String> argCodes = emitOperandsInOrder(call.args());
+                return "__jsonStringify(" + argCodes.get(0) + ")";
+            }
+            unsupported("export '" + mae.field() + "' of std/json",
+                mae.span());
+            return "null";
+        }
         // Project-module import (ISSUE-0096): a static call on the imported
         // module's emitted class. The checker has already verified the
         // export exists (E2004) and typed the member as the exported
@@ -12522,6 +12737,19 @@ public final class JvmBackend {
                     mae.span());
                 return "null";
             }
+        }
+        if (objType instanceof Type.Nullable nn
+                && nn.inner() instanceof Type.Class) {
+            // ISSUE-0302 residual closure (jvm-v12-json-completion D4):
+            // a member read through a nullable CROSS-MODULE class
+            // reference — the checker restricts the nullable-receiver
+            // unwrap to foreign classes (the conformance-gap-02 seam),
+            // where the surrounding `!== null` guard protects the
+            // dereference — emits the ordinary class field read on the
+            // boxed reference. LuaJIT emits `obj.field` here too: a
+            // null receiver crashes the guarded-only-legal program the
+            // same way a raw dereference does.
+            objType = nn.inner();
         }
         if (objType instanceof Type.Bytes
                 && "length".equals(mae.field())) {
@@ -14925,7 +15153,18 @@ public final class JvmBackend {
                 case '\b' -> sb.append("\\b");
                 case '\f' -> sb.append("\\f");
                 default -> {
-                    if (c < 0x20) {
+                    // Surrogates (paired and unpaired alike) emit as
+                    // Java unicode escapes: a raw unpaired UTF-16
+                    // surrogate in the artifact source would be
+                    // corrupted by the UTF-8 file encoding before
+                    // javac ever read it, silently replacing the
+                    // boundary-validation input — the escaped form
+                    // carries the code unit faithfully so the runtime
+                    // string boundary checks ($check E8001 / the
+                    // __jsonQuote stringify scan) observe exactly the
+                    // source value.
+                    if (c < 0x20
+                            || java.lang.Character.isSurrogate(c)) {
                         sb.append(String.format("\\u%04x", (int) c));
                     } else {
                         sb.append(c);

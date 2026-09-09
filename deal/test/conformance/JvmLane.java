@@ -1598,51 +1598,93 @@ public class JvmLane implements Lane {
         }
     }
 
-    /** The complete skip registry (absorbed verbatim from
-     * {@code JvmConformanceTest.SKIPS}). Every entry must name an
+    /** The complete skip registry (absorbed from
+     * {@code JvmConformanceTest.SKIPS}, diverging only where the
+     * differential gate's canonical-snapshot requirement is stricter
+     * than the code-only runner: the ISSUE-0302-promoted runtime-error
+     * fixtures raise the pinned E8001/E8003 on the JVM lane but the
+     * captured DEALRuntimeError carries no complete field set, so they
+     * stay tracked here with the ISSUE-0276 reason while
+     * JvmConformanceTest dropped the entries). Every entry must name an
      * on-disk runtime-classified corpus test; the lane validates the
      * registry against the corpus at construction and the gate
      * cross-checks it against its own discovery, so a stale entry fails
      * the gate with a promotion instruction. */
     private static final Map<String, SkipEntry> SKIPS = new LinkedHashMap<>();
     static {
-        // ---- JVM-GAP-STDJSON: the std/json JVM boundary ----
+        // ---- JVM-GAP-STDJSON: the std/json JVM boundary (ISSUE-0302) ----
+        // std/json joined the supported stdlib set: json.parse /
+        // json.stringify compile and run over the emitted shared JSON
+        // runtime, so the seven runtime-ok std/json fixtures (the four
+        // jsonable residuals and the three stdlib pins) promoted
+        // through the real pipeline and the stale-skip gate forced the
+        // registry entries out. The ten runtime-error fixtures below
+        // still fail the DIFFERENTIAL gate's canonical snapshot
+        // requirement: the JVM lane raises the pinned E8001/E8003, but
+        // the captured DEALRuntimeError carries no complete field set
+        // (code, message, file, line, column) and the lane never
+        // fabricates one (ISSUE-0276 owns the backend convergence), so
+        // every entry stays tracked non-fatal with that reason.
         skip("backend-runtime/class-runtime-errors/dynamic-bad-class-array-element-e8001.deal",
-            "json.parse builds the dynamic array value.", "JVM-GAP-STDJSON");
+            "the fixture raises E8003 on the JVM lane, but the JVM "
+                + "DEALRuntimeError snapshot carries no column field "
+                + "(ISSUE-0276 owns the backend convergence), so the "
+                + "lane cannot serialize the canonical error snapshot.",
+            "JVM-GAP-STDJSON");
         skip("backend-runtime/class-runtime-errors/dynamic-bad-class-param-e8001.deal",
-            "json.parse builds the dynamic class value.", "JVM-GAP-STDJSON");
+            "the fixture raises E8001 on the JVM lane, but the JVM "
+                + "DEALRuntimeError snapshot carries no column field "
+                + "(ISSUE-0276 owns the backend convergence), so the "
+                + "lane cannot serialize the canonical error snapshot.",
+            "JVM-GAP-STDJSON");
         skip("backend-runtime/class-runtime-errors/dynamic-bad-class-return-e8001.deal",
-            "json.parse builds the dynamic class value.", "JVM-GAP-STDJSON");
+            "the fixture raises E8001 on the JVM lane, but the JVM "
+                + "DEALRuntimeError snapshot carries no column field "
+                + "(ISSUE-0276 owns the backend convergence), so the "
+                + "lane cannot serialize the canonical error snapshot.",
+            "JVM-GAP-STDJSON");
         skip("backend-runtime/class-runtime-errors/dynamic-bad-imported-class-param-e8001.deal",
-            "json.parse builds the dynamic imported-class value.",
+            "the fixture raises E8001 on the JVM lane, but the JVM "
+                + "DEALRuntimeError snapshot carries no column field "
+                + "(ISSUE-0276 owns the backend convergence), so the "
+                + "lane cannot serialize the canonical error snapshot.",
             "JVM-GAP-STDJSON");
         skip("backend-runtime/class-runtime-errors/dynamic-bad-nullable-class-e8001.deal",
-            "json.parse builds the dynamic nullable-class value.",
+            "the fixture raises E8001 on the JVM lane, but the JVM "
+                + "DEALRuntimeError snapshot carries no column field "
+                + "(ISSUE-0276 owns the backend convergence), so the "
+                + "lane cannot serialize the canonical error snapshot.",
             "JVM-GAP-STDJSON");
         skip("backend-runtime/runtime-errors/json-stringify-function-e8001.deal",
-            "json.stringify of a function-holding table.",
+            "the fixture raises E8001 on the JVM lane, but the JVM "
+                + "DEALRuntimeError snapshot carries no column field "
+                + "(ISSUE-0276 owns the backend convergence), so the "
+                + "lane cannot serialize the canonical error snapshot.",
             "JVM-GAP-STDJSON");
         skip("backend-runtime/source-location/json-error-source.deal",
-            "json.stringify of a function-holding table (E8001) requires "
-                + "the std/json JVM boundary.", "JVM-GAP-STDJSON");
-        skip("backend-runtime/source-location-precision/class-param-error-source.deal",
-            "json.parse builds the dynamic class value.", "JVM-GAP-STDJSON");
-        skip("backend-runtime/type-system/dynamic-array-element-e8003.deal",
-            "json.parse of a mixed array.", "JVM-GAP-STDJSON");
-        skip("backend-runtime/stdlib/json/int32-boundary-parse.deal",
-            "json.parse int32 number mapping (2147483647/2147483648/"
-                + "-2147483648/-2147483649/-0) and stringify output.",
+            "the fixture raises E8001 on the JVM lane, but the JVM "
+                + "DEALRuntimeError snapshot carries no column field "
+                + "(ISSUE-0276 owns the backend convergence), so the "
+                + "lane cannot serialize the canonical error snapshot.",
             "JVM-GAP-STDJSON");
-        skip("backend-runtime/stdlib/json/json-stringify-roundtrip.deal",
-            "json.parse/stringify int-number document round-trips.",
+        skip("backend-runtime/source-location-precision/class-param-error-source.deal",
+            "the fixture raises E8001 on the JVM lane, but the JVM "
+                + "DEALRuntimeError snapshot carries no column field "
+                + "(ISSUE-0276 owns the backend convergence), so the "
+                + "lane cannot serialize the canonical error snapshot.",
+            "JVM-GAP-STDJSON");
+        skip("backend-runtime/type-system/dynamic-array-element-e8003.deal",
+            "the fixture raises E8003 on the JVM lane, but the JVM "
+                + "DEALRuntimeError snapshot carries no column field "
+                + "(ISSUE-0276 owns the backend convergence), so the "
+                + "lane cannot serialize the canonical error snapshot.",
             "JVM-GAP-STDJSON");
         skip("backend-runtime/stdlib/json/json-stringify-bytes-error.deal",
-            "json.stringify of a bytes-holding table (E8001).",
+            "the fixture raises E8001 on the JVM lane, but the JVM "
+                + "DEALRuntimeError snapshot carries no column field "
+                + "(ISSUE-0276 owns the backend convergence), so the "
+                + "lane cannot serialize the canonical error snapshot.",
             "JVM-GAP-STDJSON");
-        skip("backend-runtime/stdlib/table/keys-nonstring-exclusion.deal",
-            "json.parse builds the integer-keyed array table whose "
-                + "non-string keys the fixture pins excluded from "
-                + "std/table.keys.", "JVM-GAP-STDJSON");
 
         // ---- JVM-GAP-DESCRIPTORS: retired with the canonical matcher
         // realization (ISSUE-0301) ----
@@ -1762,29 +1804,6 @@ public class JvmLane implements Lane {
             "E6000: JvmBackend does not support an Error literal without "
                 + "both code and message fields (LuaJIT-owned default "
                 + "filling).", "JVM-GAP-ERROR-LITERAL-DEFAULTS");
-
-        // ---- JVM-GAP-JSONABLE-RESIDUAL: residual @jsonable JVM defects ----
-        // The two error-typed member-access/NEQ entries retired with
-        // the orchestrator's cross-module checked-fact resolution
-        // (ISSUE-0326): their skip entries were stale and the gate
-        // forced the removal.
-        skip("backend-runtime/jsonable/jsonable-fromjson-top-level-scalar.deal",
-            "requires @jsonable code generation and the std/json boundary.",
-            "JVM-GAP-JSONABLE-RESIDUAL");
-        skip("backend-runtime/jsonable/jsonable-optional-nullable-nested-class.deal",
-            "E6000: NEQ over error/null/int and member access as a value.",
-            "JVM-GAP-JSONABLE-RESIDUAL");
-        skip("backend-runtime/jsonable/nested-array-roundtrip.deal",
-            "emitted $fromJsonValue redeclares locals (l0/a0/i0/e0); "
-                + "javac rejects the artifact.", "JVM-GAP-JSONABLE-RESIDUAL");
-        skip("backend-runtime/jsonable/jsonable-table-field-nested-arrays.deal",
-            "runtime E8001 \"value is not JSON-shaped\": toJson of a "
-                + "table field holding nested arrays.",
-            "JVM-GAP-JSONABLE-RESIDUAL");
-        // jsonable-tojson-rejects-cyclic-table.deal is deliberately NOT
-        // registered: it passes on JVM — the ISSUE-0168 JVM slice's own
-        // cycle detection raises E8001 — so a skip entry would be stale
-        // and fail the stale-skip gate deterministically.
 
         // ---- JVM-GAP-HOST-ABI-SHAPES: unsupported declared host shapes ----
         skip("backend-runtime/host-abi/host-array-return-ok.deal",

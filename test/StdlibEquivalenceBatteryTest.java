@@ -2486,7 +2486,7 @@ public final class StdlibEquivalenceBatteryTest {
         for (StdlibHelperEquivalence.Exclusion exclusion : StdlibHelperEquivalence.exclusions()) {
             check(exclusion.candidate().lane() == Lane.JVM_EMITTED
                     && "std.json".equals(exclusion.candidate().modulePath()),
-                "the JVM std/json E6000 position is not an equivalence candidate: "
+                "the JVM std/json position is not an equivalence battery candidate: "
                     + exclusion.reason());
         }
         check(!StdlibHelperEquivalence.isWirable(Lane.JVM_EMITTED,
@@ -2743,10 +2743,14 @@ public final class StdlibEquivalenceBatteryTest {
         }
     }
 
-    /** The JVM std/json E6000 position stays an exclusion, evidenced by the real backend. */
-    private static void testJvmJsonE6000Position() {
-        System.out.println("-- The JVM std/json E6000 position is not an equivalence "
-            + "candidate --");
+    /** The JVM std/json position is supported (ISSUE-0302), evidenced by the real
+     * backend: the import compiles with the emitted shared JSON runtime. The
+     * position keeps its corpus-pinned surface and stays outside the
+     * equivalence battery's closed candidate set (the retained Lua/JS
+     * helpers remain the comparison lanes). */
+    private static void testJvmJsonPositionSupported() {
+        System.out.println("-- The JVM std/json position is supported (the import "
+            + "compiles over the shared JSON runtime) --");
 
         Frontend frontend = compileFrontend("""
             import * as json from "std/json"
@@ -2758,11 +2762,24 @@ public final class StdlibEquivalenceBatteryTest {
             JvmBackend.JvmCodegenResult res = JvmBackend.generate(frontend.program(),
                 frontend.result(), "jvmjsonposition.deal", "main",
                 SemanticProfile.DEAL_V1_2_INT32);
-            check(res.hasErrors() && res.diagnostics().stream()
-                    .anyMatch(d -> "E6000".equals(d.code())),
-                "the retained JVM backend rejects std/json with E6000 at the import (the "
-                    + "position is not an equivalence candidate): " + res.diagnostics());
+            check(!res.hasErrors(),
+                "the JVM backend compiles the std/json import (no E6000 at the import "
+                    + "statement): " + res.diagnostics());
+            if (!res.hasErrors()) {
+                check(res.source().contains("static java.lang.Object __jsonParse(")
+                        && res.source().contains(
+                            "static $DealRt.Table $jsonParse(java.lang.String s) {"),
+                    "the std/json-importing module emits the shared JSON runtime over "
+                        + "the table carrier");
+            }
         }
+        check(!StdlibHelperEquivalence.isWirable(Lane.JVM_EMITTED,
+                StdlibFunctionId.JSON_PARSE)
+                && !StdlibHelperEquivalence.isWirable(Lane.JVM_EMITTED,
+                    StdlibFunctionId.JSON_STRINGIFY),
+            "the JVM std/json position stays outside the equivalence battery's "
+                + "closed candidate set (the retained Lua/JS helpers are the "
+                + "comparison lanes)");
     }
 
     /** The combined T5 step: the manifest arm and the battery's covered ID set. */
@@ -3024,7 +3041,7 @@ public final class StdlibEquivalenceBatteryTest {
 
         testKnownDivergentVerdicts(laneDiv);
         testTrimCandidatesVerifiedEquivalent();
-        testJvmJsonE6000Position();
+        testJvmJsonPositionSupported();
         testNegativeControlBrokenStub(all, reference);
         testAlgorithmTamperFlipsVerdict(all, reference);
         testCombinedT5(all);

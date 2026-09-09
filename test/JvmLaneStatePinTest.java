@@ -90,13 +90,25 @@ import java.util.List;
  * so the JVM summary moved to {@code passed 306, failed 0, skipped 37
  * ... pass rate 89.2%} over the 343-fixture denominator and the LuaJIT
  * summary reads {@code Total: 538, Passed: 538} with zero tracked
- * known-fails and zero staged failures. ISSUE-0504 (the host ABI
- * conversion leaf) then lands the eight host-boundary fixtures, so
- * the JVM summary moves to {@code passed 306, failed 0, skipped 45
- * ... pass rate 87.2%} over the 351-fixture denominator (the eight
- * JVM-GAP-HOST-ABI-SHAPES skip entries) and the LuaJIT summary reads
- * {@code Total: 546, Passed: 546} with zero tracked known-fails and
- * zero staged failures.
+ * known-fails and zero staged failures.
+ * ISSUE-0302 (the std/json boundary and @jsonable completion) then
+ * promoted the thirteen JVM-GAP-STDJSON entries and the four
+ * JVM-GAP-JSONABLE-RESIDUAL entries — json.parse/json.stringify
+ * run through the shared JSON runtime, the fromJson top-level gate
+ * and the provided-fields-before-defaults phase order land, and
+ * nested array fields and table-field nested arrays roundtrip — so
+ * the JVM summary moved again to {@code passed 323, failed 0,
+ * skipped 20 ... pass rate 94.2%} over the 343-fixture denominator
+ * (the retained skips: the recursive bytes-bearing wrapper
+ * closure, the two default-plan fixtures, the sixteen host-ABI
+ * shapes, and the rtc-015 Error-literal-defaults probe).
+ * ISSUE-0504 (the host ABI conversion leaf) then lands the eight
+ * host-boundary fixtures, so the JVM summary moves to {@code passed
+ * 323, failed 0, skipped 28 ... pass rate 92.0%} over the
+ * 351-fixture denominator (the eight JVM-GAP-HOST-ABI-SHAPES skip
+ * entries) and the LuaJIT summary reads {@code Total: 546,
+ * Passed: 546} with zero tracked known-fails and zero staged
+ * failures.
  *
  * <p>The test runs from the repository root (the {@code run_tests.sh}
  * contract, like {@code ConformanceTest}); {@code run_tests.sh}
@@ -151,8 +163,8 @@ public class JvmLaneStatePinTest {
     // skipped, ISSUE-0160), so the summary moved to "passed 265,
     // denominator 301 ... pass rate 88.0%". ISSUE-0547 (the ISSUE-0160
     // container step) adds the two bytes-container fixtures, which pass
-    // the real pipeline, so the summary moved again to the re-pinned
-    // numbers below (denominator 303, pass rate 88.1%). ISSUE-0502
+    // the real pipeline, so the summary moved to "passed 267,
+    // denominator 303 ... pass rate 88.1%". ISSUE-0502
     // (the gap-suite runtime population landing) adds forty runtime
     // fixtures on top (30 runtime-ok — the promoted gap
     // bytes-boundary-order included — and 10 runtime-error; the one
@@ -164,19 +176,28 @@ public class JvmLaneStatePinTest {
     // tracks them for the snapshot column field) and only the
     // rtc-015 Error-literal-defaults probe needs the one new skip
     // entry, so the summary moved to the re-pinned numbers below
-    // (denominator 343, pass rate 89.2%). ISSUE-0504 (the host ABI
-    // conversion leaf) lands the eight host-boundary fixtures, each
-    // carrying a JVM-GAP-HOST-ABI-SHAPES skip entry — the verbatim gap
-    // HostBoundary declares long/Long int carriers while the activated
-    // DEAL_V1_2_INT32 profile resolves the declared int / int | null
-    // parameters as int/Integer, so the module-level load-time export
-    // check raises E8011 for every fixture importing host/boundary —
-    // so the summary moves to the re-pinned numbers below (denominator
-    // 351, pass rate 87.2%).
+    // (denominator 343, pass rate 89.2%). ISSUE-0302 (std/json
+    // boundary and @jsonable completion) then promoted the thirteen
+    // JVM-GAP-STDJSON entries and the four JVM-GAP-JSONABLE-RESIDUAL
+    // entries — json.parse/json.stringify run through the shared JSON
+    // runtime, the fromJson top-level gate and phase order land, and
+    // nested arrays roundtrip — so the summary moved to the re-pinned
+    // numbers below (the retained skips: the recursive bytes-bearing
+    // wrapper closure, the two default-plan fixtures, the sixteen
+    // host-ABI shapes, and the rtc-015 Error-literal-defaults probe).
+    // ISSUE-0504 (the host ABI conversion leaf) then lands the eight
+    // host-boundary fixtures, each carrying a JVM-GAP-HOST-ABI-SHAPES
+    // skip entry — the verbatim gap HostBoundary declares long/Long
+    // int carriers while the activated DEAL_V1_2_INT32 profile
+    // resolves the declared int / int | null parameters as
+    // int/Integer, so the module-level load-time export check raises
+    // E8011 for every fixture importing host/boundary — so the
+    // summary moves to the re-pinned numbers below (denominator 351,
+    // pass rate 92.0%).
     private static final String JVM_SUMMARY =
         "Backend-runtime on JVM: denominator 351 (every on-disk runtime "
-            + "test, unchanged), passed 306, failed 0, skipped 45 "
-            + "(classified), known-fail 0 (tracked) \u2014 pass rate 87.2%";
+            + "test, unchanged), passed 323, failed 0, skipped 28 "
+            + "(classified), known-fail 0 (tracked) \u2014 pass rate 92.0%";
 
     private static final String JVM_PROFILE_AUTHORITY =
         "Profile-authority accounting: 0 legacy-authority fixture(s) "
