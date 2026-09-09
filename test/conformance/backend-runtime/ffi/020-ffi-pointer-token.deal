@@ -1,0 +1,15 @@
+// @spec: Modules, declarations, standard library, and host ABI — C FFI externals entries
+// @description: An opaque C pointer round-trips as a valid pointer token (the c-pointer ABI mapping boxes and unboxes the same handle across calls).
+// @expected: runtime-ok
+// @features: c-ffi, abi, c-pointer
+
+import * as native from "candidate/native";
+export function main(): null {
+  let handle: native.Handle = native.ffi_handle_new(31);
+  let value: int = native.ffi_handle_value(handle);
+  native.ffi_handle_free(handle);
+  if (value !== 31) {
+    throw { code: "TEST_FAIL", message: "ffi pointer token" };
+  }
+  return null;
+}

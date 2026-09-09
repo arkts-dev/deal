@@ -1066,8 +1066,29 @@ public final class LuaBackend implements Visitor<Void> {
     public String generateFromInstance(ProgramNode program, boolean entryModule,
             Map<String, String> importResolutions,
             Map<String, Map<String, Type>> hostModules) {
+        return generateFromInstance(program, entryModule, importResolutions,
+            hostModules, Map.of(), "");
+    }
+
+    /**
+     * Instance generation with the extern-C module surface (ISSUE-0507
+     * FFI candidate fixture conformance; emitter page D6): the metadata
+     * phase's generated modules keyed by raw import path drive the
+     * emitted {@code __rt.load_ffi} call sites, and the manifest
+     * directory text is the base of manifest-relative native-library
+     * loader-text resolution (seam S3). The overload above keeps the
+     * FFI-free default.
+     */
+    public String generateFromInstance(ProgramNode program, boolean entryModule,
+            Map<String, String> importResolutions,
+            Map<String, Map<String, Type>> hostModules,
+            Map<String, FfiGeneratedModule> ffiModules,
+            String ffiManifestDirectoryText) {
         this.importResolutions = Map.copyOf(importResolutions);
         this.hostModules = Map.copyOf(hostModules);
+        this.ffiModules = Map.copyOf(ffiModules);
+        this.ffiManifestDirectory =
+            ffiManifestDirectoryText == null ? "" : ffiManifestDirectoryText;
         return generateFromInstance(program, entryModule);
     }
 

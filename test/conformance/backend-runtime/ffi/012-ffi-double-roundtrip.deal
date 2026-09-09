@@ -1,0 +1,13 @@
+// @spec: Modules, declarations, standard library, and host ABI — C FFI externals entries
+// @description: A C double return value maps to the DEAL number type without precision loss (ffi_half(5.0) == 2.5 through the production load_ffi path).
+// @expected: runtime-ok
+// @features: c-ffi, abi, number
+
+import * as native from "candidate/native";
+export function main(): null {
+  let value: number = native.ffi_half(5.0);
+  if (value !== 2.5) {
+    throw { code: "TEST_FAIL", message: "ffi double" };
+  }
+  return null;
+}

@@ -508,6 +508,12 @@ public class LuaLane implements Lane {
                 Set<String> companionCorpusPaths = new LinkedHashSet<>();
                 Map<String, Map<String, Type>> hostModules =
                     new LinkedHashMap<>();
+                // Corpus C FFI externals (ISSUE-0507): raw import path
+                // -> the production-validated FFIGEN module the LuaJIT
+                // emission path serializes into the __rt.load_ffi call
+                // site (the real load_ffi path).
+                Map<String, deal.ffi.FfiGeneratedModule> ffiModules =
+                    new LinkedHashMap<>();
                 for (StatementNode stmt
                         : parseResult.program().statements()) {
                     if (!(stmt instanceof ImportDeclaration imp)) {
@@ -525,6 +531,24 @@ public class LuaLane implements Lane {
                                 + e.getMessage();
                             return null;
                         }
+                        continue;
+                    }
+                    if (CorpusFfi.isFfiImport(conformanceRoot,
+                            importPath)) {
+                        CorpusFfi.Module ffiModule = CorpusFfi.module(
+                            conformanceRoot, importPath, profile);
+                        if (ffiModule.validationDiagnostics().stream()
+                                .anyMatch(d -> "error"
+                                    .equals(d.severity()))) {
+                            compileFailure = "the lane compilation failed "
+                                + "for " + corpusPath + ": the C FFI "
+                                + "declaration of " + importPath
+                                + " was rejected: " + describeDiagnostics(
+                                    ffiModule.validationDiagnostics());
+                            return null;
+                        }
+                        ffiModules.put(importPath,
+                            ffiModule.generatedModule());
                         continue;
                     }
                     Path resolved = resolveCompanionPath(importPath, fileDir);
@@ -592,13 +616,13 @@ public class LuaLane implements Lane {
 
                 // Register this module's paths before backend construction
                 // (the absorbed registerModulePath surface).
-                registerModulePath(filename, hostModules);
+                registerModulePath(filename, hostModules, ffiModules);
                 LuaBackend backend = new LuaBackend(result.typeMap(),
                     result.symbolTable(), filename, filename,
                     identityIndex(), profile);
                 String luaSource = backend.generateFromInstance(
                     parseResult.program(), isEntry, importResolutions,
-                    hostModules);
+                    hostModules, ffiModules, "");
                 for (CompilerDiagnostic diagnostic
                         : backend.diagnostics()) {
                     if ("error".equals(diagnostic.severity())) {
@@ -650,12 +674,19 @@ public class LuaLane implements Lane {
         }
 
         private void registerModulePath(String modulePath,
-                Map<String, Map<String, Type>> hostModules) {
+                Map<String, Map<String, Type>> hostModules,
+                Map<String, deal.ffi.FfiGeneratedModule> ffiModules) {
             if (modulePath != null && !modulePath.isEmpty()
                     && !moduleIdentities.containsKey(modulePath)) {
                 moduleIdentities.put(modulePath, classifyModulePath(modulePath));
             }
             for (String raw : hostModules.keySet()) {
+                String dotted = raw.replace('/', '.');
+                if (!moduleIdentities.containsKey(dotted)) {
+                    moduleIdentities.put(dotted, classifyModulePath(dotted));
+                }
+            }
+            for (String raw : ffiModules.keySet()) {
                 String dotted = raw.replace('/', '.');
                 if (!moduleIdentities.containsKey(dotted)) {
                     moduleIdentities.put(dotted, classifyModulePath(dotted));
@@ -675,6 +706,13 @@ public class LuaLane implements Lane {
                 return CanonicalModuleIdentity.BuiltinModule.INSTANCE;
             }
             if (hostRegistry.isHostModule(modulePath)) {
+                return new CanonicalModuleIdentity.ExternalModule(
+                    modulePath.replace('/', '.'));
+            }
+            // Corpus C FFI externals (ISSUE-0507): candidate/* modules
+            // classify as externals with the dotted raw specifier (the
+            // production externals classification).
+            if (CorpusFfi.isFfiImport(conformanceRoot, modulePath)) {
                 return new CanonicalModuleIdentity.ExternalModule(
                     modulePath.replace('/', '.'));
             }
@@ -978,6 +1016,13 @@ public class LuaLane implements Lane {
             if (hostRegistry.isHostModule(modulePath)) {
                 return hostRegistry.forModule(modulePath).exports();
             }
+            // Corpus C FFI externals (ISSUE-0507): candidate/* imports
+            // resolve through the corpus-owned deal.json wiring into the
+            // real FFI declaration surface.
+            if (CorpusFfi.isFfiImport(conformanceRoot, modulePath)) {
+                return CorpusFfi.module(conformanceRoot, modulePath,
+                    profile).exports();
+            }
             Path resolved = resolveRelativePath(modulePath);
             if (resolved != null && Files.exists(resolved)) {
                 return resolveFileModule(resolved, modulesInProgress);
@@ -993,6 +1038,13 @@ public class LuaLane implements Lane {
             if (hostRegistry.isHostModule(modulePath)) {
                 return hostRegistry.forModule(modulePath)
                     .classSymbols().get(className);
+            }
+            // Corpus C FFI externals (ISSUE-0507): classes of a
+            // candidate/* module resolve to the declaration's
+            // synthesized ClassSymbols.
+            if (CorpusFfi.isFfiImport(conformanceRoot, modulePath)) {
+                return CorpusFfi.module(conformanceRoot, modulePath,
+                    profile).classSymbols().get(className);
             }
             if (modulePath == null || modulePath.isEmpty()) {
                 return null;
@@ -1019,6 +1071,14 @@ public class LuaLane implements Lane {
                 if (hostRegistry.isHostModule(ext.rawImportSpecifier())) {
                     return hostRegistry.forModule(ext.rawImportSpecifier())
                         .classSymbols().get(className);
+                }
+                // Corpus C FFI externals (ISSUE-0507): the carried
+                // external identity of a candidate/* module routes back
+                // to the declaration's synthesized class symbols.
+                Symbol.ClassSymbol ffiSymbol = CorpusFfi.classSymbol(
+                    conformanceRoot, declaringModule, className, profile);
+                if (ffiSymbol != null) {
+                    return ffiSymbol;
                 }
                 return null;
             }
@@ -1055,6 +1115,12 @@ public class LuaLane implements Lane {
                 return hostRegistry.forModule(ext.rawImportSpecifier())
                     .exports().containsKey(functionName);
             }
+            // Corpus C FFI externals (ISSUE-0507): the declared export
+            // map of a candidate/* module.
+            if (CorpusFfi.declaresFunction(conformanceRoot,
+                    declaringModule, functionName, profile)) {
+                return true;
+            }
             for (Map.Entry<Path, CompiledModule> entry
                     : compilation.cache.entrySet()) {
                 CompiledModule module = entry.getValue();
@@ -1079,6 +1145,14 @@ public class LuaLane implements Lane {
             if (hostRegistry.isHostModule(modulePath)) {
                 HostDeclaration decl = hostRegistry.forModule(modulePath);
                 return resolveHostTypeNode(typeNode, modulePath, decl);
+            }
+            // Corpus C FFI externals (ISSUE-0507): field annotations of
+            // a candidate/* class resolve against the declaration's own
+            // class registry (the host-registry shape).
+            if (CorpusFfi.isFfiImport(conformanceRoot, modulePath)) {
+                return CorpusFfi.resolveTypeNode(typeNode,
+                    CorpusFfi.module(conformanceRoot, modulePath, profile)
+                        .classSymbols());
             }
             if (modulePath == null || modulePath.isEmpty()) {
                 return null;

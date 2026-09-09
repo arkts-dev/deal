@@ -677,6 +677,12 @@ public class JsLane implements Lane {
                     new LinkedHashMap<>();
                 Map<String, HostModuleDeclarations> hostModules =
                     new LinkedHashMap<>();
+                // Corpus C FFI externals (ISSUE-0507): candidate/*
+                // imports join the extern-C rejection set — the real
+                // JsBackend import-site arm emits E6006
+                // FFI_UNSUPPORTED_BACKEND (the sanctioned C6
+                // divergence), never a require of a missing artifact.
+                Set<String> externCImports = new LinkedHashSet<>();
                 for (StatementNode stmt
                         : parseResult.program().statements()) {
                     if (!(stmt instanceof ImportDeclaration imp)) {
@@ -697,6 +703,25 @@ public class JsLane implements Lane {
                                 + e.getMessage();
                             return null;
                         }
+                        continue;
+                    }
+                    if (CorpusFfi.isFfiImport(conformanceRoot,
+                            importPath)) {
+                        CorpusFfi.Module ffiModule = CorpusFfi.module(
+                            conformanceRoot, importPath, profile);
+                        if (ffiModule.validationDiagnostics().stream()
+                                .anyMatch(d -> "error"
+                                    .equals(d.severity()))) {
+                            recordFirstErrorDiagnostic(
+                                ffiModule.validationDiagnostics());
+                            compileFailure = "the lane compilation failed "
+                                + "for " + corpusPath + ": the C FFI "
+                                + "declaration of " + importPath
+                                + " was rejected: " + describeDiagnostics(
+                                    ffiModule.validationDiagnostics());
+                            return null;
+                        }
+                        externCImports.add(importPath);
                         continue;
                     }
                     Path resolved = resolveCompanionPath(importPath, fileDir);
@@ -810,7 +835,8 @@ public class JsLane implements Lane {
                 registerModulePath(filename, stem, hostModules.keySet());
                 JsBackend.JsCodegenResult codegen = JsBackend.generate(
                     parseResult.program(), result, filename, stem,
-                    jsImportResolutions, hostModules, Set.of(), isEntry,
+                    jsImportResolutions, hostModules, externCImports,
+                    isEntry,
                     identityIndex(), identityIndex().moduleIdentityLookup(),
                     null, profile);
                 if (codegen.hasErrors()) {
@@ -929,6 +955,12 @@ public class JsLane implements Lane {
                 return CanonicalModuleIdentity.BuiltinModule.INSTANCE;
             }
             if (hostRegistry.isHostModule(modulePath)) {
+                return new CanonicalModuleIdentity.ExternalModule(
+                    modulePath.replace('/', '.'));
+            }
+            // Corpus C FFI externals (ISSUE-0507): candidate/* modules
+            // classify as externals with the dotted raw specifier.
+            if (CorpusFfi.isFfiImport(conformanceRoot, modulePath)) {
                 return new CanonicalModuleIdentity.ExternalModule(
                     modulePath.replace('/', '.'));
             }
@@ -1266,6 +1298,14 @@ public class JsLane implements Lane {
             if (hostRegistry.isHostModule(modulePath)) {
                 return hostRegistry.forModule(modulePath).exports();
             }
+            // Corpus C FFI externals (ISSUE-0507): candidate/* imports
+            // resolve through the corpus-owned FFI wiring into the real
+            // FFI declaration surface (the JS lane types them before the
+            // import-site E6006 rejection).
+            if (CorpusFfi.isFfiImport(conformanceRoot, modulePath)) {
+                return CorpusFfi.module(conformanceRoot, modulePath,
+                    profile).exports();
+            }
             Path resolved = resolveRelativePath(modulePath);
             if (resolved != null && Files.exists(resolved)) {
                 return resolveFileModule(resolved, modulesInProgress);
@@ -1281,6 +1321,13 @@ public class JsLane implements Lane {
             if (hostRegistry.isHostModule(modulePath)) {
                 return hostRegistry.forModule(modulePath)
                     .classSymbols().get(className);
+            }
+            // Corpus C FFI externals (ISSUE-0507): classes of a
+            // candidate/* module resolve to the declaration's
+            // synthesized ClassSymbols.
+            if (CorpusFfi.isFfiImport(conformanceRoot, modulePath)) {
+                return CorpusFfi.module(conformanceRoot, modulePath,
+                    profile).classSymbols().get(className);
             }
             if (modulePath == null || modulePath.isEmpty()) {
                 return null;
@@ -1307,6 +1354,14 @@ public class JsLane implements Lane {
                 if (hostRegistry.isHostModule(ext.rawImportSpecifier())) {
                     return hostRegistry.forModule(ext.rawImportSpecifier())
                         .classSymbols().get(className);
+                }
+                // Corpus C FFI externals (ISSUE-0507): the carried
+                // external identity of a candidate/* module routes back
+                // to the declaration's synthesized class symbols.
+                Symbol.ClassSymbol ffiSymbol = CorpusFfi.classSymbol(
+                    conformanceRoot, declaringModule, className, profile);
+                if (ffiSymbol != null) {
+                    return ffiSymbol;
                 }
                 return null;
             }
@@ -1342,6 +1397,12 @@ public class JsLane implements Lane {
                     && hostRegistry.isHostModule(ext.rawImportSpecifier())) {
                 return hostRegistry.forModule(ext.rawImportSpecifier())
                     .exports().containsKey(functionName);
+            }
+            // Corpus C FFI externals (ISSUE-0507): the declared export
+            // map of a candidate/* module.
+            if (CorpusFfi.declaresFunction(conformanceRoot,
+                    declaringModule, functionName, profile)) {
+                return true;
             }
             for (Map.Entry<Path, CompiledModule> entry
                     : compilation.cache.entrySet()) {

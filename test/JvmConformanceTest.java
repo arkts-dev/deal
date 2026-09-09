@@ -817,6 +817,22 @@ public class JvmConformanceTest {
             CheckResult result = TypeChecker.check(filename, symTable, nr,
                 parseResult.program());
             all.addAll(result.diagnostics());
+
+            // Corpus C FFI externals (ISSUE-0507): the production
+            // FfiDeclarationValidator diagnostics of every candidate/*
+            // import surface on the frontend compile paths (the E7002 C
+            // FFI declaration policy) exactly as the orchestrator's FFI
+            // phase surfaces them.
+            for (StatementNode stmt
+                    : parseResult.program().statements()) {
+                if (stmt instanceof ImportDeclaration imp
+                        && deal.test.conformance.CorpusFfi.isFfiImport(
+                            conformanceRoot, imp.modulePath())) {
+                    all.addAll(deal.test.conformance.CorpusFfi.module(
+                        conformanceRoot, imp.modulePath(), profile)
+                        .validationDiagnostics());
+                }
+            }
             return all;
         } catch (IOException e) {
             String filename = file.toString();
@@ -861,6 +877,14 @@ public class JvmConformanceTest {
                 throw new ModuleNotFoundException(
                     "Module not found: '" + modulePath
                     + "' is not a spec-listed stdlib module");
+            }
+            // Corpus C FFI externals (ISSUE-0507): candidate/* imports
+            // resolve through the corpus-owned FFI wiring into the real
+            // FFI declaration surface.
+            if (deal.test.conformance.CorpusFfi.isFfiImport(
+                    conformanceRoot, modulePath)) {
+                return deal.test.conformance.CorpusFfi.module(
+                    conformanceRoot, modulePath, profile).exports();
             }
             Path resolved = resolveRelativePath(modulePath);
             if (resolved != null && Files.exists(resolved)) {
@@ -1153,18 +1177,29 @@ public class JvmConformanceTest {
             // externals map wiring every raw host import path to its
             // declaration under the project root (bindings/).
             Set<String> hostNames = hostImports(test.path());
+            // Corpus C FFI externals (ISSUE-0507): every candidate/*
+            // import of the compilation set wires through the real
+            // whole-project externals machinery — the orchestrator's FFI
+            // phase validates the declaration and the JVM backend
+            // rejects with E6006 FFI_UNSUPPORTED_BACKEND before any
+            // artifact.
+            Set<String> ffiImports = ffiImports(test.path());
             StringBuilder dealJson = new StringBuilder();
             dealJson.append("{\n  \"languageVersion\": \"1.2\",\n");
             dealJson.append("  \"moduleRoots\": [\"src\"],\n");
             dealJson.append("  \"output\": \"out\",\n");
             dealJson.append("  \"backend\": \"jvm\"");
-            if (!hostNames.isEmpty()) {
-                // ISSUE-0272 D8 item 2b: producer-side seam — the host
-                // declaration materialization strips classification
-                // headers before the bytes reach the orchestrator, and
-                // each raw host import path is wired to its declaration
-                // under the project root (bindings/).
-                copyHostBindings(projectRoot, hostFixturesRoot, hostNames);
+            if (!hostNames.isEmpty() || !ffiImports.isEmpty()) {
+                if (!hostNames.isEmpty()) {
+                    // ISSUE-0272 D8 item 2b: producer-side seam — the host
+                    // declaration materialization strips classification
+                    // headers before the bytes reach the orchestrator, and
+                    // each raw host import path is wired to its declaration
+                    // under the project root (bindings/).
+                    copyHostBindings(projectRoot, hostFixturesRoot,
+                        hostNames);
+                }
+                copyFfiBindings(projectRoot, ffiImports);
                 dealJson.append(",\n  \"externals\": {\n");
                 boolean first = true;
                 for (String hostName : hostNames) {
@@ -1174,6 +1209,21 @@ public class JvmConformanceTest {
                     dealJson.append("    \"host/").append(hostName)
                         .append("\": { \"declaration\": \"")
                         .append(declRel).append("\" }");
+                }
+                for (String raw : ffiImports) {
+                    if (!first) dealJson.append(",\n");
+                    first = false;
+                    String declRel = "bindings/ffi/" + raw
+                        .replace('/', '_') + ".d.deal";
+                    dealJson.append("    \"").append(raw)
+                        .append("\": { \"declaration\": \"")
+                        .append(declRel)
+                        .append("\", \"nativeLibrary\": \"")
+                        .append(deal.test.conformance.CorpusFfi
+                            .loaderTextFor(conformanceRoot,
+                                deal.test.conformance.CorpusFfi
+                                    .wiringFor(conformanceRoot, raw)))
+                        .append("\" }");
                 }
                 dealJson.append("\n  }");
             }
@@ -1204,6 +1254,34 @@ public class JvmConformanceTest {
                 if (knownFailProbe) {
                     return new Outcome(test, classified, false,
                         "orchestrator compile failed: " + run.diagnostics());
+                }
+                // Corpus C6 (ISSUE-0507): the sanctioned FFI
+                // divergence — when the fixture's sidecar pins the jvm
+                // leg as compile-reject E6006 FFI_UNSUPPORTED_BACKEND
+                // and the real pipeline rejected with exactly that code
+                // before any artifact, the lane records the pinned
+                // rejection as the verdict (matching the sidecar),
+                // never as an applicable failure.
+                deal.test.conformance.SidecarExpectations
+                        .StructuredExpectationSidecar sidecar =
+                    sidecarOf(test.path());
+                if (sidecar != null
+                        && sidecar.expectationFor("jvm")
+                            instanceof deal.test.conformance
+                                .SidecarExpectations.RuntimeExpectation
+                                .Rejected rejected
+                        && "E6006".equals(rejected.code())
+                        && run.diagnostics().stream().anyMatch(
+                            d -> "error".equals(d.severity())
+                                && "E6006".equals(d.code()))
+                        && !Files.exists(outputRoot.resolve(
+                            entryClassName(entryRel) + ".java"))) {
+                    applicablePassed.incrementAndGet();
+                    log("  [" + test.relativePath()
+                        + "] OK (compile-reject E6006 "
+                        + "FFI_UNSUPPORTED_BACKEND)");
+                    return new Outcome(test, classified, true,
+                        "compile-reject E6006 FFI_UNSUPPORTED_BACKEND");
                 }
                 applicableFailed.incrementAndGet();
                 log("  [" + test.relativePath()
@@ -1599,6 +1677,95 @@ public class JvmConformanceTest {
             }
         }
         return hosts;
+    }
+
+    /**
+     * The parsed Structured Expectation Sidecar of one fixture, or
+     * null when the fixture carries no sidecar (the compile-reject
+     * verdict check reads the sanctioned jvm-leg pin).
+     */
+    private static deal.test.conformance.SidecarExpectations
+            .StructuredExpectationSidecar sidecarOf(Path file) {
+        String name = file.getFileName().toString();
+        Path sidecar;
+        if (name.endsWith(".deal")) {
+            sidecar = file.resolveSibling(
+                name.substring(0, name.length() - ".deal".length())
+                    + ".expect.json");
+        } else {
+            sidecar = file.resolveSibling(name + ".expect.json");
+        }
+        if (!Files.isRegularFile(sidecar)) {
+            return null;
+        }
+        try {
+            return deal.test.conformance.SidecarExpectations
+                .StructuredExpectationSidecar.parse(
+                    Files.readString(sidecar));
+        } catch (IOException | RuntimeException e) {
+            throw new IllegalStateException(
+                "cannot parse the sidecar " + sidecar + ": "
+                    + e.getMessage());
+        }
+    }
+
+    /** Corpus FFI externals import specifiers ({@code candidate/*})
+     * appearing in the fixture's source (drives deal.json externals
+     * generation through the corpus-owned FFI wiring). */
+    private static Set<String> ffiImports(Path file) throws IOException {
+        Set<String> ffi = new LinkedHashSet<>();
+        String source = Files.readString(file);
+        for (String line : source.split("\n")) {
+            String trimmed = line.trim();
+            if (!trimmed.startsWith("import ")) continue;
+            int from = trimmed.indexOf(" from \"");
+            if (from < 0) continue;
+            int end = trimmed.indexOf('"', from + 7);
+            if (end < 0) continue;
+            String path = trimmed.substring(from + 7, end);
+            if (deal.test.conformance.CorpusFfi.isFfiImport(
+                    conformanceRoot, path)) {
+                ffi.add(path);
+            }
+        }
+        return ffi;
+    }
+
+    /**
+     * Materializes the corpus FFI declarations under the project root
+     * ({@code bindings/ffi/<raw with / as _>.d.deal},
+     * classification-header free — the ISSUE-0272 D8 producer-side
+     * seam) so the real whole-project externals machinery resolves
+     * every candidate/* import through the declaration on disk.
+     */
+    private static void copyFfiBindings(Path projectRoot,
+            Set<String> ffiImports) throws IOException {
+        for (String raw : ffiImports) {
+            deal.test.conformance.CorpusFfi.Wiring wiring =
+                deal.test.conformance.CorpusFfi.wiringFor(
+                    conformanceRoot, raw);
+            if (wiring == null) {
+                throw new IllegalStateException(
+                    "no corpus FFI wiring for " + raw);
+            }
+            Path declaration = conformanceRoot.resolve(
+                    deal.test.conformance.CorpusFfi.FFI_DIR)
+                .resolve(wiring.declarationCorpusPath());
+            if (!Files.isRegularFile(declaration)) {
+                throw new IllegalStateException(
+                    "the corpus FFI declaration is missing: "
+                        + declaration);
+            }
+            String declRel = "bindings/ffi/" + raw.replace('/', '_')
+                + ".d.deal";
+            Path target = projectRoot.resolve(declRel);
+            if (target.getParent() != null) {
+                Files.createDirectories(target.getParent());
+            }
+            Files.writeString(target, ConformanceHarnessMetadata
+                .stripClassificationHeaders(
+                    Files.readString(declaration)));
+        }
     }
 
     /** Resolve a relative import path to a .deal/.d.deal file on disk

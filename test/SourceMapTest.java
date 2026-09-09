@@ -1494,7 +1494,7 @@ public class SourceMapTest {
             // The retired @jsonable E6000 (ISSUE-0326), the retired
             // nested-class E6000 (ISSUE-0318), and the retired
             // host-ABI E6000 (ISSUE-0328) no longer drive this
-            // pin; the still-live @extern-c E6003 arm keeps the
+            // pin; the still-live @extern-c E6006 arm keeps the
             // rejected-module model covered. ISSUE-0273 D9 re-key: the
             // trigger is an import of an extern-C declaration module —
             // the @extern-c file directive lives on host.d.deal. The
@@ -1502,7 +1502,7 @@ public class SourceMapTest {
             // nativeLibrary) — an unbacked extern-C import is the
             // frontend E2010 invalid-manifest-policy rejection
             // (docs/spec-v1.2.md:1891), emitted before codegen, so the
-            // E6003 two-pass model needs the valid-manifest trigger.
+            // E6006 two-pass model needs the valid-manifest trigger.
             Files.writeString(proj.resolve("deal.json"),
                 "{\"languageVersion\": \"1.2\", \"backend\": \"js\","
                     + " \"moduleRoots\": [\"src\"], \"externals\": {"

@@ -1,0 +1,13 @@
+// @spec: Modules, declarations, standard library, and host ABI — C FFI externals entries
+// @description: A DEAL string argument crosses the C ABI as NUL-terminated UTF-8 bytes whose scalar count the C strlen observes (ffi_strlen("Aé😀") == 7).
+// @expected: runtime-ok
+// @features: c-ffi, abi, string, unicode
+
+import * as native from "candidate/native";
+export function main(): null {
+  let value: int = native.ffi_strlen("Aé😀");
+  if (value !== 7) {
+    throw { code: "TEST_FAIL", message: "ffi utf8 parameter" };
+  }
+  return null;
+}

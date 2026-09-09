@@ -1,0 +1,9 @@
+// @spec: C FFI declaration files — C FFI externals entries
+// @description: An async exported function is forbidden in a C FFI declaration file: the FfiDeclarationValidator rejects it with E7002 (C FFI functions must be synchronous).
+// @expected: compile-error E7002
+// @features: c-ffi, async, declaration-validation
+
+import * as invalid from "candidate/invalid-async";
+export function main(): null {
+  return null;
+}

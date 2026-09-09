@@ -1,0 +1,6 @@
+// @expected: companion
+// @description: Classified support module — the invalid async C FFI declaration companion of the candidate/invalid-async externals entry: the FfiDeclarationValidator rejects the async exported function with E7002 (C FFI functions must be synchronous).
+
+// @extern-c
+
+export async function invalidAsync(value: int): int;

@@ -335,7 +335,7 @@ public class PublicationStagerTest {
                 "the clean compile published a live set: " + before.keySet());
 
             // The later module (lib) now fails its codegen with the
-            // @extern-c E6003 rejection while the entry still codegens
+            // @extern-c E6006 rejection while the entry still codegens
             // clean — the whole-set failure contract must leave the
             // prior live set byte-identical.
             writeText(src.resolve("ffi.d.deal"),

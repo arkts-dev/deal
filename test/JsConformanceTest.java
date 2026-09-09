@@ -1142,6 +1142,27 @@ module.exports = {
                     }
                     stack.push(normalized);
                 }
+                // Corpus C FFI externals (ISSUE-0507): a candidate/*
+                // import reaches its wired support declaration (the
+                // companion-participation surface of the FFI wiring).
+                for (String importPath : ffiImports(List.of(current))) {
+                    deal.test.conformance.CorpusFfi.Wiring wiring =
+                        deal.test.conformance.CorpusFfi.wiringFor(
+                            conformanceRoot, importPath);
+                    if (wiring == null) {
+                        continue;
+                    }
+                    String declarationCorpus =
+                        deal.test.conformance.CorpusFfi.FFI_DIR + "/"
+                            + wiring.declarationCorpusPath();
+                    TestFile target = byPath.get(
+                        conformanceRoot.resolve(declarationCorpus)
+                            .toAbsolutePath().normalize().toString());
+                    if (target != null
+                            && target.expected().equals("companion")) {
+                        result.add(target.relativePath());
+                    }
+                }
             } catch (IOException ignored) {
                 // Unreadable file: the importer's run reports the failure.
             }
@@ -1301,6 +1322,23 @@ module.exports = {
             CheckResult result = TypeChecker.check(filename, symTable, nr,
                 parseResult.program());
             all.addAll(result.diagnostics());
+
+            // Corpus C FFI externals (ISSUE-0507): the production
+            // FfiDeclarationValidator diagnostics of every candidate/*
+            // import surface on the frontend compile paths (the E7002 C
+            // FFI declaration policy) exactly as the orchestrator's FFI
+            // phase surfaces them.
+            for (StatementNode stmt
+                    : parseResult.program().statements()) {
+                if (stmt instanceof ImportDeclaration imp
+                        && deal.test.conformance.CorpusFfi.isFfiImport(
+                            conformanceRoot, imp.modulePath())) {
+                    all.addAll(deal.test.conformance.CorpusFfi.module(
+                        conformanceRoot, imp.modulePath(),
+                        LANE_INVOCATION.semanticProfile())
+                        .validationDiagnostics());
+                }
+            }
             return all;
         } catch (IOException e) {
             String filename = file.toString();
@@ -1339,6 +1377,15 @@ module.exports = {
                 throw new ModuleNotFoundException(
                     "Module not found: '" + modulePath
                     + "' is not a spec-listed stdlib module");
+            }
+            // Corpus C FFI externals (ISSUE-0507): candidate/* imports
+            // resolve through the corpus-owned FFI wiring into the real
+            // FFI declaration surface.
+            if (deal.test.conformance.CorpusFfi.isFfiImport(
+                    conformanceRoot, modulePath)) {
+                return deal.test.conformance.CorpusFfi.module(
+                    conformanceRoot, modulePath,
+                    LANE_INVOCATION.semanticProfile()).exports();
             }
             Path resolved = resolveRelativePath(modulePath);
             if (resolved != null && Files.exists(resolved)) {
@@ -1649,8 +1696,9 @@ module.exports = {
             // host-fixtures declaration (the JvmConformanceTest
             // externals-wiring pattern).
             Set<String> hostNames = hostImports(written.values());
+            Set<String> ffiNames = ffiImports(written.values());
             Map<String, String> externals =
-                writeProjectManifest(projectRoot, hostNames);
+                writeProjectManifest(projectRoot, hostNames, ffiNames);
 
             // 3. The real whole-project pipeline: module discovery,
             // signature extraction, dependency ordering, name resolution,
@@ -1661,6 +1709,36 @@ module.exports = {
             OrchestratorRun run = runOrchestrator(projectRoot, entryFile,
                 outputRoot, externals);
             if (!run.success()) {
+                // Corpus C6 (ISSUE-0507): the sanctioned FFI
+                // divergence — when the fixture's sidecar pins the js
+                // leg as compile-reject E6006 FFI_UNSUPPORTED_BACKEND
+                // and the real pipeline rejected with exactly that code
+                // before any artifact, the lane records the pinned
+                // rejection as the verdict (matching the sidecar),
+                // never as an applicable failure.
+                deal.test.conformance.SidecarExpectations
+                        .StructuredExpectationSidecar sidecar =
+                    sidecarOf(test.path());
+                if (sidecar != null
+                        && sidecar.expectationFor("js")
+                            instanceof deal.test.conformance
+                                .SidecarExpectations.RuntimeExpectation
+                                .Rejected rejected
+                        && "E6006".equals(rejected.code())
+                        && run.diagnostics().stream().anyMatch(
+                            d -> "error".equals(d.severity())
+                                && "E6006".equals(d.code()))
+                        && !Files.exists(outputRoot.resolve(
+                            corpusStem(test.path()) + ".js"))) {
+                    if (!knownFailProbe) {
+                        applicablePassed.incrementAndGet();
+                    }
+                    log("  [" + test.relativePath()
+                        + "] OK (compile-reject E6006 "
+                        + "FFI_UNSUPPORTED_BACKEND)");
+                    return new Outcome(test, classified, true,
+                        "compile-reject E6006 FFI_UNSUPPORTED_BACKEND");
+                }
                 if (!knownFailProbe) {
                     applicableFailed.incrementAndGet();
                     log("  [" + test.relativePath()
@@ -1872,14 +1950,51 @@ module.exports = {
      * parent D12).
      */
     private static Map<String, String> writeProjectManifest(
-            Path projectRoot, Set<String> hostNames) throws IOException {
+            Path projectRoot, Set<String> hostNames, Set<String> ffiImports)
+            throws IOException {
         StringBuilder dealJson = new StringBuilder();
         dealJson.append("{\n  \"languageVersion\": \"1.2\",\n");
         dealJson.append("  \"moduleRoots\": [\".\"],\n");
         dealJson.append("  \"output\": \"out\",\n");
         dealJson.append("  \"backend\": \"js\"");
         Map<String, String> externals = new LinkedHashMap<>();
-        if (!hostNames.isEmpty()) {
+        // Corpus C FFI externals (ISSUE-0507): every candidate/* import
+        // of the compilation set wires through the corpus-owned FFI
+        // wiring — the isolated-phase externals map (the JS backend
+        // rejects the extern-c import with E6006 at the import site).
+        for (String raw : ffiImports) {
+            deal.test.conformance.CorpusFfi.Wiring wiring =
+                deal.test.conformance.CorpusFfi.wiringFor(
+                    conformanceRoot, raw);
+            if (wiring == null) {
+                throw new HarnessFailure(
+                    "no corpus FFI wiring for " + raw + " — the JS lane "
+                        + "cannot wire the externals entry");
+            }
+            Path declaration = conformanceRoot.resolve(
+                    deal.test.conformance.CorpusFfi.FFI_DIR)
+                .resolve(wiring.declarationCorpusPath());
+            if (!Files.isRegularFile(declaration)) {
+                throw new HarnessFailure(
+                    "the corpus FFI declaration is missing: "
+                        + declaration);
+            }
+            String declRel = "bindings/ffi/" + raw.replace('/', '_')
+                + ".d.deal";
+            Path declTarget = projectRoot.resolve(declRel);
+            if (declTarget.getParent() != null) {
+                Files.createDirectories(declTarget.getParent());
+            }
+            Files.writeString(declTarget,
+                ConformanceHarnessMetadata.stripClassificationHeaders(
+                    Files.readString(declaration)));
+            externals.put(raw,
+                declTarget.toAbsolutePath().normalize().toString());
+            materializedCorpusFiles.add(
+                deal.test.conformance.CorpusFfi.FFI_DIR + "/"
+                    + wiring.declarationCorpusPath());
+        }
+        if (!hostNames.isEmpty() || !ffiImports.isEmpty()) {
             dealJson.append(",\n  \"externals\": {\n");
             boolean first = true;
             for (String hostName : hostNames) {
@@ -1908,6 +2023,16 @@ module.exports = {
                     .append(declRel).append("\" }");
                 externals.put("host/" + hostName,
                     declTarget.toAbsolutePath().normalize().toString());
+            }
+            for (String raw : ffiImports) {
+                if (!first) {
+                    dealJson.append(",\n");
+                }
+                first = false;
+                dealJson.append("    \"").append(raw)
+                    .append("\": { \"declaration\": \"bindings/ffi/")
+                    .append(raw.replace('/', '_'))
+                    .append(".d.deal\" }");
             }
             dealJson.append("\n  }");
         }
@@ -2070,6 +2195,62 @@ module.exports = {
             }
         }
         return hosts;
+    }
+
+    /** Corpus FFI externals import specifiers ({@code candidate/*})
+     * appearing in any of the materialized files' sources, in order
+     * (drives deal.json externals generation through the corpus-owned
+     * FFI wiring). */
+    private static Set<String> ffiImports(Collection<Path> files)
+            throws IOException {
+        Set<String> ffi = new LinkedHashSet<>();
+        for (Path file : files) {
+            String source = Files.readString(file);
+            for (String line : source.split("\n")) {
+                String trimmed = line.trim();
+                if (!trimmed.startsWith("import ")) continue;
+                int from = trimmed.indexOf(" from \"");
+                if (from < 0) continue;
+                int end = trimmed.indexOf('"', from + 7);
+                if (end < 0) continue;
+                String path = trimmed.substring(from + 7, end);
+                if (deal.test.conformance.CorpusFfi.isFfiImport(
+                        conformanceRoot, path)) {
+                    ffi.add(path);
+                }
+            }
+        }
+        return ffi;
+    }
+
+    /**
+     * The parsed Structured Expectation Sidecar of one fixture, or
+     * null when the fixture carries no sidecar (the compile-reject
+     * verdict check reads the sanctioned js-leg pin).
+     */
+    private static deal.test.conformance.SidecarExpectations
+            .StructuredExpectationSidecar sidecarOf(Path file) {
+        String name = file.getFileName().toString();
+        Path sidecar;
+        if (name.endsWith(".deal")) {
+            sidecar = file.resolveSibling(
+                name.substring(0, name.length() - ".deal".length())
+                    + ".expect.json");
+        } else {
+            sidecar = file.resolveSibling(name + ".expect.json");
+        }
+        if (!Files.isRegularFile(sidecar)) {
+            return null;
+        }
+        try {
+            return deal.test.conformance.SidecarExpectations
+                .StructuredExpectationSidecar.parse(
+                    Files.readString(sidecar));
+        } catch (IOException | RuntimeException e) {
+            throw new IllegalStateException(
+                "cannot parse the sidecar " + sidecar + ": "
+                    + e.getMessage());
+        }
     }
 
     /** Resolve a relative import path to a .deal/.d.deal file on disk

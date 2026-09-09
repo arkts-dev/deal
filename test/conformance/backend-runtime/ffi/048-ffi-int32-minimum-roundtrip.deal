@@ -1,0 +1,13 @@
+// @spec: Modules, declarations, standard library, and host ABI — C FFI externals entries
+// @description: The signed int32 minimum survives both directions of the C ABI mapping (ffi_identity_int(-2147483648) == -2147483648).
+// @expected: runtime-ok
+// @features: c-ffi, int32, signed-minimum
+
+import * as native from "candidate/native";
+export function main(): null {
+  let value: int = native.ffi_identity_int(-2147483648);
+  if (value !== -2147483648) {
+    throw { code: "TEST_FAIL", message: "C int32 minimum mapping" };
+  }
+  return null;
+}

@@ -509,13 +509,18 @@ public final class HistoricalRegressionCatalog {
         // pinned over the located source bytes with exact-text anchors).
         new Row(SemanticCapability.CONTAINERS_AND_STRINGS,
             "lua-array-index-delete-e8002",
-            "deal/codegen/lua/LuaBackend.java:2434-2437",
+            "deal/codegen/lua/LuaBackend.java:2455-2458",
             Authority.BACKEND_SOURCE_LUAJIT, Family.ARRAY_DELETE,
             ExpectationClass.SameAsShared,
             "E8002",
             List.of(new ExactTextAnchor("e8002-bounds-before-nil-write",
-                "deal/codegen/lua/LuaBackend.java:2434-2437",
+                "deal/codegen/lua/LuaBackend.java:2455-2458",
                 "if __idx < 0 or __idx > #__arr then error(__rt._err(\\\"E8002\\\", ")),
+            // ISSUE-0303 (canonical) narrowed this pin's span to the
+            // four-line bounds-check emission; ISSUE-0507's LuaBackend
+            // extern-C codegen seam (+21 lines above the span) moved the
+            // narrowed span 2434-2437 -> 2455-2458 with the recomputed
+            // baseline digest.
             "32885541def6bb9f0cef3f5fa49d963e1e2da4ecafeddbcfbb82c49bdfe679d3"),
         new Row(SemanticCapability.CONTAINERS_AND_STRINGS,
             "jvm-array-index-delete-e6000",

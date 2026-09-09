@@ -21,7 +21,9 @@ import deal.test.IdentityTestFixtures;
 import deal.types.Type;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -46,6 +48,10 @@ final class CorpusFrontendResolver implements ModuleResolver {
     private final Map<String, CorpusDiscovery.Fixture> corpusByPath;
     private final Map<String, Map<String, Type>> stdlibExports;
     private final SemanticProfile profile;
+    /** The FFI declaration-validation diagnostics collected while
+     * resolving corpus FFI imports (drained by the compiler). */
+    private final List<deal.diagnostics.CompilerDiagnostic> ffiDiagnostics =
+        new ArrayList<>();
 
     /**
      * Creates the resolver over one discovered corpus.
@@ -70,6 +76,11 @@ final class CorpusFrontendResolver implements ModuleResolver {
             Path.of("std").toAbsolutePath().normalize().toString());
     }
 
+    /** The FFI declaration-validation diagnostics collected so far. */
+    List<deal.diagnostics.CompilerDiagnostic> ffiDiagnostics() {
+        return ffiDiagnostics;
+    }
+
     @Override
     public Map<String, Type> resolveModule(String modulePath,
             String importingModule, Set<String> modulesInProgress)
@@ -84,6 +95,22 @@ final class CorpusFrontendResolver implements ModuleResolver {
             throw new ModuleNotFoundException(
                 "Module not found: '" + modulePath
                     + "' is not a spec-listed stdlib module");
+        }
+        // Corpus C FFI externals (ISSUE-0507): candidate/* imports
+        // resolve through the corpus-owned FFI wiring; the production
+        // FfiDeclarationValidator diagnostics (the E7002 C FFI
+        // declaration policy) are collected into the resolver's sink
+        // for the fixture's compile verdict.
+        if (CorpusFfi.isFfiImport(conformanceRoot, modulePath)) {
+            CorpusFfi.Module ffiModule = CorpusFfi.module(
+                conformanceRoot, modulePath, profile);
+            for (deal.diagnostics.CompilerDiagnostic diagnostic
+                    : ffiModule.validationDiagnostics()) {
+                if ("error".equals(diagnostic.severity())) {
+                    ffiDiagnostics.add(diagnostic);
+                }
+            }
+            return ffiModule.exports();
         }
         String resolved = CorpusDiscovery.resolveRelativeImport(
             fixtureCorpusPath, modulePath, conformanceRoot);
@@ -120,6 +147,12 @@ final class CorpusFrontendResolver implements ModuleResolver {
         if (modulePath == null || modulePath.isEmpty()) {
             return null;
         }
+        // Corpus C FFI externals (ISSUE-0507): classes of a candidate/*
+        // module resolve to the declaration's synthesized ClassSymbols.
+        if (CorpusFfi.isFfiImport(conformanceRoot, modulePath)) {
+            return CorpusFfi.module(conformanceRoot, modulePath, profile)
+                .classSymbols().get(className);
+        }
         CorpusDiscovery.Fixture dependency = dependencyOf(modulePath);
         if (dependency == null) {
             return null;
@@ -151,6 +184,12 @@ final class CorpusFrontendResolver implements ModuleResolver {
     public boolean isFunctionExportedFromModule(
             CanonicalModuleIdentity declaringModule, String functionName,
             String importingModule) throws ModuleNotFoundException {
+        // Corpus C FFI externals (ISSUE-0507): the declared export map
+        // of a candidate/* module.
+        if (CorpusFfi.declaresFunction(conformanceRoot, declaringModule,
+                functionName, profile)) {
+            return true;
+        }
         for (CorpusDiscovery.Fixture dependency : corpusByPath.values()) {
             if (declaringModule.equals(
                     IdentityTestFixtures.moduleIdentityOf(stem(dependency)))) {
@@ -174,6 +213,14 @@ final class CorpusFrontendResolver implements ModuleResolver {
             throws ModuleNotFoundException {
         if (modulePath == null || modulePath.isEmpty()) {
             return null;
+        }
+        // Corpus C FFI externals (ISSUE-0507): field annotations of a
+        // candidate/* class resolve against the declaration's own class
+        // registry (the host-registry shape).
+        if (CorpusFfi.isFfiImport(conformanceRoot, modulePath)) {
+            return CorpusFfi.resolveTypeNode(typeNode,
+                CorpusFfi.module(conformanceRoot, modulePath, profile)
+                    .classSymbols());
         }
         CorpusDiscovery.Fixture dependency = dependencyOf(modulePath);
         if (dependency == null) {

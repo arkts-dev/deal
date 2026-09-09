@@ -219,9 +219,11 @@ public class LoweringFoundationTest {
                 e6.add(dc.code());
             }
         }
+        // ISSUE-0507 (FFI candidate fixture conformance) registers E6006
+        // FFI_UNSUPPORTED_BACKEND at the end of the E6 range (corpus C6).
         check(e6.equals(List.of("E6000", "E6001", "E6002", "E6003",
-                "E6004", "E6005")),
-            "E6 codes are exactly E6000..E6005 in declaration order; got " + e6);
+                "E6004", "E6005", "E6006")),
+            "E6 codes are exactly E6000..E6006 in declaration order; got " + e6);
 
         check(DiagnosticCode.E6005.phase() == DiagnosticCode.Phase.BACKEND_LOWERING,
             "E6005 is BACKEND_LOWERING");

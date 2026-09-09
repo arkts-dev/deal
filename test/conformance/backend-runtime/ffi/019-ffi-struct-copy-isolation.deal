@@ -1,0 +1,17 @@
+// @spec: Modules, declarations, standard library, and host ABI — C FFI externals entries
+// @description: A C function mutates its by-value struct parameter while the original DEAL value remains unchanged (copy isolation through the c-struct ABI mapping).
+// @expected: runtime-ok
+// @features: c-ffi, c-struct, by-value, copy-isolation
+
+import * as native from "candidate/native";
+export function main(): null {
+  let pair: native.Pair = { left: 4, right: 9 };
+  let changed: native.Pair = native.ffi_pair_swap(pair);
+  if (changed.left !== 1004 || changed.right !== 2009) {
+    throw { code: "TEST_FAIL", message: "C struct mutation was not exercised" };
+  }
+  if (pair.left !== 4 || pair.right !== 9) {
+    throw { code: "TEST_FAIL", message: "C struct mutation leaked into DEAL" };
+  }
+  return null;
+}

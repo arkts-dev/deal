@@ -411,6 +411,20 @@ TEST_MAINS+=(
 
 
 # =========================================================================
+# ISSUE-0507 (FFI candidate fixture conformance): the corpus C FFI
+# support component — the corpus-owned externals wiring, the GCC
+# native-library bootstrap, the production FfiDeclarationValidator /
+# FFIGEN boundary surface, and the checker-facing export/class-symbol
+# registry the lanes' module resolvers consume. It joins the compile
+# list here, next to the gate components it serves; the single
+# compile/test-list authority file (tools/gate-manifest.sh) stays
+# untouched.
+# =========================================================================
+TEST_SOURCES+=(
+  'deal/test/conformance/CorpusFfi.java'
+)
+
+# =========================================================================
 # ISSUE-0360 (JSON slice absorption — pin-before-delete): the two
 # dev-time evidence helpers join the COMPILE list only (not the run
 # phase). JsonAbsorptionGateLog runs the full three-lane differential

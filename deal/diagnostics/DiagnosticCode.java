@@ -287,6 +287,15 @@ public enum DiagnosticCode {
     /** Common semantic lowering contract violation (ISSUE-0230 foundation, parent D11). */
     E6005(Phase.BACKEND_LOWERING, "Common semantic lowering failed"),
 
+    /**
+     * A backend without C FFI support rejects an {@code @extern-c}
+     * import or declaration (the corpus C6 sanctioned rejection —
+     * {@code FFI_UNSUPPORTED_BACKEND}; ISSUE-0507 FFI candidate fixture
+     * conformance). The JVM pipeline emits it at the extern-C
+     * declaration; the JavaScript backend emits it at the import site.
+     */
+    E6006(Phase.BACKEND_LOWERING, "C FFI (@extern-c) is not supported by this backend"),
+
     // =========================================================================
     // E7xxx — declaration-file errors (FRONTEND)
     // =========================================================================

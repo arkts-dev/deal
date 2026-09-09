@@ -222,9 +222,14 @@ public class SidecarCorpusValidationTest {
      * host-boundary-nullable-int-value-roundtrip — the host +8 delta:
      * 250 -> 258. ISSUE-0160 (the recursive bytes-bearing closure)
      * adds the three closure fixtures with their three-backend
-     * runtime-ok sidecars: 258 -> 261. */
+     * runtime-ok sidecars: 258 -> 261. ISSUE-0550 (the JVM dynamic
+     * boundary rows) then adds the two runtime-ok dynamic
+     * bytes-boundary fixtures with their three-backend runtime-ok
+     * sidecars: 261 -> 263. ISSUE-0507 then adds the ten
+     * runtime-ok FFI fixtures under backend-runtime/ffi/ with their
+     * divergent C6 sidecars: 263 -> 273. */
 
-    private static final int RUNTIME_OK_COUNT = 263;
+    private static final int RUNTIME_OK_COUNT = 273;
 
     /**
      * The exact runtime-error population (ISSUE-0350 completeness, plus
@@ -278,9 +283,14 @@ public class SidecarCorpusValidationTest {
      * (rtc-035-remainder-zero-error re-pinned to the emitted E8005),
      * and source-location +3 (036-runtime-source-array-oob re-pinned
      * to the emitted E8001, 037-runtime-source-div-zero E8005,
-     * 038-runtime-source-throw PINNED_THROW): 83 -> 93.
+     * 038-runtime-source-throw PINNED_THROW): 83 -> 93. ISSUE-0550
+     * (the JVM dynamic boundary rows) then adds the four runtime-error
+     * dynamic bytes-boundary fixtures with their canonical-snapshot
+     * sidecars: 93 -> 97. ISSUE-0507
+     * adds the five runtime-error FFI fixtures under
+     * backend-runtime/ffi/ with their divergent C6 sidecars: 97 -> 102.
  */
-    private static final int RUNTIME_ERROR_COUNT = 97;
+    private static final int RUNTIME_ERROR_COUNT = 102;
 
 
 
@@ -568,15 +578,18 @@ public class SidecarCorpusValidationTest {
     // =========================================================================
 
     private static void validateRuntimeOkFixture(Fixture fixture,
-            Path sidecarPath, Set<String> corpusIndex) throws Exception {
+            Path sidecarPath, Set<String> corpusIndex,
+            Map<String, Fixture> corpusByPath) throws Exception {
         if (!Files.exists(sidecarPath)) {
             fail(fixture.corpusPath() + ": runtime-ok fixture is missing its "
                 + "Structured Expectation Sidecar " + sidecarPath.getFileName());
             return;
         }
         String sidecarText = Files.readString(sidecarPath);
+        List<SidecarSchemaValidator.CompilationModule> compilationSet =
+            compilationSetFor(fixture, corpusByPath);
         Optional<SidecarSchemaValidator.ClassificationFailure> failure =
-            validateSidecar(fixture, sidecarText, corpusIndex);
+            validateSidecar(fixture, sidecarText, compilationSet, corpusIndex);
         if (failure.isPresent()) {
             fail(failure.get().message());
             return;
@@ -585,13 +598,12 @@ public class SidecarCorpusValidationTest {
             + ": runtime-ok sidecar validates clean (schema v1)");
 
         // Transcript authoring pins (C4): stderr always empty; stdout empty
-        // except the single std/console fixture.
+        // except the single std/console fixture. The divergent C6 form
+        // audits its luajit leg's runtime expectation.
         CanonicalJson.Value root = CanonicalJson.parse(sidecarText);
         checkNoErrorField(root, "<root>", fixture.corpusPath());
-        CanonicalJson.Obj expected = (CanonicalJson.Obj)
-            ((CanonicalJson.Obj) root).entries().stream()
-                .filter(e -> e.key().equals("expected"))
-                .findFirst().orElseThrow().value();
+        CanonicalJson.Obj expected = expectationObject(
+            (CanonicalJson.Obj) root, fixture.corpusPath());
         CanonicalJson.Obj transcript = (CanonicalJson.Obj)
             expected.entries().stream()
                 .filter(e -> e.key().equals("transcript"))
@@ -634,11 +646,11 @@ public class SidecarCorpusValidationTest {
         check(true, fixture.corpusPath()
             + ": runtime-error sidecar validates clean (schema v1)");
 
+        // The divergent C6 form audits its luajit leg's runtime
+        // expectation (the uniform form audits its shared expected).
         CanonicalJson.Value root = CanonicalJson.parse(sidecarText);
-        CanonicalJson.Obj expected = (CanonicalJson.Obj)
-            ((CanonicalJson.Obj) root).entries().stream()
-                .filter(e -> e.key().equals("expected"))
-                .findFirst().orElseThrow().value();
+        CanonicalJson.Obj expected = expectationObject(
+            (CanonicalJson.Obj) root, fixture.corpusPath());
         CanonicalJson.Obj error = (CanonicalJson.Obj)
             expected.entries().stream()
                 .filter(e -> e.key().equals("error"))
@@ -791,6 +803,40 @@ public class SidecarCorpusValidationTest {
         return sb.toString();
     }
 
+    /**
+     * The runtime expectation object the audits read: the uniform
+     * sidecar's {@code expected} object, or — for the sanctioned C6
+     * divergent form — the {@code backends.luajit} entry (the runtime
+     * leg of the split; the jvm/js legs are compile-reject pins).
+     */
+    private static CanonicalJson.Obj expectationObject(CanonicalJson.Obj root,
+            String fixturePath) {
+        CanonicalJson.Value expected = root.entries().stream()
+            .filter(e -> e.key().equals("expected"))
+            .map(CanonicalJson.Entry::value)
+            .findFirst().orElse(null);
+        if (expected instanceof CanonicalJson.Obj expectedObj) {
+            return expectedObj;
+        }
+        CanonicalJson.Value backends = root.entries().stream()
+            .filter(e -> e.key().equals("backends"))
+            .map(CanonicalJson.Entry::value)
+            .findFirst().orElse(null);
+        if (backends instanceof CanonicalJson.Obj backendObj) {
+            CanonicalJson.Value luajit = backendObj.entries().stream()
+                .filter(e -> e.key().equals("luajit"))
+                .map(CanonicalJson.Entry::value)
+                .findFirst().orElse(null);
+            if (luajit instanceof CanonicalJson.Obj luajitObj) {
+                return luajitObj;
+            }
+        }
+        fail(fixturePath + ": the sidecar root carries no readable "
+            + "runtime expectation (uniform expected or divergent "
+            + "backends.luajit)");
+        return CanonicalJson.obj();
+    }
+
     private static Map<String, CanonicalJson.Value> fieldsOf(CanonicalJson.Obj obj) {
         Map<String, CanonicalJson.Value> fields = new HashMap<>();
         for (CanonicalJson.Entry entry : obj.entries()) {
@@ -883,6 +929,27 @@ public class SidecarCorpusValidationTest {
                 continue;
             }
             Fixture dependency = corpusByPath.get(resolved);
+            if (dependency != null) {
+                collectCompilationModules(dependency.corpusPath(),
+                    dependency.source(), corpusByPath, set, inProgress);
+            }
+        }
+        // Corpus C FFI externals (ISSUE-0507): a candidate/* import
+        // resolves through the corpus-owned FFI wiring into its support
+        // declaration — the module carrying the @extern-c directive the
+        // divergent sidecar's C6 trigger check requires.
+        for (String importPath : CorpusDiscovery.ffiImportPaths(source)) {
+            CorpusFfi.Wiring wiring = CorpusFfi.wiringFor(CORPUS_ROOT,
+                importPath);
+            if (wiring == null) {
+                continue;
+            }
+            String declarationPath = slash(CORPUS_ROOT.toAbsolutePath()
+                .normalize().relativize(
+                    CORPUS_ROOT.resolve(CorpusFfi.FFI_DIR)
+                        .resolve(wiring.declarationCorpusPath())
+                        .toAbsolutePath().normalize()));
+            Fixture dependency = corpusByPath.get(declarationPath);
             if (dependency != null) {
                 collectCompilationModules(dependency.corpusPath(),
                     dependency.source(), corpusByPath, set, inProgress);
@@ -1115,7 +1182,8 @@ public class SidecarCorpusValidationTest {
             if (isRuntimeOk) {
                 runtimeOk++;
                 allowedSidecars.add(sidecarPath.toString());
-                validateRuntimeOkFixture(fixture, sidecarPath, corpusIndex);
+                validateRuntimeOkFixture(fixture, sidecarPath, corpusIndex,
+                    corpusByPath);
             } else if (isRuntimeError) {
                 runtimeError++;
                 allowedSidecars.add(sidecarPath.toString());

@@ -1073,7 +1073,7 @@ public final class CompilationOrchestrator {
         // deal-v1.2-directives-and-c-ffi-declarations D4/D7/D8): after
         // semantic/graph success, validate every extern-C declaration
         // module (E7002 policy), reject the C FFI on an incapable
-        // backend (JVM: E6003 FFI_UNSUPPORTED_BACKEND at @extern-c)
+        // backend (JVM: E6006 FFI_UNSUPPORTED_BACKEND at @extern-c)
         // before any artifact write, and publish the validated
         // metadata/bundle/bindings on LuaJIT for later runtime loading.
         // Validation never evaluates defaults; a failed validation or
@@ -1816,7 +1816,7 @@ public final class CompilationOrchestrator {
      *       class references, required/defaulted source-order struct
      *       fields, pointer emptiness/non-constructibility) — never
      *       evaluating defaults;</li>
-     *   <li>on an incapable backend (JVM) emit E6003 containing
+     *   <li>on an incapable backend (JVM) emit E6006 containing
      *       {@code FFI_UNSUPPORTED_BACKEND} at the {@code @extern-c}
      *       directive range after validation and before artifacts;</li>
      *   <li>on LuaJIT publish the validated immutable descriptor plus
@@ -1826,7 +1826,7 @@ public final class CompilationOrchestrator {
      *
      * <p>A failed validation or an incapable backend publishes no
      * metadata and no partial artifact (the compile stops before phase
-     * 4). The JS backend keeps its pinned import-site E6003 arm
+     * 4). The JS backend keeps its pinned import-site E6006 arm
      * (ISSUE-0169 skeleton) and does not run this phase.</p>
      */
     // =========================================================================
@@ -2281,7 +2281,7 @@ public final class CompilationOrchestrator {
                 deal.diagnostics.DiagnosticRange externCRange =
                     info.rawAst.fileDirectives().externCRange();
                 diagnostics.add(CompilerDiagnostic.error(
-                    DiagnosticCode.E6003,
+                    DiagnosticCode.E6006,
                     "JVM backend: C FFI (@extern-c) declarations are not"
                         + " supported (FFI_UNSUPPORTED_BACKEND)",
                     externCRange != null ? externCRange
@@ -3331,7 +3331,7 @@ public final class CompilationOrchestrator {
      * module is a project import, a resolved declaration file that is not
      * a spec stdlib module is a host module. Backend diagnostics (E6004
      * for an invalid entry module main at this slice; later slices add
-     * the E6000/E6003 rejection table) fail the compilation with the
+     * the E6000/E6006 rejection table) fail the compilation with the
      * standard report; no artifact is written for a rejected module. The
      * dot→slash artifact mapping is injective over the module-path
      * domain, so no class-name-collision gate is needed (unlike
@@ -3372,7 +3372,7 @@ public final class CompilationOrchestrator {
             // Extern-C imports (fixed-name-directive-events D9): raw
             // import paths whose resolved module is a declaration file
             // with effective FileDirectives.externC — the re-keyed JS
-            // E6003 FFI_UNSUPPORTED_BACKEND arm keys on this set at the
+            // E6006 FFI_UNSUPPORTED_BACKEND arm keys on this set at the
             // import statement.
             Set<String> externCImports = new HashSet<>();
             if (info.rawAst != null) {

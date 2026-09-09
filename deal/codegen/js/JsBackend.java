@@ -205,7 +205,7 @@ import java.util.TreeMap;
  *
  * <p>ISSUE-0252 rejection pass: the D8 rejection table with exact
  * error-severity diagnostics at their documented sites — an import of
- * an extern-C declaration module is E6003 containing
+ * an extern-C declaration module is E6006 containing
  * {@code FFI_UNSUPPORTED_BACKEND} at the import statement, keyed on
  * the orchestrator-built extern-C import set
  * (fixed-name-directive-events D9;
@@ -244,7 +244,7 @@ import java.util.TreeMap;
  * read materializing a host-call argument never pre-raises its own
  * E8001; the runtime host wrapper's boundary raises E8010 (D4
  * read-site deferral). Let/assignment/return-boundary typed reads
- * keep their pinned read-site checks. The E6003 {@code @extern-c} arm
+ * keep their pinned read-site checks. The E6006 {@code @extern-c} arm
  * precedes any host handling.
  *
  * <p>ISSUE-0318 nested-class slice: the former D6 nested-class E6000
@@ -399,7 +399,7 @@ public final class JsBackend {
     private final Map<String, HostModuleDeclarations> hostModules;
     /**
      * Raw import paths whose resolved module is an extern-C declaration
-     * file (fixed-name-directive-events D9): the re-keyed E6003
+     * file (fixed-name-directive-events D9): the re-keyed E6006
      * {@code FFI_UNSUPPORTED_BACKEND} arm keys on this set.
      */
     private final Set<String> externCImports;
@@ -727,7 +727,7 @@ public final class JsBackend {
      * @param externCImports   raw import paths whose resolved module is
      *                         an extern-C declaration file
      *                         (fixed-name-directive-events D9) — the
-     *                         re-keyed E6003 arm keys on this set
+     *                         re-keyed E6006 arm keys on this set
      * @param sourceMap        the mapping recorder (or {@code null})
      * @param semanticProfile  the project-wide semantic profile
      */
@@ -861,9 +861,9 @@ public final class JsBackend {
         // spec-stdlib raw path emits <relpath>/std/<name>, an
         // importResolutions entry a project-module relative require,
         // and a hostModules entry the loadHost binding (D1 below). The
-        // rejection pass runs first: an extern-C import (E6003)
+        // rejection pass runs first: an extern-C import (E6006)
         // emits its diagnostic and no binding — a rejected import never
-        // reaches the require path (js-backend-emitter D8). The E6003
+        // reaches the require path (js-backend-emitter D8). The E6006
         // arm precedes any host handling, so an extern-C host
         // path rejects before the loadHost binding is consulted.
         List<String> importBindings = new ArrayList<>();
@@ -1144,7 +1144,7 @@ public final class JsBackend {
      * map instead (the host branch precedes this method in the import
      * loop), and no raw require of a declaration file can ever resolve.
      * An unresolved path returns {@code null}: no binding is emitted.
-     * The {@code @extern-c} E6003 diagnostic fires earlier in
+     * The {@code @extern-c} E6006 diagnostic fires earlier in
      * {@link #rejectUnsupportedImport}, before this method is
      * consulted; the host check here stays as the defensive guard for
      * classification-driven emission (a {@code @extern-c}-marked
@@ -1261,21 +1261,21 @@ public final class JsBackend {
      * fixed-name-directive-events D9). An import whose raw path is
      * marked in the orchestrator-built extern-C import set — the
      * resolved module is a declaration file with effective
-     * {@code FileDirectives.externC} — is E6003 containing
+     * {@code FileDirectives.externC} — is E6006 containing
      * {@code FFI_UNSUPPORTED_BACKEND} at the import statement
      * (deal-v1.2-directives-and-c-ffi-declarations D8: an incapable
      * backend rejects {@code @extern-c} before any artifact write).
      * The former host-ABI E6000 arm retired with ISSUE-0328: a
      * non-stdlib declaration-file import (a {@code hostModules} entry)
      * now emits the {@code $rt.loadHost} binding with the declared map
-     * (js-v12-host-abi-completion D1). The E6003 arm precedes any host
+     * (js-v12-host-abi-completion D1). The E6006 arm precedes any host
      * handling, so an extern-C host path rejects before the loadHost
      * binding is consulted. Spec-stdlib raw paths and
      * {@code importResolutions} entries are never rejected here.
      */
     private boolean rejectUnsupportedImport(ImportDeclaration imp) {
         if (externCImports.contains(imp.modulePath())) {
-            diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E6003,
+            diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E6006,
                 "JavaScript backend: @extern-c imports are not supported "
                     + "(FFI_UNSUPPORTED_BACKEND, ISSUE-0169 skeleton)",
                 imp.span()));
@@ -1487,7 +1487,7 @@ public final class JsBackend {
         switch (stmt) {
             case ImportDeclaration imp -> {
                 // Shape step 5 emitted the binding in the header (a
-                // rejected @extern-c E6003 import was already diagnosed
+                // rejected @extern-c E6006 import was already diagnosed
                 // there and emitted no binding); the walk itself emits
                 // no statement.
             }

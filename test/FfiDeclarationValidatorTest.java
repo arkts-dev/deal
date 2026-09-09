@@ -52,7 +52,7 @@ import java.util.Map;
  * retained cdef text/ownership metadata, the forward-binding state
  * machine and graph-ordered imported references, the
  * no-evaluator-execution discipline, and the orchestrator integration
- * (JVM E6003 FFI_UNSUPPORTED_BACKEND without artifacts; the Lua
+ * (JVM E6006 FFI_UNSUPPORTED_BACKEND without artifacts; the Lua
  * descriptor accepted for later runtime loading).
  */
 public class FfiDeclarationValidatorTest {
@@ -998,7 +998,7 @@ public class FfiDeclarationValidatorTest {
     // =========================================================================
 
     private static void testOrchestratorJvmRejectsExternC() throws Exception {
-        System.out.println("-- Orchestrator: JVM extern-C -> E6003/no artifacts --");
+        System.out.println("-- Orchestrator: JVM extern-C -> E6006/no artifacts --");
         Path proj = Files.createTempDirectory("ffi-jvm-proj");
         try {
             writeFileIn(proj, "deal.json",
@@ -1030,14 +1030,14 @@ public class FfiDeclarationValidatorTest {
             boolean success = orchestrator.compile();
             check(!success, "JVM extern-C compile fails");
             check(orchestrator.diagnostics().stream().anyMatch(d ->
-                    "E6003".equals(d.code()) && "error".equals(d.severity())
+                    "E6006".equals(d.code()) && "error".equals(d.severity())
                         && d.message().contains("FFI_UNSUPPORTED_BACKEND")),
-                "E6003 FFI_UNSUPPORTED_BACKEND: " + orchestrator.diagnostics());
-            CompilerDiagnostic e6003 = orchestrator.diagnostics().stream()
-                .filter(d -> "E6003".equals(d.code())).findFirst().orElse(null);
-            check(e6003 != null && e6003.range().startLine() == 1,
-                "E6003 at the @extern-c directive range, got "
-                    + (e6003 == null ? "none" : e6003.range().startLine()));
+                "E6006 FFI_UNSUPPORTED_BACKEND: " + orchestrator.diagnostics());
+            CompilerDiagnostic e6006 = orchestrator.diagnostics().stream()
+                .filter(d -> "E6006".equals(d.code())).findFirst().orElse(null);
+            check(e6006 != null && e6006.range().startLine() == 1,
+                "E6006 at the @extern-c directive range, got "
+                    + (e6006 == null ? "none" : e6006.range().startLine()));
             check(orchestrator.ffiGenerations().isEmpty(),
                 "no FFI metadata published on an incapable backend");
             check(!Files.exists(output),

@@ -145,6 +145,15 @@ public final class FrontendCompiler {
         CheckResult result = TypeChecker.check(filename, symTable, nr,
             parseResult.program());
         collectErrors(result.diagnostics(), errors);
+
+        // Corpus C FFI externals (ISSUE-0507): the production
+        // FfiDeclarationValidator diagnostics the corpus-aware resolver
+        // collected while resolving candidate/* imports surface on the
+        // fixture's compile verdict (the E7002 C FFI declaration
+        // policy).
+        if (resolver instanceof CorpusFrontendResolver corpusResolver) {
+            collectErrors(corpusResolver.ffiDiagnostics(), errors);
+        }
         return errors;
     }
 

@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "backends": {
+    "luajit": {
+      "mode": "runtime-error",
+      "transcript": {
+        "stdout": "DEAL_ERROR_CODE: FFI_INVALID_UTF8\nDEAL_ERROR_SNAPSHOT: {\"code\":\"FFI_INVALID_UTF8\",\"message\":\"C string return was not valid UTF-8\",\"sourceFile\":\"backend-runtime/ffi/023-ffi-invalid-utf8.deal\",\"line\":8,\"column\":23}\n",
+        "stderr": ""
+      },
+      "exitCode": 1,
+      "error": {
+        "code": "FFI_INVALID_UTF8",
+        "message": "C string return was not valid UTF-8",
+        "sourceFile": "backend-runtime/ffi/023-ffi-invalid-utf8.deal",
+        "line": 8,
+        "column": 23
+      }
+    },
+    "jvm": { "mode": "compile-reject", "diagnostic": { "code": "E6006" } },
+    "js": { "mode": "compile-reject", "diagnostic": { "code": "E6006" } }
+  }
+}

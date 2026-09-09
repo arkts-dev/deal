@@ -364,7 +364,7 @@ public class JsBackendTest {
      * The adapter-shape generation call with an explicit extern-C import
      * set (fixed-name-directive-events D9): routes through the
      * production seam with a standalone identity surface, exactly as the
-     * host-ABI class fixture does — the E6003 re-key pin passes the raw
+     * host-ABI class fixture does — the E6006 re-key pin passes the raw
      * import path here.
      */
     private static JsBackend.JsCodegenResult generateWithExternC(
@@ -1784,7 +1784,7 @@ public class JsBackendTest {
     // =========================================================================
 
     private static void testUnsupportedConstructsRejected() {
-        System.out.println("-- Unsupported constructs → E6000/E6003 --");
+        System.out.println("-- Unsupported constructs → E6000/E6006 --");
 
         // @jsonable emission retired the E6000 arm
         // (js-v12-jsonable-completion D1): the passing emission pins
@@ -1798,15 +1798,15 @@ public class JsBackendTest {
         // emission and runtime pins live in
         // testHostAbiEmissionPins/testHostAbiOrchestratorNode.
 
-        // @extern-c import: E6003 with the EXACT current detail text
+        // @extern-c import: E6006 with the EXACT current detail text
         // (the JSON-slice-corpus rejection-detail pin migrated here,
         // ISSUE-0359; v12-three-backend-conformance-corpus C1/C6:
         // backend-internal rejection detail texts are never corpus
-        // fields). ISSUE-0277 migrates the production emission to E6006
-        // and must update this pin together with that change — this unit
-        // test pins the CURRENT emission (E6003 + the current text at
-        // deal/codegen/js/JsBackend.java:799) and must not pin E6006
-        // before the backend epic lands it.
+        // fields). ISSUE-0507 (FFI candidate fixture conformance)
+        // landed the E6006 FFI_UNSUPPORTED_BACKEND registration and
+        // migrated this arm from its former E6003 reuse — this unit
+        // test pins the CURRENT emission (E6006 + the current text at
+        // deal/codegen/js/JsBackend.java).
         String externDetailText = "JavaScript backend: @extern-c imports "
             + "are not supported (FFI_UNSUPPORTED_BACKEND, "
             + "ISSUE-0169 skeleton)";
@@ -1823,11 +1823,11 @@ public class JsBackendTest {
         check(extern != null && extern.hasErrors(), "@extern-c import rejected");
         if (extern != null) {
             check(extern.diagnostics().stream().anyMatch(d ->
-                    "E6003".equals(d.code())
+                    "E6006".equals(d.code())
                         && "error".equals(d.severity())
                         && externDetailText.equals(d.message())
                         && d.range().startLine() == 1),
-                "@extern-c rejection is E6003 with the exact current detail "
+                "@extern-c rejection is E6006 with the exact current detail "
                     + "text at the import statement: " + extern.diagnostics());
         }
 
@@ -4957,13 +4957,13 @@ public class JsBackendTest {
         // D1), the retired nested-class rejection (ISSUE-0318), and the
         // retired host-ABI E6000 (ISSUE-0328 — the passing model lives
         // in testHostAbiOrchestratorNode) no longer drive this pin; the
-        // still-live @extern-c E6003 arm keeps the
+        // still-live @extern-c E6006 arm keeps the
         // no-partial-artifact rejection model covered — a rejected
         // module fails the whole compilation and nothing is published
         // (the transactional whole-set contract,
         // whole-project-artifact-publication D3/D4; the single-module
         // model lives in testNoPartialArtifactOnRejection).
-        // ISSUE-0273 D9 re-key: the E6003 trigger is an import of an
+        // ISSUE-0273 D9 re-key: the E6006 trigger is an import of an
         // extern-C declaration module — the @extern-c file directive
         // lives on ffi.d.deal, never on the importing implementation
         // file (where it is E1046). The import is manifest-backed (an
@@ -4993,7 +4993,7 @@ public class JsBackendTest {
         Path entryFile = tmpDir.resolve("rej_proj/src/rej_main.deal").toAbsolutePath();
         // The production locator path (ISSUE-0169 remediation,
         // ISSUE-0471): the manifest-selected Backend.JS compile
-        // rejects the manifest-backed @extern-c import with E6003.
+        // rejects the manifest-backed @extern-c import with E6006.
         ProjectLocator.LocateResult located = ProjectLocator.locate(
             entryFile.toString(), null);
         check(located.context() != null && located.e2010() == null
@@ -5015,8 +5015,8 @@ public class JsBackendTest {
         boolean success = orchestrator.compile();
         check(!success, "the @extern-c project fails the compilation");
         check(orchestrator.diagnostics().stream().anyMatch(d ->
-                "E6003".equals(d.code())),
-            "the orchestrator reports E6003: " + orchestrator.diagnostics());
+                "E6006".equals(d.code())),
+            "the orchestrator reports E6006: " + orchestrator.diagnostics());
         check(!Files.exists(outputDir.resolve("lib.js")),
             "the rejected module writes no artifact");
         // Transactional publication (whole-project-artifact-publication
@@ -5238,7 +5238,7 @@ public class JsBackendTest {
 
     /**
      * No-partial-artifact: an {@code @extern-c} import (the retained
-     * E6003 rejection) fails the compilation and the rejected module
+     * E6006 rejection) fails the compilation and the rejected module
      * writes no artifact — the rejection model the retired host-ABI
      * E6000 arm used to cover (ISSUE-0328 retired that arm; the
      * host-ABI passing model lives in testHostAbiOrchestratorNode).
@@ -5253,7 +5253,7 @@ public class JsBackendTest {
                     + "  \"externals\": {\"ffi\": {\"declaration\":"
                     + " \"ffi.d.deal\", \"nativeLibrary\": \"libhost\"}}\n}\n",
                 StandardCharsets.UTF_8);
-            // ISSUE-0273 D9 re-key: the E6003 trigger is an import of an
+            // ISSUE-0273 D9 re-key: the E6006 trigger is an import of an
             // extern-C declaration module — the @extern-c file directive
             // lives on ffi.d.deal (on an implementation file it is
             // E1046). The import is manifest-backed (an externals entry
@@ -5274,7 +5274,7 @@ public class JsBackendTest {
                 StandardCharsets.UTF_8);
             // The production locator path (ISSUE-0169 remediation,
             // ISSUE-0471): the manifest-selected Backend.JS compile
-            // rejects the @extern-c import with E6003 and writes no
+            // rejects the @extern-c import with E6006 and writes no
             // artifact for the rejected module.
             ProjectLocator.LocateResult located = ProjectLocator.locate(
                 entry.toString(), null);
@@ -5297,8 +5297,8 @@ public class JsBackendTest {
             boolean ok = orchestrator.compile();
             check(!ok, "an @extern-c import fails the JS compilation");
             check(orchestrator.diagnostics().stream()
-                    .anyMatch(d -> "E6003".equals(d.code())),
-                "the rejection is E6003: " + orchestrator.diagnostics());
+                    .anyMatch(d -> "E6006".equals(d.code())),
+                "the rejection is E6006: " + orchestrator.diagnostics());
             check(!Files.exists(outputRoot.resolve("main.js")),
                 "no entry artifact is written for the rejected module");
             check(!Files.exists(outputRoot.resolve("ffi.js")),

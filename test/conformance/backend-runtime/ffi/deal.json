@@ -1,0 +1,23 @@
+{
+  "languageVersion": "1.2",
+  "moduleRoots": ["."],
+  "backend": "luajit",
+  "externals": {
+    "candidate/native": {
+      "declaration": "support/native.d.deal",
+      "nativeLibrary": "support/libcandidate_native.so"
+    },
+    "candidate/native-missing-symbol": {
+      "declaration": "support/native-missing-symbol.d.deal",
+      "nativeLibrary": "support/libcandidate_native.so"
+    },
+    "candidate/native-missing-library": {
+      "declaration": "support/native.d.deal",
+      "nativeLibrary": "support/libcandidate_missing.so"
+    },
+    "candidate/invalid-async": {
+      "declaration": "support/invalid-async.d.deal",
+      "nativeLibrary": "support/libcandidate_native.so"
+    }
+  }
+}

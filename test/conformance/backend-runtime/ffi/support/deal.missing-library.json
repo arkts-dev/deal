@@ -1,0 +1,11 @@
+{
+  "languageVersion": "1.2",
+  "moduleRoots": ["."],
+  "backend": "luajit",
+  "externals": {
+    "candidate/native": {
+      "declaration": "support/native.d.deal",
+      "nativeLibrary": "support/libcandidate_missing.so"
+    }
+  }
+}

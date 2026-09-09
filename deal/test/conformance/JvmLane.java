@@ -654,10 +654,51 @@ public class JvmLane implements Lane {
                             Files.readString(decl)));
                 }
 
+                // 2b. Corpus C FFI bindings (ISSUE-0507): every
+                // candidate/* import of the compilation set wires
+                // through the corpus-owned FFI externals machinery —
+                // the orchestrator's FFI phase validates the
+                // declaration and the JVM backend rejects with E6006
+                // FFI_UNSUPPORTED_BACKEND before any artifact.
+                Set<String> ffiImports = new LinkedHashSet<>();
+                for (SidecarSchemaValidator.CompilationModule module
+                        : laneCase.compilationSet()) {
+                    ffiImports.addAll(CorpusDiscovery.ffiImportPaths(
+                        module.source()).stream()
+                        .filter(path -> CorpusFfi.isFfiImport(
+                            conformanceRoot, path))
+                        .toList());
+                }
+                for (String raw : ffiImports) {
+                    CorpusFfi.Wiring wiring = CorpusFfi.wiringFor(
+                        conformanceRoot, raw);
+                    if (wiring == null) {
+                        return CompilationOutcome.failure(
+                            "no corpus FFI wiring for " + raw);
+                    }
+                    Path declaration = conformanceRoot.resolve(
+                            CorpusFfi.FFI_DIR)
+                        .resolve(wiring.declarationCorpusPath());
+                    if (!Files.isRegularFile(declaration)) {
+                        return CompilationOutcome.failure(
+                            "the corpus FFI declaration is missing: "
+                                + declaration);
+                    }
+                    Path bindings = projectRoot.resolve(
+                        BINDINGS_DIRECTORY);
+                    Files.createDirectories(bindings);
+                    Files.writeString(bindings.resolve(
+                            "ffi_" + raw.replace('/', '_') + ".d.deal"),
+                        ConformanceHarnessMetadata
+                            .stripClassificationHeaders(
+                                Files.readString(declaration)));
+                }
+
                 // 3. The injected exact-v1.2 deal.json (the absorbed
                 // ISSUE-0269 surface): moduleRoots ["src"], output "out",
                 // backend "jvm", externals wiring every raw host import
-                // path to its binding declaration.
+                // path to its binding declaration plus every corpus FFI
+                // import with its nativeLibrary.
                 StringBuilder dealJson = new StringBuilder();
                 dealJson.append("{\n  \"languageVersion\": \"1.2\",\n");
                 dealJson.append("  \"moduleRoots\": [\"").append(SRC_DIRECTORY)
@@ -665,7 +706,7 @@ public class JvmLane implements Lane {
                 dealJson.append("  \"output\": \"").append(OUTPUT_DIRECTORY)
                     .append("\",\n");
                 dealJson.append("  \"backend\": \"jvm\"");
-                if (!hostNames.isEmpty()) {
+                if (!hostNames.isEmpty() || !ffiImports.isEmpty()) {
                     dealJson.append(",\n  \"externals\": {\n");
                     boolean first = true;
                     for (String hostName : hostNames) {
@@ -677,6 +718,21 @@ public class JvmLane implements Lane {
                             .append("\": { \"declaration\": \"")
                             .append(BINDINGS_DIRECTORY).append("/")
                             .append(hostName).append(".d.deal\" }");
+                    }
+                    for (String raw : ffiImports) {
+                        if (!first) {
+                            dealJson.append(",\n");
+                        }
+                        first = false;
+                        dealJson.append("    \"").append(raw)
+                            .append("\": { \"declaration\": \"")
+                            .append(BINDINGS_DIRECTORY).append("/ffi_")
+                            .append(raw.replace('/', '_'))
+                            .append(".d.deal\", \"nativeLibrary\": \"")
+                            .append(CorpusFfi.loaderTextFor(
+                                conformanceRoot,
+                                CorpusFfi.wiringFor(conformanceRoot, raw)))
+                            .append("\" }");
                     }
                     dealJson.append("\n  }");
                 }

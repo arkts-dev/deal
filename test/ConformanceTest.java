@@ -1295,6 +1295,23 @@ public class ConformanceTest {
         CheckResult result = TypeChecker.check(filename, symTable, nr, parseResult.program());
         allDiags.addAll(result.diagnostics());
 
+        // Corpus C FFI externals (ISSUE-0507): the production
+        // FfiDeclarationValidator diagnostics of every candidate/*
+        // import surface on the frontend compile paths (the E7002 C FFI
+        // declaration policy — e.g. an async exported function in a C
+        // FFI declaration file) exactly as the orchestrator's FFI phase
+        // surfaces them.
+        for (StatementNode stmt : parseResult.program().statements()) {
+            if (stmt instanceof ImportDeclaration imp
+                    && deal.test.conformance.CorpusFfi.isFfiImport(
+                        conformanceRoot, imp.modulePath())) {
+                allDiags.addAll(
+                    deal.test.conformance.CorpusFfi.module(
+                        conformanceRoot, imp.modulePath(), profile)
+                        .validationDiagnostics());
+            }
+        }
+
         return allDiags;
     }
 
@@ -1872,6 +1889,15 @@ public class ConformanceTest {
                 String dotted = modulePath.replace('/', '.');
                 return new CanonicalModuleIdentity.ExternalModule(dotted);
             }
+            // Corpus C FFI externals (ISSUE-0507): candidate/* modules
+            // classify as externals whose raw import specifier is the
+            // dotted key — the same pinned @$external/<raw>/<C> atoms
+            // the production externals classification projects.
+            if (deal.test.conformance.CorpusFfi.isFfiImport(
+                    conformanceRoot, modulePath)) {
+                return new CanonicalModuleIdentity.ExternalModule(
+                    modulePath.replace('/', '.'));
+            }
             Path p = Path.of(modulePath).toAbsolutePath().normalize();
             // Classify corpus-relative when the path lives inside the
             // conformance root: the atom text is then machine-independent
@@ -1909,14 +1935,22 @@ public class ConformanceTest {
                 new ProjectModuleIdentity("conformance", anchor, components));
         }
 
-        /** Registers a module path (and its host paths) before backend use. */
+        /** Registers a module path (and its host/FFI paths) before
+         * backend use. */
         private void registerModulePath(String modulePath,
-                Map<String, Map<String, Type>> hostModules) {
+                Map<String, Map<String, Type>> hostModules,
+                Map<String, deal.ffi.FfiGeneratedModule> ffiModules) {
             if (modulePath != null && !modulePath.isEmpty()
                     && !moduleIdentities.containsKey(modulePath)) {
                 moduleIdentities.put(modulePath, classifyModulePath(modulePath));
             }
             for (String raw : hostModules.keySet()) {
+                String dotted = raw.replace('/', '.');
+                if (!moduleIdentities.containsKey(dotted)) {
+                    moduleIdentities.put(dotted, classifyModulePath(dotted));
+                }
+            }
+            for (String raw : ffiModules.keySet()) {
                 String dotted = raw.replace('/', '.');
                 if (!moduleIdentities.containsKey(dotted)) {
                     moduleIdentities.put(dotted, classifyModulePath(dotted));
@@ -1990,6 +2024,13 @@ public class ConformanceTest {
                 Map<String, String> importResolutions = new LinkedHashMap<>();
                 Set<Path> companionDependencies = new LinkedHashSet<>();
                 Map<String, Map<String, Type>> hostModules = new LinkedHashMap<>();
+                // Corpus C FFI externals (ISSUE-0507): raw import path
+                // -> the production-validated FFIGEN module the
+                // LuaJIT emission path serializes into the
+                // __rt.load_ffi call site (the real load_ffi path —
+                // never load_host, never a raw require, never ffi.C).
+                Map<String, deal.ffi.FfiGeneratedModule> ffiModules =
+                    new LinkedHashMap<>();
 
                 for (StatementNode stmt : parseResult.program().statements()) {
                     if (stmt instanceof ImportDeclaration imp) {
@@ -2007,6 +2048,24 @@ public class ConformanceTest {
                             } catch (ModuleResolver.ModuleNotFoundException e) {
                                 return null;
                             }
+                            continue;
+                        }
+                        if (deal.test.conformance.CorpusFfi.isFfiImport(
+                                conformanceRoot, importPath)) {
+                            deal.test.conformance.CorpusFfi.Module ffiModule =
+                                deal.test.conformance.CorpusFfi.module(
+                                    conformanceRoot, importPath, profile);
+                            if (ffiModule.validationDiagnostics().stream()
+                                    .anyMatch(d -> "error"
+                                        .equals(d.severity()))) {
+                                // A rejected FFI declaration is a real
+                                // compile failure (the production
+                                // phase-3.8 policy), never a silent
+                                // import bypass.
+                                return null;
+                            }
+                            ffiModules.put(importPath,
+                                ffiModule.generatedModule());
                             continue;
                         }
                         Path resolvedPath = resolveCompanionPath(importPath, fileDir);
@@ -2044,13 +2103,13 @@ public class ConformanceTest {
                 // catalog classification, then construct the backend over
                 // the per-compilation descriptor service so every emitted
                 // descriptor resolves through the identity index.
-                registerModulePath(filename, hostModules);
+                registerModulePath(filename, hostModules, ffiModules);
                 LuaBackend backend = new LuaBackend(
                     result.typeMap(), result.symbolTable(), filename,
                     filename, identityIndex(), profile);
                 String luaSource = backend.generateFromInstance(
                     parseResult.program(), isEntry, importResolutions,
-                    hostModules);
+                    hostModules, ffiModules, "");
                 return new Artifact(luaSource,
                     Collections.unmodifiableMap(new LinkedHashMap<>(importResolutions)),
                     symTable, nr,
@@ -2280,6 +2339,17 @@ public class ConformanceTest {
                 return hostRegistry.forModule(modulePath).exports();
             }
 
+            // Corpus C FFI externals (ISSUE-0507): a candidate/*
+            // import resolves through the corpus-owned deal.json wiring
+            // into the real FFI declaration surface — the production
+            // FfiDeclarationValidator + FFIGEN boundary feed the
+            // LuaJIT emission path and the checker-facing exports.
+            if (deal.test.conformance.CorpusFfi.isFfiImport(
+                    conformanceRoot, modulePath)) {
+                return deal.test.conformance.CorpusFfi.module(
+                    conformanceRoot, modulePath, profile).exports();
+            }
+
             // Try relative file import
             Path resolved = resolveRelativePath(modulePath);
             if (resolved != null && Files.exists(resolved)) {
@@ -2302,6 +2372,15 @@ public class ConformanceTest {
                 HostRegistry.HostDeclaration decl =
                     hostRegistry.forModule(modulePath);
                 return decl.classSymbols().get(className);
+            }
+            // Corpus C FFI externals (ISSUE-0507): classes of a
+            // candidate/* module resolve to the declaration's
+            // synthesized ClassSymbols (canonical external identities).
+            if (deal.test.conformance.CorpusFfi.isFfiImport(
+                    conformanceRoot, modulePath)) {
+                return deal.test.conformance.CorpusFfi.module(
+                    conformanceRoot, modulePath, profile)
+                    .classSymbols().get(className);
             }
             // Local classes (absent modulePath) resolve through the local
             // scope in NameResolver; only foreign module paths reach here.
@@ -2332,6 +2411,16 @@ public class ConformanceTest {
                     HostRegistry.HostDeclaration decl =
                         hostRegistry.forModule(ext.rawImportSpecifier());
                     return decl.classSymbols().get(className);
+                }
+                // Corpus C FFI externals (ISSUE-0507): the carried
+                // external identity of a candidate/* module routes back
+                // to the declaration's synthesized class symbols.
+                Symbol.ClassSymbol ffiSymbol =
+                    deal.test.conformance.CorpusFfi.classSymbol(
+                        conformanceRoot, declaringModule, className,
+                        profile);
+                if (ffiSymbol != null) {
+                    return ffiSymbol;
                 }
                 return null;
             }
@@ -2371,6 +2460,13 @@ public class ConformanceTest {
                     hostRegistry.forModule(ext.rawImportSpecifier());
                 return decl.exports().containsKey(functionName);
             }
+            // Corpus C FFI externals (ISSUE-0507): the declared export
+            // map of a candidate/* module.
+            if (deal.test.conformance.CorpusFfi.declaresFunction(
+                    conformanceRoot, declaringModule, functionName,
+                    profile)) {
+                return true;
+            }
             // Catalogue companions: their jsonable synthetic exports
             // live in the declaring module's root symbol table (the
             // hoisted C$fromJson/C$toJson function symbols), keyed by
@@ -2406,6 +2502,17 @@ public class ConformanceTest {
                 HostRegistry.HostDeclaration decl =
                     hostRegistry.forModule(modulePath);
                 return resolveHostTypeNode(typeNode, modulePath, decl);
+            }
+            // Corpus C FFI externals (ISSUE-0507): field annotations of
+            // a candidate/* class resolve against the declaration's own
+            // class registry (the host-registry shape).
+            if (deal.test.conformance.CorpusFfi.isFfiImport(
+                    conformanceRoot, modulePath)) {
+                return deal.test.conformance.CorpusFfi.resolveTypeNode(
+                    typeNode,
+                    deal.test.conformance.CorpusFfi.module(
+                        conformanceRoot, modulePath, profile)
+                        .classSymbols());
             }
             if (catalog == null || modulePath == null || modulePath.isEmpty()) {
                 return null;

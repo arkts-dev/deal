@@ -1,0 +1,14 @@
+// @spec: Modules, declarations, standard library, and host ABI — C FFI externals entries
+// @description: A borrowed C string return is copied before later C mutation of its storage (ffi_borrowed_string stays "first" after ffi_overwrite_borrowed_string).
+// @expected: runtime-ok
+// @features: c-ffi, string-return, borrowed-memory, copy
+
+import * as native from "candidate/native";
+export function main(): null {
+  let value: string = native.ffi_borrowed_string();
+  let ignored: null = native.ffi_overwrite_borrowed_string();
+  if (value !== "first") {
+    throw { code: "TEST_FAIL", message: "borrowed C string was not copied" };
+  }
+  return null;
+}

@@ -329,6 +329,10 @@ public class DiagnosticClassificationTest {
             "FailureContractRegistryTest (registry-owned detail/message construction; "
             + "ISSUE-0230 foundation, ISSUE-0285) — LoweringFoundationTest pins the "
             + "registration");
+        coverage.put("E6006",
+            "FfiDeclarationValidatorTest (JVM extern-C rejection) / "
+            + "JsBackendTest (@extern-c import rejection) / the corpus "
+            + "backend-runtime/ffi C6 divergent sidecars (ISSUE-0507)");
 
         coverage.put("E7001", "ModuleSystemTest (decl file exec stmt)");
         coverage.put("E7002",

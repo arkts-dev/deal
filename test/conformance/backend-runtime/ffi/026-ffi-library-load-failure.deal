@@ -1,0 +1,9 @@
+// @spec: Modules, declarations, standard library, and host ABI — C FFI externals entries
+// @description: Importing an FFI module whose configured native library cannot load raises FFI_LIBRARY_LOAD at the import site while the FFI module initializes (the load_ffi library-open gate).
+// @expected: runtime-error FFI_LIBRARY_LOAD
+// @features: c-ffi, library-load, module-initialization, runtime-errors
+
+import * as native from "candidate/native-missing-library";
+export function main(): null {
+  return null;
+}

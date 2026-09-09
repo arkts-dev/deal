@@ -1,0 +1,13 @@
+// @spec: Modules, declarations, standard library, and host ABI — C FFI externals entries
+// @description: A C _Bool return value maps to the DEAL boolean type with the 0/1 truth mapping (ffi_not(false) == true through the production load_ffi path).
+// @expected: runtime-ok
+// @features: c-ffi, abi, boolean
+
+import * as native from "candidate/native";
+export function main(): null {
+  let value: boolean = native.ffi_not(false);
+  if (!value) {
+    throw { code: "TEST_FAIL", message: "ffi bool" };
+  }
+  return null;
+}

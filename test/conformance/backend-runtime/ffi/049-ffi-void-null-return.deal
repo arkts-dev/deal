@@ -1,0 +1,13 @@
+// @spec: Modules, declarations, standard library, and host ABI — C FFI externals entries
+// @description: A C void return reconstructs the DEAL null value (ffi_noop() == null through the load_ffi return conversion).
+// @expected: runtime-ok
+// @features: c-ffi, void, null-return
+
+import * as native from "candidate/native";
+export function main(): null {
+  let value: null = native.ffi_noop();
+  if (value !== null) {
+    throw { code: "TEST_FAIL", message: "C void did not return DEAL null" };
+  }
+  return null;
+}

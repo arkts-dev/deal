@@ -2786,7 +2786,7 @@ public class BackendConformanceTest {
         }
 
         // 1. Codegen with the real JS backend (modulePath "Main", the
-        //    single-source adapter convention). Errors (E6003 for
+        //    single-source adapter convention). Errors (E6000/E6006 for
         //    out-of-skeleton constructs) fail the fixture. A host
         //    fixture goes through the production seam with the
         //    per-compilation identity surface (the host modules
