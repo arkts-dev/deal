@@ -8307,9 +8307,6 @@ public final class JvmBackend {
         emitLine("throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
         indent--;
         emitLine("}");
-
-        indent--;
-        emitLine("}");
         emitLine("static java.lang.String __jsonQuote(java.lang.String s) {");
         indent++;
         emitLine("// ISSUE-0302 stringify-side unpaired-surrogate scan");

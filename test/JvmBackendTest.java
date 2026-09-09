@@ -10331,12 +10331,18 @@ public class JvmBackendTest {
             "(bytes)->bytes uses the shared Y-segment wrapper shape");
         check(artifact.contains("static abstract class FnA1_Y_R_Y"),
             "async(bytes)->bytes uses the distinct async wrapper shape");
-        check(artifact.contains(
+        check(!artifact.contains(
                 "if (v instanceof $DealRt.Bytes) throw new DealError("
                     + "\"E8001\", \"unsupported type for JSON encoding: "
                     + "bytes\")"),
-            "the stringifier pins the byte-identical JSON bytes "
-                + "rejection branch");
+            "the stringifier carries no bytes-specific arm (the "
+                + "std/json-only message belongs to the E6000-gated "
+                + "surface, not the @jsonable one)");
+        check(artifact.contains(
+                "throw new DealError(\"E8001\", \"value is not "
+                    + "JSON-shaped\");"),
+            "the stringifier's default arm raises the LuaJIT-equal "
+                + "'value is not JSON-shaped' for a bytes value");
         check(artifact.contains("case \"bytes\":")
                 && artifact.contains(
                     "if (v instanceof $DealRt.Bytes b) return b;"),
@@ -10477,8 +10483,15 @@ public class JvmBackendTest {
         check(asyncContainer.output().contains("0"),
             "containerized async bytes value completes with the zero-filled "
                 + "first byte: " + asyncContainer.output());
-        // The pinned JSON rejection message is byte-identical to the
-        // LuaJIT std/json bytes arm.
+        // The @jsonable C$toJson surface is the only JVM-implemented
+        // JSON stringify position; its LuaJIT reference —
+        // deal/runtime.lua's _json_table_shape walker, before std/json's
+        // encode_value ever runs — raises E8001 "value is not
+        // JSON-shaped" for a table-held bytes value. The emitted
+        // stringifier matches it through the default arm; the std/json
+        // stringify surface (whose explicit bytes arm reads "unsupported
+        // type for JSON encoding: bytes") is E6000 on JVM, not
+        // comparable.
         String jsonSource = "export function main(): null { return null; }\n"
             + "// @jsonable\nexport class Holder { payload: table = {}; }\n"
             + "export function test(): int {\n"
@@ -10488,9 +10501,12 @@ public class JvmBackendTest {
             + "      return 0;\n"
             + "    }\n";
         ExecResult jsonRun = runInt32Project(jsonSource, "json_rejection_msg");
-        check(jsonRun.output().contains(
-                "unsupported type for JSON encoding: bytes"),
-            "the JVM stringify raises the pinned bytes message: "
+        check(jsonRun.exitCode() == 1,
+            "the bytes JSON rejection run exits 1: " + jsonRun.output());
+        check(jsonRun.output().contains("DEAL_ERROR_CODE: E8001"),
+            "the bytes JSON rejection raises E8001: " + jsonRun.output());
+        check(jsonRun.output().contains("value is not JSON-shaped"),
+            "the JVM stringifier raises the LuaJIT-equal default message: "
                 + jsonRun.output());
 
         // ---- Dynamic scalar table-read boundary (ISSUE-0160 D5) ----
