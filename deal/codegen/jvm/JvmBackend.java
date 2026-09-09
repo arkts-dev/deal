@@ -1315,13 +1315,14 @@ public final class JvmBackend {
         }
         if (t instanceof Type.Array a) {
             Type element = a.element();
+            // Bytes-element arrays (bytes[] / (bytes | null)[]) carry
+            // the fixed __BytesArray / __BytesOrNullArray carriers with
+            // the fixed $checkArray rows (ISSUE-0160 container step) —
+            // no per-element-shape registration.
             if (element instanceof Type.Array
                     || element instanceof Type.Func
                     || (element instanceof Type.Nullable ne
-                        && ne.inner() instanceof Type.Func)
-                    || element instanceof Type.Bytes
-                    || (element instanceof Type.Nullable ne
-                        && ne.inner() instanceof Type.Bytes)) {
+                        && ne.inner() instanceof Type.Func)) {
                 registerRefArrayShape(element);
             }
         }
@@ -4647,6 +4648,38 @@ public final class JvmBackend {
         emitLine("static java.lang.Double __numberOrNullArrayRead($DealRt.__NumberOrNullArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return a.data[(int) i]; }");
         emitLine("static java.lang.String __stringOrNullArrayRead($DealRt.__StringOrNullArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return a.data[(int) i]; }");
         emitLine("static java.lang.Boolean __booleanOrNullArrayRead($DealRt.__BooleanOrNullArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return a.data[(int) i]; }");
+        emitLine("// bytes[] / (bytes | null)[] shared carriers (ISSUE-0160");
+        emitLine("// container step, jvm-v12-recursive-bytes-closure D1):");
+        emitLine("// $DealRt.Bytes[] storage inside the __BytesArray /");
+        emitLine("// __BytesOrNullArray wrapper classes. The wrapper identity");
+        emitLine("// is stable across appends (writing at i == length grows");
+        emitLine("// the wrapped storage in place), so every alias observes");
+        emitLine("// each write exactly like LuaJIT's shared 1-based table —");
+        emitLine("// reference semantics throughout, no deep copies. Reads:");
+        emitLine("// a negative index is E8002 (LuaJIT's emitted negative-index");
+        emitLine("// check); an index past the end is E8001 \"expected bytes,");
+        emitLine("// got null\" at the typed read (LuaJIT reads nil there and");
+        emitLine("// the read site's check_type(\"bytes\", nil) boundary fails");
+        emitLine("// with exactly that shape), while the boxed read yields the");
+        emitLine("// DEAL null there for === / !== operand positions (the read-");
+        emitLine("// site contract applies no typed boundary to a comparison");
+        emitLine("// operand, so nil === v computes on the nil value). The");
+        emitLine("// (bytes | null)[] read yields the DEAL null past the end");
+        emitLine("// (a valid nullable element — LuaJIT's nil, no E8001 at the");
+        emitLine("// read). Writes: 0 <= i <= length (E8002 otherwise); i ==");
+        emitLine("// length appends one element (spec §Array writes); the");
+        emitLine("// element policy of the PLAIN form rejects the DEAL null");
+        emitLine("// element with E8001 \"expected bytes, got null\" (LuaJIT's");
+        emitLine("// check_type(\"bytes\", nil) at the write), the OrNull form");
+        emitLine("// accepts it (check_nullable permits it) — a failed write");
+        emitLine("// mutates nothing. The helper call's Java arguments");
+        emitLine("// evaluate left to right before the bounds check, per");
+        emitLine("// spec-v1.2 §Operational semantics rule 3.");
+        emitLine("static $DealRt.Bytes __bytesArrayRead($DealRt.__BytesArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected bytes, got null\"); return a.data[(int) i]; }");
+        emitLine("static $DealRt.Bytes __bytesArrayReadBoxed($DealRt.__BytesArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return a.data[(int) i]; }");
+        emitLine("static $DealRt.Bytes __bytesArrayWrite($DealRt.__BytesArray a, long i, $DealRt.Bytes v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (v == null) throw new DealError(\"E8001\", \"expected bytes, got null\"); if (i == (long) a.data.length) { $DealRt.Bytes[] nd = new $DealRt.Bytes[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
+        emitLine("static $DealRt.Bytes __bytesOrNullArrayWrite($DealRt.__BytesOrNullArray a, long i, $DealRt.Bytes v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (i == (long) a.data.length) { $DealRt.Bytes[] nd = new $DealRt.Bytes[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
+        emitLine("static $DealRt.Bytes __bytesOrNullArrayRead($DealRt.__BytesOrNullArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return a.data[(int) i]; }");
         emitLine("// Class arrays (C[], (C | null)[]) map to the shared");
         emitLine("// $DealRt.__RefArray holding java.lang.Object[]; every class");
         emitLine("// declaration also emits a per-class subclass ($Array$<C>) so");
@@ -4818,6 +4851,15 @@ public final class JvmBackend {
         emitLine("    static final class __NumberOrNullArray { java.lang.Double[] data; __NumberOrNullArray(java.lang.Double[] data) { this.data = data; } }");
         emitLine("    static final class __StringOrNullArray { java.lang.String[] data; __StringOrNullArray(java.lang.String[] data) { this.data = data; } }");
         emitLine("    static final class __BooleanOrNullArray { java.lang.Boolean[] data; __BooleanOrNullArray(java.lang.Boolean[] data) { this.data = data; } }");
+        emitLine("    // The bytes-element array carriers (ISSUE-0160 container");
+        emitLine("    // step): $DealRt.Bytes[] storage for bytes[] and");
+        emitLine("    // (bytes | null)[] — the OrNull form accepts the DEAL");
+        emitLine("    // null element, the plain form rejects it. Identity");
+        emitLine("    // stays stable across appends, so aliases observe every");
+        emitLine("    // write; values cross module boundaries with shared");
+        emitLine("    // identity like every other shared carrier.");
+        emitLine("    static final class __BytesArray { $DealRt.Bytes[] data; __BytesArray($DealRt.Bytes[] data) { this.data = data; } }");
+        emitLine("    static final class __BytesOrNullArray { $DealRt.Bytes[] data; __BytesOrNullArray($DealRt.Bytes[] data) { this.data = data; } }");
         emitLine("    // The Object-storage base for per-class array wrappers (each");
         emitLine("    // module's $Array$<C> extends it so instanceof proves the");
         emitLine("    // element type).");
@@ -4982,12 +5024,14 @@ public final class JvmBackend {
         emitLine("if (descriptor.equals(\"[number]\")) { if (v instanceof $DealRt.__NumberArray a) return a; return $dynamicNumberArray(v); }");
         emitLine("if (descriptor.equals(\"[string]\")) { if (v instanceof $DealRt.__StringArray a) return a; return $dynamicStringArray(v); }");
         emitLine("if (descriptor.equals(\"[boolean]\")) { if (v instanceof $DealRt.__BooleanArray a) return a; return $dynamicBooleanArray(v); }");
+        emitLine("if (descriptor.equals(\"[bytes]\")) { if (v instanceof $DealRt.__BytesArray a) return a; return $dynamicBytesArray(v); }");
         emitLine(int32Mode
             ? "if (descriptor.equals(\"[?int]\")) { if (v instanceof $DealRt.__IntOrNullArray a) return a; if (v instanceof $DealRt.__IntArray a) { java.lang.Integer[] nd = new java.lang.Integer[a.data.length]; for (int i = 0; i < a.data.length; i++) nd[i] = java.lang.Integer.valueOf(a.data[i]); return new $DealRt.__IntOrNullArray(nd); } return $dynamicIntOrNullArray(v); }"
             : "if (descriptor.equals(\"[?int]\")) { if (v instanceof $DealRt.__IntOrNullArray a) return a; if (v instanceof $DealRt.__IntArray a) { java.lang.Long[] nd = new java.lang.Long[a.data.length]; for (int i = 0; i < a.data.length; i++) nd[i] = java.lang.Long.valueOf(a.data[i]); return new $DealRt.__IntOrNullArray(nd); } return $dynamicIntOrNullArray(v); }");
         emitLine("if (descriptor.equals(\"[?number]\")) { if (v instanceof $DealRt.__NumberOrNullArray a) return a; if (v instanceof $DealRt.__NumberArray a) { java.lang.Double[] nd = new java.lang.Double[a.data.length]; for (int i = 0; i < a.data.length; i++) nd[i] = java.lang.Double.valueOf(a.data[i]); return new $DealRt.__NumberOrNullArray(nd); } return $dynamicNumberOrNullArray(v); }");
         emitLine("if (descriptor.equals(\"[?string]\")) { if (v instanceof $DealRt.__StringOrNullArray a) return a; if (v instanceof $DealRt.__StringArray a) { java.lang.String[] nd = new java.lang.String[a.data.length]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); return new $DealRt.__StringOrNullArray(nd); } return $dynamicStringOrNullArray(v); }");
         emitLine("if (descriptor.equals(\"[?boolean]\")) { if (v instanceof $DealRt.__BooleanOrNullArray a) return a; if (v instanceof $DealRt.__BooleanArray a) { java.lang.Boolean[] nd = new java.lang.Boolean[a.data.length]; for (int i = 0; i < a.data.length; i++) nd[i] = java.lang.Boolean.valueOf(a.data[i]); return new $DealRt.__BooleanOrNullArray(nd); } return $dynamicBooleanOrNullArray(v); }");
+        emitLine("if (descriptor.equals(\"[?bytes]\")) { if (v instanceof $DealRt.__BytesOrNullArray a) return a; if (v instanceof $DealRt.__BytesArray a) { $DealRt.Bytes[] nd = new $DealRt.Bytes[a.data.length]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); return new $DealRt.__BytesOrNullArray(nd); } return $dynamicBytesOrNullArray(v); }");
         for (String branch : refArrayCheckBranches) {
             emitLine(branch);
         }
@@ -5011,6 +5055,8 @@ public final class JvmBackend {
         emitLine("static $DealRt.__NumberOrNullArray $dynamicNumberOrNullArray(java.lang.Object v) { if (v instanceof $DealRt.Table t && t.$array() != null) { java.util.ArrayList<java.lang.Object> a = t.$array(); java.lang.Double[] data = new java.lang.Double[a.size()]; for (int i = 0; i < a.size(); i++) { try { data[i] = (java.lang.Double) $check(\"?number\", a.get(i)); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return new $DealRt.__NumberOrNullArray(data); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
         emitLine("static $DealRt.__StringOrNullArray $dynamicStringOrNullArray(java.lang.Object v) { if (v instanceof $DealRt.Table t && t.$array() != null) { java.util.ArrayList<java.lang.Object> a = t.$array(); java.lang.String[] data = new java.lang.String[a.size()]; for (int i = 0; i < a.size(); i++) { try { data[i] = (java.lang.String) $check(\"?string\", a.get(i)); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return new $DealRt.__StringOrNullArray(data); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
         emitLine("static $DealRt.__BooleanOrNullArray $dynamicBooleanOrNullArray(java.lang.Object v) { if (v instanceof $DealRt.Table t && t.$array() != null) { java.util.ArrayList<java.lang.Object> a = t.$array(); java.lang.Boolean[] data = new java.lang.Boolean[a.size()]; for (int i = 0; i < a.size(); i++) { try { data[i] = (java.lang.Boolean) $check(\"?boolean\", a.get(i)); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return new $DealRt.__BooleanOrNullArray(data); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
+        emitLine("static $DealRt.__BytesArray $dynamicBytesArray(java.lang.Object v) { if (v instanceof $DealRt.Table t && t.$array() != null) { java.util.ArrayList<java.lang.Object> a = t.$array(); $DealRt.Bytes[] data = new $DealRt.Bytes[a.size()]; for (int i = 0; i < a.size(); i++) { try { data[i] = ($DealRt.Bytes) $check(\"bytes\", a.get(i)); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return new $DealRt.__BytesArray(data); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
+        emitLine("static $DealRt.__BytesOrNullArray $dynamicBytesOrNullArray(java.lang.Object v) { if (v instanceof $DealRt.Table t && t.$array() != null) { java.util.ArrayList<java.lang.Object> a = t.$array(); $DealRt.Bytes[] data = new $DealRt.Bytes[a.size()]; for (int i = 0; i < a.size(); i++) { try { data[i] = ($DealRt.Bytes) $check(\"?bytes\", a.get(i)); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return new $DealRt.__BytesOrNullArray(data); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
     }
 
     // =========================================================================
@@ -6025,14 +6071,14 @@ public final class JvmBackend {
             case Type.Number ignored -> "number";
             case Type.String ignored -> "string";
             case Type.Boolean ignored -> "boolean";
-            case Type.Bytes ignored -> null;
+            case Type.Bytes ignored -> "bytes";
             case Type.Nullable ne -> switch (ne.inner()) {
                 case Type.Int ignored -> "?int";
                 case Type.Number ignored -> "?number";
                 case Type.String ignored -> "?string";
                 case Type.Boolean ignored -> "?boolean";
                 case Type.Class c -> "?" + classCheckDescriptor(c);
-                case Type.Bytes ignored -> null;
+                case Type.Bytes ignored -> "?bytes";
                 default -> null;
             };
             case Type.Class c -> classCheckDescriptor(c);
@@ -13117,10 +13163,8 @@ public final class JvmBackend {
                     && (elementCheckDescriptor(arr.element()) != null
                         || arr.element() instanceof Type.Array
                         || arr.element() instanceof Type.Func
-                        || arr.element() instanceof Type.Bytes
                         || (arr.element() instanceof Type.Nullable ne
-                            && (ne.inner() instanceof Type.Func
-                                || ne.inner() instanceof Type.Bytes)))) {
+                            && ne.inner() instanceof Type.Func))) {
                 String elemDesc = elementCheckDescriptor(arr.element());
                 if (elemDesc == null) {
                     registerRefArrayShape(arr.element());
@@ -13158,10 +13202,8 @@ public final class JvmBackend {
                 if (arrayWrapperName(arr.element()) != null
                         && (arr.element() instanceof Type.Array
                             || arr.element() instanceof Type.Func
-                            || arr.element() instanceof Type.Bytes
                             || (arr.element() instanceof Type.Nullable ne
-                                && (ne.inner() instanceof Type.Func
-                                    || ne.inner() instanceof Type.Bytes)))) {
+                                && ne.inner() instanceof Type.Func))) {
                     registerRefArrayShape(arr.element());
                     elementDesc = typeDescriptor(arr.element());
                 } else {
@@ -14148,9 +14190,12 @@ public final class JvmBackend {
                     yield "java.lang.Object";
                 }
                 case Type.Bytes ignored -> {
-                    unsupported("arrays with element type " + typeName(element)
-                        + " (recursive bytes-bearing closure — ISSUE-0160)", span);
-                    yield null;
+                    // ISSUE-0160 container step: (bytes | null)[]
+                    // stores the shared $DealRt.Bytes reference — Java
+                    // null is the DEAL null element, so the OrNull
+                    // carrier reuses the same reference storage as the
+                    // plain bytes[] form.
+                    yield "$DealRt.Bytes";
                 }
                 case Type.Func f -> {
                     // ISSUE-0102 nullable function elements — Object
@@ -14176,9 +14221,10 @@ public final class JvmBackend {
                 yield "java.lang.Object";
             }
             case Type.Bytes ignored -> {
-                unsupported("arrays with element type " + typeName(element)
-                    + " (recursive bytes-bearing closure — ISSUE-0160)", span);
-                yield null;
+                // ISSUE-0160 container step: bytes[] stores the shared
+                // $DealRt.Bytes references ($DealRt.Bytes[] storage
+                // inside the __BytesArray carrier).
+                yield "$DealRt.Bytes";
             }
             case Type.Array inner -> {
                 // ISSUE-0102 nested arrays; ISSUE-0301 shared carrier:
@@ -14241,8 +14287,7 @@ public final class JvmBackend {
                     case Type.Class c -> classOrNullArrayWrapperName(c.name());
                     case Type.Func f -> "$DealRt."
                         + refArrayWrapperId(element);
-                    case Type.Bytes ignored -> "$DealRt."
-                        + refArrayWrapperId(element);
+                    case Type.Bytes ignored -> "$DealRt.__BytesOrNullArray";
                     default -> null;
                 };
             }
@@ -14264,7 +14309,7 @@ public final class JvmBackend {
                 return "$DealRt." + refArrayWrapperId(element);
             }
             case Type.Bytes ignored -> {
-                return "$DealRt." + refArrayWrapperId(element);
+                return "$DealRt.__BytesArray";
             }
             default -> {
                 return null;
@@ -14299,9 +14344,11 @@ public final class JvmBackend {
                 case Type.String ignored -> "__StringOrNullArray";
                 case Type.Boolean ignored -> "__BooleanOrNullArray";
                 case Type.Class c -> classOrNullArrayWrapperName(c.name());
+                case Type.Bytes ignored -> "__BytesOrNullArray";
                 default -> refArrayWrapperId(element);
             };
             case Type.Class c -> classArrayWrapperName(c.name());
+            case Type.Bytes ignored -> "__BytesArray";
             default -> refArrayWrapperId(element);
         };
     }
@@ -14315,7 +14362,7 @@ public final class JvmBackend {
             case Type.Number ignored -> "__numberArrayRead";
             case Type.String ignored -> "__stringArrayRead";
             case Type.Boolean ignored -> "__booleanArrayRead";
-            case Type.Bytes ignored -> null;
+            case Type.Bytes ignored -> "__bytesArrayRead";
             default -> null;
         };
     }
@@ -14333,7 +14380,7 @@ public final class JvmBackend {
             case Type.Number ignored -> "__numberArrayReadBoxed";
             case Type.String ignored -> "__stringArrayReadBoxed";
             case Type.Boolean ignored -> "__booleanArrayReadBoxed";
-            case Type.Bytes ignored -> null;
+            case Type.Bytes ignored -> "__bytesArrayReadBoxed";
             default -> null;
         };
     }
@@ -14347,7 +14394,7 @@ public final class JvmBackend {
             case Type.Number ignored -> "java.lang.Double";
             case Type.String ignored -> "java.lang.String";
             case Type.Boolean ignored -> "java.lang.Boolean";
-            case Type.Bytes ignored -> null;
+            case Type.Bytes ignored -> "$DealRt.Bytes";
             default -> null;
         };
     }
@@ -14391,7 +14438,7 @@ public final class JvmBackend {
             case Type.Number ignored -> "__numberArrayWrite";
             case Type.String ignored -> "__stringArrayWrite";
             case Type.Boolean ignored -> "__booleanArrayWrite";
-            case Type.Bytes ignored -> null;
+            case Type.Bytes ignored -> "__bytesArrayWrite";
             default -> null;
         };
     }
@@ -14407,7 +14454,7 @@ public final class JvmBackend {
             case Type.Number ignored -> "__numberOrNullArrayWrite";
             case Type.String ignored -> "__stringOrNullArrayWrite";
             case Type.Boolean ignored -> "__booleanOrNullArrayWrite";
-            case Type.Bytes ignored -> null;
+            case Type.Bytes ignored -> "__bytesOrNullArrayWrite";
             default -> null;
         };
     }
@@ -14423,7 +14470,7 @@ public final class JvmBackend {
             case Type.Number ignored -> "__numberOrNullArrayRead";
             case Type.String ignored -> "__stringOrNullArrayRead";
             case Type.Boolean ignored -> "__booleanOrNullArrayRead";
-            case Type.Bytes ignored -> null;
+            case Type.Bytes ignored -> "__bytesOrNullArrayRead";
             default -> null;
         };
     }

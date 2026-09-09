@@ -171,10 +171,14 @@ import java.util.concurrent.atomic.AtomicInteger;
  *       and class-field storage map to the shared {@code $DealRt.Bytes}
  *       reference, bytes defaults evaluate once per construction, and
  *       the nine direct bytes fixtures promoted through the real
- *       pipeline; the one remaining fixture pins the recursive
- *       bytes-bearing array/nullable/function wrapper closure, which
- *       stays E6000 until the later ISSUE-0160 container/function
- *       steps land.</li>
+ *       pipeline; ISSUE-0547 (the ISSUE-0160 container step) then
+ *       closed the bytes container layer (bytes[]/(bytes | null)[] and
+ *       nested compositions through the __BytesArray/__BytesOrNullArray
+ *       carriers) and landed the two bytes-container fixtures; the one
+ *       remaining fixture pins the recursive bytes-bearing FUNCTION
+ *       wrapper closure ((bytes)->bytes signature positions), which
+ *       stays E6000 at the function-type-annotation gate until the
+ *       later ISSUE-0160 function steps land.</li>
  * </ul>
  *
  * <h2>Gates</h2>
@@ -182,8 +186,9 @@ import java.util.concurrent.atomic.AtomicInteger;
  *   <li>frontend-classified files: 100% pass (zero failed);</li>
  *   <li>backend-runtime: zero applicable failures AND at least 80% of
  *       the on-disk backend-runtime tests (the per-run
- *       {@code runtimeDenominator()} count — 301 with the restored
- *       known-fail fixture) pass through the frontend →
+ *       {@code runtimeDenominator()} count — 303 with the restored
+ *       known-fail fixture and the two ISSUE-0547 bytes-container
+ *       fixtures) pass through the frontend →
  *       CompilationOrchestrator → JVM codegen → javac → JVM
  *       pipeline — on the post-unit tree the lane passes the two
  *       former staged cases (the flipped time fixture and the promoted
@@ -323,16 +328,18 @@ public class JvmConformanceTest {
         // skip entries became stale and the stale-skip gate forced
         // them out with the promotion.
         // The one remaining fixture pins the RECURSIVE bytes-bearing
-        // container/function closure (bytes[] / ?bytes /
-        // (bytes)->bytes array+function carriers), which the shared
-        // wrapper machinery rejects with E6000 until the later
-        // ISSUE-0160 container/function steps land.
+        // FUNCTION closure: its (bytes)->bytes and ((bytes)->bytes |
+        // null)[] signature positions still hit the live
+        // function-type-annotation bytes gate (the ISSUE-0160 function
+        // steps own the lift) — the [bytes]/?bytes container positions
+        // now compile through the ISSUE-0547 carriers, but the probe
+        // still fails E6000 at the signature sites.
         skip("backend-runtime/bytes/bytes-descriptor-boundary.deal",
-            "canonical [bytes]/?(bytes)/(bytes)->bytes descriptors "
-                + "require the recursive bytes-bearing array/nullable/"
-                + "function wrapper carriers (the ISSUE-0160 container/"
-                + "function steps); JvmBackend raises E6000 at those "
-                + "sites.", "JVM-GAP-BYTES");
+            "canonical (bytes)->bytes / [?(bytes)->bytes] function "
+                + "signatures require the recursive bytes-bearing "
+                + "function wrapper closure (the ISSUE-0160 function "
+                + "steps); JvmBackend raises E6000 at the function-type-"
+                + "annotation bytes gate.", "JVM-GAP-BYTES");
 
         // ---- JVM-GAP-JSONABLE-RESIDUAL: residual @jsonable JVM defects ----
         // The two error-typed member-access/NEQ entries retired with
@@ -498,11 +505,13 @@ public class JvmConformanceTest {
             + "storage and bytes defaults) map to the shared "
             + "$DealRt.Bytes reference and the nine direct bytes "
             + "fixtures promoted (ISSUE-0158 implementation; "
-            + "ISSUE-0160 step-1 boundary); the remaining fixture "
-            + "pins the recursive bytes-bearing array/nullable/"
-            + "function wrapper closure (bytes[] / ?bytes / "
-            + "(bytes)->bytes), which stays E6000 until the later "
-            + "ISSUE-0160 container/function steps",
+            + "ISSUE-0160 step-1 boundary); the ISSUE-0547 container "
+            + "step closes bytes[]/(bytes | null)[]/nested compositions "
+            + "through the __BytesArray/__BytesOrNullArray carriers; "
+            + "the remaining fixture pins the recursive bytes-bearing "
+            + "function wrapper closure ((bytes)->bytes signatures), "
+            + "which stays E6000 until the later ISSUE-0160 function "
+            + "steps",
         "JVM-GAP-DEFAULTS-PLANS", "v1.2 default-plan lane — imported "
             + "non-literal defaults evaluate in the declaring module's "
             + "scope under LuaJIT (E6000 on the JVM imported-class "

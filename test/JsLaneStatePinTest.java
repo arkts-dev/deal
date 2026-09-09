@@ -108,17 +108,17 @@ public class JsLaneStatePinTest {
         "GATE FAILURE: 4 applicable backend-runtime test(s) failed — "
             + "zero applicable failures required",
         "GATE FAILURE: node-executed pass rate 98.7% below the 100% "
-            + "threshold (denominator 301)");
+            + "threshold (denominator 303)");
 
     private static final String SUMMARY_FRONTEND =
         "Frontend (backend-neutral compile-ok/compile-error): total 6, "
             + "passed 6, failed 0";
     private static final String SUMMARY_RUNTIME =
-        "Backend-runtime on Node: denominator 301 (every on-disk "
+        "Backend-runtime on Node: denominator 303 (every on-disk "
             + "runtime-ok/runtime-error test plus every known-fail "
-            + "probe), passed 297, failed 4, skipped 0 (no skip registry "
+            + "probe), passed 299, failed 4, skipped 0 (no skip registry "
             + "— zero skips by construction), known-fail 0 (tracked), "
-            + "node subprocess runs 301 — pass rate 98.7%";
+            + "node subprocess runs 303 — pass rate 98.7%";
     private static final String SUMMARY_COMPANIONS =
         "classified 28 (on-disk @expected: companion 28), passed 28, "
             + "failed 0";

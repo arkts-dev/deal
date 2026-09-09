@@ -87,11 +87,13 @@ public class DifferentialGateLanesCorpusTest {
     /** The harness-owned deadline of the full run (G7). */
     private static final Duration FULL_RUN_DEADLINE = Duration.ofSeconds(120);
 
-    /** The pinned corpus population (the T2/T3/T5 pins, unchanged; the
-     * frontend population counts the promoted FFI-manifest compile-error
-     * fixture — ISSUE-0477 dropped its known-fail marker). */
-    private static final int TOTAL_FIXTURES = 545;
-    private static final int RUNTIME_CASES = 301;
+    /** The pinned corpus population (the T2/T3/T5 pins; the frontend
+     * population counts the promoted FFI-manifest compile-error
+     * fixture — ISSUE-0477 dropped its known-fail marker; ISSUE-0547
+     * adds the two bytes-container runtime fixtures, so the runtime
+     * case population grows by two). */
+    private static final int TOTAL_FIXTURES = 547;
+    private static final int RUNTIME_CASES = 303;
     private static final int FRONTEND_COMPILED = 191;
     private static final int COMPILE_PINS = 4;
 
@@ -104,9 +106,9 @@ public class DifferentialGateLanesCorpusTest {
 
     /** The per-backend pass/fail counters of the full run. */
     private static final Map<String, int[]> PER_BACKEND = Map.of(
-        "luajit", new int[] {269, 32},
-        "jvm", new int[] {199, 102},
-        "js", new int[] {270, 31});
+        "luajit", new int[] {271, 32},
+        "jvm", new int[] {201, 102},
+        "js", new int[] {272, 31});
 
     /** The designated converged subset (task criterion (a)): every lane
      * of every fixture here passes byte-exact. */

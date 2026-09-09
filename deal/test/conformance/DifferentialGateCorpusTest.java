@@ -78,13 +78,20 @@ public class DifferentialGateCorpusTest {
      * {@code .d.deal} corpus module without a manifest entry raises the
      * checker's E2010 at the import span), so the promoted fixture
      * records {@code frontend OK (found E2010)} through the real
-     * pipeline, never a manufactured pin. */
-    private static final int TOTAL_FIXTURES = 545;
+     * pipeline, never a manufactured pin. ISSUE-0547 (the ISSUE-0160
+ * container step) adds the two bytes-container fixtures
+ * {@code backend-runtime/bytes/bytes-array-container-ops.deal} and
+ * {@code backend-runtime/bytes/bytes-nested-arrays.deal} with their
+ * three-backend runtime-ok sidecars in the same change: total
+ * 545 -> 547, backend-runtime 335 -> 337, runtime-ok 218 -> 220;
+ * the runtime-error population (83), the known-fail population, and
+ * the compile pins (4) are unchanged. */
+    private static final int TOTAL_FIXTURES = 547;
     private static final int FRONTEND_FIXTURES = 210;
-    private static final int BACKEND_RUNTIME_FIXTURES = 335;
+    private static final int BACKEND_RUNTIME_FIXTURES = 337;
     private static final int COMPILE_OK = 64;
     private static final int COMPILE_ERROR = 131;
-    private static final int RUNTIME_OK = 218;
+    private static final int RUNTIME_OK = 220;
     private static final int RUNTIME_ERROR = 83;
     private static final int RUNTIME_ERROR_SIDECARS = 83;
     private static final int COMPANIONS = 49;

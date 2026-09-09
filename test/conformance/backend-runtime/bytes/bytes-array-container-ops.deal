@@ -1,0 +1,99 @@
+// @spec: Bytes — Byte indexing and buffer semantics
+// @description: The JVM bytes container layer (ISSUE-0160 step 2): bytes[] and (bytes | null)[] construct from literals, read and mutate buffers through the shared wrapper, append at i == length with identity-stable growth every alias observes, store and accept the DEAL null element in the OrNull form, and pin the plain-form past-end E8001 and the negative-index E8002 shapes (v1.2)
+// @expected: runtime-ok
+// @features: bytes, arrays, runtime, v1.2
+
+export function test_bytes_array_container_ops(): null {
+  // bytes[] literal construction: the elements flow through the E6
+  // bytes helpers at the T1 direct positions and the container holds
+  // wrapper references, never copies.
+  let xs: bytes[] = [bytes(1), bytes(2)];
+  if (xs.length !== 2) {
+    throw { code: "TEST_FAIL", message: "bytes[] literal length mismatch" };
+  }
+  if (xs[0].length !== 1 || xs[1].length !== 2) {
+    throw { code: "TEST_FAIL", message: "bytes[] element length mismatch" };
+  }
+  // Reads and mutation route through the shared wrapper: a write into
+  // an element buffer is visible through the container read.
+  xs[0][0] = 200;
+  if (xs[0][0] !== 200 || xs[1][0] !== 0) {
+    throw { code: "TEST_FAIL", message: "bytes[] element mutation mismatch" };
+  }
+  // Append at i == length grows the wrapper storage in place: every
+  // alias observes the appended element and later writes through it.
+  let alias: bytes[] = xs;
+  xs[xs.length] = bytes(3);
+  if (xs.length !== 3 || alias.length !== 3) {
+    throw { code: "TEST_FAIL", message: "bytes[] append-growth length mismatch" };
+  }
+  if (xs[2] !== alias[2]) {
+    throw { code: "TEST_FAIL", message: "bytes[] append must share the stored reference" };
+  }
+  alias[2][0] = 77;
+  if (xs[2][0] !== 77) {
+    throw { code: "TEST_FAIL", message: "bytes[] alias must observe the write" };
+  }
+  // (bytes | null)[]: the OrNull element policy stores and accepts the
+  // DEAL null element, keeps real buffer references, and yields the
+  // DEAL null past the end (a valid nullable element — no E8001).
+  let ys: (bytes | null)[] = [];
+  ys[0] = null;
+  ys[1] = bytes(2);
+  let first: bytes | null = ys[0];
+  if (first !== null) {
+    throw { code: "TEST_FAIL", message: "(bytes | null)[] must accept the null element" };
+  }
+  let second: bytes | null = ys[1];
+  if (second !== null) {
+    second[0] = 5;
+  } else {
+    throw { code: "TEST_FAIL", message: "(bytes | null)[] value element lost" };
+  }
+  let checkBack: bytes | null = ys[1];
+  if (checkBack !== null) {
+    if (checkBack[0] !== 5) {
+      throw { code: "TEST_FAIL", message: "(bytes | null)[] element reference mismatch" };
+    }
+  } else {
+    throw { code: "TEST_FAIL", message: "(bytes | null)[] value element lost on re-read" };
+  }
+  let past: bytes | null = ys[9];
+  if (past !== null) {
+    throw { code: "TEST_FAIL", message: "(bytes | null)[] past-end read must yield the DEAL null" };
+  }
+  // The plain-form element policy rejects the past-end null at the
+  // typed bytes target with E8001 (LuaJIT's check_type("bytes", nil)
+  // boundary failure shape).
+  try {
+    let z: bytes = xs[9];
+    throw { code: "TEST_FAIL", message: "expected E8001 before completing" };
+  } catch (e) {
+    if (e.code !== "E8001") {
+      throw { code: "TEST_FAIL", message: "expected E8001, got " + e.code };
+    }
+  }
+  // A negative index raises E8002 in both element forms (LuaJIT emits
+  // the negative-index check unconditionally at the read).
+  try {
+    let z: bytes = xs[-1];
+    throw { code: "TEST_FAIL", message: "expected E8002 before completing" };
+  } catch (e) {
+    if (e.code !== "E8002") {
+      throw { code: "TEST_FAIL", message: "expected E8002, got " + e.code };
+    }
+  }
+  try {
+    let z: bytes | null = ys[-1];
+    throw { code: "TEST_FAIL", message: "expected E8002 before completing" };
+  } catch (e) {
+    if (e.code !== "E8002") {
+      throw { code: "TEST_FAIL", message: "expected E8002, got " + e.code };
+    }
+  }
+  return null;
+}
+
+export function main(): null {
+  return null;
+}

@@ -323,6 +323,93 @@
       "backends": [
         "jvm"
       ]
+    },
+    {
+      "name": "jvm-bytes-array-append-alias-parity",
+      "description": "ISSUE-0547 container parity: bytes[] appends at i == length with identity-stable growth every alias observes — the alias reads the appended buffer and its later write lands through the shared reference (cross-backend with luajit)",
+      "source": "import * as console from \"std/console\"\nexport function test(): null {\n  let xs: bytes[] = [bytes(1), bytes(2)];\n  xs[0][0] = 200;\n  let alias: bytes[] = xs;\n  xs[xs.length] = bytes(3);\n  alias[2][0] = 77;\n  if (xs.length === 3 && alias.length === 3 && xs[0][0] === 200 && xs[2][0] === 77) {\n    console.log(\"container-ok\");\n  }\n}\n",
+      "expectedOutput": "container-ok",
+      "expectedError": null,
+      "expectedExitCode": null,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm",
+        "luajit"
+      ]
+    },
+    {
+      "name": "jvm-bytes-or-null-array-policy-parity",
+      "description": "ISSUE-0547 container parity: (bytes | null)[] stores and accepts the DEAL null element, keeps real buffer references, and yields the DEAL null past the end (cross-backend with luajit)",
+      "source": "import * as console from \"std/console\"\nexport function test(): null {\n  let ys: (bytes | null)[] = [];\n  ys[0] = null;\n  ys[1] = bytes(2);\n  let first: bytes | null = ys[0];\n  let past: bytes | null = ys[9];\n  if (first === null && past === null) {\n    console.log(\"or-null-ok\");\n  }\n}\n",
+      "expectedOutput": "or-null-ok",
+      "expectedError": null,
+      "expectedExitCode": null,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm",
+        "luajit"
+      ]
+    },
+    {
+      "name": "jvm-bytes-nested-array-parity",
+      "description": "ISSUE-0547 container parity: bytes[][] depth mutation plus append growth inside a nested array with alias visibility at the outer level (cross-backend with luajit)",
+      "source": "import * as console from \"std/console\"\nexport function test(): null {\n  let m: bytes[][] = [[bytes(1)], [bytes(2)]];\n  m[0][0][0] = 9;\n  let alias: bytes[][] = m;\n  m[0][m[0].length] = bytes(3);\n  alias[0][1][0] = 44;\n  if (m[0][0][0] === 9 && m[0][1][0] === 44 && alias[0].length === 2) {\n    console.log(\"nested-ok\");\n  }\n}\n",
+      "expectedOutput": "nested-ok",
+      "expectedError": null,
+      "expectedExitCode": null,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm",
+        "luajit"
+      ]
+    },
+    {
+      "name": "jvm-bytes-array-past-end-read-e8001",
+      "description": "ISSUE-0547 container pin: a bytes[] read past the end at a typed bytes target raises E8001 (the plain-form element policy rejects the past-end null; the JVM read raises the boundary failure directly)",
+      "source": "export function test(): null {\n  let xs: bytes[] = [bytes(1)];\n  let z: bytes = xs[9];\n  return null;\n}\n",
+      "expectedOutput": null,
+      "expectedError": "E8001",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-bytes-array-negative-index-e8002",
+      "description": "ISSUE-0547 container pin: a negative bytes[] read index raises E8002 (LuaJIT emits the negative-index check unconditionally at the read)",
+      "source": "export function test(): null {\n  let xs: bytes[] = [bytes(1)];\n  let z: bytes = xs[-1];\n  return null;\n}\n",
+      "expectedOutput": null,
+      "expectedError": "E8002",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-bytes-array-append-growth",
+      "description": "ISSUE-0547 container pin: consecutive appends at i == length grow the wrapper storage in place (length 0 -> 1 -> 2) with stable wrapper identity",
+      "source": "export function test(): int {\n  let xs: bytes[] = [];\n  xs[xs.length] = bytes(2);\n  xs[xs.length] = bytes(3);\n  return xs.length;\n}\n",
+      "expectedOutput": "2",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
     }
   ]
 }

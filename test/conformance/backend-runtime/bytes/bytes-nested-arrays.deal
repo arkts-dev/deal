@@ -1,0 +1,105 @@
+// @spec: Bytes — Byte indexing and buffer semantics
+// @description: Nested bytes closure (ISSUE-0160 container step): bytes[][] reads and writes at depth through the shared nested-array carriers, append growth with alias visibility at the outer level, the bytes[] | null outer null and value, the ((bytes | null)[])[] deep composition with null and real innermost elements, and the nested past-end E8001 / negative-index E8002 shapes (v1.2)
+// @expected: runtime-ok
+// @features: bytes, arrays, nullable, runtime, v1.2
+
+export function test_bytes_nested_arrays(): null {
+  // bytes[][] construction and depth reads/writes: every element
+  // crosses the per-element-shape nested carriers with the bytes
+  // wrapper reference preserved.
+  let m: bytes[][] = [[bytes(1)], [bytes(2)]];
+  if (m.length !== 2 || m[0].length !== 1 || m[1].length !== 1) {
+    throw { code: "TEST_FAIL", message: "bytes[][] literal shape mismatch" };
+  }
+  m[0][0][0] = 9;
+  m[1][0][0] = 8;
+  if (m[0][0][0] !== 9 || m[1][0][0] !== 8) {
+    throw { code: "TEST_FAIL", message: "bytes[][] depth mutation mismatch" };
+  }
+  // Append inside a nested array: the outer wrapper identity is stable
+  // and every alias observes the grown element plus later writes.
+  let alias: bytes[][] = m;
+  m[0][m[0].length] = bytes(3);
+  if (m[0].length !== 2 || alias[0].length !== 2) {
+    throw { code: "TEST_FAIL", message: "bytes[][] append-growth length mismatch" };
+  }
+  alias[0][1][0] = 44;
+  if (m[0][1][0] !== 44) {
+    throw { code: "TEST_FAIL", message: "bytes[][] alias must observe the write" };
+  }
+  // bytes[] | null: the outer null is the DEAL null and a real array
+  // assignment flows through the same wrapper reference.
+  let outer: bytes[] | null = null;
+  if (outer !== null) {
+    throw { code: "TEST_FAIL", message: "bytes[] | null outer null mismatch" };
+  }
+  outer = m[0];
+  if (outer !== null) {
+    if (outer.length !== 2) {
+      throw { code: "TEST_FAIL", message: "bytes[] | null value length mismatch" };
+    }
+    if (outer[0][0] !== 9) {
+      throw { code: "TEST_FAIL", message: "bytes[] | null value reference mismatch" };
+    }
+  } else {
+    throw { code: "TEST_FAIL", message: "bytes[] | null assignment lost" };
+  }
+  // (((bytes | null)[])[])[] — three array levels over the nullable
+  // bytes element (the [[[?bytes]]] canonical-descriptor composition):
+  // null and real innermost elements, append under the OrNull policy,
+  // and depth mutation through the reference.
+  let bottom: (bytes | null)[] = [];
+  bottom[0] = null;
+  let middle: ((bytes | null)[])[] = [bottom];
+  let deep: (((bytes | null)[])[])[] = [middle];
+  let innermost: bytes | null = deep[0][0][0];
+  if (innermost !== null) {
+    throw { code: "TEST_FAIL", message: "deep composition innermost null mismatch" };
+  }
+  deep[0][0][deep[0][0].length] = null;
+  if (deep[0][0].length !== 2) {
+    throw { code: "TEST_FAIL", message: "deep composition null append length mismatch" };
+  }
+  deep[0][0][deep[0][0].length] = bytes(2);
+  if (deep[0][0].length !== 3) {
+    throw { code: "TEST_FAIL", message: "deep composition value append length mismatch" };
+  }
+  let tail: bytes | null = deep[0][0][2];
+  if (tail !== null) {
+    tail[0] = 5;
+  } else {
+    throw { code: "TEST_FAIL", message: "deep composition real element lost" };
+  }
+  let again: bytes | null = deep[0][0][2];
+  if (again !== null) {
+    if (again[0] !== 5) {
+      throw { code: "TEST_FAIL", message: "deep composition depth mutation mismatch" };
+    }
+  } else {
+    throw { code: "TEST_FAIL", message: "deep composition value element lost" };
+  }
+  // Nested past-end read: the null the outer read yields is rejected
+  // by the bytes[] element-typed boundary with E8001.
+  try {
+    let bad: bytes[] = m[9];
+    throw { code: "TEST_FAIL", message: "expected E8001 before completing" };
+  } catch (e) {
+    if (e.code !== "E8001") {
+      throw { code: "TEST_FAIL", message: "expected E8001, got " + e.code };
+    }
+  }
+  // Nested negative index raises E8002 at the read.
+  try {
+    let bad: bytes[] = m[-1];
+    throw { code: "TEST_FAIL", message: "expected E8002 before completing" };
+  } catch (e) {
+    if (e.code !== "E8002") {
+      throw { code: "TEST_FAIL", message: "expected E8002, got " + e.code };
+    }
+  }
+  return null;
+}
+
+export function main(): null {
+  return null;
+}

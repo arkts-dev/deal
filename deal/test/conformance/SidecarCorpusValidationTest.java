@@ -175,9 +175,14 @@ public class SidecarCorpusValidationTest {
      * shared time fixture
      * {@code stdlib-edge/time-now-millis-positive.deal} to its canonical
      * {@code runtime-error E8004} header, moving it out of this
-     * population: 219 -> 218. */
+     * population: 219 -> 218. ISSUE-0547 (the ISSUE-0160 container
+     * step) adds the two bytes-container fixtures —
+     * {@code backend-runtime/bytes/bytes-array-container-ops.deal} and
+     * {@code backend-runtime/bytes/bytes-nested-arrays.deal} — with
+     * their three-backend runtime-ok sidecars in the same change:
+     * 218 -> 220. */
 
-    private static final int RUNTIME_OK_COUNT = 218;
+    private static final int RUNTIME_OK_COUNT = 220;
 
     /**
      * The exact runtime-error population (ISSUE-0350 completeness, plus
