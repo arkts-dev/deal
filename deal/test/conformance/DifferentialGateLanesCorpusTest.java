@@ -33,7 +33,8 @@ import java.util.Set;
  *       {@code error-handling/try-catch.deal} plus two more converged
  *       cases) passes byte-exact on all three lanes;</li>
  *   <li>the failure set is exactly the tracked non-fatal set (the
- *       45 JVM registry entries) plus the enumerated differential
+ *       53 JVM registry entries, including the eight ISSUE-0504
+ *       host-boundary E8011 carrier mismatches) plus the enumerated differential
  *       failures — every one naming fixture,
  *       backend, and the closed mismatch class with the first differing
  *       byte/field detail;</li>
@@ -95,9 +96,11 @@ public class DifferentialGateLanesCorpusTest {
      * gap bytes-boundary-order included, its retained-known-fail
      * marker forced off by the zero-skip promotion gate after
      * ISSUE-0158 lifted the E3019 bytes-equality gate — +10
-     * runtime-error, +1 companion). */
-    private static final int TOTAL_FIXTURES = 588;
-    private static final int RUNTIME_CASES = 343;
+     * runtime-error, +1 companion; ISSUE-0504 lands the eight
+     * host-boundary runtime-ok fixtures with their uniform three-backend
+     * sidecars). */
+    private static final int TOTAL_FIXTURES = 596;
+    private static final int RUNTIME_CASES = 351;
     private static final int FRONTEND_COMPILED = 191;
     private static final int COMPILE_PINS = 4;
 
@@ -107,15 +110,16 @@ public class DifferentialGateLanesCorpusTest {
      * and lands promoted as runtime-ok, contributing no known-fail
      * counter and no differential triples — and the JVM bytes core
      * lane promoted the nine bytes registry entries, so the registry
-     * count is the canonical 39 plus the six ISSUE-0502 additions). */
+     * count is the canonical 39 plus the six ISSUE-0502 additions
+     * plus the eight ISSUE-0504 host-boundary additions). */
     private static final int KNOWN_FAILURES_TRACKED = 0;
-    private static final int SKIP_REGISTRY_ENTRIES = 45;
+    private static final int SKIP_REGISTRY_ENTRIES = 53;
 
     /** The per-backend pass/fail counters of the full run. */
     private static final Map<String, int[]> PER_BACKEND = Map.of(
-        "luajit", new int[] {311, 32},
-        "jvm", new int[] {230, 113},
-        "js", new int[] {313, 30});
+        "luajit", new int[] {319, 32},
+        "jvm", new int[] {230, 121},
+        "js", new int[] {321, 30});
 
     /** The designated converged subset (task criterion (a)): every lane
      * of every fixture here passes byte-exact. */
@@ -144,6 +148,14 @@ public class DifferentialGateLanesCorpusTest {
         "backend-runtime/host-abi/host-array-return-ok.deal",
         "backend-runtime/host-abi/host-async-shape-value.deal",
         "backend-runtime/host-abi/host-boundary-apply-function.deal",
+        "backend-runtime/host-abi/host-boundary-boolean-roundtrip.deal",
+        "backend-runtime/host-abi/host-boundary-int-minimum-param.deal",
+        "backend-runtime/host-abi/host-boundary-null-narrowing.deal",
+        "backend-runtime/host-abi/host-boundary-nullable-int-null-roundtrip.deal",
+        "backend-runtime/host-abi/host-boundary-nullable-int-value-roundtrip.deal",
+        "backend-runtime/host-abi/host-boundary-number-roundtrip.deal",
+        "backend-runtime/host-abi/host-boundary-repeat-call.deal",
+        "backend-runtime/host-abi/host-boundary-unicode-string-roundtrip.deal",
         "backend-runtime/host-abi/host-class-default-isolation.deal",
         "backend-runtime/host-abi/host-class-export.deal",
         "backend-runtime/host-abi/host-class-extra-field.deal",
