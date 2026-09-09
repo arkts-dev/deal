@@ -93,6 +93,27 @@ TEST_MAINS+=(
   'fg|=== Running Differential Gate Corpus Tests (ISSUE-0353) ===|java -ea -cp build deal.test.conformance.DifferentialGateCorpusTest'
 )
 
+# =========================================================================
+# ISSUE-0362 (release gates — v12-zero-skip-conformance-gate G8): the
+# three-lane differential gate joins the coverage mirror exactly as in
+# run_tests.sh, so both release gates run the complete differential gate
+# unconditionally. The lanes corpus suite executes the real three-lane
+# gate over the real corpus (real luajit / javac+java / node
+# subprocesses through the production lanes); the gate core suite above
+# runs the backend-neutral discovery/classification/sidecar/pin half.
+# The lane subprocesses run outside the JaCoCo agent (no recording
+# surface), so the production coverage totals are unchanged.
+# =========================================================================
+TEST_SOURCES+=(
+  'deal/test/conformance/CorpusFrontendResolver.java'
+  'deal/test/conformance/JvmLane.java'
+  'deal/test/conformance/JsLane.java'
+  'deal/test/conformance/DifferentialGateLanesCorpusTest.java'
+)
+TEST_MAINS+=(
+  'fg|=== Running Differential Gate Lanes Corpus Tests (ISSUE-0357, release-gate mirror ISSUE-0362) ===|java -ea -cp build deal.test.conformance.DifferentialGateLanesCorpusTest'
+)
+
 JACOCO_DIR="/tmp/opencode/jacoco"
 JUNIT_CP="/usr/share/java/junit4.jar:/usr/share/java/hamcrest-core.jar"
 
@@ -175,8 +196,10 @@ main_step_name() {
   fi
 }
 
-# Step name for a guarded luajit/node suite invocation line, mapped by
-# the invoked fixture file (bounded-step-table-and-library D4).
+# Step name for a luajit/node tool suite invocation line, mapped by
+# the invoked fixture file (bounded-step-table-and-library D4). The
+# suites run unconditionally (ISSUE-0362); the step name is the strict
+# step-library table key, not a guard.
 tool_line_step() {
   # shellcheck disable=SC2124
   local file="${@: -1}"
@@ -411,33 +434,24 @@ for record in "${RUN_PHASE_MAINS[@]}"; do
       run_java "$(main_step_name "${record_args[@]}")" "${record_args[@]:4}"
       ;;
     luajit|node)
-      if command -v "$record_class" &> /dev/null; then
-        # Today's command lines run under the guard; the trailing
-        # WARNING: line is today's skip message, printed only when the
-        # tool is absent.
-        while IFS= read -r record_line; do
-          case "$record_line" in
-            WARNING:*) ;;
-            *)
-              read -r -a record_args <<< "$record_line"
-              run_step "$(tool_line_step "${record_args[@]}")" -- "${record_args[@]}"
-              ;;
-          esac
-        done <<< "$record_command"
-      else
-        # Strict mode (S2(a)): a missing guarded tool is a hard failure --
-        # TOOL_MISSING <tool> on stderr, no WARNING skip line, exit
-        # nonzero. Dev mode keeps the WARNING skip verbatim.
-        if [ -n "${DEAL_STRICT:-}" ]; then
-          echo "TOOL_MISSING $record_class" >&2
-          exit 1
-        fi
-        while IFS= read -r record_line; do
-          case "$record_line" in
-            WARNING:*) echo "$record_line" ;;
-          esac
-        done <<< "$record_command"
-      fi
+      # ISSUE-0362 (v12-zero-skip-conformance-gate G3/G8): the
+      # luajit/node suites run unconditionally — the removed
+      # `command -v` conditional branch is the issue's retired
+      # tool-absence skip. Tool absence now fails preflight P3
+      # (TOOL_MISSING <tool>) before any suite starts, and a missing
+      # tool reaching this point fails the run via `set -e` (exit 127),
+      # never a skip. The record's trailing WARNING: skip line is
+      # legacy manifest content and is never printed (the manifest
+      # stays untouched).
+      while IFS= read -r record_line; do
+        case "$record_line" in
+          WARNING:*) ;;
+          *)
+            read -r -a record_args <<< "$record_line"
+            run_step "$(tool_line_step "${record_args[@]}")" -- "${record_args[@]}"
+            ;;
+        esac
+      done <<< "$record_command"
       ;;
     golden-ir)
       GOLDEN_FILE="test/goldens/stdlib-declarations.ir.txt"
