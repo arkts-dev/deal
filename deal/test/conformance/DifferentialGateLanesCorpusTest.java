@@ -108,7 +108,7 @@ public class DifferentialGateLanesCorpusTest {
     private static final Map<String, int[]> PER_BACKEND = Map.of(
         "luajit", new int[] {271, 32},
         "jvm", new int[] {201, 102},
-        "js", new int[] {272, 31});
+        "js", new int[] {273, 30});
 
     /** The designated converged subset (task criterion (a)): every lane
      * of every fixture here passes byte-exact. */
@@ -168,7 +168,6 @@ public class DifferentialGateLanesCorpusTest {
      * mismatch class}. Anything outside this set or missing from it
      * fails the test (the failure set is exactly this enumeration). */
     private static final Set<String> DIFFERENTIAL_FAILURES = Set.of(
-        "backend-runtime/arithmetic/int32-mod-min-neg-one.deal | js | TRANSCRIPT_MISMATCH",
         "backend-runtime/arithmetic/int32-pow-infinity.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/arithmetic/int32-pow-overflow.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/arithmetic/int-add-overflow.deal | js | TRANSCRIPT_MISMATCH",
@@ -752,6 +751,31 @@ public class DifferentialGateLanesCorpusTest {
             check(timeJs.mismatch().isEmpty(),
                 "the time fixture's js leg carries no mismatch, got: "
                     + timeJs.mismatch());
+        }
+
+        // The shared int32 remainder fixture's js leg passes after
+        // the js-v12-int32-bytes lane closure (ISSUE-0324): the JS
+        // runtime's intMod carries the I4 int32 branch —
+        // MIN_VALUE % -1 computes the truncated remainder 0 — so
+        // the transcript matches the uniform runtime-ok sidecar
+        // byte-exact (the lane compiles the fixture under
+        // COMMON_SHADOW + DEAL_V1_2_INT32, A5).
+        GateDispatcher.CaseVerdict modVerdict = verdictOf(run,
+            "backend-runtime/arithmetic/int32-mod-min-neg-one.deal");
+        check(modVerdict != null,
+            "the int32 remainder fixture is dispatched, got: "
+                + modVerdict);
+        GateDispatcher.LaneOutcome modJs = modVerdict == null ? null
+            : modVerdict.outcomes().stream()
+                .filter(o -> "js".equals(o.backend())).findFirst()
+                .orElse(null);
+        check(modJs != null && modJs.passed(),
+            "the int32 remainder fixture's js leg passes byte-exact "
+                + "against the runtime-ok sidecar, got: " + modJs);
+        if (modJs != null && modJs.passed()) {
+            check(modJs.mismatch().isEmpty(),
+                "the int32 remainder fixture's js leg carries no "
+                    + "mismatch, got: " + modJs.mismatch());
         }
 
         // Representative first-difference spot pins (the gate's bounded

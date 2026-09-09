@@ -41,23 +41,21 @@ import java.util.List;
  *       {@code expectation(fixture) == landed std/time.js behavior}
  *       holds — js-v12-completion-architecture D5), the frontend and
  *       companion gates are green (6/6 and 28/28), and the exact
- *       failure set is the four owner-delegated lane divergences below —
+ *       failure set is the three owner-delegated lane divergences below —
  *       each pinned by the differential gate's committed full-run
  *       enumeration — with exit code 1 (the gate's own gates still fail
  *       on them; the sanctioned pre-completion state is visible, never
  *       greenwashed).</li>
  * </ul>
  *
- * <p>The four owner-delegated divergences (each outside this
+ * <p>The three owner-delegated divergences (each outside this
  * remediation's surface: {@code deal/runtime.js} stays byte-identical
  * under the resolution, and the JS lane contracts own them):
+ * {@code arithmetic/int32-mod-min-neg-one.deal} remainder divergence
+ * retired with the js-v12-int32-bytes lane closure (ISSUE-0324): the JS
+ * runtime's {@code intMod} carries the I4 int32 branch, so
+ * {@code MIN_VALUE % -1} computes 0 on the lane:
  * <ol>
- *   <li>{@code arithmetic/int32-mod-min-neg-one.deal} — the JS runtime's
- *       pinned {@code intMod} contract (js-v12-int32-bytes D1:
- *       {@code MIN_VALUE % -1} raises E8004 on JS) diverges from the
- *       shared fixture's spec-v1.2 remainder rule ({@code runtime-ok},
- *       landed with ISSUE-0397 I6; the LuaJIT runtime carries the I4
- *       int32 branch).</li>
  *   <li>{@code class-runtime-errors/dynamic-bad-class-array-element-e8001.deal}
  *       and {@code type-system/dynamic-array-element-e8003.deal} — the JS
  *       runtime's {@code checkArray} rejects a json-marked Map table with
@@ -93,11 +91,10 @@ public class JsLaneStatePinTest {
         "  [backend-runtime/stdlib-edge/time-now-millis-positive.deal] "
             + "OK (found DEAL_ERROR_CODE: E8004)";
 
-    /** The four owner-delegated lane divergences (the exact
+    /** The three owner-delegated lane divergences (the exact
      * {@code ] FAIL (} fixture-path multiset; each is pinned by the
      * differential gate's committed full-run enumeration). */
     private static final List<String> PINNED_FAIL_PATHS = List.of(
-        "backend-runtime/arithmetic/int32-mod-min-neg-one.deal",
         "backend-runtime/class-runtime-errors/dynamic-bad-class-array-element-e8001.deal",
         "backend-runtime/host-abi/host-class-extra-field.deal",
         "backend-runtime/type-system/dynamic-array-element-e8003.deal");
@@ -105,9 +102,9 @@ public class JsLaneStatePinTest {
     /** The gate's own failure lines — exactly these two, never more,
      * never fewer (the sanctioned pre-completion state). */
     private static final List<String> PINNED_GATE_FAILURES = List.of(
-        "GATE FAILURE: 4 applicable backend-runtime test(s) failed — "
+        "GATE FAILURE: 3 applicable backend-runtime test(s) failed — "
             + "zero applicable failures required",
-        "GATE FAILURE: node-executed pass rate 98.7% below the 100% "
+        "GATE FAILURE: node-executed pass rate 99.0% below the 100% "
             + "threshold (denominator 303)");
 
     private static final String SUMMARY_FRONTEND =
@@ -116,9 +113,9 @@ public class JsLaneStatePinTest {
     private static final String SUMMARY_RUNTIME =
         "Backend-runtime on Node: denominator 303 (every on-disk "
             + "runtime-ok/runtime-error test plus every known-fail "
-            + "probe), passed 299, failed 4, skipped 0 (no skip registry "
+            + "probe), passed 300, failed 3, skipped 0 (no skip registry "
             + "— zero skips by construction), known-fail 0 (tracked), "
-            + "node subprocess runs 303 — pass rate 98.7%";
+            + "node subprocess runs 303 — pass rate 99.0%";
     private static final String SUMMARY_COMPANIONS =
         "classified 28 (on-disk @expected: companion 28), passed 28, "
             + "failed 0";

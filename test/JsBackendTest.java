@@ -2597,13 +2597,14 @@ public class JsBackendTest {
             "MIN_VALUE / -1 → E8004 (the truncated quotient leaves the "
                 + "int32 range), exit 1: " + divOver.output());
 
-        NodeResult modOver = runDealNodeProfile(
+        NodeResult modMinNegOne = runDealNodeProfile(
             "export function test(): int { return -2147483648 % -1; }",
-            "int32-mod-over", SemanticProfile.DEAL_V1_2_INT32);
-        check(modOver.exitCode() == 1
-                && modOver.output().contains("DEAL_ERROR_CODE: E8004"),
-            "MIN_VALUE % -1 → E8004 (the reference's truncating-quotient "
-                + "gate), exit 1: " + modOver.output());
+            "int32-mod-min-neg-one", SemanticProfile.DEAL_V1_2_INT32);
+        check(modMinNegOne.exitCode() == 0
+                && modMinNegOne.output().equals("0"),
+            "MIN_VALUE % -1 → 0 (the v1.2 remainder rule gates the "
+                + "truncated remainder only — only / overflows on "
+                + "MIN_VALUE / -1), exit 0: " + modMinNegOne.output());
 
         NodeResult negOver = runDealNodeProfile(
             "export function test(): int { return -(-2147483648); }",

@@ -1462,19 +1462,27 @@ const $rt = {
     return $rt.checkInt($Math.trunc(a / b), file, line, column);
   },
 
-  // intMod: E8005 on a zero divisor first, then the reference's
-  // truncating-quotient gate (deal/runtime.lua:497-501): MIN_VALUE % -1
-  // raises E8004 because the truncated quotient (2147483648) leaves the
-  // int32 range, even though the mathematical remainder (0) is
-  // representable. The gate never fires under LEGACY_SAFE_INT: |q| ≤ |a|
-  // for every nonzero integer divisor, so a checked operand keeps q
-  // inside the profile range. The remainder a - q * b then passes
-  // through checkInt.
+  // intMod: E8005 on a zero divisor first, then the remainder rule
+  // (deal/runtime.lua:301-327): under $int32 the truncated remainder
+  // alone is gated (spec v1.2 remainder rule — only / overflows on
+  // MIN_VALUE / -1), so -2147483648 % -1 computes 0 (signed-int32
+  // foundation I4; SharedValueSemantics.int32Mod agrees). The legacy
+  // branch (the byte-identical landed ISSUE-0321 behavior) gates the
+  // truncating quotient first: MIN_VALUE % -1 raises E8004 because the
+  // truncated quotient (2147483648) leaves the int32 range, even
+  // though the mathematical remainder (0) is representable. The
+  // quotient gate never fires under LEGACY_SAFE_INT: |q| ≤ |a| for
+  // every nonzero integer divisor, so a checked operand keeps q inside
+  // the profile range. The remainder a - q * b then passes through
+  // checkInt.
   intMod: function $intMod(a, b, file, line, column) {
     if (b === 0) {
       $rt.fail("E8005", "integer division by zero", file, line, column);
     }
     const $q = $Math.trunc(a / b);
+    if ($int32) {
+      return $rt.checkInt(a - $q * b, file, line, column);
+    }
     $rt.checkInt($q, file, line, column);
     return $rt.checkInt(a - $q * b, file, line, column);
   },
