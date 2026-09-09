@@ -165,12 +165,16 @@ import java.util.concurrent.atomic.AtomicInteger;
  *       were removed with their promotions (the A5 seam promotions and
  *       the ISSUE-0397 I6 int32-math-abs-min absInt long-magnitude
  *       arm); the gap keeps no entries.</li>
- *   <li><b>JVM-GAP-BYTES</b> (1 entry) — the bytes runtime lane
- *       landed with ISSUE-0158 (zero-fill allocation, E8012/E8013,
- *       single-evaluation writes, class fields all pass on JVM); the
- *       one remaining fixture pins the recursive bytes-bearing
- *       array/nullable/function wrapper closure, which stays E6000
- *       until ISSUE-0160.</li>
+ *   <li><b>JVM-GAP-BYTES</b> (1 entry) — the direct typed-position
+ *       bytes boundary is closed (ISSUE-0160 step 1, implemented by
+ *       the ISSUE-0158 carrier mapping): locals, parameters, returns,
+ *       and class-field storage map to the shared {@code $DealRt.Bytes}
+ *       reference, bytes defaults evaluate once per construction, and
+ *       the nine direct bytes fixtures promoted through the real
+ *       pipeline; the one remaining fixture pins the recursive
+ *       bytes-bearing array/nullable/function wrapper closure, which
+ *       stays E6000 until the later ISSUE-0160 container/function
+ *       steps land.</li>
  * </ul>
  *
  * <h2>Gates</h2>
@@ -305,22 +309,30 @@ public class JvmConformanceTest {
         // reaches the int32 checkInt gate and raises E8004
         // (int32-math-abs-min pins the promoted case on both retained
         // routes), and the stale skip was removed.
-        // ---- JVM-GAP-BYTES: the bytes runtime lane (ISSUE-0158) ----
-        // The direct bytes lane landed with ISSUE-0158: bytes(n)
-        // allocation (zero-filled byte[]), b.length, unsigned reads,
-        // E8012 index bounds, E8013 value range, single-evaluation
-        // writes, reference aliasing, and bytes-typed class fields all
-        // pass the real pipeline — their skip entries became stale and
-        // the stale-skip gate forced them out with the promotion.
+        // ---- JVM-GAP-BYTES: the direct typed-position bytes boundary ----
+        // Direct typed positions are closed at the ISSUE-0160 step-1
+        // boundary (the ISSUE-0158 carrier mapping): locals,
+        // parameters, returns, and class-field storage emit the shared
+        // $DealRt.Bytes reference (javaLocalType/nullableJavaType and
+        // the required/optional field gates), bytes(n) class defaults
+        // evaluate once per construction through the default
+        // machinery, and the nine direct bytes fixtures — buffer ops,
+        // E8012 bounds, E8013 range, length, single-evaluation and
+        // validation-after-RHS write order, class-field isolation, and
+        // the two source-location pins — pass the real pipeline; their
+        // skip entries became stale and the stale-skip gate forced
+        // them out with the promotion.
         // The one remaining fixture pins the RECURSIVE bytes-bearing
         // container/function closure (bytes[] / ?bytes /
         // (bytes)->bytes array+function carriers), which the shared
-        // wrapper machinery rejects with E6000 until ISSUE-0160 lands.
+        // wrapper machinery rejects with E6000 until the later
+        // ISSUE-0160 container/function steps land.
         skip("backend-runtime/bytes/bytes-descriptor-boundary.deal",
             "canonical [bytes]/?(bytes)/(bytes)->bytes descriptors "
                 + "require the recursive bytes-bearing array/nullable/"
-                + "function wrapper carriers (ISSUE-0160); JvmBackend "
-                + "raises E6000 at those sites.", "JVM-GAP-BYTES");
+                + "function wrapper carriers (the ISSUE-0160 container/"
+                + "function steps); JvmBackend raises E6000 at those "
+                + "sites.", "JVM-GAP-BYTES");
 
         // ---- JVM-GAP-JSONABLE-RESIDUAL: residual @jsonable JVM defects ----
         // The two error-typed member-access/NEQ entries retired with
@@ -481,12 +493,16 @@ public class JvmConformanceTest {
             + "shapes — host class exports, array/function-typed "
             + "parameters and returns (E6000), the Lua pre-wrapped "
             + "export form",
-        "JVM-GAP-BYTES", "bytes runtime lane — the direct bytes "
-            + "surface (allocation, length, indexing, mutation, class "
-            + "fields) landed with ISSUE-0158; the remaining fixture "
+        "JVM-GAP-BYTES", "bytes runtime lane — direct typed "
+            + "positions (locals, parameters, returns, class-field "
+            + "storage and bytes defaults) map to the shared "
+            + "$DealRt.Bytes reference and the nine direct bytes "
+            + "fixtures promoted (ISSUE-0158 implementation; "
+            + "ISSUE-0160 step-1 boundary); the remaining fixture "
             + "pins the recursive bytes-bearing array/nullable/"
             + "function wrapper closure (bytes[] / ?bytes / "
-            + "(bytes)->bytes), which stays E6000 until ISSUE-0160",
+            + "(bytes)->bytes), which stays E6000 until the later "
+            + "ISSUE-0160 container/function steps",
         "JVM-GAP-DEFAULTS-PLANS", "v1.2 default-plan lane — imported "
             + "non-literal defaults evaluate in the declaring module's "
             + "scope under LuaJIT (E6000 on the JVM imported-class "
