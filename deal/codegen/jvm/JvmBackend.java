@@ -5,6 +5,7 @@ import deal.ast.ArrayType;
 import deal.ast.FunctionType;
 import deal.ast.NullableType;
 import deal.checker.CheckResult;
+import deal.descriptors.CanonicalRuntimeTypeDescriptor;
 import deal.checker.Symbol;
 import deal.checker.SymbolTable;
 import deal.identity.CanonicalClassIdentity;
@@ -693,6 +694,22 @@ public final class JvmBackend {
     private static final CanonicalClassIdentityIndex STATIC_DESCRIPTOR_INDEX =
         ModuleIdentityResolver.buildIndex(Map.of(
             "", CanonicalModuleIdentity.BuiltinModule.INSTANCE));
+
+
+    /**
+     * The one canonical descriptor service behind the public static
+     * {@link #typeDescriptor(Type)} surface
+     * (descriptor-identity-propagation D2): the static emitter
+     * delegates to {@link CanonicalRuntimeTypeDescriptor#encode(Type)} —
+     * the compilation's one Type→text producer — over the
+     * identity-carrier projection index above.  The per-producer
+     * switch (including its {@code Type.Error} arm) is retired with
+     * it: the sentinel has no descriptor and {@code encode} fails
+     * closed for it (the pinned internal invariant violation — never
+     * emitted, never an artifact).
+     */
+    private static final CanonicalRuntimeTypeDescriptor STATIC_DESCRIPTORS =
+        new CanonicalRuntimeTypeDescriptor(STATIC_DESCRIPTOR_INDEX);
 
     /** The standalone single-module identity surface of the legacy
      * generate overloads: both the module path and the source path
@@ -4958,8 +4975,132 @@ public final class JvmBackend {
         emitLine("    }");
         emitLine("    return false;");
         emitLine("}");
+        emitLine("// Canonical-grammar validation (the generated RuntimeTypeMatcher realization): the");
+        emitLine("// strict grammar is checked BEFORE any branch, so parse-rejected spellings (?null,");
+        emitLine("// ?[], ?, ?int[], T[], T|null, bare names, rest sigs, dotted class-name text) raise");
+        emitLine("// E8001 even when the carrier is null — canonical parsing precedes the legacy '?'");
+        emitLine("// shortcut. The validator mirrors the compiler's strict parser: primitive keywords,");
+        emitLine("// [D]/?D (nested nullable and ?null rejected), exact sync/async function forms, and");
+        emitLine("// class atoms whose final component is identifier-shaped with at least one '/' (dots");
+        emitLine("// are legal in non-final components: @$external/host.cfg/ServerConfig parses,");
+        emitLine("// @src.models.User does not).");
+        emitLine("static boolean __canonical(java.lang.String d) {");
+        emitLine("    int[] p = new int[]{0};");
+        emitLine("    return __canonicalAt(p, d) && p[0] == d.length();");
+        emitLine("}");
+        emitLine("static boolean __canonicalAt(int[] p, java.lang.String d) {");
+        emitLine("    if (p[0] >= d.length()) return false;");
+        emitLine("    char c = d.charAt(p[0]);");
+        emitLine("    if (c == '[') {");
+        emitLine("        p[0]++;");
+        emitLine("        if (!__canonicalAt(p, d)) return false;");
+        emitLine("        if (p[0] >= d.length() || d.charAt(p[0]) != ']') return false;");
+        emitLine("        p[0]++;");
+        emitLine("        return true;");
+        emitLine("    }");
+        emitLine("    if (c == '?') {");
+        emitLine("        p[0]++;");
+        emitLine("        int inner = p[0];");
+        emitLine("        if (!__canonicalAt(p, d)) return false;");
+        emitLine("        if (inner < d.length() && d.charAt(inner) == '?') return false;");
+        emitLine("        if (d.startsWith(\"null\", inner) && (inner + 4 == d.length() || d.charAt(inner + 4) == ']' || d.charAt(inner + 4) == ')' || d.charAt(inner + 4) == ',')) return false;");
+        emitLine("        return true;");
+        emitLine("    }");
+        emitLine("    if (c == '(') return __canonicalFunction(p, d);");
+        emitLine("    if (c == '@') {");
+        emitLine("        p[0]++;");
+        emitLine("        boolean sep = false;");
+        emitLine("        boolean done = false;");
+        emitLine("        while (!done) {");
+        emitLine("            int start = p[0];");
+        emitLine("            while (p[0] < d.length() && !done) {");
+        emitLine("                char b = d.charAt(p[0]);");
+        emitLine("                if (java.lang.Character.isHighSurrogate(b)) {");
+        emitLine("                    if (p[0] + 1 >= d.length()) {");
+        emitLine("                        return false; // a lone high surrogate is not a decoded Unicode scalar");
+        emitLine("                    }");
+        emitLine("                    if (!java.lang.Character.isLowSurrogate(d.charAt(p[0] + 1))) {");
+        emitLine("                        return false;");
+        emitLine("                    }");
+        emitLine("                    p[0] += 2; // one legal astral-plane scalar (a surrogate pair)");
+        emitLine("                } else if (b == ']' || b == ')' || b == ',' || b == '/' || !__componentChar(b)) {");
+        emitLine("                    done = true;");
+        emitLine("                } else if (b == '-' && p[0] + 1 < d.length() && d.charAt(p[0] + 1) == '>') {");
+        emitLine("                    return false;");
+        emitLine("                } else {");
+        emitLine("                    p[0]++;");
+        emitLine("                }");
+        emitLine("            }");
+        emitLine("            if (p[0] == start) return false;");
+        emitLine("            java.lang.String comp = d.substring(start, p[0]);");
+        emitLine("            if (comp.equals(\".\") || comp.equals(\"..\")) return false;");
+        emitLine("            if (p[0] < d.length() && d.charAt(p[0]) == '/') { sep = true; p[0]++; done = false; }");
+        emitLine("            else { return sep && __identifierShape(comp); }");
+        emitLine("        }");
+        emitLine("        return false;");
+        emitLine("    }");
+        emitLine("    if (d.startsWith(\"async\", p[0])) {");
+        emitLine("        int end = p[0] + 5;");
+        emitLine("        if (end < d.length() && __identifierPart(d.charAt(end))) return false;");
+        emitLine("        if (end >= d.length() || d.charAt(end) != '(') return false;");
+        emitLine("        p[0] = end;");
+        emitLine("        return __canonicalFunction(p, d);");
+        emitLine("    }");
+        emitLine("    java.lang.String[] kws = {\"null\", \"boolean\", \"int\", \"number\", \"string\", \"bytes\", \"table\"};");
+        emitLine("    for (java.lang.String kw : kws) {");
+        emitLine("        if (d.startsWith(kw, p[0])) { p[0] += kw.length(); return true; }");
+        emitLine("    }");
+        emitLine("    return false;");
+        emitLine("}");
+        emitLine("static boolean __canonicalFunction(int[] p, java.lang.String d) {");
+        emitLine("    p[0]++;");
+        emitLine("    if (p[0] < d.length() && d.charAt(p[0]) != ')') {");
+        emitLine("        boolean more = true;");
+        emitLine("        while (more) {");
+        emitLine("            if (!__canonicalAt(p, d)) return false;");
+        emitLine("            if (p[0] >= d.length()) return false;");
+        emitLine("            char b = d.charAt(p[0]);");
+        emitLine("            if (b == ',') { p[0]++; }");
+        emitLine("            else if (b == ')') { more = false; }");
+        emitLine("            else { return false; }");
+        emitLine("        }");
+        emitLine("    }");
+        emitLine("    if (p[0] >= d.length()) return false;");
+        emitLine("    p[0]++;");
+        emitLine("    if (p[0] + 1 >= d.length() || d.charAt(p[0]) != '-' || d.charAt(p[0] + 1) != '>') return false;");
+        emitLine("    p[0] += 2;");
+        emitLine("    return __canonicalAt(p, d);");
+        emitLine("}");
+        emitLine("static boolean __identifierPart(char c) {");
+        emitLine("    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_';");
+        emitLine("}");
+        emitLine("static boolean __identifierShape(java.lang.String comp) {");
+        emitLine("    if (comp.isEmpty()) return false;");
+        emitLine("    char f = comp.charAt(0);");
+        emitLine("    if (!((f >= 'A' && f <= 'Z') || (f >= 'a' && f <= 'z') || f == '_')) return false;");
+        emitLine("    for (int i = 1; i < comp.length(); i++) {");
+        emitLine("        if (!__identifierPart(comp.charAt(i))) return false;");
+        emitLine("    }");
+        emitLine("    return true;");
+        emitLine("}");
+        emitLine("// The pinned component alphabet, mirroring the compiler-side");
+        emitLine("// CanonicalRuntimeTypeDescriptor.forbiddenInComponent: U+0020 and the");
+        emitLine("// rest of the pinned White_Space property reject; a valid surrogate");
+        emitLine("// pair is consumed as one legal astral-plane scalar in the '@' branch");
+        emitLine("// before this check, so only a LONE surrogate code unit fails here.");
+        emitLine("static boolean __componentChar(char c) {");
+        emitLine("    if (c <= 0x20 || c == 0x7F) return false;");
+        emitLine("    switch (c) {");
+        emitLine("        case '@', '[', ']', '?', '(', ')', ',': return false;");
+        emitLine("    }");
+        emitLine("    if (c == 0x85 || c == 0xA0 || c == 0x1680 || c == 0x2028 || c == 0x2029 || c == 0x202F || c == 0x205F || c == 0x3000) return false;");
+        emitLine("    if (c >= 0x2000 && c <= 0x200A) return false;");
+        emitLine("    if (c >= 0xD800 && c <= 0xDFFF) return false;");
+        emitLine("    return true;");
+        emitLine("}");
         emitLine("static java.lang.Object $check(java.lang.String descriptor, java.lang.Object v) {");
         indent++;
+        emitLine("if (!__canonical(descriptor)) throw new DealError(\"E8001\", \"internal: cannot parse type descriptor: \" + descriptor);");
         emitLine("if (descriptor.startsWith(\"?\")) {");
         indent++;
         emitLine("if (v == null) return null;");
@@ -5984,44 +6125,31 @@ public final class JvmBackend {
 
     /**
      * The ONE JVM type-descriptor emitter (ISSUE-0110, ISSUE-0301
-     * descriptor seam): every {@link Type}&rarr;text production in the
-     * backend uses this single public static emitter — the canonical
-     * runtime-descriptor grammar ({@code [D]} arrays, {@code ?D}
-     * nullables, {@code bytes}, exact {@code async? (...) -> D}
-     * functions) with class atoms projected byte-for-byte from the
-     * carried canonical identity through the static identity index
+     * descriptor seam; descriptor-identity-propagation D2): every
+     * {@link Type}&rarr;text production in the backend uses this single
+     * public static emitter, which delegates to the one
+     * {@link CanonicalRuntimeTypeDescriptor#encode(Type)} service over
+     * the identity-carrier projection index (the static
+     * STATIC_DESCRIPTOR_INDEX — descriptorTextFor projects from the
+     * identity carriers, so one empty-classification index serves every
+     * identity) — the canonical runtime-descriptor grammar ({@code [D]}
+     * arrays, {@code ?D} nullables, {@code bytes}, exact
+     * {@code async? (...) -> D} functions) with class atoms projected
+     * byte-for-byte from the carried canonical identity
      * ({@code @$builtin/Error}, {@code @<configuredRootText>/...},
      * {@code @$external/<specifier>/<ClassName>}) — never a legacy
      * spelling ({@code T[]}, {@code T|null}, bare class names). No
      * second {@code Type}&rarr;text producer exists in the backend.
+     *
+     * <p>The retired per-producer switch's {@code Type.Error} arm is
+     * removed with it: the internal checker sentinel has no canonical
+     * descriptor, so {@code encode} fails closed for it (the pinned
+     * internal invariant violation — never emitted, never an
+     * artifact).</p>
      */
     public static String typeDescriptor(Type t) {
         if (t == null) return "null";
-        return switch (t) {
-            case Type.Null ignored -> "null";
-            case Type.Boolean ignored -> "boolean";
-            case Type.Int ignored -> "int";
-            case Type.Number ignored -> "number";
-            case Type.String ignored -> "string";
-            case Type.Table ignored -> "table";
-            case Type.Bytes ignored -> "bytes";
-            case Type.Error ignored -> "Error";
-            case Type.Array arr -> "[" + typeDescriptor(arr.element()) + "]";
-            case Type.Nullable n -> "?" + typeDescriptor(n.inner());
-            case Type.Class cls ->
-                STATIC_DESCRIPTOR_INDEX.descriptorTextFor(cls.identity());
-            case Type.Func f -> {
-                StringBuilder sb = new StringBuilder();
-                if (f.isAsync()) sb.append("async");
-                sb.append("(");
-                for (int i = 0; i < f.paramTypes().size(); i++) {
-                    if (i > 0) sb.append(",");
-                    sb.append(typeDescriptor(f.paramTypes().get(i)));
-                }
-                sb.append(")->").append(typeDescriptor(f.returnType()));
-                yield sb.toString();
-            }
-        };
+        return STATIC_DESCRIPTORS.encode(t);
     }
 
     /**
