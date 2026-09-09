@@ -241,3 +241,61 @@ from the real gate run on the rebased tree.
 
 `git status` is clean; the committed diff contains only the intended
 backend/test/fixture/record changes.
+
+## Update: rebase onto the canonical b1931b66b base (engine-imported revision, MR-0441 and the ISSUE-0502/0546/0547/0315 lane)
+
+The engine imported canonical revision `b1931b66b` (MR-0441/ISSUE-0315
+canonical descriptor and identity propagation through compiler
+surfaces, the Lua runtime, and the JVM emitted checks; ISSUE-0502
+gap-suite runtime population; ISSUE-0546/0547 JVM bytes boundary and
+container closure; ISSUE-0540/0541 default-plan carriers; the
+ISSUE-0305/0331/0324/0490/0530/0537 lane landings). The rebase
+replayed the 12 MR-0387 commits onto it. The reconciliation is
+structural, not semantic:
+
+1. `deal/codegen/jvm/JvmBackend.java` — the canonical bytes-array
+   machinery that landed while the MR was pending (ISSUE-0547: the
+   fixed `__BytesArray`/`__BytesOrNullArray` carriers with
+   `$DealRt.Bytes[]` storage, the five native helpers including the
+   past-end nil parity — `__bytesOrNullArrayRead` and
+   `__bytesArrayReadBoxed` yield the DEAL null past the end — and the
+   direct `arrayReadHelper`/`boxedArrayReadHelper`/`arrayBoxedJavaType`
+   bytes arms) supersedes this MR's per-element-shape Object-storage
+   bytes helpers, so the canonical carriers stay exclusively; the MR's
+   E8 function-signature closure lands on top as the remaining delta
+   (`hasBytesOrTableCarrier` → `hasTableCarrier`, table-only
+   rejection at function-type annotations with the updated messages,
+   the updated class-field/README wording). The cycle-3 past-end nil
+   parity is therefore delivered by the canonical helpers and pinned
+   by this MR's fixtures and JvmBackendTest byte pins.
+2. `test/JvmConformanceTest.java` — the JVM-GAP-BYTES skip entry for
+   `bytes-descriptor-boundary.deal` retires with the closure (the
+   fixture passes the real pipeline), the gap keeps no entries, and
+   the ISSUE-0502/ERROR-LITERAL-DEFAULTS entry stays.
+3. `test/JvmLaneStatePinTest.java` — the JVM lane summary re-pins to
+   the tree-derived run: `denominator 343 ... passed 307, failed 0,
+   skipped 36 ... pass rate 89.5%` (the promoted descriptor-boundary
+   fixture moves 306/37 → 307/36 over the unchanged 343 denominator);
+   the LuaJIT lane pins stay at the canonical `Total: 538, Passed:
+   538` / `349/349` / 587 v1.2-credit results.
+4. `test/HistoricalRegressionCatalog.java` — the array-delete
+   code-contract row re-locates to the post-rebase spans
+   (`JvmBackend.java:10073`, `15591-15595`) with the tree-derived
+   baseline digest `06a0e04c...` (the digest covers the locator
+   strings, so the relocation re-derives it over the unchanged span
+   bytes).
+5. `deal/test/conformance/DifferentialGateLanesCorpusTest.java` and
+   `JvmLaneTest.java` — the E8 delta re-applied over the canonical
+   pins: the bytes-descriptor-boundary registry entry retires from
+   the live set (SKIP_REGISTRY_ENTRIES 45 → 44, TRACKED_REGISTRY 45 →
+   44), the JVM per-backend counters move 230/113 → 231/112 (the
+   fixture now passes the jvm lane), and the luajit/js counters stay
+   at the canonical 311/32 and 313/30.
+6. `test/JvmBackendTest.java` — the for-of boundary pin names the
+   table carrier with the new `table carriers` message wording, the
+   bytes-signature for-of compiles and runs, and the async/table
+   annotation pins keep the `table carriers` substring.
+
+No acceptance criterion changed; criteria 1-4 stay met on both
+backends. Every re-pin is tree-derived from the real gate run on the
+rebased tree.
