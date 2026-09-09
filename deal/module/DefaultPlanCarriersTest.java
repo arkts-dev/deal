@@ -14,8 +14,11 @@ import deal.project.ProjectDeploymentIdentity;
 import deal.types.Type;
 
 import java.lang.reflect.RecordComponent;
+import java.util.AbstractSet;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -188,6 +191,25 @@ public final class DefaultPlanCarriersTest {
         return new RuntimeClassDefaultPlan(CLASS_IDENTITY,
             List.of(runtimeEntry("count", false),
                 runtimeEntry("note", true)));
+    }
+
+    /**
+     * A deterministic set that yields its backing list's elements on
+     * iteration — including duplicates — so the carrier's defensive
+     * duplicate-element rejection is exercisable even though the
+     * completion seams take {@code Set} inputs (a well-behaved Set
+     * never contains duplicate elements).
+     */
+    private static <T> Set<T> duplicateYieldingSet(List<T> elements) {
+        return new AbstractSet<>() {
+            @Override public Iterator<T> iterator() {
+                return elements.iterator();
+            }
+
+            @Override public int size() {
+                return elements.size();
+            }
+        };
     }
 
     // =========================================================================
@@ -427,21 +449,39 @@ public final class DefaultPlanCarriersTest {
         checkListOrder(runtimePlan.orderedFields(),
             List.of("a", "b", "c"), "runtime orderedFields");
 
-        // runtimeResources: a non-LinkedHashSet input (a List) keeps its
-        // own iteration order through the copy.
-        ResolvedDefaultExpression completed = expression()
-            .withCanonicalSemantics("content", DIGEST,
-                List.of(resource(DIGEST), resource(DIGEST_2),
-                    resource(DIGEST_3)));
-        checkSetOrder(completed.runtimeResources(),
-            List.of(DIGEST, DIGEST_2, DIGEST_3), "runtimeResources");
+        // runtimeResources: a LinkedHashSet input keeps its insertion
+        // order.
+        Set<RuntimeResourceReference> resourcesInsertion =
+            new LinkedHashSet<>(List.of(resource(DIGEST),
+                resource(DIGEST_2), resource(DIGEST_3)));
+        ResolvedDefaultExpression completedInsertion = expression()
+            .withCanonicalSemantics("content", DIGEST, resourcesInsertion);
+        checkSetOrder(completedInsertion.runtimeResources(),
+            List.of(DIGEST, DIGEST_2, DIGEST_3),
+            "runtimeResources from a LinkedHashSet input");
 
-        // runtimeDependencies: same order-preserving copy semantics.
-        CompilerClassDefaultPlan completedPlan = compilerPlan()
-            .withRuntimeDependencies(List.of(
+        // runtimeResources: a non-LinkedHashSet input (a HashSet) keeps
+        // its own iteration order through the copy.
+        Set<RuntimeResourceReference> resourcesHashed = new HashSet<>(
+            List.of(resource(DIGEST), resource(DIGEST_2),
+                resource(DIGEST_3)));
+        ResolvedDefaultExpression completedHashed = expression()
+            .withCanonicalSemantics("content", DIGEST, resourcesHashed);
+        checkSetOrder(completedHashed.runtimeResources(),
+            resourcesHashed.stream()
+                .map(RuntimeResourceReference::providerContractDigest)
+                .toList(),
+            "runtimeResources from a non-LinkedHashSet input");
+
+        // runtimeDependencies: a LinkedHashSet input keeps its insertion
+        // order (positions and reasons pinned).
+        Set<RuntimeImportDependency> depsInsertion = new LinkedHashSet<>(
+            List.of(
                 dependency(DIGEST, RuntimeImportDependency.Reason.RUNTIME_USE),
                 dependency(DIGEST_2,
                     RuntimeImportDependency.Reason.DEFERRED_DEFAULT_BINDING)));
+        CompilerClassDefaultPlan completedPlan = compilerPlan()
+            .withRuntimeDependencies(depsInsertion);
         List<RuntimeImportDependency> deps =
             List.copyOf(completedPlan.runtimeDependencies());
         check(deps.size() == 2, "completed dependencies must have 2 entries");
@@ -453,6 +493,22 @@ public final class DefaultPlanCarriersTest {
                 && deps.get(1).reason()
                     == RuntimeImportDependency.Reason.DEFERRED_DEFAULT_BINDING,
             "second dependency must keep the input position and reason");
+
+        // runtimeDependencies: a non-LinkedHashSet input keeps its own
+        // iteration order through the copy.
+        Set<RuntimeImportDependency> depsHashed = new HashSet<>(List.of(
+            dependency(DIGEST, RuntimeImportDependency.Reason.RUNTIME_USE),
+            dependency(DIGEST_2,
+                RuntimeImportDependency.Reason.DEFERRED_DEFAULT_BINDING)));
+        CompilerClassDefaultPlan hashedPlan = compilerPlan()
+            .withRuntimeDependencies(depsHashed);
+        check(List.copyOf(hashedPlan.runtimeDependencies()).stream()
+                .map(RuntimeImportDependency::providerContractDigest).toList()
+                .equals(List.copyOf(depsHashed).stream()
+                    .map(RuntimeImportDependency::providerContractDigest)
+                    .toList()),
+            "dependencies from a non-LinkedHashSet input must keep the"
+                + " input iteration order");
 
         // resolvedBindings: insertion order is preserved.
         Map<String, Symbol> bindings = new LinkedHashMap<>();
@@ -500,7 +556,8 @@ public final class DefaultPlanCarriersTest {
             () -> new ResolvedDefaultExpression(literal(),
                 Type.Int.INSTANCE, RANGE, CONTEXT,
                 Map.of("helper", helperSymbol()), IR, null, null,
-                List.of(resource(DIGEST), resource(DIGEST))),
+                duplicateYieldingSet(List.of(resource(DIGEST),
+                    resource(DIGEST)))),
             "duplicate runtime resources must be rejected at"
                 + " construction");
         check(resourceDup.getMessage().contains("runtimeResources"),
@@ -510,7 +567,8 @@ public final class DefaultPlanCarriersTest {
         IllegalArgumentException completedResourceDup = checkThrows(
             IllegalArgumentException.class,
             () -> expression().withCanonicalSemantics("content", DIGEST,
-                List.of(resource(DIGEST_2), resource(DIGEST_2))),
+                duplicateYieldingSet(List.of(resource(DIGEST_2),
+                    resource(DIGEST_2)))),
             "duplicate runtime resources must be rejected at completion");
         check(completedResourceDup.getMessage().contains("runtimeResources"),
             "duplicate-resource completion message must name the field: "
@@ -519,10 +577,11 @@ public final class DefaultPlanCarriersTest {
         IllegalArgumentException dependencyDup = checkThrows(
             IllegalArgumentException.class,
             () -> compilerPlan().withRuntimeDependencies(
-                List.of(dependency(DIGEST,
+                duplicateYieldingSet(List.of(
+                    dependency(DIGEST,
                         RuntimeImportDependency.Reason.RUNTIME_USE),
                     dependency(DIGEST,
-                        RuntimeImportDependency.Reason.RUNTIME_USE))),
+                        RuntimeImportDependency.Reason.RUNTIME_USE)))),
             "duplicate runtime dependencies must be rejected at"
                 + " completion");
         check(dependencyDup.getMessage().contains("runtimeDependencies"),
@@ -570,7 +629,7 @@ public final class DefaultPlanCarriersTest {
         // Completion leaves the source instance unchanged.
         ResolvedDefaultExpression source = expression();
         ResolvedDefaultExpression done = source.withCanonicalSemantics(
-            "content", DIGEST, List.of(resource(DIGEST)));
+            "content", DIGEST, Set.of(resource(DIGEST)));
         check(source.canonicalSemanticContent() == null
                 && source.semanticDigest() == null
                 && source.runtimeResources().isEmpty(),
@@ -582,7 +641,7 @@ public final class DefaultPlanCarriersTest {
 
         CompilerClassDefaultPlan sourcePlan = compilerPlan();
         CompilerClassDefaultPlan donePlan = sourcePlan.withRuntimeDependencies(
-            List.of(dependency(DIGEST,
+            Set.of(dependency(DIGEST,
                 RuntimeImportDependency.Reason.RUNTIME_USE)));
         check(sourcePlan.runtimeDependencies().isEmpty(),
             "completion must leave the source plan unchanged");
@@ -609,7 +668,9 @@ public final class DefaultPlanCarriersTest {
         // All other fields survive completion byte-identical.
         ResolvedDefaultExpression source = expression();
         ResolvedDefaultExpression done = source.withCanonicalSemantics(
-            "content", DIGEST, List.of(resource(DIGEST), resource(DIGEST_2)));
+            "content", DIGEST,
+            new LinkedHashSet<>(List.of(resource(DIGEST),
+                resource(DIGEST_2))));
         check(source.expressionAst() == done.expressionAst()
                 && source.resolvedExpressionType() == done.resolvedExpressionType()
                 && source.sourceRange() == done.sourceRange()
@@ -642,7 +703,8 @@ public final class DefaultPlanCarriersTest {
             "null runtime dependencies must be rejected");
 
         CompilerClassDefaultPlan populated = plan.withRuntimeDependencies(
-            List.of(dependency(DIGEST, RuntimeImportDependency.Reason.RUNTIME_USE)));
+            Set.of(dependency(DIGEST,
+                RuntimeImportDependency.Reason.RUNTIME_USE)));
         check(populated.classIdentity() == plan.classIdentity()
                 && populated.declaringSemanticModuleIdentity()
                     == plan.declaringSemanticModuleIdentity()
@@ -801,7 +863,6 @@ public final class DefaultPlanCarriersTest {
                 null, true, null),
             "null runtimeTypeDescriptor must be rejected (compiler entry)");
 
-        ResolvedDefaultExpression expr = expression();
         checkThrows(NullPointerException.class,
             () -> new ResolvedDefaultExpression(null, Type.Int.INSTANCE,
                 RANGE, CONTEXT, Map.of(), IR, null, null, Set.of()),
