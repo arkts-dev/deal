@@ -416,6 +416,7 @@ public class JvmBackendTest {
             new TestCase("testLegacyGenerateOverloadChain", () -> testLegacyGenerateOverloadChain()),
             new TestCase("testTypeDescriptorEmitter", () -> testTypeDescriptorEmitter()),
             new TestCase("testSharedCheckSeam", () -> testSharedCheckSeam()),
+            new TestCase("testSharedCheckSeamCanonicalParsing", () -> testSharedCheckSeamCanonicalParsing()),
             new TestCase("testNullableSlice", () -> testNullableSlice()),
             new TestCase("testAsyncSlice", () -> testAsyncSlice()),
             new TestCase("testJsonableSlice", () -> testJsonableSlice()),
@@ -11854,8 +11855,12 @@ public class JvmBackendTest {
             "table spells 'table'");
         check(JvmBackend.typeDescriptor(Type.Null.INSTANCE).equals("null"),
             "null spells 'null'");
-        check(JvmBackend.typeDescriptor(Type.Error.INSTANCE).equals("Error"),
-            "Error spells 'Error'");
+        try {
+            JvmBackend.typeDescriptor(Type.Error.INSTANCE);
+            fail("typeDescriptor: the internal Type.Error sentinel must never be emitted");
+        } catch (IllegalStateException expected) {
+            check(true, "Type.Error has no canonical descriptor (the pinned internal invariant violation — never emitted, never an artifact)");
+        }
         check(JvmBackend.typeDescriptor(Types.nullable(Type.Int.INSTANCE)).equals("?int"),
             "int | null spells '?int'");
         check(JvmBackend.typeDescriptor(Types.array(Type.Int.INSTANCE)).equals("[int]"),
@@ -12012,6 +12017,151 @@ public class JvmBackendTest {
         }
         System.out.println("  seam dispatch descriptors pinned");
     }
+    private static void testSharedCheckSeamCanonicalParsing()
+            throws Exception {
+        System.out.println("-- Shared $check seam: canonical parsing precedes the legacy '?' shortcut (ISSUE-0315) --");
+        Frontend f = compileFrontend("""
+            export function test(): int { return 1; }
+            """, "jvmtest-seam-canonical.deal");
+        check(f.errors().isEmpty(),
+            "seam-canonical fixture frontend clean: " + f.errors());
+        if (!f.errors().isEmpty()) return;
+        JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+            f.program(), f.checkResult(), "jvmtest-seam-canonical.deal",
+            "Main");
+        check(!res.hasErrors(),
+            "seam-canonical fixture codegen clean: " + res.diagnostics());
+        if (res.hasErrors()) return;
+        // The probe runner drives the emitted $check(descriptor, value)
+        // seam directly: every parse-rejected spelling must raise E8001
+        // with the pinned defensive message even for a NULL carrier (the
+        // retired '?' shortcut would have passed ?null/?[]/?/?int[] with
+        // null); canonical ? forms still pass null through.
+        StringBuilder runner = new StringBuilder();
+        runner.append("public final class CheckSeamProbeRunner {\n");
+        runner.append("    public static void main(String[] args) {\n");
+        runner.append("        java.lang.String[] spells = {\"?null\", \"?[]\", \"?\", \"?int[]\", \"int[]\", \"string|null\", \"(string,...int[])\", \"Error\", \"User\", \"@src.models.User\", \"@a/b.C\", \"@Foo\", \"??int\"};\n");
+        runner.append("        for (java.lang.String s : spells) {\n");
+        runner.append("            try {\n");
+        runner.append("                Main.$check(s, null);\n");
+        runner.append("                System.out.println(\"PASSED: \" + s);\n");
+        runner.append("            } catch (Main.DealError e) {\n");
+        runner.append("                System.out.println(\"REJECTED: \" + s + \" | \" + e.code + \" | \" + e.getMessage());\n");
+        runner.append("            }\n");
+        runner.append("        }\n");
+        runner.append("        try {\n");
+        runner.append("            System.out.println(\"ALPH_SPACE: \" + Main.__canonical(\"@a b/c\"));\n");
+        runner.append("            System.out.println(\"ALPH_ASTRAL: \" + Main.__canonical(\"@\" + java.lang.Character.toString(0x1F600) + \"/User\"));\n");
+        runner.append("            System.out.println(\"ALPH_LONE_HI: \" + Main.__canonical(\"@a\" + (char)0xD83D + \"/b\"));\n");
+        runner.append("            System.out.println(\"ALPH_LONE_LO: \" + Main.__canonical(\"@a\" + (char)0xDE00 + \"/b\"));\n");
+        runner.append("        } catch (Main.DealError e) {\n");
+        runner.append("            System.out.println(\"ALPH_FAIL: \" + e.code + \" | \" + e.getMessage());\n");
+        runner.append("        }\n");
+        runner.append("        try {\n");
+        runner.append("            Main.$check(\"@a b/c\", null);\n");
+        runner.append("            System.out.println(\"SPACE_CHECK: none\");\n");
+        runner.append("        } catch (Main.DealError e) {\n");
+        runner.append("            System.out.println(\"SPACE_CHECK: \" + e.code + \" | \" + e.getMessage());\n");
+        runner.append("        }\n");
+        runner.append("        try {\n");
+        runner.append("            Main.$check(\"@\" + java.lang.Character.toString(0x1F600) + \"/User\", null);\n");
+        runner.append("            System.out.println(\"ASTRAL_CHECK: none\");\n");
+        runner.append("        } catch (Main.DealError e) {\n");
+        runner.append("            System.out.println(\"ASTRAL_CHECK: \" + e.code + \" | \" + e.getMessage());\n");
+        runner.append("        }\n");
+        runner.append("        try {\n");
+        runner.append("            System.out.println(\"CANON_OK: ?int -> \" + (Main.$check(\"?int\", null) == null));\n");
+        runner.append("            System.out.println(\"CANON_OK: ?[int] -> \" + (Main.$check(\"?[int]\", null) == null));\n");
+        runner.append("            System.out.println(\"CANON_OK: ?(int)->int -> \" + (Main.$check(\"?(int)->int\", null) == null));\n");
+        runner.append("            System.out.println(\"CANON_OK: ?@Main/Point -> \" + (Main.$check(\"?@Main/Point\", null) == null));\n");
+        runner.append("        } catch (Main.DealError e) {\n");
+        runner.append("            System.out.println(\"CANON_FAIL: \" + e.code + \" | \" + e.getMessage());\n");
+        runner.append("        }\n");
+        runner.append("        try {\n");
+        runner.append("            Main.$check(\"?int\", \"x\");\n");
+        runner.append("            System.out.println(\"MISMATCH: none\");\n");
+        runner.append("        } catch (Main.DealError e) {\n");
+        runner.append("            System.out.println(\"MISMATCH: \" + e.code);\n");
+        runner.append("        }\n");
+        runner.append("    }\n");
+        runner.append("}\n");
+        Path dir = null;
+        try {
+            dir = Files.createTempDirectory("jvmtest_seam_canonical_");
+            Files.writeString(dir.resolve("Main.java"), res.source());
+            Files.writeString(dir.resolve("CheckSeamProbeRunner.java"),
+                runner.toString());
+            StringBuilder err = new StringBuilder();
+            boolean ok = BackendConformanceTest.compileWithJavac(dir,
+                List.of("Main.java", "CheckSeamProbeRunner.java"), err);
+            check(ok, "the seam-canonical artifact compiles with javac: "
+                + err);
+            if (!ok) return;
+            ProcessBuilder java = new ProcessBuilder("java", "-cp",
+                dir.toString(), "CheckSeamProbeRunner");
+            java.redirectErrorStream(true);
+            Process p = java.start();
+            String out = new String(p.getInputStream().readAllBytes())
+                .trim();
+            int exit = p.waitFor();
+            check(exit == 0, "seam-canonical probe exits 0: " + out);
+            for (String spelling : List.of("?null", "?[]", "?", "?int[]",
+                    "int[]", "string|null", "(string,...int[])", "Error",
+                    "User", "@src.models.User", "@a/b.C", "@Foo", "??int")) {
+                check(out.contains("REJECTED: " + spelling + " | E8001 | "
+                        + "internal: cannot parse type descriptor: "
+                        + spelling),
+                    "parse-rejected spelling '" + spelling
+                        + "' raises E8001 even for a null carrier: " + out);
+                check(!out.contains("PASSED: " + spelling),
+                    "parse-rejected spelling '" + spelling
+                        + "' never passes: " + out);
+            }
+            check(out.contains("CANON_OK: ?int -> true"),
+                "canonical '?int' passes null: " + out);
+            check(out.contains("CANON_OK: ?[int] -> true"),
+                "canonical '?[int]' passes null: " + out);
+            check(out.contains("CANON_OK: ?(int)->int -> true"),
+                "canonical '?(int)->int' passes null: " + out);
+            check(out.contains("CANON_OK: ?@Main/Point -> true"),
+                "canonical '?@Main/Point' passes null: " + out);
+            check(out.contains("MISMATCH: E8001"),
+                "a wrong-kind value against a canonical descriptor keeps"
+                    + " the pinned E8001: " + out);
+            check(out.contains("ALPH_SPACE: false"),
+                "space-bearing class-atom component fails __canonical: "
+                    + out);
+            check(out.contains("ALPH_ASTRAL: true"),
+                "astral scalar in a non-final component passes __canonical: "
+                    + out);
+            check(out.contains("ALPH_LONE_HI: false"),
+                "lone high surrogate rejected by __canonical: " + out);
+            check(out.contains("ALPH_LONE_LO: false"),
+                "lone low surrogate rejected by __canonical: " + out);
+            check(out.contains("SPACE_CHECK: E8001 | internal: cannot parse"
+                    + " type descriptor: @a b/c"),
+                "space-bearing atom raises the pinned E8001 defensive"
+                    + " parse message: " + out);
+            String astralAtom = "@" + new String(Character.toChars(0x1F600))
+                + "/User";
+            check(out.contains("ASTRAL_CHECK: E8001 | expected " + astralAtom
+                    + ", got null"),
+                "canonical astral atom passes parsing and reaches the"
+                    + " matcher fallback: " + out);
+        } catch (IOException e) {
+            fail("seam-canonical javac/java I/O: " + e);
+        } finally {
+            if (dir != null) {
+                try {
+                    Files.walk(dir).sorted(Comparator.reverseOrder())
+                        .forEach(p -> { try { Files.deleteIfExists(p); }
+                        catch (IOException ignored) {} });
+                } catch (IOException ignored) {}
+            }
+        }
+        System.out.println("  $check canonical parsing pins verified");
+    }
+
 
     private static void testNullableSlice() throws Exception {
         System.out.println("-- Nullable slice (ISSUE-0108): boxed representation, narrowing, nullable arrays --");
