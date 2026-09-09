@@ -115,6 +115,23 @@ TEST_MAINS+=(
 )
 
 # =========================================================================
+# ISSUE-0542 (canonical default serializer): the versioned canonical
+# expression/statement grammars, digests, plan projections, provider
+# digests, and the runtimeResources completion battery — exercised
+# through the real orchestrator planning path (the E2 planner output)
+# plus synthetic reentrant/broken-occurrence/range inputs. Joined here
+# at the gate-script level, like the ISSUE-0541 suites, so the single
+# compile/test-list authority file (tools/gate-manifest.sh) stays
+# untouched.
+# =========================================================================
+TEST_SOURCES+=(
+  'test/DefaultSemanticSerializerTest.java'
+)
+TEST_MAINS+=(
+  'fg|=== Running Default Semantic Serializer Tests (ISSUE-0542) ===|java -ea -cp build deal.test.DefaultSemanticSerializerTest'
+)
+
+# =========================================================================
 # ISSUE-0474 + ISSUE-0475 (Coverage Manifest Validator and Corpus
 # Check): the reusable C7 validation component, its synthetic 26/0 unit
 # matrix, and the real-manifest 82/0 mechanical check join the compile

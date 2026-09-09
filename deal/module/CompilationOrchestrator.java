@@ -2251,6 +2251,61 @@ public final class CompilationOrchestrator {
         return Collections.unmodifiableMap(plannedDefaultClasses);
     }
 
+    /**
+     * The canonical serializer input surface of this compile
+     * (ISSUE-0542): module source path &rarr; the read-only per-module
+     * facts {@link DefaultSemanticSerializer} consumes alongside
+     * {@link #plannedDefaultClasses()} — checked facts and the name
+     * resolver for implementation modules, the module resolver and the
+     * export map for declaration modules, the import surface, the
+     * canonical descriptor encoder, and the module-identity
+     * classification. Read-only; a data seam only — this epic wires
+     * no serializer phase: the graph epic (ISSUE-0543) owns the
+     * orchestrator phase that invokes the serializer after its
+     * digest-free SCC pass. No digest is computed, no graph runs, and
+     * nothing is published here.
+     */
+    public Map<String, DefaultSerializerModuleInput>
+            defaultSerializerModuleInputs() {
+        Map<String, DefaultSerializerModuleInput> inputs =
+            new LinkedHashMap<>();
+        if (identityAssembly == null) {
+            return Collections.unmodifiableMap(inputs);
+        }
+        CanonicalRuntimeTypeDescriptor descriptors =
+            new CanonicalRuntimeTypeDescriptor(identityAssembly.index());
+        Map<String, CanonicalModuleIdentity> classification =
+            modulePathClassification();
+        ModuleResolverImpl moduleResolver = new ModuleResolverImpl(modules,
+            diagnostics);
+        for (ModuleInfo info : modules.values()) {
+            if (info.rawAst == null || info.location == null) {
+                continue;
+            }
+            // Defensive: the serializer is only invoked after a
+            // successful planning phase, so modules whose checked
+            // facts never completed (a failed compile) stay outside
+            // the seam — the serializer input contract requires the
+            // exact declaration/implementation fact split.
+            if (!info.isDeclarationFile
+                    && (info.checkResult == null
+                        || info.nameResolver == null)) {
+                continue;
+            }
+            inputs.put(info.sourcePath, new DefaultSerializerModuleInput(
+                info.sourcePath, info.modulePath, info.rawAst,
+                info.location,
+                info.isDeclarationFile ? null : info.checkResult,
+                info.isDeclarationFile ? null : info.nameResolver,
+                defaultPlanImportsOf(info),
+                info.exports != null ? info.exports : Map.of(),
+                descriptors, classification,
+                info.isDeclarationFile ? moduleResolver : null,
+                info.isDeclarationFile, isExternCModuleInfo(info)));
+        }
+        return Collections.unmodifiableMap(inputs);
+    }
+
     private void validateCffiDeclarations() {
         if (backend == Backend.JS) {
             return;

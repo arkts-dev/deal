@@ -194,7 +194,7 @@ final class DefaultIrRecorder {
             case LiteralExpr lit -> {
                 return node(DefaultIrNode.NodeKind.LITERAL, null,
                     typeMap.get(lit), contexts, List.of(), lit.value(),
-                    null, null, null, lit.span());
+                    null, null, lit, lit.span());
             }
             case IdentifierExpr id -> {
                 return recordIdentifier(id, scope, contexts);
@@ -207,14 +207,14 @@ final class DefaultIrRecorder {
                             evaluatorScope),
                         recordExpression(bin.right(), scope, List.of(),
                             evaluatorScope)),
-                    null, null, null, null, bin.span());
+                    null, null, null, bin, bin.span());
             }
             case UnaryExpr un -> {
                 return node(DefaultIrNode.NodeKind.UNARY,
                     un.op().name(), typeMap.get(un), contexts,
                     List.of(recordExpression(un.expr(), scope, List.of(),
                         evaluatorScope)),
-                    null, null, null, null, un.span());
+                    null, null, null, un, un.span());
             }
             case CallExpr call -> {
                 return recordCall(call, scope, contexts, evaluatorScope);
@@ -231,7 +231,7 @@ final class DefaultIrRecorder {
                             evaluatorScope),
                         recordExpression(idx.index(), scope, List.of(),
                             evaluatorScope)),
-                    null, null, null, null, idx.span());
+                    null, null, null, idx, idx.span());
             }
             case ArrayLiteralExpr arr -> {
                 List<DefaultIrNode> elements = new ArrayList<>();
@@ -241,7 +241,7 @@ final class DefaultIrRecorder {
                 }
                 return node(DefaultIrNode.NodeKind.ARRAY_LITERAL, null,
                     typeMap.get(arr), contexts, elements, null, null,
-                    null, null, arr.span());
+                    null, arr, arr.span());
             }
             case ObjectLiteralExpr obj -> {
                 return recordObjectLiteral(obj, scope, contexts,
@@ -255,7 +255,7 @@ final class DefaultIrRecorder {
                     typeMap.get(has), contexts,
                     List.of(recordExpression(has.object(), scope,
                         List.of(), evaluatorScope)),
-                    null, null, null, null, has.span());
+                    null, null, null, has, has.span());
             }
             case AssignmentExpr assign -> {
                 Type targetType = typeMap.get(assign.target());
@@ -268,7 +268,7 @@ final class DefaultIrRecorder {
                             targetType == null ? List.of()
                                 : List.of(targetType),
                             evaluatorScope)),
-                    null, null, null, null, assign.span());
+                    null, null, null, assign, assign.span());
             }
             case AwaitExpression await -> {
                 if (evaluatorScope) {
@@ -283,7 +283,7 @@ final class DefaultIrRecorder {
                     typeMap.get(await), contexts,
                     List.of(recordExpression(await.callee(), scope,
                         List.of(), evaluatorScope)),
-                    null, null, null, null, await.span());
+                    null, null, null, await, await.span());
             }
             case TemplateLiteralExpr tl -> {
                 List<DefaultIrNode> parts = new ArrayList<>();
@@ -293,7 +293,7 @@ final class DefaultIrRecorder {
                 }
                 return node(DefaultIrNode.NodeKind.TEMPLATE_LITERAL, null,
                     typeMap.get(tl), contexts, parts, null, null, null,
-                    null, tl.span());
+                    tl, tl.span());
             }
         }
     }
@@ -325,7 +325,7 @@ final class DefaultIrRecorder {
         }
         return node(DefaultIrNode.NodeKind.IDENTIFIER, null,
             typeMap.get(id), contexts, List.of(), null, target, null,
-            null, id.span());
+            id, id.span());
     }
 
     private DefaultIrNode recordCall(CallExpr call, SymbolTable scope,
@@ -376,7 +376,7 @@ final class DefaultIrRecorder {
                 evaluatorScope));
         }
         return node(DefaultIrNode.NodeKind.CALL, null, typeMap.get(call),
-            contexts, children, null, target, null, null, call.span());
+            contexts, children, null, target, null, call, call.span());
     }
 
     private List<Type> paramContextsOf(CallExpr call) {
@@ -440,7 +440,7 @@ final class DefaultIrRecorder {
             typeMap.get(mae), effectiveContexts,
             List.of(recordExpression(mae.object(), scope, List.of(),
                 evaluatorScope)),
-            null, target, null, null, mae.span());
+            null, target, null, mae, mae.span());
     }
 
     private DefaultIrNode recordObjectLiteral(ObjectLiteralExpr obj,
@@ -503,7 +503,43 @@ final class DefaultIrRecorder {
         }
         return node(DefaultIrNode.NodeKind.OBJECT_LITERAL, null,
             resolvedType, effectiveContexts, children, null, target,
-            null, null, obj.span());
+            null, obj, obj.span());
+    }
+
+    /**
+     * Records one function body as ordered statement IR nodes (the
+     * serializer-owned provider-body entry, ISSUE-0542; design source
+     * {@code provider-versioned-default-plans} D9): the body
+     * statements walk at non-evaluator scope (await inside the body is
+     * legal — the E3020 gate applies only at evaluator scope), and
+     * imported-resource reference sites record as ordered occurrences
+     * exactly like the default walk. Class declarations nested in the
+     * body are not descended into: their defaults are planned
+     * separately as their own plan.
+     *
+     * @param fd          the function declaration whose body to record
+     * @param moduleScope the module root scope (the synthetic-fallback
+     *                    parent when the pass-1 resolver recorded no
+     *                    body scope)
+     * @return the ordered body statement IR nodes
+     */
+    List<DefaultIrNode> recordFunctionBody(FunctionDeclaration fd,
+            SymbolTable moduleScope) {
+        SymbolTable bodyScope = scopeMap.get(fd.body());
+        if (bodyScope == null) {
+            bodyScope = moduleScope.enterScope();
+            for (Parameter p : fd.params()) {
+                Type paramType = typeResolver.resolveTypeNode(p.type(),
+                    bodyScope);
+                bodyScope.define(p.name(), new Symbol.VariableSymbol(
+                    p.name(), paramType, true));
+            }
+        }
+        List<DefaultIrNode> statements = new ArrayList<>();
+        for (StatementNode stmt : fd.body().statements()) {
+            statements.add(walkStatement(stmt, bodyScope, false));
+        }
+        return List.copyOf(statements);
     }
 
     private DefaultIrNode recordFunctionExpression(FunctionExpr fe,
@@ -530,7 +566,7 @@ final class DefaultIrRecorder {
         }
         return node(DefaultIrNode.NodeKind.FUNCTION_EXPRESSION, null,
             typeMap.get(fe), contexts, bodyChildren, null, null, null,
-            null, fe.span());
+            fe, fe.span());
     }
 
     // =====================================================================
@@ -739,10 +775,10 @@ final class DefaultIrRecorder {
             String operatorKind, Type resultType, List<Type> contexts,
             List<DefaultIrNode> children, LiteralValue literalValue,
             DefaultIrNode.Target target, String declaredName,
-            StatementNode statement, Span span) {
+            ExpressionNode expression, Span span) {
         return new DefaultIrNode(kind, operatorKind, resultType, contexts,
-            children, literalValue, target, declaredName, statement,
-            span.range());
+            children, literalValue, target, declaredName, null,
+            expression, span.range());
     }
 
     private static DefaultIrNode node(DefaultIrNode.NodeKind kind,
@@ -752,7 +788,7 @@ final class DefaultIrRecorder {
             StatementNode statement, DiagnosticRange range) {
         return new DefaultIrNode(kind, operatorKind, resultType, contexts,
             children, literalValue, target, declaredName, statement,
-            range);
+            null, range);
     }
 
     private void recordOccurrence(RuntimeResourceReference.Kind kind,
