@@ -1,0 +1,7 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: A number parameter and return cross the host boundary without integer coercion
+// @expected: runtime-ok
+// @features: host-abi, number, outbound-boundary, inbound-boundary
+
+import * as host from "host/boundary";
+export function main(): null { let value: number = host.echoNumber(1.25); if (value !== 1.25) { throw { code: "TEST_FAIL", message: "host number mapping" }; } return null; }

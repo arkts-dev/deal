@@ -127,7 +127,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  *       @jsonable JVM defects: nested-array {@code fromJson} javac
  *       collision; table-field nested arrays E8001; the fromJson
  *       top-level input gate (ISSUE-0101 promotion).</li>
- *   <li><b>JVM-GAP-HOST-ABI-SHAPES</b> (16 entries) — JVM host ABI
+ *   <li><b>JVM-GAP-HOST-ABI-SHAPES</b> (24 entries, ISSUE-0504 +8) — JVM host ABI
  *       unsupported declared shapes: host class exports,
  *       array/function-typed parameters and returns (E6000), the
  *       Lua pre-wrapped export form, and the host async export used as
@@ -418,6 +418,61 @@ public class JvmConformanceTest {
         skip("backend-runtime/host-abi/host-boundary-apply-function.deal",
             "E6000: declared function-typed host parameter.",
             "JVM-GAP-HOST-ABI-SHAPES");
+        // ---- ISSUE-0504: the eight converted host-boundary fixtures
+        // (v12-gap-suite-integration D9) import host/boundary, whose
+        // verbatim gap HostBoundary.java declares the legacy long/Long
+        // int carriers while the lane-wide activated DEAL_V1_2_INT32
+        // profile resolves the declared int and int | null parameters
+        // as int/Integer (JvmBackend.hostParamClassLiteral under
+        // int32Mode). The module-level load-time presence check
+        // validates every declared export, so the declared echoInt
+        // export raises E8011 before any call and every fixture that
+        // imports host/boundary fails on JVM. The sanctioned D10
+        // disposition is one JVM-GAP-HOST-ABI-SHAPES entry per
+        // fixture; the oracles stay unweakened. ----
+        skip("backend-runtime/host-abi/host-boundary-repeat-call.deal",
+            "E8011 load-time signature mismatch: the verbatim gap "
+                + "HostBoundary declares echoInt(long) where the "
+                + "int32-activated JVM host slice resolves the declared "
+                + "int parameter as int (the load-time export check "
+                + "raises E8011 for the declared echoInt export, so "
+                + "every fixture importing host/boundary fails before "
+                + "any call).", "JVM-GAP-HOST-ABI-SHAPES");
+        skip("backend-runtime/host-abi/host-boundary-null-narrowing.deal",
+            "E8011 load-time signature mismatch (verbatim gap "
+                + "HostBoundary echoInt(long) vs the int32-activated "
+                + "int parameter resolution).",
+            "JVM-GAP-HOST-ABI-SHAPES");
+        skip("backend-runtime/host-abi/host-boundary-int-minimum-param.deal",
+            "E8011 load-time signature mismatch (verbatim gap "
+                + "HostBoundary echoInt(long) vs the int32-activated "
+                + "int parameter resolution).",
+            "JVM-GAP-HOST-ABI-SHAPES");
+        skip("backend-runtime/host-abi/host-boundary-number-roundtrip.deal",
+            "E8011 load-time signature mismatch (verbatim gap "
+                + "HostBoundary echoInt(long) vs the int32-activated "
+                + "int parameter resolution).",
+            "JVM-GAP-HOST-ABI-SHAPES");
+        skip("backend-runtime/host-abi/host-boundary-boolean-roundtrip.deal",
+            "E8011 load-time signature mismatch (verbatim gap "
+                + "HostBoundary echoInt(long) vs the int32-activated "
+                + "int parameter resolution).",
+            "JVM-GAP-HOST-ABI-SHAPES");
+        skip("backend-runtime/host-abi/host-boundary-unicode-string-roundtrip.deal",
+            "E8011 load-time signature mismatch (verbatim gap "
+                + "HostBoundary echoInt(long) vs the int32-activated "
+                + "int parameter resolution).",
+            "JVM-GAP-HOST-ABI-SHAPES");
+        skip("backend-runtime/host-abi/host-boundary-nullable-int-null-roundtrip.deal",
+            "E8011 load-time signature mismatch (verbatim gap "
+                + "HostBoundary echoInt(long)/nullableInt(Long) vs the "
+                + "int32-activated int/Integer parameter resolution).",
+            "JVM-GAP-HOST-ABI-SHAPES");
+        skip("backend-runtime/host-abi/host-boundary-nullable-int-value-roundtrip.deal",
+            "E8011 load-time signature mismatch (verbatim gap "
+                + "HostBoundary echoInt(long)/nullableInt(Long) vs the "
+                + "int32-activated int/Integer parameter resolution).",
+            "JVM-GAP-HOST-ABI-SHAPES");
         skip("backend-runtime/host-abi/host-nullable-function-param.deal",
             "E6000: declared function | null host parameter.",
             "JVM-GAP-HOST-ABI-SHAPES");
@@ -538,7 +593,9 @@ public class JvmConformanceTest {
         "JVM-GAP-HOST-ABI-SHAPES", "JVM host ABI unsupported declared "
             + "shapes — host class exports, array/function-typed "
             + "parameters and returns (E6000), the Lua pre-wrapped "
-            + "export form",
+            + "export form, and the E8011 legacy long/Long carrier "
+            + "signature mismatches of the verbatim gap host "
+            + "implementations under the int32-activated profile",
         "JVM-GAP-BYTES", "bytes runtime lane — direct typed "
             + "positions (locals, parameters, returns, class-field "
             + "storage and bytes defaults) map to the shared "
@@ -631,6 +688,22 @@ public class JvmConformanceTest {
                 + "  public static Object surrogateString() {\n"
                 + "    return \"\\uD800\";\n"
                 + "  }\n"
+                + "}\n"),
+        Map.entry("boundary",
+            "public final class HostBoundary {\n"
+                + "  private static long nextValue;\n"
+                + "\n"
+                + "  public static Object intValue() { return Long.valueOf(17L); }\n"
+                + "  public static Object stringValue() { return \"host\"; }\n"
+                + "  public static Object nullableString(boolean flag) { return flag ? \"host\" : null; }\n"
+                + "  public static Object nullValue() { return null; }\n"
+                + "  public static Object nextValue() { nextValue += 1L; return Long.valueOf(nextValue); }\n"
+                + "  public static Object echoInt(long value) { return Long.valueOf(value); }\n"
+                + "  public static Object echoNumber(double value) { return Double.valueOf(value); }\n"
+                + "  public static Object echoBoolean(boolean value) { return Boolean.valueOf(value); }\n"
+                + "  public static Object echoString(String value) { return value; }\n"
+                + "  public static Object nullableInt(Long value) { return value; }\n"
+                + "  public static Object extraExport() { return \"ignored\"; }\n"
                 + "}\n"),
         Map.entry("nullreturn_bad",
             "public final class HostNullreturn_bad {\n"

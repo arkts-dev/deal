@@ -90,8 +90,13 @@ import java.util.List;
  * so the JVM summary moved to {@code passed 306, failed 0, skipped 37
  * ... pass rate 89.2%} over the 343-fixture denominator and the LuaJIT
  * summary reads {@code Total: 538, Passed: 538} with zero tracked
- * known-fails and zero staged failures.
-
+ * known-fails and zero staged failures. ISSUE-0504 (the host ABI
+ * conversion leaf) then lands the eight host-boundary fixtures, so
+ * the JVM summary moves to {@code passed 306, failed 0, skipped 45
+ * ... pass rate 87.2%} over the 351-fixture denominator (the eight
+ * JVM-GAP-HOST-ABI-SHAPES skip entries) and the LuaJIT summary reads
+ * {@code Total: 546, Passed: 546} with zero tracked known-fails and
+ * zero staged failures.
  *
  * <p>The test runs from the repository root (the {@code run_tests.sh}
  * contract, like {@code ConformanceTest}); {@code run_tests.sh}
@@ -131,7 +136,7 @@ public class JvmLaneStatePinTest {
     private static final String JVM_GATES_PASSED =
         "Gates PASSED: frontend 100%; backend-runtime zero applicable "
 
-            + "failures AND >= 80% pass rate over the unchanged 343-test "
+            + "failures AND >= 80% pass rate over the unchanged 351-test "
             + "denominator; zero unclassified skips; zero stale skips; "
             + "zero stale known-fail markers; zero probe runner "
             + "exceptions.";
@@ -159,11 +164,19 @@ public class JvmLaneStatePinTest {
     // tracks them for the snapshot column field) and only the
     // rtc-015 Error-literal-defaults probe needs the one new skip
     // entry, so the summary moved to the re-pinned numbers below
-    // (denominator 343, pass rate 89.2%).
+    // (denominator 343, pass rate 89.2%). ISSUE-0504 (the host ABI
+    // conversion leaf) lands the eight host-boundary fixtures, each
+    // carrying a JVM-GAP-HOST-ABI-SHAPES skip entry — the verbatim gap
+    // HostBoundary declares long/Long int carriers while the activated
+    // DEAL_V1_2_INT32 profile resolves the declared int / int | null
+    // parameters as int/Integer, so the module-level load-time export
+    // check raises E8011 for every fixture importing host/boundary —
+    // so the summary moves to the re-pinned numbers below (denominator
+    // 351, pass rate 87.2%).
     private static final String JVM_SUMMARY =
-        "Backend-runtime on JVM: denominator 343 (every on-disk runtime "
-            + "test, unchanged), passed 306, failed 0, skipped 37 "
-            + "(classified), known-fail 0 (tracked) \u2014 pass rate 89.2%";
+        "Backend-runtime on JVM: denominator 351 (every on-disk runtime "
+            + "test, unchanged), passed 306, failed 0, skipped 45 "
+            + "(classified), known-fail 0 (tracked) \u2014 pass rate 87.2%";
 
     private static final String JVM_PROFILE_AUTHORITY =
         "Profile-authority accounting: 0 legacy-authority fixture(s) "
@@ -202,13 +215,16 @@ public class JvmLaneStatePinTest {
     // (588 discovered - 50 companions, zero tracked known-fail: this
     // tree promoted the FFI-manifest frontend pin to compile-error
     // E2010 and the promoted bytes-boundary-order fixture counts as a
-    // real runtime-ok fixture).
+    // real runtime-ok fixture). ISSUE-0504 (the host ABI conversion
+    // leaf) then lands the eight host-boundary fixtures, so the
+    // summary reads 546 recorded results (596 discovered - 50
+    // companions) and the backend-runtime phase reads 357/357.
     private static final String LUA_SUMMARY =
-        "Total: 538, Passed: 538, Failed: 0, Skipped: 0, "
+        "Total: 546, Passed: 546, Failed: 0, Skipped: 0, "
             + "KnownFailures (tracked): 0, StagedFailures (tracked): 0";
 
     private static final String LUA_PHASE =
-        "  LuaJIT backend-runtime conformance (v1.2): 349/349 passed, "
+        "  LuaJIT backend-runtime conformance (v1.2): 357/357 passed, "
             + "0 failed, 0 skipped, 0 known-fail (tracked), 0 "
             + "staged-fail (tracked)";
 
@@ -219,7 +235,7 @@ public class JvmLaneStatePinTest {
     private static final String LUA_PROFILE_AUTHORITY =
         "Profile-authority accounting: 1 legacy-authority result(s) "
             + "(LEGACY_REGRESSION + LEGACY_SAFE_INT \u2014 zero "
-            + "v1.2/promotion credit; 1 passed, 0 failed), 587 v1.2-credit "
+            + "v1.2/promotion credit; 1 passed, 0 failed), 595 v1.2-credit "
             + "result(s) (COMMON_SHADOW + DEAL_V1_2_INT32)";
 
 
