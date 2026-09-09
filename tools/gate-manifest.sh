@@ -250,6 +250,13 @@ TEST_SOURCES=(
   # ISSUE-0162 registration: the C FFI declaration validation and
   # forward binding generation battery.
   'test/FfiDeclarationValidatorTest.java'
+  # ISSUE-0540 registration: the default-plan carrier shape battery -
+  # fields, immutability, ordering, uniqueness/presence rejection,
+  # completion seams, the invoke contract, and the reused landed
+  # carriers (default-plan-carriers D10, Verification 1-9). Test-list
+  # wiring only: the production carriers compile from the
+  # deal/module glob.
+  'deal/module/DefaultPlanCarriersTest.java'
 )
 
 # TEST_MAINS: ordered "<class>|<banner>|<command>" records reproducing
@@ -439,4 +446,7 @@ WARNING: luajit not found, skipping async nesting stress tests'
   # ISSUE-0514 registration: the shared-factory lowering battery — the
   # imported-construction slice through the extended two-module seam.
   'fg|=== Running Shared Factory Lowering Tests (ISSUE-0514 SHARED_FACTORY arm) ===|java -ea -cp build deal.test.SharedFactoryLoweringTest'
+  # ISSUE-0540 registration: the carrier-shape battery main - one
+  # foreground record (default-plan-carriers D10).
+  'fg|=== Running Default Plan Carrier Shape Tests (ISSUE-0540) ===|java -ea -cp build deal.module.DefaultPlanCarriersTest'
 )
