@@ -222,6 +222,22 @@ public final class CompilationOrchestrator {
         new LinkedHashMap<>();
 
     /**
+     * The compiler-default planning result of this compile (ISSUE-0541,
+     * {@code provider-versioned-default-plans} D1): module source path
+     * &rarr; the planned classes (one {@link CompilerClassDefaultPlan}
+     * per plan-bearing class plus the ordered provisional
+     * {@link DefaultResourceOccurrence} list), in planning order —
+     * dependency order over the implementation modules and extern-C
+     * declaration modules. Plans stay compiler-internal until the
+     * dependency graph succeeds: this epic publishes them nowhere (no
+     * lowerer, no FFI descriptor, no artifact). Empty before the
+     * planning phase runs, when a preceding phase failed, or when
+     * planning produced error-level diagnostics.
+     */
+    private final Map<String, List<PlannedDefaultClass>>
+        plannedDefaultClasses = new LinkedHashMap<>();
+
+    /**
      * The JVM codegen pass-1 results of this compile (ISSUE-0374 profile
      * plumb observability): module source path → the
      * {@link JvmBackend.JvmCodegenResult} the backend generated for every
@@ -883,6 +899,23 @@ public final class CompilationOrchestrator {
         planRoutesForCompile();
         if (hasErrors) { printDiagnostics(); return false; }
 
+        // Default planning phase (ISSUE-0541, design source
+        // provider-versioned-default-plans D1-D4): after checking and
+        // declaration analysis, before serialization and the graph —
+        // one CompilerClassDefaultPlan per plan-bearing class
+        // (implementation classes planned by DefaultSemanticPlanner,
+        // C-struct classes planned by DeclarationSemanticAnalyzer),
+        // resolution/type-checking in the declaring lexical/import
+        // context, the complete typed evaluator IR walk, and the two
+        // plan-shape gates (E4001 declaration shape, E3020 sync
+        // evaluators). Host-declared classes are exempt and produce no
+        // plan. No evaluator is invoked and no library is loaded; no
+        // digest is computed and no dependency edge or graph runs
+        // (the serializer and graph epics own those).
+        log("Phase 3.8: Default planning and declaration default analysis");
+        planDefaultClasses();
+        if (hasErrors) { printDiagnostics(); return false; }
+
         // FFI phase (ISSUE-0162, design source
         // deal-v1.2-directives-and-c-ffi-declarations D4/D7/D8): after
         // semantic/graph success, validate every extern-C declaration
@@ -892,7 +925,7 @@ public final class CompilationOrchestrator {
         // metadata/bundle/bindings on LuaJIT for later runtime loading.
         // Validation never evaluates defaults; a failed validation or
         // an incapable backend publishes no metadata and no artifact.
-        log("Phase 3.8: C FFI declaration validation and metadata");
+        log("Phase 3.9: C FFI declaration validation and metadata");
         validateCffiDeclarations();
         if (hasErrors) { printDiagnostics(); return false; }
 
@@ -2065,6 +2098,159 @@ public final class CompilationOrchestrator {
      * 4). The JS backend keeps its pinned import-site E6003 arm
      * (ISSUE-0169 skeleton) and does not run this phase.</p>
      */
+    // =========================================================================
+    // Phase 3.8: Default planning and declaration default analysis (ISSUE-0541)
+    // =========================================================================
+
+    /**
+     * Runs the shared default planning pipeline over every plan-bearing
+     * module in dependency order: implementation modules through
+     * {@link DefaultSemanticPlanner}, extern-C declaration modules
+     * through {@link DeclarationSemanticAnalyzer}. Host-declared
+     * (non-extern-C declaration) classes are exempt and produce no
+     * plan. Error-level diagnostics fail the compile and publish no
+     * plan; success stores the plans and their provisional occurrence
+     * data in {@link #plannedDefaultClasses()} only — nothing is
+     * published to lowerers, the FFI descriptor stage, or artifacts
+     * (the graph epic owns publication), no digest is computed, no
+     * evaluator is invoked, and no library is loaded.
+     */
+    private void planDefaultClasses() {
+        // The planning epics require public class identity for every
+        // plan-bearing class and the canonical descriptor encoder
+        // resolves class atoms through the assembly index: register the
+        // intrinsic Error projection and every class declaration of
+        // every implementation module (phase 1 registered the
+        // top-level classes; nested classes join idempotently here)
+        // before any entry encodes a descriptor.
+        identityAssembly.intrinsicErrorIdentity();
+        for (ModuleInfo info : modules.values()) {
+            if (info.isDeclarationFile || info.checkResult == null) {
+                continue;
+            }
+            for (Map.Entry<ClassDeclaration, SymbolTable> entry
+                    : info.checkResult.classScopes().entrySet()) {
+                ModuleIdentityAssembly.ClassIdentityResult required =
+                    identityAssembly.requireClassIdentity(info.location,
+                        entry.getKey().name(), entry.getKey().span());
+                if (required
+                        instanceof ModuleIdentityAssembly.ClassIdentityResult
+                            .Failure f) {
+                    diagnostics.add(f.diagnostic());
+                    hasErrors = true;
+                }
+            }
+        }
+        if (hasErrors) {
+            return;
+        }
+
+        CanonicalRuntimeTypeDescriptor descriptors =
+            new CanonicalRuntimeTypeDescriptor(identityAssembly.index());
+        Map<String, CanonicalModuleIdentity> classification =
+            modulePathClassification();
+        ModuleResolverImpl moduleResolver = new ModuleResolverImpl(modules,
+            diagnostics);
+
+        for (String sourcePath : dependencyOrder) {
+            ModuleInfo info = modules.get(sourcePath);
+            if (info == null || info.rawAst == null
+                    || info.location == null) {
+                continue;
+            }
+            Map<String, DefaultPlanImport> imports =
+                defaultPlanImportsOf(info);
+            if (info.isDeclarationFile) {
+                if (!isExternCModuleInfo(info)) {
+                    // Host-declared classes are exempt from the plan
+                    // gates and produce no plan (the host supplies
+                    // <C>_defaults at load).
+                    continue;
+                }
+                DefaultDeclarationModuleInput input =
+                    new DefaultDeclarationModuleInput(
+                        info.sourcePath, info.modulePath, info.rawAst,
+                        info.location, imports, descriptors,
+                        moduleResolver, classification);
+                DeclarationSemanticAnalyzer.Result result =
+                    DeclarationSemanticAnalyzer.analyze(input,
+                        identityAssembly);
+                diagnostics.addAll(result.diagnostics());
+                if (result.hasErrors()) {
+                    hasErrors = true;
+                } else {
+                    plannedDefaultClasses.put(info.sourcePath,
+                        result.plannedClasses());
+                }
+                continue;
+            }
+            if (info.checkResult == null || info.nameResolver == null) {
+                continue; // defensive: checked facts always exist here
+            }
+            DefaultPlanModuleInput input = new DefaultPlanModuleInput(
+                info.sourcePath, info.modulePath, info.rawAst,
+                info.location, info.checkResult, info.nameResolver,
+                imports, descriptors, classification);
+            DefaultSemanticPlanner.Result result =
+                DefaultSemanticPlanner.plan(input, identityAssembly);
+            diagnostics.addAll(result.diagnostics());
+            if (result.hasErrors()) {
+                hasErrors = true;
+            } else {
+                plannedDefaultClasses.put(info.sourcePath,
+                    result.plannedClasses());
+            }
+        }
+    }
+
+    /**
+     * The import surface of one module: import alias &rarr; the
+     * provider's read-only planning snapshot (source path, dotted
+     * module path, parsed program, resolved location, extracted export
+     * map, symbol table when available, and the declaration/extern-C
+     * flags), insertion-ordered by the module's import declarations.
+     */
+    private Map<String, DefaultPlanImport> defaultPlanImportsOf(
+            ModuleInfo info) {
+        Map<String, DefaultPlanImport> imports = new LinkedHashMap<>();
+        if (info.rawAst == null) {
+            return imports;
+        }
+        for (StatementNode stmt : info.rawAst.statements()) {
+            if (!(stmt instanceof ImportDeclaration imp)) {
+                continue;
+            }
+            String resolvedSource = resolveImportPath(imp.modulePath(),
+                Path.of(info.sourcePath), imp.span());
+            if (resolvedSource == null) {
+                continue; // the E2003/E2009 was already reported
+            }
+            ModuleInfo imported = modules.get(resolvedSource);
+            if (imported == null || imported.rawAst == null
+                    || imported.location == null) {
+                continue;
+            }
+            imports.put(imp.alias(), new DefaultPlanImport(
+                imported.sourcePath, imported.modulePath, imported.rawAst,
+                imported.location,
+                imported.exports != null ? imported.exports : Map.of(),
+                imported.symbolTable, imported.isDeclarationFile,
+                isExternCModuleInfo(imported)));
+        }
+        return imports;
+    }
+
+    /**
+     * The planning result of the current compile: module source path
+     * &rarr; the planned classes with their provisional occurrence
+     * data, in planning order. Read-only; empty before the planning
+     * phase runs, when a preceding phase failed, or when planning
+     * produced error-level diagnostics.
+     */
+    public Map<String, List<PlannedDefaultClass>> plannedDefaultClasses() {
+        return Collections.unmodifiableMap(plannedDefaultClasses);
+    }
+
     private void validateCffiDeclarations() {
         if (backend == Backend.JS) {
             return;

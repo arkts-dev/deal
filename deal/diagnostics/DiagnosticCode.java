@@ -224,6 +224,15 @@ public enum DiagnosticCode {
     /** Table index write/delete key must have static type string. */
     E3018(Phase.FRONTEND, "Table index key must have static type string"),
 
+    /**
+     * 'await' at evaluator scope in a class default (defaults are
+     * synchronous per-construction evaluators; the planner's sync gate,
+     * {@code provider-versioned-default-plans} D2 — the registration
+     * joins the E3xxx family after E3018 in this tree, the position the
+     * design pins as "after E3019" in its planned-state citation).
+     */
+    E3020(Phase.FRONTEND, "'await' in class default"),
+
     // =========================================================================
     // E4xxx — class shape validation (FRONTEND)
     // =========================================================================

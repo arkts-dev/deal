@@ -9628,7 +9628,7 @@ public class JvmBackendTest {
         String fieldSource = """
             import * as time from "std/time"
             export class C {
-              f: int;
+              f: int = 0;
             }
             export function main(): null { return null; }
             export function test(): int {
@@ -10412,7 +10412,7 @@ public class JvmBackendTest {
               x?: int;
             }
             export class CallbackHolder {
-              cb: (x: int) => int;
+              cb: (x: int) => int = function(x: int): int { return x; };
             }
             export function run(): int { return 1; }
             """);

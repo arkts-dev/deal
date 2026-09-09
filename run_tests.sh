@@ -69,6 +69,25 @@ fi
 # TEST_MAINS (today's run phase, verbatim). See gate-manifest-authority.
 source tools/gate-manifest.sh
 # =========================================================================
+# ISSUE-0541 (default planning epics): the planner-level battery —
+# DefaultSemanticPlanner/DeclarationSemanticAnalyzer plans and the
+# provisional occurrence data exercised through the real orchestrator
+# path (ProjectLocator -> production CompilationOrchestrator ->
+# compile()) plus the E4001/E3020/E3001 plan-shape gates. Joined here at
+# the gate-script level, like the ISSUE-0474/0475 suites, so the single
+# compile/test-list authority file (tools/gate-manifest.sh) stays
+# untouched.
+# =========================================================================
+TEST_SOURCES+=(
+  'test/DefaultSemanticPlannerTest.java'
+  'deal/module/DefaultIrRecorderTest.java'
+)
+TEST_MAINS+=(
+  'fg|=== Running Default Semantic Planner Tests (ISSUE-0541) ===|java -ea -cp build deal.test.DefaultSemanticPlannerTest'
+  'fg|=== Running Default IR Recorder Tests (ISSUE-0541) ===|java -ea -cp build deal.module.DefaultIrRecorderTest'
+)
+
+# =========================================================================
 # ISSUE-0474 + ISSUE-0475 (Coverage Manifest Validator and Corpus
 # Check): the reusable C7 validation component, its synthetic 26/0 unit
 # matrix, and the real-manifest 82/0 mechanical check join the compile

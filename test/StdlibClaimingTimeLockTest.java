@@ -785,7 +785,9 @@ public class StdlibClaimingTimeLockTest {
                     import * as console from "std/console"
 
                     class C {
-                      log: (x: int) => null
+                      log: (x: int) => null = function(x: int): null {
+                        return null
+                      }
                     }
 
                     function run(): null {

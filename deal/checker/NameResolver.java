@@ -198,7 +198,7 @@ public final class NameResolver {
      * resolved annotation (a class declared inside a function body
      * resolves there, never against the stale module root).
      */
-    void setCurrentScope(SymbolTable scope) {
+    public void setCurrentScope(SymbolTable scope) {
         this.currentScope = scope;
     }
 

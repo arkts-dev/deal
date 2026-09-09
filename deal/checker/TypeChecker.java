@@ -58,6 +58,13 @@ public final class TypeChecker {
     //    treated as a write target (no contextual typing required) --
     private boolean assignmentTargetMode = false;
 
+    // -- Class declaration lexical scopes (the default-planning seam of
+    //    ISSUE-0541): every class the checker visits, in walk order, with
+    //    the exact scope its declaration was checked in — the declaring
+    //    lexical context the default planner resolves defaults against.
+    private final Map<ClassDeclaration, SymbolTable> classDeclarationScopes =
+        new LinkedHashMap<>();
+
     // -- Jsonable cycle detection (D3) --
     // Maps @jsonable class name → same-module @jsonable dependency names
     private final Map<String, Set<String>> jsonableClassDeps = new LinkedHashMap<>();
@@ -92,7 +99,8 @@ public final class TypeChecker {
             Map.copyOf(checker.typeMap),
             checker.rootTable,
             Map.copyOf(scopeMap),
-            List.copyOf(checker.diagnostics)
+            List.copyOf(checker.diagnostics),
+            Map.copyOf(checker.classDeclarationScopes)
         );
     }
 
@@ -172,6 +180,11 @@ public final class TypeChecker {
     // =======================================================================
 
     private void checkClassDeclaration(ClassDeclaration cd) {
+        // The default-planning seam (ISSUE-0541): record the exact scope
+        // this declaration is checked in — the scope the planner resolves
+        // the class's defaults against.
+        classDeclarationScopes.put(cd, currentScope);
+
         // ISSUE-0095 rework: every class-field default expression runs
         // through checkExpression here — the class declaration site, the
         // point where LuaJIT evaluates the defaults table — so the
@@ -1797,7 +1810,7 @@ public final class TypeChecker {
      * Returns a human-readable name for a type for use in diagnostic messages.
      * Returns {@code "<error>"} for the internal error sentinel.
      */
-    static String typeName(Type t) {
+    public static String typeName(Type t) {
         if (t == null) return "null";
         return switch (t) {
             case Type.Null ignored -> "null";

@@ -1,7 +1,7 @@
 import * as c from "std/console";
 
 class Holder {
-  f: async (b: bytes) => bytes;
+  f: async (b: bytes) => bytes = bump;
 }
 
 async function bump(b: bytes): bytes {

@@ -1191,9 +1191,17 @@ public class FfiDeclarationValidatorTest {
             boolean success = orchestrator.compile();
             check(!success, "failed struct validation fails the compile");
             check(orchestrator.diagnostics().stream().anyMatch(d ->
-                    "E7002".equals(d.code()) && "error".equals(d.severity())
-                        && d.message().contains("must carry a default")),
-                "E7002 missing default reported: "
+                    "E4001".equals(d.code()) && "error".equals(d.severity())
+                        && d.message().contains(
+                            "Class field without default is not valid")
+                        && d.range().startLine() == 5
+                        && d.range().startColumn() == 3),
+                "E4001 at the field declaration range reported: "
+                    + orchestrator.diagnostics());
+            check(orchestrator.diagnostics().stream().noneMatch(d ->
+                    "E7002".equals(d.code())),
+                "the FFI missing-default E7002 never fires (the planner"
+                    + " gate precedes the FFI phase): "
                     + orchestrator.diagnostics());
             check(orchestrator.ffiGenerations().isEmpty(),
                 "no metadata published on failed struct validation");
