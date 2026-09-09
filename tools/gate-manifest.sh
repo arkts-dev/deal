@@ -273,12 +273,22 @@ TEST_SOURCES=(
   # (CorpusFfi — the corpus-owned externals wiring, the GCC
   # native-library bootstrap, the production FfiDeclarationValidator /
   # FFIGEN boundary surface, and the checker-facing export/class-symbol
-  # registry the lanes’ module resolvers consume) — consumed by the
-  # manifest-listed
-  # ConformanceTest/JvmConformanceTest/JsConformanceTest/
-  # SidecarCorpusValidationTest runners at startup, so the strict
-  # full-set compile list (the manifest exactly) is self-consistent.
+  # registry the lanes' module resolvers consume) — consumed by the
+  # manifest-listed ConformanceTest/JvmConformanceTest/
+  # JsConformanceTest/SidecarCorpusValidationTest runners at startup,
+  # so the strict full-set compile list (the manifest exactly) is
+  # self-consistent.
   'deal/test/conformance/CorpusFfi.java'
+  # ISSUE-0507 registration (self-consistency closure): the
+  # manifest-listed JvmConformanceTest/JsConformanceTest runners and
+  # the manifest-listed SidecarCorpusValidationTest consume
+  # SidecarExpectations (the structured expectation record surface)
+  # and CorpusDiscovery (the corpus walker, extended with the FFI
+  # import-path surface by ISSUE-0507), which previously compiled
+  # only from the gate-script-level additions. Both join the manifest
+  # so the strict full-set compile list stays self-consistent.
+  'deal/test/conformance/SidecarExpectations.java'
+  'deal/test/conformance/CorpusDiscovery.java'
   # ISSUE-0162 registration: the C FFI declaration validation and
   # forward binding generation battery.
   'test/FfiDeclarationValidatorTest.java'
