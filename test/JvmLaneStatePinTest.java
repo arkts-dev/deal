@@ -87,8 +87,8 @@ import java.util.List;
  * bytes-boundary-order included, its retained-known-fail marker
  * forced off by the zero-skip promotion gate after ISSUE-0158 lifted
  * the E3019 bytes-equality gate), 10 runtime-error, and 1 companion —
- * so the JVM summary moved to {@code passed 301, failed 0, skipped 42
- * ... pass rate 87.8%} over the 343-fixture denominator and the LuaJIT
+ * so the JVM summary moved to {@code passed 306, failed 0, skipped 37
+ * ... pass rate 89.2%} over the 343-fixture denominator and the LuaJIT
  * summary reads {@code Total: 538, Passed: 538} with zero tracked
  * known-fails and zero staged failures.
 
@@ -151,15 +151,19 @@ public class JvmLaneStatePinTest {
     // (the gap-suite runtime population landing) adds forty runtime
     // fixtures on top (30 runtime-ok — the promoted gap
     // bytes-boundary-order included — and 10 runtime-error; the one
-    // companion is never counted) and six more classified skips (the
-    // five E8012/E8013 gap bytes fixtures whose JVM error snapshot
-    // carries no column field, and the rtc-015 Error-literal-defaults
-    // probe), so the summary moved to the re-pinned numbers below
-    // (denominator 343, pass rate 87.8%).
+    // companion is never counted). Thirty-four of them pass the real
+    // JVM pipeline; five — the E8012/E8013 gap bytes runtime-error
+    // fixtures — also pass this lane (its code-level DEAL_ERROR_CODE
+    // needle matches their real JVM emissions, so they need no skip
+    // entry here; only the differential gate's absorbed registry
+    // tracks them for the snapshot column field) and only the
+    // rtc-015 Error-literal-defaults probe needs the one new skip
+    // entry, so the summary moved to the re-pinned numbers below
+    // (denominator 343, pass rate 89.2%).
     private static final String JVM_SUMMARY =
         "Backend-runtime on JVM: denominator 343 (every on-disk runtime "
-            + "test, unchanged), passed 301, failed 0, skipped 42 "
-            + "(classified), known-fail 0 (tracked) \u2014 pass rate 87.8%";
+            + "test, unchanged), passed 306, failed 0, skipped 37 "
+            + "(classified), known-fail 0 (tracked) \u2014 pass rate 89.2%";
 
     private static final String JVM_PROFILE_AUTHORITY =
         "Profile-authority accounting: 0 legacy-authority fixture(s) "
@@ -215,7 +219,7 @@ public class JvmLaneStatePinTest {
     private static final String LUA_PROFILE_AUTHORITY =
         "Profile-authority accounting: 1 legacy-authority result(s) "
             + "(LEGACY_REGRESSION + LEGACY_SAFE_INT \u2014 zero "
-            + "v1.2/promotion credit; 1 passed, 0 failed), 586 v1.2-credit "
+            + "v1.2/promotion credit; 1 passed, 0 failed), 587 v1.2-credit "
             + "result(s) (COMMON_SHADOW + DEAL_V1_2_INT32)";
 
 

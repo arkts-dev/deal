@@ -116,8 +116,6 @@ public class DifferentialGateLanesCorpusTest {
         "luajit", new int[] {311, 32},
         "jvm", new int[] {230, 113},
         "js", new int[] {313, 30});
-        "jvm", new int[] {201, 102},
-        "js", new int[] {273, 30});
 
     /** The designated converged subset (task criterion (a)): every lane
      * of every fixture here passes byte-exact. */
