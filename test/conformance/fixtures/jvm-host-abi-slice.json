@@ -538,10 +538,10 @@
     },
     {
       "name": "jvm-host-class-export",
-      "description": "Declared host classes synthesize shared $DealRt records with canonical externals identity and the preserved defaults-map construction seam; the constructed instance crosses the class-typed host parameter and the host reads its fields",
+      "description": "Declared host classes synthesize shared $DealRt records with canonical externals identity and the preserved defaults-map construction seam; the constructed instance crosses the class-typed host parameter and the host reads its fields. An optional array-typed write (tags) and an optional nullable-string write (note) store the slot AND set the presence flag, so has() observes both writes",
       "modules": {
         "bindings/cfg.d.deal": "export class Endpoint {\n  path: string;\n}\nexport class ServerConfig {\n  port: int;\n  endpoint: Endpoint;\n  tags?: string[];\n  note?: string | null;\n}\nexport function describe(s: ServerConfig): string;",
-        "entry.deal": "import * as cfg from \"host/cfg\"\nexport function main(): null { return null; }\nexport function run(): string { let s: cfg.ServerConfig = { port: 9090, endpoint: { path: \"/api\" }, tags: [\"dev\"], note: null }; return cfg.describe(s); }"
+        "entry.deal": "import * as cfg from \"host/cfg\"\nexport function main(): null { return null; }\nexport function run(): string { let s: cfg.ServerConfig = { port: 9090, endpoint: { path: \"/api\" }, tags: [\"dev\"], note: null }; return cfg.describe(s); }\nexport function runWrite(): string { let s: cfg.ServerConfig = { port: 9090, endpoint: { path: \"/api\" } }; if (has(s.tags)) { throw { code: \"TEST_FAIL\", message: \"absent optional array field reported present\" }; } s.tags = [\"dev\", \"x\"]; if (!has(s.tags)) { throw { code: \"TEST_FAIL\", message: \"written optional array field reported absent\" }; } let tags: string[] | null = s.tags; if (tags !== null) { if (tags[1] !== \"x\") { throw { code: \"TEST_FAIL\", message: \"written optional array field value mismatch\" }; } } else { throw { code: \"TEST_FAIL\", message: \"written optional array field read as null\" }; } s.note = \"hello\"; if (!has(s.note)) { throw { code: \"TEST_FAIL\", message: \"written optional nullable field reported absent\" }; } let note: string | null = s.note; if (note !== null) { if (note !== \"hello\") { throw { code: \"TEST_FAIL\", message: \"written optional nullable field value mismatch\" }; } } else { throw { code: \"TEST_FAIL\", message: \"written optional nullable field read as null\" }; } return \"write-ok\"; }"
       },
       "entry": "entry.deal",
       "hosts": {
@@ -550,7 +550,7 @@
           "java": "public final class HostCfg {\n    public static final java.util.Map<String, Object> Endpoint_defaults = java.util.Map.of(\"path\", \"/\");\n    public static final java.util.Map<String, Object> ServerConfig_defaults = java.util.Map.of(\"port\", Integer.valueOf(8080), \"endpoint\", new Object(), \"tags\", new Object(), \"note\", new Object());\n    public static Object describe($DealRt.$Host$host$scfg$ServerConfig s) { return s.endpoint.path + \":\" + s.port; }\n}\n"
         }
       },
-      "expectedOutput": "/api:9090",
+      "expectedOutput": "/api:9090\nwrite-ok",
       "expectedError": null,
       "expectedExitCode": 0,
       "expectedCompileError": null,
@@ -562,10 +562,10 @@
     },
     {
       "name": "jvm-host-class-presence",
-      "description": "A host module's declared surface exposes its wrapped call and its declared class constructs and reads fields through the synthesized record (no E3004); a missing defaults field would raise E8011 at load",
+      "description": "A host module's declared surface exposes its wrapped call and its declared class constructs and reads fields through the synthesized record (no E3004); a missing defaults field would raise E8011 at load. Optional host-class field writes keep the project-class three-state semantics: a write stores the slot AND sets the presence flag (has() observes it), a present-null write stays present, and delete clears both",
       "modules": {
         "bindings/presence.d.deal": "export class Config {\n  port: int;\n  fallback?: Config | null;\n  peers?: Config[];\n}\nexport function ping(): string;",
-        "entry.deal": "import * as host from \"host/presence\"\nexport function main(): null { return null; }\nexport function run(): string { return host.ping(); }\nexport function runPort(): int { let c: host.Config = { port: 9090 }; return c.port; }"
+        "entry.deal": "import * as host from \"host/presence\"\nexport function main(): null { return null; }\nexport function run(): string { return host.ping(); }\nexport function runPort(): int { let c: host.Config = { port: 9090 }; return c.port; }\nexport function runOpts(): string { let c: host.Config = { port: 9090 }; if (has(c.fallback)) { throw { code: \"TEST_FAIL\", message: \"absent optional field reported present\" }; } c.fallback = c; if (!has(c.fallback)) { throw { code: \"TEST_FAIL\", message: \"written optional field reported absent\" }; } let fb: host.Config | null = c.fallback; if (fb !== null) { if (fb.port !== 9090) { throw { code: \"TEST_FAIL\", message: \"written optional field value mismatch\" }; } } else { throw { code: \"TEST_FAIL\", message: \"written optional field read as null\" }; } c.fallback = null; if (!has(c.fallback)) { throw { code: \"TEST_FAIL\", message: \"written null optional field reported absent\" }; } delete c.fallback; if (has(c.fallback)) { throw { code: \"TEST_FAIL\", message: \"deleted optional field reported present\" }; } return \"opt-ok\"; }"
       },
       "entry": "entry.deal",
       "hosts": {
@@ -574,7 +574,7 @@
           "java": "public final class HostPresence {\n    public static final java.util.Map<String, Object> Config_defaults = java.util.Map.of(\"port\", Integer.valueOf(8080));\n    public static Object ping() { return \"pong\"; }\n}\n"
         }
       },
-      "expectedOutput": "pong\n9090",
+      "expectedOutput": "pong\n9090\nopt-ok",
       "expectedError": null,
       "expectedExitCode": 0,
       "expectedCompileError": null,

@@ -2601,11 +2601,13 @@ public final class JvmBackend {
                 // D5, the same classification the LuaJIT use site builds)
                 // is a host-module import. Its declared function exports
                 // emit per-alias wrapper methods with load-time presence
-                // checks and call-time boundary checks; declared exports
-                // with shapes the slice does not support (classes,
-                // arrays, tables, function values, rest parameters) are
-                // E6000 at the import statement, never silently
-                // miscompiled.
+                // checks and call-time boundary checks; ISSUE-0303
+                // (jvm-v12-host-abi-completion D1/D4) lifts the declared
+                // array/function/class shapes onto those wrappers and the
+                // synthesized shared records. Declared exports with
+                // shapes the extended boundary still rejects (table and
+                // bytes carriers) are E6000 at the import statement,
+                // never silently miscompiled.
                 Map<String, Type> hostExports = hostModules.get(imp.modulePath());
                 if (hostExports != null) {
                     if (validateHostExports(imp.modulePath(), hostExports,
@@ -5358,6 +5360,28 @@ public final class JvmBackend {
             }
         }
         emitLine("        }");
+        // Per-optional-field write helpers (the project-class __optSet$
+        // analog — ISSUE-0102 three-state semantics): a write to an
+        // optional field stores the boxed/nullable slot AND sets the
+        // presence flag, so has() observes the write exactly like the
+        // LuaJIT class machinery. Every module's emitAssignmentCore
+        // routes optional host-class field writes through these
+        // instance helpers (the synthesized record's only assignment
+        // seam), and each returns the stored value so the assignment
+        // keeps its DEAL value in value positions.
+        for (int i = 0; i < storageNames.size(); i++) {
+            if (optionalFlags.get(i)) {
+                emitLine("        " + storageTypes.get(i) + " $optSet$"
+                    + storageNames.get(i) + "(" + storageTypes.get(i)
+                    + " v) {");
+                emitLine("            this." + storageNames.get(i)
+                    + " = v;");
+                emitLine("            this." + storageNames.get(i)
+                    + "$present = true;");
+                emitLine("            return v;");
+                emitLine("        }");
+            }
+        }
         emitLine("    }");
         emitLine("    // Per-class array wrapper for " + className
             + "[] / nullable-element arrays (shared __RefArray storage).");
@@ -5798,11 +5822,11 @@ public final class JvmBackend {
     }
 
     /** A class whose declaring module is a HOST module import of the
-     * current module is never representable here: host class exports
-     * keep their import-time E6000s (the host ABI lane's carriers —
-     * jvm-v12-host-abi-completion), and the shared scope can never
+     * current module maps to the shared per-class {@code __RefArray}
+     * subclass emitted beside the synthesized record (ISSUE-0303 D4,
+     * jvm-v12-host-abi-completion): the shared scope can never
      * reference a host Java class the backend does not emit, so the
-     * wrapper must not carry one. */
+     * wrapper carries the synthesized carrier instead. */
     private String silentClassArrayWrapperName(Type.Class c,
             boolean orNull) {
         String wrapper = orNull
@@ -5836,10 +5860,10 @@ public final class JvmBackend {
      * compiles. A class of an unknown module (never the case for a
      * checker-typed collected shape) maps to {@code null}. A class
      * whose declaring module is a host module import of the current
-     * module maps to {@code null} as well: host class exports keep
-     * their import-time E6000s (the host ABI lane's carriers —
-     * jvm-v12-host-abi-completion), and a shared-scope wrapper may
-     * never reference a host Java class the backend does not emit. */
+     * module maps to the synthesized shared {@code $DealRt} record
+     * (ISSUE-0303 D4, jvm-v12-host-abi-completion): a shared-scope
+     * wrapper may never reference a host Java class the backend does
+     * not emit. */
     private String silentClassJavaType(Type.Class c) {
         if (isBuiltinErrorType(c)) {
             return "java.lang.RuntimeException";
@@ -5869,9 +5893,10 @@ public final class JvmBackend {
      * declaration module ({@code ExternalModule(rawImportSpecifier)})
      * whose raw specifier — or its dotted/raw converted spelling — is
      * a host module import of the current module
-     * ({@link #hostModules}). Host class exports keep their import-time
-     * E6000s (the host ABI lane's carriers), never a shared-scope
-     * wrapper over a never-emitted host Java class. */
+     * ({@link #hostModules}). Declared host classes map to the
+     * synthesized shared {@code $DealRt} records (ISSUE-0303 D4),
+     * never to a shared-scope wrapper over a never-emitted host Java
+     * class. */
     private boolean isHostModuleClass(Type.Class c) {
         CanonicalModuleIdentity mi = c.identity().moduleIdentity();
         if (mi instanceof CanonicalModuleIdentity.ExternalModule em) {
@@ -15278,8 +15303,29 @@ public final class JvmBackend {
                 // array-write branch handles. The emitted assignment
                 // expression keeps its DEAL value in value positions
                 // (`return p.x = 5;`, `f(p.x = 5)`).
-                Type fieldType = declaredFieldType(
-                    (Type.Class) objType, mae.field());
+                // ISSUE-0303 host-class field writes: the declared host
+                // field record carries the orchestrator-resolved declared
+                // type — the read-site target and the storage coercion
+                // the project-class path derives from moduleClasses.
+                HostModuleDeclarations.HostField hostField = null;
+                if (isHostModuleClass(ccls)) {
+                    List<HostModuleDeclarations.HostField> hostFields =
+                        hostFieldsFor(ccls);
+                    if (hostFields != null) {
+                        for (HostModuleDeclarations.HostField hf
+                                : hostFields) {
+                            if (hf.declaration().name()
+                                    .equals(mae.field())) {
+                                hostField = hf;
+                                break;
+                            }
+                        }
+                    }
+                }
+                Type fieldType = hostField != null
+                    ? hostField.type()
+                    : declaredFieldType(
+                        (Type.Class) objType, mae.field());
                 // The read-site target for a direct index-read RHS is the
                 // declared field type (a T[] read assigned to a T | null
                 // field yields the DEAL null past the end); an imported
@@ -15301,6 +15347,25 @@ public final class JvmBackend {
                     value = coerceNullValueCode(value, ae.value(),
                         fieldJava, ae.span());
                     value = adaptIntBoundary(ae.value(), value, fieldType);
+                }
+                if (hostField != null) {
+                    // A host-class field write stores the synthesized
+                    // record slot with the declared-type coercion applied
+                    // above (the record's storage type is exactly the
+                    // DEAL-side JVM mapping of the declared field type).
+                    // An OPTIONAL host-class field write also sets the
+                    // presence flag — routed through the record's
+                    // per-field $optSet$ helper (the project-class
+                    // __optSet$ analog, emitted once in the shared scope)
+                    // so the assignment keeps its DEAL value in value
+                    // positions and has() observes the write exactly like
+                    // the LuaJIT class machinery.
+                    if (hostField.declaration().optional()) {
+                        return "(" + codes.get(0) + ").$optSet$"
+                            + javaName(mae.field()) + "(" + value + ")";
+                    }
+                    return "(" + codes.get(0) + ")."
+                        + javaName(mae.field()) + " = " + value;
                 }
                 // ISSUE-0102: an optional field write also sets the
                 // presence flag — routed through the per-class generic
