@@ -1260,7 +1260,6 @@ public class JvmLaneTest {
             gapIds.add(entry.gapId());
         }
         check(gapIds.containsAll(Set.of("JVM-GAP-STDJSON",
-        check(gapIds.containsAll(Set.of("JVM-GAP-STDJSON",
                 "JVM-GAP-HOST-ABI-SHAPES",
                 "JVM-GAP-BYTES", "JVM-GAP-DEFAULTS-PLANS",
                 "JVM-GAP-ERROR-LITERAL-DEFAULTS"))
