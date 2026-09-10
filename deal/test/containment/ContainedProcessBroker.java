@@ -75,9 +75,11 @@ import java.util.concurrent.ConcurrentHashMap;
  * <p>Nonce retention for CANCEL: the invocation nonce is outer-generated
  * and reaches the coordinator exclusively through the {@code STUB_READY}
  * relay (outer-coordinator-and-broker D4), so {@code run()} retains it
- * per live invocationId — populated at {@code STUB_READY}, cleared at
- * the terminal {@code CLEAN}/{@code FAILED} record — and exposes it
- * during that live window through {@link #invocationNonce(long)} and
+ * per live invocationId — populated once {@code STUB_READY} is parsed
+ * and the record's ACK is written (so a subsequently observed live id
+ * always has its ACK on the wire), cleared at the terminal
+ * {@code CLEAN}/{@code FAILED} record — and exposes it during that
+ * live window through {@link #invocationNonce(long)} and
  * {@link #cancelLive(String)}. The required nonce-bound
  * {@code CANCEL <invocationId> <nonce>} flow is therefore reachable
  * with the exact nonce the outer will accept.
@@ -163,14 +165,21 @@ public final class ContainedProcessBroker implements AutoCloseable {
     private boolean byeSent;
     /**
      * Retained {@code STUB_READY} nonce per live invocationId —
-     * populated when {@code run()} parses STUB_READY, cleared when it
-     * consumes the terminal CLEAN/FAILED record (the exact live window
-     * in which the outer accepts a nonce-bound CANCEL for the record).
-     * Concurrent map: {@link #cancelLive(String)} may be called from
-     * another thread while {@code run()} owns the read stream.
+     * populated when {@code run()} parses STUB_READY and writes the
+     * record's ACK (so an observed live id always has its ACK already
+     * on the wire), cleared when it consumes the terminal
+     * CLEAN/FAILED record (the exact live window in which the outer
+     * accepts a nonce-bound CANCEL for the record). Concurrent map:
+     * {@link #cancelLive(String)} may be called from another thread
+     * while {@code run()} owns the read stream.
      */
     private final ConcurrentHashMap<Long, String> invocationNonces =
             new ConcurrentHashMap<>();
+    /** The HELLO_OK capability bitmask observed at connect time
+     * (retained for the live-suite handshake assertion — the mask the
+     * real outer advertised, asserted to equal
+     * {@link #EXPECTED_CAPABILITY_MASK}). */
+    private long observedCaps;
 
     private ContainedProcessBroker(SocketChannel channel, String coordinatorNonce) {
         this.channel = channel;
@@ -262,6 +271,7 @@ public final class ContainedProcessBroker implements AutoCloseable {
                     "HELLO_OK capability bitmask " + caps + " lacks expected bits "
                             + EXPECTED_CAPABILITY_MASK);
         }
+        observedCaps = caps;
     }
 
     /**
@@ -407,9 +417,22 @@ public final class ContainedProcessBroker implements AutoCloseable {
          * accepts for a CANCEL of this record, outer-coordinator-and-
          * broker D4/D7) and reaches the coordinator exclusively through
          * this relay, so without retention no conforming caller could
-         * ever obtain it. Cleared at the terminal record. */
-        invocationNonces.put(invocationId, stubNonce);
+         * ever obtain it. Cleared at the terminal record.
+         *
+         * <p>Wire-order pin: the ACK write precedes the nonce
+         * retention, so the retained nonce becomes observable only
+         * after this record's ACK is on the wire. A caller that
+         * observes a live id through {@link #invocationNonce(long)} /
+         * {@link #awaitLiveInvocation(long)} and then issues
+         * {@link #cancelLive(String)} therefore always emits the
+         * CANCEL after the ACK — the outer applies the ACK (the
+         * release authorization) before the CANCEL and the accepted
+         * cancel completes the record as CLEAN cancelled
+         * deterministically (a CANCEL racing ahead of the ACK would
+         * instead leave the record CANCELLING so the late ACK was
+         * answered REJECT ... AUTH_FAILED). */
         send("ACK", String.valueOf(invocationId), stubNonce);
+        invocationNonces.put(invocationId, stubNonce);
 
         /* Post-ACK phase: STARTED|EXEC_FAILED, OUT/OUT_END, REPORT,
          * CLEAN|FAILED. REJECT may answer the ACK (record-level
@@ -599,14 +622,107 @@ public final class ContainedProcessBroker implements AutoCloseable {
     }
 
     /**
+     * The {@code HELLO_OK} capability bitmask the broker advertised at
+     * connect time. The handshake already rejected any mask missing an
+     * expected bit ({@code CAPABILITY_MISSING} before
+     * {@code FEATURE_READY}); the live suite additionally asserts this
+     * observed value equals {@link #EXPECTED_CAPABILITY_MASK} (63, the
+     * post-flip live outer) exactly.
+     */
+    long helloCaps() {
+        return observedCaps;
+    }
+
+    /**
+     * Live-suite seam (package-private): blocks, polling with a
+     * caller-owned deadline, until at least one invocation has a
+     * retained {@code STUB_READY} nonce — the live window in which the
+     * outer accepts a nonce-bound {@code CANCEL} for that record — and
+     * returns the first such invocationId. Because the nonce is
+     * retained only after the record's ACK write ({@link #run}),
+     * a caller that observes the returned id and then issues
+     * {@link #cancelLive(long)} always emits the CANCEL after the ACK
+     * on the wire.
+     *
+     * @throws ContainmentException ({@code LIVE_INVOCATION_TIMEOUT})
+     *         when no invocation became live within {@code timeoutMs}
+     *         (the suite maps this to its named CANCEL-flow failure
+     *         token) or the wait was interrupted.
+     */
+    long awaitLiveInvocation(long timeoutMs) {
+        long deadline = System.nanoTime()
+                + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(timeoutMs);
+        while (true) {
+            for (Long id : invocationNonces.keySet()) {
+                if (id != null) {
+                    return id.longValue();
+                }
+            }
+            if (System.nanoTime() >= deadline) {
+                throw new ContainmentException("LIVE_INVOCATION_TIMEOUT",
+                        "no invocation became live within " + timeoutMs + " ms");
+            }
+            try {
+                Thread.sleep(2);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new ContainmentException("LIVE_INVOCATION_TIMEOUT",
+                        "interrupted while waiting for a live invocation: " + e);
+            }
+        }
+    }
+
+    /**
+     * Live-suite seam (package-private): asserts the broker stream is
+     * quiet at session end — no buffered or pending record bytes on
+     * the socket and no EOF yet. A {@code PROTOCOL_ERROR} /
+     * {@code AUTH_FAILED} / {@code BROKER_STALLED} event on the outer
+     * would have closed the broker, and a record-level rejection would
+     * have left a pending record, so a quiet stream plus every
+     * completed round-trip is the client-side proof that no such token
+     * reached this session.
+     *
+     * @return {@code true} when no record byte is buffered or pending
+     *         and the channel is not at EOF.
+     * @throws ContainmentException on a channel I/O failure.
+     */
+    boolean streamQuiet() {
+        synchronized (writeLock) {
+            if (closed) {
+                throw new ContainmentException("BROKER_CLOSED", "broker is closed");
+            }
+            try {
+                if (in.available() > 0) {
+                    return false; /* a record is buffered: unexpected */
+                }
+                channel.configureBlocking(false);
+                try {
+                    ByteBuffer probe = ByteBuffer.allocate(1);
+                    int r = channel.read(probe);
+                    if (r != 0) {
+                        return false; /* pending record or EOF: unexpected */
+                    }
+                } finally {
+                    channel.configureBlocking(true);
+                }
+            } catch (IOException e) {
+                throw new ContainmentException("BROKER_IO_ERROR",
+                        "broker stream quiet probe failed: " + e);
+            }
+        }
+        return true;
+    }
+
+    /**
      * The retained {@code STUB_READY} nonce of a live invocation, or
      * {@code null} when the id is not live from this client's view: no
      * {@code STUB_READY} for the id has been observed yet, or the
      * terminal {@code CLEAN}/{@code FAILED} record has already cleared
-     * it (populated at {@code STUB_READY}, cleared at the terminal
-     * record — the exact window in which the outer accepts a
-     * nonce-bound {@code CANCEL} for the record,
-     * outer-coordinator-and-broker D4/D7).
+     * it (populated when {@code run()} parses {@code STUB_READY} and
+     * writes the record's ACK, cleared at the terminal record — the
+     * exact window in which the outer accepts a nonce-bound
+     * {@code CANCEL} for the record, outer-coordinator-and-broker
+     * D4/D7).
      */
     public String invocationNonce(long invocationId) {
         return invocationNonces.get(invocationId);
