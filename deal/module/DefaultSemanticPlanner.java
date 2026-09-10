@@ -271,7 +271,7 @@ public final class DefaultSemanticPlanner {
         CompilerClassDefaultPlan plan = new CompilerClassDefaultPlan(
             classIdentity, input.location().semanticModuleIdentity(),
             entries, Set.of());
-        return new PlannedDefaultClass(plan, occurrences);
+        return new PlannedDefaultClass(plan, cd, occurrences);
     }
 
     /**

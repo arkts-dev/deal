@@ -1,5 +1,6 @@
 package deal.module;
 
+import deal.ast.ExpressionNode;
 import deal.ast.LiteralValue;
 import deal.ast.StatementNode;
 import deal.diagnostics.DiagnosticRange;
@@ -52,6 +53,11 @@ import java.util.Objects;
  *       statement kinds (the serializer's recovery surface, e.g. the
  *       nested {@link deal.ast.ClassDeclaration}), {@code null} for
  *       expression nodes.</li>
+ *   <li>{@code expression} — the original expression AST node for
+ *       expression kinds (the serializer's recovery surface, e.g. the
+ *       {@link deal.ast.FunctionExpr} parameter list the serializer
+ *       defines in the body scope), {@code null} for statement
+ *       nodes.</li>
  *   <li>{@code span} — the construct's complete scalar source range
  *       through the complete-range carrier.</li>
  * </ul>
@@ -77,6 +83,7 @@ import java.util.Objects;
  * @param target           the resolved target, or null
  * @param declaredName     the declared binding name, or null
  * @param statement        the statement AST node, or null
+ * @param expression       the expression AST node, or null
  * @param span             the construct's complete scalar range
  */
 public record DefaultIrNode(
@@ -89,6 +96,7 @@ public record DefaultIrNode(
     Target target,
     String declaredName,
     StatementNode statement,
+    ExpressionNode expression,
     DiagnosticRange span
 ) implements TypedEvaluatorIr {
 

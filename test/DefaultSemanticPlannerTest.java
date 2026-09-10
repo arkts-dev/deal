@@ -234,9 +234,10 @@ public class DefaultSemanticPlannerTest {
                 : PlannedDefaultClass.class.getRecordComponents()) {
             plannedComponents.add(component.getName());
         }
-        check(plannedComponents.equals(List.of("plan", "occurrences")),
-            "PlannedDefaultClass components are (plan, occurrences), got "
-                + plannedComponents);
+        check(plannedComponents.equals(List.of("plan", "declaration",
+                "occurrences")),
+            "PlannedDefaultClass components are (plan, declaration,"
+                + " occurrences), got " + plannedComponents);
     }
 
     // =========================================================================
