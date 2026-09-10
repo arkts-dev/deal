@@ -222,6 +222,12 @@ TEST_SOURCES=(
   # (class-construction-jsonable-operations K-D4 — the pinned literal
   # payload shapes, the combined T1+T2 executor drive, and determinism).
   'test/ClassNewLoweringTest.java'
+  # ISSUE-0236 registration: the E7 (D13/D15 call machine) integration
+  # verification — the real production chain over direct/indirect/host/
+  # external calls, async starts and awaits, entries/callbacks, adapter
+  # invocation with statically fixed sources, and deterministic
+  # re-lowering/re-execution parity.
+  'test/CallMachineIntegrationTest.java'
   # ISSUE-0513 registration: the field-operation executor battery
   # (class-construction-jsonable-operations K-D6/K-D7, Verification 4 —
   # the presence matrix, nominal receiver failures, the required-field
@@ -436,6 +442,7 @@ WARNING: luajit not found, skipping async nesting stress tests'
   # K-D6/K-D7 presence semantics, the canonical receiver projections,
   # and the commit discipline (class-construction-jsonable-operations
   # K-D6/K-D7, Verification 4; sequencing item 3).
+  'fg|=== Running Call Machine Integration Verification (ISSUE-0236, E7) ===|java -ea -cp build deal.test.CallMachineIntegrationTest'
   'fg|=== Running Field Ops Executor Tests (ISSUE-0513 K-D6/K-D7) ===|java -ea -cp build deal.test.FieldOpsExecutorTest'
   # ISSUE-0513 registration: the field-operation lowering battery — the
   # pinned read/write/delete/has arms and the combined T1+T2+T3 drive

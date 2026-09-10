@@ -392,6 +392,7 @@ public final class JvmSemanticEmitter {
                 case DISCARD -> emitDiscard(op, indent);
                 case MODULE_IMPORT -> emitModuleImport(op, indent);
                 case EXPORT_READ -> emitExportRead(op, indent);
+                case ENTRY_INVOKE -> emitEntryInvoke(op, indent);
                 default -> throw new IllegalStateException("op kind " + op.kind()
                     + " has no shared-JVM emission in this decomposition-tail domain");
             }
@@ -1759,6 +1760,21 @@ public final class JvmSemanticEmitter {
 
         private void emitDiscard(SemanticOp op, int indent) {
             emitStart(op, indent);
+            emitPlainSuccess(op, indent);
+        }
+
+        /**
+         * ENTRY_INVOKE — delegates exactly one CALL(DIRECT) to main
+         * (its owned child) and exits after the terminal.
+         */
+        private void emitEntryInvoke(SemanticOp op, int indent) {
+            emitStart(op, indent);
+            for (SemanticOp candidate : opsById.values()) {
+                if (candidate.kind() == SemanticOpKind.CALL
+                        && op.opId().equals(candidate.origin().parentOpId())) {
+                    emitCall(candidate, indent);
+                }
+            }
             emitPlainSuccess(op, indent);
         }
 

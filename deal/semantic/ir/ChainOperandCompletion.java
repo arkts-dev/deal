@@ -34,7 +34,9 @@ import java.util.Set;
  * <li>{@link #structuralOwners(LoweredModuleUnit)} — the payload-owned
  * children (chain children, boundary children of {@code ARRAY_NEW}/
  * {@code CALL}/{@code STDLIB_CALL}/{@code MEMBER_READ}/{@code INDEX_READ}/
- * {@code RETURN}), executed exactly once by their owner arm.</li>
+ * {@code RETURN}/{@code ASYNC_START}/{@code CALLBACK_INVOKE}/
+ * {@code EXTERNAL_ENTRY}/{@code AWAIT}, and the delegated {@code CALL} of
+ * {@code ENTRY_INVOKE}), executed exactly once by their owner arm.</li>
  * <li>{@link #operandProducersOf(SemanticOp, LoweredModuleUnit, Set)} —
  * the transitive operand-producing closure of one chain child, in unit
  * list order, excluding structurally-owned ops (those execute under
@@ -59,9 +61,11 @@ public final class ChainOperandCompletion {
      * The payload-owned children of every structure op: ops referenced
      * by an owner payload's child/boundary id lists, plus the
      * {@code BOUNDARY} children of {@code STDLIB_CALL}/{@code MEMBER_READ}
-     * (identified by their recorded {@code parentOpId}). The block walk
-     * skips them; their owner arm executes each exactly once in payload
-     * order (a double execution would duplicate effects and events).
+     * (identified by their recorded {@code parentOpId}) and the delegated
+     * {@code CALL} child of {@code ENTRY_INVOKE} (identified by its
+     * recorded {@code parentOpId}). The block walk skips them; their
+     * owner arm executes each exactly once in payload order (a double
+     * execution would duplicate effects and events).
      */
     public static Set<OpId> structuralOwners(LoweredModuleUnit unit) {
         Set<OpId> owned = new HashSet<>();
@@ -79,14 +83,32 @@ public final class ChainOperandCompletion {
                         owned.add(call.returnBoundaryOpId());
                     }
                 }
+                case KindPayload.AsyncStartPayload start -> {
+                    owned.addAll(start.parameterBoundaryOpIds());
+                    if (start.returnBoundaryOpId() != null) {
+                        owned.add(start.returnBoundaryOpId());
+                    }
+                }
+                case KindPayload.CallbackInvokePayload callback -> {
+                    owned.addAll(callback.parameterBoundaryOpIds());
+                    owned.add(callback.returnBoundaryOpId());
+                }
+                case KindPayload.ExternalEntryPayload entry ->
+                    owned.add(entry.returnBoundaryOpId());
+                case KindPayload.AwaitPayload await ->
+                    owned.add(await.completionBoundaryOpId());
                 case KindPayload.IndexReadPayload read ->
                     owned.add(read.elementBoundaryOpId());
                 case KindPayload.ReturnPayload ret ->
                     owned.add(ret.returnBoundaryOpId());
                 case KindPayload.StdlibCallPayload ignored ->
                     addBoundaryChildren(unit, op, owned);
+                case KindPayload.ExportPublishPayload ignored ->
+                    addBoundaryChildren(unit, op, owned);
                 case KindPayload.MemberReadPayload ignored ->
                     addBoundaryChildren(unit, op, owned);
+                case KindPayload.EntryInvokePayload ignored ->
+                    addEntryCallChildren(unit, op, owned);
                 default -> {
                 }
             }
@@ -99,6 +121,21 @@ public final class ChainOperandCompletion {
         for (SemanticOp candidate : unit.ops()) {
             if (candidate.kind() == SemanticOpKind.BOUNDARY
                     && owner.opId().equals(candidate.origin().parentOpId())) {
+                owned.add(candidate.opId());
+            }
+        }
+    }
+
+    /**
+     * The delegated {@code CALL(DIRECT main)} of an {@code ENTRY_INVOKE}:
+     * the exactly one {@code CALL} op parented to the entry op executes
+     * once under the entry arm, never at its flat block-list position.
+     */
+    private static void addEntryCallChildren(LoweredModuleUnit unit, SemanticOp entry,
+                                             Set<OpId> owned) {
+        for (SemanticOp candidate : unit.ops()) {
+            if (candidate.kind() == SemanticOpKind.CALL
+                    && entry.opId().equals(candidate.origin().parentOpId())) {
                 owned.add(candidate.opId());
             }
         }
