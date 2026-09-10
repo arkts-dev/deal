@@ -1,18 +1,19 @@
 /*
- * DEALPG4 probe mode, selftest mode, and the five micro-batteries.
+ * DEALPG4 probe mode, selftest mode, and the six micro-batteries.
  *
  * Probe mode (ISSUE-0203) and selftest mode surface (ISSUE-0204) live
  * here. Owns (dealpg4-probe-selftest-foundation D1-D4, probe/selftest
  * mode contracts; dealpg4-time-stream-utilities battery mechanics):
  *  - the byte-stable three-part probe report: exactly one identity line
- *    "DEALPG4 4 linux-x86_64 CAPS 31" (every advertised capability bit
+ *    "DEALPG4 4 linux-x86_64 CAPS 63" (every advertised capability bit
  *    is backed by a passing battery in this artifact), exactly one
  *    12-field LIMITS line printed from the embedded limits records (only
  *    after the mode-entry limits validation passed), and one
  *    "OK <battery>" line per passing battery in the canonical order
  *    monotonic-timer, subreaper, parent-death, negative-pgid,
- *    bounded-drain; exit 0 iff every battery passes — no skip, no retry;
- *  - the five kernel-mechanism batteries, each running in fresh forked
+ *    bounded-drain, outer-registry-broker; exit 0 iff every battery
+ *    passes — no skip, no retry;
+ *  - the six kernel-mechanism batteries, each running in fresh forked
  *    children; the prober is the subreaper and reaps everything it forks;
  *    post-state: no survivors, sessions, or open battery fds — battery
  *    failure and bound-expiry paths SIGKILL the battery's known live
@@ -37,7 +38,7 @@
  *    changes no embedded constant, probe report, or manifest;
  *  - one selftest child forked from the entry inherits the bound
  *    context and runs an explicit additive battery list: at this stage
- *    the five probe batteries, printing the same five "OK <battery>"
+ *    the six probe batteries, printing the same six "OK <battery>"
  *    lines as probe in the same order (identity/LIMITS lines are
  *    probe-only); the fault-injection battery (excluded, ISSUE-0184)
  *    appends to the same list, child, and bound machinery, with every
@@ -85,6 +86,23 @@
  *    is exactly the first 1048576 bytes plus the marker
  *    "\n[STREAM TRUNCATED at 1 MiB]\n" at the cut point, read-side EOF is
  *    observed, and the child is reaped; pipe closed after.
+ *  - outer-registry-broker (the atomic CAPS flip, ISSUE-0524 — the
+ *    tools/src/outer.h engine D7 battery contract, appended after
+ *    bounded-drain in the canonical order): a 0700 scratch directory
+ *    (mkdtemp under TMPDIR, removed afterward); socket(AF_UNIX,
+ *    SOCK_STREAM); bind at a scratch path with the stale-same-name
+ *    unlink first and chmod(path, 0600) after bind; listen; a forked
+ *    child connects to the path and performs one bounded line
+ *    round-trip; accept returns exactly the one connection — a
+ *    follow-up non-blocking accept must report EAGAIN (no second
+ *    connection); SO_PEERCRED on the accepted socket reports pid ==
+ *    the connecting child's pid and uid == getuid(); close and
+ *    unlink the path; the child is reaped; the scratch dir is
+ *    removed. Success iff every step holds, the socket path is
+ *    unlinked, and no survivor remains; every wait is bounded by the
+ *    earlier of the battery-local deadline and the overall mode
+ *    bound, and a failing path kill-reaps its child (no leaked
+ *    process).
  *
  * Fault-injection override installer (ISSUE-0205,
  * dealpg4-probe-selftest-foundation D5 seam contract): the
@@ -109,8 +127,12 @@
 #include <signal.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/prctl.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/un.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
@@ -125,9 +147,9 @@
 #error "DEALPG4 launcher artifact builds only on linux-x86_64 (pinned platform)"
 #endif
 
-/* Stage CAPS: exactly the five battery-backed bits (1|2|4|8|16). */
-_Static_assert(DEALPG4_PROBE_CAPS == 31,
-               "stage CAPS 31: bits 1|2|4|8|16, every bit battery-backed");
+/* CAPS 63: exactly the six battery-backed bits (1|2|4|8|16|32). */
+_Static_assert(DEALPG4_PROBE_CAPS == 63,
+               "CAPS 63: bits 1|2|4|8|16|32, every bit battery-backed");
 
 /* === Battery mechanics constants ======================================= */
 
@@ -154,6 +176,11 @@ _Static_assert(DEALPG4_PROBE_CAPS == 31,
  * child dies by SIGALRM so the battery observes the failure instead of
  * hanging. */
 #define DEALPG4_BATTERY_PGID_ALARM_S 2u
+
+/* outer-registry-broker child self-limit: if the round-trip never
+ * completes, the child dies by SIGALRM so the battery observes the
+ * failure instead of hanging. */
+#define DEALPG4_BATTERY_ORB_ALARM_S 5u
 
 /* bounded-drain overshoot past the cap (architect-decided; any overshoot
  * exercises the cut point): 1048576 + 4096 bytes. */
@@ -460,7 +487,7 @@ static int dealpg4_battery_write_all(int fd, const void *buf, size_t len)
     return 1;
 }
 
-/* === The five micro-batteries ========================================== */
+/* === The six micro-batteries ========================================== */
 
 static int dealpg4_battery_monotonic_timer(dealpg4_battery_bound *bound)
 {
@@ -1053,6 +1080,378 @@ static int dealpg4_battery_bounded_drain(dealpg4_battery_bound *bound)
     return DEALPG4_BATTERY_PASS;
 }
 
+
+/* outer-registry-broker micro-battery (the atomic CAPS flip, ISSUE-0524 —
+ * the tools/src/outer.h engine D7 battery contract, appended after
+ * bounded-drain in the canonical order). Proves the kernel mechanisms
+ * the outer broker depends on, in the contract's exact order: the 0700
+ * mkdtemp scratch directory (removed afterward), the AF_UNIX socket
+ * with the stale-same-name unlink before bind and the 0600 chmod after
+ * bind, listen, one forked child that connects and performs one bounded
+ * line round-trip, accept returning exactly the one connection with the
+ * follow-up non-blocking accept reporting EAGAIN, the SO_PEERCRED
+ * pid/uid equality on the accepted socket, close/unlink, the child
+ * reaped, the scratch dir removed. Success iff every step holds, the
+ * socket path is unlinked, and no survivor remains. Every wait is
+ * bounded by the earlier of the battery-local deadline and the overall
+ * mode bound; a failing path kill-reaps its child (no leaked process). */
+
+/* The round-trip lines: the prober writes the server line to the
+ * accepted connection; the child answers with the client line. */
+#define DEALPG4_BATTERY_ORB_SERVER_LINE "DEALPG4 BROKER_PROBE_ROUNDTRIP\n"
+#define DEALPG4_BATTERY_ORB_CLIENT_LINE "DEALPG4 BROKER_PROBE_ROUNDTRIP_ACK\n"
+
+/* Bounded non-blocking socket line write (MSG_NOSIGNAL: a dead peer is
+ * an error return, never process death). EAGAIN waits one bounded
+ * sleep slice at a time — the wait is owned by the earlier of the
+ * local deadline and the overall mode bound. */
+static int dealpg4_battery_sock_write_bounded(int fd, const char *line,
+                                              size_t len,
+                                              uint64_t local_deadline_ms,
+                                              dealpg4_battery_bound *bound)
+{
+    size_t off = 0;
+
+    while (off < len) {
+        ssize_t w = send(fd, line + off, len - off, MSG_NOSIGNAL);
+
+        if (w > 0) {
+            off += (size_t)w;
+            continue;
+        }
+        if (w < 0 && errno == EINTR)
+            continue;
+        if (w < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            int rc;
+
+            if (dealpg4_now_ms() >= local_deadline_ms)
+                return -1;
+            rc = dealpg4_sleep_slice(bound);
+            if (rc != 0)
+                return rc == DEALPG4_BATTERY_BOUND
+                           ? DEALPG4_BATTERY_BOUND
+                           : -1;
+            continue;
+        }
+        return -1;
+    }
+    return 0;
+}
+
+/* Failure-path cleanup: kill-reap the connecting child (when forked),
+ * close every fd, unlink the socket path, and remove the scratch
+ * directory — best-effort, so a failed battery never leaks a child, an
+ * fd, a socket path, or the scratch dir. */
+static void dealpg4_battery_orb_cleanup(dealpg4_battery_bound *bound,
+                                        pid_t child, int listen_fd,
+                                        int conn_fd, const char *sock_path,
+                                        const char *dir_path)
+{
+    if (child > 0)
+        dealpg4_battery_kill_reap_one(bound, child);
+    if (conn_fd >= 0)
+        close(conn_fd);
+    if (listen_fd >= 0)
+        close(listen_fd);
+    if (sock_path != NULL && sock_path[0] != '\0')
+        (void)unlink(sock_path);
+    if (dir_path != NULL && dir_path[0] != '\0')
+        (void)rmdir(dir_path);
+}
+
+static int dealpg4_battery_outer_registry_broker(dealpg4_battery_bound *bound)
+{
+    const char *tmpdir;
+    char dir_path[PATH_MAX];
+    char sock_path[PATH_MAX];
+    struct sockaddr_un sun;
+    struct stat sb;
+    int listen_fd = -1;
+    int conn_fd = -1;
+    pid_t child = -1;
+    uint64_t local;
+    int status;
+    int rc;
+    int n;
+
+    /* (1) A 0700 scratch directory under TMPDIR (mkdtemp creates mode
+     * 0700; the chmod makes the mode exact regardless of umask). */
+    tmpdir = getenv("TMPDIR");
+    if (tmpdir == NULL || tmpdir[0] == '\0')
+        tmpdir = "/tmp";
+    n = snprintf(dir_path, sizeof dir_path, "%s/dealpg4-orb.XXXXXX",
+                 tmpdir);
+    if (n <= 0 || (size_t)n >= sizeof dir_path)
+        return DEALPG4_BATTERY_FAIL;
+    if (mkdtemp(dir_path) == NULL)
+        return DEALPG4_BATTERY_FAIL;
+    if (chmod(dir_path, 0700) != 0) {
+        (void)rmdir(dir_path);
+        return DEALPG4_BATTERY_FAIL;
+    }
+    if (stat(dir_path, &sb) != 0 || !S_ISDIR(sb.st_mode)
+        || (sb.st_mode & 0777) != 0700) {
+        (void)rmdir(dir_path);
+        return DEALPG4_BATTERY_FAIL;
+    }
+
+    /* The scratch socket path (fits the sun_path cap by construction). */
+    n = snprintf(sock_path, sizeof sock_path, "%s/broker.sock", dir_path);
+    if (n <= 0 || (size_t)n >= sizeof sock_path
+        || (size_t)n >= sizeof sun.sun_path) {
+        (void)rmdir(dir_path);
+        return DEALPG4_BATTERY_FAIL;
+    }
+
+    /* (3) Stale same-name path unlinked first (ENOENT is the normal
+     * outcome of a fresh scratch dir). */
+    if (unlink(sock_path) != 0 && errno != ENOENT) {
+        (void)rmdir(dir_path);
+        return DEALPG4_BATTERY_FAIL;
+    }
+
+    /* (2) socket(AF_UNIX, SOCK_STREAM), non-blocking so the follow-up
+     * accept reports EAGAIN (never blocks). */
+    listen_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (listen_fd < 0) {
+        (void)rmdir(dir_path);
+        return DEALPG4_BATTERY_FAIL;
+    }
+    {
+        int fl = fcntl(listen_fd, F_GETFL);
+
+        if (fl == -1 || fcntl(listen_fd, F_SETFL, fl | O_NONBLOCK) == -1) {
+            dealpg4_battery_orb_cleanup(bound, child, listen_fd, conn_fd,
+                                        sock_path, dir_path);
+            return DEALPG4_BATTERY_FAIL;
+        }
+    }
+
+    memset(&sun, 0, sizeof sun);
+    sun.sun_family = AF_UNIX;
+    memcpy(sun.sun_path, sock_path, (size_t)n + 1);
+
+    /* (3) bind; chmod(path, 0600) after bind, verified by stat. */
+    if (bind(listen_fd, (struct sockaddr *)&sun, sizeof sun) != 0) {
+        dealpg4_battery_orb_cleanup(bound, child, listen_fd, conn_fd,
+                                    sock_path, dir_path);
+        return DEALPG4_BATTERY_FAIL;
+    }
+    if (chmod(sock_path, 0600) != 0) {
+        dealpg4_battery_orb_cleanup(bound, child, listen_fd, conn_fd,
+                                    sock_path, dir_path);
+        return DEALPG4_BATTERY_FAIL;
+    }
+    if (stat(sock_path, &sb) != 0 || !S_ISSOCK(sb.st_mode)
+        || (sb.st_mode & 0777) != 0600) {
+        dealpg4_battery_orb_cleanup(bound, child, listen_fd, conn_fd,
+                                    sock_path, dir_path);
+        return DEALPG4_BATTERY_FAIL;
+    }
+
+    /* (4) listen. */
+    if (listen(listen_fd, 1) != 0) {
+        dealpg4_battery_orb_cleanup(bound, child, listen_fd, conn_fd,
+                                    sock_path, dir_path);
+        return DEALPG4_BATTERY_FAIL;
+    }
+
+    /* (5) A forked child connects to the path and performs one bounded
+     * line round-trip: it answers the prober's server line with the
+     * client line (self-limited by SIGALRM). */
+    child = fork();
+    if (child < 0) {
+        dealpg4_battery_orb_cleanup(bound, child, listen_fd, conn_fd,
+                                    sock_path, dir_path);
+        return DEALPG4_BATTERY_FAIL;
+    }
+    if (child == 0) {
+        char buf[64];
+        int cfd;
+        size_t got = 0;
+
+        close(listen_fd);
+        cfd = socket(AF_UNIX, SOCK_STREAM, 0);
+        if (cfd < 0)
+            _exit(1);
+        alarm(DEALPG4_BATTERY_ORB_ALARM_S);
+        if (connect(cfd, (struct sockaddr *)&sun, sizeof sun) != 0)
+            _exit(1);
+        /* Read exactly the server line, then answer with the client
+         * line; any deviation (EOF, error, content mismatch, or the
+         * alarm) is a child failure the prober observes. */
+        for (;;) {
+            ssize_t r = read(cfd, buf + got,
+                             sizeof(DEALPG4_BATTERY_ORB_SERVER_LINE) - 1
+                                 - got);
+
+            if (r > 0) {
+                got += (size_t)r;
+                if (got == sizeof(DEALPG4_BATTERY_ORB_SERVER_LINE) - 1)
+                    break;
+                continue;
+            }
+            if (r < 0 && errno == EINTR)
+                continue;
+            _exit(1);
+        }
+        if (memcmp(buf, DEALPG4_BATTERY_ORB_SERVER_LINE,
+                   sizeof(DEALPG4_BATTERY_ORB_SERVER_LINE) - 1) != 0)
+            _exit(1);
+        if (!dealpg4_battery_write_all(
+                cfd, DEALPG4_BATTERY_ORB_CLIENT_LINE,
+                sizeof(DEALPG4_BATTERY_ORB_CLIENT_LINE) - 1))
+            _exit(1);
+        close(cfd);
+        _exit(0);
+    }
+
+    /* (6) Wait for the one connection, then accept it. */
+    local = dealpg4_now_ms() + DEALPG4_BATTERY_LOCAL_DEADLINE_MS;
+    {
+        short revents = 0;
+
+        rc = dealpg4_poll_wait(listen_fd, local, bound, &revents);
+        if (rc != 1) {
+            dealpg4_battery_orb_cleanup(bound, child, listen_fd, conn_fd,
+                                        sock_path, dir_path);
+            return rc == DEALPG4_BATTERY_BOUND ? DEALPG4_BATTERY_BOUND
+                                               : DEALPG4_BATTERY_FAIL;
+        }
+    }
+    conn_fd = accept(listen_fd, NULL, NULL);
+    if (conn_fd < 0) {
+        dealpg4_battery_orb_cleanup(bound, child, listen_fd, conn_fd,
+                                    sock_path, dir_path);
+        return DEALPG4_BATTERY_FAIL;
+    }
+    {
+        int fl = fcntl(conn_fd, F_GETFL);
+
+        if (fl == -1 || fcntl(conn_fd, F_SETFL, fl | O_NONBLOCK) == -1) {
+            dealpg4_battery_orb_cleanup(bound, child, listen_fd, conn_fd,
+                                        sock_path, dir_path);
+            return DEALPG4_BATTERY_FAIL;
+        }
+    }
+
+    /* (5 continued) The prober's half of the round-trip: write the
+     * server line, then read the child's client line back. */
+    rc = dealpg4_battery_sock_write_bounded(
+        conn_fd, DEALPG4_BATTERY_ORB_SERVER_LINE,
+        sizeof(DEALPG4_BATTERY_ORB_SERVER_LINE) - 1, local, bound);
+    if (rc != 0) {
+        dealpg4_battery_orb_cleanup(bound, child, listen_fd, conn_fd,
+                                    sock_path, dir_path);
+        return rc == DEALPG4_BATTERY_BOUND ? DEALPG4_BATTERY_BOUND
+                                           : DEALPG4_BATTERY_FAIL;
+    }
+    {
+        char buf[64];
+
+        memset(buf, 0, sizeof buf);
+        rc = dealpg4_read_bounded(
+            conn_fd, buf, sizeof(DEALPG4_BATTERY_ORB_CLIENT_LINE) - 1,
+            local, bound);
+        if (rc != 0) {
+            dealpg4_battery_orb_cleanup(bound, child, listen_fd, conn_fd,
+                                        sock_path, dir_path);
+            return rc == DEALPG4_BATTERY_BOUND ? DEALPG4_BATTERY_BOUND
+                                               : DEALPG4_BATTERY_FAIL;
+        }
+        if (memcmp(buf, DEALPG4_BATTERY_ORB_CLIENT_LINE,
+                   sizeof(DEALPG4_BATTERY_ORB_CLIENT_LINE) - 1) != 0) {
+            dealpg4_battery_orb_cleanup(bound, child, listen_fd, conn_fd,
+                                        sock_path, dir_path);
+            return DEALPG4_BATTERY_FAIL;
+        }
+    }
+
+    /* (6 continued) No second connection: the follow-up non-blocking
+     * accept must report EAGAIN. */
+    {
+        int extra = accept(listen_fd, NULL, NULL);
+
+        if (extra >= 0) {
+            close(extra);
+            dealpg4_battery_orb_cleanup(bound, child, listen_fd, conn_fd,
+                                        sock_path, dir_path);
+            return DEALPG4_BATTERY_FAIL;
+        }
+        if (errno != EAGAIN && errno != EWOULDBLOCK) {
+            dealpg4_battery_orb_cleanup(bound, child, listen_fd, conn_fd,
+                                        sock_path, dir_path);
+            return DEALPG4_BATTERY_FAIL;
+        }
+    }
+
+    /* (7) SO_PEERCRED: pid == the connecting child's pid and uid ==
+     * getuid(). */
+    {
+        struct ucred cred;
+        socklen_t cred_len = sizeof cred;
+
+        if (getsockopt(conn_fd, SOL_SOCKET, SO_PEERCRED, &cred,
+                       &cred_len) != 0
+            || cred_len != sizeof cred || cred.pid != child
+            || cred.uid != getuid()) {
+            dealpg4_battery_orb_cleanup(bound, child, listen_fd, conn_fd,
+                                        sock_path, dir_path);
+            return DEALPG4_BATTERY_FAIL;
+        }
+    }
+
+    /* (8) close and unlink the path; the child is reaped. */
+    close(conn_fd);
+    conn_fd = -1;
+    close(listen_fd);
+    listen_fd = -1;
+
+    local = dealpg4_now_ms() + DEALPG4_BATTERY_LOCAL_DEADLINE_MS;
+    status = 0;
+    rc = dealpg4_waitpid_bounded(child, &status, local, bound);
+    if (rc == DEALPG4_BATTERY_BOUND) {
+        dealpg4_battery_kill_reap_one(bound, child);
+        (void)unlink(sock_path);
+        (void)rmdir(dir_path);
+        return DEALPG4_BATTERY_BOUND;
+    }
+    if (rc != 0 || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        dealpg4_battery_kill_reap_one(bound, child);
+        (void)unlink(sock_path);
+        (void)rmdir(dir_path);
+        return DEALPG4_BATTERY_FAIL;
+    }
+    child = -1; /* reaped */
+
+    /* The socket path is unlinked (the stat re-check proves the
+     * post-state). */
+    if (unlink(sock_path) != 0) {
+        (void)rmdir(dir_path);
+        return DEALPG4_BATTERY_FAIL;
+    }
+    if (stat(sock_path, &sb) == 0 || errno != ENOENT) {
+        (void)rmdir(dir_path);
+        return DEALPG4_BATTERY_FAIL;
+    }
+
+    /* The scratch dir is removed (rmdir only succeeds on the now-empty
+     * directory; the stat re-check proves the post-state). */
+    if (rmdir(dir_path) != 0)
+        return DEALPG4_BATTERY_FAIL;
+    if (stat(dir_path, &sb) == 0 || errno != ENOENT)
+        return DEALPG4_BATTERY_FAIL;
+
+    /* No survivor remains: waitid loop to ECHILD. */
+    rc = dealpg4_reap_all_bounded(bound,
+                                  dealpg4_now_ms()
+                                      + DEALPG4_BATTERY_LOCAL_DEADLINE_MS);
+    if (rc != 0)
+        return rc == DEALPG4_BATTERY_BOUND ? DEALPG4_BATTERY_BOUND
+                                           : DEALPG4_BATTERY_FAIL;
+    return DEALPG4_BATTERY_PASS;
+}
+
 /* === Probe entry ======================================================= */
 
 struct dealpg4_battery_spec {
@@ -1060,42 +1459,50 @@ struct dealpg4_battery_spec {
     int (*run)(dealpg4_battery_bound *bound);
 };
 
-/* The probe battery table: exactly the five canonical batteries in the
- * canonical order (byte-stable report). */
+/* The probe battery table: exactly the six canonical batteries in the
+ * canonical order (byte-stable report; the outer-registry-broker
+ * battery appended after bounded-drain by the atomic CAPS flip,
+ * ISSUE-0524). */
 static const struct dealpg4_battery_spec dealpg4_probe_batteries[] = {
     { DEALPG4_PROBE_BATTERY_MONOTONIC_TIMER,
       dealpg4_battery_monotonic_timer },
     { DEALPG4_PROBE_BATTERY_SUBREAPER, dealpg4_battery_subreaper },
     { DEALPG4_PROBE_BATTERY_PARENT_DEATH, dealpg4_battery_parent_death },
     { DEALPG4_PROBE_BATTERY_NEGATIVE_PGID, dealpg4_battery_negative_pgid },
-    { DEALPG4_PROBE_BATTERY_BOUNDED_DRAIN, dealpg4_battery_bounded_drain }
+    { DEALPG4_PROBE_BATTERY_BOUNDED_DRAIN, dealpg4_battery_bounded_drain },
+    { DEALPG4_PROBE_BATTERY_OUTER_REGISTRY_BROKER,
+      dealpg4_battery_outer_registry_broker }
 };
 
 _Static_assert(sizeof(dealpg4_probe_batteries)
-                   / sizeof(dealpg4_probe_batteries[0]) == 5,
-               "probe runs exactly the five canonical batteries");
+                   / sizeof(dealpg4_probe_batteries[0]) == 6,
+               "probe runs exactly the six canonical batteries");
 
 /* The selftest battery table: an explicit additive structure. At this
- * stage it carries the five probe batteries — the same spec entries in
+ * stage it carries the six probe batteries — the same spec entries in
  * the same canonical order, so the selftest OK lines are byte-equal to
- * probe's; the fault-injection battery (excluded, ISSUE-0184) appends
- * here and runs in the same child under the same bound machinery (every
- * future scenario is deadline-owned at the earlier of its scenario
- * budget and the remaining mode bound — the run signature already
- * carries the bound, so the machinery needs no change). */
+ * probe's (the outer-registry-broker battery joined with the atomic
+ * CAPS flip, ISSUE-0524); the fault-injection battery (excluded,
+ * ISSUE-0184) appends here and runs in the same child under the same
+ * bound machinery (every future scenario is deadline-owned at the
+ * earlier of its scenario budget and the remaining mode bound — the
+ * run signature already carries the bound, so the machinery needs no
+ * change). */
 static const struct dealpg4_battery_spec dealpg4_selftest_batteries[] = {
     { DEALPG4_PROBE_BATTERY_MONOTONIC_TIMER,
       dealpg4_battery_monotonic_timer },
     { DEALPG4_PROBE_BATTERY_SUBREAPER, dealpg4_battery_subreaper },
     { DEALPG4_PROBE_BATTERY_PARENT_DEATH, dealpg4_battery_parent_death },
     { DEALPG4_PROBE_BATTERY_NEGATIVE_PGID, dealpg4_battery_negative_pgid },
-    { DEALPG4_PROBE_BATTERY_BOUNDED_DRAIN, dealpg4_battery_bounded_drain }
+    { DEALPG4_PROBE_BATTERY_BOUNDED_DRAIN, dealpg4_battery_bounded_drain },
+    { DEALPG4_PROBE_BATTERY_OUTER_REGISTRY_BROKER,
+      dealpg4_battery_outer_registry_broker }
     /* ISSUE-0184 fault-injection battery appends here. */
 };
 
 _Static_assert(sizeof(dealpg4_selftest_batteries)
-                   / sizeof(dealpg4_selftest_batteries[0]) >= 5,
-               "selftest runs the five probe batteries plus the fault "
+                   / sizeof(dealpg4_selftest_batteries[0]) >= 6,
+               "selftest runs the six probe batteries plus the fault "
                "battery");
 
 /* Outcome of a battery-list run. */

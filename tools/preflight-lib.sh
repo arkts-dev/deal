@@ -61,12 +61,13 @@
 #   dealpg4_preflight_javac "${DEALPG4_PREFLIGHT_JAVAC_ARGS[@]}"  # P4
 #   dealpg4_preflight_outer                          # P5 after P4
 #
-# Staging pin: DEALPG4_PREFLIGHT_EXPECTED_CAPS and
+# Landed (ISSUE-0524, the atomic CAPS flip):
+# DEALPG4_PREFLIGHT_EXPECTED_CAPS and
 # DEALPG4_PREFLIGHT_PROBE_REPORT_LINES mirror tools/verify-launcher.sh's
-# EXPECTED_CAPS and 7-line report count. ISSUE-0184's atomic CAPS flip
+# EXPECTED_CAPS and the 8-line report count. The atomic CAPS flip
 # (bit 32 outer registry/broker -> 63, the sixth OK line, 8 report
-# lines) updates these constants here and in tools/verify-launcher.sh
-# together with the native flip and the digest re-pin.
+# lines) landed these constants here and in tools/verify-launcher.sh
+# together with the native flip and the digest re-pin — one change.
 
 # --- Pinned artifact surface ---------------------------------------------
 
@@ -75,14 +76,15 @@ DEALPG4_PREFLIGHT_MANIFEST="tools/launcher-manifest.json"
 DEALPG4_PREFLIGHT_SHA256SUM="/usr/bin/sha256sum"
 DEALPG4_PREFLIGHT_PYTHON3="/usr/bin/python3"
 
-# Stage capability bitmask (dealpg4-probe-selftest-foundation D2/D6,
-# tools/src/outer.h battery contract): bits 1|2|4|8|16 = 31, each backed
-# by a passing probe battery in the committed artifact; the probe
-# identity line must match exactly.
-DEALPG4_PREFLIGHT_EXPECTED_CAPS=31
-# The probe report is exactly 7 lines at this stage: identity, LIMITS,
-# five OK lines in canonical order.
-DEALPG4_PREFLIGHT_PROBE_REPORT_LINES=7
+# Capability bitmask (dealpg4-probe-selftest-foundation D2/D6,
+# tools/src/outer.h battery contract; the ISSUE-0524 atomic CAPS flip):
+# bits 1|2|4|8|16|32 = 63, each backed by a passing probe battery in
+# the committed artifact (bit 32 is backed by the outer-registry-broker
+# battery); the probe identity line must match exactly.
+DEALPG4_PREFLIGHT_EXPECTED_CAPS=63
+# The probe report is exactly 8 lines: identity, LIMITS, six OK lines
+# in canonical order.
+DEALPG4_PREFLIGHT_PROBE_REPORT_LINES=8
 
 # Manifest mirrors, filled by P0 and consumed by P1: protocol, version,
 # platform, sha256, and the 12 canonical limits values in the exact
@@ -221,8 +223,10 @@ dealpg4_preflight_p1() {
         fi
         cat "$err" >&2
 
-        # The report is exactly 7 lines at this stage: identity, LIMITS,
-        # five OK lines (dealpg4-probe-selftest-foundation D1).
+        # The report is exactly 8 lines: identity, LIMITS, six OK
+        # lines (dealpg4-probe-selftest-foundation D1; the
+        # outer-registry-broker line landed with the ISSUE-0524
+        # atomic CAPS flip).
         nlines=$(wc -l < "$out" | tr -d ' ')
         if [ "$nlines" -ne "$DEALPG4_PREFLIGHT_PROBE_REPORT_LINES" ]; then
             cat "$out" >&2
@@ -281,16 +285,19 @@ EOF
         [ "$*" = "$DEALPG4_M_LIMITS" ] \
             || dealpg4_preflight_fail LIMITS_MISMATCH
 
-        # The five canonical OK lines, in order, byte-stable
-        # (dealpg4-probe-selftest-foundation D1).
+        # The six canonical OK lines, in order, byte-stable
+        # (dealpg4-probe-selftest-foundation D1; the
+        # outer-registry-broker battery appended after bounded-drain
+        # by the ISSUE-0524 atomic CAPS flip).
         {
             printf 'OK monotonic-timer\n'
             printf 'OK subreaper\n'
             printf 'OK parent-death\n'
             printf 'OK negative-pgid\n'
             printf 'OK bounded-drain\n'
+            printf 'OK outer-registry-broker\n'
         } > "$out.ok.expected"
-        tail -n 5 "$out" > "$out.ok.actual"
+        tail -n 6 "$out" > "$out.ok.actual"
         if ! cmp -s "$out.ok.expected" "$out.ok.actual"; then
             cat "$out" >&2
             dealpg4_preflight_fail CAPABILITY_MISSING

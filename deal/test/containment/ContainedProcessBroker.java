@@ -98,31 +98,31 @@ public final class ContainedProcessBroker implements AutoCloseable {
      * outer registry/broker). The coordinator must observe every expected
      * bit before sending FEATURE_READY.
      *
-     * <p>Staging (dealpg4-probe-selftest-foundation D2/D6,
-     * tools/src/outer.h outer-registry-broker battery contract): at this
-     * stage the native artifact advertises exactly the five
-     * battery-backed probe bits (1|2|4|8|16 = 31) on both the probe
-     * identity line and {@code HELLO_OK}. Bit 32 (outer registry/broker)
-     * joins the advertised set with ISSUE-0184's fault-injection battery
-     * — the atomic CAPS flip to 63 — and
-     * {@link #EXPECTED_CAPABILITY_MASK} flips to the full 63 in the same
-     * change. The mask below is therefore the stage expectation: every
-     * probe bit must be present, and a broker advertising extra bits
-     * (63) is accepted as a superset of the stage set. */
+     * <p>Landed (ISSUE-0524, the atomic CAPS flip): the native artifact
+     * advertises exactly the six battery-backed probe bits
+     * (1|2|4|8|16|32 = 63) on both the probe identity line and
+     * {@code HELLO_OK} — bit 32 (outer registry/broker) joined the
+     * advertised set together with the outer-registry-broker probe
+     * battery and the digest re-pin. The mask below is therefore the
+     * full post-flip expectation: every one of the six bits must be
+     * present, and a live broker advertising anything less than 63
+     * fails the handshake with {@code CAPABILITY_MISSING} before
+     * {@code FEATURE_READY}. */
     public static final long CAP_SUBREAPER = 1L << 0;
     public static final long CAP_MONOTONIC_TIMER = 1L << 1;
     public static final long CAP_NEGATIVE_PGID_SIGNALING = 1L << 2;
     public static final long CAP_PARENT_DEATH_SIGNAL = 1L << 3;
     public static final long CAP_BOUNDED_DRAINS = 1L << 4;
     public static final long CAP_OUTER_REGISTRY_BROKER = 1L << 5;
-    /** The capability bits the live broker must advertise at this
-     * stage: 31 (the five battery-backed probe bits, every one required
-     * — a {@code HELLO_OK} missing any of them is
-     * {@code CAPABILITY_MISSING} before {@code FEATURE_READY}).
-     * ISSUE-0184's atomic CAPS flip raises this mask to the full 63. */
+    /** The capability bits the live broker must advertise (the
+     * ISSUE-0524 atomic CAPS flip): 63 — the six battery-backed probe
+     * bits (1|2|4|8|16|32), every one required — a {@code HELLO_OK}
+     * missing any of them is {@code CAPABILITY_MISSING} before
+     * {@code FEATURE_READY}. */
     public static final long EXPECTED_CAPABILITY_MASK =
             CAP_SUBREAPER | CAP_MONOTONIC_TIMER | CAP_NEGATIVE_PGID_SIGNALING
-                    | CAP_PARENT_DEATH_SIGNAL | CAP_BOUNDED_DRAINS;
+                    | CAP_PARENT_DEATH_SIGNAL | CAP_BOUNDED_DRAINS
+                    | CAP_OUTER_REGISTRY_BROKER;
 
     /** 1 MiB per-stream output retention cap (supervisor-page D7 drain rule). */
     public static final int MAX_OUTPUT_RETAINED_BYTES = 1048576;

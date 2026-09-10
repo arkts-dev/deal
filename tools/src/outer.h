@@ -753,18 +753,16 @@ enum dealpg4_outer_fi_fail_site {
  * survivors. Any deviation -> CAPABILITY_MISSING outer-registry-broker,
  * nonzero exit.
  *
- * Staging pin (D7): ISSUE-0184 lands this battery appended after
- * bounded-drain in the canonical battery order, together with
+ * Landed (ISSUE-0524, the atomic CAPS flip): this battery appended
+ * after bounded-drain in the canonical battery order,
  * DEALPG4_CAP_OUTER_REGISTRY_BROKER = 32 joining DEALPG4_PROBE_CAPS
  * (selftest.h), the identity line reporting CAPS 63, the probe report
- * gaining the sixth "OK outer-registry-broker" line (8 lines total),
- * tools/verify-launcher.sh updating EXPECTED_CAPS=63, the 7-line
- * report count, the expected OK-line list, and the SELFTEST_LEG_ACTIVE
- * flip, and the digest re-pin — one atomic change. This child keeps
- * DEALPG4_PROBE_CAPS = 31 and EXPECTED_CAPS = 31 (no sixth battery, no
- * probe-report change, no SELFTEST_LEG_ACTIVE flip, no CAPS-driven
- * digest re-pin at this merge) and re-pins LauncherManifest.sha256
- * only for the outer implementation change. */
+ * carrying the sixth "OK outer-registry-broker" line (8 lines total),
+ * tools/verify-launcher.sh at EXPECTED_CAPS=63 with the 8-line report
+ * count, the expected OK-line list, and SELFTEST_LEG_ACTIVE=1, the
+ * preflight/Java mask pins at 63, and the digest re-pin — all one
+ * atomic change (a mixed state fails P0 DIGEST_MISMATCH or P1
+ * CAPABILITY_MISSING by construction). */
 #define DEALPG4_BATTERY_OUTER_REGISTRY_BROKER "outer-registry-broker"
 
 /* === Exit-status mapping (engine D1) =================================== */

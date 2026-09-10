@@ -16,21 +16,23 @@
 #   2. SHA-256 byte equality of the scratch file against
 #      LauncherManifest.sha256, else DIGEST_MISMATCH;
 #   3. run "<scratch> probe" and require the exact identity line, the
-#      exact 12-field LIMITS line, all five OK lines, and exit 0; probe
+#      exact 12-field LIMITS line, all six OK lines, and exit 0; probe
 #      failures map to PLATFORM_MISMATCH / PROTOCOL_MISMATCH /
 #      CAPABILITY_MISSING / PROBE_TIMEOUT / CONFIG_INVALID per the probe
 #      contract;
-#   4. cross-check the probe LIMITS line field-by-field against the
+#   4. selftest leg (active since the ISSUE-0524 atomic CAPS flip landed
+#      the fault-injection battery): run "<scratch> selftest", require
+#      exit 0 with the six battery OK lines present, and map failures --
+#      the launcher's own bound expiry (exit 6) or the script-side
+#      timeout (124) -> SELFTEST_TIMEOUT, any other failure ->
+#      CAPABILITY_MISSING with the launcher's stderr token relayed;
+#   5. cross-check the probe LIMITS line field-by-field against the
 #      manifest records, LIMITS_MISMATCH on drift.
-# Exit 0 iff every leg passes. Manifest parsing uses the pinned python3
-# 3.10.12 (/usr/bin/python3); the digest comparison uses
-# /usr/bin/sha256sum.
-#
-# Selftest leg: defined below in dormant form (SELFTEST_LEG_ACTIVE=0).
-# The activation condition is the fault-injection battery: when the
-# selftest child lands it (ISSUE-0184), that change flips the constant
-# to 1 (and re-pins the digest under the atomic rule); from that point
-# the full script -- including the selftest leg -- must pass.
+# Exit 0 only if the rebuild is byte-identical AND digest equality holds
+# AND probe is green (identity CAPS 63, LIMITS shape, six OK lines) AND
+# the selftest leg is green AND the LIMITS cross-check passes. Manifest
+# parsing uses the pinned python3 3.10.12 (/usr/bin/python3); the digest
+# comparison uses /usr/bin/sha256sum.
 set -eu
 
 cd "$(dirname "$0")/.."
@@ -39,12 +41,12 @@ MANIFEST="tools/launcher-manifest.json"
 SHA256SUM=/usr/bin/sha256sum
 PYTHON3=/usr/bin/python3
 
-# Stage capability bitmask (dealpg4-probe-selftest-foundation D2/D6):
-# bits 1|2|4|8|16 = 31, each backed by a passing probe battery in this
-# artifact. The outer child flips this to 63 (bit 32 registry/broker) in
-# the same change that lands its selftest coverage, together with the
-# digest re-pin; the identity line must match exactly.
-EXPECTED_CAPS=31
+# Capability bitmask (dealpg4-probe-selftest-foundation D2/D6; the
+# ISSUE-0524 atomic CAPS flip): bits 1|2|4|8|16|32 = 63, each backed by
+# a passing probe battery in this artifact (the outer-registry-broker
+# battery backed bit 32 when it joined in the same change as the digest
+# re-pin). The identity line must match exactly.
+EXPECTED_CAPS=63
 
 fail() {
     printf '%s\n' "$1" >&2
@@ -56,7 +58,7 @@ trap 'rm -rf "$SCRATCH_DIR"' EXIT
 trap 'rm -rf "$SCRATCH_DIR"; exit 130' HUP INT TERM
 SCRATCH_BIN="$SCRATCH_DIR/launcher"
 
-echo "verify-launcher: leg 1/4 rebuild (pinned recipe into scratch)" >&2
+echo "verify-launcher: leg 1/5 rebuild (pinned recipe into scratch)" >&2
 
 SOURCE_DATE_EPOCH=0
 export SOURCE_DATE_EPOCH
@@ -74,7 +76,7 @@ if ! gcc -std=c11 -O2 -Wall -Werror -fno-ident -ffile-prefix-map=$PWD=. \
 fi
 objcopy --remove-section=.comment "$SCRATCH_BIN"
 
-echo "verify-launcher: leg 2/4 digest equality" >&2
+echo "verify-launcher: leg 2/5 digest equality" >&2
 
 # Manifest parsing uses the pinned python3 3.10.12. Emits protocol,
 # version, platform, sha256, and the 12 canonical limits values (in the
@@ -121,7 +123,7 @@ if [ "$scratch_sha" != "$m_sha256" ]; then
     fail DIGEST_MISMATCH
 fi
 
-echo "verify-launcher: leg 3/4 probe" >&2
+echo "verify-launcher: leg 3/5 probe" >&2
 
 # The script-side bound maps a hung probe to PROBE_TIMEOUT (the probe's
 # own bound expiry exits 5; the launcher's CONFIG_INVALID exit is 3).
@@ -137,9 +139,9 @@ if ! timeout 60 "$SCRATCH_BIN" probe \
     esac
 fi
 
-# The report is exactly 7 lines: identity, LIMITS, five OK lines.
+# The report is exactly 8 lines: identity, LIMITS, six OK lines.
 nlines=$(wc -l < "$SCRATCH_DIR/probe.out" | tr -d ' ')
-if [ "$nlines" -ne 7 ]; then
+if [ "$nlines" -ne 8 ]; then
     fail CAPABILITY_MISSING
 fi
 
@@ -148,7 +150,7 @@ lim_line=$(sed -n '2p' "$SCRATCH_DIR/probe.out")
 
 # Identity line: exact "DEALPG4 <version> <platform> CAPS <caps>" shape,
 # field-checked against the manifest protocol/version/platform and the
-# stage bitmask. A missing or mis-shaped identity line, a CAPS field
+# capability bitmask. A missing or mis-shaped identity line, a CAPS field
 # that lacks an expected bit, or any extra byte is a capability failure.
 [ -n "$id_line" ] || fail CAPABILITY_MISSING
 p_protocol=
@@ -177,7 +179,7 @@ expected_id="DEALPG4 $m_version $m_platform CAPS $EXPECTED_CAPS"
 [ "$id_line" = "$expected_id" ] || fail CAPABILITY_MISSING
 
 # LIMITS line: the exact 12-field shape (the field-by-field manifest
-# cross-check is leg 4).
+# cross-check is leg 5).
 case "$lim_line" in
 "LIMITS "*) ;;
 *) fail CAPABILITY_MISSING ;;
@@ -190,42 +192,35 @@ for field in "$@"; do
     ''|*[!0-9]*) fail CAPABILITY_MISSING ;;
     esac
 done
+p_limits=$*
 
-# The five canonical OK lines, in order, byte-stable
-# (dealpg4-probe-selftest-foundation D1).
+# The six canonical OK lines, in order, byte-stable
+# (dealpg4-probe-selftest-foundation D1; the outer-registry-broker
+# battery appended after bounded-drain by the ISSUE-0524 atomic CAPS
+# flip).
 {
     printf 'OK monotonic-timer\n'
     printf 'OK subreaper\n'
     printf 'OK parent-death\n'
     printf 'OK negative-pgid\n'
     printf 'OK bounded-drain\n'
+    printf 'OK outer-registry-broker\n'
 } > "$SCRATCH_DIR/ok.expected"
-tail -n 5 "$SCRATCH_DIR/probe.out" > "$SCRATCH_DIR/ok.actual"
+tail -n 6 "$SCRATCH_DIR/probe.out" > "$SCRATCH_DIR/ok.actual"
 if ! cmp -s "$SCRATCH_DIR/ok.expected" "$SCRATCH_DIR/ok.actual"; then
     fail CAPABILITY_MISSING
 fi
 
-echo "verify-launcher: leg 4/4 LIMITS cross-check" >&2
-
-# Field-by-field: the 12 probe LIMITS fields against the manifest
-# invocationLimits + outerLimits + selftestLimits records, in canonical
-# order.
-[ "$*" = "$m_limits" ] || fail LIMITS_MISMATCH
-
 # ----------------------------------------------------------------------
-# Selftest leg (DORMANT at this stage).
-# The activation condition is the fault-injection battery: when the
-# selftest child lands it (ISSUE-0184), that change flips
-# SELFTEST_LEG_ACTIVE to 1 below. From that point the full script --
-# including this leg -- must pass (dealpg4-launcher-core verify-launcher
-# contract). The leg runs the rebuilt scratch launcher in selftest mode
-# with a script-side bound, requires exit 0 with the five probe-battery
-# OK lines present, and maps failures: the launcher's own bound expiry
-# (exit 6) or the script-side timeout (124) -> SELFTEST_TIMEOUT, any
-# other failure -> CAPABILITY_MISSING with the launcher's stderr token
-# relayed. No skip, no retry.
+# Selftest leg (ACTIVE since the ISSUE-0524 atomic CAPS flip landed the
+# fault-injection battery). The leg runs the rebuilt scratch launcher in
+# selftest mode with a script-side bound, requires exit 0 with the six
+# probe-battery OK lines present, and maps failures: the launcher's own
+# bound expiry (exit 6) or the script-side timeout (124) ->
+# SELFTEST_TIMEOUT, any other failure -> CAPABILITY_MISSING with the
+# launcher's stderr token relayed. No skip, no retry.
 # ----------------------------------------------------------------------
-SELFTEST_LEG_ACTIVE=0
+SELFTEST_LEG_ACTIVE=1
 if [ "$SELFTEST_LEG_ACTIVE" = "1" ]; then
     echo "verify-launcher: selftest leg" >&2
     if ! timeout 120 "$SCRATCH_BIN" selftest \
@@ -238,11 +233,18 @@ if [ "$SELFTEST_LEG_ACTIVE" = "1" ]; then
         esac
     fi
     for battery in monotonic-timer subreaper parent-death negative-pgid \
-                   bounded-drain; do
+                   bounded-drain outer-registry-broker; do
         grep -qx "OK $battery" "$SCRATCH_DIR/selftest.out" \
             || fail CAPABILITY_MISSING
     done
 fi
 
-printf 'verify-launcher: PASS (rebuild byte-identical, probe green, LIMITS cross-check clean)\n'
+echo "verify-launcher: leg 5/5 LIMITS cross-check" >&2
+
+# Field-by-field: the 12 probe LIMITS fields against the manifest
+# invocationLimits + outerLimits + selftestLimits records, in canonical
+# order.
+[ "$p_limits" = "$m_limits" ] || fail LIMITS_MISMATCH
+
+printf 'verify-launcher: PASS (rebuild byte-identical, digest equality, probe green, selftest green, LIMITS cross-check clean)\n'
 exit 0

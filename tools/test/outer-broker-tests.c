@@ -30,7 +30,7 @@
  *     record;
  *  2. full handshake success through the core: the scripted
  *     coordinator connects, asserts the socket/dir modes from the
- *     coordinator side, HELLO -> HELLO_OK 4 31 -> FEATURE_READY ->
+ *     coordinator side, HELLO -> HELLO_OK 4 63 -> FEATURE_READY ->
  *     READY_ACK <nonce> -> close, exits 0 — the outer exits 0, no
  *     escalation, the final proof completes, the socket path is
  *     unlinked, no survivor;
@@ -308,7 +308,7 @@ static int peer_do_handshake(int fd, const char *path, const char *nonce,
         return 1;
     if (peer_read_line(fd, line, sizeof line, 3000) != 0)
         return 1;
-    if (strcmp(line, "DEALPG4 HELLO_OK 4 31\n") != 0)
+    if (strcmp(line, "DEALPG4 HELLO_OK 4 63\n") != 0)
         return 1;
     n = snprintf(cmd, sizeof cmd, "DEALPG4 FEATURE_READY %s\n", nonce);
     if (n <= 0 || (size_t)n >= sizeof cmd)
@@ -377,7 +377,7 @@ static int broker_peer_main(const char *scenario, const char *arg)
             }
             sleep_ms(500);
             if (peer_read_line(fd, line, sizeof line, 3000) != 0
-                || strcmp(line, "DEALPG4 HELLO_OK 4 31\n") != 0) {
+                || strcmp(line, "DEALPG4 HELLO_OK 4 63\n") != 0) {
                 fprintf(stderr, "PEER FAIL hello-ok\n");
                 return 1;
             }
@@ -494,7 +494,7 @@ static int broker_peer_main(const char *scenario, const char *arg)
         if (n <= 0 || (size_t)n >= sizeof cmd
             || peer_write_all(fd, cmd, (size_t)n) != 0
             || peer_read_line(fd, line, sizeof line, 3000) != 0
-            || strcmp(line, "DEALPG4 HELLO_OK 4 31\n") != 0) {
+            || strcmp(line, "DEALPG4 HELLO_OK 4 63\n") != 0) {
             fprintf(stderr, "PEER FAIL hello-ok\n");
             return 1;
         }
@@ -524,7 +524,7 @@ static int broker_peer_main(const char *scenario, const char *arg)
         if (n <= 0 || (size_t)n >= sizeof cmd
             || peer_write_all(fd, cmd, (size_t)n) != 0
             || peer_read_line(fd, line, sizeof line, 3000) != 0
-            || strcmp(line, "DEALPG4 HELLO_OK 4 31\n") != 0) {
+            || strcmp(line, "DEALPG4 HELLO_OK 4 63\n") != 0) {
             fprintf(stderr, "PEER FAIL hello-ok\n");
             return 1;
         }

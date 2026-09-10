@@ -1162,7 +1162,10 @@ static void dealpg4_outer_broker_queue_raw(dealpg4_outer_state *st,
         dealpg4_outer_broker_close(st);
 }
 
-/* HELLO_OK 4 <caps> (caps = the stage bitmask 31, selftest.h). */
+/* HELLO_OK 4 <caps> (caps = DEALPG4_PROBE_CAPS, selftest.h — CAPS 63
+ * since the ISSUE-0524 atomic flip landed bit 32 with its
+ * outer-registry-broker battery; the record code is unchanged, the
+ * constant drives the emitted value). */
 static void dealpg4_outer_broker_queue_hello_ok(dealpg4_outer_state *st)
 {
     char caps[16];

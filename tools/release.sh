@@ -106,12 +106,13 @@ RELEASE_MANIFEST="tools/launcher-manifest.json"
 RELEASE_SHA256SUM="/usr/bin/sha256sum"
 RELEASE_PYTHON3="/usr/bin/python3"
 
-# Stage capability bitmask and the probe report shape, mirrored from
-# tools/verify-launcher.sh (leg 3) and tools/preflight-lib.sh: the probe
-# report is exactly 7 lines at this stage -- identity, LIMITS, five OK
-# lines in canonical order -- and the identity line must match exactly.
-RELEASE_EXPECTED_CAPS=31
-RELEASE_PROBE_REPORT_LINES=7
+# Capability bitmask and the probe report shape, mirrored from
+# tools/verify-launcher.sh (leg 3) and tools/preflight-lib.sh (the
+# ISSUE-0524 atomic CAPS flip): the probe report is exactly 8 lines --
+# identity, LIMITS, six OK lines in canonical order -- and the identity
+# line must match exactly.
+RELEASE_EXPECTED_CAPS=63
+RELEASE_PROBE_REPORT_LINES=8
 
 # --- Gate-record state (S8) -----------------------------------------------
 # Fixed field order, all fields always present, null for not-yet-produced
@@ -329,9 +330,9 @@ update_record_after_r3() {
 # R0 (3): the launcher probe -- exempt from the table (the bounding
 # mechanism itself carries embedded self-bounds; the `timeout 60` guard is
 # the fail-closed safety net of tools/verify-launcher.sh leg 3). Legs:
-# identity line ("DEALPG4 <version> <platform> CAPS 31" field-checked
+# identity line ("DEALPG4 <version> <platform> CAPS 63" field-checked
 # against the manifest protocol/version/platform), the exact 12-field
-# LIMITS line shape, and the five canonical OK lines in order. The probe
+# LIMITS line shape, and the six canonical OK lines in order. The probe
 # report is captured at <export>/release/r0-probe.out for R0 (4)'s
 # preflight-limits cross-check. Token mapping: PROBE_TIMEOUT (124/5),
 # CONFIG_INVALID (3), CAPABILITY_MISSING (4 or any other exit),
@@ -371,8 +372,8 @@ r0_probe() {
   fi
   cat "$err" >&2
 
-  # The report is exactly 7 lines at this stage: identity, LIMITS, five OK
-  # lines in canonical order.
+  # The report is exactly 8 lines: identity, LIMITS, six OK lines in
+  # canonical order.
   nlines=$(wc -l < "$out" | tr -d ' ')
   if [ "$nlines" -ne "$RELEASE_PROBE_REPORT_LINES" ]; then
     cat "$out" >&2
@@ -420,16 +421,16 @@ EOF
     esac
   done
 
-  # The five canonical OK lines, in order, byte-stable.
-  expected_ok=$(printf 'OK monotonic-timer\nOK subreaper\nOK parent-death\nOK negative-pgid\nOK bounded-drain')
-  actual_ok=$(tail -n 5 "$out")
+  # The six canonical OK lines, in order, byte-stable.
+  expected_ok=$(printf 'OK monotonic-timer\nOK subreaper\nOK parent-death\nOK negative-pgid\nOK bounded-drain\nOK outer-registry-broker')
+  actual_ok=$(tail -n 6 "$out")
   if [ "$actual_ok" != "$expected_ok" ]; then
     cat "$out" >&2
     echo "CAPABILITY_MISSING" >&2
     return 1
   fi
   cat "$out"
-  echo "  probe green: identity and 12 LIMITS fields in shape, five OK batteries"
+  echo "  probe green: identity and 12 LIMITS fields in shape, six OK batteries"
 }
 
 # =========================================================================
@@ -580,7 +581,7 @@ main() {
 
   # --- R0 (3): launcher probe (exempt from the table) ----------------------
   echo ""
-  echo "=== R0 preflight (3): launcher probe (identity, LIMITS shape, five OK batteries; exempt from the table) ==="
+  echo "=== R0 preflight (3): launcher probe (identity, LIMITS shape, six OK batteries; exempt from the table) ==="
   r0_probe || exit 1
 
   # --- R0 (4): preflight-limits (checkout-cwd table entry) -----------------

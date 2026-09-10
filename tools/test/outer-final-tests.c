@@ -582,7 +582,7 @@ static int peer_do_handshake(int fd, const char *nonce)
         || peer_write_all(fd, cmd, (size_t)n) != 0)
         return 1;
     if (peer_read_line(fd, line, sizeof line, 5000) != 0
-        || strcmp(line, "DEALPG4 HELLO_OK 4 31\n") != 0)
+        || strcmp(line, "DEALPG4 HELLO_OK 4 63\n") != 0)
         return 1;
     n = snprintf(cmd, sizeof cmd, "DEALPG4 FEATURE_READY %s\n", nonce);
     if (n <= 0 || (size_t)n >= sizeof cmd

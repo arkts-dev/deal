@@ -51,10 +51,10 @@ import java.util.function.BooleanSupplier;
  * <p>The transport is a real Unix-domain socket pair: the test binds a
  * {@link ServerSocketChannel} on a temporary socket path and runs a
  * scripted peer that answers the handshake and invocation records
- * exactly as the live outer broker answers them at this stage
- * ({@code HELLO_OK 4 31} for the stage capability bitmask — the five
- * battery-backed probe bits 1|2|4|8|16 that the artifact advertises;
- * bit 32 joins with ISSUE-0184's battery flip to 63), {@code READY_ACK
+ * exactly as the live outer broker answers them
+ * ({@code HELLO_OK 4 63} for the capability bitmask — the six
+ * battery-backed probe bits 1|2|4|8|16|32 the artifact advertises
+ * since the ISSUE-0524 atomic CAPS flip), {@code READY_ACK
  * <nonce>} for {@code FEATURE_READY}, {@code INVOKED}/{@code
  * STARTED}/{@code REPORT}/{@code CLEAN} for a round-trip). This is a
  * test-only double for the peer side of the state machine; the live
@@ -67,11 +67,13 @@ import java.util.function.BooleanSupplier;
 public final class ContainedProcessBrokerStateTest {
 
     private static final String NONCE = "0123456789abcdef0123456789abcdef";
-    /** Stage capability bitmask (tools/src/selftest.h DEALPG4_PROBE_CAPS
-     * and the ContainedProcessBroker stage expectation): the live outer
-     * broker advertises 31 (bits 1|2|4|8|16) until ISSUE-0184's atomic
-     * flip to 63, so the scripted peer answers the same value. */
-    private static final int EXPECTED_CAPS = 31;
+    /** Capability bitmask (tools/src/selftest.h DEALPG4_PROBE_CAPS and
+     * the ContainedProcessBroker mask-63 expectation): the live outer
+     * broker advertises 63 (bits 1|2|4|8|16|32) since the ISSUE-0524
+     * atomic CAPS flip, so the scripted peer answers the same value
+     * (its scripted HELLO_OK must satisfy the client's mask-63
+     * check). */
+    private static final int EXPECTED_CAPS = 63;
 
     /** STUB_READY nonce scripted for the invocation scenarios. */
     private static final String STUB_NONCE = "aabbccddeeff00112233445566778899";
@@ -405,12 +407,13 @@ public final class ContainedProcessBrokerStateTest {
     }
 
     /**
-     * Fail-closed capability check (ContainedProcessBroker stage
-     * expectation): a live handshake against a peer answering
-     * {@code HELLO_OK 4 30} — the stage bitmask minus capability bit 1
-     * (subreaper) — must be rejected with {@code CAPABILITY_MISSING}
-     * before any {@code FEATURE_READY}, and the rejected session never
-     * emits a record beyond {@code HELLO}.
+     * Fail-closed capability check (ContainedProcessBroker
+     * mask-63 expectation): a live handshake against a peer
+     * answering {@code HELLO_OK 4 30} — the advertised bitmask
+     * minus capability bit 1 (subreaper) — must be rejected with
+     * {@code CAPABILITY_MISSING} before any {@code FEATURE_READY},
+     * and the rejected session never emits a record beyond
+     * {@code HELLO}.
      */
     private static void runCapsRejectionScenario() throws Exception {
         Path socketDir = Files.createTempDirectory("dealpg4-state-test-caps");
