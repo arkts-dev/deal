@@ -1426,7 +1426,6 @@ public final class SemanticLowerer {
     }
 
     /**
-    /**
      * The E7 call-machine lowering result (ISSUE-0236): the validated
      * lowering result plus the module's recorded {@code EXTERNAL_ENTRY}
      * and {@code CALLBACK_INVOKE} op ids by export name — the surfaces a
@@ -1463,8 +1462,6 @@ public final class SemanticLowerer {
      * {@code @jsonable} class's {@code JSON_FROM_CLASS} op in
      * declaration order). On failure the lowering result carries the
      * first E6005 and both records are empty.
-     */
-
      */
     public record ClassDeclarationCoreResult(LoweringResult lowering,
                                              deal.semantic.ir.ClassFactoryRegistry registry,
