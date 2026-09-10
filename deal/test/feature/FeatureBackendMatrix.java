@@ -21,7 +21,7 @@ import java.util.List;
  * | PROJECT_CONFIG                     | applicable backend pipeline   |
  * | C_FFI                              | LuaJIT runtime record plus    |
  * |                                    | linked JVM compile-error      |
- * |                                    | E6003 record                  |
+ * |                                    | E6006 record                  |
  * | C_FFI_DECLARATION_ERROR            | compile-error on both         |
  * |                                    | pipelines unless              |
  * |                                    | backend-specific              |
@@ -29,7 +29,7 @@ import java.util.List;
  *
  * <p>{@link #validate(V12FeatureMetadata)} is the catalog's pre-compilation
  * gate: a sidecar backend set must equal the matrix result; omission,
- * addition, a missing linked E6003 record, an illegal invocation shape,
+ * addition, a missing linked E6006 record, an illegal invocation shape,
  * or a sync invocation for an async record fails catalog validation
  * before any compilation. The matrix is a closed switch — no feature id
  * can pass validation through a default or fallback row.</p>
@@ -105,14 +105,14 @@ public final class FeatureBackendMatrix {
             }
             case C_FFI -> {
                 if (record.backends().equals(List.of("jvm"))) {
-                    // The linked JVM E6003 rejection half (D12): a
-                    // JVM-only compile-error E6003 record, never a
+                    // The linked JVM E6006 rejection half (D12): a
+                    // JVM-only compile-error E6006 record, never a
                     // runtime record.
                     if (!(record.expected()
                             instanceof V12FeatureMetadata.CompileError error)
-                            || !error.code().equals("E6003")) {
+                            || !error.code().equals("E6006")) {
                         yield feature.canonicalName() + " JVM-only records "
-                            + "must expect compile-error E6003";
+                            + "must expect compile-error E6006";
                     }
                     if (invocation != V12FeatureMetadata.Invocation.COMPILE_ONLY) {
                         yield feature.canonicalName() + " JVM-only records "
@@ -131,7 +131,7 @@ public final class FeatureBackendMatrix {
                 String linked = record.linkedRecord();
                 if (linked == null || linked.isEmpty()) {
                     yield feature.canonicalName() + " requires a linked JVM "
-                        + "compile-error E6003 record (missing linkedRecord)";
+                        + "compile-error E6006 record (missing linkedRecord)";
                 }
                 V12FeatureMetadata linkedRecord = catalog == null ? null
                     : catalog.recordById(linked);
@@ -146,9 +146,9 @@ public final class FeatureBackendMatrix {
                 }
                 if (!(linkedRecord.expected()
                         instanceof V12FeatureMetadata.CompileError error)
-                        || !error.code().equals("E6003")) {
+                        || !error.code().equals("E6006")) {
                     yield feature.canonicalName() + " linkedRecord '" + linked
-                        + "' must expect compile-error E6003";
+                        + "' must expect compile-error E6006";
                 }
                 yield null;
             }

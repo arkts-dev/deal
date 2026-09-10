@@ -23,7 +23,7 @@ import java.util.List;
  *
  * <p>Every matrix mutation here is the intentional negative of the
  * declarations-page D12 table: omitting a required JVM record, adding a
- * forbidden JVM FFI runtime record, removing the linked E6003 record, and
+ * forbidden JVM FFI runtime record, removing the linked E6006 record, and
  * mislabeling async invocation as direct-main each fail catalog
  * validation before any compilation. Exit 0 iff every case holds; a
  * failure prints its named token and exits nonzero (no skip, no retry).</p>
@@ -450,8 +450,8 @@ public final class V12FeatureGateTest {
                 "runtime-ok", List.of("luajit", "jvm"), "direct-main",
                 null)))));
 
-        expectFailure("C_FFI without a linked E6003 fails",
-            "linked JVM compile-error E6003",
+        expectFailure("C_FFI without a linked E6006 fails",
+            "linked JVM compile-error E6006",
             () -> catalogWith(fresh(), single(withNative(record("c-ffi",
                 "runtime-ok", List.of("luajit"), "direct-main", null)))));
 
@@ -461,7 +461,7 @@ public final class V12FeatureGateTest {
                 "c-ffi", "runtime-ok", List.of("luajit"), "direct-main",
                 "c-ffi/jvm-reject-missing")))));
 
-        expectFailure("linked record without E6003 fails", "expect compile-error E6003",
+        expectFailure("linked record without E6006 fails", "expect compile-error E6006",
             () -> catalogWith(fresh(), Map.of(
                 "c-ffi/runtime.sidecar.json",
                 withNative(recordWithLinked("c-ffi", "runtime-ok",
@@ -933,7 +933,7 @@ public final class V12FeatureGateTest {
             if (!ids.contains("int32/truncating-arith/record")
                     || !ids.contains("c-ffi/duplicate-marker/record")
                     || !ids.contains("c-ffi/runtime-native/record")
-                    || !ids.contains("c-ffi/linked-jvm-e6003/record")
+                    || !ids.contains("c-ffi/linked-jvm-e6006/record")
                     || !ids.contains("c-ffi/unloadable-library/record")
                     || !ids.contains("c-ffi/missing-symbol/record")
                     || !ids.contains("c-ffi/classify-manifest-relative/record")

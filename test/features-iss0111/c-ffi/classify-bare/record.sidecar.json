@@ -6,7 +6,7 @@
   "expected": { "runtime-error": "FFI_LIBRARY_LOAD" },
   "backends": ["luajit"],
   "invocation": "direct-main",
-  "linkedRecord": "c-ffi/linked-jvm-e6003/record",
+  "linkedRecord": "c-ffi/linked-jvm-e6006/record",
   "support": [],
   "native": {
     "entries": [

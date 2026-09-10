@@ -1013,7 +1013,7 @@ private final Path repoRoot;
      *       LuaJIT runtime leg the gate compiles it with contained GCC
      *       into a shared object and returns its absolute path (the
      *       events file is recorded for the C FFI driver); on a
-     *       compile-error leg (the linked JVM E6003 record) a pinned
+     *       compile-error leg (the linked JVM E6006 record) a pinned
      *       placeholder absolute path is used (the library is never
      *       loaded);</li>
      *   <li>leading {@code /}: a pinned absolute path used verbatim (the
@@ -1039,7 +1039,7 @@ private final Path repoRoot;
                     || entry.metadata().expected()
                         instanceof V12FeatureMetadata.RuntimeError);
             if (!runtimeLeg) {
-                return "/v12-linked-jvm-e6003/" + library;
+                return "/v12-linked-jvm-e6006/" + library;
             }
             return compileNativeFixture(entry, library).toString();
         }
