@@ -1004,6 +1004,116 @@ public class JsonClassExecutorTest {
                 && failure.actual().equals(ActualKind.MISSING.token()),
             "the adapter fails the internal missing view inside a table at data.k with "
                 + "the missing token");
+
+        // Dotted table keys: E8's dot-joined failure path is ambiguous
+        // (a table key is never re-escaped there, so "a.0" may be the
+        // key "a.0" or the array element 0 under key "a"), and the
+        // pinned segment convention must be resolved against the actual
+        // value structure — a table key always appends ".key", an array
+        // element always "[i]" — never the reported string. Fixture and
+        // production adapter agree on the exact fieldPath.
+        SemanticTable<Value> dottedFunctionData = new SemanticTable<>();
+        dottedFunctionData.put("a", new Value.Array(SemanticArray.of(new Value.Int(1))));
+        dottedFunctionData.put("a.0", new Value.Function(new RuntimeDescriptor.Func(
+            List.of(), RuntimeDescriptor.Null.INSTANCE, false)));
+        JsonStringify fixtureDottedKey = FixtureJson.stringify(
+            new Value.Table(dottedFunctionData), "data");
+        JsonStringify adapterDottedKey = adapterStringifier.stringify(
+            new Value.Table(dottedFunctionData), "data");
+        check(fixtureDottedKey instanceof JsonStringify.Failure failure
+                && failure.fieldPath().equals("data.a.0")
+                && failure.actual().equals(ActualKind.FUNCTION.token()),
+            "the fixture fails a function at the dotted key a.0 as data.a.0 (a table "
+                + "key always appends .key)");
+        check(adapterDottedKey instanceof JsonStringify.Failure failure
+                && failure.fieldPath().equals("data.a.0")
+                && failure.actual().equals(ActualKind.FUNCTION.token()),
+            "the adapter fails a function at the dotted key a.0 as data.a.0 (the "
+                + "segment-aware first-failure replay, never the ambiguous dot string)");
+
+        // The mirror ambiguity: the same reported string "a.0" resolves
+        // as the array element under key "a" when the first failure is
+        // there — a key-spelling guess would misreport .a.0.
+        SemanticTable<Value> dottedArrayData = new SemanticTable<>();
+        dottedArrayData.put("a", new Value.Array(SemanticArray.of(
+            new Value.Function(new RuntimeDescriptor.Func(List.of(),
+                RuntimeDescriptor.Null.INSTANCE, false)))));
+        dottedArrayData.put("a.0", new Value.Int(1));
+        JsonStringify fixtureDottedArray = FixtureJson.stringify(
+            new Value.Table(dottedArrayData), "data");
+        JsonStringify adapterDottedArray = adapterStringifier.stringify(
+            new Value.Table(dottedArrayData), "data");
+        check(fixtureDottedArray instanceof JsonStringify.Failure failure
+                && failure.fieldPath().equals("data.a[0]")
+                && failure.actual().equals(ActualKind.FUNCTION.token()),
+            "the fixture fails the array element under key a as data.a[0] even with a "
+                + "dotted sibling key present");
+        check(adapterDottedArray instanceof JsonStringify.Failure failure
+                && failure.fieldPath().equals("data.a[0]")
+                && failure.actual().equals(ActualKind.FUNCTION.token()),
+            "the adapter fails the array element under key a as data.a[0] even with a "
+                + "dotted sibling key present (the first failure is the array element, "
+                + "not the key)");
+
+        // A dotted key carrying a failing array child: the key's own
+        // segments stay .key and the child appends its index.
+        SemanticTable<Value> dottedArrayChild = new SemanticTable<>();
+        dottedArrayChild.put("a.0", new Value.Array(SemanticArray.of(
+            new Value.Function(new RuntimeDescriptor.Func(List.of(),
+                RuntimeDescriptor.Null.INSTANCE, false)))));
+        JsonStringify fixtureDottedChild = FixtureJson.stringify(
+            new Value.Table(dottedArrayChild), "data");
+        JsonStringify adapterDottedChild = adapterStringifier.stringify(
+            new Value.Table(dottedArrayChild), "data");
+        check(fixtureDottedChild instanceof JsonStringify.Failure failure
+                && failure.fieldPath().equals("data.a.0[0]")
+                && failure.actual().equals(ActualKind.FUNCTION.token()),
+            "the fixture fails an array element under a dotted key as data.a.0[0]");
+        check(adapterDottedChild instanceof JsonStringify.Failure failure
+                && failure.fieldPath().equals("data.a.0[0]")
+                && failure.actual().equals(ActualKind.FUNCTION.token()),
+            "the adapter fails an array element under a dotted key as data.a.0[0]");
+
+        // Cyclic containers through the production adapter: the
+        // pre-walk short-circuits the re-entry before the mapping (the
+        // mapping cannot represent a cycle) and projects the pinned
+        // terminal — the re-entering container's own canonical token at
+        // its pinned path — identical to the fixture's walk.
+        SemanticTable<Value> selfTable = new SemanticTable<>();
+        selfTable.put("self", new Value.Table(selfTable));
+        JsonStringify fixtureSelfCycle = FixtureJson.stringify(
+            new Value.Table(selfTable), "data");
+        JsonStringify adapterSelfCycle = adapterStringifier.stringify(
+            new Value.Table(selfTable), "data");
+        check(fixtureSelfCycle instanceof JsonStringify.Failure failure
+                && failure.fieldPath().equals("data.self")
+                && failure.actual().equals(ActualKind.TABLE.token()),
+            "the fixture fails a self-referential table at data.self with the table token");
+        check(adapterSelfCycle instanceof JsonStringify.Failure failure
+                && failure.fieldPath().equals("data.self")
+                && failure.actual().equals(ActualKind.TABLE.token()),
+            "the adapter fails a self-referential table at data.self with the table "
+                + "token (never a producer crash)");
+
+        // A table/array cycle: the re-entering table reports its token
+        // at the pinned mixed path .a[0].
+        SemanticTable<Value> cycleTable = new SemanticTable<>();
+        SemanticArray<Value> cycleArray = SemanticArray.of(List.of(
+            new Value.Table(cycleTable)));
+        cycleTable.put("a", new Value.Array(cycleArray));
+        JsonStringify fixtureMixedCycle = FixtureJson.stringify(
+            new Value.Table(cycleTable), "data");
+        JsonStringify adapterMixedCycle = adapterStringifier.stringify(
+            new Value.Table(cycleTable), "data");
+        check(fixtureMixedCycle instanceof JsonStringify.Failure failure
+                && failure.fieldPath().equals("data.a[0]")
+                && failure.actual().equals(ActualKind.TABLE.token()),
+            "the fixture fails a table/array cycle at data.a[0] with the table token");
+        check(adapterMixedCycle instanceof JsonStringify.Failure failure
+                && failure.fieldPath().equals("data.a[0]")
+                && failure.actual().equals(ActualKind.TABLE.token()),
+            "the adapter fails a table/array cycle at data.a[0] with the table token "
+                + "(never a producer crash)");
     }
 
     /** The carrier text of one valid-scalar string view (test-local). */
@@ -1738,6 +1848,57 @@ public class JsonClassExecutorTest {
             "the production adapter's walk projects the missing-in-table failure at "
                 + "data.k with the missing token and the call origin");
 
+        // A dotted table key: E8's dot-joined failure path is ambiguous
+        // ({"a": [1], "a.0": <function>} reports "a.0", which is the
+        // key "a.0", not the array element 0 under key "a"), so the
+        // pinned convention resolves the failure against the actual
+        // structure — the generated C$toJson production walk pins
+        // data.a.0 (a table key always appends .key) at the call origin.
+        SemanticTable<Value> dottedData = new SemanticTable<>();
+        dottedData.put("a", new Value.Array(SemanticArray.of(new Value.Int(1))));
+        dottedData.put("a.0", new Value.Function(new RuntimeDescriptor.Func(List.of(),
+            RuntimeDescriptor.Null.INSTANCE, false)));
+        Value.Class dottedInTable = instanceOf(point, Map.of(
+            "name", Value.string("n"),
+            "age", new Value.Int(1),
+            "home", instanceOf(nested, Map.of("city", Value.string("c"))),
+            "tags", new Value.Array(SemanticArray.of(new Value.Int(0))),
+            "data", new Value.Table(dottedData)));
+        Outcome<Value> dottedFailure = ClassOpsExecutor.executeJsonToClass(op,
+            Map.of(classId, dottedInTable), layouts, JsonClassAlgorithmAdapter.stringifier(),
+            callOrigin);
+        check(dottedFailure instanceof Outcome.Failure<Value> failure
+                && failure.failure().failure().message().equals(
+                    "value at data.a.0 is not JSON serializable: function")
+                && failure.failure().origin().equals(callOrigin),
+            "the production adapter's walk projects the dotted-key failure at data.a.0 "
+                + "(a table key always appends .key, never [0]) at the call origin");
+
+        // The mirror ambiguity through the same walk: when the first
+        // failure is the array element under key "a" and a dotted
+        // sibling key "a.0" also exists, the pinned path stays data.a[0]
+        // (the segment spelling is the parent container's kind).
+        SemanticTable<Value> dottedArrayWalkData = new SemanticTable<>();
+        dottedArrayWalkData.put("a", new Value.Array(SemanticArray.of(
+            new Value.Function(new RuntimeDescriptor.Func(List.of(),
+                RuntimeDescriptor.Null.INSTANCE, false)))));
+        dottedArrayWalkData.put("a.0", new Value.Int(1));
+        Value.Class dottedArrayInTable = instanceOf(point, Map.of(
+            "name", Value.string("n"),
+            "age", new Value.Int(1),
+            "home", instanceOf(nested, Map.of("city", Value.string("c"))),
+            "tags", new Value.Array(SemanticArray.of(new Value.Int(0))),
+            "data", new Value.Table(dottedArrayWalkData)));
+        Outcome<Value> dottedArrayFailure = ClassOpsExecutor.executeJsonToClass(op,
+            Map.of(classId, dottedArrayInTable), layouts,
+            JsonClassAlgorithmAdapter.stringifier(), callOrigin);
+        check(dottedArrayFailure instanceof Outcome.Failure<Value> failure
+                && failure.failure().failure().message().equals(
+                    "value at data.a[0] is not JSON serializable: function")
+                && failure.failure().origin().equals(callOrigin),
+            "the production adapter's walk projects the array-element failure at "
+                + "data.a[0] even with a dotted sibling key present, at the call origin");
+
         // A nested-class-field failure under a path: path "home.city".
         Value.Class badNestedField = instanceOf(point, Map.of(
             "name", Value.string("n"),
@@ -1887,6 +2048,19 @@ public class JsonClassExecutorTest {
                 && failure.failure().failure().message().equals(
                     "value at data.self is not JSON serializable: table"),
             "a cyclic table fails at the f.k path with the table token");
+
+        // The production adapter over the same cyclic table: the
+        // pre-walk short-circuits the re-entry before any mapping, so
+        // the generated C$toJson production walk projects the pinned
+        // failure (never a producer crash).
+        Outcome<Value> tableCycleAdapter = ClassOpsExecutor.executeJsonToClass(
+            tableCycleOp, Map.of(tableClassId, tableCycle), Map.of(POINT, withTable),
+            JsonClassAlgorithmAdapter.stringifier(), nextOrigin(null));
+        check(tableCycleAdapter instanceof Outcome.Failure<Value> failure
+                && failure.failure().failure().message().equals(
+                    "value at data.self is not JSON serializable: table"),
+            "the production adapter fails the cyclic table at the pinned f.k path with "
+                + "the table token (never a producer crash)");
 
         // The depth bound: a 513-deep class nesting fails; 512 decodes.
         ValueId deepClassId = nextValue();
