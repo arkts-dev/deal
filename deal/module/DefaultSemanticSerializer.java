@@ -234,7 +234,8 @@ public final class DefaultSemanticSerializer {
          * projections always agree for a demanded provider). */
         private final Map<DigestKey, DigestMemo> digestMemo =
             new LinkedHashMap<>();
-        /** The already-serialized class plans, keyed by class. */
+        /** The already-serialized class plans, keyed by the exact
+         * class declaration (name plus its complete scalar range). */
         private final Map<DigestKey, SerializedDefaultClass> classMemo =
             new LinkedHashMap<>();
         /** The reentrant-demand guard: providers whose digest is being
@@ -257,8 +258,24 @@ public final class DefaultSemanticSerializer {
 
         private boolean failed = false;
 
+        /**
+         * One provider digest-memo key: the module, the declared name,
+         * the provider kind, and — for class providers — the exact
+         * class declaration's complete scalar range. Class plans are
+         * keyed by declaration, never by declared name alone: a module
+         * may legally declare same-named classes in distinct scopes
+         * (the checker rejects duplicates only at module level), and a
+         * name-only key silently collapses the second class's plan
+         * serialization into the first's, corrupting its canonical
+         * content and planDigest with no diagnostic (D6/D8 identity
+         * and the fail-closed contract). Function providers keep a
+         * null range: imported function references always resolve to
+         * the provider module's top-level exports, where declared
+         * names are unique.
+         */
         private record DigestKey(String moduleSourcePath,
-                                 String declaredName, ProviderKind kind) {
+                                 String declaredName, ProviderKind kind,
+                                 DiagnosticRange declarationRange) {
         }
 
         /** One memoized provider digest derivation: the digest and
@@ -322,8 +339,10 @@ public final class DefaultSemanticSerializer {
         private SerializedDefaultClass serializedClassFor(String sourcePath,
                 PlannedDefaultClass planned) {
             CompilerClassDefaultPlan plan = planned.plan();
+            ClassDeclaration declaration = planned.declaration();
             DigestKey key = new DigestKey(sourcePath,
-                plan.classIdentity().className(), ProviderKind.CLASS);
+                declaration.name(), ProviderKind.CLASS,
+                declaration.span().range());
             SerializedDefaultClass existing = classMemo.get(key);
             if (existing != null) {
                 return existing;
@@ -358,7 +377,7 @@ public final class DefaultSemanticSerializer {
             CompilerClassDefaultPlan plan = planned.plan();
             DefaultSerializerModuleInput input = modules.get(sourcePath);
             SymbolTable classScope = classDeclarationScope(input,
-                plan.classIdentity().className());
+                planned.declaration());
             if (classScope == null) {
                 return null;
             }
@@ -1209,6 +1228,22 @@ public final class DefaultSemanticSerializer {
                 }
                 case CLASS_DECLARATION -> {
                     bindingMarker = node.declaredName();
+                    if (!(statementAst instanceof ClassDeclaration
+                            nestedDeclaration)) {
+                        fail("CLASS_DECLARATION IR node carries no"
+                            + " class declaration AST (broken IR)",
+                            node.span());
+                        return null;
+                    }
+                    if (!node.declaredName().equals(
+                            nestedDeclaration.name())) {
+                        fail("CLASS_DECLARATION IR node declares '"
+                            + node.declaredName()
+                            + "' but carries the declaration of '"
+                            + nestedDeclaration.name()
+                            + "' (broken IR)", node.span());
+                        return null;
+                    }
                     // Mirror NameResolver.walkClassDecl: the nested
                     // class binding is defined in the walked scope, so
                     // later body annotations resolve it exactly as
@@ -1223,8 +1258,14 @@ public final class DefaultSemanticSerializer {
                     if (failed) {
                         return null;
                     }
+                    // The inline plan content resolves by the exact
+                    // nested declaration (name plus its complete
+                    // scalar range), never by declared name alone:
+                    // same-named classes in distinct scopes each inline
+                    // their own plan, and an unresolvable declaration
+                    // fails closed.
                     String planContent = nestedPlanContent(input,
-                        node.declaredName());
+                        nestedDeclaration);
                     if (failed) {
                         return null;
                     }
@@ -1293,34 +1334,57 @@ public final class DefaultSemanticSerializer {
 
         /**
          * The nested class's full canonical plan content (D6
-         * projection) — demand-driven through the class plan, by
-         * declared name within the current module.
+         * projection) — demand-driven through the class plan, keyed
+         * by the exact nested declaration (name plus its complete
+         * scalar range), never by declared name alone: same-named
+         * classes in distinct scopes each inline their own plan, and
+         * an unresolvable declaration fails closed instead of
+         * silently reusing another class's serialization.
          */
         private String nestedPlanContent(DefaultSerializerModuleInput input,
-                String className) {
+                ClassDeclaration nestedDeclaration) {
             List<PlannedDefaultClass> modulePlans =
                 plannedClasses.get(input.sourcePath());
             if (modulePlans == null) {
-                fail("the nested class '" + className + "' of module '"
-                    + input.modulePath() + "' has no planned classes",
-                    DiagnosticRange.synthetic(input.sourcePath()));
+                fail("the nested class '" + nestedDeclaration.name()
+                    + "' of module '" + input.modulePath()
+                    + "' has no planned classes",
+                    nestedDeclaration.span().range());
                 return null;
             }
+            PlannedDefaultClass match = null;
             for (PlannedDefaultClass planned : modulePlans) {
-                if (planned.plan().classIdentity().className()
-                        .equals(className)) {
-                    SerializedDefaultClass serializedPlan =
-                        serializedClassFor(input.sourcePath(), planned);
-                    if (serializedPlan == null) {
+                ClassDeclaration cd = planned.declaration();
+                if (cd.name().equals(nestedDeclaration.name())
+                        && cd.span().range().equals(
+                            nestedDeclaration.span().range())) {
+                    if (match != null) {
+                        fail("the nested class '"
+                            + nestedDeclaration.name() + "' at "
+                            + rangeText(
+                                nestedDeclaration.span().range())
+                            + " matches multiple planned classes"
+                            + " (broken planner input)",
+                            nestedDeclaration.span().range());
                         return null;
                     }
-                    return serializedPlan.canonicalPlanContent();
+                    match = planned;
                 }
             }
-            fail("the nested class '" + className + "' of module '"
-                + input.modulePath() + "' has no planned class record",
-                DiagnosticRange.synthetic(input.sourcePath()));
-            return null;
+            if (match == null) {
+                fail("the nested class '" + nestedDeclaration.name()
+                    + "' of module '" + input.modulePath()
+                    + "' has no planned class record at its"
+                    + " declaration range (broken planner input)",
+                    nestedDeclaration.span().range());
+                return null;
+            }
+            SerializedDefaultClass serializedPlan =
+                serializedClassFor(input.sourcePath(), match);
+            if (serializedPlan == null) {
+                return null;
+            }
+            return serializedPlan.canonicalPlanContent();
         }
 
         /**
@@ -1416,9 +1480,19 @@ public final class DefaultSemanticSerializer {
                         .sourceScalarRange());
                 return null;
             }
+            // Class providers are keyed by their exact declaration
+            // range (the identity's complete source scalar range), so
+            // a same-named class in a distinct scope never reuses
+            // another class's memoized digest or content; function
+            // providers stay name-keyed (imported references always
+            // resolve to the module's unique top-level exports).
+            DiagnosticRange declarationRange = kind == ProviderKind.CLASS
+                ? identity.lexicalDeclarationIdentity()
+                    .sourceScalarRange()
+                : null;
             DigestKey key = new DigestKey(input.sourcePath(),
                 identity.lexicalDeclarationIdentity().declaredName(),
-                kind);
+                kind, declarationRange);
             DigestMemo memo = digestMemo.get(key);
             if (memo != null) {
                 // The memo fast-path still publishes the digest and
@@ -1469,7 +1543,13 @@ public final class DefaultSemanticSerializer {
         /**
          * The serialized plan of a class provider (D5/D6): the
          * demand-driven class serialization whose {@code planDigest} is
-         * the provider digest.
+         * the provider digest — resolved by the exact demanded class
+         * declaration (declared name plus its complete scalar range,
+         * the {@code DigestKey}'s range), never by declared name
+         * alone. A demand with no matching planned declaration fails
+         * closed at the demanded declaration range: same-named classes
+         * in distinct scopes never silently reuse another class's
+         * serialization.
          */
         private SerializedDefaultClass classDigest(
                 DefaultSerializerModuleInput input, DigestKey key) {
@@ -1481,17 +1561,36 @@ public final class DefaultSemanticSerializer {
                     DiagnosticRange.synthetic(input.sourcePath()));
                 return null;
             }
+            PlannedDefaultClass match = null;
             for (PlannedDefaultClass planned : modulePlans) {
-                if (planned.plan().classIdentity().className()
-                        .equals(key.declaredName())) {
-                    return serializedClassFor(input.sourcePath(),
-                        planned);
+                ClassDeclaration cd = planned.declaration();
+                if (cd.name().equals(key.declaredName())
+                        && cd.span().range().equals(
+                            key.declarationRange())) {
+                    if (match != null) {
+                        fail("the demanded class plan '"
+                            + key.declaredName() + "' at "
+                            + rangeText(key.declarationRange())
+                            + " matches multiple planned classes"
+                            + " (broken planner input)",
+                            key.declarationRange());
+                        return null;
+                    }
+                    match = planned;
                 }
             }
-            fail("no planned class '" + key.declaredName()
-                + "' in provider module '" + input.modulePath() + "'",
-                DiagnosticRange.synthetic(input.sourcePath()));
-            return null;
+            if (match == null) {
+                fail("no planned class '" + key.declaredName()
+                    + "' of provider module '" + input.modulePath()
+                    + "' at the demanded declaration range "
+                    + rangeText(key.declarationRange())
+                    + " (a class reference with no planned record —"
+                    + " never silently reuse another class's"
+                    + " serialization)",
+                    key.declarationRange());
+                return null;
+            }
+            return serializedClassFor(input.sourcePath(), match);
         }
 
         /**
@@ -1536,8 +1635,7 @@ public final class DefaultSemanticSerializer {
                 fail("the provider function '" + key.declaredName()
                     + "' of module '" + input.modulePath()
                     + "' has no function declaration with a body",
-                    declarationRangeOf(input, key.kind(),
-                        key.declaredName()));
+                    declarationRangeOf(input, key.declaredName()));
                 return null;
             }
             Type exportType = input.exports().get(key.declaredName());
@@ -1617,12 +1715,12 @@ public final class DefaultSemanticSerializer {
                 fail("the declared provider function '"
                     + key.declaredName() + "' of module '"
                     + input.modulePath() + "' has no resolved declared"
-                    + " signature", declarationRangeOf(input, key.kind(),
+                    + " signature", declarationRangeOf(input,
                         key.declaredName()));
                 return null;
             }
             DiagnosticRange declarationRange = declarationRangeOf(input,
-                key.kind(), key.declaredName());
+                key.declaredName());
             SemanticResourceIdentity identity =
                 new SemanticResourceIdentity(
                     input.location().semanticModuleIdentity(),
@@ -2011,24 +2109,27 @@ public final class DefaultSemanticSerializer {
          * The declaration scope of the class being serialized: the
          * exact scope the checker visited the declaration in (the
          * declaring lexical context the planner resolved the class's
-         * defaults against, D3), or the declaration module's rebuilt
-         * root scope (the declaration analyzer's surface). Never the
-         * module root scope of implementation modules.
+         * defaults against, D3), looked up by the exact class
+         * declaration — never by declared name alone, so same-named
+         * classes in distinct scopes each resolve their defaults in
+         * their own declaration scope — or the declaration module's
+         * rebuilt root scope (the declaration analyzer's surface).
+         * Never the module root scope of implementation modules.
          */
         private SymbolTable classDeclarationScope(
-                DefaultSerializerModuleInput input, String className) {
+                DefaultSerializerModuleInput input,
+                ClassDeclaration declaration) {
             if (input.checkResult() != null) {
-                for (Map.Entry<ClassDeclaration, SymbolTable> entry
-                        : input.checkResult().classScopes().entrySet()) {
-                    if (entry.getKey().name().equals(className)) {
-                        return entry.getValue();
-                    }
+                SymbolTable scope =
+                    input.checkResult().classScopes().get(declaration);
+                if (scope != null) {
+                    return scope;
                 }
-                fail("class '" + className + "' of module '"
+                fail("class '" + declaration.name() + "' of module '"
                     + input.modulePath() + "' has no recorded"
                     + " declaration scope (broken planner input: plans"
                     + " exist only for checker-visited classes)",
-                    DiagnosticRange.synthetic(input.sourcePath()));
+                    declaration.span().range());
                 return null;
             }
             SymbolTable root = declarationRootFor(input);
@@ -2236,18 +2337,6 @@ public final class DefaultSemanticSerializer {
             return null;
         }
 
-        /** Finds a top-level class declaration by name. */
-        private static ClassDeclaration topLevelClass(ProgramNode program,
-                String name) {
-            for (StatementNode stmt : program.statements()) {
-                ClassDeclaration cd = classDeclarationOf(stmt);
-                if (cd != null && cd.name().equals(name)) {
-                    return cd;
-                }
-            }
-            return null;
-        }
-
         private static ClassDeclaration classDeclarationOf(
                 StatementNode stmt) {
             if (stmt instanceof ClassDeclaration cd) {
@@ -2280,25 +2369,21 @@ public final class DefaultSemanticSerializer {
         }
 
         /**
-         * The declaration range of a provider (the reentrant-provider
-         * anchor): the declaration's complete scalar range when the
-         * declaration is findable, the canonical synthetic range
-         * otherwise.
+         * The declaration range of a function provider (the
+         * reentrant-provider and missing-declaration anchor): the
+         * top-level function declaration's complete scalar range when
+         * findable, the canonical synthetic range otherwise. Class
+         * providers anchor on their exact demanded declaration range
+         * (the {@code DigestKey}'s range) — never a name-only lookup,
+         * which could silently anchor another same-named class's
+         * declaration.
          */
         private DiagnosticRange declarationRangeOf(
-                DefaultSerializerModuleInput input, ProviderKind kind,
-                String name) {
-            if (kind == ProviderKind.FUNCTION) {
-                FunctionDeclaration fd = topLevelFunction(input.program(),
-                    name);
-                if (fd != null) {
-                    return fd.span().range();
-                }
-            } else {
-                ClassDeclaration cd = topLevelClass(input.program(), name);
-                if (cd != null) {
-                    return cd.span().range();
-                }
+                DefaultSerializerModuleInput input, String name) {
+            FunctionDeclaration fd = topLevelFunction(input.program(),
+                name);
+            if (fd != null) {
+                return fd.span().range();
             }
             return DiagnosticRange.synthetic(input.sourcePath());
         }
@@ -2314,8 +2399,9 @@ public final class DefaultSemanticSerializer {
                 + " digest demand (never a hang, never a placeholder)",
                 input == null
                     ? DiagnosticRange.synthetic(key.moduleSourcePath())
-                    : declarationRangeOf(input, key.kind(),
-                        key.declaredName()));
+                    : key.declarationRange() != null
+                        ? key.declarationRange()
+                        : declarationRangeOf(input, key.declaredName()));
         }
 
         private void fail(String reason, DiagnosticRange range) {

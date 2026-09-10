@@ -311,7 +311,7 @@ public final class DeclarationSemanticAnalyzer {
         CompilerClassDefaultPlan plan = new CompilerClassDefaultPlan(
             classIdentity, input.location().semanticModuleIdentity(),
             entries, Set.of());
-        return new PlannedDefaultClass(plan, occurrences);
+        return new PlannedDefaultClass(plan, cd, occurrences);
     }
 
     private static ClassDeclaration classDeclarationOf(StatementNode stmt) {

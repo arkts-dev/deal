@@ -283,6 +283,21 @@ public class DefaultSemanticSerializerTest {
         return text != null && text.matches("[0-9a-f]{64}");
     }
 
+    /** The serialized classes of the module whose path ends with the
+     * given suffix, or an empty list. */
+    private static List<DefaultSemanticSerializer.SerializedDefaultClass>
+            modulePlansOf(DefaultSemanticSerializer.Result result,
+                          String sourceSuffix) {
+        for (Map.Entry<String, List<DefaultSemanticSerializer
+                .SerializedDefaultClass>> entry
+                : result.serializedClasses().entrySet()) {
+            if (entry.getKey().endsWith(sourceSuffix)) {
+                return entry.getValue();
+            }
+        }
+        return List.of();
+    }
+
     private static final List<String> FOURTEEN_KINDS = List.of(
         "ARRAY_LITERAL", "ASSIGNMENT", "AWAIT", "BINARY", "CALL",
         "FUNCTION_EXPRESSION", "HAS", "IDENTIFIER", "INDEX", "LITERAL",
@@ -300,6 +315,8 @@ public class DefaultSemanticSerializerTest {
         testPlanProjectionsAndDigestDerivation();
         testPlanEntryOrderSensitivity();
         testDefaultNestedScopeResolution();
+        testSameNamedClassesDistinctScopes();
+        testSameNamedNestedAndImportedPlans();
         testProviderVersioningAndStability();
         testResourceCompletion();
         testFunctionProviderContent();
@@ -1070,6 +1087,371 @@ public class DefaultSemanticSerializerTest {
                         + "\\\"@src/FeLocal\\\""),
                 "the function-expression-body class declaration"
                     + " inlines its full canonical plan content");
+        } finally {
+            deleteRecursively(compile.root);
+        }
+    }
+
+    // =========================================================================
+    // Same-named classes in distinct scopes: class plans, the digest
+    // memo, and the declaration-scope lookup are keyed by the exact
+    // declaration (name plus complete scalar range), never by declared
+    // name alone — the second same-named class serializes its own
+    // content/digest and resolves its defaults in its own declaration
+    // scope (D6/D8 identity, provider versioning, fail-closed totality)
+    // =========================================================================
+
+    private static void testSameNamedClassesDistinctScopes()
+            throws Exception {
+        System.out.println("-- Same-named classes in distinct scopes:"
+            + " declaration-keyed plans, scopes, and digests --");
+        String mainSource = """
+            function makeA(): null {
+              class LocalA {
+                x: int = 1;
+              }
+              class Same {
+                f: int = (function(v: LocalA): int {
+                  return v.x;
+                })({});
+              }
+              return null;
+            }
+
+            function makeB(): null {
+              class LocalB {
+                y: int = 5;
+              }
+              class Same {
+                g: int = (function(w: LocalB): int {
+                  return w.y + 1;
+                })({});
+              }
+              return null;
+            }
+
+            export function main(): null {
+              return null;
+            }
+            """;
+        Compile first = new Compile(Map.of(
+            "deal.json", MANIFEST, "src/main.deal", mainSource),
+            "src/main.deal");
+        try {
+            check(first.success,
+                "the same-named fixture compiles: "
+                    + first.diagnostics);
+            DefaultSemanticSerializer.Result result = first.serialize();
+            check(!result.hasErrors() && result.diagnostics().isEmpty(),
+                "the serializer accepts the same-named classes: "
+                    + result.diagnostics());
+            List<DefaultSemanticSerializer.SerializedDefaultClass> plans =
+                modulePlansOf(result, "main.deal");
+            check(plans.size() == 4,
+                "the module serializes all four plans (LocalA, Same,"
+                    + " LocalB, Same): got " + plans.size());
+            if (plans.size() != 4) {
+                return;
+            }
+            DefaultSemanticSerializer.SerializedDefaultClass sameF =
+                null;
+            DefaultSemanticSerializer.SerializedDefaultClass sameG =
+                null;
+            for (DefaultSemanticSerializer.SerializedDefaultClass plan
+                    : plans) {
+                if (plan.canonicalPlanContent().contains(
+                        "\"name\":\"f\"")) {
+                    sameF = plan;
+                }
+                if (plan.canonicalPlanContent().contains(
+                        "\"name\":\"g\"")) {
+                    sameG = plan;
+                }
+            }
+            check(sameF != null && sameG != null,
+                "both same-named Same plans serialize their own"
+                    + " fields (f and g)");
+            if (sameF == null || sameG == null) {
+                return;
+            }
+            check("Same".equals(sameF.completedPlan().classIdentity()
+                    .className())
+                    && "Same".equals(sameG.completedPlan().classIdentity()
+                        .className()),
+                "both same-named plans carry the class name Same");
+            check(sameF.canonicalPlanContent().contains("\"name\":\"f\"")
+                    && !sameF.canonicalPlanContent().contains(
+                        "\"name\":\"g\""),
+                "the f-bearing Same plan serializes exactly its own"
+                    + " field f (never the other class's fields)");
+            check(sameG.canonicalPlanContent().contains("\"name\":\"g\"")
+                    && !sameG.canonicalPlanContent().contains(
+                        "\"name\":\"f\""),
+                "the g-bearing Same plan serializes exactly its own"
+                    + " field g (never the other class's fields)");
+            String fContent = sameF.completedPlan().orderedFields().get(0)
+                .defaultExpression().canonicalSemanticContent();
+            String gContent = sameG.completedPlan().orderedFields().get(0)
+                .defaultExpression().canonicalSemanticContent();
+            check(fContent.contains(
+                    "\"(@src/LocalA)->int\""),
+                "the f-bearing Same default's function-expression"
+                    + " parameter annotation resolves in its own"
+                    + " declaration scope (LocalA)");
+            check(gContent.contains(
+                    "\"(@src/LocalB)->int\""),
+                "the g-bearing Same default's function-expression"
+                    + " parameter annotation resolves in its own"
+                    + " declaration scope (LocalB)");
+            check(!sameF.planDigest().equals(sameG.planDigest()),
+                "same-named classes carry distinct planDigests (no"
+                    + " silent collapse)");
+            check(sameF.planDigest().equals(digestOf(
+                    sameF.canonicalPlanContent()))
+                    && sameG.planDigest().equals(digestOf(
+                        sameG.canonicalPlanContent())),
+                "each same-named plan's planDigest derives from its own"
+                    + " canonicalPlanContent");
+
+            // Provider versioning: changing a literal inside the
+            // second same-named class's default changes exactly that
+            // class's planDigest; the first class stays stable.
+            String mutated = mainSource.replace("return w.y + 1;",
+                "return w.y + 2;");
+            Compile second = first.recompile(Map.of(
+                "deal.json", MANIFEST, "src/main.deal", mutated));
+            check(second.success,
+                "the mutated variant compiles: " + second.diagnostics);
+            List<DefaultSemanticSerializer.SerializedDefaultClass>
+                mutatedPlans = modulePlansOf(second.serialize(),
+                    "main.deal");
+            check(mutatedPlans.size() == 4,
+                "the mutated variant serializes all four plans: got "
+                    + mutatedPlans.size());
+            if (mutatedPlans.size() != 4) {
+                return;
+            }
+            DefaultSemanticSerializer.SerializedDefaultClass
+                mutatedF = null;
+            DefaultSemanticSerializer.SerializedDefaultClass
+                mutatedG = null;
+            for (DefaultSemanticSerializer.SerializedDefaultClass plan
+                    : mutatedPlans) {
+                if (plan.canonicalPlanContent().contains(
+                        "\"name\":\"f\"")) {
+                    mutatedF = plan;
+                }
+                if (plan.canonicalPlanContent().contains(
+                        "\"name\":\"g\"")) {
+                    mutatedG = plan;
+                }
+            }
+            check(mutatedF != null && mutatedG != null,
+                "the mutated variant still serializes both same-named"
+                    + " plans");
+            if (mutatedF == null || mutatedG == null) {
+                return;
+            }
+            check(mutatedF.planDigest().equals(sameF.planDigest()),
+                "changing the second class's literal leaves the first"
+                    + " same-named class's planDigest stable (provider"
+                    + " versioning)");
+            check(!mutatedG.planDigest().equals(sameG.planDigest()),
+                "changing the second class's literal changes that"
+                    + " class's planDigest (its content is its own)");
+            check(mutatedG.canonicalPlanContent().contains(
+                    "\"literalValue\":2"),
+                "the mutated literal enters the second class's"
+                    + " canonical plan content");
+        } finally {
+            deleteRecursively(first.root);
+        }
+    }
+
+    // =========================================================================
+    // Same-named nested and imported class plans: inline nesting and
+    // digest demand resolve by the exact declaration (name plus
+    // complete scalar range) — never the first same-named plan in
+    // module order
+    // =========================================================================
+
+    private static void testSameNamedNestedAndImportedPlans()
+            throws Exception {
+        System.out.println("-- Same-named nested/imported class plans:"
+            + " inline nesting and digest demand keyed by"
+            + " declaration --");
+        Compile compile = new Compile(Map.of(
+            "deal.json", MANIFEST,
+            "src/main.deal", """
+                import * as L from "./lib"
+
+                class Same {
+                  n: int = 1;
+                }
+
+                class Box {
+                  f: int = (function(): int {
+                    class Same {
+                      m: int = 7;
+                    }
+                    return 3;
+                  })();
+                  g: L.Widget = {};
+                }
+
+                export function main(): null {
+                  return null;
+                }
+                """,
+            "src/lib.deal", """
+                function make(): null {
+                  class Widget {
+                    inner: int = 9;
+                  }
+                  return null;
+                }
+
+                export class Widget {
+                  tag: int = 3;
+                }
+                """), "src/main.deal");
+        try {
+            check(compile.success,
+                "the same-named nested/imported fixture compiles: "
+                    + compile.diagnostics);
+            DefaultSemanticSerializer.Result result = compile.serialize();
+            check(!result.hasErrors() && result.diagnostics().isEmpty(),
+                "the serializer accepts the plans: "
+                    + result.diagnostics());
+            List<DefaultSemanticSerializer.SerializedDefaultClass>
+                mainPlans = modulePlansOf(result, "main.deal");
+            List<DefaultSemanticSerializer.SerializedDefaultClass>
+                libPlans = modulePlansOf(result, "lib.deal");
+            check(mainPlans.size() == 3,
+                "the main module serializes three plans (top Same,"
+                    + " Box, nested Same): got " + mainPlans.size());
+            check(libPlans.size() == 2,
+                "the lib module serializes both same-named Widget"
+                    + " plans: got " + libPlans.size());
+            if (mainPlans.size() != 3 || libPlans.size() != 2) {
+                return;
+            }
+            DefaultSemanticSerializer.SerializedDefaultClass box =
+                null;
+            DefaultSemanticSerializer.SerializedDefaultClass topSame =
+                null;
+            DefaultSemanticSerializer.SerializedDefaultClass nestedSame =
+                null;
+            for (DefaultSemanticSerializer.SerializedDefaultClass plan
+                    : mainPlans) {
+                String content = plan.canonicalPlanContent();
+                if (content.contains("\"name\":\"f\"")
+                        && content.contains("\"name\":\"g\"")) {
+                    box = plan;
+                } else if (content.contains("\"name\":\"n\"")) {
+                    topSame = plan;
+                } else if (content.contains("\"name\":\"m\"")) {
+                    nestedSame = plan;
+                }
+            }
+            check(box != null && topSame != null
+                    && nestedSame != null,
+                "the main plans are identifiable by their own field"
+                    + " content (Box, top Same, nested Same)");
+            if (box == null || topSame == null || nestedSame == null) {
+                return;
+            }
+            String fContent = box.completedPlan().orderedFields().get(0)
+                .defaultExpression().canonicalSemanticContent();
+            check(fContent.contains("\\\"name\\\":\\\"m\\\"")
+                    && fContent.contains("\\\"literalValue\\\":7"),
+                "the function-expression body's nested Same inlines"
+                    + " its own plan (field m), never the top-level"
+                    + " Same's (field n)");
+            check(!fContent.contains("\\\"name\\\":\\\"n\\\""),
+                "the top-level Same plan is never inlined for the"
+                    + " nested declaration");
+            check(nestedSame.canonicalPlanContent().contains(
+                    "\"name\":\"m\"")
+                    && nestedSame.canonicalPlanContent()
+                        .contains("\"literalValue\":7"),
+                "the nested Same serializes its own plan with field m");
+            check(topSame.canonicalPlanContent().contains(
+                    "\"name\":\"n\"")
+                    && topSame.canonicalPlanContent()
+                        .contains("\"literalValue\":1"),
+                "the top-level Same serializes its own plan with"
+                    + " field n");
+            check(!topSame.planDigest().equals(
+                    nestedSame.planDigest()),
+                "same-named top-level and nested plans carry distinct"
+                    + " planDigests");
+
+            DefaultSemanticSerializer.SerializedDefaultClass topWidget =
+                null;
+            DefaultSemanticSerializer.SerializedDefaultClass
+                nestedWidget = null;
+            for (DefaultSemanticSerializer.SerializedDefaultClass plan
+                    : libPlans) {
+                if (plan.canonicalPlanContent().contains(
+                        "\"name\":\"tag\"")) {
+                    topWidget = plan;
+                }
+                if (plan.canonicalPlanContent().contains(
+                        "\"name\":\"inner\"")) {
+                    nestedWidget = plan;
+                }
+            }
+            check(topWidget != null && nestedWidget != null,
+                "both same-named Widget plans are identifiable by"
+                    + " their own field content (tag, inner)");
+            if (topWidget == null || nestedWidget == null) {
+                return;
+            }
+            check(nestedWidget.canonicalPlanContent().contains(
+                    "\"name\":\"inner\"")
+                    && nestedWidget.canonicalPlanContent().contains(
+                        "\"literalValue\":9"),
+                "the nested Widget serializes its own plan (inner)");
+            check(topWidget.canonicalPlanContent().contains(
+                    "\"name\":\"tag\"")
+                    && topWidget.canonicalPlanContent().contains(
+                        "\"literalValue\":3"),
+                "the exported Widget serializes its own plan (tag)");
+            check(!topWidget.planDigest().equals(
+                    nestedWidget.planDigest()),
+                "the same-named Widget plans carry distinct"
+                    + " planDigests");
+
+            ResolvedDefaultExpression g = box.completedPlan()
+                .orderedFields().get(1).defaultExpression();
+            check(g.runtimeResources().size() == 1,
+                "the imported Widget literal completes one resource");
+            RuntimeResourceReference gRef = g.runtimeResources()
+                .iterator().next();
+            check(gRef.kind() == RuntimeResourceReference.Kind
+                    .IMPORTED_CLASS_DEFAULT_PLAN
+                    && "Widget".equals(gRef.semanticResourceIdentity()
+                        .lexicalDeclarationIdentity().declaredName()),
+                "the completed resource is the imported Widget plan");
+            check(gRef.providerContractDigest().equals(
+                    topWidget.planDigest()),
+                "the digest demand resolves the exported Widget by"
+                    + " declaration range (top-level), never the"
+                    + " nested same-named Widget");
+            check(!gRef.providerContractDigest().equals(
+                    nestedWidget.planDigest()),
+                "the nested same-named Widget's digest is never"
+                    + " substituted");
+            check(g.canonicalSemanticContent().contains(
+                    topWidget.planDigest()),
+                "the canonical target embeds the exported Widget's"
+                    + " provider digest");
+            check(topWidget.canonicalPlanContent().equals(
+                    result.providerContents().get(
+                        gRef.semanticResourceIdentity())),
+                "the demanded provider's canonical content is the"
+                    + " exported Widget's plan content");
         } finally {
             deleteRecursively(compile.root);
         }
@@ -2066,12 +2448,12 @@ public class DefaultSemanticSerializerTest {
             java.util.Set.of());
 
         PlannedDefaultClass plannedA = new PlannedDefaultClass(planA,
-            List.of(new DefaultResourceOccurrence(
+            cdA, List.of(new DefaultResourceOccurrence(
                 RuntimeResourceReference.Kind
                     .IMPORTED_CLASS_DEFAULT_PLAN,
                 MODULE_A, MODULE_B, "L", resourceB, aLiteralRange)));
         PlannedDefaultClass plannedB = new PlannedDefaultClass(planB,
-            List.of(new DefaultResourceOccurrence(
+            cdB, List.of(new DefaultResourceOccurrence(
                 RuntimeResourceReference.Kind
                     .IMPORTED_CLASS_DEFAULT_PLAN,
                 MODULE_B, MODULE_A, "M", resourceA, bLiteralRange)));
@@ -2248,7 +2630,7 @@ public class DefaultSemanticSerializerTest {
         // complete while only the tested occurrence record is
         // corrupted.
         PlannedDefaultClass broken = new PlannedDefaultClass(
-            planned.plan(), List.of(corrupted));
+            planned.plan(), planned.declaration(), List.of(corrupted));
         Map<String, List<PlannedDefaultClass>> plannedMap =
             new LinkedHashMap<>();
         for (Map.Entry<String, List<PlannedDefaultClass>> entry
@@ -2345,7 +2727,7 @@ public class DefaultSemanticSerializerTest {
             List.of(new CompilerClassDefaultEntry("x",
                 Type.Int.INSTANCE, "int", false, expr)),
             java.util.Set.of());
-        PlannedDefaultClass planned = new PlannedDefaultClass(plan,
+        PlannedDefaultClass planned = new PlannedDefaultClass(plan, cd,
             List.of());
         DefaultSerializerModuleInput input =
             new DefaultSerializerModuleInput(
