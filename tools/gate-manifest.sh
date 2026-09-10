@@ -272,6 +272,13 @@ TEST_SOURCES=(
   # ISSUE-0162 registration: the C FFI declaration validation and
   # forward binding generation battery.
   'test/FfiDeclarationValidatorTest.java'
+  # ISSUE-0516 registration: the class epic's decomposition tail — the
+  # production ClassConstructionValidator battery (K-D11), the claiming
+  # seam battery (K-D7/K-D11), and the end-to-end integration
+  # verification driving T1-T6 with the injected-fault contract.
+  'test/ClassConstructionValidatorTest.java'
+  'test/ClassClaimingSeamTest.java'
+  'test/ClassIntegrationVerificationTest.java'
   # ISSUE-0540 registration: the default-plan carrier shape battery -
   # fields, immutability, ordering, uniqueness/presence rejection,
   # completion seams, the invoke contract, and the reused landed
@@ -492,4 +499,12 @@ WARNING: luajit not found, skipping async nesting stress tests'
   # (class-construction-jsonable-operations K-D8/K-D10; sequencing
   # item 5).
   'fg|=== Running Json Class Lowering Tests (ISSUE-0515 K-D8/K-D10) ===|java -ea -cp build deal.test.JsonClassLoweringTest'
+  # ISSUE-0516 registration: the class epic's decomposition tail — the
+  # production validator battery, the claiming seams, and the
+  # end-to-end integration verification
+  # (class-construction-jsonable-operations K-D7/K-D11, Verification 7;
+  # sequencing item 6, the last task).
+  'fg|=== Running Class Construction Validator Tests (ISSUE-0516 K-D11) ===|java -ea -cp build deal.test.ClassConstructionValidatorTest'
+  'fg|=== Running Class Claiming Seam Tests (ISSUE-0516 K-D7/K-D11) ===|java -ea -cp build deal.test.ClassClaimingSeamTest'
+  'fg|=== Running Class Integration Verification (ISSUE-0516, decomposition tail) ===|java -ea -cp build deal.test.ClassIntegrationVerificationTest'
 )

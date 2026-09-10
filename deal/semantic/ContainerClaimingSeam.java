@@ -228,6 +228,31 @@ public final class ContainerClaimingSeam {
             SemanticCapability.BOUNDARIES, SemanticCapability.CONTAINERS_AND_STRINGS,
             SemanticCapability.EVALUATION_ORDER, SemanticCapability.BINDINGS));
 
+    /**
+     * The E9-gate activation hand-off (D9 item 5(e); the class epic's
+     * closing gate, ISSUE-0516): {@code CLASSES} activates for the eight
+     * class-op families — a unit producing the full
+     * {@code {CLASS_NEW, CLASS_FACTORY, CLASS_DEFAULT, FIELD_READ,
+     * FIELD_WRITE, FIELD_DELETE, JSON_FROM_CLASS, JSON_TO_CLASS}} family
+     * set must claim {@code CLASSES}; a unit evidencing only a subset
+     * defers per unit (the recorded terminal claim outcome for that
+     * immutable unit). The class epic's producer records its op-side
+     * claim outcomes under this shared mechanism:
+     * {@code HAS_FIELD} homes to {@code CONTAINERS_AND_STRINGS} (the
+     * catalog's required-op row, K-D7 — active since E5's gate, never
+     * {@code CLASSES}), and the class boundary children
+     * ({@code UNTYPED_CLASS_INPUT}/{@code OPTIONAL_FIELD_READ}/
+     * {@code CLASS_FIELD_ASSIGNMENT}/{@code CLASS_LITERAL_FIELD}/
+     * {@code CLASS_DEFAULT_FIELD}) home to {@code DESCRIPTORS} and
+     * {@code BOUNDARIES} (active since E4's gate).
+     */
+    public static final Set<SemanticCapability> E9_GATE_ACTIVATION =
+        Collections.unmodifiableSet(EnumSet.of(SemanticCapability.SIGNED_INT32,
+            SemanticCapability.FOUNDATION_VALUES, SemanticCapability.DESCRIPTORS,
+            SemanticCapability.BOUNDARIES, SemanticCapability.CONTAINERS_AND_STRINGS,
+            SemanticCapability.EVALUATION_ORDER, SemanticCapability.BINDINGS,
+            SemanticCapability.CLASSES));
+
     private ContainerClaimingSeam() {
         // Static entry points and the pinned gate activation states; no instances.
     }
@@ -334,13 +359,25 @@ public final class ContainerClaimingSeam {
             case ARRAY_NEW, TABLE_NEW, ARRAY_LENGTH, MEMBER_READ, FOR_EACH ->
                 List.of(SemanticCapability.CONTAINERS_AND_STRINGS);
             case BOUNDARY -> switch (((KindPayload.BoundaryPayload) op.payload()).kind()) {
-                case ARRAY_LITERAL_ELEMENT, CONTEXTUAL_TABLE_READ ->
+                case ARRAY_LITERAL_ELEMENT, CONTEXTUAL_TABLE_READ,
+                     UNTYPED_CLASS_INPUT, OPTIONAL_FIELD_READ, CLASS_FIELD_ASSIGNMENT,
+                     CLASS_LITERAL_FIELD, CLASS_DEFAULT_FIELD ->
                     List.of(SemanticCapability.DESCRIPTORS, SemanticCapability.BOUNDARIES);
                 default -> List.of();
             };
             case BINDING_LOAD -> List.of(SemanticCapability.BINDINGS);
             case BRANCH, LOOP, DISCARD -> List.of(SemanticCapability.EVALUATION_ORDER);
             case STDLIB_CALL -> List.of(SemanticCapability.STDLIB_SEMANTICS);
+            // The class epic's home rows (K-D7/K-D11, ISSUE-0516): the
+            // eight class ops home to CLASSES (the catalog's closed
+            // required-op row); HAS_FIELD homes to
+            // CONTAINERS_AND_STRINGS — recorded by the class epic's
+            // producer under this shared claiming mechanism, never to
+            // CLASSES (K-D7).
+            case CLASS_NEW, CLASS_FACTORY, CLASS_DEFAULT, FIELD_READ, FIELD_WRITE,
+                 FIELD_DELETE, JSON_FROM_CLASS, JSON_TO_CLASS ->
+                List.of(SemanticCapability.CLASSES);
+            case HAS_FIELD -> List.of(SemanticCapability.CONTAINERS_AND_STRINGS);
             default -> List.of();
         };
     }

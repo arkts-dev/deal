@@ -385,6 +385,19 @@ public final class LoweringSupport {
             if (scans.get(module.moduleId()).stdlibCall) {
                 capabilities.add(SemanticCapability.STDLIB_SEMANTICS);
             }
+            // The plan-time CLASSES arm (class epic, ISSUE-0516): a module
+            // whose checked source contains a class construct — a class
+            // declaration, a class-typed object literal, a class member
+            // read/write/delete, or a has() expression — claims CLASSES
+            // before lowering (the class epic's ops home to the CLASSES
+            // catalog row); a module without a class construct never
+            // claims it. The claim names the op-producing constructs only:
+            // a module that merely names a class as a type (no
+            // construction/member op) produces no class op and claims
+            // nothing.
+            if (scans.get(module.moduleId()).classConstruct) {
+                capabilities.add(SemanticCapability.CLASSES);
+            }
             SemanticRequirementManifest manifest = new SemanticRequirementManifest(
                 module.moduleId(), capabilities, scans.get(module.moduleId()).coverage);
             byId.put(module.moduleId(), manifest);
@@ -675,6 +688,14 @@ public final class LoweringSupport {
          *  catalog entry (D1) — the only common stdlib form (D3); a
          *  stdlib-export value read never sets it. */
         boolean stdlibCall;
+
+        /** The plan-time {@code CLASSES} trigger (ISSUE-0516): a class
+         *  declaration, a class-typed object literal, a member access or
+         *  write/delete target on a class-typed receiver, or a
+         *  {@code has()} expression — every checked construct the class
+         *  epic's arms lower to a class op. Type-only references never
+         *  set it. */
+        boolean classConstruct;
         final Map<ConstructKind, List<SemanticOpKind>> coverage =
             new EnumMap<>(ConstructKind.class);
 
@@ -730,6 +751,11 @@ public final class LoweringSupport {
             }
             case ClassDeclaration classDeclaration -> {
                 scan.cover(ConstructKind.CLASS_DECLARATION);
+                // The plan-time CLASSES arm: a class declaration is a class
+                // construct — the declaration arm produces the layout, the
+                // CLASS_DEFAULT ops, and (for exported classes) the
+                // CLASS_FACTORY.
+                scan.classConstruct = true;
                 for (ClassField field : classDeclaration.fields()) {
                     if (field.defaultExpr().isPresent()) {
                         walkExpression(field.defaultExpr().get(), module, scan,
@@ -938,6 +964,12 @@ public final class LoweringSupport {
             case MemberAccessExpr memberAccessExpr -> {
                 scan.cover(ConstructKind.MEMBER_ACCESS);
                 walkExpression(memberAccessExpr.object(), module, scan, checkerScope);
+                // The plan-time CLASSES arm: a member read on a class-typed
+                // (or cross-module nullable class) receiver lowers to
+                // FIELD_READ.
+                if (isClassReceiverType(checkedType(module, memberAccessExpr.object()))) {
+                    scan.classConstruct = true;
+                }
                 if ("nowMillis".equals(memberAccessExpr.field())) {
                     checkNowMillisAccess(memberAccessExpr, module, scan, checkerScope);
                 }
@@ -956,9 +988,15 @@ public final class LoweringSupport {
                 // (CLASS_NEW/CLASS_FACTORY); every other object literal
                 // constructs an insertion-ordered table (TABLE_NEW).
                 Type type = checkedType(module, objectLiteralExpr);
-                scan.cover(type instanceof Type.Class
+                boolean classLiteral = type instanceof Type.Class;
+                scan.cover(classLiteral
                     ? ConstructKind.CLASS_OBJECT_LITERAL
                     : ConstructKind.ARRAY_OBJECT_LITERAL);
+                // The plan-time CLASSES arm: a class-typed literal lowers
+                // CLASS_NEW (LOCAL or SHARED_FACTORY).
+                if (classLiteral) {
+                    scan.classConstruct = true;
+                }
                 for (Property property : objectLiteralExpr.properties()) {
                     walkExpression(property.value(), module, scan, checkerScope);
                 }
@@ -969,6 +1007,10 @@ public final class LoweringSupport {
             }
             case HasExpr hasExpr -> {
                 scan.cover(ConstructKind.HAS);
+                // The plan-time CLASSES arm: has() is checker-pinned to a
+                // class receiver with an optional field (E4005), so every
+                // has() expression lowers to HAS_FIELD.
+                scan.classConstruct = true;
                 walkExpression(hasExpr.object(), module, scan, checkerScope);
             }
             case AssignmentExpr assignmentExpr -> {
@@ -1017,14 +1059,33 @@ public final class LoweringSupport {
                                         ModuleScan scan, SymbolTable checkerScope)
             throws FactDefect {
         switch (target) {
-            case MemberAccessExpr member ->
+            case MemberAccessExpr member -> {
+                // The plan-time CLASSES arm: a class-field assignment or
+                // delete lowers the FIELD_WRITE/FIELD_DELETE commit op.
+                if (isClassReceiverType(checkedType(module, member.object()))) {
+                    scan.classConstruct = true;
+                }
                 walkExpression(member.object(), module, scan, checkerScope);
+            }
             case IndexExpr index -> {
                 walkExpression(index.array(), module, scan, checkerScope);
                 walkExpression(index.index(), module, scan, checkerScope);
             }
             default -> walkExpression(target, module, scan, checkerScope);
         }
+    }
+
+    /**
+     * The closed class-receiver type predicate of the plan-time
+     * {@code CLASSES} arm: a class type, or the cross-module nullable
+     * class read shape the checker unwraps for member access
+     * ({@code ?C} over a foreign identity). Every other type is not a
+     * class receiver.
+     */
+    private static boolean isClassReceiverType(Type type) {
+        return type instanceof Type.Class
+            || (type instanceof Type.Nullable nullable
+                && nullable.inner() instanceof Type.Class);
     }
 
     /**

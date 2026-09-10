@@ -2824,7 +2824,10 @@ public final class SemanticLowerer {
      * <p>The produced unit passes the closed validator, the production-time
      * address-chain protocol, the control-flow validator (the factory is
      * detached per the five-module-level-kind rule), and the B9
-     * bindings production validator. The unit's
+     * bindings production validator, and the class-construction validator
+ * (ISSUE-0516, K-D11 — factory and construction coherence,
+ * field-operation shapes, default-block admission, and nested-jsonable
+ * layout resolution). The unit's
      * {@code constructCoverage} rows are recorded verbatim from the
      * caller-supplied rows; the {@code CLASS_DECLARATION} row is satisfied
      * through the produced {@code CLASS_DEFAULT}/{@code CLASS_FACTORY}
@@ -2968,7 +2971,7 @@ public final class SemanticLowerer {
         LoweredModuleUnit unit = lowerer.buildUnit(constructCoverage,
             module.imports().stream().map(ResolvedImport::resolvedModuleId).toList(),
             interfaceHash, capabilityRegistryHash,
-            ContainerClaimingSeam.E6_GATE_ACTIVATION);
+            ContainerClaimingSeam.E9_GATE_ACTIVATION);
         Optional<CompilerDiagnostic> validation = SemanticIrValidator.validate(unit,
             new SemanticIrValidator.ComparisonFacts(interfaceHash,
                 SemanticProfile.DEAL_V1_2_INT32, capabilityRegistryHash));
@@ -2999,6 +3002,23 @@ public final class SemanticLowerer {
         if (bindings.isPresent()) {
             return new ClassDeclarationCoreResult(new LoweringResult(null, null,
                 List.of(bindings.get())),
+                new deal.semantic.ir.ClassFactoryRegistry(Map.of()),
+                new deal.semantic.ir.JsonDefaultChildTable(Map.of()));
+        }
+        // ISSUE-0516 production-time check (K-D11): the produced class
+        // constructs must pass the class-construction validator — factory
+        // and construction coherence, field-operation shapes, default-block
+        // admission, and nested-jsonable layout resolution; the first
+        // violation is the returned E6005 (FACTORY_COHERENCE |
+        // CONSTRUCTION_COHERENCE | FIELD_OPERATION_SHAPE |
+        // DEFAULT_BLOCK_ADMISSION | JSON_LAYOUT_COHERENCE).
+        Optional<CompilerDiagnostic> construction =
+            ClassConstructionValidator.validate(unit, lowerer.bodyTable(),
+                lowerer.factoryRegistry(), lowerer.jsonDefaultChildren(),
+                ownInterface, sharedFactories);
+        if (construction.isPresent()) {
+            return new ClassDeclarationCoreResult(new LoweringResult(null, null,
+                List.of(construction.get())),
                 new deal.semantic.ir.ClassFactoryRegistry(Map.of()),
                 new deal.semantic.ir.JsonDefaultChildTable(Map.of()));
         }

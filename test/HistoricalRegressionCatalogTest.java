@@ -1073,12 +1073,10 @@ public class HistoricalRegressionCatalogTest {
                 + "export function test(): int { return 1; }");
         boolean claimsClasses = classManifests.stream().anyMatch(
             m -> m.capabilities().contains(SemanticCapability.CLASSES));
-        check(!claimsClasses,
-            "today's LoweringSupport does not claim CLASSES for a "
-                + "class source (the full claim derivation is the "
-                + "construct epics' conformance gate) — the mismatch "
-                + "probe uses a capability the manifests genuinely do "
-                + "not require");
+        check(claimsClasses,
+            "the plan-time CLASSES arm (the class epic's landed claim, "
+                + "ISSUE-0516) derives the claim for a class source — "
+                + "never fixture-asserted: " + classManifests);
 
         // Missing catalog entry.
         LegacyCapabilityCatalog.AssignmentValidation missingEntry =
