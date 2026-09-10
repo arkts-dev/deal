@@ -15224,11 +15224,9 @@ public final class JvmBackend {
                 case Type.Boolean ignored -> "__BooleanOrNullArray";
                 case Type.Bytes ignored -> "__BytesOrNullArray";
                 case Type.Class c -> classOrNullArrayWrapperName(c.name());
-                case Type.Bytes ignored -> "__BytesOrNullArray";
                 default -> refArrayWrapperId(element);
             };
             case Type.Class c -> classArrayWrapperName(c.name());
-            case Type.Bytes ignored -> "__BytesArray";
             default -> refArrayWrapperId(element);
         };
     }
