@@ -608,11 +608,19 @@ public class ProjectGraphFixturesGatesTest {
         }
     }
 
-    /** F2 with the class-field default B.get(1) -> 1: compile-ok. */
-    private static void perturbationRuntimeCycleDeclarationOnly()
+    /**
+     * F2 with the class-field default B.get(1) -> 1: the default edge
+     * disappears, but runtime_three_b's function body still calls
+     * C.get, so the cycle stays a runtime SCC through the ordinary
+     * edge alone (ISSUE-0543 merged ordinary + default edges,
+     * provider-versioned-default-plans D7(a): function bodies count)
+     * — E2005 again, now with the RUNTIME_USE edge note.
+     */
+    private static void perturbationRuntimeCycleOrdinaryOnly()
             throws Exception {
         System.out.println("-- Perturbation: runtime cycle with the"
-            + " class-field default replaced by 1 -> compile-ok --");
+            + " class-field default replaced by 1 -> E2005 through the"
+            + " ordinary edge alone --");
         Path dir = F2_DIR;
         Path support = dir.resolve("support/runtime_three_a.deal");
         String committed = Files.readString(support);
@@ -638,11 +646,23 @@ public class ProjectGraphFixturesGatesTest {
                     "runtime-cycle-class-default-three-modules.deal")
                     .toString(),
                 "--output", out.toString()});
-            check("0".equals(run[0]),
-                "F2 perturbation (declaration-only cycle) compiles with"
-                    + " exit 0: " + run[1]);
-            check(!run[1].contains("ERROR"),
-                "F2 perturbation emits no ERROR: " + run[1]);
+            check("1".equals(run[0]),
+                "F2 perturbation (ordinary-edge cycle) exits 1: "
+                    + run[1]);
+            check(countOccurrences(run[1], "E2005") == 1,
+                "F2 perturbation emits exactly one E2005: " + run[1]);
+            check(run[1].contains("runtime edge RUNTIME_USE"),
+                "F2 perturbation's E2005 notes the ordinary runtime"
+                    + " edge (RUNTIME_USE): " + run[1]);
+            check(run[1].contains("runtime_three_b.deal -> ")
+                    && run[1].contains("runtime_three_c.deal"),
+                "F2 perturbation's note names the ordinary edge"
+                    + " runtime_three_b -> runtime_three_c: " + run[1]);
+            check(run[1].contains("1 error(s), 0 warning(s)"),
+                "F2 perturbation reports 1 error(s), 0 warning(s): "
+                    + run[1]);
+            check(!Files.exists(out),
+                "F2 perturbation creates no --output directory: " + out);
         } finally {
             deleteRecursively(base);
         }
@@ -666,7 +686,7 @@ public class ProjectGraphFixturesGatesTest {
         gateModuleRootsBareImport();
         gateCffiNativeLibraryRequired();
         perturbationDeclarationCycleNoExternals();
-        perturbationRuntimeCycleDeclarationOnly();
+        perturbationRuntimeCycleOrdinaryOnly();
 
         Map<String, String> after = snapshotFixtureTree();
         check(before.equals(after),

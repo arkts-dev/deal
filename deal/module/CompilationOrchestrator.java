@@ -203,9 +203,16 @@ public final class CompilationOrchestrator {
     private boolean hasErrors = false;
 
     /**
-     * The phase-2 dependency (check) order of this compilation, in
-     * module-path form — the graph order the extern-C metadata phase
-     * orders imported provider references by (empty before phase 2).
+     * The dependency (check/initialization) order of this
+     * compilation, in module-path form — the one shared ordering
+     * algorithm of {@link ModuleDependencyGraph#initializationOrder}
+     * (Kahn over the import edges in module discovery order with the
+     * remaining cycle members appended at a stuck step). Phase 2
+     * derives the type-checking order from it; the runtime dependency
+     * graph phase (ISSUE-0543) republishes the identical order as the
+     * initialization order after graph success. The extern-C metadata
+     * phase orders imported provider references by it. Empty before
+     * phase 2.
      */
     private List<String> dependencyOrder = List.of();
 
@@ -236,6 +243,29 @@ public final class CompilationOrchestrator {
      */
     private final Map<String, List<PlannedDefaultClass>>
         plannedDefaultClasses = new LinkedHashMap<>();
+
+    /**
+     * The dependency graph's published result of this compile
+     * (ISSUE-0543): the completed plans — every plan's
+     * {@code runtimeDependencies} filled with the final digest-bearing
+     * records and the serializer-completed entry content preserved —
+     * keyed by module source path in planning order. Populated only
+     * after the graph phase succeeded; empty on E2005 and on any
+     * preceding failure (a failed graph publishes no plan).
+     */
+    private final Map<String, List<PlannedDefaultClass>>
+        completedDefaultPlans = new LinkedHashMap<>();
+
+    /**
+     * The merged final digest-bearing runtime dependency records of
+     * this compile (ISSUE-0543): ordinary RUNTIME_USE records in
+     * first-occurrence order followed by the per-plan
+     * DEFERRED_DEFAULT_BINDING records, structurally deduplicated.
+     * Empty before the graph phase runs or when the graph rejected the
+     * compilation (E2005 publishes no dependency record).
+     */
+    private List<RuntimeImportDependency> runtimeDependencies =
+        List.of();
 
     /**
      * The JVM codegen pass-1 results of this compile (ISSUE-0374 profile
@@ -916,6 +946,23 @@ public final class CompilationOrchestrator {
         planDefaultClasses();
         if (hasErrors) { printDiagnostics(); return false; }
 
+        // Runtime dependency graph phase (ISSUE-0543, design source
+        // provider-versioned-default-plans D1/D7/D8): after planning,
+        // before FFI validation and codegen — the digest-free SCC pass
+        // merges the ordinary runtime-use edges (RUNTIME_USE) with the
+        // planner's default edges (DEFERRED_DEFAULT_BINDING) over the
+        // one RuntimeImportDependency carrier; a runtime SCC reports
+        // E2005 with a note per runtime edge and publishes no plan,
+        // FFI metadata, or artifact. Only an acyclic pass requests the
+        // provider digests (the serializer, with the ordinary
+        // occurrences demanded), publishes the final digest-bearing
+        // dependency records, completes every plan's
+        // runtimeDependencies, and fixes the initialization order.
+        // No evaluator is invoked and no library is loaded here.
+        log("Phase 3.85: Runtime dependency graph and plan publication");
+        evaluateDependencyGraph();
+        if (hasErrors) { printDiagnostics(); return false; }
+
         // FFI phase (ISSUE-0162, design source
         // deal-v1.2-directives-and-c-ffi-declarations D4/D7/D8): after
         // semantic/graph success, validate every extern-C declaration
@@ -1393,175 +1440,47 @@ public final class CompilationOrchestrator {
     // ... (unchanged)
     // =========================================================================
 
+    /**
+     * Phase-2 module ordering for type checking: the one shared
+     * initialization-order algorithm over the import-declaration edge
+     * structure ({@link ModuleDependencyGraph#initializationOrder} —
+     * Kahn in module discovery order; when no module is ready, exactly
+     * the remaining cycle members are appended in discovery order and
+     * the sweep resumes, so an importer never precedes its imported
+     * module). Every import cycle orders here: type-only cycles are
+     * legal and impose no order, and runtime-cycle rejection moved to
+     * the post-checking dependency graph phase (ISSUE-0543) — the
+     * digest-free SCC pass over the merged ordinary + default runtime
+     * edges, where the resolved semantic resource identities and the
+     * planner's default edges exist.
+     */
     private List<String> buildCheckOrder() {
         Map<String, Set<String>> deps = new LinkedHashMap<>();
-        // The dependency graph retains each import declaration's span
-        // (D5): source path -> (resolved target -> import declaration
-        // span), for the E2005 cycle-edge anchor chain.
-        Map<String, Map<String, Span>> edgeSpans = new LinkedHashMap<>();
         for (Map.Entry<String, ModuleInfo> entry : modules.entrySet()) {
             String sourcePath = entry.getKey();
             ModuleInfo info = entry.getValue();
             Set<String> imports = new LinkedHashSet<>();
-            Map<String, Span> spans = new LinkedHashMap<>();
-
             for (StatementNode stmt : info.rawAst.statements()) {
                 if (stmt instanceof ImportDeclaration imp) {
                     String resolved = resolveImportPath(imp.modulePath(),
                         Path.of(sourcePath), imp.span());
                     if (resolved != null && modules.containsKey(resolved)) {
                         imports.add(resolved);
-                        spans.put(resolved, imp.span());
                     }
                 }
             }
             deps.put(sourcePath, imports);
-            edgeSpans.put(sourcePath, spans);
         }
-
-        List<String> order = new ArrayList<>();
-        Set<String> remaining = new LinkedHashSet<>(modules.keySet());
-
-        while (!remaining.isEmpty()) {
-            boolean found = false;
-            for (Iterator<String> it = remaining.iterator(); it.hasNext(); ) {
-                String src = it.next();
-                Set<String> imports = deps.get(src);
-                if (order.containsAll(imports)) {
-                    order.add(src);
-                    it.remove();
-                    found = true;
-                }
-            }
-            if (!found) {
-                return handleCycle(deps, edgeSpans, remaining);
-            }
-        }
-        return order;
-    }
-
-    private List<String> handleCycle(Map<String, Set<String>> deps,
-                                      Map<String, Map<String, Span>> edgeSpans,
-                                      Set<String> remaining) {
-        // Find the first cycle
-        List<String> cycle = new ArrayList<>();
-        String start = remaining.iterator().next();
-        Set<String> visited = new HashSet<>();
-        Deque<String> stack = new ArrayDeque<>();
-        findCycle(deps, start, visited, stack, cycle);
-        if (cycle.isEmpty()) {
-            cycle.addAll(remaining);
-        }
-
-        // Check if the first cycle has runtime dependencies
-        if (!isDeclarationOnlyCycle(cycle, deps)) {
-            reportCycleError(cycle, edgeSpans);
-            return null;
-        }
-
-        // First cycle is declaration-only. Now check non-cycle modules
-        // for additional cycles (multiple disconnected SCCs).
-        Set<String> allCycleNodes = new LinkedHashSet<>(cycle);
-        Set<String> nonCycle = new LinkedHashSet<>(remaining);
-        nonCycle.removeAll(allCycleNodes);
-
-        // Iteratively find and check additional cycles in the non-cycle set
-        List<String> additionalCycle;
-        while ((additionalCycle = findCycleInSet(deps, nonCycle)) != null
-                && !additionalCycle.isEmpty()) {
-            if (!isDeclarationOnlyCycle(additionalCycle, deps)) {
-                reportCycleError(additionalCycle, edgeSpans);
-                return null;
-            }
-            allCycleNodes.addAll(additionalCycle);
-            nonCycle.removeAll(additionalCycle);
-        }
-
-        // All cycles are declaration-only. Build the order.
-        List<String> order = new ArrayList<>();
-
-        // Step 1: non-cycle modules with all deps already in order
-        boolean progress;
-        do {
-            progress = false;
-            for (Iterator<String> it = nonCycle.iterator(); it.hasNext(); ) {
-                String src = it.next();
-                Set<String> imports = deps.get(src);
-                if (order.containsAll(imports)) {
-                    order.add(src);
-                    it.remove();
-                    progress = true;
-                }
-            }
-        } while (progress);
-
-        // Step 2: all cycle modules
-        order.addAll(allCycleNodes);
-
-        // Step 3: non-cycle modules whose deps are now satisfied
-        do {
-            progress = false;
-            for (Iterator<String> it = nonCycle.iterator(); it.hasNext(); ) {
-                String src = it.next();
-                Set<String> imports = deps.get(src);
-                if (order.containsAll(imports)) {
-                    order.add(src);
-                    it.remove();
-                    progress = true;
-                }
-            }
-        } while (progress);
-
-        // Step 4: any remaining modules (deps not fully satisfied)
-        if (!nonCycle.isEmpty()) {
-            for (String src : nonCycle) {
-                order.add(src);
-            }
-        }
-
-        return order;
-    }
-
-    /**
-     * Emits the E2005 runtime-cycle diagnostic with the D5 anchor chain:
-     * the import declaration span of the first cycle module that targets
-     * another cycle member (the dependency graph retains each import
-     * declaration's span), falling back to that module's program span,
-     * then to the canonical synthetic shape with a cycle-edge-naming
-     * anchor note.
-     */
-    private void reportCycleError(List<String> cycle,
-                                  Map<String, Map<String, Span>> edgeSpans) {
-        StringBuilder cyclePath = new StringBuilder();
-        for (int i = 0; i < cycle.size(); i++) {
-            if (i > 0) cyclePath.append(" -> ");
-            cyclePath.append(cycle.get(i));
-        }
-        String message = "Circular import with runtime dependency: " + cyclePath;
-        diagnostics.add(e2005Diagnostic(cycle, edgeSpans,
-            programSpansFor(cycle), message));
-        hasErrors = true;
-    }
-
-    /**
-     * The module program spans of the given cycle, for the E2005 program
-     * span fallback (D5).
-     */
-    private Map<String, Span> programSpansFor(List<String> cycle) {
-        Map<String, Span> spans = new HashMap<>();
-        for (String sourcePath : cycle) {
-            ModuleInfo info = modules.get(sourcePath);
-            if (info != null && info.rawAst != null
-                    && info.rawAst.span() != null) {
-                spans.put(sourcePath, info.rawAst.span());
-            }
-        }
-        return spans;
+        return ModuleDependencyGraph.initializationOrder(
+            new ArrayList<>(modules.keySet()), deps);
     }
 
     /**
      * Builds the E2005 runtime-cycle diagnostic with the D5 anchor chain
-     * (public static so the fallback chain is directly pinnable):
+     * (public static so the fallback chain is directly pinnable; the
+     * graph epic, ISSUE-0543, is the production owner of this helper —
+     * {@link ModuleDependencyGraph} builds the per-runtime-SCC E2005
+     * diagnostics with the per-edge notes through it):
      * <ul>
      *   <li>the import declaration span of the first cycle module that
      *       targets another cycle member,</li>
@@ -1629,300 +1548,6 @@ public final class CompilationOrchestrator {
             "IR dump failed for " + sourcePath + ": " + failureMessage,
             sourcePath,
             "missing anchor: IR dump path for module '" + sourcePath + "'");
-    }
-
-    /**
-     * Finds a cycle in the given set of modules. Returns the cycle nodes
-     * (with duplicates removed via LinkedHashSet), or an empty list if
-     * no cycle is found.
-     */
-    private List<String> findCycleInSet(Map<String, Set<String>> deps,
-                                         Set<String> candidates) {
-        if (candidates.isEmpty()) return null;
-
-        for (String start : candidates) {
-            List<String> cycle = new ArrayList<>();
-            Set<String> visited = new HashSet<>();
-            Deque<String> stack = new ArrayDeque<>();
-            if (findCycleRestricted(deps, start, candidates, visited, stack, cycle)) {
-                List<String> unique = new ArrayList<>();
-                Set<String> seen = new HashSet<>();
-                for (String s : cycle) {
-                    if (seen.add(s)) {
-                        unique.add(s);
-                    }
-                }
-                return unique;
-            }
-        }
-        return new ArrayList<>();
-    }
-
-    private boolean findCycleRestricted(Map<String, Set<String>> deps,
-                                         String current, Set<String> allowed,
-                                         Set<String> visited, Deque<String> stack,
-                                         List<String> cycle) {
-        if (stack.contains(current)) {
-            boolean found = false;
-            for (String s : stack) {
-                if (s.equals(current)) found = true;
-                if (found) cycle.add(s);
-            }
-            cycle.add(current);
-            return true;
-        }
-        if (visited.contains(current)) return false;
-
-        visited.add(current);
-        stack.addLast(current);
-
-        Set<String> imports = deps.get(current);
-        if (imports != null) {
-            for (String imp : imports) {
-                if (!allowed.contains(imp)) continue;
-                if (findCycleRestricted(deps, imp, allowed, visited, stack, cycle))
-                    return true;
-            }
-        }
-
-        stack.removeLast();
-        return false;
-    }
-
-
-    private boolean isDeclarationOnlyCycle(List<String> cycle,
-                                            Map<String, Set<String>> deps) {
-        Set<String> cycleSet = new LinkedHashSet<>(cycle);
-
-        for (String modulePath : cycle) {
-            ModuleInfo info = modules.get(modulePath);
-            if (info == null || info.rawAst == null) continue;
-
-            for (StatementNode stmt : info.rawAst.statements()) {
-                if (stmt instanceof ImportDeclaration imp) {
-                    String resolved = resolveImportPath(imp.modulePath(),
-                        Path.of(modulePath), imp.span());
-                    if (resolved != null && cycleSet.contains(resolved)) {
-                        if (usesImportAtRuntime(info.rawAst, imp.alias())) {
-                            return false;
-                        }
-                    }
-                }
-            }
-        }
-        return true;
-    }
-
-    /**
-     * Checks whether a module uses a given import alias at runtime
-     * (i.e., in top-level executable statements, not just in type positions).
-     *
-     * <p><b>Known limitation (v0.6):</b> Indirect runtime dependencies are not
-     * detected.  If a module defines a function that uses the cyclic import and
-     * then calls that function at the top level, the cycle will be incorrectly
-     * classified as declaration-only:
-     * <pre>{@code
-     *   import * as B from "./b"
-     *   function helper(): int { return B.getValue(); }
-     *   let x: int = helper();  // indirect runtime use of B — not detected
-     * }</pre>
-     * A full fix requires data-flow analysis, planned for a future release.
-     */
-    private boolean usesImportAtRuntime(ProgramNode program, String alias) {
-        for (StatementNode stmt : program.statements()) {
-            if (hasRuntimeImportUsage(stmt, alias)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private boolean hasRuntimeImportUsage(StatementNode stmt, String alias) {
-        return switch (stmt) {
-            case VariableDeclaration vd -> {
-                if (vd.initializer() != null
-                        && exprReferencesImport(vd.initializer(), alias)) {
-                    yield true;
-                }
-                yield false;
-            }
-            case ExpressionStatement es -> {
-                yield exprReferencesImport(es.expr(), alias);
-            }
-            case ReturnStatement rs -> {
-                if (rs.expr().isPresent()
-                        && exprReferencesImport(rs.expr().get(), alias)) {
-                    yield true;
-                }
-                yield false;
-            }
-            case IfStatement is -> {
-                if (exprReferencesImport(is.condition(), alias)) yield true;
-                if (hasRuntimeImportUsage(is.thenBlock(), alias)) yield true;
-                if (is.elseBranch().isPresent()) {
-                    Either<IfStatement, Block> eb = is.elseBranch().get();
-                    if (eb instanceof Either.Left<IfStatement, Block> left) {
-                        if (hasRuntimeImportUsage(left.value(), alias)) yield true;
-                    } else if (eb instanceof Either.Right<IfStatement, Block> right) {
-                        if (hasRuntimeImportUsage(right.value(), alias)) yield true;
-                    }
-                }
-                yield false;
-            }
-            case WhileStatement ws -> {
-                if (exprReferencesImport(ws.condition(), alias)) yield true;
-                if (hasRuntimeImportUsage(ws.body(), alias)) yield true;
-                yield false;
-            }
-            case ForStatement fs -> {
-                if (fs.init().isPresent()) {
-                    ForInit init = fs.init().get();
-                    if (init instanceof ForInit.VarDecl vd) {
-                        if (exprReferencesImport(vd.decl().initializer(), alias)) yield true;
-                    } else if (init instanceof ForInit.AssignExpr ie) {
-                        AssignmentExpr ae = ie.expr();
-                        if (exprReferencesImport(ae.target(), alias)) yield true;
-                        if (exprReferencesImport(ae.value(), alias)) yield true;
-                    }
-                }
-                if (fs.condition().isPresent()
-                        && exprReferencesImport(fs.condition().get(), alias)) yield true;
-                if (fs.update().isPresent()
-                        && exprReferencesImport(fs.update().get(), alias)) yield true;
-                if (hasRuntimeImportUsage(fs.body(), alias)) yield true;
-                yield false;
-            }
-            case Block b -> {
-                for (StatementNode s : b.statements()) {
-                    if (hasRuntimeImportUsage(s, alias)) yield true;
-                }
-                yield false;
-            }
-            case TryStatement ts -> {
-                if (hasRuntimeImportUsage(ts.tryBlock(), alias)) yield true;
-                if (ts.catchBlock() != null
-                        && hasRuntimeImportUsage(ts.catchBlock(), alias)) yield true;
-                yield false;
-            }
-            case ThrowStatement th -> {
-                yield exprReferencesImport(th.expr(), alias);
-            }
-            case ExportDeclaration ed -> {
-                yield hasRuntimeImportUsage(ed.declaration(), alias);
-            }
-            case FunctionDeclaration fd -> false;
-            case ClassDeclaration cd -> {
-                // DEAL v1.2: class field defaults evaluate at module
-                // initialization, so a default referencing a cyclic import
-                // creates a runtime dependency (top-level executable
-                // statements no longer exist).
-                for (ClassField field : cd.fields()) {
-                    if (field.defaultExpr().isPresent()
-                            && exprReferencesImport(field.defaultExpr().get(), alias)) {
-                        yield true;
-                    }
-                }
-                yield false;
-            }
-            case ImportDeclaration id -> false;
-            case DeleteStatement ds -> false;
-            case BreakStatement bs -> false;
-            case ContinueStatement cs -> false;
-            case ForOfStatement fos -> {
-                if (exprReferencesImport(fos.iterable(), alias)) yield true;
-                if (hasRuntimeImportUsage(fos.body(), alias)) yield true;
-                yield false;
-            }
-        };
-    }
-
-    private boolean exprReferencesImport(ExpressionNode expr, String alias) {
-        return switch (expr) {
-            case IdentifierExpr id -> id.name().equals(alias);
-            case MemberAccessExpr ma -> {
-                if (exprReferencesImport(ma.object(), alias)) yield true;
-                yield false;
-            }
-            case CallExpr ce -> {
-                if (exprReferencesImport(ce.callee(), alias)) yield true;
-                for (ExpressionNode arg : ce.args()) {
-                    if (exprReferencesImport(arg, alias)) yield true;
-                }
-                yield false;
-            }
-            case BinaryExpr be -> {
-                if (exprReferencesImport(be.left(), alias)) yield true;
-                if (exprReferencesImport(be.right(), alias)) yield true;
-                yield false;
-            }
-            case UnaryExpr ue -> {
-                yield exprReferencesImport(ue.expr(), alias);
-            }
-            case IndexExpr ie -> {
-                if (exprReferencesImport(ie.array(), alias)) yield true;
-                if (exprReferencesImport(ie.index(), alias)) yield true;
-                yield false;
-            }
-            case ArrayLiteralExpr al -> {
-                for (ExpressionNode e : al.elements()) {
-                    if (exprReferencesImport(e, alias)) yield true;
-                }
-                yield false;
-            }
-            case ObjectLiteralExpr ol -> {
-                for (Property p : ol.properties()) {
-                    if (exprReferencesImport(p.value(), alias)) yield true;
-                }
-                yield false;
-            }
-            case AssignmentExpr ae -> {
-                if (exprReferencesImport(ae.target(), alias)) yield true;
-                if (exprReferencesImport(ae.value(), alias)) yield true;
-                yield false;
-            }
-            case HasExpr he -> {
-                yield exprReferencesImport(he.object(), alias);
-            }
-            case FunctionExpr fe -> false;
-            case LiteralExpr le -> false;
-            case AwaitExpression await -> {
-                yield exprReferencesImport(await.callee(), alias);
-            }
-            case TemplateLiteralExpr tl -> {
-                for (ExpressionNode part : tl.parts()) {
-                    if (exprReferencesImport(part, alias)) yield true;
-                }
-                yield false;
-            }
-        };
-    }
-
-    private boolean findCycle(Map<String, Set<String>> deps, String current,
-                               Set<String> visited, Deque<String> stack,
-                               List<String> cycle) {
-        if (stack.contains(current)) {
-            boolean found = false;
-            for (String s : stack) {
-                if (s.equals(current)) found = true;
-                if (found) cycle.add(s);
-            }
-            cycle.add(current);
-            return true;
-        }
-        if (visited.contains(current)) return false;
-
-        visited.add(current);
-        stack.addLast(current);
-
-        Set<String> imports = deps.get(current);
-        if (imports != null) {
-            for (String imp : imports) {
-                if (findCycle(deps, imp, visited, stack, cycle)) return true;
-            }
-        }
-
-        stack.removeLast();
-        return false;
     }
 
     // =========================================================================
@@ -2244,11 +1869,50 @@ public final class CompilationOrchestrator {
      * The planning result of the current compile: module source path
      * &rarr; the planned classes with their provisional occurrence
      * data, in planning order. Read-only; empty before the planning
-     * phase runs, when a preceding phase failed, or when planning
-     * produced error-level diagnostics.
+     * phase runs, when a preceding phase failed, when planning
+     * produced error-level diagnostics, or when the dependency graph
+     * rejected the compilation (E2005 publishes no plan — the
+     * provisional plans are discarded).
      */
     public Map<String, List<PlannedDefaultClass>> plannedDefaultClasses() {
         return Collections.unmodifiableMap(plannedDefaultClasses);
+    }
+
+    /**
+     * The dependency graph's published completed plans of this compile
+     * (ISSUE-0543): module source path &rarr; the planned classes with
+     * every plan's {@code runtimeDependencies} completed with the final
+     * digest-bearing records and the serializer-completed entry content
+     * preserved, in planning order. Read-only; empty before the graph
+     * phase runs, when a preceding phase failed, or when the graph
+     * rejected the compilation (E2005 publishes no plan).
+     */
+    public Map<String, List<PlannedDefaultClass>> completedDefaultPlans() {
+        return Collections.unmodifiableMap(completedDefaultPlans);
+    }
+
+    /**
+     * The merged final digest-bearing runtime dependency records of
+     * this compile (ISSUE-0543): ordinary {@code RUNTIME_USE} records
+     * in first-occurrence order followed by the per-plan
+     * {@code DEFERRED_DEFAULT_BINDING} records, structurally
+     * deduplicated. Read-only; empty before the graph phase runs or
+     * when the graph rejected the compilation.
+     */
+    public List<RuntimeImportDependency> runtimeDependencies() {
+        return List.copyOf(runtimeDependencies);
+    }
+
+    /**
+     * The initialization order of this compile (ISSUE-0543): module
+     * source paths in dependency order preserving first-import
+     * declaration order — the one shared ordering algorithm of
+     * {@link ModuleDependencyGraph#initializationOrder} (the phase-2
+     * check order derives from it, and the graph phase republishes the
+     * identical order after success). Read-only; empty before phase 2.
+     */
+    public List<String> dependencyOrder() {
+        return List.copyOf(dependencyOrder);
     }
 
     /**
@@ -2304,6 +1968,113 @@ public final class CompilationOrchestrator {
                 info.isDeclarationFile, isExternCModuleInfo(info)));
         }
         return Collections.unmodifiableMap(inputs);
+    }
+
+    /**
+     * Phase 3.85 (ISSUE-0543, design source
+     * {@code provider-versioned-default-plans} D1/D7/D8): the runtime
+     * dependency graph and plan publication — the digest-free SCC
+     * pass merges the ordinary runtime-use edges ({@code RUNTIME_USE},
+     * the complete typed evaluator IR walk of every function body)
+     * with the planner's default edges
+     * ({@code DEFERRED_DEFAULT_BINDING}) over the one
+     * {@link RuntimeImportDependency} carrier; a strongly connected
+     * component containing at least one runtime edge reports E2005
+     * with a note per runtime edge carrying
+     * {@code (reason, from &rarr; to, sourceRange)} and publishes no
+     * plan, FFI metadata, or artifact (the provisional plans are
+     * discarded). Only an acyclic pass requests the provider digests —
+     * the serializer completes every default's {@code runtimeResources}
+     * and additionally demands the ordinary occurrences' provider
+     * digests — publishes the final digest-bearing dependency records
+     * and the completed plans, and fixes the initialization order. No
+     * evaluator is invoked and no library is loaded.
+     */
+    private void evaluateDependencyGraph() {
+        Map<String, ModuleDependencyGraph.ModuleInput> inputs =
+            new LinkedHashMap<>();
+        for (Map.Entry<String, ModuleInfo> entry : modules.entrySet()) {
+            String sourcePath = entry.getKey();
+            ModuleInfo info = entry.getValue();
+            if (info.rawAst == null || info.location == null) {
+                continue;
+            }
+            if (!info.isDeclarationFile
+                    && (info.checkResult == null
+                        || info.nameResolver == null)) {
+                continue;
+            }
+            inputs.put(sourcePath, new ModuleDependencyGraph.ModuleInput(
+                info.sourcePath, info.modulePath, info.rawAst,
+                info.location,
+                info.isDeclarationFile ? null : info.checkResult,
+                info.isDeclarationFile ? null : info.nameResolver,
+                defaultPlanImportsOf(info), modulePathClassification(),
+                info.isDeclarationFile));
+        }
+        // The E2005 anchor chain inputs: each module's import-edge
+        // spans and program span.
+        Map<String, Map<String, Span>> edgeSpans = new LinkedHashMap<>();
+        Map<String, Span> programSpans = new LinkedHashMap<>();
+        for (Map.Entry<String, ModuleInfo> entry : modules.entrySet()) {
+            String sourcePath = entry.getKey();
+            ModuleInfo info = entry.getValue();
+            Map<String, Span> spans = new LinkedHashMap<>();
+            if (info.rawAst != null) {
+                for (StatementNode stmt : info.rawAst.statements()) {
+                    if (stmt instanceof ImportDeclaration imp) {
+                        String resolved = resolveImportPath(
+                            imp.modulePath(), Path.of(sourcePath),
+                            imp.span());
+                        if (resolved != null
+                                && modules.containsKey(resolved)) {
+                            spans.put(resolved, imp.span());
+                        }
+                    }
+                }
+                if (info.rawAst.span() != null) {
+                    programSpans.put(sourcePath, info.rawAst.span());
+                }
+            }
+            edgeSpans.put(sourcePath, spans);
+        }
+
+        ModuleDependencyGraph.DigestFreeResult free =
+            ModuleDependencyGraph.digestFreePass(inputs,
+                plannedDefaultClasses, edgeSpans, programSpans);
+        if (free.failed()) {
+            // E2005: a runtime SCC — publish no plan, no FFI metadata,
+            // and no artifact; the provisional plans are discarded.
+            diagnostics.addAll(free.diagnostics());
+            hasErrors = true;
+            plannedDefaultClasses.clear();
+            runtimeDependencies = List.of();
+            return;
+        }
+        // Acyclic: request the provider digests now — the serializer
+        // completes every default's runtimeResources and additionally
+        // demands the ordinary occurrences' provider digests.
+        DefaultSemanticSerializer.Result serialized =
+            DefaultSemanticSerializer.serialize(
+                defaultSerializerModuleInputs(), plannedDefaultClasses,
+                free.ordinaryOccurrences());
+        diagnostics.addAll(serialized.diagnostics());
+        if (serialized.hasErrors()) {
+            hasErrors = true;
+            plannedDefaultClasses.clear();
+            runtimeDependencies = List.of();
+            return;
+        }
+        ModuleDependencyGraph.PublishedGraph published =
+            ModuleDependencyGraph.finalizeGraph(free,
+                plannedDefaultClasses, serialized.serializedClasses(),
+                serialized.providerDigests());
+        completedDefaultPlans.putAll(published.completedPlans());
+        runtimeDependencies = published.runtimeDependencies();
+        dependencyOrder = free.initializationOrder();
+        log("  Runtime graph: " + runtimeDependencies.size()
+            + " dependency edge(s); initialization order "
+            + dependencyOrder.size() + " module(s)");
     }
 
     private void validateCffiDeclarations() {

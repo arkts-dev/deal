@@ -55,11 +55,14 @@ import java.util.Set;
  * runtime-edge occurrence structure is acyclic — the production
  * pipeline invokes this serializer only after the graph epic's
  * (ISSUE-0543) digest-free SCC pass rejects runtime SCCs with E2005,
- * so digest equations are well-founded (D9). This epic wires no
- * orchestrator phase. A defensive reentrant-demand guard fails closed
- * with a deterministic E6005 error at the first reentrant provider —
- * never a hang, never a placeholder — so a broken acyclicity gate
- * fails loudly.</p>
+ * so digest equations are well-founded (D9). The graph epic
+ * (ISSUE-0543) owns the orchestrator phase that invokes this
+ * serializer after its digest-free SCC pass, demanding the ordinary
+ * runtime-use occurrences through the additional-demand overload
+ * ({@link #serialize(Map, Map, List)}). A defensive reentrant-demand
+ * guard fails closed with a deterministic E6005 error at the first
+ * reentrant provider — never a hang, never a placeholder — so a broken
+ * acyclicity gate fails loudly.</p>
  *
  * <p><b>Boundary (task-pinned):</b> this epic completes
  * {@code runtimeResources} only. It constructs no
@@ -186,7 +189,51 @@ public final class DefaultSemanticSerializer {
             Map<String, List<PlannedDefaultClass>> plannedClasses) {
         Objects.requireNonNull(modules, "modules");
         Objects.requireNonNull(plannedClasses, "plannedClasses");
-        return new Serializer(modules, plannedClasses).run();
+        return new Serializer(modules, plannedClasses, List.of()).run();
+    }
+
+    /**
+     * The graph epic's (ISSUE-0543) demand overload: serializes every
+     * planned class exactly like {@link #serialize(Map, Map)} and then
+     * additionally demands the provider digest of every given
+     * provisional occurrence (the ordinary runtime-use occurrences of
+     * an acyclic compilation, which the planned-class flow alone never
+     * demands), so {@link Result#providerDigests()} covers both the
+     * planner's default edges and the ordinary edges the graph merges
+     * with them. The additional demands never change the serialized
+     * classes or the canonical contents — they only extend the
+     * demanded-digest projection. Demand failure (a broken occurrence,
+     * an unresolvable provider, a reentrant demand) fails closed with
+     * E6005 and publishes nothing, exactly like the main flow.
+     *
+     * <p>The production pipeline invokes this overload only after the
+     * graph's digest-free SCC pass succeeded (a runtime SCC fails the
+     * compilation with E2005 before any digest demand), so digest
+     * equations stay well-founded (D9).</p>
+     *
+     * @param modules                 module source path &rarr; the
+     *                                read-only per-module facts
+     * @param plannedClasses          module source path &rarr; the
+     *                                planned classes (the planner
+     *                                output, in planning order)
+     * @param additionalDigestDemands the ordinary runtime-use
+     *                                occurrences whose provider
+     *                                digests to demand additionally
+     *                                (possibly empty)
+     * @return the diagnostics, the serialized classes, and the
+     *         computed provider digests (covering the additional
+     *         demands)
+     */
+    public static Result serialize(
+            Map<String, DefaultSerializerModuleInput> modules,
+            Map<String, List<PlannedDefaultClass>> plannedClasses,
+            List<DefaultResourceOccurrence> additionalDigestDemands) {
+        Objects.requireNonNull(modules, "modules");
+        Objects.requireNonNull(plannedClasses, "plannedClasses");
+        Objects.requireNonNull(additionalDigestDemands,
+            "additionalDigestDemands");
+        return new Serializer(modules, plannedClasses,
+            additionalDigestDemands).run();
     }
 
     // =========================================================================
@@ -284,10 +331,16 @@ public final class DefaultSemanticSerializer {
         private record DigestMemo(String digest, String content) {
         }
 
+        /** The additional digest demands (the graph epic's ordinary
+         * runtime-use occurrences), demanded after the main flow. */
+        private final List<DefaultResourceOccurrence> additionalDemands;
+
         Serializer(Map<String, DefaultSerializerModuleInput> modules,
-                   Map<String, List<PlannedDefaultClass>> plannedClasses) {
+                   Map<String, List<PlannedDefaultClass>> plannedClasses,
+                   List<DefaultResourceOccurrence> additionalDemands) {
             this.modules.putAll(modules);
             this.plannedClasses.putAll(plannedClasses);
+            this.additionalDemands = List.copyOf(additionalDemands);
             for (DefaultSerializerModuleInput input : modules.values()) {
                 moduleByUri.put(input.location().semanticModuleIdentity()
                     .canonicalResolvedSourceUri(), input);
@@ -318,6 +371,24 @@ public final class DefaultSemanticSerializer {
                 if (!failed) {
                     serialized.put(sourcePath, List.copyOf(classes));
                 }
+            }
+            if (failed) {
+                return new Result(List.copyOf(diagnostics), Map.of(),
+                    Map.of(), Map.of());
+            }
+            // The graph epic's additional digest demands (ISSUE-0543):
+            // every ordinary runtime-use occurrence demands its
+            // provider digest after the planned-class flow completed,
+            // so the providerDigests projection covers both edge sets.
+            // Demand failure fails closed with E6005 and publishes
+            // nothing — the same fail-closed contract as the main flow.
+            for (DefaultResourceOccurrence occurrence
+                    : additionalDemands) {
+                if (failed) {
+                    break;
+                }
+                digestFor(occurrence.semanticResourceIdentity(),
+                    providerKindOf(occurrence.kind()));
             }
             if (failed) {
                 return new Result(List.copyOf(diagnostics), Map.of(),
