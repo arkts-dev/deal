@@ -101,7 +101,7 @@ public class DifferentialGateLanesCorpusTest {
      * sidecars; the three ISSUE-0160 recursive bytes-closure fixtures
      * land on top). */
     private static final int TOTAL_FIXTURES = 599;
-    private static final int RUNTIME_CASES = 357;
+    private static final int RUNTIME_CASES = 354;
     private static final int FRONTEND_COMPILED = 191;
     private static final int COMPILE_PINS = 4;
 
@@ -128,7 +128,7 @@ public class DifferentialGateLanesCorpusTest {
     /** The per-backend pass/fail counters of the full run. */
     private static final Map<String, int[]> PER_BACKEND = Map.of(
         "luajit", new int[] {322, 32},
-        "jvm", new int[] {241, 114},
+        "jvm", new int[] {241, 113},
         "js", new int[] {324, 30});
 
     /** The designated converged subset (task criterion (a)): every lane

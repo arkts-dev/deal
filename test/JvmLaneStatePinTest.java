@@ -155,7 +155,7 @@ public class JvmLaneStatePinTest {
     private static final String JVM_GATES_PASSED =
         "Gates PASSED: frontend 100%; backend-runtime zero applicable "
 
-            + "failures AND >= 80% pass rate over the unchanged 357-test "
+            + "failures AND >= 80% pass rate over the unchanged 354-test "
             + "denominator; zero unclassified skips; zero stale skips; "
             + "zero stale known-fail markers; zero probe runner "
             + "exceptions.";

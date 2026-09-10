@@ -10336,12 +10336,18 @@ public class JvmBackendTest {
                     + "\"E8001\", \"unsupported type for JSON encoding: "
                     + "bytes\")"),
             "the stringifier carries no bytes-specific arm (the "
-                + "std/json-only message belongs to the E6000-gated "
-                + "surface, not the @jsonable one)");
+                + "unsupported-type message belongs to the std/json "
+                + "stringify surface's encode_value-parity default arm, "
+                + "not the @jsonable one)");
+        check(artifact.contains(
+                "static $DealRt.Table __jsonShape($DealRt.Table v) {"),
+            "the @jsonable runtime emits the __jsonShape table-field "
+                + "validation helper (deal/runtime.lua's "
+                + "_json_table_shape mirror)");
         check(artifact.contains(
                 "throw new DealError(\"E8001\", \"value is not "
                     + "JSON-shaped\");"),
-            "the stringifier's default arm raises the LuaJIT-equal "
+            "the @jsonable shape walk raises the LuaJIT-equal "
                 + "'value is not JSON-shaped' for a bytes value");
         check(artifact.contains("case \"bytes\":")
                 && artifact.contains(
@@ -10483,15 +10489,16 @@ public class JvmBackendTest {
         check(asyncContainer.output().contains("0"),
             "containerized async bytes value completes with the zero-filled "
                 + "first byte: " + asyncContainer.output());
-        // The @jsonable C$toJson surface is the only JVM-implemented
-        // JSON stringify position; its LuaJIT reference —
-        // deal/runtime.lua's _json_table_shape walker, before std/json's
-        // encode_value ever runs — raises E8001 "value is not
-        // JSON-shaped" for a table-held bytes value. The emitted
-        // stringifier matches it through the default arm; the std/json
-        // stringify surface (whose explicit bytes arm reads "unsupported
-        // type for JSON encoding: bytes") is E6000 on JVM, not
-        // comparable.
+        // The @jsonable C$toJson surface validates table fields through
+        // the emitted __jsonShape walk — deal/runtime.lua's
+        // _json_table_shape mirror, before std/json's encode_value ever
+        // runs — so a table-held bytes value raises E8001 "value is
+        // not JSON-shaped", byte-identical to the LuaJIT @jsonable
+        // reference. The std/json stringify surface (landed with
+        // ISSUE-0302) keeps its own encode_value-parity arm — E8001
+        // "unsupported type for JSON encoding: bytes" for the same
+        // table — exactly like std/json.lua's explicit bytes arm, so
+        // the two LuaJIT surfaces stay byte-distinct on the JVM.
         String jsonSource = "export function main(): null { return null; }\n"
             + "// @jsonable\nexport class Holder { payload: table = {}; }\n"
             + "export function test(): int {\n"
@@ -10508,6 +10515,26 @@ public class JvmBackendTest {
         check(jsonRun.output().contains("value is not JSON-shaped"),
             "the JVM stringifier raises the LuaJIT-equal default message: "
                 + jsonRun.output());
+
+        // The std/json stringify surface raises the encode_value-parity
+        // message for the same table-held bytes value (std/json.lua's
+        // explicit bytes arm) — the two JVM stringify surfaces stay
+        // byte-distinct exactly like the LuaJIT reference runtime.
+        ExecResult stdJsonBytes = compileAndRunJvm("""
+            import * as json from "std/json"
+            export function test(): string {
+              let t: table = { inner: {} };
+              t.inner.b = bytes(2);
+              return json.stringify(t);
+            }
+            """, "std_json_stringify_bytes_msg");
+        check(stdJsonBytes.output().contains("DEAL_ERROR_CODE: E8001"),
+            "the std/json bytes stringify raises E8001: "
+                + stdJsonBytes.output());
+        check(stdJsonBytes.output().contains(
+                "unsupported type for JSON encoding: bytes"),
+            "the std/json stringify raises the encode_value-parity bytes "
+                + "message: " + stdJsonBytes.output());
 
         // ---- Dynamic scalar table-read boundary (ISSUE-0160 D5) ----
         // Table writes store the raw wrapper reference; a bytes-typed
