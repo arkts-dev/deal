@@ -2377,7 +2377,8 @@ public final class ClassOpsExecutor {
      *
      * Every listed failure publishes language null and no partial
      * instance is visible; the walk is bounded by
-     * {@link #JSON_MAX_DEPTH} (exceeding it returns language null). The
+     * {@link #JSON_MAX_DEPTH} over class/array recursion and
+     * table-field contents (exceeding it returns language null). The
      * op runs zero boundary children and zero return boundaries — the
      * executor never drives a {@code BOUNDARY} child.
      *
@@ -2421,8 +2422,12 @@ public final class ClassOpsExecutor {
      *                              default child, a nested factory
      *                              producing a wrong-kind or
      *                              wrong-shaped instance, an
-     *                              unresolvable nested layout, or a
-     *                              non-JSON-shaped seam result
+     *                              unresolvable nested layout, a
+     *                              non-JSON-shaped seam result, or a
+     *                              producer Defect thrown by the
+     *                              default-block runner or the nested
+     *                              factory seam (fail closed, never the
+     *                              walk's language-null carrier)
      * @throws NullPointerException if any argument is null
      */
     public static Value executeJsonFromClass(
@@ -2534,6 +2539,7 @@ public final class ClassOpsExecutor {
      *   <li>cycle detection is path-local (a seen set over entered
      *       class instances); re-entry fails at the re-entering
      *       position; the walk is bounded by {@link #JSON_MAX_DEPTH}
+     *       over class/array recursion and table-field contents
      *       (exceeding it fails at the exceeding position);</li>
      *   <li>the first failure wins in declaration order; the pinned
      *       fieldPath convention — root {@code ""}, a declared field
@@ -2775,6 +2781,10 @@ public final class ClassOpsExecutor {
             Value produced;
             try {
                 produced = bodyRunner.runDefault(child);
+            } catch (Defect defect) {
+                // Fail closed (K-D11): producer defects and infrastructure
+                // failures never use the walk's language-null carrier.
+                throw defect;
             } catch (RuntimeException childFailure) {
                 throw new JsonFromFailure("CLASS_DEFAULT child " + child.opId()
                     + " of field '" + field.name() + "' failed (K-D8 step 5)",
@@ -2815,9 +2825,10 @@ public final class ClassOpsExecutor {
      * extra-key gate, provided decode in declaration order, default
      * application through the nested class's {@code CLASS_FACTORY}
      * (the {@link NestedClassFactory} seam — K-D5 trigger (b); the
-     * nested defaults evaluate in the nested declaring module's scope),
-     * the decoded provided fields overlay, final validation, and the
-     * nested tag.
+     * nested defaults evaluate in the nested declaring module's scope;
+     * a failing factory child fails the walk end-to-end — language
+     * null), the decoded provided fields overlay, final validation, and
+     * the nested tag.
      */
     private static Value decodeNestedClass(
             SemanticOp op, ClassId classId, Value.Table document,
@@ -2859,9 +2870,24 @@ public final class ClassOpsExecutor {
         // CLASS_FACTORY (K-D5 trigger (b)): the factory fills the
         // omitted required-present defaults in the nested declaring
         // module's scope (skip-provided) and returns the default-filled
-        // untagged transfer instance.
-        Value filled = nestedFactory.fillDefaults(classId,
-            new LinkedHashSet<>(decoded.keySet()));
+        // untagged transfer instance. A failing factory child fails the
+        // walk end-to-end (language null, K-D8 step 6 / K-D5's
+        // failing-child rule) with the completed children's effects
+        // remaining; a producer Defect of the seam or the factory
+        // execution fails closed (K-D11), never null.
+        Value filled;
+        try {
+            filled = nestedFactory.fillDefaults(classId,
+                new LinkedHashSet<>(decoded.keySet()));
+        } catch (Defect defect) {
+            // Fail closed (K-D11): producer defects and infrastructure
+            // failures never use the walk's language-null carrier.
+            throw defect;
+        } catch (RuntimeException factoryFailure) {
+            throw new JsonFromFailure("nested CLASS_FACTORY of " + classId
+                + " failed during default filling (K-D8 step 6)",
+                factoryFailure);
+        }
         if (!(filled instanceof Value.Class instance)) {
             throw new Defect("JSON_FROM_CLASS " + op.opId() + " nested factory of "
                 + classId + " produced " + filled.actualKind() + ": the factory returns "
@@ -2920,9 +2946,12 @@ public final class ClassOpsExecutor {
      * carriers from the parse's signed32 lexical mapping; nullable
      * fields accept JSON null; a JSON null on a non-nullable field
      * fails; {@code table} fields accept only a JSON object or the
-     * empty-array collapse; {@code array} fields decode element-wise;
-     * class fields recurse into the nested walk with an identity check.
-     * Any failure throws {@link JsonFromFailure} (language null).
+     * empty-array collapse, and their parsed subtrees are depth-bounded
+     * by the walk's {@link #JSON_MAX_DEPTH} bound (the retained
+     * {@code _json_table_shape} authority); {@code array} fields decode
+     * element-wise; class fields recurse into the nested walk with an
+     * identity check. Any failure throws {@link JsonFromFailure}
+     * (language null).
      */
     private static Value decodeRaw(
             SemanticOp op, RuntimeDescriptor descriptor, Value raw,
@@ -2975,8 +3004,9 @@ public final class ClassOpsExecutor {
                 yield raw;
             }
             case RuntimeDescriptor.Table ignored -> {
-                if (raw instanceof Value.Table) {
-                    yield raw;
+                if (raw instanceof Value.Table tableValue) {
+                    boundParsedTableContents(op, tableValue, depth);
+                    yield tableValue;
                 }
                 // The empty-array collapse: [] decodes as an empty table
                 // (the retained pins; a non-empty array-shaped value
@@ -3120,7 +3150,10 @@ public final class ClassOpsExecutor {
      * field and fails on a non-nullable one; class fields recurse with
      * a nested identity check; array fields encode element-wise;
      * {@code table} fields run the seam's finite-acyclic JSON-shape
-     * walk; every leaf/table text comes from the {@link JsonStringifier}
+     * walk, bounded by the walk's {@link #JSON_MAX_DEPTH} over the
+     * table subtree before the seam runs (the retained
+     * {@code _json_table_shape} authority); every leaf/table text comes
+     * from the {@link JsonStringifier}
      * seam (the E8 stringify algorithm — RFC-8259 escaping, shortest
      * round-trippable decimals, first-insertion and index order).
      */
@@ -3171,6 +3204,9 @@ public final class ClassOpsExecutor {
                 if (!(value instanceof Value.Table)) {
                     throw new JsonToFailure(fieldPath, actualTokenOf(value));
                 }
+                boundTableContentsDepth(op, value, fieldPath, depth,
+                    java.util.Collections.newSetFromMap(
+                        new java.util.IdentityHashMap<>()));
                 yield seamText(op, stringifier, value, fieldPath);
             }
             case RuntimeDescriptor.Array arrayDescriptor -> {
@@ -3393,6 +3429,120 @@ public final class ClassOpsExecutor {
                 + raw.actualKind() + ": the closed parsed-JSON value model carries "
                 + "null/bool/int/number/string/object/array only — a seam-contract "
                 + "violation is a producer defect, never executed");
+        }
+    }
+
+    /**
+     * The depth-aware shape walk over one table field's parsed subtree
+     * (K-D8's bounded walk over table-field contents — the retained
+     * {@code _json_table_shape} authority,
+     * {@code deal/runtime.lua:1615-1659}): every nested table/array
+     * container counts one depth level from the walk's current depth,
+     * and a container past {@link #JSON_MAX_DEPTH} fails the walk
+     * (language null). The parsed model is always JSON-shaped, so a
+     * non-JSON-shaped nested value fails closed as a producer
+     * {@link Defect}, never as a walk failure.
+     */
+    private static void boundParsedTableContents(SemanticOp op, Value value, int depth) {
+        switch (value) {
+            case Value.Table table -> {
+                if (depth > JSON_MAX_DEPTH) {
+                    throw new JsonFromFailure("a table field's contents exceed the "
+                        + "pinned walk depth bound " + JSON_MAX_DEPTH
+                        + " (the retained _json_table_shape authority)");
+                }
+                for (String key : table.table().keys()) {
+                    SemanticTable.Lookup<Value> lookup = table.table().get(key);
+                    if (!(lookup instanceof SemanticTable.Lookup.Present<Value> present)) {
+                        throw new Defect("JSON_FROM_CLASS " + op.opId() + ": a parsed "
+                            + "table key '" + key + "' reads Missing: the closed parsed "
+                            + "model keeps every listed key present — a seam-contract "
+                            + "violation is a producer defect, never executed");
+                    }
+                    requireJsonShape(op, present.value());
+                    boundParsedTableContents(op, present.value(), depth + 1);
+                }
+            }
+            case Value.Array array -> {
+                if (depth > JSON_MAX_DEPTH) {
+                    throw new JsonFromFailure("a table field's contents exceed the "
+                        + "pinned walk depth bound " + JSON_MAX_DEPTH
+                        + " (the retained _json_table_shape authority)");
+                }
+                for (Value element : array.array().elements()) {
+                    requireJsonShape(op, element);
+                    boundParsedTableContents(op, element, depth + 1);
+                }
+            }
+            default -> {
+                // JSON-shaped leaves (validated by requireJsonShape at
+                // every recursion site): no depth level consumed.
+            }
+        }
+    }
+
+    /**
+     * The depth-aware pre-walk over one table field's subtree (K-D10's
+     * bounded walk over table-field contents — the retained
+     * {@code _json_table_shape} authority,
+     * {@code deal/runtime.lua:1615-1659,2145-2180}): every nested
+     * table/array container counts one depth level from the walk's
+     * current depth, and a container past {@link #JSON_MAX_DEPTH} fails
+     * {@code JSON_TO_ERROR} at its pinned path with its canonical
+     * actual-kind token. Unsupported carriers, nonfinite leaves, and
+     * cycles stay the seam's pinned failures: the pre-walk bounds only
+     * depth (a path-local re-entry stops the recursion and the seam
+     * reports the pinned cycle token), so the seam's own recursion
+     * never exceeds the bound — no infrastructure stack overflow can
+     * escape a DEAL-visible failure.
+     */
+    private static void boundTableContentsDepth(SemanticOp op, Value value,
+                                                String fieldPath, int depth,
+                                                Set<Object> entered) {
+        switch (value) {
+            case Value.Table table -> {
+                if (depth > JSON_MAX_DEPTH) {
+                    throw new JsonToFailure(fieldPath, actualTokenOf(value));
+                }
+                if (!entered.add(table.table())) {
+                    return; // path-local re-entry: the seam reports the pinned cycle token
+                }
+                try {
+                    for (String key : table.table().keys()) {
+                        SemanticTable.Lookup<Value> lookup = table.table().get(key);
+                        if (!(lookup instanceof SemanticTable.Lookup.Present<Value> present)) {
+                            throw new Defect("JSON_TO_CLASS " + op.opId() + ": a table "
+                                + "key '" + key + "' reads Missing: a table's listed key "
+                                + "is always present — a wrong table view is a producer "
+                                + "defect, never executed");
+                        }
+                        boundTableContentsDepth(op, present.value(),
+                            fieldPath + "." + key, depth + 1, entered);
+                    }
+                } finally {
+                    entered.remove(table.table());
+                }
+            }
+            case Value.Array array -> {
+                if (depth > JSON_MAX_DEPTH) {
+                    throw new JsonToFailure(fieldPath, actualTokenOf(value));
+                }
+                if (!entered.add(array.array())) {
+                    return; // path-local re-entry: the seam reports the pinned cycle token
+                }
+                try {
+                    for (int i = 0; i < array.array().size(); i++) {
+                        boundTableContentsDepth(op, array.array().elementAt(i),
+                            fieldPath + "[" + i + "]", depth + 1, entered);
+                    }
+                } finally {
+                    entered.remove(array.array());
+                }
+            }
+            default -> {
+                // Leaves (unsupported carriers included): the seam's
+                // pinned failures, never this walk's depth concern.
+            }
         }
     }
 

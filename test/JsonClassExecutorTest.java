@@ -73,7 +73,8 @@ import java.util.Set;
  *       table field, wrong element shapes); a failing default child
  *       (completed effects remain); an absent required-present
  *       no-default key (K-D9); a nested decode failure; depth
- *       overflow;</li>
+ *       overflow (class/array recursion and table-field
+ *       contents);</li>
  *   <li>the {@code {}}/{@code []} collapse and the top-level gate
  *       (null/non-object/non-empty-array → null);</li>
  *   <li>the three-state roundtrip (missing vs present null preserved);
@@ -92,8 +93,8 @@ import java.util.Set;
  *       {@code "f.g"}, array element {@code "f[0]"}, table key
  *       {@code "f.k"}); wrong identity at root and nested positions;
  *       cycles (class and table); nonfinite numbers; missing required;
- *       optional omitted; deterministic output bytes; depth
- *       overflow;</li>
+ *       optional omitted; deterministic output bytes; depth overflow
+ *       (class recursion and table-field contents);</li>
  *   <li>the call-origin anchoring — a failure projects at the supplied
  *       call origin, never the generated body's synthetic anchor;</li>
  *   <li>fail-closed defects and null-argument NPEs;</li>
@@ -1273,6 +1274,19 @@ public class JsonClassExecutorTest {
         check(logFailing.equals(List.of("default " + xDefault.opId(),
                 "default " + tagDefault.opId())),
             "completed children's effects remain (x ran; tag ran and failed)");
+
+        // A producer Defect thrown by the default-block runner fails
+        // closed (K-D11): it never uses the walk's language-null
+        // carrier (the JsonFromFailure carrier's pinned discipline).
+        BodyRunner defectiveRunner = defaultOp -> {
+            throw new Defect("a producer defect inside the default block of "
+                + defaultOp.opId() + " — fail closed, never language null");
+        };
+        expectDefect(() -> ClassOpsExecutor.executeJsonFromClass(op,
+                Map.of(jsonId, Value.string("{}")), childIds, defaultOps, layouts,
+                FixtureJson.parser(), missingFactorySeam(), defectiveRunner),
+            "a body-runner Defect during a local default child fails closed "
+                + "(never language null)");
     }
 
     // =========================================================================
@@ -1302,6 +1316,7 @@ public class JsonClassExecutorTest {
                 List.of(cityDefault.opId(), zipDefault.opId()), nestedCallerRef),
             nestedFactoryResult, new RuntimeDescriptor.Class(NESTED),
             FailurePolicyId.CLASS_CONSTRUCTION, null, nestedFactory.origin());
+        final SemanticOp rebuiltFactory = nestedFactory;
         Map<OpId, Value> ownerProduced = new LinkedHashMap<>();
         ownerProduced.put(cityDefault.opId(), Value.string("berlin"));
         ownerProduced.put(zipDefault.opId(), new Value.Int(10115));
@@ -1365,6 +1380,46 @@ public class JsonClassExecutorTest {
             new ScriptedBodyRunner(new ArrayList<>(), produced, null));
         check(nestedFailure instanceof Value.Null,
             "a nested extra-key failure returns null end-to-end");
+
+        // A failing nested-factory child: the owner-side default block
+        // throws through the real executeClassFactory (the
+        // DEAL-failure stand-in) — the walk publishes language null
+        // end-to-end (K-D8 step 6 / K-D5's failing-child rule), never
+        // an uncaught throw, and the completed child ran first.
+        List<String> failingLog = new ArrayList<>();
+        NestedClassFactory failingSeam = (classId, providedFields) -> {
+            Outcome<Value> outcome = ClassOpsExecutor.executeClassFactory(rebuiltFactory,
+                op, Map.of(cityDefault.opId(), cityDefault, zipDefault.opId(), zipDefault),
+                layouts, providedFields, defaultOp -> {
+                    failingLog.add("nested-default " + defaultOp.opId());
+                    throw new IllegalStateException("scripted owner-side default-block "
+                        + "failure of " + defaultOp.opId());
+                });
+            if (!(outcome instanceof Outcome.Success<Value> success)) {
+                throw new IllegalStateException("unexpected factory failure terminal");
+            }
+            return success.value();
+        };
+        Value nestedDefaultFailure = ClassOpsExecutor.executeJsonFromClass(op,
+            Map.of(jsonId, Value.string("{\"home\":{}}")), List.of(nameDefault.opId()),
+            defaultOps, layouts, FixtureJson.parser(), failingSeam, runner);
+        check(nestedDefaultFailure instanceof Value.Null,
+            "a failing nested-factory child returns null end-to-end (K-D8 step 6)");
+        check(failingLog.equals(List.of("nested-default " + cityDefault.opId())),
+            "the failing nested factory ran its first child before the failure "
+                + "(completed children's effects remain)");
+
+        // A producer Defect of the nested seam fails closed (K-D11): it
+        // never uses the walk's language-null carrier.
+        NestedClassFactory defectiveSeam = (classId, providedFields) -> {
+            throw new Defect("a producer defect of the nested factory seam — never a "
+                + "walk failure");
+        };
+        expectDefect(() -> ClassOpsExecutor.executeJsonFromClass(op,
+                Map.of(jsonId, Value.string("{\"home\":{}}")),
+                List.of(nameDefault.opId()), defaultOps, layouts, FixtureJson.parser(),
+                defectiveSeam, new ScriptedBodyRunner(new ArrayList<>(), produced, null)),
+            "a nested-factory producer Defect fails closed (never language null)");
     }
 
     // =========================================================================
@@ -1399,6 +1454,46 @@ public class JsonClassExecutorTest {
             new ScriptedBodyRunner(new ArrayList<>(), Map.of(), null));
         check(bounded instanceof Value.Class,
             "a 512-deep nested document decodes (the bound is inclusive)");
+
+        // Table-field contents are bounded by the same walk depth (the
+        // retained _json_table_shape authority): a table subtree whose
+        // nested containers pass the bound returns null; the bound
+        // itself decodes (a container at depth 512 is inclusive).
+        ClassLayout withTable = layoutOf(POINT, field("data", TABLE, true));
+        ValueId tableJsonId = nextValue();
+        SemanticOp tableOp = jsonFromOp(withTable, tableJsonId);
+        Map<ClassId, ClassLayout> tableLayouts = Map.of(POINT, withTable);
+        NestedClassFactory noNested = (classId, providedFields) -> {
+            throw new Defect("the table-content depth walk never resolves a nested "
+                + "class");
+        };
+        Value tableOverflow = ClassOpsExecutor.executeJsonFromClass(tableOp,
+            Map.of(tableJsonId, Value.string("unused")), List.of(), Map.of(),
+            tableLayouts, scriptedParser(rawTable(Map.of("data", nestedTableChain(513)))),
+            noNested, new ScriptedBodyRunner(new ArrayList<>(), Map.of(), null));
+        check(tableOverflow instanceof Value.Null,
+            "a 513-deep table subtree inside a table field returns null");
+        Value tableBounded = ClassOpsExecutor.executeJsonFromClass(tableOp,
+            Map.of(tableJsonId, Value.string("unused")), List.of(), Map.of(),
+            tableLayouts, scriptedParser(rawTable(Map.of("data", nestedTableChain(512)))),
+            noNested, new ScriptedBodyRunner(new ArrayList<>(), Map.of(), null));
+        check(tableBounded instanceof Value.Class instance
+                && fieldValue(instance, withTable, "data") instanceof Value.Table,
+            "a 512-deep table subtree inside a table field decodes (the bound is "
+                + "inclusive)");
+        Value mixedOverflow = ClassOpsExecutor.executeJsonFromClass(tableOp,
+            Map.of(tableJsonId, Value.string("unused")), List.of(), Map.of(),
+            tableLayouts, scriptedParser(rawTable(Map.of("data", nestedMixedChain(513)))),
+            noNested, new ScriptedBodyRunner(new ArrayList<>(), Map.of(), null));
+        check(mixedOverflow instanceof Value.Null,
+            "a 513-deep mixed table/array subtree inside a table field returns null");
+        Value mixedBounded = ClassOpsExecutor.executeJsonFromClass(tableOp,
+            Map.of(tableJsonId, Value.string("unused")), List.of(), Map.of(),
+            tableLayouts, scriptedParser(rawTable(Map.of("data", nestedMixedChain(512)))),
+            noNested, new ScriptedBodyRunner(new ArrayList<>(), Map.of(), null));
+        check(mixedBounded instanceof Value.Class,
+            "a 512-deep mixed table/array subtree inside a table field decodes "
+                + "(the bound is inclusive)");
     }
 
     /** A parsed nested document of the given depth: {"next":{"next":...{}}}. */
@@ -1406,6 +1501,33 @@ public class JsonClassExecutorTest {
         Value current = rawTable(Map.of());
         for (int i = 0; i < depth; i++) {
             current = rawTable(Map.of("next", current));
+        }
+        return current;
+    }
+
+    /**
+     * A chain of nested single-key tables of the given nesting depth:
+     * {@code {"k": {"k": ... {}}}} — the innermost table is empty.
+     */
+    private static Value nestedTableChain(int depth) {
+        Value current = rawTable(Map.of());
+        for (int i = 0; i < depth; i++) {
+            current = rawTable(Map.of("k", current));
+        }
+        return current;
+    }
+
+    /**
+     * A chain of alternating table/array containers of the given
+     * nesting depth: {@code {"k": [{"k": [...]}]}} — the outermost
+     * container is a table, then an array, alternating inward.
+     */
+    private static Value nestedMixedChain(int depth) {
+        Value current = rawTable(Map.of());
+        for (int i = depth - 1; i >= 0; i--) {
+            current = (i % 2 == 0)
+                ? rawTable(Map.of("k", current))
+                : new Value.Array(SemanticArray.of(current));
         }
         return current;
     }
@@ -1789,6 +1911,67 @@ public class JsonClassExecutorTest {
             nextOrigin(null));
         check(bounded instanceof Outcome.Success<Value>,
             "a 512-deep class nesting serializes (the bound is inclusive)");
+
+        // Table-field contents are bounded by the same walk depth (the
+        // retained _json_table_shape authority): a 513-deep table
+        // subtree fails at the exceeding container's pinned path (513
+        // key segments) with the table token; a 512-deep one
+        // serializes; the production adapter fails identically (the
+        // pre-walk bounds before the seam runs, so no unbounded seam
+        // recursion ever escapes).
+        ClassLayout tableLayout = layoutOf(POINT, field("data", TABLE, true));
+        Value.Class deepTable = instanceOf(tableLayout,
+            Map.of("data", nestedTableChain(513)));
+        ValueId deepTableClassId = nextValue();
+        SemanticOp deepTableOp = jsonToOp(tableLayout, deepTableClassId);
+        String overflowPath = "data" + ".k".repeat(513);
+        Outcome<Value> tableOverflow = ClassOpsExecutor.executeJsonToClass(deepTableOp,
+            Map.of(deepTableClassId, deepTable), Map.of(POINT, tableLayout),
+            FixtureJson.stringifier(), nextOrigin(null));
+        check(tableOverflow instanceof Outcome.Failure<Value> failure
+                && failure.failure().failure().message().equals(
+                    "value at " + overflowPath + " is not JSON serializable: table"),
+            "a 513-deep table subtree fails at the exceeding container's pinned path "
+                + "with the table token");
+        Outcome<Value> tableOverflowAdapter = ClassOpsExecutor.executeJsonToClass(
+            deepTableOp, Map.of(deepTableClassId, deepTable), Map.of(POINT, tableLayout),
+            JsonClassAlgorithmAdapter.stringifier(), nextOrigin(null));
+        check(tableOverflowAdapter instanceof Outcome.Failure<Value> failure
+                && failure.failure().failure().message().equals(
+                    "value at " + overflowPath + " is not JSON serializable: table"),
+            "the production adapter fails the deep table subtree identically (never a "
+                + "producer crash)");
+        Value.Class boundedTable = instanceOf(tableLayout,
+            Map.of("data", nestedTableChain(512)));
+        ValueId boundedTableClassId = nextValue();
+        SemanticOp boundedTableOp = jsonToOp(tableLayout, boundedTableClassId);
+        Outcome<Value> tableBounded = ClassOpsExecutor.executeJsonToClass(boundedTableOp,
+            Map.of(boundedTableClassId, boundedTable), Map.of(POINT, tableLayout),
+            FixtureJson.stringifier(), nextOrigin(null));
+        check(tableBounded instanceof Outcome.Success<Value>,
+            "a 512-deep table subtree serializes (the bound is inclusive)");
+
+        // A mixed table/array subtree: array segments inside table
+        // contents append [0] (the pinned convention — a segment's
+        // spelling is the parent container's kind: a table parent
+        // appends ".k", an array parent appends "[0]"), and the
+        // exceeding innermost array wrapper reports the array token.
+        Value.Class deepMixed = instanceOf(tableLayout,
+            Map.of("data", nestedMixedChain(514)));
+        ValueId deepMixedClassId = nextValue();
+        SemanticOp deepMixedOp = jsonToOp(tableLayout, deepMixedClassId);
+        StringBuilder mixedPath = new StringBuilder("data");
+        for (int j = 2; j <= 514; j++) {
+            mixedPath.append(j % 2 == 0 ? ".k" : "[0]");
+        }
+        Outcome<Value> mixedOverflow = ClassOpsExecutor.executeJsonToClass(deepMixedOp,
+            Map.of(deepMixedClassId, deepMixed), Map.of(POINT, tableLayout),
+            FixtureJson.stringifier(), nextOrigin(null));
+        check(mixedOverflow instanceof Outcome.Failure<Value> failure
+                && failure.failure().failure().message().equals(
+                    "value at " + mixedPath + " is not JSON serializable: array"),
+            "a mixed table/array subtree fails at the exceeding array container with "
+                + "the pinned mixed segments and the array token");
     }
 
     private static Value.Class emptyNode() {
