@@ -88,6 +88,33 @@ TEST_MAINS+=(
 )
 
 # =========================================================================
+# ISSUE-0316 (E2 identity integration gates and the final release gate):
+# the dedicated integration battery runs every pinned E2-integration
+# scenario through the real production pipeline on both LuaJIT and JVM —
+# multi-component roots (src, lib, lib/utils) with distinct byte-stable
+# canonical descriptors and runtime tags, the dot-bearing configured root
+# (src.models -> @src.models/User) and the dotted externals key
+# (host.cfg -> @$external/host.cfg/ServerConfig) legal projections that
+# parse, round-trip, and byte-match their runtime tags, the dotted-legacy
+# tag failing E8011 end-to-end against the canonical projection, the
+# unrepresentable required public identity (root text a@b, relative
+# component x->y) failing E2010 at the class span before any
+# metadata/artifact with class-free continuation in the same root, the
+# class-free out-of-root artifact sets carrying no public descriptor, and
+# the private-identity exclusion / legacy-emission grep pins over every
+# identity-bearing artifact set. The conformance host-fixture projections
+# merged by T5 stay verified by the gate's conformance suites
+# (ConformanceTest / the lane pin tests) — this child verifies, never
+# re-migrates. Joined here at the gate-script level, like the
+# ISSUE-0474/0475 suites, so the single compile/test-list authority file
+# (tools/gate-manifest.sh) stays untouched.
+# =========================================================================
+TEST_SOURCES+=( 'test/E2IdentityIntegrationGatesTest.java' )
+TEST_MAINS+=(
+  'fg|=== Running E2 Identity Integration Gates (ISSUE-0316) ===|java -ea -cp build deal.test.E2IdentityIntegrationGatesTest'
+)
+
+# =========================================================================
 # ISSUE-0474 + ISSUE-0475 (Coverage Manifest Validator and Corpus
 # Check): the reusable C7 validation component, its synthetic 26/0 unit
 # matrix, and the real-manifest 82/0 mechanical check join the compile
