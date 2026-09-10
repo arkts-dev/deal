@@ -131,7 +131,7 @@ TEST_SOURCES=(
   # ISSUE-0488 registration: the historical/legacy catalogs —
   # HistoricalRegressionCatalog (the closed historical pin authority
   # with pinned expectation baselines) and LegacyCapabilityCatalog (the
-  # release-owned unsupported-legacy-slice authority) — are gate-run
+  # release-owned unsupported-legacy-slice authority) are gate-run
   # conformance data consumed by the manifest-listed
   # BackendConformanceTest/ConformanceTest runners at startup; they
   # compile from the manifest so the strict full-set compile list (the
@@ -254,6 +254,21 @@ TEST_SOURCES=(
   # RETAINED_ABI deferral negative, same-module LOCAL preservation, and
   # determinism).
   'test/SharedFactoryLoweringTest.java'
+  # ISSUE-0515 registration: the JSON_FROM_CLASS/JSON_TO_CLASS executor
+  # battery (class-construction-jsonable-operations K-D8/K-D9/K-D10/
+  # K-D11, Verification 5-6 — the fixture JSON delegate implementing
+  # the pinned rows, null on every listed failure, the {}/[] collapse,
+  # the three-state roundtrip, the nested factory trigger, the exact
+  # template and pinned fieldPath convention, the call-origin
+  # anchoring, cycles, nonfinite numbers, depth bounds, and the
+  # fail-closed discipline).
+  'test/JsonClassExecutorTest.java'
+  # ISSUE-0515 registration: the generated C$fromJson/C$toJson lowering
+  # battery (class-construction-jsonable-operations K-D8/K-D10 —
+  # the pinned generated bodies, LoweredBody registrations, the
+  # JsonDefaultChildTable record, the combined T1..T5 two-module
+  # end-to-end drive, and determinism).
+  'test/JsonClassLoweringTest.java'
   # ISSUE-0162 registration: the C FFI declaration validation and
   # forward binding generation battery.
   'test/FfiDeclarationValidatorTest.java'
@@ -458,4 +473,15 @@ WARNING: luajit not found, skipping async nesting stress tests'
   # ISSUE-0540 registration: the carrier-shape battery main - one
   # foreground record (default-plan-carriers D10).
   'fg|=== Running Default Plan Carrier Shape Tests (ISSUE-0540) ===|java -ea -cp build deal.module.DefaultPlanCarriersTest'
+  # ISSUE-0515 registration: the JSON walker executor battery — the
+  # generated C$fromJson/C$toJson walk contracts over the fixture JSON
+  # delegate (class-construction-jsonable-operations K-D8/K-D9/K-D10/
+  # K-D11; sequencing item 5).
+  'fg|=== Running Json Class Executor Tests (ISSUE-0515 K-D8/K-D9/K-D10/K-D11) ===|java -ea -cp build deal.test.JsonClassExecutorTest'
+  # ISSUE-0515 registration: the generated @jsonable body lowering
+  # battery — the pinned generated bodies, the JsonDefaultChildTable
+  # record, and the combined T1..T5 end-to-end drive
+  # (class-construction-jsonable-operations K-D8/K-D10; sequencing
+  # item 5).
+  'fg|=== Running Json Class Lowering Tests (ISSUE-0515 K-D8/K-D10) ===|java -ea -cp build deal.test.JsonClassLoweringTest'
 )
