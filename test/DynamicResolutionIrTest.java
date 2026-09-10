@@ -109,6 +109,20 @@ import java.util.Set;
  *       correlation id, descriptor/key mismatches, null correlation id
  *       through the text surface).</li>
  *   <li>Canonical rendering and the text round-trip.</li>
+ *   <li>Oracle execution of a dynamically resolved {@code ASYNC_START} for
+ *       every runtime resolution class — DEAL_BODY (the task body's
+ *       {@code RETURN} runs exactly the recorded {@code FUNCTION_RETURN}
+ *       task cell), HOST (start/complete with the derived operation
+ *       label; zero caller-side return cells), and EXTERNAL/SHARED_BODY
+ *       (the callee async {@code EXTERNAL_ENTRY} owns the canonical
+ *       token and the caller {@code AWAIT} completes through the
+ *       execution-bound referent).</li>
+ *   <li>Oracle execution of adapter-resolved dynamic {@code CALL} and
+ *       {@code ASYNC_START} — the D15 source resolution fixes the class
+ *       per source binding (LoweredBody, HostFunction, HostFunctionValue,
+ *       retained-ABI external, SHARED_BODY external) and each class
+ *       executes exactly the selected recorded cell with the pinned
+ *       kind and owner.</li>
  * </ol>
  */
 public class DynamicResolutionIrTest {
@@ -1353,6 +1367,335 @@ public class DynamicResolutionIrTest {
         return false;
     }
 
+    /** The count of SUCCESS events of one boundary kind within one unit's op set. */
+    private static long oracleBoundarySuccesses(SemanticRuntimeModel.ConsumerRun run,
+            LoweredModuleUnit unit, BoundaryKind kind) {
+        long count = 0;
+        for (SemanticRuntimeModel.TraceEvent event : run.trace()) {
+            if (event.phase() == SemanticRuntimeModel.Phase.SUCCESS
+                    && event.kind() == SemanticOpKind.BOUNDARY) {
+                for (SemanticOp op : unit.ops()) {
+                    if (op.opId().equals(event.op())
+                            && ((KindPayload.BoundaryPayload) op.payload()).kind() == kind) {
+                        count++;
+                    }
+                }
+            }
+        }
+        return count;
+    }
+
+    /** Whether the run recorded the exact ordered effect. */
+    private static boolean oracleEffect(SemanticRuntimeModel.ConsumerRun run,
+            SemanticRuntimeModel.EffectEvent.Kind kind, String text) {
+        return run.effects().contains(new SemanticRuntimeModel.EffectEvent(kind, text));
+    }
+
+    /**
+     * The oracle-execution fixture for one dynamically resolved
+     * {@code ASYNC_START}: the module-init block runs one CONST (the
+     * argument value 7), the dynamic {@code ASYNC_START} (recorded source
+     * {@code DEAL_BODY} — the single recorded caller-side cell is the
+     * {@code FUNCTION_RETURN} task cell parented to the task body's
+     * {@code RETURN}), and the consuming {@code AWAIT}; the task body
+     * block holds one leading parameter ALLOC + the RETURN.
+     */
+    private static LoweredModuleUnit dynamicOracleAsyncCaller(
+            FunctionExecutionBinding binding, AsyncTokenId token, ValueId calleeId,
+            OpId constOp, OpId paramBoundary, OpId taskCell, OpId allocOp, OpId returnOp,
+            OpId startOp, OpId completionBoundary, OpId awaitOp, ValueId argValue,
+            ValueId awaitResult, BlockId bodyBlock) {
+        List<SemanticOp> ops = new ArrayList<>();
+        ops.add(opWith(constOp, SemanticOpKind.CONST,
+            new KindPayload.ConstPayload(new ScalarValue.Int(7)), argValue, INT,
+            FailurePolicyId.NO_DEAL_FAILURE, null));
+        ops.add(boundaryWithInput(paramBoundary, BoundaryKind.FUNCTION_PARAMETER, INT,
+            FailurePolicyId.TYPE_DESCRIPTOR, startOp, argValue));
+        ops.add(boundaryWith(taskCell, BoundaryKind.FUNCTION_RETURN, INT,
+            FailurePolicyId.TYPE_DESCRIPTOR, returnOp));
+        ops.add(opWith(allocOp, SemanticOpKind.BINDING_ALLOC,
+            new KindPayload.BindingAllocPayload(new BindingId(9), bodyBlock, false,
+                BindingCellKind.DIRECT, 0),
+            null, null, FailurePolicyId.NO_DEAL_FAILURE, null));
+        ops.add(opWith(returnOp, SemanticOpKind.RETURN,
+            new KindPayload.ReturnPayload(argValue, new FunctionId(1), startOp, taskCell),
+            null, null, FailurePolicyId.NO_DEAL_FAILURE, startOp));
+        ops.add(opWith(startOp, SemanticOpKind.ASYNC_START,
+            new KindPayload.AsyncStartPayload(
+                new KindPayload.CallCallee.Dynamic(calleeId),
+                AsyncStartSource.DEAL_BODY, ParameterBoundaryMode.RUN,
+                List.of(paramBoundary), INT, taskCell, null, null),
+            token, InternalResultType.INTERNAL_ASYNC, FailurePolicyId.NO_DEAL_FAILURE, null));
+        ops.add(boundaryWith(completionBoundary, BoundaryKind.ASYNC_COMPLETION, INT,
+            FailurePolicyId.ASYNC_COMPLETION, awaitOp));
+        ops.add(opWith(awaitOp, SemanticOpKind.AWAIT,
+            new KindPayload.AwaitPayload(token, INT, completionBoundary),
+            awaitResult, INT, FailurePolicyId.NO_DEAL_FAILURE, null));
+        Map<FunctionId, LoweredFunction> functions = Map.of(
+            new FunctionId(1),
+            new LoweredFunction(new FunctionId(1), SIG, List.of(), bodyBlock));
+        Map<FunctionAllocationIdentity, FunctionExecutionBinding> bindings = Map.of(
+            new FunctionAllocationIdentity(calleeId.id()), binding);
+        return unit(MOD, functions, bindings, ops);
+    }
+
+    /** The block-membership table of one dynamic-ASYNC_START caller unit. */
+    private static StructuredBodyTable dynamicOracleAsyncTable(BlockId bodyBlock,
+            OpId constOp, OpId startOp, OpId awaitOp, OpId allocOp, OpId returnOp) {
+        Map<BlockId, List<OpId>> blockOps = new LinkedHashMap<>();
+        blockOps.put(new BlockId(0), List.of(constOp, startOp, awaitOp));
+        blockOps.put(bodyBlock, List.of(allocOp, returnOp));
+        Map<OpId, BlockId> opBlocks = new LinkedHashMap<>();
+        opBlocks.put(constOp, new BlockId(0));
+        opBlocks.put(startOp, new BlockId(0));
+        opBlocks.put(awaitOp, new BlockId(0));
+        opBlocks.put(allocOp, bodyBlock);
+        opBlocks.put(returnOp, bodyBlock);
+        return new StructuredBodyTable(blockOps, opBlocks);
+    }
+
+    /**
+     * One {@code MOD_B} async callee unit for a dynamic
+     * {@code ASYNC_START(EXTERNAL/SHARED_BODY)} fixture: the async
+     * {@code EXTERNAL_ENTRY} owns the canonical token, and the entry task
+     * body's {@code RETURN} runs the single callee-unit
+     * {@code FUNCTION_RETURN}.
+     */
+    private static LoweredModuleUnit dynamicOracleAsyncCallee(OpId entry, OpId cell,
+            OpId allocOp, OpId returnOp, ValueId argValue, BlockId bodyBlock) {
+        List<SemanticOp> ops = new ArrayList<>();
+        ops.add(boundaryWith(cell, BoundaryKind.FUNCTION_RETURN, INT,
+            FailurePolicyId.TYPE_DESCRIPTOR, returnOp));
+        ops.add(opWith(allocOp, SemanticOpKind.BINDING_ALLOC,
+            new KindPayload.BindingAllocPayload(new BindingId(8), bodyBlock, false,
+                BindingCellKind.DIRECT, 0),
+            null, null, FailurePolicyId.NO_DEAL_FAILURE, null));
+        ops.add(opWith(returnOp, SemanticOpKind.RETURN,
+            new KindPayload.ReturnPayload(argValue, new FunctionId(2), entry, cell),
+            null, null, FailurePolicyId.NO_DEAL_FAILURE, entry));
+        ops.add(opWith(entry, SemanticOpKind.EXTERNAL_ENTRY,
+            new KindPayload.ExternalEntryPayload("f", new FunctionId(2), SIG, true, cell,
+                INT),
+            null, null, FailurePolicyId.NO_DEAL_FAILURE, null));
+        return unit(MOD_B, Map.of(new FunctionId(2),
+                new LoweredFunction(new FunctionId(2), SIG, List.of(), bodyBlock)),
+            Map.of(), ops);
+    }
+
+    /** The block-membership table of one async callee unit. */
+    private static StructuredBodyTable dynamicOracleAsyncCalleeTable(BlockId bodyBlock,
+            OpId allocOp, OpId returnOp) {
+        return new StructuredBodyTable(
+            Map.of(bodyBlock, List.of(allocOp, returnOp), new BlockId(0), List.of()),
+            Map.of(allocOp, bodyBlock, returnOp, bodyBlock));
+    }
+
+    /**
+     * One {@code MOD_B} sync callee unit for a dynamic
+     * {@code CALL(SHARED_BODY)} fixture: the sync {@code EXTERNAL_ENTRY}
+     * body's {@code RETURN} runs the single {@code EXTERNAL_RETURN}.
+     */
+    private static LoweredModuleUnit dynamicOracleSyncCallee(OpId entry, OpId cell,
+            OpId allocOp, OpId returnOp, ValueId argValue, BlockId bodyBlock) {
+        List<SemanticOp> ops = new ArrayList<>();
+        ops.add(boundaryWith(cell, BoundaryKind.EXTERNAL_RETURN, INT,
+            FailurePolicyId.TYPE_DESCRIPTOR, returnOp));
+        ops.add(opWith(allocOp, SemanticOpKind.BINDING_ALLOC,
+            new KindPayload.BindingAllocPayload(new BindingId(8), bodyBlock, false,
+                BindingCellKind.DIRECT, 0),
+            null, null, FailurePolicyId.NO_DEAL_FAILURE, null));
+        ops.add(opWith(returnOp, SemanticOpKind.RETURN,
+            new KindPayload.ReturnPayload(argValue, new FunctionId(2), entry, cell),
+            null, null, FailurePolicyId.NO_DEAL_FAILURE, entry));
+        ops.add(opWith(entry, SemanticOpKind.EXTERNAL_ENTRY,
+            new KindPayload.ExternalEntryPayload("f", new FunctionId(2), SIG, false, cell,
+                null),
+            null, null, FailurePolicyId.NO_DEAL_FAILURE, null));
+        return unit(MOD_B, Map.of(new FunctionId(2),
+                new LoweredFunction(new FunctionId(2), SIG, List.of(), bodyBlock)),
+            Map.of(), ops);
+    }
+
+    /** One executable project over the caller (MOD) and callee (MOD_B) units. */
+    private static ExecutableLoweredProject dynamicOracleProject(LoweredModuleUnit callee,
+            LoweredModuleUnit caller) {
+        Map<ModuleId, LoweredModuleUnit> modules = new LinkedHashMap<>();
+        modules.put(MOD_B, callee);
+        modules.put(MOD, caller);
+        ProjectInterfaceIndex index = new ProjectInterfaceIndex(
+            ProjectInterfaceIndex.FORMAT_VERSION, Map.of(
+                MOD_B, new ExternalModuleInterface(MOD_B, ExternalModuleKind.IMPLEMENTATION,
+                    List.of(), List.of(), List.of(), InitializationMode.ONCE_AFTER_DEPENDENCIES),
+                MOD, new ExternalModuleInterface(MOD, ExternalModuleKind.IMPLEMENTATION,
+                    List.of(), List.of(), List.of(), InitializationMode.ONCE_AFTER_DEPENDENCIES)));
+        return new ExecutableLoweredProject(
+            SemanticProfile.DEAL_V1_2_INT32, index, modules, MOD);
+    }
+
+    /**
+     * The oracle-execution fixture for one adapter-resolved dynamic
+     * {@code CALL}: the module-init block runs one CONST (argument value
+     * 7), one {@code CLOSURE_NEW} producing the source function value
+     * (its producing identity registers the source binding), one
+     * {@code FUNCTION_ADAPT} producing the adapter (the D15 source value
+     * retention), and the dynamic {@code CALL} whose callee resolves to
+     * the {@code AdapterBinding}; the recorded three return cells plus
+     * one {@code FUNCTION_PARAMETER} boundary; the DEAL-body resolution's
+     * body block (one leading parameter ALLOC + the RETURN).
+     */
+    private static LoweredModuleUnit dynamicOracleAdapterCaller(
+            FunctionExecutionBinding sourceBinding, RuntimeDescriptor.Func sourceSignature,
+            RuntimeDescriptor.Func targetSignature, ValueId closureResult, ValueId adaptResult,
+            ValueId calleeId, OpId constOp, OpId closureOp, OpId adaptOp, OpId paramBoundary,
+            OpId dealCell, OpId hostCell, OpId externalCell, OpId allocOp, OpId returnOp,
+            OpId callOp, ValueId argValue, ValueId callResult, BlockId bodyBlock) {
+        FunctionExecutionBinding.AdapterBinding adapter =
+            new FunctionExecutionBinding.AdapterBinding(adaptOp, CaptureMode.VALUE,
+                new AdaptSourceRef.Value(closureResult), sourceSignature, targetSignature);
+        List<SemanticOp> ops = new ArrayList<>();
+        ops.add(opWith(constOp, SemanticOpKind.CONST,
+            new KindPayload.ConstPayload(new ScalarValue.Int(7)), argValue, INT,
+            FailurePolicyId.NO_DEAL_FAILURE, null));
+        ops.add(opWith(closureOp, SemanticOpKind.CLOSURE_NEW,
+            new KindPayload.ClosureNewPayload(new FunctionId(2), sourceSignature, List.of(),
+                new FunctionExecutionBinding.LoweredBody(new FunctionId(2), bodyBlock)),
+            closureResult, sourceSignature, FailurePolicyId.NO_DEAL_FAILURE, null));
+        ops.add(opWith(adaptOp, SemanticOpKind.FUNCTION_ADAPT,
+            new KindPayload.FunctionAdaptPayload(sourceSignature, targetSignature,
+                CaptureMode.VALUE, new AdaptSourceRef.Value(closureResult), null),
+            adaptResult, targetSignature, FailurePolicyId.NO_DEAL_FAILURE, null));
+        ops.add(boundaryWithInput(paramBoundary, BoundaryKind.FUNCTION_PARAMETER, INT,
+            FailurePolicyId.TYPE_DESCRIPTOR, callOp, argValue));
+        ops.add(boundaryWith(dealCell, BoundaryKind.FUNCTION_RETURN, INT,
+            FailurePolicyId.TYPE_DESCRIPTOR, returnOp));
+        ops.add(boundaryWith(hostCell, BoundaryKind.HOST_TO_DEAL, INT,
+            FailurePolicyId.HOST_SYNC_RETURN, callOp));
+        ops.add(boundaryWith(externalCell, BoundaryKind.EXTERNAL_RETURN, INT,
+            FailurePolicyId.TYPE_DESCRIPTOR, callOp));
+        ops.add(opWith(allocOp, SemanticOpKind.BINDING_ALLOC,
+            new KindPayload.BindingAllocPayload(new BindingId(4), bodyBlock, false,
+                BindingCellKind.DIRECT, 0),
+            null, null, FailurePolicyId.NO_DEAL_FAILURE, null));
+        ops.add(opWith(returnOp, SemanticOpKind.RETURN,
+            new KindPayload.ReturnPayload(argValue, new FunctionId(2), callOp, dealCell),
+            null, null, FailurePolicyId.NO_DEAL_FAILURE, callOp));
+        ops.add(opWith(callOp, SemanticOpKind.CALL,
+            new KindPayload.CallPayload(CallMode.INDIRECT,
+                new KindPayload.CallCallee.Dynamic(calleeId),
+                targetSignature, List.of(paramBoundary), null,
+                new KindPayload.DynamicReturnBoundary(dealCell, hostCell, externalCell),
+                null, null),
+            callResult, INT, FailurePolicyId.NO_DEAL_FAILURE, null));
+        Map<FunctionId, LoweredFunction> functions = Map.of(
+            new FunctionId(2),
+            new LoweredFunction(new FunctionId(2), sourceSignature, List.of(), bodyBlock));
+        Map<FunctionAllocationIdentity, FunctionExecutionBinding> bindings =
+            new LinkedHashMap<>();
+        bindings.put(new FunctionAllocationIdentity(closureResult.id()), sourceBinding);
+        bindings.put(new FunctionAllocationIdentity(adaptResult.id()), adapter);
+        bindings.put(new FunctionAllocationIdentity(calleeId.id()), adapter);
+        return unit(MOD, functions, bindings, ops);
+    }
+
+    /** The block-membership table of one adapter-resolved dynamic-CALL unit. */
+    private static StructuredBodyTable dynamicOracleAdapterCallTable(BlockId bodyBlock,
+            OpId constOp, OpId closureOp, OpId adaptOp, OpId callOp, OpId allocOp,
+            OpId returnOp) {
+        Map<BlockId, List<OpId>> blockOps = new LinkedHashMap<>();
+        blockOps.put(new BlockId(0), List.of(constOp, closureOp, adaptOp, callOp));
+        blockOps.put(bodyBlock, List.of(allocOp, returnOp));
+        Map<OpId, BlockId> opBlocks = new LinkedHashMap<>();
+        opBlocks.put(constOp, new BlockId(0));
+        opBlocks.put(closureOp, new BlockId(0));
+        opBlocks.put(adaptOp, new BlockId(0));
+        opBlocks.put(callOp, new BlockId(0));
+        opBlocks.put(allocOp, bodyBlock);
+        opBlocks.put(returnOp, bodyBlock);
+        return new StructuredBodyTable(blockOps, opBlocks);
+    }
+
+    /**
+     * The oracle-execution fixture for one adapter-resolved dynamic
+     * {@code ASYNC_START}: the same D15 setup as the adapter CALL
+     * (CONST + CLOSURE_NEW + FUNCTION_ADAPT), then the dynamic
+     * {@code ASYNC_START} (recorded source {@code DEAL_BODY} with the
+     * single {@code FUNCTION_RETURN} task cell) and the consuming
+     * {@code AWAIT}; the task body block (one leading parameter ALLOC +
+     * the RETURN) is the DEAL-body resolution's body.
+     */
+    private static LoweredModuleUnit dynamicOracleAdapterAsyncCaller(
+            FunctionExecutionBinding sourceBinding, RuntimeDescriptor.Func sourceSignature,
+            RuntimeDescriptor.Func targetSignature, AsyncTokenId token, ValueId closureResult,
+            ValueId adaptResult, ValueId calleeId, OpId constOp, OpId closureOp, OpId adaptOp,
+            OpId paramBoundary, OpId taskCell, OpId allocOp, OpId returnOp, OpId startOp,
+            OpId completionBoundary, OpId awaitOp, ValueId argValue, ValueId awaitResult,
+            BlockId bodyBlock) {
+        FunctionExecutionBinding.AdapterBinding adapter =
+            new FunctionExecutionBinding.AdapterBinding(adaptOp, CaptureMode.VALUE,
+                new AdaptSourceRef.Value(closureResult), sourceSignature, targetSignature);
+        List<SemanticOp> ops = new ArrayList<>();
+        ops.add(opWith(constOp, SemanticOpKind.CONST,
+            new KindPayload.ConstPayload(new ScalarValue.Int(7)), argValue, INT,
+            FailurePolicyId.NO_DEAL_FAILURE, null));
+        ops.add(opWith(closureOp, SemanticOpKind.CLOSURE_NEW,
+            new KindPayload.ClosureNewPayload(new FunctionId(2), sourceSignature, List.of(),
+                new FunctionExecutionBinding.LoweredBody(new FunctionId(2), bodyBlock)),
+            closureResult, sourceSignature, FailurePolicyId.NO_DEAL_FAILURE, null));
+        ops.add(opWith(adaptOp, SemanticOpKind.FUNCTION_ADAPT,
+            new KindPayload.FunctionAdaptPayload(sourceSignature, targetSignature,
+                CaptureMode.VALUE, new AdaptSourceRef.Value(closureResult), null),
+            adaptResult, targetSignature, FailurePolicyId.NO_DEAL_FAILURE, null));
+        ops.add(boundaryWithInput(paramBoundary, BoundaryKind.FUNCTION_PARAMETER, INT,
+            FailurePolicyId.TYPE_DESCRIPTOR, startOp, argValue));
+        ops.add(boundaryWith(taskCell, BoundaryKind.FUNCTION_RETURN, INT,
+            FailurePolicyId.TYPE_DESCRIPTOR, returnOp));
+        ops.add(opWith(allocOp, SemanticOpKind.BINDING_ALLOC,
+            new KindPayload.BindingAllocPayload(new BindingId(14), bodyBlock, false,
+                BindingCellKind.DIRECT, 0),
+            null, null, FailurePolicyId.NO_DEAL_FAILURE, null));
+        ops.add(opWith(returnOp, SemanticOpKind.RETURN,
+            new KindPayload.ReturnPayload(argValue, new FunctionId(2), startOp, taskCell),
+            null, null, FailurePolicyId.NO_DEAL_FAILURE, startOp));
+        ops.add(opWith(startOp, SemanticOpKind.ASYNC_START,
+            new KindPayload.AsyncStartPayload(
+                new KindPayload.CallCallee.Dynamic(calleeId),
+                AsyncStartSource.DEAL_BODY, ParameterBoundaryMode.RUN,
+                List.of(paramBoundary), INT, taskCell, null, null),
+            token, InternalResultType.INTERNAL_ASYNC, FailurePolicyId.NO_DEAL_FAILURE, null));
+        ops.add(boundaryWith(completionBoundary, BoundaryKind.ASYNC_COMPLETION, INT,
+            FailurePolicyId.ASYNC_COMPLETION, awaitOp));
+        ops.add(opWith(awaitOp, SemanticOpKind.AWAIT,
+            new KindPayload.AwaitPayload(token, INT, completionBoundary),
+            awaitResult, INT, FailurePolicyId.NO_DEAL_FAILURE, null));
+        Map<FunctionId, LoweredFunction> functions = Map.of(
+            new FunctionId(2),
+            new LoweredFunction(new FunctionId(2), sourceSignature, List.of(), bodyBlock));
+        Map<FunctionAllocationIdentity, FunctionExecutionBinding> bindings =
+            new LinkedHashMap<>();
+        bindings.put(new FunctionAllocationIdentity(closureResult.id()), sourceBinding);
+        bindings.put(new FunctionAllocationIdentity(adaptResult.id()), adapter);
+        bindings.put(new FunctionAllocationIdentity(calleeId.id()), adapter);
+        return unit(MOD, functions, bindings, ops);
+    }
+
+    /** The block-membership table of one adapter-resolved dynamic-ASYNC_START unit. */
+    private static StructuredBodyTable dynamicOracleAdapterAsyncTable(BlockId bodyBlock,
+            OpId constOp, OpId closureOp, OpId adaptOp, OpId startOp, OpId awaitOp,
+            OpId allocOp, OpId returnOp) {
+        Map<BlockId, List<OpId>> blockOps = new LinkedHashMap<>();
+        blockOps.put(new BlockId(0), List.of(constOp, closureOp, adaptOp, startOp, awaitOp));
+        blockOps.put(bodyBlock, List.of(allocOp, returnOp));
+        Map<OpId, BlockId> opBlocks = new LinkedHashMap<>();
+        opBlocks.put(constOp, new BlockId(0));
+        opBlocks.put(closureOp, new BlockId(0));
+        opBlocks.put(adaptOp, new BlockId(0));
+        opBlocks.put(startOp, new BlockId(0));
+        opBlocks.put(awaitOp, new BlockId(0));
+        opBlocks.put(allocOp, bodyBlock);
+        opBlocks.put(returnOp, bodyBlock);
+        return new StructuredBodyTable(blockOps, opBlocks);
+    }
+
     private static void testDynamicOracleExecution() {
         System.out.println("-- Oracle execution: dynamic CALL per runtime resolution class --");
 
@@ -1509,6 +1852,689 @@ public class DynamicResolutionIrTest {
             "the SHARED_BODY resolution executes zero caller-side return boundaries");
     }
 
+    private static void testDynamicAsyncOracleExecution() {
+        System.out.println("-- Oracle execution: dynamic ASYNC_START per runtime resolution class --");
+
+        // DEAL_BODY: the task body's RETURN executes the recorded FUNCTION_RETURN
+        // task cell — exactly that cell, nothing else.
+        {
+            ValueId callee = new ValueId(88);
+            AsyncTokenId token = new AsyncTokenId.Canonical(901,
+                AsyncTokenOwner.DEAL_BODY_TASK);
+            OpId constOp = nextOpId();
+            OpId paramBoundary = nextOpId();
+            OpId taskCell = nextOpId();
+            OpId allocOp = nextOpId();
+            OpId returnOp = nextOpId();
+            OpId startOp = nextOpId();
+            OpId completionBoundary = nextOpId();
+            OpId awaitOp = nextOpId();
+            ValueId argValue = nextValue();
+            ValueId awaitResult = nextValue();
+            BlockId bodyBlock = new BlockId(2);
+            LoweredModuleUnit unit = dynamicOracleAsyncCaller(
+                new FunctionExecutionBinding.LoweredBody(new FunctionId(1), bodyBlock),
+                token, callee, constOp, paramBoundary, taskCell, allocOp, returnOp, startOp,
+                completionBoundary, awaitOp, argValue, awaitResult, bodyBlock);
+            StructuredBodyTable table = dynamicOracleAsyncTable(bodyBlock, constOp, startOp,
+                awaitOp, allocOp, returnOp);
+            SemanticRuntimeModel.ConsumerRun run = SemanticOracle.execute(unit, table);
+            check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+                "the DEAL-body dynamic ASYNC_START run succeeds");
+            check(oracleSucceeded(run, startOp, "tok:901:DEAL_BODY_TASK"),
+                "the DEAL-body ASYNC_START publishes its canonical token");
+            check(oracleSucceeded(run, paramBoundary, "int:7"),
+                "the DEAL-body resolution checks the argument through the parameter boundary");
+            check(oracleSucceeded(run, taskCell, "int:7"),
+                "the DEAL-body resolution executes the recorded FUNCTION_RETURN task cell "
+                    + "(int:7)");
+            check(oracleBoundarySuccesses(run, unit, BoundaryKind.FUNCTION_RETURN) == 1,
+                "the DEAL-body resolution executes exactly the recorded task cell");
+            check(oracleBoundarySuccesses(run, unit, BoundaryKind.ASYNC_COMPLETION) == 1,
+                "the AWAIT runs exactly one ASYNC_COMPLETION boundary");
+            check(oracleSucceeded(run, awaitOp, "int:7"),
+                "the DEAL-body AWAIT completes through the recorded task cell (int:7)");
+        }
+
+        // HOST: startAsync/completeAsync with the derived operation label; zero
+        // caller-side return cells execute.
+        {
+            ValueId callee = new ValueId(88);
+            AsyncTokenId token = new AsyncTokenId.Canonical(902,
+                AsyncTokenOwner.HOST_OPERATION);
+            OpId constOp = nextOpId();
+            OpId paramBoundary = nextOpId();
+            OpId taskCell = nextOpId();
+            OpId allocOp = nextOpId();
+            OpId returnOp = nextOpId();
+            OpId startOp = nextOpId();
+            OpId completionBoundary = nextOpId();
+            OpId awaitOp = nextOpId();
+            ValueId argValue = nextValue();
+            ValueId awaitResult = nextValue();
+            BlockId bodyBlock = new BlockId(3);
+            SemanticOracle.HostResponder responder = new SemanticOracle.HostResponder() {
+                @Override
+                public String startAsync(ModuleId module, String export,
+                        RuntimeDescriptor.Func descriptor, List<SemanticOracle.Value> args,
+                        String operationLabel) {
+                    check(MOD.equals(module) && "f".equals(export) && SIG.equals(descriptor)
+                            && args.size() == 1
+                            && ((SemanticOracle.Value.IntValue) args.get(0)).value() == 7
+                            && "mod.a.f".equals(operationLabel),
+                        "the HOST resolution derives the operation label mod.a.f and "
+                            + "starts with the checked argument");
+                    return operationLabel;
+                }
+
+                @Override
+                public SyncOutcome completeAsync(String operationLabel) {
+                    check("mod.a.f".equals(operationLabel),
+                        "the AWAIT completes the derived operation label");
+                    return new SyncOutcome.Returned(new SemanticOracle.Value.IntValue(9));
+                }
+            };
+            LoweredModuleUnit unit = dynamicOracleAsyncCaller(
+                new FunctionExecutionBinding.HostFunction(MOD, "f", SIG),
+                token, callee, constOp, paramBoundary, taskCell, allocOp, returnOp, startOp,
+                completionBoundary, awaitOp, argValue, awaitResult, bodyBlock);
+            StructuredBodyTable table = dynamicOracleAsyncTable(bodyBlock, constOp, startOp,
+                awaitOp, allocOp, returnOp);
+            SemanticRuntimeModel.ConsumerRun run = SemanticOracle.execute(unit, table,
+                responder);
+            check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+                "the HOST dynamic ASYNC_START run succeeds");
+            check(oracleSucceeded(run, startOp, "tok:902:HOST_OPERATION"),
+                "the HOST ASYNC_START publishes its canonical token");
+            check(oracleSucceeded(run, awaitOp, "int:9"),
+                "the HOST AWAIT completes the host operation (int:9)");
+            check(!oracleTouched(run, taskCell)
+                    && oracleBoundarySuccesses(run, unit, BoundaryKind.FUNCTION_RETURN) == 0,
+                "the HOST resolution executes zero caller-side return cells");
+            check(oracleEffect(run, SemanticRuntimeModel.EffectEvent.Kind.ASYNC_START_OP,
+                    "mod.a.f")
+                    && oracleEffect(run,
+                        SemanticRuntimeModel.EffectEvent.Kind.ASYNC_COMPLETE_RETURN,
+                        "mod.a.f=int:9"),
+                "the HOST resolution records the ordered async host effects");
+        }
+
+        // EXTERNAL and SHARED_BODY: the callee unit's async EXTERNAL_ENTRY owns the
+        // canonical token; the caller token links through the execution-bound
+        // dynamicReferents map and the caller AWAIT completes through it.
+        for (ExternalExecutionOwner owner : List.of(ExternalExecutionOwner.RETAINED_ABI,
+                ExternalExecutionOwner.SHARED_BODY)) {
+            String label = owner == ExternalExecutionOwner.RETAINED_ABI
+                ? "EXTERNAL (retained-ABI)" : "SHARED_BODY";
+            long callerToken = owner == ExternalExecutionOwner.RETAINED_ABI ? 903 : 904;
+            ValueId callee = new ValueId(88);
+            OpId constOp = nextOpId();
+            OpId paramBoundary = nextOpId();
+            OpId taskCell = nextOpId();
+            OpId allocOp = nextOpId();
+            OpId returnOp = nextOpId();
+            OpId startOp = nextOpId();
+            OpId completionBoundary = nextOpId();
+            OpId awaitOp = nextOpId();
+            ValueId argValue = nextValue();
+            ValueId awaitResult = nextValue();
+            BlockId bodyBlock = new BlockId(4);
+            OpId calleeEntry = new OpId(MOD_B, 11);
+            OpId calleeCell = new OpId(MOD_B, 12);
+            OpId calleeAlloc = new OpId(MOD_B, 13);
+            OpId calleeReturn = new OpId(MOD_B, 14);
+            BlockId calleeBody = new BlockId(1);
+            LoweredModuleUnit calleeUnit = dynamicOracleAsyncCallee(calleeEntry, calleeCell,
+                calleeAlloc, calleeReturn, argValue, calleeBody);
+            StructuredBodyTable calleeTable = dynamicOracleAsyncCalleeTable(calleeBody,
+                calleeAlloc, calleeReturn);
+            LoweredModuleUnit caller = dynamicOracleAsyncCaller(
+                new FunctionExecutionBinding.ExternalFunction(MOD_B, "f", SIG, owner),
+                new AsyncTokenId.Canonical(callerToken, AsyncTokenOwner.DEAL_BODY_TASK),
+                callee, constOp, paramBoundary, taskCell, allocOp, returnOp, startOp,
+                completionBoundary, awaitOp, argValue, awaitResult, bodyBlock);
+            StructuredBodyTable callerTable = dynamicOracleAsyncTable(bodyBlock, constOp,
+                startOp, awaitOp, allocOp, returnOp);
+            ExecutableLoweredProject project = dynamicOracleProject(calleeUnit, caller);
+            Map<ModuleId, StructuredBodyTable> tables = Map.of(MOD, callerTable, MOD_B,
+                calleeTable);
+            SemanticRuntimeModel.ConsumerRun run = SemanticOracle.execute(project, tables,
+                null);
+            check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+                "the " + label + " dynamic ASYNC_START run succeeds");
+            check(oracleSucceeded(run, startOp, "tok:" + callerToken + ":DEAL_BODY_TASK"),
+                "the " + label + " ASYNC_START publishes its caller token");
+            check(oracleSucceeded(run, calleeEntry, "tok:11:DEAL_BODY_TASK"),
+                "the " + label + " callee async entry publishes its canonical token");
+            check(oracleSucceeded(run, calleeCell, "int:7"),
+                "the " + label + " callee task runs the callee-unit FUNCTION_RETURN (int:7)");
+            check(!oracleTouched(run, taskCell)
+                    && oracleBoundarySuccesses(run, caller, BoundaryKind.FUNCTION_RETURN) == 0,
+                "the " + label + " resolution executes zero caller-side return cells");
+            check(oracleBoundarySuccesses(run, calleeUnit, BoundaryKind.FUNCTION_RETURN) == 1
+                    && oracleBoundarySuccesses(run, caller,
+                        BoundaryKind.ASYNC_COMPLETION) == 1,
+                "the " + label + " run executes one callee FUNCTION_RETURN and one caller "
+                    + "ASYNC_COMPLETION");
+            check(oracleSucceeded(run, awaitOp, "int:7"),
+                "the " + label + " AWAIT completes through the canonical referent (int:7)");
+        }
+    }
+
+    private static void testDynamicAdapterOracleExecution() {
+        System.out.println("-- Oracle execution: adapter-resolved dynamic CALL and ASYNC_START --");
+
+        // CALL — the D15 source resolution fixes the execution class per the
+        // source binding; each class executes exactly the selected recorded cell.
+        {
+            // LoweredBody source → DEAL_BODY: the source body's RETURN executes the
+            // recorded FUNCTION_RETURN cell.
+            ValueId closureResult = new ValueId(61);
+            ValueId adaptResult = new ValueId(62);
+            ValueId callee = new ValueId(63);
+            OpId constOp = nextOpId();
+            OpId closureOp = nextOpId();
+            OpId adaptOp = nextOpId();
+            OpId paramBoundary = nextOpId();
+            OpId dealCell = nextOpId();
+            OpId hostCell = nextOpId();
+            OpId externalCell = nextOpId();
+            OpId allocOp = nextOpId();
+            OpId returnOp = nextOpId();
+            OpId callOp = nextOpId();
+            ValueId argValue = nextValue();
+            ValueId callResult = nextValue();
+            BlockId bodyBlock = new BlockId(5);
+            LoweredModuleUnit unit = dynamicOracleAdapterCaller(
+                new FunctionExecutionBinding.LoweredBody(new FunctionId(2), bodyBlock),
+                SIG, SIG, closureResult, adaptResult, callee, constOp, closureOp, adaptOp,
+                paramBoundary, dealCell, hostCell, externalCell, allocOp, returnOp, callOp,
+                argValue, callResult, bodyBlock);
+            StructuredBodyTable table = dynamicOracleAdapterCallTable(bodyBlock, constOp,
+                closureOp, adaptOp, callOp, allocOp, returnOp);
+            SemanticRuntimeModel.ConsumerRun run = SemanticOracle.execute(unit, table);
+            check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+                "the adapter CALL with a LoweredBody source run succeeds");
+            check(oracleTouched(run, closureOp) && oracleTouched(run, adaptOp),
+                "the D15 setup runs CLOSURE_NEW then FUNCTION_ADAPT before the call");
+            check(oracleSucceeded(run, dealCell, "int:7"),
+                "the adapter DEAL-body resolution executes the recorded FUNCTION_RETURN "
+                    + "cell (int:7)");
+            check(oracleSucceeded(run, callOp, "int:7"),
+                "the adapter DEAL-body CALL terminal records the checked value");
+            check(!oracleTouched(run, hostCell) && !oracleTouched(run, externalCell),
+                "the adapter DEAL-body resolution executes exactly the selected cell");
+        }
+        {
+            // HostFunction source → HOST: the call op executes the recorded
+            // HOST_TO_DEAL cell.
+            ValueId closureResult = new ValueId(64);
+            ValueId adaptResult = new ValueId(65);
+            ValueId callee = new ValueId(66);
+            OpId constOp = nextOpId();
+            OpId closureOp = nextOpId();
+            OpId adaptOp = nextOpId();
+            OpId paramBoundary = nextOpId();
+            OpId dealCell = nextOpId();
+            OpId hostCell = nextOpId();
+            OpId externalCell = nextOpId();
+            OpId allocOp = nextOpId();
+            OpId returnOp = nextOpId();
+            OpId callOp = nextOpId();
+            ValueId argValue = nextValue();
+            ValueId callResult = nextValue();
+            BlockId bodyBlock = new BlockId(6);
+            SemanticOracle.HostResponder responder = new SemanticOracle.HostResponder() {
+                @Override
+                public SyncOutcome call(ModuleId module, String export,
+                        RuntimeDescriptor.Func descriptor, List<SemanticOracle.Value> args) {
+                    check(MOD.equals(module) && "f".equals(export)
+                            && SIG.equals(descriptor) && args.size() == 1
+                            && ((SemanticOracle.Value.IntValue) args.get(0)).value() == 7,
+                        "the adapter HOST resolution forwards the host call with the "
+                            + "leading source argument");
+                    return new SyncOutcome.Returned(new SemanticOracle.Value.IntValue(9));
+                }
+            };
+            LoweredModuleUnit unit = dynamicOracleAdapterCaller(
+                new FunctionExecutionBinding.HostFunction(MOD, "f", SIG),
+                SIG, SIG, closureResult, adaptResult, callee, constOp, closureOp, adaptOp,
+                paramBoundary, dealCell, hostCell, externalCell, allocOp, returnOp, callOp,
+                argValue, callResult, bodyBlock);
+            StructuredBodyTable table = dynamicOracleAdapterCallTable(bodyBlock, constOp,
+                closureOp, adaptOp, callOp, allocOp, returnOp);
+            SemanticRuntimeModel.ConsumerRun run = SemanticOracle.execute(unit, table,
+                responder);
+            check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+                "the adapter CALL with a HostFunction source run succeeds");
+            check(oracleSucceeded(run, hostCell, "int:9"),
+                "the adapter HOST resolution executes the recorded HOST_TO_DEAL cell "
+                    + "(int:9)");
+            check(oracleSucceeded(run, callOp, "int:9"),
+                "the adapter HOST CALL terminal records the checked value");
+            check(!oracleTouched(run, dealCell) && !oracleTouched(run, externalCell),
+                "the adapter HOST resolution executes exactly the selected cell");
+            check(oracleEffect(run, SemanticRuntimeModel.EffectEvent.Kind.HOST_CALL,
+                    "mod.a.f")
+                    && oracleEffect(run, SemanticRuntimeModel.EffectEvent.Kind.HOST_RETURN,
+                        "mod.a.f=int:9"),
+                "the adapter HOST resolution records the ordered host effects");
+        }
+        {
+            // HostFunctionValue source → HOST: the materializing-boundary
+            // correlation names the host export.
+            ValueId closureResult = new ValueId(67);
+            ValueId adaptResult = new ValueId(68);
+            ValueId callee = new ValueId(69);
+            OpId materializing = new OpId(MOD, 700);
+            OpId constOp = nextOpId();
+            OpId closureOp = nextOpId();
+            OpId adaptOp = nextOpId();
+            OpId paramBoundary = nextOpId();
+            OpId dealCell = nextOpId();
+            OpId hostCell = nextOpId();
+            OpId externalCell = nextOpId();
+            OpId allocOp = nextOpId();
+            OpId returnOp = nextOpId();
+            OpId callOp = nextOpId();
+            ValueId argValue = nextValue();
+            ValueId callResult = nextValue();
+            BlockId bodyBlock = new BlockId(7);
+            SemanticOracle.HostResponder responder = new SemanticOracle.HostResponder() {
+                @Override
+                public SyncOutcome call(ModuleId module, String export,
+                        RuntimeDescriptor.Func descriptor, List<SemanticOracle.Value> args) {
+                    check(MOD.equals(module) && "@value#700".equals(export)
+                            && SIG.equals(descriptor) && args.size() == 1
+                            && ((SemanticOracle.Value.IntValue) args.get(0)).value() == 7,
+                        "the adapter HostFunctionValue resolution forwards the host call "
+                            + "under the materializing-boundary correlation export");
+                    return new SyncOutcome.Returned(new SemanticOracle.Value.IntValue(9));
+                }
+            };
+            LoweredModuleUnit unit = dynamicOracleAdapterCaller(
+                new FunctionExecutionBinding.HostFunctionValue(MOD, materializing, SIG),
+                SIG, SIG, closureResult, adaptResult, callee, constOp, closureOp, adaptOp,
+                paramBoundary, dealCell, hostCell, externalCell, allocOp, returnOp, callOp,
+                argValue, callResult, bodyBlock);
+            StructuredBodyTable table = dynamicOracleAdapterCallTable(bodyBlock, constOp,
+                closureOp, adaptOp, callOp, allocOp, returnOp);
+            SemanticRuntimeModel.ConsumerRun run = SemanticOracle.execute(unit, table,
+                responder);
+            check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+                "the adapter CALL with a HostFunctionValue source run succeeds");
+            check(oracleSucceeded(run, hostCell, "int:9"),
+                "the adapter HostFunctionValue resolution executes the recorded "
+                    + "HOST_TO_DEAL cell (int:9)");
+            check(oracleSucceeded(run, callOp, "int:9"),
+                "the adapter HostFunctionValue CALL terminal records the checked value");
+            check(!oracleTouched(run, dealCell) && !oracleTouched(run, externalCell),
+                "the adapter HostFunctionValue resolution executes exactly the selected "
+                    + "cell");
+            check(oracleEffect(run, SemanticRuntimeModel.EffectEvent.Kind.HOST_CALL,
+                    "mod.a.@value#700"),
+                "the adapter HostFunctionValue resolution records the correlation export "
+                    + "effect");
+        }
+        {
+            // ExternalFunction (RETAINED_ABI) source → EXTERNAL: the call op executes
+            // the recorded EXTERNAL_RETURN cell.
+            ValueId closureResult = new ValueId(70);
+            ValueId adaptResult = new ValueId(71);
+            ValueId callee = new ValueId(72);
+            OpId constOp = nextOpId();
+            OpId closureOp = nextOpId();
+            OpId adaptOp = nextOpId();
+            OpId paramBoundary = nextOpId();
+            OpId dealCell = nextOpId();
+            OpId hostCell = nextOpId();
+            OpId externalCell = nextOpId();
+            OpId allocOp = nextOpId();
+            OpId returnOp = nextOpId();
+            OpId callOp = nextOpId();
+            ValueId argValue = nextValue();
+            ValueId callResult = nextValue();
+            BlockId bodyBlock = new BlockId(8);
+            SemanticOracle.HostResponder responder = new SemanticOracle.HostResponder() {
+                @Override
+                public SyncOutcome call(ModuleId module, String export,
+                        RuntimeDescriptor.Func descriptor, List<SemanticOracle.Value> args) {
+                    check(MOD_B.equals(module) && "f".equals(export)
+                            && SIG.equals(descriptor) && args.size() == 1
+                            && ((SemanticOracle.Value.IntValue) args.get(0)).value() == 7,
+                        "the adapter EXTERNAL resolution forwards the retained-ABI host "
+                            + "call with the leading source argument");
+                    return new SyncOutcome.Returned(new SemanticOracle.Value.IntValue(9));
+                }
+            };
+            LoweredModuleUnit unit = dynamicOracleAdapterCaller(
+                new FunctionExecutionBinding.ExternalFunction(MOD_B, "f", SIG,
+                    ExternalExecutionOwner.RETAINED_ABI),
+                SIG, SIG, closureResult, adaptResult, callee, constOp, closureOp, adaptOp,
+                paramBoundary, dealCell, hostCell, externalCell, allocOp, returnOp, callOp,
+                argValue, callResult, bodyBlock);
+            StructuredBodyTable table = dynamicOracleAdapterCallTable(bodyBlock, constOp,
+                closureOp, adaptOp, callOp, allocOp, returnOp);
+            SemanticRuntimeModel.ConsumerRun run = SemanticOracle.execute(unit, table,
+                responder);
+            check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+                "the adapter CALL with a retained-ABI ExternalFunction source run succeeds");
+            check(oracleSucceeded(run, externalCell, "int:9"),
+                "the adapter EXTERNAL resolution executes the recorded EXTERNAL_RETURN "
+                    + "cell (int:9)");
+            check(oracleSucceeded(run, callOp, "int:9"),
+                "the adapter EXTERNAL CALL terminal records the checked value");
+            check(!oracleTouched(run, dealCell) && !oracleTouched(run, hostCell),
+                "the adapter EXTERNAL resolution executes exactly the selected cell");
+            check(oracleEffect(run, SemanticRuntimeModel.EffectEvent.Kind.HOST_CALL,
+                    "mod.b.f"),
+                "the adapter EXTERNAL resolution records the retained-ABI host effect");
+        }
+        {
+            // ExternalFunction (SHARED_BODY) source → SHARED_BODY: zero caller-side
+            // cells; the callee unit's sync EXTERNAL_ENTRY runs its EXTERNAL_RETURN.
+            ValueId closureResult = new ValueId(73);
+            ValueId adaptResult = new ValueId(74);
+            ValueId callee = new ValueId(75);
+            OpId constOp = nextOpId();
+            OpId closureOp = nextOpId();
+            OpId adaptOp = nextOpId();
+            OpId paramBoundary = nextOpId();
+            OpId dealCell = nextOpId();
+            OpId hostCell = nextOpId();
+            OpId externalCell = nextOpId();
+            OpId allocOp = nextOpId();
+            OpId returnOp = nextOpId();
+            OpId callOp = nextOpId();
+            ValueId argValue = nextValue();
+            ValueId callResult = nextValue();
+            BlockId bodyBlock = new BlockId(9);
+            OpId calleeEntry = new OpId(MOD_B, 21);
+            OpId calleeCell = new OpId(MOD_B, 22);
+            OpId calleeAlloc = new OpId(MOD_B, 23);
+            OpId calleeReturn = new OpId(MOD_B, 24);
+            BlockId calleeBody = new BlockId(1);
+            LoweredModuleUnit calleeUnit = dynamicOracleSyncCallee(calleeEntry, calleeCell,
+                calleeAlloc, calleeReturn, argValue, calleeBody);
+            StructuredBodyTable calleeTable = dynamicOracleAsyncCalleeTable(calleeBody,
+                calleeAlloc, calleeReturn);
+            LoweredModuleUnit caller = dynamicOracleAdapterCaller(
+                new FunctionExecutionBinding.ExternalFunction(MOD_B, "f", SIG,
+                    ExternalExecutionOwner.SHARED_BODY),
+                SIG, SIG, closureResult, adaptResult, callee, constOp, closureOp, adaptOp,
+                paramBoundary, dealCell, hostCell, externalCell, allocOp, returnOp, callOp,
+                argValue, callResult, bodyBlock);
+            StructuredBodyTable callerTable = dynamicOracleAdapterCallTable(bodyBlock,
+                constOp, closureOp, adaptOp, callOp, allocOp, returnOp);
+            ExecutableLoweredProject project = dynamicOracleProject(calleeUnit, caller);
+            Map<ModuleId, StructuredBodyTable> tables = Map.of(MOD, callerTable, MOD_B,
+                calleeTable);
+            SemanticRuntimeModel.ConsumerRun run = SemanticOracle.execute(project, tables,
+                null);
+            check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+                "the adapter CALL with a SHARED_BODY ExternalFunction source run succeeds");
+            check(oracleSucceeded(run, calleeCell, "int:7"),
+                "the adapter SHARED_BODY resolution runs the callee EXTERNAL_RETURN "
+                    + "(int:7)");
+            check(oracleSucceeded(run, callOp, "int:7"),
+                "the adapter SHARED_BODY CALL terminal records the value without "
+                    + "re-checking");
+            check(!oracleTouched(run, dealCell) && !oracleTouched(run, hostCell)
+                    && !oracleTouched(run, externalCell),
+                "the adapter SHARED_BODY resolution executes zero caller-side return "
+                    + "cells");
+        }
+
+        // ASYNC_START — the same D15 setup; each source class executes its own
+        // terminal with zero caller-side return cells outside the DEAL-body
+        // resolution's recorded task cell.
+        {
+            // LoweredBody source → DEAL_BODY: the task body's RETURN executes the
+            // recorded FUNCTION_RETURN task cell.
+            ValueId closureResult = new ValueId(76);
+            ValueId adaptResult = new ValueId(77);
+            ValueId callee = new ValueId(78);
+            AsyncTokenId token = new AsyncTokenId.Canonical(911,
+                AsyncTokenOwner.DEAL_BODY_TASK);
+            OpId constOp = nextOpId();
+            OpId closureOp = nextOpId();
+            OpId adaptOp = nextOpId();
+            OpId paramBoundary = nextOpId();
+            OpId taskCell = nextOpId();
+            OpId allocOp = nextOpId();
+            OpId returnOp = nextOpId();
+            OpId startOp = nextOpId();
+            OpId completionBoundary = nextOpId();
+            OpId awaitOp = nextOpId();
+            ValueId argValue = nextValue();
+            ValueId awaitResult = nextValue();
+            BlockId bodyBlock = new BlockId(10);
+            LoweredModuleUnit unit = dynamicOracleAdapterAsyncCaller(
+                new FunctionExecutionBinding.LoweredBody(new FunctionId(2), bodyBlock),
+                SIG, SIG, token, closureResult, adaptResult, callee, constOp, closureOp,
+                adaptOp, paramBoundary, taskCell, allocOp, returnOp, startOp,
+                completionBoundary, awaitOp, argValue, awaitResult, bodyBlock);
+            StructuredBodyTable table = dynamicOracleAdapterAsyncTable(bodyBlock, constOp,
+                closureOp, adaptOp, startOp, awaitOp, allocOp, returnOp);
+            SemanticRuntimeModel.ConsumerRun run = SemanticOracle.execute(unit, table);
+            check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+                "the adapter ASYNC_START with a LoweredBody source run succeeds");
+            check(oracleSucceeded(run, startOp, "tok:911:DEAL_BODY_TASK"),
+                "the adapter DEAL-body ASYNC_START publishes its canonical token");
+            check(oracleSucceeded(run, taskCell, "int:7"),
+                "the adapter DEAL-body resolution executes the recorded FUNCTION_RETURN "
+                    + "task cell (int:7)");
+            check(oracleBoundarySuccesses(run, unit, BoundaryKind.FUNCTION_RETURN) == 1
+                    && oracleBoundarySuccesses(run, unit,
+                        BoundaryKind.ASYNC_COMPLETION) == 1,
+                "the adapter DEAL-body resolution executes exactly the recorded task cell "
+                    + "plus one ASYNC_COMPLETION");
+            check(oracleSucceeded(run, awaitOp, "int:7"),
+                "the adapter DEAL-body AWAIT completes through the recorded task cell "
+                    + "(int:7)");
+        }
+        {
+            // HostFunction source → HOST: startAsync/completeAsync with the derived
+            // label; zero caller-side return cells.
+            ValueId closureResult = new ValueId(79);
+            ValueId adaptResult = new ValueId(80);
+            ValueId callee = new ValueId(81);
+            AsyncTokenId token = new AsyncTokenId.Canonical(912,
+                AsyncTokenOwner.HOST_OPERATION);
+            OpId constOp = nextOpId();
+            OpId closureOp = nextOpId();
+            OpId adaptOp = nextOpId();
+            OpId paramBoundary = nextOpId();
+            OpId taskCell = nextOpId();
+            OpId allocOp = nextOpId();
+            OpId returnOp = nextOpId();
+            OpId startOp = nextOpId();
+            OpId completionBoundary = nextOpId();
+            OpId awaitOp = nextOpId();
+            ValueId argValue = nextValue();
+            ValueId awaitResult = nextValue();
+            BlockId bodyBlock = new BlockId(11);
+            SemanticOracle.HostResponder responder = new SemanticOracle.HostResponder() {
+                @Override
+                public String startAsync(ModuleId module, String export,
+                        RuntimeDescriptor.Func descriptor, List<SemanticOracle.Value> args,
+                        String operationLabel) {
+                    check(MOD.equals(module) && "f".equals(export) && SIG.equals(descriptor)
+                            && args.size() == 1
+                            && ((SemanticOracle.Value.IntValue) args.get(0)).value() == 7
+                            && "mod.a.f".equals(operationLabel),
+                        "the adapter HOST resolution derives the operation label mod.a.f "
+                            + "and starts with the leading source argument");
+                    return operationLabel;
+                }
+
+                @Override
+                public SyncOutcome completeAsync(String operationLabel) {
+                    check("mod.a.f".equals(operationLabel),
+                        "the adapter HOST AWAIT completes the derived operation label");
+                    return new SyncOutcome.Returned(new SemanticOracle.Value.IntValue(9));
+                }
+            };
+            LoweredModuleUnit unit = dynamicOracleAdapterAsyncCaller(
+                new FunctionExecutionBinding.HostFunction(MOD, "f", SIG),
+                SIG, SIG, token, closureResult, adaptResult, callee, constOp, closureOp,
+                adaptOp, paramBoundary, taskCell, allocOp, returnOp, startOp,
+                completionBoundary, awaitOp, argValue, awaitResult, bodyBlock);
+            StructuredBodyTable table = dynamicOracleAdapterAsyncTable(bodyBlock, constOp,
+                closureOp, adaptOp, startOp, awaitOp, allocOp, returnOp);
+            SemanticRuntimeModel.ConsumerRun run = SemanticOracle.execute(unit, table,
+                responder);
+            check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+                "the adapter ASYNC_START with a HostFunction source run succeeds");
+            check(oracleSucceeded(run, startOp, "tok:912:HOST_OPERATION"),
+                "the adapter HOST ASYNC_START publishes its canonical token");
+            check(oracleSucceeded(run, awaitOp, "int:9"),
+                "the adapter HOST AWAIT completes the host operation (int:9)");
+            check(!oracleTouched(run, taskCell)
+                    && oracleBoundarySuccesses(run, unit, BoundaryKind.FUNCTION_RETURN) == 0,
+                "the adapter HOST resolution executes zero caller-side return cells");
+            check(oracleEffect(run, SemanticRuntimeModel.EffectEvent.Kind.ASYNC_START_OP,
+                    "mod.a.f")
+                    && oracleEffect(run,
+                        SemanticRuntimeModel.EffectEvent.Kind.ASYNC_COMPLETE_RETURN,
+                        "mod.a.f=int:9"),
+                "the adapter HOST resolution records the ordered async host effects");
+        }
+        {
+            // HostFunctionValue source → HOST: the derived label collapses the
+            // materializing-boundary correlation.
+            ValueId closureResult = new ValueId(82);
+            ValueId adaptResult = new ValueId(83);
+            ValueId callee = new ValueId(84);
+            OpId materializing = new OpId(MOD, 701);
+            AsyncTokenId token = new AsyncTokenId.Canonical(913,
+                AsyncTokenOwner.HOST_OPERATION);
+            OpId constOp = nextOpId();
+            OpId closureOp = nextOpId();
+            OpId adaptOp = nextOpId();
+            OpId paramBoundary = nextOpId();
+            OpId taskCell = nextOpId();
+            OpId allocOp = nextOpId();
+            OpId returnOp = nextOpId();
+            OpId startOp = nextOpId();
+            OpId completionBoundary = nextOpId();
+            OpId awaitOp = nextOpId();
+            ValueId argValue = nextValue();
+            ValueId awaitResult = nextValue();
+            BlockId bodyBlock = new BlockId(12);
+            SemanticOracle.HostResponder responder = new SemanticOracle.HostResponder() {
+                @Override
+                public String startAsync(ModuleId module, String export,
+                        RuntimeDescriptor.Func descriptor, List<SemanticOracle.Value> args,
+                        String operationLabel) {
+                    check(MOD.equals(module) && "@value#701".equals(export)
+                            && SIG.equals(descriptor) && args.size() == 1
+                            && ((SemanticOracle.Value.IntValue) args.get(0)).value() == 7
+                            && "mod.a.@value".equals(operationLabel),
+                        "the adapter HostFunctionValue resolution derives the operation "
+                            + "label mod.a.@value and starts under the correlation export");
+                    return operationLabel;
+                }
+
+                @Override
+                public SyncOutcome completeAsync(String operationLabel) {
+                    check("mod.a.@value".equals(operationLabel),
+                        "the adapter HostFunctionValue AWAIT completes the derived "
+                            + "operation label");
+                    return new SyncOutcome.Returned(new SemanticOracle.Value.IntValue(9));
+                }
+            };
+            LoweredModuleUnit unit = dynamicOracleAdapterAsyncCaller(
+                new FunctionExecutionBinding.HostFunctionValue(MOD, materializing, SIG),
+                SIG, SIG, token, closureResult, adaptResult, callee, constOp, closureOp,
+                adaptOp, paramBoundary, taskCell, allocOp, returnOp, startOp,
+                completionBoundary, awaitOp, argValue, awaitResult, bodyBlock);
+            StructuredBodyTable table = dynamicOracleAdapterAsyncTable(bodyBlock, constOp,
+                closureOp, adaptOp, startOp, awaitOp, allocOp, returnOp);
+            SemanticRuntimeModel.ConsumerRun run = SemanticOracle.execute(unit, table,
+                responder);
+            check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+                "the adapter ASYNC_START with a HostFunctionValue source run succeeds");
+            check(oracleSucceeded(run, startOp, "tok:913:HOST_OPERATION"),
+                "the adapter HostFunctionValue ASYNC_START publishes its canonical token");
+            check(oracleSucceeded(run, awaitOp, "int:9"),
+                "the adapter HostFunctionValue AWAIT completes the host operation (int:9)");
+            check(!oracleTouched(run, taskCell)
+                    && oracleBoundarySuccesses(run, unit, BoundaryKind.FUNCTION_RETURN) == 0,
+                "the adapter HostFunctionValue resolution executes zero caller-side "
+                    + "return cells");
+            check(oracleEffect(run, SemanticRuntimeModel.EffectEvent.Kind.ASYNC_START_OP,
+                    "mod.a.@value"),
+                "the adapter HostFunctionValue resolution records the derived label effect");
+        }
+        for (ExternalExecutionOwner owner : List.of(ExternalExecutionOwner.RETAINED_ABI,
+                ExternalExecutionOwner.SHARED_BODY)) {
+            // ExternalFunction source → EXTERNAL/SHARED_BODY: the callee unit's async
+            // EXTERNAL_ENTRY owns the canonical token; the caller AWAIT completes
+            // through the dynamicReferents linkage.
+            String label = owner == ExternalExecutionOwner.RETAINED_ABI
+                ? "EXTERNAL (retained-ABI)" : "SHARED_BODY";
+            long callerToken = owner == ExternalExecutionOwner.RETAINED_ABI ? 914 : 915;
+            ValueId closureResult = new ValueId(85);
+            ValueId adaptResult = new ValueId(86);
+            ValueId callee = new ValueId(87);
+            AsyncTokenId token = new AsyncTokenId.Canonical(callerToken,
+                AsyncTokenOwner.DEAL_BODY_TASK);
+            OpId constOp = nextOpId();
+            OpId closureOp = nextOpId();
+            OpId adaptOp = nextOpId();
+            OpId paramBoundary = nextOpId();
+            OpId taskCell = nextOpId();
+            OpId allocOp = nextOpId();
+            OpId returnOp = nextOpId();
+            OpId startOp = nextOpId();
+            OpId completionBoundary = nextOpId();
+            OpId awaitOp = nextOpId();
+            ValueId argValue = nextValue();
+            ValueId awaitResult = nextValue();
+            BlockId bodyBlock = new BlockId(13);
+            OpId calleeEntry = new OpId(MOD_B, 11);
+            OpId calleeCell = new OpId(MOD_B, 12);
+            OpId calleeAlloc = new OpId(MOD_B, 13);
+            OpId calleeReturn = new OpId(MOD_B, 14);
+            BlockId calleeBody = new BlockId(1);
+            LoweredModuleUnit calleeUnit = dynamicOracleAsyncCallee(calleeEntry, calleeCell,
+                calleeAlloc, calleeReturn, argValue, calleeBody);
+            StructuredBodyTable calleeTable = dynamicOracleAsyncCalleeTable(calleeBody,
+                calleeAlloc, calleeReturn);
+            LoweredModuleUnit caller = dynamicOracleAdapterAsyncCaller(
+                new FunctionExecutionBinding.ExternalFunction(MOD_B, "f", SIG, owner),
+                SIG, SIG, token, closureResult, adaptResult, callee, constOp, closureOp,
+                adaptOp, paramBoundary, taskCell, allocOp, returnOp, startOp,
+                completionBoundary, awaitOp, argValue, awaitResult, bodyBlock);
+            StructuredBodyTable callerTable = dynamicOracleAdapterAsyncTable(bodyBlock,
+                constOp, closureOp, adaptOp, startOp, awaitOp, allocOp, returnOp);
+            ExecutableLoweredProject project = dynamicOracleProject(calleeUnit, caller);
+            Map<ModuleId, StructuredBodyTable> tables = Map.of(MOD, callerTable, MOD_B,
+                calleeTable);
+            SemanticRuntimeModel.ConsumerRun run = SemanticOracle.execute(project, tables,
+                null);
+            check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+                "the adapter ASYNC_START with a " + label + " ExternalFunction source "
+                    + "run succeeds");
+            check(oracleSucceeded(run, startOp, "tok:" + callerToken + ":DEAL_BODY_TASK"),
+                "the adapter " + label + " ASYNC_START publishes its caller token");
+            check(oracleSucceeded(run, calleeEntry, "tok:11:DEAL_BODY_TASK"),
+                "the adapter " + label + " callee async entry publishes its canonical "
+                    + "token");
+            check(oracleSucceeded(run, calleeCell, "int:7"),
+                "the adapter " + label + " callee task runs the callee-unit "
+                    + "FUNCTION_RETURN (int:7)");
+            check(!oracleTouched(run, taskCell)
+                    && oracleBoundarySuccesses(run, caller, BoundaryKind.FUNCTION_RETURN) == 0,
+                "the adapter " + label + " resolution executes zero caller-side return "
+                    + "cells");
+            check(oracleSucceeded(run, awaitOp, "int:7"),
+                "the adapter " + label + " AWAIT completes through the canonical referent "
+                    + "(int:7)");
+        }
+    }
+
     // =========================================================================
     // Entry point
     // =========================================================================
@@ -1526,6 +2552,8 @@ public class DynamicResolutionIrTest {
         testDynamicAsyncNegatives();
         testHostFunctionValueClosure();
         testDynamicOracleExecution();
+        testDynamicAsyncOracleExecution();
+        testDynamicAdapterOracleExecution();
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
