@@ -2164,7 +2164,8 @@ public final class StdlibIntegrationTest {
                 StdlibFunctionId.JSON_PARSE)
                 && !StdlibHelperEquivalence.isWirable(Lane.JVM_EMITTED,
                     StdlibFunctionId.JSON_STRINGIFY),
-            "T6: the JVM std/json E6000 position is never wirable (not a candidate)");
+            "T6: the JVM std/json position is never wirable (outside the "
+                + "equivalence battery's closed candidate set)");
         for (Lane lane : Lane.values()) {
             check(StdlibHelperEquivalence.isWirable(lane, StdlibFunctionId.STRING_TRIM),
                 "T6: the " + lane + " trim helper (the closed set U+0009–U+000D and "

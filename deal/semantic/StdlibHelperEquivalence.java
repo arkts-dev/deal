@@ -183,8 +183,10 @@ public final class StdlibHelperEquivalence {
             if (function != null) {
                 exclusions.add(new Exclusion(
                     new Candidate(Lane.JVM_EMITTED, "std.json", exportName, function),
-                    "the JVM backend's std/json E6000 position (JvmBackend rejects the "
-                        + "std/json import with E6000) is not an equivalence candidate "
+                    "the JVM std/json position keeps its own corpus-pinned surface "
+                        + "(ISSUE-0302: the import compiles over the emitted shared "
+                        + "JSON runtime) and is not an equivalence battery candidate — "
+                        + "the retained Lua/JS helpers are the comparison lanes "
                         + "(stdlib-operations-and-time-lock D7)"));
             }
         }

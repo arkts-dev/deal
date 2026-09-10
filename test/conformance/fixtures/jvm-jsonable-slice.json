@@ -146,6 +146,81 @@
    "backends": [
     "jvm"
    ]
+  },
+  {
+   "name": "jvm-jsonable-fromjson-top-level-gate",
+   "description": "@jsonable fromJson top-level input gate (ISSUE-0302 D3): a document parsing to a scalar, null, or a non-empty array returns the DEAL null (never throws), and \"[]\" / \"{}\" both decode the defaulted instance and roundtrip identically (the documented parse collapse)",
+   "source": "// @jsonable\nexport class C {\n  x: int = 0;\n}\nexport function test(): string {\n  if (C$fromJson(\"42\") !== null) { return \"s42\"; }\n  if (C$fromJson(\"\\\"x\\\"\") !== null) { return \"sstr\"; }\n  if (C$fromJson(\"true\") !== null) { return \"strue\"; }\n  if (C$fromJson(\"null\") !== null) { return \"snull\"; }\n  if (C$fromJson(\"[1,2]\") !== null) { return \"sarr\"; }\n  let from_obj: C | null = C$fromJson(\"{}\");\n  let from_arr: C | null = C$fromJson(\"[]\");\n  if (from_obj !== null) {\n    if (from_arr !== null) {\n      if (C$toJson(from_obj) !== C$toJson(from_arr)) { return \"collapse-neq\"; }\n    } else {\n      return \"arr-null\";\n    }\n  } else {\n    return \"obj-null\";\n  }\n  return \"ok\";\n}\n",
+   "expectedOutput": "ok",
+   "expectedError": null,
+   "expectedExitCode": 0,
+   "backends": [
+    "jvm"
+   ]
+  },
+
+  {
+   "name": "jvm-jsonable-nested-array-roundtrip-deep",
+   "description": "@jsonable nested arrays roundtrip through C$toJson/C$fromJson for int[][] and deeper shapes (int[][][]) — the emitted nested decoders allocate fresh local names per nesting level (l/a/i/e suffixes), so the artifact stays valid Java with no local redeclaration at any depth",
+   "source": "// @jsonable\nexport class Matrix {\n  values: int[][] = [];\n}\n// @jsonable\nexport class Cube {\n  values: int[][][] = [];\n}\nexport function test(): string {\n  let m: Matrix = { values: [[1, 2], [3, 4]] };\n  let json: string = Matrix$toJson(m);\n  let m2: Matrix | null = Matrix$fromJson(json);\n  if (m2 !== null) {\n    if (m2.values[0][0] !== 1 || m2.values[1][1] !== 4) { return \"m-bad\"; }\n  } else {\n    return \"m-null\";\n  }\n  let c: Cube = { values: [[[1, 2], [3, 4]], [[5, 6], [7, 8]]] };\n  let cjson: string = Cube$toJson(c);\n  let c2: Cube | null = Cube$fromJson(cjson);\n  if (c2 !== null) {\n    if (c2.values[0][0][0] !== 1 || c2.values[1][1][1] !== 8) { return \"c-bad\"; }\n  } else {\n    return \"c-null\";\n  }\n  return \"ok\";\n}\n",
+   "expectedOutput": "ok",
+   "expectedError": null,
+   "expectedExitCode": 0,
+   "backends": [
+    "jvm"
+   ]
+  },
+
+  {
+   "name": "jvm-jsonable-table-field-nested-arrays-roundtrip",
+   "description": "a table field holding nested arrays ([[1,2],[3,4]]) roundtrips through C$toJson/C$fromJson without E8001 — __jsonAppend serializes array wrappers recursively by element type at any depth (ISSUE-0302 D4)",
+   "source": "// @jsonable\nexport class Wrap {\n  data: table = {};\n}\nexport function test(): string {\n  let w: Wrap = { data: { values: [[1, 2], [3, 4]] } };\n  let json: string = Wrap$toJson(w);\n  let w2: Wrap | null = Wrap$fromJson(json);\n  if (w2 !== null) {\n    let json2: string = Wrap$toJson(w2);\n    let w3: Wrap | null = Wrap$fromJson(json2);\n    if (w3 !== null) {\n      let t: table = w3.data;\n      let values: int[][] = t.values;\n      if (values[0][0] !== 1 || values[1][1] !== 4) { return \"bad-values\"; }\n    } else {\n      return \"w3-null\";\n    }\n  } else {\n    return \"w2-null\";\n  }\n  return \"ok\";\n}\n",
+   "expectedOutput": "ok",
+   "expectedError": null,
+   "expectedExitCode": 0,
+   "backends": [
+    "jvm"
+   ]
+  },
+
+  {
+   "name": "jvm-json-parse-raw-control-char-e8001",
+   "description": "raw-control-character parse rejection (ISSUE-0302): a U+0000-U+001F character inside a JSON string is rejected by json.parse with E8001 \"raw control character in string (must be escaped)\" (std/json.lua parse_string parity), while C$fromJson collapses the same parse failure to the DEAL null",
+   "source": "import * as json from \"std/json\"\n// @jsonable\nexport class Wrap {\n  data: table = {};\n}\nexport function test(): string {\n  let fromJsonNull: Wrap | null = Wrap$fromJson(\"{\\\"data\\\":{\\\"leaf\\\":\\\"\t\\\"}}\");\n  if (fromJsonNull !== null) { return \"fromjson-accepted\"; }\n  return json.parse(\"{\\\"data\\\":\\\"\t\\\"}\").data;\n}\n",
+   "expectedOutput": "raw control character in string (must be escaped)",
+   "expectedError": "E8001",
+   "expectedExitCode": 1,
+   "backends": [
+    "jvm"
+   ]
+  },
+
+  {
+   "name": "jvm-json-parse-malformed-e8001",
+   "description": "json.parse of malformed input raises E8001 with the decoder's stored message (std/json.lua parse_error inside the pcall-equivalent) — never a raw crash and never a silent null",
+   "source": "import * as json from \"std/json\"\nexport function test(): string {\n  return json.parse(\"{oops\").a;\n}\n",
+   "expectedOutput": "JSON parse error",
+   "expectedError": "E8001",
+   "expectedExitCode": 1,
+   "backends": [
+    "jvm"
+   ]
+  },
+
+  {
+   "name": "jvm-jsonable-fromjson-provided-before-defaults",
+   "description": "fromJson phase order (ISSUE-0302): provided fields decode and validate in class source order BEFORE any omitted default evaluates — a provided-value failure returns the DEAL null with zero default side effects (the marker prints exactly once, only for the successful decode); successful provided decoding is followed by omitted defaults, final validation, and publication",
+   "source": "import * as console from \"std/console\"\nfunction markDefault(): int {\n  console.log(\"DEFAULT-RAN\");\n  return 1;\n}\n// @jsonable\nexport class Rec {\n  a: int = 0;\n  b: int = markDefault();\n}\nexport function test(): string {\n  let bad: Rec | null = Rec$fromJson(\"{\\\"a\\\":\\\"x\\\"}\");\n  if (bad !== null) { return \"bad-not-null\"; }\n  let good: Rec | null = Rec$fromJson(\"{\\\"a\\\":7}\");\n  if (good !== null) {\n    if (good.a !== 7) { return \"a\"; }\n    if (good.b !== 1) { return \"b\"; }\n  } else {\n    return \"good-null\";\n  }\n  return \"ok\";\n}\n",
+   "expectedOutput": "ok",
+   "expectedNotOutput": [
+    "DEFAULT-RAN\nDEFAULT-RAN"
+   ],
+   "expectedError": null,
+   "expectedExitCode": 0,
+   "backends": [
+    "jvm"
+   ]
   }
+
  ]
 }

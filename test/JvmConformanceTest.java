@@ -119,14 +119,26 @@ import java.util.concurrent.atomic.AtomicInteger;
  * <h2>The skip registry (ISSUE-0102)</h2>
  *
  * <ul>
- *   <li><b>JVM-GAP-STDJSON</b> (13 entries) — std/json JVM boundary:
- *       {@code JvmBackend} E6000 at {@code import std/json}
- *       (json.parse/stringify require table values the JVM slice does
- *       not support).</li>
- *   <li><b>JVM-GAP-JSONABLE-RESIDUAL</b> (4 entries) — residual
- *       @jsonable JVM defects: nested-array {@code fromJson} javac
- *       collision; table-field nested arrays E8001; the fromJson
- *       top-level input gate (ISSUE-0101 promotion).</li>
+ *   <li><b>JVM-GAP-STDJSON</b> — RETIRED (ISSUE-0302): {@code std/json}
+ *       joins the supported stdlib set — {@code json.parse} lowers to
+ *       the emitted {@code __jsonParse} + {@code __jsonTableValue}
+ *       pair, {@code json.stringify} to {@code __jsonStringify} — so
+ *       the nine dynamic-boundary fixtures, the function-stringify
+ *       E8001 pair, the int32-boundary parse, the roundtrip and
+ *       bytes-error pins, and the keys-nonstring-exclusion table pin
+ *       pass the real pipeline, and the stale-skip gate forced the 13
+ *       registry entries out.</li>
+ *   <li><b>JVM-GAP-JSONABLE-RESIDUAL</b> — RETIRED (ISSUE-0302): the
+ *       {@code C$fromJson} top-level input gate (scalar/null/non-empty
+ *       array → the DEAL null; {@code []}/{@code {}} collapse to the
+ *       defaulted instance), the provided-fields-before-defaults phase
+ *       order, fresh per-level nested-array decoder locals (javac
+ *       validity), and the recursive {@code __jsonAppend} array
+ *       serialization close the four residual fixtures, and the
+ *       stale-skip gate forced the registry entries out.
+ *       {@code jsonable-tojson-rejects-cyclic-table.deal} stays
+ *       unregistered — it passes on JVM (the cycle detection raises
+ *       E8001), so a skip entry would be stale by construction.</li>
  *   <li><b>JVM-GAP-HOST-ABI-SHAPES</b> (24 entries, ISSUE-0504 +8) — JVM host ABI
  *       unsupported declared shapes: host class exports,
  *       array/function-typed parameters and returns (E6000), the
@@ -265,44 +277,6 @@ public class JvmConformanceTest {
      * against the corpus so a stale entry fails the run. */
     private static final Map<String, SkipEntry> SKIPS = new LinkedHashMap<>();
     static {
-        // ---- JVM-GAP-STDJSON: the std/json JVM boundary ----
-        skip("backend-runtime/class-runtime-errors/dynamic-bad-class-array-element-e8001.deal",
-            "json.parse builds the dynamic array value.", "JVM-GAP-STDJSON");
-        skip("backend-runtime/class-runtime-errors/dynamic-bad-class-param-e8001.deal",
-            "json.parse builds the dynamic class value.", "JVM-GAP-STDJSON");
-        skip("backend-runtime/class-runtime-errors/dynamic-bad-class-return-e8001.deal",
-            "json.parse builds the dynamic class value.", "JVM-GAP-STDJSON");
-        skip("backend-runtime/class-runtime-errors/dynamic-bad-imported-class-param-e8001.deal",
-            "json.parse builds the dynamic imported-class value.",
-            "JVM-GAP-STDJSON");
-        skip("backend-runtime/class-runtime-errors/dynamic-bad-nullable-class-e8001.deal",
-            "json.parse builds the dynamic nullable-class value.",
-            "JVM-GAP-STDJSON");
-        skip("backend-runtime/runtime-errors/json-stringify-function-e8001.deal",
-            "json.stringify of a function-holding table.",
-            "JVM-GAP-STDJSON");
-        skip("backend-runtime/source-location/json-error-source.deal",
-            "json.stringify of a function-holding table (E8001) requires "
-                + "the std/json JVM boundary.", "JVM-GAP-STDJSON");
-        skip("backend-runtime/source-location-precision/class-param-error-source.deal",
-            "json.parse builds the dynamic class value.", "JVM-GAP-STDJSON");
-        skip("backend-runtime/type-system/dynamic-array-element-e8003.deal",
-            "json.parse of a mixed array.", "JVM-GAP-STDJSON");
-        skip("backend-runtime/stdlib/json/int32-boundary-parse.deal",
-            "json.parse int32 number mapping (2147483647/2147483648/"
-                + "-2147483648/-2147483649/-0) and stringify output.",
-            "JVM-GAP-STDJSON");
-        skip("backend-runtime/stdlib/json/json-stringify-roundtrip.deal",
-            "json.parse/stringify int-number document round-trips.",
-            "JVM-GAP-STDJSON");
-        skip("backend-runtime/stdlib/json/json-stringify-bytes-error.deal",
-            "json.stringify of a bytes-holding table (E8001).",
-            "JVM-GAP-STDJSON");
-        skip("backend-runtime/stdlib/table/keys-nonstring-exclusion.deal",
-            "json.parse builds the integer-keyed array table whose "
-                + "non-string keys the fixture pins excluded from "
-                + "std/table.keys.", "JVM-GAP-STDJSON");
-
         // ---- JVM-GAP-DESCRIPTORS: retired with the canonical matcher
         // realization (ISSUE-0301) ----
         // The emitted $check function row (jvm-v12-runtime-value-surface
@@ -379,30 +353,6 @@ public class JvmConformanceTest {
             "E6000: JvmBackend does not support an Error literal without "
                 + "both code and message fields (LuaJIT-owned default "
                 + "filling).", "JVM-GAP-ERROR-LITERAL-DEFAULTS");
-
-        // ---- JVM-GAP-JSONABLE-RESIDUAL: residual @jsonable JVM defects ----
-        // The two error-typed member-access/NEQ entries retired with
-        // the orchestrator's cross-module checked-fact resolution
-        // (ISSUE-0326): their skip entries were stale and the gate
-        // forced the removal.
-        skip("backend-runtime/jsonable/jsonable-fromjson-top-level-scalar.deal",
-            "requires @jsonable code generation and the std/json boundary.",
-            "JVM-GAP-JSONABLE-RESIDUAL");
-        skip("backend-runtime/jsonable/jsonable-optional-nullable-nested-class.deal",
-            "E6000: NEQ over error/null/int and member access as a value.",
-            "JVM-GAP-JSONABLE-RESIDUAL");
-        skip("backend-runtime/jsonable/nested-array-roundtrip.deal",
-            "emitted $fromJsonValue redeclares locals (l0/a0/i0/e0); "
-                + "javac rejects the artifact.", "JVM-GAP-JSONABLE-RESIDUAL");
-        skip("backend-runtime/jsonable/jsonable-table-field-nested-arrays.deal",
-            "runtime E8001 \"value is not JSON-shaped\": toJson of a "
-                + "table field holding nested arrays.",
-            "JVM-GAP-JSONABLE-RESIDUAL");
-        // jsonable-tojson-rejects-cyclic-table.deal is deliberately NOT
-        // registered: it passes on JVM — the ISSUE-0168 JVM slice's own
-        // cycle detection raises E8001 — so a skip entry would be stale
-        // and fail the stale-skip gate deterministically. Verified JVM
-        // promotion, recorded per ISSUE-0187.
 
         // ---- JVM-GAP-HOST-ABI-SHAPES: unsupported declared host shapes ----
         skip("backend-runtime/host-abi/host-array-return-ok.deal",
@@ -583,13 +533,6 @@ public class JvmConformanceTest {
     /** Gap id → human-readable lane description, for the summary's
      * skip-group report. */
     private static final Map<String, String> FOLLOW_UP_GAPS = Map.of(
-        "JVM-GAP-STDJSON", "std/json JVM boundary — JvmBackend E6000 at "
-            + "import std/json (json.parse/stringify require table "
-            + "values the JVM slice does not support)",
-        "JVM-GAP-JSONABLE-RESIDUAL", "residual @jsonable JVM defects — "
-            + "nested-array fromJson javac collision; table-field "
-            + "nested arrays E8001; the fromJson top-level input gate "
-            + "(ISSUE-0101 promotion)",
         "JVM-GAP-HOST-ABI-SHAPES", "JVM host ABI unsupported declared "
             + "shapes — host class exports, array/function-typed "
             + "parameters and returns (E6000), the Lua pre-wrapped "

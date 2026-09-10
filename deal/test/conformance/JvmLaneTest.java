@@ -108,14 +108,16 @@ public class JvmLaneTest {
     // JVM-GAP-ERROR-LITERAL-DEFAULTS. The three promoted runtime-ok
     // gap bytes fixtures carry no entries (they pass the real
     // pipeline, verified this run) and the promoted
-    // bytes-boundary-order fixture carries none either. ISSUE-0504
-    // (the host ABI conversion leaf) then adds the eight
+    // bytes-boundary-order fixture carries none either. ISSUE-0302
+    // (the std/json boundary) promoted the seven runtime-ok std/json
+    // fixtures out of the registry (the live count dropped to 38).
+    // ISSUE-0504 (the host ABI conversion leaf) then adds the eight
     // host-boundary entries (JVM-GAP-HOST-ABI-SHAPES): the verbatim
     // gap HostBoundary declares the legacy long/Long int carriers
     // while the int32-activated profile resolves the declared int /
     // int | null parameters as int/Integer, so the load-time export
     // check raises E8011 for every fixture importing host/boundary.
-    private static final int SKIP_REGISTRY_ENTRIES = 53;
+    private static final int SKIP_REGISTRY_ENTRIES = 46;
 
     public static void main(String[] args) throws Exception {
         System.out.println("=== JVM Lane Tests (ISSUE-0355) ===\n");
@@ -1258,11 +1260,13 @@ public class JvmLaneTest {
             gapIds.add(entry.gapId());
         }
         check(gapIds.containsAll(Set.of("JVM-GAP-STDJSON",
-                "JVM-GAP-JSONABLE-RESIDUAL", "JVM-GAP-HOST-ABI-SHAPES",
+                "JVM-GAP-HOST-ABI-SHAPES",
                 "JVM-GAP-BYTES", "JVM-GAP-DEFAULTS-PLANS",
-                "JVM-GAP-ERROR-LITERAL-DEFAULTS")),
-            "the absorbed registry spans the six live gap families, got: "
-                + gapIds);
+                "JVM-GAP-ERROR-LITERAL-DEFAULTS"))
+                && !gapIds.contains("JVM-GAP-JSONABLE-RESIDUAL"),
+            "the absorbed registry spans the five live gap families "
+                + "(JVM-GAP-JSONABLE-RESIDUAL retired with ISSUE-0302), "
+                + "got: " + gapIds);
     }
 
     /**
