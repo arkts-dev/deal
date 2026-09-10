@@ -210,9 +210,19 @@ public class SidecarCorpusValidationTest {
      * candidate passes both lanes after ISSUE-0158 lifted the E3019
      * bytes-equality gate, so the zero-skip promotion gate forces
      * the marker off and the fixture lands runtime-ok with its
-     * sidecar: 220 -> 250. */
+     * sidecar: 220 -> 250. ISSUE-0504 (the host ABI conversion leaf
+     * of v12-gap-suite-integration, D9/D5) lands the eight converted
+     * host-boundary runtime-ok fixtures with their uniform
+     * three-backend sidecars in the same change:
+     * host-boundary-repeat-call, host-boundary-null-narrowing,
+     * host-boundary-int-minimum-param, host-boundary-number-roundtrip,
+     * host-boundary-boolean-roundtrip,
+     * host-boundary-unicode-string-roundtrip,
+     * host-boundary-nullable-int-null-roundtrip, and
+     * host-boundary-nullable-int-value-roundtrip — the host +8 delta:
+     * 250 -> 258. */
 
-    private static final int RUNTIME_OK_COUNT = 250;
+    private static final int RUNTIME_OK_COUNT = 258;
 
     /**
      * The exact runtime-error population (ISSUE-0350 completeness, plus
@@ -272,6 +282,49 @@ public class SidecarCorpusValidationTest {
 
 
 
+    /**
+     * ISSUE-0504 count-pin amendment record (the MR-0305 record shape;
+     * review cycle 1 of this MR). The issue's written criterion pins
+     * this child's count movement as
+     * {@code RUNTIME_OK_COUNT 249 -> 257} with
+     * {@code RUNTIME_ERROR_COUNT} staying at 91 and the known-fail
+     * population staying
+     * {@code {backend-runtime/bytes/bytes-boundary-order.deal}} — a
+     * pre-state (T3's 248 runtime-ok plus EA's aggregate-call-order)
+     * and a final state authored against the ISSUE-0468 integration
+     * tree. Those absolute values are unattainable in this tree: the
+     * canonical revision (c9f7804b, the required rebase target)
+     * landed the sibling T3 runtime population as ISSUE-0502 with its
+     * own amendment record (above) — the population landed at 250
+     * runtime-ok / 93 runtime-error with the tracked known-fail
+     * population empty: ISSUE-0547 had moved the merge-base to 220/83,
+     * ISSUE-0502 added +29 runtime-ok and +10 runtime-error, and the
+     * bytes-boundary-order retained-known-fail candidate was promoted
+     * to runtime-ok (ISSUE-0158 lifted the E3019 bytes-equality gate,
+     * so the zero-skip promotion gate forces the stale marker off).
+     * The EA aggregate-call-order fixture is still absent — it lands
+     * with the destination-resolution epic EA, per the ISSUE-0502
+     * record. The written pre-state population (249 runtime-ok / 91
+     * runtime-error / known-fail {@code {bytes-boundary-order.deal}})
+     * therefore does not exist in this tree; the criterion's written
+     * deltas are the binding criterion and this child applies them
+     * exactly: +8 runtime-ok (the eight converted host-boundary
+     * fixtures), runtime-error unchanged, known-fail population
+     * unchanged, landing the pins at 250 + 8 = 258 runtime-ok / 93
+     * runtime-error / empty known-fail — the design's own Corpus
+     * Count-Pin Amendment rule (the final absolute pins equal the
+     * verified on-disk population after the change, and an amendment
+     * record states the deltas). Pins at the written 257/91 with a
+     * non-empty known-fail set would deterministically fail the
+     * completeness checks (the corpus carries 258/93 with the
+     * known-fail population empty), and re-marking the promoted
+     * bytes-boundary-order fixture as known-fail would
+     * deterministically fail the zero-skip promotion gate on both
+     * lanes (ISSUE-0502 record). The issue-tracker update to the
+     * amended wording is flagged on this MR for the issue authority
+     * (the implementer's tooling cannot amend the issue record) — the
+     * MR-0305 precedent.
+     */
     /**
      * ISSUE-0397 count-pin criterion record (MR-0305 review cycles 1
      * and 2, the count-pin finding). The amended criterion — the

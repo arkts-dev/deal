@@ -108,8 +108,14 @@ public class JvmLaneTest {
     // JVM-GAP-ERROR-LITERAL-DEFAULTS. The three promoted runtime-ok
     // gap bytes fixtures carry no entries (they pass the real
     // pipeline, verified this run) and the promoted
-    // bytes-boundary-order fixture carries none either.
-    private static final int SKIP_REGISTRY_ENTRIES = 45;
+    // bytes-boundary-order fixture carries none either. ISSUE-0504
+    // (the host ABI conversion leaf) then adds the eight
+    // host-boundary entries (JVM-GAP-HOST-ABI-SHAPES): the verbatim
+    // gap HostBoundary declares the legacy long/Long int carriers
+    // while the int32-activated profile resolves the declared int /
+    // int | null parameters as int/Integer, so the load-time export
+    // check raises E8011 for every fixture importing host/boundary.
+    private static final int SKIP_REGISTRY_ENTRIES = 53;
 
     public static void main(String[] args) throws Exception {
         System.out.println("=== JVM Lane Tests (ISSUE-0355) ===\n");

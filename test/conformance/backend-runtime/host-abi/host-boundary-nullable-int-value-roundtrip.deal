@@ -1,0 +1,17 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: A nullable primitive non-null parameter and return preserve the int value
+// @expected: runtime-ok
+// @features: host-abi, nullable, primitive, int32
+
+import * as host from "host/boundary";
+export function main(): null {
+  let value: int | null = host.nullableInt(2147483647);
+  if (value !== null) {
+    let narrowed: int = value;
+    if (narrowed !== 2147483647) {
+      throw { code: "TEST_FAIL", message: "host nullable primitive value changed" };
+    }
+    return null;
+  }
+  throw { code: "TEST_FAIL", message: "host nullable primitive value was null" };
+}

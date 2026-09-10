@@ -94,13 +94,19 @@ public class DifferentialGateCorpusTest {
      * (integration_state_lib.deal): runtime-ok 220 -> 250,
      * runtime-error 83 -> 93, companions 49 -> 50, known-fail stays 0
      * (ISSUE-0477 already promoted the FFI-manifest pin), total
-     * 547 -> 588, backend-runtime 337 -> 378. */
-    private static final int TOTAL_FIXTURES = 588;
+     * 547 -> 588, backend-runtime 337 -> 378. ISSUE-0504 (the host ABI
+     * conversion leaf) lands the eight host-boundary runtime-ok
+     * fixtures with their uniform three-backend sidecars in the same
+     * change: total 588 -> 596, backend-runtime 378 -> 386,
+     * runtime-ok 250 -> 258; the runtime-error population (93), the
+     * known-fail population, the companions (50), the frontend
+     * populations, and the compile pins (4) are unchanged. */
+    private static final int TOTAL_FIXTURES = 596;
     private static final int FRONTEND_FIXTURES = 210;
-    private static final int BACKEND_RUNTIME_FIXTURES = 378;
+    private static final int BACKEND_RUNTIME_FIXTURES = 386;
     private static final int COMPILE_OK = 64;
     private static final int COMPILE_ERROR = 131;
-    private static final int RUNTIME_OK = 250;
+    private static final int RUNTIME_OK = 258;
     private static final int RUNTIME_ERROR = 93;
     private static final int RUNTIME_ERROR_SIDECARS = 93;
     private static final int COMPANIONS = 50;
