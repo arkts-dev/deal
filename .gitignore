@@ -10,3 +10,8 @@ release/deal-*.tar
 # transient local artifacts created next to any publication root, never
 # committed (they persist until the next staging run reuses them).
 *.deal-publish.lock
+# Local review/probe scratch trees: investigation artifacts created next to
+# the repository by reviewer probes (scratch publication roots, generated
+# class dumps, defer-nested probe outputs). No tracked content lives under
+# this path; it is never repository state.
+scratch-review/
