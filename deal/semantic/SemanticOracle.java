@@ -8,6 +8,8 @@ import deal.semantic.ir.AsyncTokenId;
 import deal.semantic.ir.AsyncTokenOwner;
 import deal.semantic.ir.CallMode;
 import deal.semantic.ir.CaptureMode;
+import deal.semantic.ir.DynamicResolutionKind;
+import deal.semantic.ir.DynamicReturnBoundaryProtocol;
 import deal.semantic.ir.ExecutableLoweredProject;
 import deal.semantic.ir.ExternalExecutionOwner;
 import deal.semantic.ir.FunctionAllocationIdentity;
@@ -37,6 +39,7 @@ import deal.semantic.ir.ModuleId;
 import deal.semantic.ir.NormalizedSlot;
 import deal.semantic.ir.OpId;
 import deal.semantic.ir.RuntimeDescriptor;
+import deal.semantic.ir.ReturnBoundarySelection;
 import deal.semantic.ir.ScalarValue;
 import deal.semantic.ir.SemanticArray;
 import deal.semantic.ir.SemanticOp;
@@ -536,6 +539,13 @@ public final class SemanticOracle {
         final ArrayDeque<Long> readyQueue = new ArrayDeque<>();
         /** The canonical-token → host operation-label bindings. */
         final Map<Long, String> hostOperations = new LinkedHashMap<>();
+        /**
+         * The execution-bound external async token linkage of a
+         * dynamically resolved ASYNC_START (ISSUE-0531): caller token
+         * → callee EXTERNAL_ENTRY canonical token, bound when the
+         * runtime resolves the callee to an async external.
+         */
+        final Map<Long, Long> dynamicReferents = new LinkedHashMap<>();
         /** The heap function value → resolved execution binding index. */
         final IdentityHashMap<Value, FunctionExecutionBinding> bindingsByValue =
             new IdentityHashMap<>();
@@ -1766,7 +1776,10 @@ public final class SemanticOracle {
          * callee unit's EXTERNAL_ENTRY for SHARED_BODY or the target ABI
          * terminal for RETAINED_ABI), then the single return boundary of
          * the shape — by the callee's RETURN for bodies, by the call op
-         * for host terminals and retained-ABI externals.
+         * for host terminals and retained-ABI externals. A DYNAMIC
+         * callee resolves its identity at execution and executes the
+         * selected recorded return-boundary cell per the closed runtime
+         * resolution protocol ({@link #executeDynamicCall}).
          */
         private String executeCall(SemanticOp op) {
             KindPayload.CallPayload payload = (KindPayload.CallPayload) op.payload();
@@ -1775,22 +1788,25 @@ public final class SemanticOracle {
             FunctionExecutionBinding binding = switch (payload.callee()) {
                 case KindPayload.CallCallee.Static staticCallee -> staticCallee.binding();
                 case KindPayload.CallCallee.Indirect indirect -> resolveBindingOf(indirect.callee());
+                case KindPayload.CallCallee.Dynamic dynamic -> resolveBindingOf(dynamic.callee());
             };
-            Value returned = switch (binding) {
-                case FunctionExecutionBinding.LoweredBody body ->
-                    invokeLoweredBody(op, payload, body, checkedArgs);
-                case FunctionExecutionBinding.AdapterBinding adapter ->
-                    invokeAdapter(op, payload, adapter, checkedArgs);
-                case FunctionExecutionBinding.HostFunction host ->
-                    invokeHostCallWithBoundary(op, payload, host.hostModuleId(),
-                        host.exportName(), host.descriptor(), checkedArgs);
-                case FunctionExecutionBinding.HostFunctionValue hostValue ->
-                    invokeHostCallWithBoundary(op, payload, hostValue.hostModuleId(),
-                        "@value#" + hostValue.materializingBoundaryOpId().id(),
-                        hostValue.descriptor(), checkedArgs);
-                case FunctionExecutionBinding.ExternalFunction external ->
-                    invokeExternalCall(op, payload, external, checkedArgs);
-            };
+            Value returned = payload.callee() instanceof KindPayload.CallCallee.Dynamic
+                ? executeDynamicCall(op, payload, binding, checkedArgs)
+                : switch (binding) {
+                    case FunctionExecutionBinding.LoweredBody body ->
+                        invokeLoweredBody(op, payload, body, checkedArgs);
+                    case FunctionExecutionBinding.AdapterBinding adapter ->
+                        invokeAdapter(op, payload, adapter, checkedArgs);
+                    case FunctionExecutionBinding.HostFunction host ->
+                        invokeHostCallWithBoundary(op, payload, host.hostModuleId(),
+                            host.exportName(), host.descriptor(), checkedArgs);
+                    case FunctionExecutionBinding.HostFunctionValue hostValue ->
+                        invokeHostCallWithBoundary(op, payload, hostValue.hostModuleId(),
+                            "@value#" + hostValue.materializingBoundaryOpId().id(),
+                            hostValue.descriptor(), checkedArgs);
+                    case FunctionExecutionBinding.ExternalFunction external ->
+                        invokeExternalCall(op, payload, external, checkedArgs);
+                };
             return publish(op, returned);
         }
 
@@ -1885,6 +1901,145 @@ public final class SemanticOracle {
                     throw new IllegalStateException("adapter-of-adapter invocation is "
                         + "outside the statically-resolved slice (ISSUE-0531)");
             };
+        }
+
+        /**
+         * The dynamically resolved CALL terminal (ISSUE-0531): the
+         * callee's binding kind was unknown until execution, so the
+         * runtime resolves the identity against the registry, classifies
+         * the resolution with the closed protocol
+         * ({@link DynamicReturnBoundaryProtocol}), and executes the
+         * selected recorded return-boundary cell per the closed
+         * selection ({@link ReturnBoundarySelection}): the callee's
+         * source {@code RETURN} executes the recorded
+         * {@code FUNCTION_RETURN} cell for {@code DEAL_BODY}, the call op
+         * executes the recorded {@code HOST_TO_DEAL}/
+         * {@code EXTERNAL_RETURN} cell for {@code HOST}/{@code EXTERNAL},
+         * and {@code SHARED_BODY} executes zero caller-side return
+         * boundaries (the callee unit's {@code RETURN} under its
+         * {@code EXTERNAL_ENTRY} runs the single {@code EXTERNAL_RETURN}
+         * in the callee unit).
+         */
+        private Value executeDynamicCall(SemanticOp op, KindPayload.CallPayload payload,
+                                         FunctionExecutionBinding binding,
+                                         List<Value> checkedArgs) {
+            if (binding instanceof FunctionExecutionBinding.AdapterBinding adapter) {
+                return executeDynamicAdapterCall(op, payload, adapter, checkedArgs);
+            }
+            DynamicResolutionKind kind = DynamicReturnBoundaryProtocol.kindOf(binding);
+            ReturnBoundarySelection selection = DynamicReturnBoundaryProtocol.select(
+                payload.dynamicReturnBoundary(), kind);
+            return switch (selection) {
+                case ReturnBoundarySelection.CalleeReturn ignored ->
+                    invokeLoweredBody(op, payload,
+                        (FunctionExecutionBinding.LoweredBody) binding, checkedArgs);
+                case ReturnBoundarySelection.CallTerminal terminal -> {
+                    Value value = invokeResolvedHostRequest(op, binding, checkedArgs);
+                    yield runBoundaryChild(opOf(terminal.boundaryOpId()), value,
+                        BoundaryContext.none());
+                }
+                case ReturnBoundarySelection.None ignored -> executeExternalEntryFor(op,
+                    externalEntryOpOf((FunctionExecutionBinding.ExternalFunction) binding,
+                        false).opId(),
+                    (FunctionExecutionBinding.ExternalFunction) binding, checkedArgs);
+            };
+        }
+
+        /**
+         * The dynamically resolved adapter CALL (ISSUE-0531): the D15
+         * invocation protocol resolves the adapter's source value and its
+         * source binding fixes the resolution class (the adapter carries
+         * no source kind of its own —
+         * {@link DynamicReturnBoundaryProtocol} fails closed on an
+         * adapter input).
+         */
+        private Value executeDynamicAdapterCall(SemanticOp op,
+                KindPayload.CallPayload payload,
+                FunctionExecutionBinding.AdapterBinding adapter,
+                List<Value> checkedArgs) {
+            int m = adapter.sourceSignature().paramTypes().size();
+            Value sourceValue = loadAdapterSource(op, adapter);
+            checkAdapterSourceSignature(op, adapter, sourceValue);
+            FunctionExecutionBinding sourceBinding = resolveBindingOfValue(sourceValue);
+            if (sourceBinding instanceof FunctionExecutionBinding.AdapterBinding) {
+                throw new IllegalStateException("adapter-of-adapter invocation is "
+                    + "outside the statically-resolved slice (ISSUE-0531)");
+            }
+            DynamicResolutionKind kind = DynamicReturnBoundaryProtocol.kindOf(sourceBinding);
+            ReturnBoundarySelection selection = DynamicReturnBoundaryProtocol.select(
+                payload.dynamicReturnBoundary(), kind);
+            List<Value> leading = List.copyOf(checkedArgs.subList(0, m));
+            return switch (selection) {
+                case ReturnBoundarySelection.CalleeReturn ignored -> {
+                    FunctionExecutionBinding.LoweredBody body =
+                        (FunctionExecutionBinding.LoweredBody) sourceBinding;
+                    UnitState state = stateOf(op.opId());
+                    bindParamCells(state, body.blockId(), m, leading);
+                    frames.add(0, body.functionId());
+                    try {
+                        yield runBodyBlock(body.blockId(), m, state);
+                    } finally {
+                        frames.remove(0);
+                        popParamCells();
+                    }
+                }
+                case ReturnBoundarySelection.CallTerminal terminal -> {
+                    Value value = invokeResolvedHostRequest(op, sourceBinding, leading);
+                    yield runBoundaryChild(opOf(terminal.boundaryOpId()), value,
+                        BoundaryContext.none());
+                }
+                case ReturnBoundarySelection.None ignored -> executeExternalEntryFor(op,
+                    externalEntryOpOf(
+                        (FunctionExecutionBinding.ExternalFunction) sourceBinding,
+                        false).opId(),
+                    (FunctionExecutionBinding.ExternalFunction) sourceBinding, leading);
+            };
+        }
+
+        /** The host-request terminal of a HOST-class or retained-ABI external binding. */
+        private Value invokeResolvedHostRequest(SemanticOp op,
+                FunctionExecutionBinding binding, List<Value> args) {
+            return switch (binding) {
+                case FunctionExecutionBinding.HostFunction host -> invokeHostRequest(op,
+                    host.hostModuleId(), host.exportName(), host.descriptor(), args);
+                case FunctionExecutionBinding.HostFunctionValue hostValue ->
+                    invokeHostRequest(op, hostValue.hostModuleId(),
+                        "@value#" + hostValue.materializingBoundaryOpId().id(),
+                        hostValue.descriptor(), args);
+                case FunctionExecutionBinding.ExternalFunction external ->
+                    invokeHostRequest(op, external.moduleId(), external.exportName(),
+                        external.descriptor(), args);
+                case FunctionExecutionBinding.LoweredBody ignored ->
+                    throw new IllegalStateException("a DEAL-body binding never executes "
+                        + "a call-terminal return boundary (producer defect)");
+                case FunctionExecutionBinding.AdapterBinding ignored ->
+                    throw new IllegalStateException("an adapter binding resolves its "
+                        + "source before classification (producer defect)");
+            };
+        }
+
+        /** The callee unit's sync/async EXTERNAL_ENTRY for one external binding. */
+        private SemanticOp externalEntryOpOf(
+                FunctionExecutionBinding.ExternalFunction external, boolean async) {
+            UnitState state = units.get(external.moduleId());
+            if (state == null) {
+                throw new IllegalStateException("the external callee module "
+                    + external.moduleId() + " is not in the closure (producer defect)");
+            }
+            for (SemanticOp op : state.unit.ops()) {
+                if (op.kind() == SemanticOpKind.EXTERNAL_ENTRY) {
+                    KindPayload.ExternalEntryPayload entryPayload =
+                        (KindPayload.ExternalEntryPayload) op.payload();
+                    if (entryPayload.async() == async
+                            && entryPayload.exportName().equals(external.exportName())) {
+                        return op;
+                    }
+                }
+            }
+            throw new IllegalStateException("module " + external.moduleId()
+                + " records no " + (async ? "async" : "sync")
+                + " EXTERNAL_ENTRY for export '" + external.exportName()
+                + "' (producer defect)");
         }
 
         /** The D15 source load: VALUE retains, SHARED_CELL re-reads, THUNK re-executes. */
@@ -2135,7 +2290,10 @@ public final class SemanticOracle {
          * token bound to the operation label for an async host function;
          * the callee unit's async {@code EXTERNAL_ENTRY} for an async
          * external (the caller token aliases the callee canonical token
-         * through {@code ExternalAsyncLink}).
+         * through {@code ExternalAsyncLink}). A DYNAMIC callee resolves
+         * its identity at execution and executes the effective source's
+         * terminal per the closed runtime resolution protocol
+         * ({@link #executeDynamicAsyncStart}).
          */
         private String executeAsyncStart(SemanticOp op) {
             KindPayload.AsyncStartPayload payload =
@@ -2155,8 +2313,13 @@ public final class SemanticOracle {
             FunctionExecutionBinding binding = switch (payload.callee()) {
                 case KindPayload.CallCallee.Static staticCallee -> staticCallee.binding();
                 case KindPayload.CallCallee.Indirect indirect -> resolveBindingOf(indirect.callee());
+                case KindPayload.CallCallee.Dynamic dynamic -> resolveBindingOf(dynamic.callee());
             };
             AsyncTokenId token = (AsyncTokenId) op.result();
+            if (payload.callee() instanceof KindPayload.CallCallee.Dynamic) {
+                executeDynamicAsyncStart(op, binding, checkedArgs, token);
+                return tokenAtom(token);
+            }
             switch (binding) {
                 case FunctionExecutionBinding.LoweredBody body -> {
                     tasks.put(token.tokenId(), new Task(token,
@@ -2210,6 +2373,153 @@ public final class SemanticOracle {
                 }
             }
             return tokenAtom(token);
+        }
+
+        /**
+         * The dynamically resolved ASYNC_START terminal (ISSUE-0531):
+         * the recorded source is {@code DEAL_BODY} (the only resolution
+         * whose caller-recorded return boundary executes — the single
+         * {@code FUNCTION_RETURN} task cell run by the task body's
+         * {@code RETURN}); the runtime derives the effective source from
+         * the resolved binding, and HOST/EXTERNAL/adapter-over-async
+         * resolutions execute zero caller-side return boundaries with
+         * their linkage (operation label, external async entry) bound at
+         * execution.
+         */
+        private void executeDynamicAsyncStart(SemanticOp op,
+                FunctionExecutionBinding binding, List<Value> checkedArgs,
+                AsyncTokenId token) {
+            if (binding instanceof FunctionExecutionBinding.AdapterBinding adapter) {
+                executeDynamicAdapterAsyncStart(op, adapter, checkedArgs, token);
+                return;
+            }
+            DynamicResolutionKind kind = DynamicReturnBoundaryProtocol.kindOf(binding);
+            switch (kind) {
+                case DEAL_BODY -> {
+                    FunctionExecutionBinding.LoweredBody body =
+                        (FunctionExecutionBinding.LoweredBody) binding;
+                    tasks.put(token.tokenId(), new Task(token,
+                        () -> runTaskBody(op, body, checkedArgs)));
+                    readyQueue.add(token.tokenId());
+                }
+                case HOST -> {
+                    requireHostResponder();
+                    ModuleId module;
+                    String export;
+                    RuntimeDescriptor.Func descriptor;
+                    String label;
+                    if (binding instanceof FunctionExecutionBinding.HostFunction host) {
+                        module = host.hostModuleId();
+                        export = host.exportName();
+                        descriptor = host.descriptor();
+                        label = module.path() + "." + export;
+                    } else {
+                        FunctionExecutionBinding.HostFunctionValue hostValue =
+                            (FunctionExecutionBinding.HostFunctionValue) binding;
+                        module = hostValue.hostModuleId();
+                        export = "@value#" + hostValue.materializingBoundaryOpId().id();
+                        descriptor = hostValue.descriptor();
+                        label = module.path() + ".@value";
+                    }
+                    effects.add(new SemanticRuntimeModel.EffectEvent(
+                        SemanticRuntimeModel.EffectEvent.Kind.ASYNC_START_OP, label));
+                    String bound = responder.startAsync(module, export, descriptor,
+                        List.copyOf(checkedArgs), label);
+                    if (bound == null) {
+                        throw registryFailure(op, FailurePolicyId.ASYNC_OPERATION_HANDLE,
+                            "async-operation", "nothing");
+                    }
+                    hostOperations.put(token.tokenId(), bound);
+                    tasks.put(token.tokenId(), new Task(token, null));
+                }
+                case EXTERNAL, SHARED_BODY -> {
+                    FunctionExecutionBinding.ExternalFunction external =
+                        (FunctionExecutionBinding.ExternalFunction) binding;
+                    SemanticOp entry = externalEntryOpOf(external, true);
+                    long calleeTokenId = entry.opId().id();
+                    dynamicReferents.put(token.tokenId(), calleeTokenId);
+                    executeAsyncEntry(entry, op.opId(), checkedArgs, calleeTokenId);
+                }
+            }
+        }
+
+        /**
+         * The dynamically resolved adapter-over-async task (ISSUE-0531):
+         * the D15 source resolution fixes the effective source class;
+         * the leading M source arguments come from the outer op's checked
+         * target-signature arguments, and the effective source's terminal
+         * binds at execution (zero caller-side return boundaries outside
+         * the DEAL_BODY resolution's recorded task cell).
+         */
+        private void executeDynamicAdapterAsyncStart(SemanticOp op,
+                FunctionExecutionBinding.AdapterBinding adapter,
+                List<Value> checkedArgs, AsyncTokenId token) {
+            int m = adapter.sourceSignature().paramTypes().size();
+            Value sourceValue = loadAdapterSource(op, adapter);
+            checkAdapterSourceSignature(op, adapter, sourceValue);
+            FunctionExecutionBinding sourceBinding = resolveBindingOfValue(sourceValue);
+            if (sourceBinding instanceof FunctionExecutionBinding.AdapterBinding) {
+                throw new IllegalStateException("adapter-of-adapter invocation is "
+                    + "outside the statically-resolved slice (ISSUE-0531)");
+            }
+            List<Value> leading = List.copyOf(checkedArgs.subList(0, m));
+            DynamicResolutionKind kind = DynamicReturnBoundaryProtocol.kindOf(sourceBinding);
+            switch (kind) {
+                case DEAL_BODY -> {
+                    FunctionExecutionBinding.LoweredBody body =
+                        (FunctionExecutionBinding.LoweredBody) sourceBinding;
+                    tasks.put(token.tokenId(), new Task(token, () -> {
+                        UnitState state = stateOf(op.opId());
+                        bindParamCells(state, body.blockId(), m, leading);
+                        frames.add(0, body.functionId());
+                        try {
+                            return runBodyBlock(body.blockId(), m, state);
+                        } finally {
+                            frames.remove(0);
+                            popParamCells();
+                        }
+                    }));
+                    readyQueue.add(token.tokenId());
+                }
+                case HOST -> {
+                    requireHostResponder();
+                    ModuleId module;
+                    String export;
+                    RuntimeDescriptor.Func descriptor;
+                    String label;
+                    if (sourceBinding instanceof FunctionExecutionBinding.HostFunction host) {
+                        module = host.hostModuleId();
+                        export = host.exportName();
+                        descriptor = host.descriptor();
+                        label = module.path() + "." + export;
+                    } else {
+                        FunctionExecutionBinding.HostFunctionValue hostValue =
+                            (FunctionExecutionBinding.HostFunctionValue) sourceBinding;
+                        module = hostValue.hostModuleId();
+                        export = "@value#" + hostValue.materializingBoundaryOpId().id();
+                        descriptor = hostValue.descriptor();
+                        label = module.path() + ".@value";
+                    }
+                    effects.add(new SemanticRuntimeModel.EffectEvent(
+                        SemanticRuntimeModel.EffectEvent.Kind.ASYNC_START_OP, label));
+                    String bound = responder.startAsync(module, export, descriptor,
+                        List.copyOf(leading), label);
+                    if (bound == null) {
+                        throw registryFailure(op, FailurePolicyId.ASYNC_OPERATION_HANDLE,
+                            "async-operation", "nothing");
+                    }
+                    hostOperations.put(token.tokenId(), bound);
+                    tasks.put(token.tokenId(), new Task(token, null));
+                }
+                case EXTERNAL, SHARED_BODY -> {
+                    FunctionExecutionBinding.ExternalFunction external =
+                        (FunctionExecutionBinding.ExternalFunction) sourceBinding;
+                    SemanticOp entry = externalEntryOpOf(external, true);
+                    long calleeTokenId = entry.opId().id();
+                    dynamicReferents.put(token.tokenId(), calleeTokenId);
+                    executeAsyncEntry(entry, op.opId(), leading, calleeTokenId);
+                }
+            }
         }
 
         /** The deterministic host responder guard (fail closed without one). */
@@ -2388,7 +2698,8 @@ public final class SemanticOracle {
                 }
                 current = alias.referent();
             }
-            return current.tokenId();
+            Long dynamicReferent = dynamicReferents.get(current.tokenId());
+            return dynamicReferent != null ? dynamicReferent : current.tokenId();
         }
 
         /**
