@@ -1,9 +1,22 @@
 package deal.semantic;
 
 import deal.semantic.ir.ActualKind;
+import deal.semantic.ir.AdaptSourceRef;
+import deal.semantic.ir.AsyncLinkKind;
+import deal.semantic.ir.AsyncStartSource;
+import deal.semantic.ir.AsyncTokenId;
+import deal.semantic.ir.AsyncTokenOwner;
+import deal.semantic.ir.CallMode;
+import deal.semantic.ir.CaptureMode;
+import deal.semantic.ir.ExecutableLoweredProject;
+import deal.semantic.ir.ExternalExecutionOwner;
+import deal.semantic.ir.FunctionAllocationIdentity;
+import deal.semantic.ir.InternalResultType;
+import deal.semantic.ir.ParameterBoundaryMode;
 import deal.semantic.ir.BindingId;
 import deal.semantic.ir.BlockId;
 import deal.semantic.ir.BoundaryContext;
+import deal.semantic.ir.BoundaryKind;
 import deal.semantic.ir.BoundaryExecutor;
 import deal.semantic.ir.BoundaryFailure;
 import deal.semantic.ir.BoundaryOutcome;
@@ -20,6 +33,7 @@ import deal.semantic.ir.IterationMode;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredFunction;
 import deal.semantic.ir.LoweredModuleUnit;
+import deal.semantic.ir.ModuleId;
 import deal.semantic.ir.NormalizedSlot;
 import deal.semantic.ir.OpId;
 import deal.semantic.ir.RuntimeDescriptor;
@@ -39,10 +53,13 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * The semantic oracle of {@code deal.semantic-ir/1} — an independent
@@ -141,9 +158,22 @@ public final class SemanticOracle {
      */
     public static SemanticRuntimeModel.ConsumerRun execute(LoweredModuleUnit unit,
                                                            StructuredBodyTable table) {
+        return execute(unit, table, null);
+    }
+
+    /**
+     * Executes the entry module with the given deterministic host
+     * responder (the E7 host seam): {@code CALL(HOST)}/host-source
+     * adapter calls and async host operations resolve through the
+     * responder — never through ambient host state. A host call without
+     * a responder is a producer defect, never a silent projection.
+     */
+    public static SemanticRuntimeModel.ConsumerRun execute(LoweredModuleUnit unit,
+                                                           StructuredBodyTable table,
+                                                           HostResponder responder) {
         Objects.requireNonNull(unit, "unit must not be null");
         Objects.requireNonNull(table, "table must not be null");
-        Execution state = new Execution(unit, table);
+        Execution state = new Execution(unit, table, responder);
         try {
             state.runBlock(unit.moduleInit().initBlock());
         } catch (DealFailure failure) {
@@ -155,6 +185,213 @@ public final class SemanticOracle {
         return state.report(new SemanticRuntimeModel.Terminal.Success(resultAtom));
     }
 
+    /**
+     * Executes the entry module of a validated executable project with
+     * the complete implementation closure: {@code CALL(EXTERNAL)}/
+     * {@code ASYNC_START(EXTERNAL)} execute the callee unit's
+     * {@code EXTERNAL_ENTRY} (sync: the callee {@code RETURN} runs the
+     * single {@code EXTERNAL_RETURN} boundary and the value crosses the
+     * ABI unchanged; async: the callee entry creates the canonical token
+     * and the body task, the caller's alias token links through the
+     * {@code ExternalAsyncLink}, and the caller's single
+     * {@code ASYNC_COMPLETION} boundary validates the crossed value at
+     * {@code AWAIT}). The entry module's run report is returned.
+     */
+    public static SemanticRuntimeModel.ConsumerRun execute(ExecutableLoweredProject project,
+            Map<ModuleId, StructuredBodyTable> tables, HostResponder responder) {
+        Objects.requireNonNull(project, "project must not be null");
+        Objects.requireNonNull(tables, "tables must not be null");
+        LoweredModuleUnit unit = project.modules().get(project.entryModule());
+        if (unit == null) {
+            throw new IllegalArgumentException("the entry module is not in the closure");
+        }
+        Execution state = new Execution(project, tables, responder);
+        try {
+            state.runBlock(unit.moduleInit().initBlock());
+        } catch (DealFailure failure) {
+            return state.report(new SemanticRuntimeModel.Terminal.DealFailure(
+                state.snapshot(failure)));
+        }
+        String resultAtom = state.entryResultAtom != null
+            ? state.entryResultAtom : "null";
+        return state.report(new SemanticRuntimeModel.Terminal.Success(resultAtom));
+    }
+
+    /**
+     * Host-driven callback invocation (the E7 callback surface): the
+     * unit's {@code CALLBACK_INVOKE} record for the bound function value
+     * executes top-level — the {@code HOST_TO_DEAL} parameter boundaries
+     * in one-based order, the resolved execution binding, and the single
+     * {@code DEAL_TO_HOST} return boundary (by the executed body's
+     * {@code RETURN} for bodies and DEAL-body-source adapters, by the
+     * callback op for host/external functions and host/external-source
+     * adapters). Sync functions only.
+     */
+    public static SemanticRuntimeModel.ConsumerRun invokeCallback(LoweredModuleUnit unit,
+            StructuredBodyTable table, ValueId functionValue, List<Value> args) {
+        Objects.requireNonNull(unit, "unit must not be null");
+        Objects.requireNonNull(table, "table must not be null");
+        Objects.requireNonNull(functionValue, "functionValue must not be null");
+        Objects.requireNonNull(args, "args must not be null");
+        Execution state = new Execution(unit, table, null);
+        SemanticOp callback = null;
+        for (SemanticOp op : unit.ops()) {
+            if (op.kind() == SemanticOpKind.CALLBACK_INVOKE
+                    && ((KindPayload.CallbackInvokePayload) op.payload()).function()
+                        .equals(functionValue)) {
+                callback = op;
+                break;
+            }
+        }
+        if (callback == null) {
+            throw new IllegalArgumentException("the unit records no CALLBACK_INVOKE for "
+                + functionValue + " (the callback surface is the lowerer's recorded "
+                + "invocation, never an invented one)");
+        }
+        try {
+            Value returned = state.executeCallback(callback, args);
+            return state.report(new SemanticRuntimeModel.Terminal.Success(
+                state.atomOf(returned)));
+        } catch (DealFailure failure) {
+            return state.report(new SemanticRuntimeModel.Terminal.DealFailure(
+                state.snapshot(failure)));
+        }
+    }
+
+    /**
+     * Async-export invocation (the E7 cross-module async drive): the
+     * callee module's async {@code EXTERNAL_ENTRY} creates its canonical
+     * token and body task (the entry op id is the canonical token
+     * identity), the deterministic FIFO drain runs the task exactly once
+     * (the body's {@code RETURN} runs the single {@code FUNCTION_RETURN}
+     * boundary), and the completed value/error is the run terminal —
+     * caller-side {@code ASYNC_COMPLETION} boundaries run at the
+     * caller's {@code AWAIT} sites inside the task itself.
+     */
+    public static SemanticRuntimeModel.ConsumerRun invokeAsyncEntry(
+            ExecutableLoweredProject project, Map<ModuleId, StructuredBodyTable> tables,
+            HostResponder responder, ModuleId module, String exportName, List<Value> args) {
+        Objects.requireNonNull(project, "project must not be null");
+        Objects.requireNonNull(tables, "tables must not be null");
+        Objects.requireNonNull(module, "module must not be null");
+        Objects.requireNonNull(exportName, "exportName must not be null");
+        Objects.requireNonNull(args, "args must not be null");
+        LoweredModuleUnit unit = project.modules().get(module);
+        if (unit == null) {
+            throw new IllegalArgumentException("module " + module + " is not in the closure");
+        }
+        SemanticOp entry = null;
+        for (SemanticOp op : unit.ops()) {
+            if (op.kind() == SemanticOpKind.EXTERNAL_ENTRY
+                    && ((KindPayload.ExternalEntryPayload) op.payload()).exportName()
+                        .equals(exportName)) {
+                entry = op;
+                break;
+            }
+        }
+        if (entry == null) {
+            throw new IllegalArgumentException("module " + module
+                + " records no EXTERNAL_ENTRY for export '" + exportName + "'");
+        }
+        Execution state = new Execution(project, tables, responder);
+        try {
+            // Dependency initialization first: the module-init block
+            // (bindings, imports, the inert entry delegation) runs once
+            // before the async entry task executes.
+            try {
+                state.runBlock(unit.moduleInit().initBlock());
+            } catch (ReturnSignal | LoopSignal signal) {
+                // The module-init block never transfers.
+            }
+            state.executeAsyncEntry(entry, null, List.copyOf(args), entry.opId().id());
+            state.drainReadyTasks();
+            Execution.Task task = state.tasks.get(entry.opId().id());
+            if (task == null || !task.completed) {
+                throw new IllegalStateException("the async entry task did not complete "
+                    + "(producer defect)");
+            }
+            if (task.failure != null) {
+                throw task.failure;
+            }
+            Value value = task.value == null ? Value.NullValue.INSTANCE : task.value;
+            return state.report(new SemanticRuntimeModel.Terminal.Success(
+                state.atomOf(value)));
+        } catch (DealFailure failure) {
+            return state.report(new SemanticRuntimeModel.Terminal.DealFailure(
+                state.snapshot(failure)));
+        }
+    }
+
+    /**
+     * The deterministic host seam of the E7 call machine: a closed
+     * responder supplies every host terminal — sync returns/throws,
+     * async starts (an operation label, or a bad handle), and async
+     * completions. The oracle records one ordered
+     * {@code HOST_CALL}/{@code HOST_RETURN}/{@code HOST_THROW}/
+     * {@code ASYNC_START_OP}/{@code ASYNC_COMPLETE_*} effect per
+     * terminal, and a thrown host error crosses as a DEAL failure with
+     * the host's code/message at the call origin.
+     */
+    public interface HostResponder {
+
+        /** One sync host terminal: the returned value or the thrown host error. */
+        sealed interface SyncOutcome permits SyncOutcome.Returned, SyncOutcome.Thrown {
+
+            /** The host returned a value. */
+            record Returned(Value value) implements SyncOutcome {
+            }
+
+            /** The host threw an error (code/message preserved). */
+            record Thrown(String code, String message) implements SyncOutcome {
+            }
+        }
+
+        /**
+         * One sync host call terminal.
+         *
+         * @param module     the owning host module; non-null
+         * @param export     the host export name; non-null
+         * @param descriptor the declared function descriptor; non-null
+         * @param args       the boundary-checked argument values; non-null
+         * @return the terminal
+         */
+        default SyncOutcome call(ModuleId module, String export,
+                                 RuntimeDescriptor.Func descriptor, List<Value> args) {
+            throw new IllegalStateException("the responder scripts no sync host call for "
+                + module + "." + export + " (the E7 host seam fails closed)");
+        }
+
+        /**
+         * One async host start: returns the operation label the returned
+         * handle binds to, or {@code null} for a bad handle (the
+         * {@code ASYNC_OPERATION_HANDLE} terminal check fails).
+         *
+         * @param module         the owning host module; non-null
+         * @param export         the host export name; non-null
+         * @param descriptor     the declared async function descriptor; non-null
+         * @param args           the boundary-checked argument values; non-null
+         * @param operationLabel the deterministic operation label the
+         *                       canonical token binds one-to-one to; non-null
+         * @return the bound label, or {@code null} for a bad handle
+         */
+        default String startAsync(ModuleId module, String export,
+                                  RuntimeDescriptor.Func descriptor, List<Value> args,
+                                  String operationLabel) {
+            return operationLabel;
+        }
+
+        /**
+         * One async host completion: the completion value or the thrown
+         * host error of the operation label.
+         *
+         * @param operationLabel the operation label; non-null
+         * @return the completion terminal
+         */
+        default SyncOutcome completeAsync(String operationLabel) {
+            return new SyncOutcome.Returned(Value.NullValue.INSTANCE);
+        }
+    }
+
     // =========================================================================
     // Runtime values
     // =========================================================================
@@ -163,7 +400,8 @@ public final class SemanticOracle {
     public sealed interface Value
         permits Value.NullValue, Value.MissingValue, Value.BoolValue, Value.IntValue,
                 Value.NumValue, Value.StrValue, Value.TableValue, Value.ArrayValue,
-                Value.FuncValue, Value.IntrinsicValue, Value.ErrorValue, Value.SlotValue {
+                Value.FuncValue, Value.AdapterValue, Value.IntrinsicValue, Value.ErrorValue,
+                Value.SlotValue {
 
         enum NullValue implements Value { INSTANCE }
 
@@ -197,6 +435,10 @@ public final class SemanticOracle {
 
         /** An intrinsic/export function value (int()/number(), stdlib exports). */
         record IntrinsicValue(String name) implements Value {
+        }
+
+        /** A {@code FUNCTION_ADAPT} adapter value (target signature). */
+        record AdapterValue(RuntimeDescriptor.Func signature) implements Value {
         }
 
         /** The caught/reified DEAL {@code Error} value {@code {code, message}}. */
@@ -280,8 +522,23 @@ public final class SemanticOracle {
     private static final class Execution {
         final LoweredModuleUnit unit;
         final StructuredBodyTable table;
+        /** The deterministic host responder (the E7 host seam); null outside host drives. */
+        final HostResponder responder;
+        /** The complete implementation closure (entry module included). */
+        final Map<ModuleId, UnitState> units = new LinkedHashMap<>();
+        /** The entry module's unit state. */
+        final UnitState entry;
+        /** The entry module's op index (single-unit aliases). */
         final Map<OpId, SemanticOp> opsById = new HashMap<>();
-        final Map<OpId, List<SemanticOp>> childrenByParent = new HashMap<>();
+        /** One async task/operation state per canonical token identity. */
+        final Map<Long, Task> tasks = new LinkedHashMap<>();
+        /** The deterministic FIFO queue of pending DEAL body tasks. */
+        final ArrayDeque<Long> readyQueue = new ArrayDeque<>();
+        /** The canonical-token → host operation-label bindings. */
+        final Map<Long, String> hostOperations = new LinkedHashMap<>();
+        /** The heap function value → resolved execution binding index. */
+        final IdentityHashMap<Value, FunctionExecutionBinding> bindingsByValue =
+            new IdentityHashMap<>();
         /**
          * The payload-owned children: ops referenced by an owner payload's
          * child/boundary id lists (chain children, boundary children of
@@ -291,27 +548,40 @@ public final class SemanticOracle {
          * effects and fail the trace pairing.
          */
         final java.util.Set<OpId> ownedChildren = new java.util.HashSet<>();
-        /** The payload-owned children only (closure computation excludes them). */
-        final java.util.Set<OpId> structuralOwned;
         final Map<ValueId, Value> values = new HashMap<>();
         final Map<String, Cell> cells = new HashMap<>();
+        /**
+         * The per-invocation parameter-cell overlays, innermost first:
+         * every body invocation pushes a fresh overlay holding its
+         * parameter cells, so a recursive invocation re-binds its own
+         * cells without corrupting the enclosing invocation's (the
+         * closed cell model is keyed by binding identity — recursion
+         * needs the invocation dimension).
+         */
+        final ArrayDeque<Map<String, Cell>> cellOverlays = new ArrayDeque<>();
+        /**
+         * The per-invocation value overlays, innermost first: a body
+         * invocation pushes a fresh overlay so a re-executed op's result
+         * slot (the same static {@code ValueId} across recursive
+         * invocations) publishes per invocation — the enclosing
+         * invocation's slot values stay untouched.
+         */
+        final ArrayDeque<Map<ValueId, Value>> valueOverlays = new ArrayDeque<>();
         final List<SemanticRuntimeModel.TraceEvent> trace = new ArrayList<>();
         final List<SemanticRuntimeModel.EffectEvent> effects = new ArrayList<>();
         final List<FunctionId> frames = new ArrayList<>();
         long sequence = 0;
         String entryResultAtom = null;
 
-        Execution(LoweredModuleUnit unit, StructuredBodyTable table) {
+        Execution(LoweredModuleUnit unit, StructuredBodyTable table, HostResponder responder) {
             this.unit = unit;
             this.table = table;
+            this.responder = responder;
+            UnitState entryState = new UnitState(unit, table);
+            units.put(unit.moduleId(), entryState);
+            entry = entryState;
             for (SemanticOp op : unit.ops()) {
                 opsById.put(op.opId(), op);
-            }
-            for (SemanticOp op : unit.ops()) {
-                OpId parent = op.origin().parentOpId();
-                if (parent != null) {
-                    childrenByParent.computeIfAbsent(parent, k -> new ArrayList<>()).add(op);
-                }
             }
             // Payload-referenced children (executed exactly once by their
             // owner arm in payload order) plus boundary children of
@@ -322,10 +592,159 @@ public final class SemanticOracle {
             // position inside the chain, never at their flat block-list
             // position (the hoisted-operand interleaving the parity
             // fixtures pin).
-            structuralOwned = ChainOperandCompletion.structuralOwners(unit);
+            java.util.Set<OpId> structuralOwned =
+                ChainOperandCompletion.structuralOwners(unit);
             ownedChildren.addAll(structuralOwned);
             ChainOperandCompletion.registerChainOperandOwners(unit, structuralOwned,
                 ownedChildren);
+            ownedChildren.addAll(entryState.ownedChildren);
+        }
+
+        Execution(ExecutableLoweredProject project, Map<ModuleId, StructuredBodyTable> tables,
+                  HostResponder responder) {
+            LoweredModuleUnit entryUnit = project.modules().get(project.entryModule());
+            if (entryUnit == null) {
+                throw new IllegalArgumentException("the entry module is not in the closure");
+            }
+            this.unit = entryUnit;
+            this.table = tables.get(project.entryModule());
+            if (this.table == null) {
+                throw new IllegalArgumentException("the entry module has no body table");
+            }
+            this.responder = responder;
+            UnitState entryState = null;
+            for (Map.Entry<ModuleId, LoweredModuleUnit> moduleEntry
+                    : project.modules().entrySet()) {
+                StructuredBodyTable moduleTable = tables.get(moduleEntry.getKey());
+                if (moduleTable == null) {
+                    throw new IllegalArgumentException("missing body table for module "
+                        + moduleEntry.getKey());
+                }
+                UnitState state = new UnitState(moduleEntry.getValue(), moduleTable);
+                units.put(moduleEntry.getKey(), state);
+                if (moduleEntry.getKey().equals(project.entryModule())) {
+                    entryState = state;
+                }
+            }
+            entry = entryState;
+            for (SemanticOp op : entryUnit.ops()) {
+                opsById.put(op.opId(), op);
+            }
+            java.util.Set<OpId> structuralOwned =
+                ChainOperandCompletion.structuralOwners(entryUnit);
+            ownedChildren.addAll(structuralOwned);
+            ChainOperandCompletion.registerChainOperandOwners(entryUnit, structuralOwned,
+                ownedChildren);
+            ownedChildren.addAll(entryState.ownedChildren);
+        }
+
+        /** One module's validated execution state (ops, children, ownership). */
+        private static final class UnitState {
+            final LoweredModuleUnit unit;
+            final StructuredBodyTable table;
+            final Map<OpId, SemanticOp> opsById = new HashMap<>();
+            final Map<OpId, List<SemanticOp>> childrenByParent = new HashMap<>();
+            /**
+             * The payload-owned children only: the chain executor's
+             * operand-completion rule computes each child's producing
+             * closure against its own unit's structural set — never
+             * against the skip set, which already contains the chain's
+             * own operand producers.
+             */
+            final Set<OpId> structuralOwned;
+            /**
+             * The block-walk skip set: {@code structuralOwned} plus every
+             * chain child's operand closure (the chain arm executes
+             * those at the consuming child's position).
+             */
+            final Set<OpId> ownedChildren;
+
+            UnitState(LoweredModuleUnit unit, StructuredBodyTable table) {
+                this.unit = unit;
+                this.table = table;
+                for (SemanticOp op : unit.ops()) {
+                    opsById.put(op.opId(), op);
+                }
+                for (SemanticOp op : unit.ops()) {
+                    OpId parent = op.origin().parentOpId();
+                    if (parent != null) {
+                        childrenByParent.computeIfAbsent(parent,
+                            k -> new ArrayList<>()).add(op);
+                    }
+                }
+                structuralOwned = ChainOperandCompletion.structuralOwners(unit);
+                ownedChildren = new HashSet<>(structuralOwned);
+                ChainOperandCompletion.registerChainOperandOwners(unit,
+                    structuralOwned, ownedChildren);
+                // The nested source ASYNC_START of an adapter-over-async
+                // task executes under its outer op's arm, never at its
+                // flat block-list position.
+                for (SemanticOp op : unit.ops()) {
+                    if (op.kind() == SemanticOpKind.ASYNC_START) {
+                        for (SemanticOp candidate : unit.ops()) {
+                            if (candidate.kind() == SemanticOpKind.ASYNC_START
+                                    && op.opId().equals(candidate.origin().parentOpId())) {
+                                ownedChildren.add(candidate.opId());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        /** The current value of one slot (overlays innermost-first). */
+        Value valueOf(ValueId id) {
+            for (Map<ValueId, Value> overlay : valueOverlays) {
+                Value value = overlay.get(id);
+                if (value != null) {
+                    return value;
+                }
+            }
+            return values.get(id);
+        }
+
+        /** Publishes one slot value (the innermost invocation overlay wins). */
+        void putValue(ValueId id, Value value) {
+            if (valueOverlays.isEmpty()) {
+                values.put(id, value);
+            } else {
+                valueOverlays.peek().put(id, value);
+            }
+        }
+
+        /** The unit state owning one op id. */
+        UnitState stateOf(OpId opId) {
+            UnitState state = units.get(opId.module());
+            if (state == null) {
+                throw new IllegalStateException("op " + opId + " names a module outside "
+                    + "the executable closure (producer defect)");
+            }
+            return state;
+        }
+
+        /** Resolves one op id in its owning unit. */
+        SemanticOp opOf(OpId opId) {
+            SemanticOp op = stateOf(opId).opsById.get(opId);
+            if (op == null) {
+                throw new IllegalStateException("op " + opId + " is not a member of its "
+                    + "validated unit (producer defect)");
+            }
+            return op;
+        }
+
+        /** One async task/operation state per canonical token identity. */
+        static final class Task {
+            final AsyncTokenId token;
+            java.util.function.Supplier<Value> body;
+            boolean ran;
+            Value value;
+            DealFailure failure;
+            boolean completed;
+
+            Task(AsyncTokenId token, java.util.function.Supplier<Value> body) {
+                this.token = token;
+                this.body = body;
+            }
         }
 
         SemanticRuntimeModel.ConsumerRun report(SemanticRuntimeModel.Terminal terminal) {
@@ -364,6 +783,17 @@ public final class SemanticOracle {
                 case Value.ArrayValue array -> allocate(array);
                 case Value.FuncValue func -> allocate(func);
                 case Value.IntrinsicValue intrinsic -> allocate(intrinsic);
+                case Value.AdapterValue adapter -> allocate(adapter);
+            };
+        }
+
+        /** The canonical token atom of an ASYNC_START/EXTERNAL_ENTRY SUCCESS. */
+        String tokenAtom(AsyncTokenId token) {
+            return switch (token) {
+                case AsyncTokenId.Canonical canonical -> "tok:" + canonical.tokenId()
+                    + ":" + canonical.owner().name();
+                case AsyncTokenId.Alias alias -> "alias:" + alias.tokenId() + "->"
+                    + canonicalReferent(alias.referent());
             };
         }
 
@@ -385,7 +815,7 @@ public final class SemanticOracle {
 
         /** The atom of an op's operand value. */
         String operandAtom(SemanticOp op, int index) {
-            return atomOf(values.get(op.operands().get(index)));
+            return atomOf(valueOf(op.operands().get(index)));
         }
 
         String originText(SourceOrigin origin) {
@@ -398,22 +828,46 @@ public final class SemanticOracle {
         // -- events -----------------------------------------------------------------
 
         void emitStart(SemanticOp op, List<String> inputs) {
-            trace.add(new SemanticRuntimeModel.TraceEvent(sequence++, unit.moduleId().path(),
-                op.opId(), op.origin().parentOpId(), op.kind(),
+            trace.add(new SemanticRuntimeModel.TraceEvent(sequence++,
+                op.opId().module().path(), op.opId(), op.origin().parentOpId(), op.kind(),
                 SemanticRuntimeModel.Phase.START, op.contract().canonicalDigest(),
                 inputs, null, null));
         }
 
         void emitSuccess(SemanticOp op, String output) {
-            trace.add(new SemanticRuntimeModel.TraceEvent(sequence++, unit.moduleId().path(),
-                op.opId(), op.origin().parentOpId(), op.kind(),
+            trace.add(new SemanticRuntimeModel.TraceEvent(sequence++,
+                op.opId().module().path(), op.opId(), op.origin().parentOpId(), op.kind(),
                 SemanticRuntimeModel.Phase.SUCCESS, op.contract().canonicalDigest(),
                 List.of(), output, null));
         }
 
         void emitFailure(SemanticOp op, DealFailure failure) {
-            trace.add(new SemanticRuntimeModel.TraceEvent(sequence++, unit.moduleId().path(),
-                op.opId(), op.origin().parentOpId(), op.kind(),
+            trace.add(new SemanticRuntimeModel.TraceEvent(sequence++,
+                op.opId().module().path(), op.opId(), op.origin().parentOpId(), op.kind(),
+                SemanticRuntimeModel.Phase.FAILURE, op.contract().canonicalDigest(),
+                List.of(), null, snapshot(failure)));
+        }
+
+        /** START with a structural parent override (cross-unit ENTRY execution). */
+        void emitStartParented(SemanticOp op, OpId parent, List<String> inputs) {
+            trace.add(new SemanticRuntimeModel.TraceEvent(sequence++,
+                op.opId().module().path(), op.opId(), parent, op.kind(),
+                SemanticRuntimeModel.Phase.START, op.contract().canonicalDigest(),
+                inputs, null, null));
+        }
+
+        /** SUCCESS with a structural parent override (cross-unit ENTRY execution). */
+        void emitSuccessParented(SemanticOp op, OpId parent, String output) {
+            trace.add(new SemanticRuntimeModel.TraceEvent(sequence++,
+                op.opId().module().path(), op.opId(), parent, op.kind(),
+                SemanticRuntimeModel.Phase.SUCCESS, op.contract().canonicalDigest(),
+                List.of(), output, null));
+        }
+
+        /** FAILURE with a structural parent override (cross-unit ENTRY execution). */
+        void emitFailureParented(SemanticOp op, OpId parent, DealFailure failure) {
+            trace.add(new SemanticRuntimeModel.TraceEvent(sequence++,
+                op.opId().module().path(), op.opId(), parent, op.kind(),
                 SemanticRuntimeModel.Phase.FAILURE, op.contract().canonicalDigest(),
                 List.of(), null, snapshot(failure)));
         }
@@ -432,16 +886,49 @@ public final class SemanticOracle {
 
         Cell cellOf(BindingId binding, long generation, boolean create) {
             String key = binding + "#" + generation;
-            Cell cell = cells.get(key);
-            if (cell == null && create) {
+            if (!create) {
+                for (Map<String, Cell> overlay : cellOverlays) {
+                    Cell cell = overlay.get(key);
+                    if (cell != null) {
+                        return cell;
+                    }
+                }
+                return cells.get(key);
+            }
+            if (cellOverlays.isEmpty()) {
+                Cell cell = cells.get(key);
+                if (cell == null) {
+                    cell = new Cell(binding, generation);
+                    cells.put(key, cell);
+                }
+                return cell;
+            }
+            // The innermost invocation overlay hosts fresh cells; a cell
+            // already present there (an earlier re-entry of the same
+            // binding identity inside one invocation) is reused.
+            Map<String, Cell> top = cellOverlays.peek();
+            Cell cell = top.get(key);
+            if (cell == null) {
                 cell = new Cell(binding, generation);
-                cells.put(key, cell);
+                top.put(key, cell);
             }
             return cell;
         }
 
-        /** The binding's current (latest-generation) cell. */
+        /** The binding's current (latest-generation) cell (overlays innermost-first). */
         Cell currentCellOf(BindingId binding) {
+            for (Map<String, Cell> overlay : cellOverlays) {
+                Cell latest = null;
+                for (Cell cell : overlay.values()) {
+                    if (cell.binding.equals(binding)
+                            && (latest == null || cell.generation > latest.generation)) {
+                        latest = cell;
+                    }
+                }
+                if (latest != null) {
+                    return latest;
+                }
+            }
             Cell latest = null;
             for (Cell cell : cells.values()) {
                 if (cell.binding.equals(binding)) {
@@ -451,6 +938,43 @@ public final class SemanticOracle {
                 }
             }
             return latest;
+        }
+
+        /**
+         * Pushes one invocation's parameter-cell overlay: the body
+         * block's leading parameter ALLOCs get fresh cells bound to the
+         * argument values (recursion-safe — the enclosing invocation's
+         * cells stay untouched).
+         */
+        void pushParamCells(UnitState state, BlockId bodyBlock, int paramCount,
+                            List<Value> args) {
+            List<OpId> bodyOps = state.table.blockOps().get(bodyBlock);
+            if (bodyOps == null) {
+                throw new IllegalStateException("the callee body block " + bodyBlock
+                    + " has no membership row (producer defect)");
+            }
+            Map<String, Cell> overlay = new LinkedHashMap<>();
+            for (int i = 0; i < paramCount && i < bodyOps.size(); i++) {
+                SemanticOp alloc = state.opsById.get(bodyOps.get(i));
+                if (alloc.kind() != SemanticOpKind.BINDING_ALLOC) {
+                    throw new IllegalStateException("the callee body's leading op "
+                        + alloc.opId() + " is not a BINDING_ALLOC (parameter cell)");
+                }
+                KindPayload.BindingAllocPayload allocPayload =
+                    (KindPayload.BindingAllocPayload) alloc.payload();
+                Cell cell = new Cell(allocPayload.binding(), allocPayload.generation());
+                cell.value = args.get(i);
+                cell.initialized = true;
+                overlay.put(allocPayload.binding() + "#" + allocPayload.generation(), cell);
+            }
+            cellOverlays.push(overlay);
+            valueOverlays.push(new LinkedHashMap<>());
+        }
+
+        /** Pops the innermost invocation's parameter-cell overlay. */
+        void popParamCells() {
+            cellOverlays.pop();
+            valueOverlays.pop();
         }
 
         // -- control flow ------------------------------------------------------------
@@ -483,7 +1007,7 @@ public final class SemanticOracle {
         void execute(SemanticOp op) {
             List<String> inputs = new ArrayList<>();
             for (ValueId operand : op.operands()) {
-                inputs.add(atomOf(values.get(operand)));
+                inputs.add(atomOf(valueOf(operand)));
             }
             emitStart(op, inputs);
             try {
@@ -521,6 +1045,17 @@ public final class SemanticOracle {
                 case ASSIGN -> executeAssign(op);
                 case DELETE -> executeDelete(op);
                 case CALL -> executeCall(op);
+                case EXTERNAL_ENTRY -> throw new IllegalStateException(
+                    "an EXTERNAL_ENTRY executes only under its triggering caller op "
+                        + "(the block walk never runs the entry record)");
+                case CALLBACK_INVOKE -> throw new IllegalStateException(
+                    "a CALLBACK_INVOKE executes only under the host-driven "
+                        + "invokeCallback surface (the block walk never runs it)");
+                case ASYNC_START -> executeAsyncStart(op);
+                case AWAIT -> executeAwait(op);
+                case FUNCTION_ADAPT -> executeFunctionAdapt(op);
+                case ENTRY_INVOKE -> executeEntryInvoke(op);
+                case EXPORT_PUBLISH -> executeExportPublish(op);
                 case INTRINSIC_CALL -> executeIntrinsic(op);
                 case STDLIB_CALL -> executeStdlib(op);
                 case BRANCH -> executeBranch(op);
@@ -545,7 +1080,7 @@ public final class SemanticOracle {
         /** Publishes an op's result value and returns its atom. */
         private String publish(SemanticOp op, Value value) {
             if (op.result() instanceof ValueId valueId) {
-                values.put(valueId, value);
+                putValue(valueId, value);
             }
             return atomOf(value);
         }
@@ -565,7 +1100,7 @@ public final class SemanticOracle {
 
         private String executeUnary(SemanticOp op) {
             KindPayload.UnaryPayload payload = (KindPayload.UnaryPayload) op.payload();
-            Value input = values.get(op.operands().get(0));
+            Value input = valueOf(op.operands().get(0));
             return switch (payload.selector()) {
                 case BOOL_NOT -> publish(op,
                     new Value.BoolValue(!((Value.BoolValue) input).value()));
@@ -583,8 +1118,8 @@ public final class SemanticOracle {
 
         private String executeBinary(SemanticOp op) {
             KindPayload.BinaryPayload payload = (KindPayload.BinaryPayload) op.payload();
-            Value left = values.get(op.operands().get(0));
-            Value right = values.get(op.operands().get(1));
+            Value left = valueOf(op.operands().get(0));
+            Value right = valueOf(op.operands().get(1));
             if (payload.selector().name().startsWith("INT32_")
                     || payload.selector().name().startsWith("NUMBER_")) {
                 boolean comparison = payload.selector().name().endsWith("_EQ")
@@ -726,7 +1261,7 @@ public final class SemanticOracle {
                 (KindPayload.StringConcatPayload) op.payload();
             StringBuilder out = new StringBuilder();
             for (ValueId fragment : payload.fragments()) {
-                out.append(((Value.StrValue) values.get(fragment)).value());
+                out.append(((Value.StrValue) valueOf(fragment)).value());
             }
             return publish(op, new Value.StrValue(out.toString()));
         }
@@ -737,8 +1272,8 @@ public final class SemanticOracle {
             for (int i = 0; i < payload.values().size(); i++) {
                 ValueId valueId = payload.values().get(i);
                 OpId boundaryId = payload.elementBoundaryOpIds().get(i);
-                SemanticOp boundary = opsById.get(boundaryId);
-                Value checked = runBoundaryChild(boundary, values.get(valueId),
+                SemanticOp boundary = opOf(boundaryId);
+                Value checked = runBoundaryChild(boundary, valueOf(valueId),
                     BoundaryContext.element(i + 1));
                 elements.add(checked);
             }
@@ -749,7 +1284,7 @@ public final class SemanticOracle {
             KindPayload.TableNewPayload payload = (KindPayload.TableNewPayload) op.payload();
             LinkedHashMap<String, Value> entries = new LinkedHashMap<>();
             for (KindPayload.TableEntry entry : payload.entries()) {
-                entries.put(entry.key(), values.get(entry.value()));
+                entries.put(entry.key(), valueOf(entry.value()));
             }
             return publish(op, new Value.TableValue(entries));
         }
@@ -757,7 +1292,7 @@ public final class SemanticOracle {
         private String executeArrayLength(SemanticOp op) {
             KindPayload.ArrayLengthPayload payload =
                 (KindPayload.ArrayLengthPayload) op.payload();
-            Value.ArrayValue array = (Value.ArrayValue) values.get(payload.arrayValue());
+            Value.ArrayValue array = (Value.ArrayValue) valueOf(payload.arrayValue());
             return publish(op, new Value.IntValue(array.elements().size()));
         }
 
@@ -768,7 +1303,7 @@ public final class SemanticOracle {
          */
         private String executeMemberRead(SemanticOp op) {
             KindPayload.MemberReadPayload payload = (KindPayload.MemberReadPayload) op.payload();
-            Value.TableValue table = (Value.TableValue) values.get(payload.table());
+            Value.TableValue table = (Value.TableValue) valueOf(payload.table());
             Value read = table.entries().get(payload.key());
             if (read == null) {
                 read = Value.MissingValue.INSTANCE;
@@ -785,7 +1320,7 @@ public final class SemanticOracle {
 
         /** The single child op parented to {@code op}, or null. */
         private SemanticOp singleChild(SemanticOp op) {
-            List<SemanticOp> children = childrenByParent.get(op.opId());
+            List<SemanticOp> children = stateOf(op.opId()).childrenByParent.get(op.opId());
             if (children == null || children.isEmpty()) {
                 return null;
             }
@@ -804,21 +1339,21 @@ public final class SemanticOracle {
         private String executeCommit(SemanticOp op) {
             switch (op.payload()) {
                 case KindPayload.MemberWritePayload payload -> {
-                    Value.TableValue table = (Value.TableValue) values.get(payload.table());
-                    table.entries().put(payload.key(), values.get(payload.value()));
+                    Value.TableValue table = (Value.TableValue) valueOf(payload.table());
+                    table.entries().put(payload.key(), valueOf(payload.value()));
                 }
                 case KindPayload.MemberDeletePayload payload -> {
-                    Value.TableValue table = (Value.TableValue) values.get(payload.table());
+                    Value.TableValue table = (Value.TableValue) valueOf(payload.table());
                     table.entries().remove(payload.key());
                 }
                 case KindPayload.IndexWritePayload payload -> {
-                    Value container = values.get(payload.container());
-                    NormalizedSlot slot = ((Value.SlotValue) values.get(payload.slot())).slot();
-                    commitIndexWrite(container, slot, values.get(payload.value()));
+                    Value container = valueOf(payload.container());
+                    NormalizedSlot slot = ((Value.SlotValue) valueOf(payload.slot())).slot();
+                    commitIndexWrite(container, slot, valueOf(payload.value()));
                 }
                 case KindPayload.IndexDeletePayload payload -> {
-                    Value container = values.get(payload.container());
-                    NormalizedSlot slot = ((Value.SlotValue) values.get(payload.slot())).slot();
+                    Value container = valueOf(payload.container());
+                    NormalizedSlot slot = ((Value.SlotValue) valueOf(payload.slot())).slot();
                     commitIndexDelete(container, slot);
                 }
                 default -> throw new IllegalStateException(
@@ -861,8 +1396,8 @@ public final class SemanticOracle {
         private String executeNormalize(SemanticOp op) {
             KindPayload.IndexNormalizePayload payload =
                 (KindPayload.IndexNormalizePayload) op.payload();
-            Value rawKey = values.get(payload.rawKey());
-            Value currentLength = values.get(payload.currentLength());
+            Value rawKey = valueOf(payload.rawKey());
+            Value currentLength = valueOf(payload.currentLength());
             NormalizedSlot slot = switch (payload.mode()) {
                 case ARRAY_READ, ARRAY_WRITE -> NormalizedSlot.arraySlot(payload.mode(),
                     (int) ((Value.IntValue) rawKey).value(),
@@ -875,9 +1410,9 @@ public final class SemanticOracle {
 
         private String executeIndexRead(SemanticOp op) {
             KindPayload.IndexReadPayload payload = (KindPayload.IndexReadPayload) op.payload();
-            Value container = values.get(payload.container());
-            NormalizedSlot slot = ((Value.SlotValue) values.get(payload.slot())).slot();
-            SemanticOp boundary = opsById.get(payload.elementBoundaryOpId());
+            Value container = valueOf(payload.container());
+            NormalizedSlot slot = ((Value.SlotValue) valueOf(payload.slot())).slot();
+            SemanticOp boundary = opOf(payload.elementBoundaryOpId());
             RuntimeDescriptor descriptor = ((KindPayload.BoundaryPayload) boundary.payload())
                 .descriptor();
             switch (slot) {
@@ -990,6 +1525,8 @@ public final class SemanticOracle {
                 case Value.TableValue table -> BoundaryValueView.of(ActualKind.TABLE);
                 case Value.ErrorValue error -> BoundaryValueView.ofClass("@builtin/Error");
                 case Value.FuncValue func -> BoundaryValueView.ofFunction(func.signature());
+                case Value.AdapterValue adapter ->
+                    BoundaryValueView.ofFunction(adapter.signature());
                 case Value.IntrinsicValue intrinsic ->
                     BoundaryValueView.ofFunction(new RuntimeDescriptor.Func(List.of(),
                         RuntimeDescriptor.Number.INSTANCE, false));
@@ -1018,7 +1555,7 @@ public final class SemanticOracle {
         /** A free BOUNDARY op: the check over its completed operand (no events here). */
         private String executeBoundary(SemanticOp op) {
             KindPayload.BoundaryPayload payload = (KindPayload.BoundaryPayload) op.payload();
-            Value input = values.get(payload.input());
+            Value input = valueOf(payload.input());
             BoundaryOutcome outcome;
             try {
                 outcome = BoundaryExecutor.execute(op.failurePolicy(), payload.descriptor(),
@@ -1045,12 +1582,12 @@ public final class SemanticOracle {
             KindPayload.BindingInitPayload payload =
                 (KindPayload.BindingInitPayload) op.payload();
             Cell cell = cellOf(payload.binding(), payload.generation(), true);
-            Value value = values.get(payload.value());
+            Value value = valueOf(payload.value());
             if (value == null) {
                 // An intrinsic function identity (int()/number() as
                 // first-class values — the producer-less identity slot).
                 value = new Value.IntrinsicValue("intrinsic");
-                values.put(payload.value(), value);
+                putValue(payload.value(), value);
             }
             cell.value = value;
             cell.initialized = true;
@@ -1063,7 +1600,8 @@ public final class SemanticOracle {
             Cell cell = cellOf(payload.binding(), payload.generation(), false);
             if (cell == null || !cell.initialized) {
                 throw new IllegalStateException("binding load of uninitialized cell "
-                    + payload.binding() + "#" + payload.generation());
+                    + payload.binding() + "#" + payload.generation() + " at op "
+                    + op.opId() + " in " + op.origin().sourceId());
             }
             return publish(op, cell.value);
         }
@@ -1072,7 +1610,7 @@ public final class SemanticOracle {
             KindPayload.BindingStorePayload payload =
                 (KindPayload.BindingStorePayload) op.payload();
             Cell cell = cellOf(payload.binding(), payload.generation(), true);
-            cell.value = values.get(payload.value());
+            cell.value = valueOf(payload.value());
             cell.initialized = true;
             return null;
         }
@@ -1089,21 +1627,26 @@ public final class SemanticOracle {
                 }
                 captures.put(binding, current);
             }
-            return publish(op, new Value.FuncValue(payload.function(), payload.signature(),
-                captures));
+            Value.FuncValue closure = new Value.FuncValue(payload.function(),
+                payload.signature(), captures);
+            FunctionExecutionBinding binding = bindingOf((ValueId) op.result());
+            if (binding != null) {
+                bindingsByValue.put(closure, binding);
+            }
+            return publish(op, closure);
         }
 
         /** ASSIGN: children in payload order; the committed value result is pre-published. */
         private String executeAssign(SemanticOp op) {
             KindPayload.AssignPayload payload = (KindPayload.AssignPayload) op.payload();
             for (OpId childId : payload.childOps()) {
-                SemanticOp child = opsById.get(childId);
+                SemanticOp child = opOf(childId);
                 completeChainOperands(child);
                 if (child.kind() == SemanticOpKind.BOUNDARY) {
                     KindPayload.BoundaryPayload boundaryPayload =
                         (KindPayload.BoundaryPayload) child.payload();
                     BoundaryContext context = chainBoundaryContext(op, boundaryPayload.kind());
-                    Value input = values.get(boundaryPayload.input());
+                    Value input = valueOf(boundaryPayload.input());
                     runBoundaryChild(child, input, context);
                 } else {
                     execute(child);
@@ -1111,7 +1654,7 @@ public final class SemanticOracle {
             }
             Value committed = null;
             if (op.result() instanceof ValueId valueId) {
-                committed = values.get(valueId);
+                committed = valueOf(valueId);
             }
             return committed == null ? null : atomOf(committed);
         }
@@ -1136,15 +1679,16 @@ public final class SemanticOracle {
                 case KindPayload.DeletePayload delete -> delete.childOps();
                 default -> List.of();
             };
+            Map<OpId, SemanticOp> ops = stateOf(chain.opId()).opsById;
             for (OpId childId : children) {
-                SemanticOp child = opsById.get(childId);
+                SemanticOp child = ops.get(childId);
                 if (child.kind() == SemanticOpKind.INDEX_NORMALIZE
                         && child.result() instanceof ValueId normalizeResult) {
                     array = (NormalizedSlot.ArraySlot)
-                        ((Value.SlotValue) values.get(normalizeResult)).slot();
+                        ((Value.SlotValue) valueOf(normalizeResult)).slot();
                 } else if (child.kind() == SemanticOpKind.ARRAY_LENGTH
                         && child.result() instanceof ValueId lengthResult) {
-                    length = (int) ((Value.IntValue) values.get(lengthResult)).value();
+                    length = (int) ((Value.IntValue) valueOf(lengthResult)).value();
                 }
             }
             if (array == null || length < 0) {
@@ -1181,12 +1725,12 @@ public final class SemanticOracle {
         private String executeDelete(SemanticOp op) {
             KindPayload.DeletePayload payload = (KindPayload.DeletePayload) op.payload();
             for (OpId childId : payload.childOps()) {
-                SemanticOp child = opsById.get(childId);
+                SemanticOp child = opOf(childId);
                 completeChainOperands(child);
                 if (child.kind() == SemanticOpKind.BOUNDARY) {
                     KindPayload.BoundaryPayload boundaryPayload =
                         (KindPayload.BoundaryPayload) child.payload();
-                    runBoundaryChild(child, values.get(boundaryPayload.input()),
+                    runBoundaryChild(child, valueOf(boundaryPayload.input()),
                         chainBoundaryContext(op, boundaryPayload.kind()));
                 } else {
                     execute(child);
@@ -1206,61 +1750,325 @@ public final class SemanticOracle {
          * only after the key child completed).
          */
         private void completeChainOperands(SemanticOp child) {
+            UnitState owner = stateOf(child.opId());
             for (SemanticOp producer : ChainOperandCompletion.operandProducersOf(
-                    child, unit, structuralOwned)) {
+                    child, owner.unit, owner.structuralOwned)) {
                 execute(producer);
             }
         }
 
         /**
-         * CALL(DIRECT): parameter boundaries in one-based order, then the
-         * recorded body block with the leading parameter ALLOCs bound.
+         * CALL — the D13 machine: parameter boundaries in one-based order
+         * with the closed table's cells, then the callee execution per
+         * the resolved binding (DIRECT runs the recorded body block;
+         * INDIRECT resolves the callee's binding and executes it; HOST
+         * performs exactly one host request; EXTERNAL executes the
+         * callee unit's EXTERNAL_ENTRY for SHARED_BODY or the target ABI
+         * terminal for RETAINED_ABI), then the single return boundary of
+         * the shape — by the callee's RETURN for bodies, by the call op
+         * for host terminals and retained-ABI externals.
          */
         private String executeCall(SemanticOp op) {
             KindPayload.CallPayload payload = (KindPayload.CallPayload) op.payload();
-            FunctionExecutionBinding.LoweredBody body =
-                (FunctionExecutionBinding.LoweredBody)
-                    ((KindPayload.CallCallee.Static) payload.callee()).binding();
-            // Parameter boundaries (descriptor-kind rule cells).
-            List<Value> checkedArgs = new ArrayList<>();
-            for (int i = 0; i < payload.parameterBoundaryOpIds().size(); i++) {
-                OpId boundaryId = payload.parameterBoundaryOpIds().get(i);
-                SemanticOp boundary = opsById.get(boundaryId);
-                Value arg = values.get(
+            List<Value> checkedArgs = runParameterBoundaries(op,
+                payload.parameterBoundaryOpIds());
+            FunctionExecutionBinding binding = switch (payload.callee()) {
+                case KindPayload.CallCallee.Static staticCallee -> staticCallee.binding();
+                case KindPayload.CallCallee.Indirect indirect -> resolveBindingOf(indirect.callee());
+            };
+            Value returned = switch (binding) {
+                case FunctionExecutionBinding.LoweredBody body ->
+                    invokeLoweredBody(op, payload, body, checkedArgs);
+                case FunctionExecutionBinding.AdapterBinding adapter ->
+                    invokeAdapter(op, payload, adapter, checkedArgs);
+                case FunctionExecutionBinding.HostFunction host ->
+                    invokeHostCallWithBoundary(op, payload, host.hostModuleId(),
+                        host.exportName(), host.descriptor(), checkedArgs);
+                case FunctionExecutionBinding.HostFunctionValue hostValue ->
+                    invokeHostCallWithBoundary(op, payload, hostValue.hostModuleId(),
+                        "@value#" + hostValue.materializingBoundaryOpId().id(),
+                        hostValue.descriptor(), checkedArgs);
+                case FunctionExecutionBinding.ExternalFunction external ->
+                    invokeExternalCall(op, payload, external, checkedArgs);
+            };
+            return publish(op, returned);
+        }
+
+        /** The parameter boundaries of one call/async/callback op in one-based order. */
+        private List<Value> runParameterBoundaries(SemanticOp op, List<OpId> boundaryIds) {
+            List<Value> checked = new ArrayList<>();
+            for (int i = 0; i < boundaryIds.size(); i++) {
+                SemanticOp boundary = opOf(boundaryIds.get(i));
+                Value arg = valueOf(
                     ((KindPayload.BoundaryPayload) boundary.payload()).input());
-                checkedArgs.add(runBoundaryChild(boundary, arg,
+                checked.add(runBoundaryChild(boundary, arg,
                     BoundaryContext.parameter(i + 1)));
             }
-            LoweredFunction function = unit.functions().get(body.functionId());
+            return checked;
+        }
+
+        /** The body execution of one LoweredBody binding under the invoking op. */
+        private Value invokeLoweredBody(SemanticOp op, KindPayload.CallPayload payload,
+                                        FunctionExecutionBinding.LoweredBody body,
+                                        List<Value> checkedArgs) {
+            UnitState state = stateOf(op.opId());
+            LoweredFunction function = state.unit.functions().get(body.functionId());
             if (function == null) {
                 throw new IllegalStateException("CALL resolves a missing lowered function "
                     + body.functionId());
             }
-            // Bind the body block's leading parameter ALLOC cells.
-            List<OpId> bodyOps = table.blockOps().get(body.blockId());
-            int paramCount = payload.signature().paramTypes().size();
-            for (int i = 0; i < paramCount && i < bodyOps.size(); i++) {
-                SemanticOp alloc = opsById.get(bodyOps.get(i));
-                if (alloc.kind() != SemanticOpKind.BINDING_ALLOC) {
-                    throw new IllegalStateException("the callee body's leading op "
-                        + alloc.opId() + " is not a BINDING_ALLOC (parameter cell)");
-                }
-                KindPayload.BindingAllocPayload allocPayload =
-                    (KindPayload.BindingAllocPayload) alloc.payload();
-                Cell cell = cellOf(allocPayload.binding(), allocPayload.generation(), true);
-                cell.value = checkedArgs.get(i);
-                cell.initialized = true;
-            }
+            bindParamCells(state, body.blockId(), payload.signature().paramTypes().size(),
+                checkedArgs);
             frames.add(0, body.functionId());
             Value returned;
             try {
-                returned = runBodyBlock(body.blockId(), paramCount);
-            } catch (DealFailure failure) {
-                throw failure; // frames already captured innermost-first at the raise
+                returned = runBodyBlock(body.blockId(),
+                    payload.signature().paramTypes().size(), state);
             } finally {
                 frames.remove(0);
+                popParamCells();
             }
-            return publish(op, returned);
+            return returned;
+        }
+
+        /** Binds one body block's leading parameter ALLOC cells (the invocation overlay). */
+        private void bindParamCells(UnitState state, BlockId bodyBlock, int paramCount,
+                                    List<Value> args) {
+            pushParamCells(state, bodyBlock, paramCount, args);
+        }
+
+        /** The D15 adapter invocation protocol (source class statically fixed). */
+        private Value invokeAdapter(SemanticOp op, KindPayload.CallPayload payload,
+                                    FunctionExecutionBinding.AdapterBinding adapter,
+                                    List<Value> checkedArgs) {
+            int m = adapter.sourceSignature().paramTypes().size();
+            Value sourceValue = loadAdapterSource(op, adapter);
+            checkAdapterSourceSignature(op, adapter, sourceValue);
+            FunctionExecutionBinding sourceBinding = resolveBindingOfValue(sourceValue);
+            List<Value> leading = List.copyOf(checkedArgs.subList(0, m));
+            return switch (sourceBinding) {
+                case FunctionExecutionBinding.LoweredBody body -> {
+                    UnitState state = stateOf(op.opId());
+                    bindParamCells(state, body.blockId(), m, leading);
+                    frames.add(0, body.functionId());
+                    try {
+                        yield runBodyBlock(body.blockId(), m, state);
+                    } finally {
+                        frames.remove(0);
+                        popParamCells();
+                    }
+                }
+                case FunctionExecutionBinding.HostFunction host -> {
+                    Value value = invokeHostRequest(op, host.hostModuleId(),
+                        host.exportName(), host.descriptor(), leading);
+                    yield runBoundaryChild(opOf(payload.returnBoundaryOpId()), value,
+                        BoundaryContext.none());
+                }
+                case FunctionExecutionBinding.HostFunctionValue hostValue -> {
+                    Value value = invokeHostRequest(op, hostValue.hostModuleId(),
+                        "@value#" + hostValue.materializingBoundaryOpId().id(),
+                        hostValue.descriptor(), leading);
+                    yield runBoundaryChild(opOf(payload.returnBoundaryOpId()), value,
+                        BoundaryContext.none());
+                }
+                case FunctionExecutionBinding.ExternalFunction external -> {
+                    if (external.executionOwner() == ExternalExecutionOwner.SHARED_BODY) {
+                        yield executeExternalEntryFor(op, payload.externalEntryRef(),
+                            external, leading);
+                    }
+                    Value value = invokeHostRequest(op, external.moduleId(),
+                        external.exportName(), external.descriptor(), leading);
+                    yield runBoundaryChild(opOf(payload.returnBoundaryOpId()), value,
+                        BoundaryContext.none());
+                }
+                case FunctionExecutionBinding.AdapterBinding nested ->
+                    throw new IllegalStateException("adapter-of-adapter invocation is "
+                        + "outside the statically-resolved slice (ISSUE-0531)");
+            };
+        }
+
+        /** The D15 source load: VALUE retains, SHARED_CELL re-reads, THUNK re-executes. */
+        private Value loadAdapterSource(SemanticOp op,
+                                        FunctionExecutionBinding.AdapterBinding adapter) {
+            return switch (adapter.sourceRef()) {
+                case AdaptSourceRef.Value value -> valueOf(value.value());
+                case AdaptSourceRef.SharedCell cell -> {
+                    Cell loaded = cellOf(cell.binding(), cell.generation(), false);
+                    if (loaded == null || !loaded.initialized) {
+                        throw new IllegalStateException("the adapter's SHARED_CELL load "
+                            + "of an uninitialized cell " + cell.binding() + "#"
+                            + cell.generation() + " (producer defect)");
+                    }
+                    yield loaded.value;
+                }
+                case AdaptSourceRef.Thunk thunk -> runThunkBlock(op, thunk);
+            };
+        }
+
+        /** The adapter's source-signature check: E8010 FUNCTION_SIGNATURE at the invocation. */
+        private void checkAdapterSourceSignature(SemanticOp op,
+                FunctionExecutionBinding.AdapterBinding adapter, Value sourceValue) {
+            BoundaryOutcome outcome = BoundaryExecutor.check(
+                FailurePolicyId.FUNCTION_SIGNATURE, adapter.sourceSignature(),
+                viewOfValue(sourceValue), BoundaryContext.none());
+            switch (outcome) {
+                case BoundaryOutcome.Pass ignored -> { }
+                case BoundaryOutcome.Fail fail -> throw DealFailure.of(fail.failure(),
+                    op.origin(), List.copyOf(frames));
+            }
+        }
+
+        /** The REEVALUATE_THUNK source re-execution (side effects repeat per invoke). */
+        private Value runThunkBlock(SemanticOp invocation, AdaptSourceRef.Thunk thunk) {
+            UnitState state = stateOf(invocation.opId());
+            List<OpId> ops = state.table.blockOps().get(thunk.blockId());
+            if (ops == null) {
+                throw new IllegalStateException("the adapter thunk block "
+                    + thunk.blockId() + " has no membership row (producer defect)");
+            }
+            Value produced = null;
+            for (OpId opId : ops) {
+                if (state.ownedChildren.contains(opId)) {
+                    continue;
+                }
+                SemanticOp thunkOp = state.opsById.get(opId);
+                if (thunkOp == null) {
+                    throw new IllegalStateException("op " + opId
+                        + " is not a member of the validated unit");
+                }
+                execute(thunkOp);
+                if (thunkOp.result() instanceof ValueId valueId) {
+                    produced = valueOf(valueId);
+                }
+            }
+            return produced;
+        }
+
+        /** One host request effect with its ordered terminal. */
+        private Value invokeHostRequest(SemanticOp op, ModuleId module, String export,
+                                        RuntimeDescriptor.Func descriptor, List<Value> args) {
+            if (responder == null) {
+                throw new IllegalStateException("a host call requires a deterministic "
+                    + "host responder (the E7 host seam)");
+            }
+            effects.add(new SemanticRuntimeModel.EffectEvent(
+                SemanticRuntimeModel.EffectEvent.Kind.HOST_CALL,
+                module.path() + "." + export));
+            HostResponder.SyncOutcome outcome = responder.call(module, export, descriptor,
+                List.copyOf(args));
+            return switch (outcome) {
+                case HostResponder.SyncOutcome.Returned returned -> {
+                    effects.add(new SemanticRuntimeModel.EffectEvent(
+                        SemanticRuntimeModel.EffectEvent.Kind.HOST_RETURN,
+                        module.path() + "." + export + "=" + atomOf(returned.value())));
+                    yield returned.value();
+                }
+                case HostResponder.SyncOutcome.Thrown thrown -> {
+                    effects.add(new SemanticRuntimeModel.EffectEvent(
+                        SemanticRuntimeModel.EffectEvent.Kind.HOST_THROW,
+                        module.path() + "." + export + "!" + thrown.code()));
+                    throw new DealFailure(thrown.code(), thrown.message(), op.origin(),
+                        null, null, null, List.copyOf(frames));
+                }
+            };
+        }
+
+        /** A host call plus the call-op-run HOST_TO_DEAL+HOST_SYNC_RETURN boundary. */
+        private Value invokeHostCallWithBoundary(SemanticOp op, KindPayload.CallPayload payload,
+                ModuleId module, String export, RuntimeDescriptor.Func descriptor,
+                List<Value> args) {
+            Value value = invokeHostRequest(op, module, export, descriptor, args);
+            return runBoundaryChild(opOf(payload.returnBoundaryOpId()), value,
+                BoundaryContext.none());
+        }
+
+        /** The external-call terminal per the execution owner. */
+        private Value invokeExternalCall(SemanticOp op, KindPayload.CallPayload payload,
+                FunctionExecutionBinding.ExternalFunction external, List<Value> args) {
+            if (external.executionOwner() == ExternalExecutionOwner.SHARED_BODY) {
+                return executeExternalEntryFor(op, payload.externalEntryRef(), external,
+                    args);
+            }
+            Value value = invokeHostRequest(op, external.moduleId(), external.exportName(),
+                external.descriptor(), args);
+            return runBoundaryChild(opOf(payload.returnBoundaryOpId()), value,
+                BoundaryContext.none());
+        }
+
+        /** The callee unit's sync EXTERNAL_ENTRY execution under the triggering caller op. */
+        private Value executeExternalEntryFor(SemanticOp caller, OpId entryOpId,
+                FunctionExecutionBinding.ExternalFunction external, List<Value> args) {
+            if (entryOpId == null) {
+                throw new IllegalStateException("the SHARED_BODY external call carries no "
+                    + "externalEntryRef (producer defect)");
+            }
+            SemanticOp entry = opOf(entryOpId);
+            UnitState state = stateOf(entryOpId);
+            KindPayload.ExternalEntryPayload entryPayload =
+                (KindPayload.ExternalEntryPayload) entry.payload();
+            if (!entryPayload.exportName().equals(external.exportName())) {
+                throw new IllegalStateException("the externalEntryRef names export '"
+                    + entryPayload.exportName() + "' but the binding names '"
+                    + external.exportName() + "' (producer defect)");
+            }
+            LoweredFunction function = state.unit.functions().get(entryPayload.function());
+            if (function == null) {
+                throw new IllegalStateException("EXTERNAL_ENTRY resolves a missing "
+                    + "lowered function " + entryPayload.function());
+            }
+            emitStartParented(entry, caller.opId(), List.of());
+            try {
+                // The entry runs no parameter boundaries: the caller's
+                // EXTERNAL_PARAMETER boundaries ran exactly once.
+                bindParamCells(state, function.body(),
+                    entryPayload.signature().paramTypes().size(), args);
+                frames.add(0, entryPayload.function());
+                Value returned;
+                try {
+                    returned = runBodyBlock(function.body(),
+                        entryPayload.signature().paramTypes().size(), state);
+                } finally {
+                    frames.remove(0);
+                    popParamCells();
+                }
+                emitSuccessParented(entry, caller.opId(), atomOf(returned));
+                return returned;
+            } catch (DealFailure failure) {
+                emitFailureParented(entry, caller.opId(), failure);
+                throw failure;
+            }
+        }
+
+        /** The registered binding of one producing allocation identity, or null. */
+        private FunctionExecutionBinding bindingOf(ValueId identity) {
+            for (UnitState state : units.values()) {
+                FunctionExecutionBinding found = state.unit.functionBindings().get(
+                    new FunctionAllocationIdentity(identity.id()));
+                if (found != null) {
+                    return found;
+                }
+            }
+            return null;
+        }
+
+        /** The binding of one callee/function ValueId (fail closed when absent). */
+        private FunctionExecutionBinding resolveBindingOf(ValueId callee) {
+            FunctionExecutionBinding binding = bindingOf(callee);
+            if (binding == null) {
+                throw new IllegalStateException("function value " + callee
+                    + " has no registered FunctionExecutionBinding (producer defect)");
+            }
+            return binding;
+        }
+
+        /** The heap function value's resolved execution binding (fail closed). */
+        private FunctionExecutionBinding resolveBindingOfValue(Value value) {
+            FunctionExecutionBinding binding = bindingsByValue.get(value);
+            if (binding == null) {
+                throw new IllegalStateException("function value " + atomOf(value)
+                    + " has no registered FunctionExecutionBinding (producer defect)");
+            }
+            return binding;
         }
 
         /**
@@ -1268,16 +2076,29 @@ public final class SemanticOracle {
          * (already bound); a RETURN transfers the checked value out.
          */
         private Value runBodyBlock(BlockId block, int skipLeading) {
-            List<OpId> ops = table.blockOps().get(block);
+            return runBodyBlock(block, skipLeading, entry);
+        }
+
+        private Value runBodyBlock(BlockId block, int skipLeading, UnitState state) {
+            List<OpId> ops = state.table.blockOps().get(block);
+            if (ops == null) {
+                throw new IllegalStateException("block " + block
+                    + " has no membership row (a malformed table — the production "
+                    + "validator rejects this)");
+            }
             int i = 0;
             for (OpId opId : ops) {
                 if (i++ < skipLeading) {
                     continue;
                 }
-                if (ownedChildren.contains(opId)) {
+                if (state.ownedChildren.contains(opId)) {
                     continue;
                 }
-                SemanticOp op = opsById.get(opId);
+                SemanticOp op = state.opsById.get(opId);
+                if (op == null) {
+                    throw new IllegalStateException("op " + opId
+                        + " is not a member of the validated unit");
+                }
                 try {
                     execute(op);
                 } catch (ReturnSignal signal) {
@@ -1287,10 +2108,459 @@ public final class SemanticOracle {
             return Value.NullValue.INSTANCE;
         }
 
+        /**
+         * FUNCTION_ADAPT creation (D15): SUCCESS publishes a fresh
+         * adapter identity of the target signature; creation evaluates no
+         * thunk and reads no binding (VALUE's single operand already
+         * completed).
+         */
+        private String executeFunctionAdapt(SemanticOp op) {
+            KindPayload.FunctionAdaptPayload payload =
+                (KindPayload.FunctionAdaptPayload) op.payload();
+            Value.AdapterValue adapter = new Value.AdapterValue(payload.targetSignature());
+            FunctionExecutionBinding binding = resolveBindingOf((ValueId) op.result());
+            bindingsByValue.put(adapter, binding);
+            return publish(op, adapter);
+        }
+
+        /**
+         * ASYNC_START — the per-resolution terminal (D13 step 6): the
+         * parameter boundaries in one-based order (zero under
+         * {@code ELIDED_BY_ADAPTER}), then the source's own terminal —
+         * a canonical token plus one body task for a DEAL body; the
+         * adapter protocol plus the nested source {@code ASYNC_START}
+         * for adapter-over-async; one host request with the
+         * {@code AsyncStart} terminal, handle validation as the op's own
+         * {@code ASYNC_OPERATION_HANDLE} terminal check, and a canonical
+         * token bound to the operation label for an async host function;
+         * the callee unit's async {@code EXTERNAL_ENTRY} for an async
+         * external (the caller token aliases the callee canonical token
+         * through {@code ExternalAsyncLink}).
+         */
+        private String executeAsyncStart(SemanticOp op) {
+            KindPayload.AsyncStartPayload payload =
+                (KindPayload.AsyncStartPayload) op.payload();
+            // Under ELIDED_BY_ADAPTER the leading-M operand values are the
+            // source arguments (zero parameter boundaries — the outer
+            // adapter's xN checks are the complete set).
+            List<Value> checkedArgs;
+            if (payload.parameterBoundaryMode() == ParameterBoundaryMode.ELIDED_BY_ADAPTER) {
+                checkedArgs = new ArrayList<>();
+                for (ValueId operand : op.operands()) {
+                    checkedArgs.add(valueOf(operand));
+                }
+            } else {
+                checkedArgs = runParameterBoundaries(op, payload.parameterBoundaryOpIds());
+            }
+            FunctionExecutionBinding binding = switch (payload.callee()) {
+                case KindPayload.CallCallee.Static staticCallee -> staticCallee.binding();
+                case KindPayload.CallCallee.Indirect indirect -> resolveBindingOf(indirect.callee());
+            };
+            AsyncTokenId token = (AsyncTokenId) op.result();
+            switch (binding) {
+                case FunctionExecutionBinding.LoweredBody body -> {
+                    tasks.put(token.tokenId(), new Task(token,
+                        () -> runTaskBody(op, body, checkedArgs)));
+                    readyQueue.add(token.tokenId());
+                }
+                case FunctionExecutionBinding.AdapterBinding adapter -> {
+                    tasks.put(token.tokenId(), new Task(token,
+                        () -> runAdapterOverAsyncTask(op, adapter, checkedArgs)));
+                    readyQueue.add(token.tokenId());
+                }
+                case FunctionExecutionBinding.HostFunction host -> {
+                    requireHostResponder();
+                    String label = payload.hostOperationLabel();
+                    effects.add(new SemanticRuntimeModel.EffectEvent(
+                        SemanticRuntimeModel.EffectEvent.Kind.ASYNC_START_OP, label));
+                    String bound = responder.startAsync(host.hostModuleId(),
+                        host.exportName(), host.descriptor(), List.copyOf(checkedArgs),
+                        label);
+                    if (bound == null) {
+                        throw registryFailure(op, FailurePolicyId.ASYNC_OPERATION_HANDLE,
+                            "async-operation", "nothing");
+                    }
+                    hostOperations.put(token.tokenId(), bound);
+                    tasks.put(token.tokenId(), new Task(token, null));
+                }
+                case FunctionExecutionBinding.HostFunctionValue hostValue -> {
+                    requireHostResponder();
+                    String label = payload.hostOperationLabel();
+                    effects.add(new SemanticRuntimeModel.EffectEvent(
+                        SemanticRuntimeModel.EffectEvent.Kind.ASYNC_START_OP, label));
+                    String bound = responder.startAsync(hostValue.hostModuleId(),
+                        "@value#" + hostValue.materializingBoundaryOpId().id(),
+                        hostValue.descriptor(), List.copyOf(checkedArgs), label);
+                    if (bound == null) {
+                        throw registryFailure(op, FailurePolicyId.ASYNC_OPERATION_HANDLE,
+                            "async-operation", "nothing");
+                    }
+                    hostOperations.put(token.tokenId(), bound);
+                    tasks.put(token.tokenId(), new Task(token, null));
+                }
+                case FunctionExecutionBinding.ExternalFunction external -> {
+                    if (payload.externalAsyncLink() == null) {
+                        throw new IllegalStateException("ASYNC_START(EXTERNAL) without "
+                            + "its ExternalAsyncLink (producer defect)");
+                    }
+                    long calleeTokenId =
+                        payload.externalAsyncLink().calleeTokenId().tokenId();
+                    SemanticOp entry = opOf(new OpId(external.moduleId(), calleeTokenId));
+                    executeAsyncEntry(entry, op.opId(), checkedArgs, calleeTokenId);
+                }
+            }
+            return tokenAtom(token);
+        }
+
+        /** The deterministic host responder guard (fail closed without one). */
+        private void requireHostResponder() {
+            if (responder == null) {
+                throw new IllegalStateException("an async host call requires a "
+                    + "deterministic host responder (the E7 host seam)");
+            }
+        }
+
+        /** One DEAL body task: the body executes exactly once and completes the token. */
+        private Value runTaskBody(SemanticOp op, FunctionExecutionBinding.LoweredBody body,
+                                  List<Value> args) {
+            UnitState state = stateOf(op.opId());
+            bindParamCells(state, body.blockId(), args.size(), args);
+            frames.add(0, body.functionId());
+            try {
+                return runBodyBlock(body.blockId(), args.size(), state);
+            } finally {
+                frames.remove(0);
+                popParamCells();
+            }
+        }
+
+        /**
+         * One adapter-over-async task: the adapter protocol steps, then
+         * the nested source {@code ASYNC_START} (ELIDED_BY_ADAPTER) with
+         * its own per-resolution terminal; the outer alias token
+         * completes by delegation through the source token (zero return
+         * boundaries of its own).
+         */
+        private Value runAdapterOverAsyncTask(SemanticOp op,
+                FunctionExecutionBinding.AdapterBinding adapter, List<Value> checkedArgs) {
+            Value sourceValue = loadAdapterSource(op, adapter);
+            checkAdapterSourceSignature(op, adapter, sourceValue);
+            SemanticOp nested = nestedAsyncStartOf(op);
+            execute(nested);
+            return Value.NullValue.INSTANCE;
+        }
+
+        /** The nested source ASYNC_START parented to the outer adapter-over-async op. */
+        private SemanticOp nestedAsyncStartOf(SemanticOp outer) {
+            for (SemanticOp candidate : stateOf(outer.opId()).unit.ops()) {
+                if (candidate.kind() == SemanticOpKind.ASYNC_START
+                        && outer.opId().equals(candidate.origin().parentOpId())) {
+                    return candidate;
+                }
+            }
+            throw new IllegalStateException("the adapter-over-async task has no nested "
+                + "source ASYNC_START (producer defect)");
+        }
+
+        /** The callee unit's async EXTERNAL_ENTRY under the triggering caller op. */
+        private void executeAsyncEntry(SemanticOp entry, OpId callerOpId, List<Value> args,
+                                       long canonicalTokenId) {
+            KindPayload.ExternalEntryPayload entryPayload =
+                (KindPayload.ExternalEntryPayload) entry.payload();
+            if (!entryPayload.async()) {
+                throw new IllegalStateException("the async external call's entry is not "
+                    + "async (producer defect)");
+            }
+            AsyncTokenId token = new AsyncTokenId.Canonical(canonicalTokenId,
+                AsyncTokenOwner.DEAL_BODY_TASK);
+            emitStartParented(entry, callerOpId, List.of());
+            tasks.put(canonicalTokenId, new Task(token, () -> runEntryTask(entry, args)));
+            readyQueue.add(canonicalTokenId);
+            emitSuccessParented(entry, callerOpId, tokenAtom(token));
+        }
+
+        /** One async entry body task (the callee unit's canonical token task). */
+        private Value runEntryTask(SemanticOp entry, List<Value> args) {
+            KindPayload.ExternalEntryPayload entryPayload =
+                (KindPayload.ExternalEntryPayload) entry.payload();
+            UnitState state = stateOf(entry.opId());
+            LoweredFunction function = state.unit.functions().get(entryPayload.function());
+            if (function == null) {
+                throw new IllegalStateException("EXTERNAL_ENTRY resolves a missing "
+                    + "lowered function " + entryPayload.function());
+            }
+            bindParamCells(state, function.body(),
+                entryPayload.signature().paramTypes().size(), args);
+            frames.add(0, entryPayload.function());
+            try {
+                return runBodyBlock(function.body(),
+                    entryPayload.signature().paramTypes().size(), state);
+            } finally {
+                frames.remove(0);
+                popParamCells();
+            }
+        }
+
+        /** The deterministic FIFO task drain (no parallel source execution). */
+        private void drainReadyTasks() {
+            while (!readyQueue.isEmpty()) {
+                long tokenId = readyQueue.poll();
+                Task task = tasks.get(tokenId);
+                if (task == null || task.ran || task.completed) {
+                    continue;
+                }
+                task.ran = true;
+                if (task.body == null) {
+                    continue; // host operations complete through the responder.
+                }
+                try {
+                    task.value = task.body.get();
+                    task.completed = true;
+                } catch (DealFailure failure) {
+                    task.failure = failure;
+                    task.completed = true;
+                }
+            }
+        }
+
+        /**
+         * AWAIT — the completion position (D13 step 6): the deterministic
+         * FIFO drain first, then the token's completion. Alias tokens
+         * complete exactly when their canonical referent completes, with
+         * the referent's completion value/error unchanged; a failed
+         * operation publishes the identical error (never a re-check or a
+         * synthesized copy) and a completed value crosses the single
+         * {@code ASYNC_COMPLETION} boundary at the await site. Host
+         * operation tokens complete from the host through the responder.
+         */
+        private String executeAwait(SemanticOp op) {
+            KindPayload.AwaitPayload payload = (KindPayload.AwaitPayload) op.payload();
+            drainReadyTasks();
+            long canonicalId = canonicalReferent(payload.token());
+            Task task = tasks.get(canonicalId);
+            if (task == null) {
+                throw new IllegalStateException("AWAIT consumes an unbound token "
+                    + payload.token() + " (producer defect)");
+            }
+            if (!task.completed) {
+                // A host operation: the completion arrives from the host.
+                String label = hostOperations.get(canonicalId);
+                if (label == null) {
+                    throw new IllegalStateException("the AWAIT token " + payload.token()
+                        + " has no task and no host operation label (producer defect)");
+                }
+                requireHostResponder();
+                HostResponder.SyncOutcome outcome = responder.completeAsync(label);
+                switch (outcome) {
+                    case HostResponder.SyncOutcome.Returned returned -> {
+                        effects.add(new SemanticRuntimeModel.EffectEvent(
+                            SemanticRuntimeModel.EffectEvent.Kind.ASYNC_COMPLETE_RETURN,
+                            label + "=" + atomOf(returned.value())));
+                        task.value = returned.value();
+                        task.completed = true;
+                    }
+                    case HostResponder.SyncOutcome.Thrown thrown -> {
+                        effects.add(new SemanticRuntimeModel.EffectEvent(
+                            SemanticRuntimeModel.EffectEvent.Kind.ASYNC_COMPLETE_THROW,
+                            label + "!" + thrown.code()));
+                        task.failure = new DealFailure(thrown.code(), thrown.message(),
+                            op.origin(), null, null, null, List.copyOf(frames));
+                        task.completed = true;
+                    }
+                }
+            }
+            if (task.failure != null) {
+                throw task.failure; // the identical error — never re-checked or copied
+            }
+            Value completed = task.value == null ? Value.NullValue.INSTANCE : task.value;
+            SemanticOp boundary = opOf(payload.completionBoundaryOpId());
+            Value checked = runBoundaryChild(boundary, completed, BoundaryContext.none());
+            return publish(op, checked);
+        }
+
+        /** The canonical referent token identity (alias chains resolve transitively). */
+        long canonicalReferent(AsyncTokenId token) {
+            AsyncTokenId current = token;
+            Set<Long> seen = new HashSet<>();
+            while (current instanceof AsyncTokenId.Alias alias) {
+                if (!seen.add(current.tokenId())) {
+                    throw new IllegalStateException("alias cycle over token " + current);
+                }
+                current = alias.referent();
+            }
+            return current.tokenId();
+        }
+
+        /**
+         * EXPORT_PUBLISH — the atomic publication record: the
+         * MODULE_EXPORT boundary (descriptor-kind) checks the published
+         * value, then the publication is the unit-level export fact
+         * (inert at execution — the exports are recorded statically).
+         */
+        private String executeExportPublish(SemanticOp op) {
+            KindPayload.ExportPublishPayload payload =
+                (KindPayload.ExportPublishPayload) op.payload();
+            Value value = valueOf(payload.value());
+            for (SemanticOp candidate : stateOf(op.opId()).unit.ops()) {
+                if (candidate.kind() == SemanticOpKind.BOUNDARY
+                        && op.opId().equals(candidate.origin().parentOpId())
+                        && ((KindPayload.BoundaryPayload) candidate.payload()).kind()
+                            == BoundaryKind.MODULE_EXPORT) {
+                    runBoundaryChild(candidate, value, BoundaryContext.none());
+                }
+            }
+            return null;
+        }
+
+        /**
+         * ENTRY_INVOKE — delegates exactly one {@code CALL(DIRECT)} to
+         * {@code main}: null and exits the program after the terminal.
+         */
+        private String executeEntryInvoke(SemanticOp op) {
+            SemanticOp call = entryCallOf(op);
+            execute(call);
+            entryResultAtom = atomOf(valueOf((ValueId) call.result()));
+            return null;
+        }
+
+        /** The delegated CALL child parented to the entry op. */
+        private SemanticOp entryCallOf(SemanticOp entry) {
+            for (SemanticOp candidate : stateOf(entry.opId()).unit.ops()) {
+                if (candidate.kind() == SemanticOpKind.CALL
+                        && entry.opId().equals(candidate.origin().parentOpId())) {
+                    return candidate;
+                }
+            }
+            throw new IllegalStateException("ENTRY_INVOKE without its delegated CALL "
+                + "(producer defect)");
+        }
+
+        /**
+         * The CALLBACK_INVOKE execution (host-driven, top-level): one
+         * START event with the scripted argument inputs and no
+         * {@code parentOpId} (the scenario {@code InvokeCallback} step
+         * triggers it), the {@code HOST_TO_DEAL} parameter boundaries in
+         * one-based order, the resolved execution binding, and the single
+         * {@code DEAL_TO_HOST} return boundary — by the executed body's
+         * {@code RETURN} for bodies and DEAL-body-source adapters, by the
+         * callback op for host/external functions and host/external-source
+         * adapters — then the op's terminal event (SUCCESS with the
+         * checked value, or FAILURE with the propagated error). Sync
+         * functions only.
+         */
+        private Value executeCallback(SemanticOp callback, List<Value> args) {
+            KindPayload.CallbackInvokePayload payload =
+                (KindPayload.CallbackInvokePayload) callback.payload();
+            List<String> inputs = new ArrayList<>();
+            for (Value arg : args) {
+                inputs.add(atomOf(arg));
+            }
+            emitStart(callback, inputs);
+            try {
+                List<Value> checked = new ArrayList<>();
+                for (int i = 0; i < payload.parameterBoundaryOpIds().size(); i++) {
+                    SemanticOp boundary = opOf(payload.parameterBoundaryOpIds().get(i));
+                    Value arg = i < args.size() ? args.get(i)
+                        : Value.MissingValue.INSTANCE;
+                    putValue(((KindPayload.BoundaryPayload) boundary.payload()).input(),
+                        arg);
+                    checked.add(runBoundaryChild(boundary, arg,
+                        BoundaryContext.parameter(i + 1)));
+                }
+                FunctionExecutionBinding binding = resolveBindingOf(payload.function());
+                Value returned = switch (binding) {
+                    case FunctionExecutionBinding.LoweredBody body -> {
+                        UnitState state = stateOf(callback.opId());
+                        bindParamCells(state, body.blockId(),
+                            payload.descriptor().paramTypes().size(), checked);
+                        frames.add(0, body.functionId());
+                        try {
+                            yield runBodyBlock(body.blockId(),
+                                payload.descriptor().paramTypes().size(), state);
+                        } finally {
+                            frames.remove(0);
+                            popParamCells();
+                        }
+                    }
+                    case FunctionExecutionBinding.AdapterBinding adapter -> {
+                        int m = adapter.sourceSignature().paramTypes().size();
+                        Value sourceValue = loadAdapterSource(callback, adapter);
+                        checkAdapterSourceSignature(callback, adapter, sourceValue);
+                        FunctionExecutionBinding sourceBinding =
+                            resolveBindingOfValue(sourceValue);
+                        List<Value> leading = List.copyOf(checked.subList(0, m));
+                        yield switch (sourceBinding) {
+                            case FunctionExecutionBinding.LoweredBody body -> {
+                                UnitState state = stateOf(callback.opId());
+                                bindParamCells(state, body.blockId(), m, leading);
+                                frames.add(0, body.functionId());
+                                try {
+                                    yield runBodyBlock(body.blockId(), m, state);
+                                } finally {
+                                    frames.remove(0);
+                                    popParamCells();
+                                }
+                            }
+                            case FunctionExecutionBinding.HostFunction host -> {
+                                Value value = invokeHostRequest(callback,
+                                    host.hostModuleId(), host.exportName(),
+                                    host.descriptor(), leading);
+                                yield runBoundaryChild(opOf(payload.returnBoundaryOpId()),
+                                    value, BoundaryContext.none());
+                            }
+                            case FunctionExecutionBinding.HostFunctionValue hostValue -> {
+                                Value value = invokeHostRequest(callback,
+                                    hostValue.hostModuleId(),
+                                    "@value#" + hostValue.materializingBoundaryOpId().id(),
+                                    hostValue.descriptor(), leading);
+                                yield runBoundaryChild(opOf(payload.returnBoundaryOpId()),
+                                    value, BoundaryContext.none());
+                            }
+                            case FunctionExecutionBinding.ExternalFunction external -> {
+                                Value value = invokeHostRequest(callback,
+                                    external.moduleId(), external.exportName(),
+                                    external.descriptor(), leading);
+                                yield runBoundaryChild(opOf(payload.returnBoundaryOpId()),
+                                    value, BoundaryContext.none());
+                            }
+                            case FunctionExecutionBinding.AdapterBinding nested ->
+                                throw new IllegalStateException("adapter-of-adapter "
+                                    + "invocation is outside the statically-resolved "
+                                    + "slice (ISSUE-0531)");
+                        };
+                    }
+                    case FunctionExecutionBinding.HostFunction host -> {
+                        Value value = invokeHostRequest(callback, host.hostModuleId(),
+                            host.exportName(), host.descriptor(), checked);
+                        yield runBoundaryChild(opOf(payload.returnBoundaryOpId()), value,
+                            BoundaryContext.none());
+                    }
+                    case FunctionExecutionBinding.HostFunctionValue hostValue -> {
+                        Value value = invokeHostRequest(callback, hostValue.hostModuleId(),
+                            "@value#" + hostValue.materializingBoundaryOpId().id(),
+                            hostValue.descriptor(), checked);
+                        yield runBoundaryChild(opOf(payload.returnBoundaryOpId()), value,
+                            BoundaryContext.none());
+                    }
+                    case FunctionExecutionBinding.ExternalFunction external -> {
+                        Value value = invokeHostRequest(callback, external.moduleId(),
+                            external.exportName(), external.descriptor(), checked);
+                        yield runBoundaryChild(opOf(payload.returnBoundaryOpId()), value,
+                            BoundaryContext.none());
+                    }
+                };
+                emitSuccess(callback, atomOf(returned));
+                return returned;
+            } catch (DealFailure failure) {
+                emitFailure(callback, failure);
+                throw failure;
+            }
+        }
+
         private String executeIntrinsic(SemanticOp op) {
             KindPayload.IntrinsicCallPayload payload =
                 (KindPayload.IntrinsicCallPayload) op.payload();
-            Value input = values.get(payload.input());
+            Value input = valueOf(payload.input());
             Value result = switch (payload.kind()) {
                 case INT_CONVERT -> convertInt(op, input);
                 case NUMBER_CONVERT -> convertNumber(op, input);
@@ -1357,6 +2627,7 @@ public final class SemanticOracle {
                 case Value.TableValue ignored -> "table";
                 case Value.ArrayValue ignored -> "array";
                 case Value.FuncValue ignored -> "function";
+                case Value.AdapterValue ignored -> "function";
                 case Value.IntrinsicValue ignored -> "function";
                 case Value.ErrorValue ignored -> "class:@builtin/Error";
                 case Value.MissingValue ignored -> "missing";
@@ -1389,7 +2660,7 @@ public final class SemanticOracle {
             // scalar encoding" at the boundary origin).
             List<Value> checked = new ArrayList<>();
             for (int i = 0; i < payload.args().size(); i++) {
-                Value value = values.get(payload.args().get(i));
+                Value value = valueOf(payload.args().get(i));
                 SemanticOp boundary = parameterBoundaryOf(op, i);
                 if (boundary != null) {
                     value = runBoundaryChild(boundary, value,
@@ -1437,7 +2708,7 @@ public final class SemanticOracle {
 
         /** The STDLIB_PARAMETER child for the i-th argument, or null. */
         private SemanticOp parameterBoundaryOf(SemanticOp op, int index) {
-            List<SemanticOp> children = childrenByParent.get(op.opId());
+            List<SemanticOp> children = stateOf(op.opId()).childrenByParent.get(op.opId());
             if (children == null) {
                 return null;
             }
@@ -1493,6 +2764,8 @@ public final class SemanticOracle {
                     stdlibTableCarrierOf(table));
                 case Value.ArrayValue array -> stdlibArrayCarrierOf(array);
                 case Value.FuncValue ignored ->
+                    new SharedStdlibSemantics.Value.Other(ActualKind.FUNCTION, null);
+                case Value.AdapterValue ignored ->
                     new SharedStdlibSemantics.Value.Other(ActualKind.FUNCTION, null);
                 case Value.IntrinsicValue ignored ->
                     new SharedStdlibSemantics.Value.Other(ActualKind.FUNCTION, null);
@@ -1637,7 +2910,7 @@ public final class SemanticOracle {
 
         /** The STDLIB_RETURN child, or null. */
         private SemanticOp returnBoundaryOf(SemanticOp op) {
-            List<SemanticOp> children = childrenByParent.get(op.opId());
+            List<SemanticOp> children = stateOf(op.opId()).childrenByParent.get(op.opId());
             if (children == null) {
                 return null;
             }
@@ -1653,7 +2926,7 @@ public final class SemanticOracle {
 
         private String executeBranch(SemanticOp op) {
             KindPayload.BranchPayload payload = (KindPayload.BranchPayload) op.payload();
-            Value condition = values.get(payload.condition());
+            Value condition = valueOf(payload.condition());
             boolean truthy = ((Value.BoolValue) condition).value();
             switch (payload.selector()) {
                 case IF -> {
@@ -1675,14 +2948,14 @@ public final class SemanticOracle {
                         return publish(op, condition);
                     }
                     runBlock(payload.selectedBlock());
-                    return publish(op, values.get((ValueId) op.result()));
+                    return publish(op, valueOf((ValueId) op.result()));
                 }
                 case LOGICAL_OR -> {
                     if (truthy) {
                         return publish(op, condition);
                     }
                     runBlock(payload.selectedBlock());
-                    return publish(op, values.get((ValueId) op.result()));
+                    return publish(op, valueOf((ValueId) op.result()));
                 }
                 default -> throw new IllegalStateException("BRANCH selector "
                     + payload.selector());
@@ -1695,7 +2968,7 @@ public final class SemanticOracle {
                 case WHILE -> {
                     while (true) {
                         runBlock(payload.initBlock());
-                        if (!((Value.BoolValue) values.get(payload.condition())).value()) {
+                        if (!((Value.BoolValue) valueOf(payload.condition())).value()) {
                             break;
                         }
                         try {
@@ -1715,7 +2988,7 @@ public final class SemanticOracle {
                 case FOR -> {
                     runBlock(payload.initBlock());
                     while (true) {
-                        if (!((Value.BoolValue) values.get(payload.condition())).value()) {
+                        if (!((Value.BoolValue) valueOf(payload.condition())).value()) {
                             break;
                         }
                         boolean broken = false;
@@ -1754,7 +3027,7 @@ public final class SemanticOracle {
 
         private String executeForEach(SemanticOp op) {
             KindPayload.ForEachPayload payload = (KindPayload.ForEachPayload) op.payload();
-            Value iterable = values.get(payload.iterable());
+            Value iterable = valueOf(payload.iterable());
             switch (payload.mode()) {
                 case ARRAY_VALUES -> {
                     Value.ArrayValue array = (Value.ArrayValue) iterable;
@@ -1867,7 +3140,7 @@ public final class SemanticOracle {
 
         private String executeThrow(SemanticOp op) {
             KindPayload.ThrowPayload payload = (KindPayload.ThrowPayload) op.payload();
-            Value.ErrorValue error = (Value.ErrorValue) values.get(payload.errorValue());
+            Value.ErrorValue error = (Value.ErrorValue) valueOf(payload.errorValue());
             throw new DealFailure(error.code(), error.message(), op.origin(), null, null,
                 null, List.copyOf(frames));
         }
@@ -1875,8 +3148,8 @@ public final class SemanticOracle {
         private String executeReturn(SemanticOp op) {
             KindPayload.ReturnPayload payload = (KindPayload.ReturnPayload) op.payload();
             Value value = payload.value() == null
-                ? Value.NullValue.INSTANCE : values.get(payload.value());
-            SemanticOp boundary = opsById.get(payload.returnBoundaryOpId());
+                ? Value.NullValue.INSTANCE : valueOf(payload.value());
+            SemanticOp boundary = opOf(payload.returnBoundaryOpId());
             Value checked = runBoundaryChild(boundary, value, BoundaryContext.none());
             throw new ReturnSignal(checked);
         }
@@ -1907,7 +3180,12 @@ public final class SemanticOracle {
         private String executeExportRead(SemanticOp op) {
             KindPayload.ExportReadPayload payload =
                 (KindPayload.ExportReadPayload) op.payload();
-            Value value = new Value.IntrinsicValue("export:" + payload.name());
+            Value value = new Value.IntrinsicValue("export:" + payload.module().path()
+                + "." + payload.name());
+            FunctionExecutionBinding binding = bindingOf((ValueId) op.result());
+            if (binding != null) {
+                bindingsByValue.put(value, binding);
+            }
             return publish(op, value);
         }
 
@@ -1919,7 +3197,7 @@ public final class SemanticOracle {
 
         private String executeDiscard(SemanticOp op) {
             KindPayload.DiscardPayload payload = (KindPayload.DiscardPayload) op.payload();
-            Value discarded = values.get(payload.value());
+            Value discarded = valueOf(payload.value());
             // The entry delegation discards the main-call result: record it
             // as the run result atom.
             if (isEntryDelegationDiscard(op)) {

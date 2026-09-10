@@ -419,6 +419,7 @@ public final class LuaSemanticEmitter {
                 case DISCARD -> emitDiscard(op);
                 case MODULE_IMPORT -> emitModuleImport(op);
                 case EXPORT_READ -> emitExportRead(op);
+                case ENTRY_INVOKE -> emitEntryInvoke(op);
                 default -> throw new IllegalStateException("op kind " + op.kind()
                     + " has no shared-LuaJIT emission in this decomposition-tail "
                     + "domain");
@@ -1663,6 +1664,21 @@ public final class LuaSemanticEmitter {
 
         private void emitDiscard(SemanticOp op) {
             emitStart(op);
+            emitPlainSuccess(op);
+        }
+
+        /**
+         * ENTRY_INVOKE — delegates exactly one CALL(DIRECT) to main
+         * (its owned child) and exits after the terminal.
+         */
+        private void emitEntryInvoke(SemanticOp op) {
+            emitStart(op);
+            for (SemanticOp candidate : opsById.values()) {
+                if (candidate.kind() == SemanticOpKind.CALL
+                        && op.opId().equals(candidate.origin().parentOpId())) {
+                    emitCall(candidate);
+                }
+            }
             emitPlainSuccess(op);
         }
 

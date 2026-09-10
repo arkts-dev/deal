@@ -225,7 +225,22 @@ public final class SemanticRuntimeModel {
     /** One ordered external effect of the closed effect protocol. */
     public record EffectEvent(Kind kind, String text) {
 
-        public enum Kind { CONSOLE_WRITE }
+        public enum Kind {
+            /** A console write (the stdlib console algorithm's ordered effect). */
+            CONSOLE_WRITE,
+            /** A host call request (the E7 host seam; callee discriminator text). */
+            HOST_CALL,
+            /** A host call terminal: the returned value (atom text). */
+            HOST_RETURN,
+            /** A host call terminal: the thrown host error (code text). */
+            HOST_THROW,
+            /** An async host start (operation-label text). */
+            ASYNC_START_OP,
+            /** An async host completion by value (atom text). */
+            ASYNC_COMPLETE_RETURN,
+            /** An async host completion by throw (code text). */
+            ASYNC_COMPLETE_THROW
+        }
 
         public EffectEvent {
             Objects.requireNonNull(kind, "kind must not be null");
