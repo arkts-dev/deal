@@ -58,9 +58,12 @@ import java.util.regex.Pattern;
  *       fixture (runtime tag byte-match at load and at the call
  *       boundary), and the dotted-legacy tag
  *       {@code @host.cfg/ServerConfig} fails E8011 end-to-end against
- *       the canonical projection. The JVM arm pins the retained
- *       boundary: host class exports stay E6000 at the import (the
- *       jvm-v12-host-abi-completion lane owns their carriers).</li>
+ *       the canonical projection. The JVM arm compiles the declared
+ *       host class export into the synthesized shared record with the
+ *       canonical projection (ISSUE-0303,
+ *       jvm-v12-host-abi-completion D4), never the legacy tag, and
+ *       runs the constructed record across the class-typed boundary
+ *       through a Java host implementation.</li>
  *   <li><b>Gate 4 — unrepresentable required public identity</b> (E2
  *       D6 component rules): a configured root text containing a
  *       descriptor metacharacter ({@code a@b}) and a source-relative
@@ -766,8 +769,9 @@ public class E2IdentityIntegrationGatesTest {
     // Gate 3. Dotted externals key (host.cfg): the legal
     //         @$external/host.cfg/<Name> projection through the
     //         production load_host seam; the dotted-legacy tag fails
-    //         E8011 end-to-end; the JVM host-class-export boundary stays
-    //         the pinned E6000.
+    //         E8011 end-to-end; the JVM arm synthesizes the shared
+    //         host-class record with the canonical projection and
+    //         crosses it through the Java host (ISSUE-0303 D4).
     // =========================================================================
 
     private static void gateDottedExternals() throws Exception {
@@ -921,27 +925,74 @@ public class E2IdentityIntegrationGatesTest {
                     + " @$external/host.cfg/ServerConfig at host load: "
                     + legacyRun.output());
 
-            // JVM arm: host class exports stay the pinned E6000 boundary
-            // (jvm-v12-host-abi-completion owns their carriers); the
-            // compile fails closed before any artifact.
+            // JVM arm: ISSUE-0303 (jvm-v12-host-abi-completion D4)
+            // supports declared host class exports — the compile
+            // succeeds, the synthesized shared record carries the
+            // canonical projection, the dotted-legacy tag appears
+            // nowhere, and the constructed record crosses the
+            // class-typed boundary through the Java host.
             Path jvmOut = base.resolve("out_jvm");
             String[] jvm = runCliCapturingErr(new String[]{
                 "compile", entry.toString(), "--backend", "jvm",
                 "--output", jvmOut.toString()});
-            check("1".equals(jvm[0])
-                    && jvm[1].contains("E6000")
-                    && jvm[1].contains("host class exports are not"
-                        + " supported"),
-                "the JVM arm of the dotted-externals class fixture stays"
-                    + " the pinned E6000 boundary (host class exports are"
-                    + " the host-ABI lane's carriers): " + jvm[1]);
-            check(!Files.exists(jvmOut),
-                "the JVM E6000 publishes no artifact");
+            check("0".equals(jvm[0]),
+                "the dotted-externals project compiles on JVM (declared"
+                    + " host class exports are supported): " + jvm[1]);
+            boolean jvmCanonical = false;
+            String serverRecord = null;
+            for (String rel : artifactFilesUnder(jvmOut)) {
+                if (!rel.endsWith(".java")) continue;
+                String content = Files.readString(jvmOut.resolve(rel),
+                    StandardCharsets.UTF_8);
+                if (content.contains("\"" + DESC_EXT_SERVER + "\"")) {
+                    jvmCanonical = true;
+                }
+                check(!content.contains("\"" + DESC_EXT_SERVER_LEGACY
+                        + "\""),
+                    "no JVM producer emits the dotted v1.1 emission shape"
+                        + " @host.cfg/ServerConfig");
+                java.util.regex.Matcher rec = Pattern.compile(
+                    "static final class (\\$Host\\$[A-Za-z0-9_$]+"
+                        + "ServerConfig) \\{").matcher(content);
+                if (rec.find()) {
+                    serverRecord = rec.group(1);
+                }
+            }
+            check(jvmCanonical,
+                "the synthesized JVM host-class record carries the"
+                    + " canonical identity @$external/host.cfg/ServerConfig");
+            check(serverRecord != null,
+                "the synthesized shared ServerConfig record class exists"
+                    + " in the emitted JVM artifact set");
+            // The Java host implementation — the JVM analog of the Lua
+            // host fixture above: static export methods plus the
+            // mandatory <C>_defaults maps, declared over the JVM-mapped
+            // carriers (the synthesized shared record).
+            write(jvmOut, "HostCfg.java",
+                "public final class HostCfg {\n"
+                    + "    public static final java.util.Map<String, Object>"
+                    + " Endpoint_defaults = java.util.Map.of(\"path\", \"/\");\n"
+                    + "    public static final java.util.Map<String, Object>"
+                    + " ServerConfig_defaults = java.util.Map.of(\"port\","
+                    + " Integer.valueOf(8080), \"endpoint\", new Object());\n"
+                    + "    public static Object describe($DealRt."
+                    + serverRecord + " s) { return s.endpoint.path"
+                    + " + \":\" + s.port; }\n"
+                    + "}\n");
+            ProcessOutcome jvmRun = javacAndRun(jvmOut);
+            check(jvmRun.exitCode() == 0
+                    && jvmRun.output().trim().equals("/api:9090"),
+                "the dotted-externals project runs under JVM: the"
+                    + " synthesized record crosses the class-typed host"
+                    + " boundary and the Java host reads its fields ("
+                    + DESC_EXT_DESCRIBE + "): " + jvmRun.output());
 
-            // Legacy and privacy pins over the LuaJIT artifact set.
+            // Legacy and privacy pins over both artifact sets.
             assertNoLegacyEmission(luaDir, "dotted-externals LuaJIT");
+            assertNoLegacyEmission(jvmOut, "dotted-externals JVM");
             String digest = deploymentDigest(entry.toString());
             assertPrivacy(luaDir, digest, "dotted-externals LuaJIT");
+            assertPrivacy(jvmOut, digest, "dotted-externals JVM");
         } finally {
             deleteRecursively(base);
         }

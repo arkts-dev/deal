@@ -4757,7 +4757,7 @@ public final class JvmBackend {
         emitLine("            if (v == null) return null;");
         emitLine("            break;");
         emitLine("    }");
-        emitLine("    if (d.startsWith(\"@\")) return $check(desc, v);");
+        emitLine("    if (d.indexOf('@') == 0) return $check(desc, v);");
         emitLine("    if (completion) throw new DealError(\"E8001\", \"expected \" + desc + \", got \" + $describe(v));");
         emitLine("    throw new DealError(\"E8010\", \"host function '\" + fn + \"' return value 1 type mismatch: expected \" + desc + \", got \" + $describe(v));");
         emitLine("}");
@@ -4779,7 +4779,7 @@ public final class JvmBackend {
         emitLine("        if (v == null) return null;");
         emitLine("        d = d.substring(1);");
         emitLine("    }");
-        emitLine("    if (d.startsWith(\"@\")) return $check(desc, v);");
+        emitLine("    if (d.indexOf('@') == 0) return $check(desc, v);");
         emitLine("    try { return $check(desc, v); }");
         emitLine("    catch (DealError inner) {");
         emitLine("        throw new DealError(\"E8010\", \"parameter \" + i + \" type mismatch: \" + inner.getMessage());");
