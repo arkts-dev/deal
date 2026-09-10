@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "feature": "directives",
+  "spec": "Declaration metadata versioning — delimiter-free 1.2 is accepted",
+  "description": "@deal-version1.2 reaches numeric version validation and accepts exactly (1,2)",
+  "expected": "compile-ok",
+  "backends": ["luajit", "jvm"],
+  "invocation": "compile-only",
+  "support": []
+}

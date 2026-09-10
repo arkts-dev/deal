@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "feature": "c-ffi",
+  "spec": "Valid but unloadable native configuration \u2014 cached FFI_LIBRARY_LOAD",
+  "description": "a valid ABSOLUTE_PATH nativeLibrary whose dlopen fails raises FFI_LIBRARY_LOAD at runtime; the exact same load re-raises the cached error value and marks the fresh bindings FAILED (never an infrastructure match)",
+  "expected": {
+    "runtime-error": "FFI_LIBRARY_LOAD"
+  },
+  "backends": [
+    "luajit"
+  ],
+  "invocation": "direct-main",
+  "linkedRecord": "c-ffi/linked-jvm-e6003/record",
+  "support": [],
+  "native": {
+    "entries": [
+      {
+        "importSpecifier": "native/math",
+        "declaration": "src/lib.d.deal",
+        "library": "/v12-feature-unloadable/missing-fixture.so"
+      }
+    ]
+  }
+}

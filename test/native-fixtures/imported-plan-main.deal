@@ -1,0 +1,33 @@
+// ISSUE-0165 staged imported class-plan oracle fixture (E13 gate
+// evidence): a class default that constructs an imported class directly —
+// the imported class's default plan is a runtime dependency edge (D5,
+// IMPORTED_CLASS_DEFAULT_PLAN). The gate compiles it through the
+// production orchestrator and executes it once on LuaJIT; the JVM leg
+// stays an honest E6000 in this revision (non-nullable imported-class
+// fields are a sibling-lane deliverable, absent from the canonical
+// tree).
+import * as M from "./mod"
+
+class Holder {
+  inner: M.Imported = {};
+}
+
+export function main(): null {
+  let h: Holder = {};
+  if (h.inner.v !== 7) {
+    throw { code: "TEST_FAIL", message: "imported class plan default mismatch" };
+  }
+  // Per-attempt freshness: each reconstruction runs the imported plan
+  // once and publishes a distinct instance.
+  let h2: Holder = {};
+  if (h.inner === h2.inner) {
+    throw { code: "TEST_FAIL", message: "imported class plan default shared" };
+  }
+  // The provided overlay: a provided imported instance wins over the
+  // default and the default never runs.
+  let h3: Holder = { inner: h.inner };
+  if (h3.inner !== h.inner) {
+    throw { code: "TEST_FAIL", message: "provided imported instance lost" };
+  }
+  return null;
+}

@@ -1,0 +1,12 @@
+// ISSUE-0165 C_FFI linked JVM record: the same extern-C project shape
+// as the runtime record. The JVM backend rejects every extern-C module
+// with E6003 FFI_UNSUPPORTED_BACKEND at @extern-c after semantic/
+// declaration validation and before any artifact write.
+
+import * as math from "native/math"
+import * as duala from "native/dualA"
+import * as dualb from "native/dualB"
+
+export function main(): null {
+  return null;
+}

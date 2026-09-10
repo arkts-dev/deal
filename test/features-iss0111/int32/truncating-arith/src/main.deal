@@ -1,0 +1,19 @@
+// ISSUE-0165 SIGNED_INT32: truncating division/remainder and the
+// immediate-minimum literal produce identical LuaJIT/JVM output.
+import * as console from "std/console"
+
+export function main(): null {
+  let pos: int = 7;
+  let neg: int = -7;
+  let two: int = 2;
+  if (pos / two !== 3) { throw { code: "TEST_FAIL", message: "7/2" }; }
+  if (neg / two !== -3) { throw { code: "TEST_FAIL", message: "-7/2" }; }
+  if (pos % two !== 1) { throw { code: "TEST_FAIL", message: "7%2" }; }
+  if (neg % two !== -1) { throw { code: "TEST_FAIL", message: "-7%2" }; }
+  let min: int = -2147483648;
+  if (min !== -2147483648) { throw { code: "TEST_FAIL", message: "min" }; }
+  let max: int = 2147483647;
+  if (max !== 2147483647) { throw { code: "TEST_FAIL", message: "max" }; }
+  console.log("V12FEATURE-OK:int32/truncating-arith");
+  return null;
+}

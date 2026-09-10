@@ -1,0 +1,6 @@
+// Provider variant B: marker() derives 24 — a different behavior for
+// the same import spelling; the pinned oracle result of the second
+// compilation must differ from variant A.
+export function marker(): int {
+  return 6 * 4;
+}

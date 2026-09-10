@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "feature": "c-ffi",
+  "spec": "Configuration classification \u2014 a manifest-relative nativeLibrary with a library present at the relative location",
+  "description": "the nativeLibrary contains '/' without a leading one: the production classifier selects MANIFEST_RELATIVE_PATH, the shared object lives at exactly that relative path inside the temporary project, dlopen resolves it, and the same-symbol dual signature runs through the handle-scoped resolver to a working call",
+  "expected": "runtime-ok",
+  "backends": ["luajit"],
+  "invocation": "direct-main",
+  "linkedRecord": "c-ffi/linked-jvm-e6003/record",
+  "support": [],
+  "native": {
+    "entries": [
+      {
+        "importSpecifier": "native/rel",
+        "declaration": "src/lib.d.deal",
+        "library": "native/ffi-runtime-dual-a.so"
+      }
+    ]
+  }
+}

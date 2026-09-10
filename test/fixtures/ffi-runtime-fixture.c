@@ -252,6 +252,19 @@ const char *fixture_long_string(void)
     return fixture_long_string_buffer;
 }
 
+int fixture_echo_len(const char *s)
+{
+    /* The DEAL-side pre-call conversion rejects an embedded NUL with
+     * FFI_INVALID_STRING before this body runs; a clean parameter
+     * reaches here and reports its length. */
+    int n = 0;
+    fixture_counter++;
+    while (s[n] != '\0') {
+        n++;
+    }
+    return n;
+}
+
 const char *fixture_echo_long(const char *s)
 {
     int i = 0;

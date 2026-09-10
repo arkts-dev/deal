@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "feature": "project-config",
+  "spec": "Module resolution — an out-of-root project class is E2010",
+  "description": "a class in ../shared has no representable configured-root identity",
+  "expected": { "compile-error": "E2010" },
+  "backends": ["luajit", "jvm"],
+  "invocation": "compile-only",
+  "support": []
+}

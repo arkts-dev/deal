@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "feature": "bytes-defaults",
+  "spec": "spec-v1.2.md §Classes / Construction",
+  "description": "per-attempt bytes defaults: fresh zero-filled instances per construction with the declared default length, and provided fields overlay defaults before publication",
+  "expected": "runtime-ok",
+  "backends": ["luajit", "jvm"],
+  "invocation": "synthetic-main",
+  "oracle": { "exportName": "defaultsOracle", "functionDescriptor": "()->int" },
+  "support": []
+}

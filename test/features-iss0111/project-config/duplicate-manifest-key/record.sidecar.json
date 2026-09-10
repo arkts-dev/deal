@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "feature": "project-config",
+  "spec": "Package manifest — duplicate object members are E2010 at the second key",
+  "description": "the gate publishes manifest-inject.json as deal.json with a duplicated languageVersion; the pinned duplicate-member E2010 fragment must be observed before overrides",
+  "expected": { "compile-error": "E2010" },
+  "backends": ["luajit", "jvm"],
+  "invocation": "compile-only",
+  "support": [],
+  "manifestPolicy": "inject",
+  "manifestErrorFragment": "duplicate member 'languageVersion'"
+}

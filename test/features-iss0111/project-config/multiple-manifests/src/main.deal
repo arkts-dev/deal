@@ -1,0 +1,7 @@
+// ISSUE-0165 PROJECT_CONFIG: the entry's directory and its ancestor
+// both carry deal.json — the production locator reports the
+// multiple-manifest discovery E2010 with a candidate note per manifest
+// instead of guessing.
+export function main(): null {
+  return null;
+}

@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "feature": "bytes-defaults",
+  "spec": "spec-v1.2.md §Module resolution and cycles",
+  "description": "a runtime default-dependency cycle is E2005 with no plans or artifacts on both pipelines",
+  "expected": { "compile-error": "E2005" },
+  "backends": ["luajit", "jvm"],
+  "invocation": "compile-only",
+  "support": []
+}

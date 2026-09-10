@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "feature": "signed-int32",
+  "spec": "Numeric overflow — negative integer exponent raises E8006",
+  "description": "2 ** -1 must raise E8006 on both backends",
+  "expected": { "runtime-error": "E8006" },
+  "backends": ["luajit", "jvm"],
+  "invocation": "direct-main",
+  "support": []
+}

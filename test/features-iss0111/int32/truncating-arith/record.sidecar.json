@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "feature": "signed-int32",
+  "spec": "Numeric overflow — truncating division/remainder and literal bounds",
+  "description": "7/2=3, -7/2=-3, 7%2=1, -7%2=-1, immediate-minimum literal; equal LuaJIT/JVM output",
+  "expected": "runtime-ok",
+  "backends": ["luajit", "jvm"],
+  "invocation": "direct-main",
+  "support": []
+}

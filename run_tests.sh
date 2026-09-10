@@ -437,6 +437,32 @@ TEST_MAINS+=(
 )
 
 # =========================================================================
+# ISSUE-0165 (E13): the dedicated production-path ISSUE-0111 feature /
+# native / cross-backend release gate. The strict sidecar catalog, the
+# architecture-owned backend matrix, the fixture corpus under
+# test/features-iss0111/, the production ProjectLocator/orchestrator/
+# runtime execution wiring, the pinned-launcher (E12) containment of
+# every tool and fixture process, the production async-export (E9)
+# evidence step, and the contained real-native load_ffi (E11) probe join
+# the compile list and the unconditional run phase here. Fail-closed: a
+# missing tool, launcher, catalog defect, backend omission, containment
+# failure, wrong DEAL code, or infrastructure failure makes this gate
+# nonzero — never a skip. General corpus promotion remains ISSUE-0107.
+# =========================================================================
+TEST_SOURCES+=(
+  'deal/test/feature/FeatureId.java'
+  'deal/test/feature/V12FeatureMetadata.java'
+  'deal/test/feature/FeatureBackendMatrix.java'
+  'deal/test/feature/V12FeatureFixtureCatalog.java'
+  'deal/test/feature/V12FeatureGate.java'
+  'deal/test/feature/V12FeatureGateTest.java'
+)
+TEST_MAINS+=(
+  'fg|=== Running V12 Feature Catalog/Matrix Tests (ISSUE-0165) ===|java -ea -cp build deal.test.feature.V12FeatureGateTest'
+  'fg|=== Running the Production V12 Feature/Native Gate (ISSUE-0165) ===|java -ea -cp build deal.test.feature.V12FeatureGate'
+)
+
+# =========================================================================
 # DEALPG4 fail-closed toolchain preflight (ISSUE-0183,
 # fail-closed-toolchain-preflight D1/D2/D5): one ordered, fail-closed
 # phase sequence P0-P5 shared verbatim with coverage.sh via

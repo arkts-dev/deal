@@ -1,0 +1,12 @@
+// ISSUE-0165 PROJECT_CONFIG: a rooted entry may import a class-free
+// module outside every configured root through importer-relative
+// resolution; the private semantic identity (never public descriptor
+// text) carries the dependency.
+import * as shared from "../shared/fn"
+
+export function main(): null {
+  if (shared.answer() !== 42) {
+    throw { code: "TEST_FAIL", message: "out-of-root provider" };
+  }
+  return null;
+}

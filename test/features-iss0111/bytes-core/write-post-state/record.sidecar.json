@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "feature": "bytes-core",
+  "spec": "spec-v1.2.md §Bytes",
+  "description": "failed writes change no storage: E8012 bounds and E8013 range failures preserve post-state and never append",
+  "expected": "runtime-ok",
+  "backends": ["luajit", "jvm"],
+  "invocation": "direct-main",
+  "support": []
+}

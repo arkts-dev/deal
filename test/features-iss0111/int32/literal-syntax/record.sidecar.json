@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "feature": "signed-int32",
+  "spec": "Numeric overflow — positive literals above 2147483647 are E1036",
+  "description": "Parser numeric guard rejects 2147483648 with E1036 on both pipelines",
+  "expected": { "compile-error": "E1036" },
+  "backends": ["luajit", "jvm"],
+  "invocation": "compile-only",
+  "support": []
+}

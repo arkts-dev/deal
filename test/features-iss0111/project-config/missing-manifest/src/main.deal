@@ -1,0 +1,6 @@
+// ISSUE-0165 PROJECT_CONFIG: the entry has no ancestor deal.json —
+// the production locator fails with the zero-manifest discovery E2010
+// before any compilation (no implicit root, no guessed manifest).
+export function main(): null {
+  return null;
+}

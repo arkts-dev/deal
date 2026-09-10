@@ -1,0 +1,16 @@
+// ISSUE-0165 C_FFI runtime record: production extern-C graph discovery.
+// The entry imports the three externals declarations — the production
+// SourceModuleResolver is the only discovery path (bare specifiers hit
+// the manifest externals first). Runtime execution goes through the
+// gate-owned generated-bindings loader (the production
+// LuaFfiBindingGenerator output through production __rt.load_ffi), not
+// the emitted entry (the generated-import emission lane, ISSUE-0425,
+// is not landed; this gate wires the same production surfaces).
+
+import * as math from "native/math"
+import * as duala from "native/dualA"
+import * as dualb from "native/dualB"
+
+export function main(): null {
+  return null;
+}

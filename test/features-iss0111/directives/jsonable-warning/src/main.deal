@@ -1,0 +1,7 @@
+// ISSUE-0165 DIRECTIVES: an argument-free @jsonable attached to an
+// exported function is the E1043 warning-and-ignore path — no metadata
+// is applied and compilation continues.
+// @jsonable
+export function main(): null {
+  return null;
+}

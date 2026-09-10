@@ -1,0 +1,29 @@
+// ISSUE-0165 staged async-bytes oracle fixture (E13 gate evidence):
+// the exact production shape of BYTES_ASYNC_FUNCTION — a non-async
+// selected main(): null plus an exported async oracle that assigns,
+// invokes, awaits, and asserts a first-class async (bytes)->bytes value.
+// The gate compiles it through the production orchestrator and invokes
+// the oracle through the production async-export host ABI (E9) with the
+// byte-exact canonical descriptor "async()->null".
+
+async function flip(b: bytes): bytes {
+  b[0] = 65;
+  return b;
+}
+
+export async function oracle(): null {
+  let f: async (b: bytes) => bytes = flip;
+  let x: bytes = bytes(2);
+  let y: bytes = await f(x);
+  if (y[0] !== 65) {
+    throw { code: "TEST_FAIL", message: "await bytes: first byte" };
+  }
+  if (y.length !== 2) {
+    throw { code: "TEST_FAIL", message: "await bytes: immutable length" };
+  }
+  return null;
+}
+
+export function main(): null {
+  return null;
+}

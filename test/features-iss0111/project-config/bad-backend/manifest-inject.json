@@ -1,0 +1,5 @@
+{
+  "languageVersion": "1.2",
+  "moduleRoots": ["src"],
+  "backend": "lua"
+}

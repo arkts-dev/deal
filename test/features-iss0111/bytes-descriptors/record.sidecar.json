@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "feature": "bytes-descriptors",
+  "spec": "spec-v1.2.md §Runtime type descriptor format",
+  "description": "bytes-typed class fields keep per-instance identity through the canonical descriptor boundary on both backends",
+  "expected": "runtime-ok",
+  "backends": ["luajit", "jvm"],
+  "invocation": "direct-main",
+  "support": []
+}

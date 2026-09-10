@@ -1,0 +1,11 @@
+// ISSUE-0165 C_FFI missing-symbol row: the library opens (the
+// gate-compiled shared object exists) but the declared symbol is absent
+// from it, so the production load_ffi symbol resolution raises the
+// cached FFI_SYMBOL_MISSING (runtime page D1: missing target symbols
+// after open are FFI_SYMBOL_MISSING — a declared DEAL runtime error).
+
+import * as missing from "native/missing"
+
+export function main(): null {
+  return null;
+}

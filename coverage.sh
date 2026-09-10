@@ -15,6 +15,13 @@ set -e
 # post-implementation this gate reports 84.00% line / 71.35% branch with
 # deal.codegen.lua.LuaAbi at 100% line and 100% branch (LINE_MISSED=0,
 # BRANCH_MISSED=0 in build/coverage.csv) and zero deal.test rows.
+#
+# ISSUE-0165 (E13): the compile list and the run phase now consume the
+# single compile/test-list authority (tools/gate-manifest.sh) plus the
+# same additions run_tests.sh makes — including the dedicated production
+# ISSUE-0111 feature/native gate (deal.test.feature.V12FeatureGate,
+# unconditional, zero skips) — so the coverage denominator and the run
+# evidence cover the whole modern tree under one JaCoCo agent.
 # =========================================================================
 
 # Single compile/test-list authority (gate-manifest-authority M1-M3):
@@ -45,6 +52,26 @@ TEST_MAINS+=(
 )
 
 # =========================================================================
+# ISSUE-0488 (historical/legacy catalogs): HistoricalRegressionCatalog
+# (the closed historical pin authority with pinned expectation
+# baselines), LegacyCapabilityCatalog (the release-owned unsupported-
+# legacy-slice authority), and their gate-run verification battery join
+# the compile list and the run phase here — the gate-run conformance
+# files where the LegacyProfileRegressionCatalog precedent lives. The
+# two catalogs are test-harness data only (production code never depends
+# on them); the conformance runners validate them at startup and record
+# the signed-int32 historical executed evidence.
+# =========================================================================
+TEST_SOURCES+=(
+  'test/HistoricalRegressionCatalog.java'
+  'test/LegacyCapabilityCatalog.java'
+  'test/HistoricalRegressionCatalogTest.java'
+)
+TEST_MAINS+=(
+  'fg|=== Running Historical / Legacy-Profile / Legacy-Capability Catalog Tests (ISSUE-0488) ===|java -ea -cp build deal.test.HistoricalRegressionCatalogTest'
+)
+
+# =========================================================================
 # ISSUE-0354 (LuaJIT lane): the Lua lane of the differential gate plus its
 # lane suite join the coverage mirror exactly as in run_tests.sh (the
 # Shared Lane Contract G4 over the absorbed ConformanceTest compile ->
@@ -58,6 +85,44 @@ TEST_SOURCES+=(
 )
 TEST_MAINS+=(
   'fg|=== Running Lua Lane Tests (ISSUE-0354) ===|java -ea -cp build deal.test.conformance.LuaLaneTest'
+)
+
+# =========================================================================
+# ISSUE-0356 (JS lane): the JavaScript lane of the differential gate plus
+# its lane suite join the compile list and the run phase here. The lane
+# implements the Shared Lane Contract (G4) over the absorbed
+# BackendConformanceTest JS adapter path (real frontend + JsBackend ->
+# deal/runtime.js + std/*.js + host-fixtures/<name>.js deployment -> real
+# node subprocess) and reuses the shared canonical ErrorSnapshot
+# serializer verbatim. BackendConformanceTest/JsE2eTest keep running
+# unchanged until the absorption/retirement children land.
+# =========================================================================
+TEST_SOURCES+=(
+  'deal/test/conformance/JsLane.java'
+  'deal/test/conformance/JsLaneTest.java'
+)
+TEST_MAINS+=(
+  'fg|=== Running JS Lane Tests (ISSUE-0356) ===|java -ea -cp build deal.test.conformance.JsLaneTest'
+)
+
+# =========================================================================
+# ISSUE-0355 (JVM lane): the JVM lane of the differential gate plus its
+# lane suite join the compile list and the run phase here. The lane
+# implements the Shared Lane Contract (G4) over the absorbed
+# JvmConformanceTest whole-project pipeline (ProjectLocator ->
+# CompilationOrchestrator -> JvmBackend codegen -> javac -> real java
+# subprocess) and reuses the shared canonical ErrorSnapshot serializer
+# verbatim. Pre-flip, the lane keeps the absorbed skip registry as
+# tracked non-fatal paths (G8); JvmConformanceTest keeps running
+# unchanged in run_tests.sh until the flip retires it (G5's
+# temporary-coexistence window).
+# =========================================================================
+TEST_SOURCES+=(
+  'deal/test/conformance/JvmLane.java'
+  'deal/test/conformance/JvmLaneTest.java'
+)
+TEST_MAINS+=(
+  'fg|=== Running JVM Lane Tests (ISSUE-0355) ===|java -ea -cp build deal.test.conformance.JvmLaneTest'
 )
 
 # =========================================================================
@@ -103,6 +168,21 @@ TEST_MAINS+=(
 # runs the backend-neutral discovery/classification/sidecar/pin half.
 # The lane subprocesses run outside the JaCoCo agent (no recording
 # surface), so the production coverage totals are unchanged.
+# ISSUE-0360 (JSON slice absorption — pin-before-delete): the two
+# dev-time evidence helpers join the COMPILE list only (no run phase),
+# exactly as in run_tests.sh. JsonAbsorptionGateLog runs the full
+# three-lane differential gate over the real corpus and prints the
+# per-fixture per-backend VERDICT log committed at
+# test/conformance/json-absorption/gate-pass-log.txt;
+# JsonAbsorptionNegativeControls runs the oracle-negative control
+# battery (Verification 4) over the absorbed destinations on scratch
+# copies.
+# =========================================================================
+TEST_SOURCES+=(
+  'deal/test/conformance/JsonAbsorptionGateLog.java'
+  'deal/test/conformance/JsonAbsorptionNegativeControls.java'
+)
+
 # =========================================================================
 TEST_SOURCES+=(
   'deal/test/conformance/CorpusFrontendResolver.java'
@@ -112,6 +192,28 @@ TEST_SOURCES+=(
 )
 TEST_MAINS+=(
   'fg|=== Running Differential Gate Lanes Corpus Tests (ISSUE-0357, release-gate mirror ISSUE-0362) ===|java -ea -cp build deal.test.conformance.DifferentialGateLanesCorpusTest'
+)
+# ISSUE-0165 (E13): the dedicated production-path ISSUE-0111 feature /
+# native / cross-backend release gate joins the coverage mirror exactly
+# as in run_tests.sh (the strict sidecar catalog, the architecture-owned
+# backend matrix, the production locator/orchestrator/runtime execution
+# wiring, the pinned-launcher containment, the async-export evidence
+# step, and the contained real-native probe). The TEST_SOURCES additions
+# must precede the DEALPG4_PREFLIGHT_JAVAC_ARGS construction below so the
+# deal/test/feature package is compiled on a clean checkout (the array is
+# expanded at assignment time).
+# =========================================================================
+TEST_SOURCES+=(
+  'deal/test/feature/FeatureId.java'
+  'deal/test/feature/V12FeatureMetadata.java'
+  'deal/test/feature/FeatureBackendMatrix.java'
+  'deal/test/feature/V12FeatureFixtureCatalog.java'
+  'deal/test/feature/V12FeatureGate.java'
+  'deal/test/feature/V12FeatureGateTest.java'
+)
+TEST_MAINS+=(
+  'fg|=== Running V12 Feature Catalog/Matrix Tests (ISSUE-0165) ===|java -ea -cp build deal.test.feature.V12FeatureGateTest'
+  'fg|=== Running the Production V12 Feature/Native Gate (ISSUE-0165) ===|java -ea -cp build deal.test.feature.V12FeatureGate'
 )
 
 JACOCO_DIR="/tmp/opencode/jacoco"
@@ -380,6 +482,7 @@ run_java() {
 # messages, and the golden-IR check at its position). Each record's
 # command shape is "java -ea -cp <cp> <main...>"; the foreground records
 # drop the first four tokens and re-run under the agent's own classpath.
+
 # =========================================================================
 BACKGROUND_PIDS=""
 
@@ -457,11 +560,12 @@ for record in "${RUN_PHASE_MAINS[@]}"; do
       GOLDEN_FILE="test/goldens/stdlib-declarations.ir.txt"
       TEMP_FILE="/tmp/deal-stdlib-ir-cov-$$.txt"
       # Strict mode drops the dev-only stderr redirect (bounded-step-
-      # table-and-library D8); dev mode keeps the exact redirect. The
-      # invocation carries the main class explicitly (run_java's first
-      # argument is the step name, not the main class): the pinned
-      # step name and the main class are the same token here, so the
-      # java line must repeat it once as the wrapper tail's main.
+      # table-and-library D8); dev mode keeps the exact redirect.
+      # run_java consumes its first argument as the pinned step name, so
+      # the main class must be passed to java explicitly (mirror of the
+      # run_tests.sh golden-ir case): the pinned step name and the main
+      # class are the same token here, so the java line repeats it once
+      # as the wrapper tail's main.
       if [ -n "${DEAL_STRICT:-}" ]; then
         run_step deal.test.GenerateStdlibGoldenIr -- java -ea "$AGENT" -cp "build:$JUNIT_CP" deal.test.GenerateStdlibGoldenIr "$TEMP_FILE"
       else

@@ -1,0 +1,28 @@
+// ISSUE-0165 PROJECT_CONFIG: public/private identity separation
+// (int32/bytes page D5-D6; strict-project-context-resolution-identity
+// D4). The class Widget is declared in the module directly under the
+// configured root "src", so its canonical public class descriptor is
+// exactly the configured-root spelling "src/Widget" (D6: an empty
+// relative module path projects the leading at-sign plus root text plus
+// the class name) — never the private semantic/deployment identity
+// (canonical manifest URI + validated manifest-content digest), which
+// must stay out of artifact text.
+class Widget {
+  label: string = "";
+  value: int = 7;
+}
+
+function describe(w: Widget): string {
+  return w.label;
+}
+
+export function main(): null {
+  let w: Widget = { label: "id" };
+  if (describe(w) !== "id") {
+    throw { code: "TEST_FAIL", message: "widget boundary identity" };
+  }
+  if (w.value !== 7) {
+    throw { code: "TEST_FAIL", message: "widget literal default" };
+  }
+  return null;
+}

@@ -1,0 +1,6 @@
+// ISSUE-0165 DIRECTIVES: no fixed normative name matches `foo`; the
+// recovered maximal name is E1044 with the remaining line retained.
+// @foo bar
+export function main(): null {
+  return null;
+}

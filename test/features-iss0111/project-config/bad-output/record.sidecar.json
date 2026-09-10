@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "feature": "project-config",
+  "spec": "Package manifest — a non-string output value is E2010 before artifacts",
+  "description": "the gate publishes manifest-inject.json as deal.json with output:123; the pinned non-string E2010 fragment must be observed and no directory created",
+  "expected": { "compile-error": "E2010" },
+  "backends": ["luajit", "jvm"],
+  "invocation": "compile-only",
+  "support": [],
+  "manifestPolicy": "inject",
+  "manifestErrorFragment": "'output' must be a non-empty string"
+}

@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "feature": "project-config",
+  "spec": "Identity — public class descriptors carry the configured-root identity; private deployment identity never appears in artifacts",
+  "description": "a rooted class crosses a typed boundary on both backends: the emitted artifacts carry the canonical public descriptor @src/Widget (D6: a file directly in the root has an empty relative module path, so the descriptor projects as @<rootText>/<ClassName>) while the private project deployment identity (canonical manifest URI + validated manifest-content digest from the production ProjectContext) appears in no emitted artifact text",
+  "expected": "runtime-ok",
+  "backends": ["luajit", "jvm"],
+  "invocation": "direct-main",
+  "identityArtifact": { "classDescriptor": "@src/Widget" },
+  "support": []
+}

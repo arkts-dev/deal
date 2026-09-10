@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "feature": "project-config",
+  "spec": "Exact ancestor manifest discovery — two manifests is E2010",
+  "description": "two ancestor deal.json candidates produce the multiple-manifest discovery E2010 (synthetic range, one candidate-path note per manifest) — the compiler never guesses between them",
+  "expected": { "compile-error": "E2010" },
+  "backends": ["luajit", "jvm"],
+  "invocation": "compile-only",
+  "manifestPolicy": "multiple",
+  "manifestErrorFragment": "multiple deal.json project manifests found among the ancestor directories of entry file",
+  "support": []
+}

@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "feature": "signed-int32",
+  "spec": "Conformance — typed synthetic entry invokes the oracle once",
+  "description": "The gate generates a typed entry that imports the unchanged fixture and calls oracle(): int once",
+  "expected": "runtime-ok",
+  "backends": ["luajit", "jvm"],
+  "invocation": "synthetic-main",
+  "oracle": { "exportName": "oracle", "functionDescriptor": "()->int" },
+  "support": []
+}

@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "feature": "signed-int32",
+  "spec": "Numeric overflow — zero divisor raises E8005",
+  "description": "integer division by zero must raise E8005 on both backends",
+  "expected": { "runtime-error": "E8005" },
+  "backends": ["luajit", "jvm"],
+  "invocation": "direct-main",
+  "support": []
+}

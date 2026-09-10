@@ -1,0 +1,14 @@
+// ISSUE-0165 C_FFI manifest-relative classification row: the manifest
+// pins nativeLibrary "native/ffi-runtime-dual-a.so" — contains '/' but
+// no leading one — so the production classifier selects
+// MANIFEST_RELATIVE_PATH; the gate places the compiled shared object at
+// exactly that relative path inside the temporary project and the
+// driver runs from the project root, so the production resolver dlopens
+// it and the pinned dual battery calls fixture_dual_combine through the
+// retained handle.
+
+import * as rel from "native/rel"
+
+export function main(): null {
+  return null;
+}

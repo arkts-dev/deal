@@ -1,0 +1,8 @@
+// ISSUE-0165 C_FFI_DECLARATION_ERROR: under effective @extern-c an
+// exported class with two attached C markers violates the
+// exactly-one-marker rule and is E7002 at the class declaration.
+import * as lib from "./lib"
+
+export function main(): null {
+  return null;
+}

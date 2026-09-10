@@ -1,0 +1,29 @@
+// ISSUE-0165 BYTES_CORE buffer-ops row (int32/bytes page D3-D4): zero
+// fill, the compiler-resolved immutable .length, unsigned reads of
+// 128..255, checked non-appending writes, and reference identity/
+// aliasing through an imported support helper — on both backends.
+import * as Ops from "./helper/bytes-ops"
+
+export function main(): null {
+  let b: bytes = Ops.zeroFill(4);
+  if (b.length !== 4) {
+    throw { code: "TEST_FAIL", message: "bytes: initial length mismatch" };
+  }
+  if (b[0] !== 0) {
+    throw { code: "TEST_FAIL", message: "bytes: zero-fill mismatch" };
+  }
+  b[0] = 255;
+  b[1] = 128;
+  if (b[0] !== 255 || b[1] !== 128) {
+    throw { code: "TEST_FAIL", message: "bytes: unsigned roundtrip mismatch" };
+  }
+  let alias: bytes = b;
+  alias[2] = 7;
+  if (b[2] !== 7) {
+    throw { code: "TEST_FAIL", message: "bytes: reference copy mismatch" };
+  }
+  if (Ops.byteSum(b) !== 255 + 128 + 7) {
+    throw { code: "TEST_FAIL", message: "bytes: imported helper mismatch" };
+  }
+  return null;
+}
