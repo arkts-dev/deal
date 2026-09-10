@@ -326,6 +326,54 @@ public final class V12FeatureGateTest {
                 throw new AssertionError("wrong record fields: " + record);
             }
         });
+
+        // artifactScan conditional rules: the closed two-member block,
+        // non-empty requiredText, the successful-compile expectation.
+        String artifactScanBlock = "\"artifactScan\": {"
+            + " \"requiredText\": [\"bytes\"],"
+            + " \"forbiddenText\": [] }";
+        expectFailure("artifactScan with a compile-error expectation fails",
+            "artifactScan requires",
+            () -> V12FeatureMetadata.parse("x.sidecar.json",
+                valid().replace("\"support\": []",
+                    "\"support\": [], " + artifactScanBlock)));
+        expectFailure("artifactScan with empty requiredText fails",
+            "requiredText must be non-empty",
+            () -> V12FeatureMetadata.parse("x.sidecar.json",
+                runtimeOk().replace("\"support\": []",
+                    "\"support\": [], \"artifactScan\": {"
+                        + " \"requiredText\": [],"
+                        + " \"forbiddenText\": [] }")));
+        expectFailure("artifactScan with a non-string entry fails",
+            "requiredText must be an array of non-empty strings",
+            () -> V12FeatureMetadata.parse("x.sidecar.json",
+                runtimeOk().replace("\"support\": []",
+                    "\"support\": [], \"artifactScan\": {"
+                        + " \"requiredText\": [1],"
+                        + " \"forbiddenText\": [] }")));
+        check("artifactScan parses on a runtime-ok record", () -> {
+            V12FeatureMetadata record = V12FeatureMetadata.parse(
+                "x.sidecar.json",
+                runtimeOk().replace("\"support\": []",
+                    "\"support\": [], " + artifactScanBlock));
+            if (record.artifactScan() == null
+                    || !record.artifactScan().requiredText()
+                        .equals(List.of("bytes"))
+                    || !record.artifactScan().forbiddenText().isEmpty()) {
+                throw new AssertionError("wrong artifactScan: "
+                    + record.artifactScan());
+            }
+        });
+    }
+
+    /** A bytes-core runtime-ok direct-main record shape for conditional
+     *  rule mutations. */
+    private static String runtimeOk() {
+        return "{\"version\": 1, \"feature\": \"bytes-core\","
+            + " \"spec\": \"s\", \"description\": \"d\","
+            + " \"expected\": \"runtime-ok\","
+            + " \"backends\": [\"luajit\", \"jvm\"],"
+            + " \"invocation\": \"direct-main\", \"support\": []}";
     }
 
     private static String valid() {
@@ -563,7 +611,7 @@ public final class V12FeatureGateTest {
             List.of("luajit", "jvm"),
             V12FeatureMetadata.Invocation.COMPILE_ONLY, null, List.of(), null,
             "unsupported backend 'lua'",
-            V12FeatureMetadata.ManifestPolicy.INJECT, null, null, null);
+            V12FeatureMetadata.ManifestPolicy.INJECT, null, null, null, null);
         V12FeatureFixtureCatalog.RecordEntry entry =
             new V12FeatureFixtureCatalog.RecordEntry("probe",
                 Path.of("probe"), Path.of("probe/record.sidecar.json"),
@@ -616,7 +664,7 @@ public final class V12FeatureGateTest {
             List.of("luajit", "jvm"),
             V12FeatureMetadata.Invocation.COMPILE_ONLY, null, List.of(), null,
             "no deal.json project manifest found",
-            V12FeatureMetadata.ManifestPolicy.MISSING, null, null, null);
+            V12FeatureMetadata.ManifestPolicy.MISSING, null, null, null, null);
         V12FeatureFixtureCatalog.RecordEntry missingEntry =
             new V12FeatureFixtureCatalog.RecordEntry("missing-probe",
                 Path.of("missing-probe"),
@@ -653,7 +701,7 @@ public final class V12FeatureGateTest {
             List.of("luajit", "jvm"),
             V12FeatureMetadata.Invocation.COMPILE_ONLY, null, List.of(), null,
             "multiple deal.json project manifests found",
-            V12FeatureMetadata.ManifestPolicy.MULTIPLE, null, null, null);
+            V12FeatureMetadata.ManifestPolicy.MULTIPLE, null, null, null, null);
         V12FeatureFixtureCatalog.RecordEntry multipleEntry =
             new V12FeatureFixtureCatalog.RecordEntry("multiple-probe",
                 Path.of("multiple-probe"),
@@ -878,8 +926,8 @@ public final class V12FeatureGateTest {
                 ids.add(entry.id());
             }
             ids.sort(Comparator.naturalOrder());
-            if (ids.size() != 43) {
-                throw new AssertionError("committed corpus must carry 43 "
+            if (ids.size() != 46) {
+                throw new AssertionError("committed corpus must carry 46 "
                     + "records, got " + ids);
             }
             if (!ids.contains("int32/truncating-arith/record")
@@ -906,7 +954,10 @@ public final class V12FeatureGateTest {
                     || !ids.contains("bytes-defaults/cycle/record")
                     || !ids.contains("bytes-defaults/changed-provider/record")
                     || !ids.contains("bytes-descriptors/record")
-                    || !ids.contains("bytes-descriptors/nullable/record")) {
+                    || !ids.contains("bytes-descriptors/nullable/record")
+                    || !ids.contains("bytes-descriptors/canonical-emission/record")
+                    || !ids.contains("bytes-core/nested-arrays/record")
+                    || !ids.contains("bytes-defaults/json-phase-order/record")) {
                 throw new AssertionError("missing committed record: " + ids);
             }
         });
@@ -1159,6 +1210,44 @@ public final class V12FeatureGateTest {
                     + violation);
             }
         });
+        check("artifactScanViolation accepts required canonical text", () -> {
+            Path dir = Files.createTempDirectory("v12scan-");
+            Files.writeString(dir.resolve("a.lua"),
+                "check_type(\"bytes\", v)\ncheck_array(\"[[bytes]]\", v)\n",
+                StandardCharsets.UTF_8);
+            String violation = V12FeatureGate.artifactScanViolation(dir,
+                List.of("\"bytes\""), List.of("\"bytes[]\""));
+            if (violation != null) {
+                throw new AssertionError("unexpected violation: " + violation);
+            }
+        });
+
+        check("artifactScanViolation requires each pinned fragment", () -> {
+            Path dir = Files.createTempDirectory("v12scan-");
+            Files.writeString(dir.resolve("a.lua"),
+                "check_type(\"bytes\", v)\n", StandardCharsets.UTF_8);
+            String violation = V12FeatureGate.artifactScanViolation(dir,
+                List.of("\"bytes\"", "\"?bytes\""), List.of());
+            if (violation == null
+                    || !violation.contains("\"?bytes\"")) {
+                throw new AssertionError("expected the missing-fragment "
+                    + "violation, got: " + violation);
+            }
+        });
+
+        check("artifactScanViolation rejects a legacy fragment", () -> {
+            Path dir = Files.createTempDirectory("v12scan-");
+            Files.writeString(dir.resolve("a.lua"),
+                "check_type(\"bytes[]\", v)\n", StandardCharsets.UTF_8);
+            String violation = V12FeatureGate.artifactScanViolation(dir,
+                List.of("\"bytes[]\""), List.of("\"bytes[]\""));
+            if (violation == null
+                    || !violation.contains("legacy descriptor fragment")) {
+                throw new AssertionError("expected the legacy rejection, got: "
+                    + violation);
+            }
+        });
+
         check("artifact pin fails when the manifest URI leaks", () -> {
             Path out = Files.createTempDirectory("v12identity-uri-");
             Files.writeString(out.resolve("main.lua"),

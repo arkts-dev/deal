@@ -33,8 +33,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.SecureRandom;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.stream.Stream;
 
 /**
@@ -186,6 +188,8 @@ private final Path repoRoot;
                 }
             }
             asyncExportEvidence();
+            syncFunctionEvidence();
+            importedPlanEvidence();
             return failed == 0 ? 0 : 1;
         } catch (RuntimeException e) {
             System.err.println("V12FEATURE-GATE-FAILURE: " + e.getMessage());
@@ -299,6 +303,7 @@ private final Path repoRoot;
             Path project = materializeProject(catalog, entry, backend);
             CompileOutcome outcome = compileProject(project, entry, backend);
             checkIdentityArtifact(entry, outcome);
+            checkArtifactScan(entry, outcome);
             boolean ok;
             if (entry.metadata().feature() == FeatureId.C_FFI
                     && backend.equals("luajit")) {
@@ -365,6 +370,7 @@ private final Path repoRoot;
                     variants.oracleResults().get(v), variantSource);
                 CompileOutcome outcome = compileProject(project, entry, backend);
                 checkIdentityArtifact(entry, outcome);
+                checkArtifactScan(entry, outcome);
                 RunOutcome run = executeRuntime(entry, backend, outcome);
                 boolean ok = checkRunOutcome(entry, null, variantLabel, run);
                 record(variantLabel, ok);
@@ -456,6 +462,85 @@ private final Path repoRoot;
             return "no emitted artifact under " + outputRoot
                 + " carries the pinned public class descriptor '"
                 + classDescriptor + "'";
+        }
+        return null;
+    }
+
+    /**
+     * The canonical-descriptor artifact-scan pin (int32/bytes page D7,
+     * {@code descriptor-identity-propagation}): a record carrying
+     * {@code artifactScan} must emit, on every backend, every pinned
+     * required canonical descriptor fragment in at least one artifact,
+     * and no artifact may carry any pinned forbidden legacy-descriptor
+     * fragment ({@code T[]}, {@code T|null}, dotted paths, bare class
+     * names). The check runs on the pure emitted artifact set before
+     * runtime execution; a missing canonical fragment or a legacy
+     * leak is a hard gate failure.
+     */
+    private void checkArtifactScan(
+            V12FeatureFixtureCatalog.RecordEntry entry,
+            CompileOutcome outcome) {
+        V12FeatureMetadata.ArtifactScan pin = entry.metadata().artifactScan();
+        if (pin == null || outcome.locateE2010 != null || !outcome.success
+                || outcome.outputRoot == null) {
+            return;
+        }
+        String violation = artifactScanViolation(outcome.outputRoot,
+            pin.requiredText(), pin.forbiddenText());
+        if (violation != null) {
+            throw new GateFailure(violation);
+        }
+    }
+
+    /**
+     * The testable canonical-descriptor artifact scan: walks every
+     * emitted artifact under the output root and requires (1) each
+     * required fragment to appear in at least one artifact and (2) no
+     * forbidden fragment to appear in any artifact text. Returns a
+     * violation message or null.
+     */
+    static String artifactScanViolation(Path outputRoot,
+            List<String> requiredText, List<String> forbiddenText) {
+        if (requiredText == null || requiredText.isEmpty()) {
+            return "artifactScan requiredText must be non-empty";
+        }
+        for (String fragment : requiredText) {
+            if (fragment == null || fragment.isEmpty()) {
+                return "artifactScan requiredText entries must be "
+                    + "non-empty strings";
+            }
+        }
+        List<String> artifacts = new ArrayList<>();
+        try (Stream<Path> walk = Files.walk(outputRoot)) {
+            walk.filter(Files::isRegularFile)
+                .sorted()
+                .forEach(p -> artifacts.add(p.toString()));
+        } catch (IOException e) {
+            return "cannot walk the emitted artifacts under " + outputRoot
+                + ": " + e;
+        }
+        Set<String> seen = new HashSet<>();
+        for (String artifact : artifacts) {
+            String artifactText = readText(Path.of(artifact));
+            for (String fragment : requiredText) {
+                if (artifactText.contains(fragment)) {
+                    seen.add(fragment);
+                }
+            }
+            for (String fragment : forbiddenText) {
+                if (fragment != null && !fragment.isEmpty()
+                        && artifactText.contains(fragment)) {
+                    return "legacy descriptor fragment '" + fragment
+                        + "' appears in emitted artifact " + artifact;
+                }
+            }
+        }
+        for (String fragment : requiredText) {
+            if (!seen.contains(fragment)) {
+                return "no emitted artifact under " + outputRoot
+                    + " carries the required canonical descriptor fragment '"
+                    + fragment + "'";
+            }
         }
         return null;
     }
@@ -1528,6 +1613,233 @@ private final Path repoRoot;
                 throw new GateFailure("expected HostFailure for the sync "
                     + "export 'main', got " + wrong);
             }
+            // Legacy-descriptor rejection proof (int32/bytes page D7):
+            // the production runtime parses the requested return
+            // descriptor through the canonical grammar, so a legacy
+            // spelling (T[] / T|null / dotted paths) is a
+            // host-invocation failure — never silently accepted, never
+            // a DEAL error, never a value.
+            LuaJitAsyncExportInvoker.Result legacy =
+                new LuaJitAsyncExportInvoker().invoke(
+                    new AsyncExportInvocationRequest(entryArtifact,
+                        "oracle", "null[]"));
+            if (!(legacy instanceof LuaJitAsyncExportInvoker.Result.HostFailure hf)
+                    || !hf.reason().contains("not a canonical descriptor")) {
+                throw new GateFailure("expected HostFailure naming the "
+                    + "legacy descriptor rejection for 'null[]', got "
+                    + legacy);
+            }
+            record(label, true);
+        } catch (GateFailure failure) {
+            record(label, false);
+            System.err.println("  FAIL " + label + ": " + failure.getMessage());
+        } catch (IOException e) {
+            record(label, false);
+            System.err.println("  FAIL " + label + ": " + e);
+        }
+    }
+
+    /**
+     * The staged first-class sync bytes-function evidence step
+     * (int32/bytes page D8, BYTES_SYNC_FUNCTION): compiles the committed
+     * sync-bytes oracle through the production orchestrator on LuaJIT
+     * and executes it once through the gate-owned runner — the oracle
+     * assigns, containerizes (nullable + array), invokes, and asserts a
+     * first-class {@code (bytes)->bytes} value through typed boundaries,
+     * with reference identity preserved across the call. The JVM leg of
+     * BYTES_SYNC_FUNCTION stays an honest E6000 in this revision (the
+     * ISSUE-0160 recursive bytes-bearing wrapper closure is a sibling
+     * lane, absent from the canonical tree), so the matrix-mandated
+     * both-backends record lands with that lane; this step keeps the
+     * LuaJIT half executed through the production pipeline, never
+     * silent.
+     */
+    private void syncFunctionEvidence() {
+        String label = "sync-bytes-function [luajit, evidence]";
+        try {
+            Path oracleSource = nativeFixtures.resolve(
+                "sync-bytes-oracle.deal");
+            if (!Files.isRegularFile(oracleSource)) {
+                throw new GateFailure("sync-bytes oracle fixture missing: "
+                    + oracleSource);
+            }
+            Path project = Files.createTempDirectory("v12feature-sync-");
+            copyBytes(oracleSource, project.resolve("src/main.deal"));
+            writeText(project.resolve("deal.json"), "{\n"
+                + "  \"languageVersion\": \"1.2\",\n"
+                + "  \"moduleRoots\": [\"src\"],\n"
+                + "  \"backend\": \"luajit\",\n"
+                + "  \"output\": \"build/lua\"\n"
+                + "}\n");
+            Path entryFile = project.resolve("src/main.deal")
+                .toAbsolutePath().normalize();
+            ProjectLocator.LocateResult located =
+                ProjectLocator.locate(entryFile.toString(), null);
+            if (located.context() == null) {
+                throw new GateFailure("sync oracle project did not locate: "
+                    + (located.e2010() != null ? located.e2010().message()
+                        : located.cliDiagnostic().message()));
+            }
+            var invocation = CompilerProfileProvider.resolveCommonShadow(
+                SemanticProfile.DEAL_V1_2_INT32, ReleaseState.PRE_ACTIVATION,
+                CapabilityRegistry.releaseRegistry());
+            ByteArrayOutputStream captured = new ByteArrayOutputStream();
+            PrintStream originalOut = System.out;
+            PrintStream originalErr = System.err;
+            boolean compiled;
+            List<CompilerDiagnostic> syncDiagnostics;
+            try {
+                System.setOut(new PrintStream(captured, true,
+                    StandardCharsets.UTF_8));
+                System.setErr(new PrintStream(captured, true,
+                    StandardCharsets.UTF_8));
+                CompilationOrchestrator orchestrator =
+                    new CompilationOrchestrator(located.context(), entryFile,
+                        false, false, false, false, null, invocation);
+                try {
+                    compiled = orchestrator.compile();
+                } catch (IOException e) {
+                    throw new GateFailure("sync oracle orchestrator I/O: " + e);
+                }
+                syncDiagnostics = orchestrator.diagnostics();
+            } finally {
+                System.out.flush();
+                System.err.flush();
+                System.setOut(originalOut);
+                System.setErr(originalErr);
+            }
+            if (!compiled) {
+                throw new GateFailure("sync oracle compile failed: "
+                    + syncDiagnostics);
+            }
+            Path outputRoot = Path.of(
+                located.context().outputPath().absoluteNormalizedPath());
+            Path entryArtifact = outputRoot.resolve("main.lua");
+            if (!Files.isRegularFile(entryArtifact)) {
+                throw new GateFailure("sync oracle entry artifact missing: "
+                    + entryArtifact);
+            }
+            writeText(outputRoot.resolve("v12_runner.lua"), LUA_RUNNER);
+            RunOutcome run = runContained(outputRoot.toString(),
+                List.of("luajit", "v12_runner.lua",
+                    entryArtifact.getFileName().toString()));
+            if (run.exitCode != 0 || run.containmentFailure()) {
+                throw new GateFailure("sync oracle execution failed (exit "
+                    + run.exitCode + ", failure token '"
+                    + run.failureToken + "'): " + run.stdout + run.stderr);
+            }
+            if (run.stdout.contains("DEAL_ERROR_CODE")) {
+                throw new GateFailure("sync oracle raised a DEAL error: "
+                    + run.stdout + run.stderr);
+            }
+            record(label, true);
+        } catch (GateFailure failure) {
+            record(label, false);
+            System.err.println("  FAIL " + label + ": " + failure.getMessage());
+        } catch (IOException e) {
+            record(label, false);
+            System.err.println("  FAIL " + label + ": " + e);
+        }
+    }
+
+    /**
+     * The staged imported class-plan evidence step (int32/bytes page
+     * D5, {@code provider-versioned-default-plans}): a class default
+     * that constructs an imported class directly consumes the imported
+     * class's default plan as a runtime dependency edge
+     * (IMPORTED_CLASS_DEFAULT_PLAN). The gate compiles the committed
+     * two-module fixture through the production orchestrator on LuaJIT
+     * and executes it once — the default publishes the imported plan's
+     * value, each attempt re-runs the plan (fresh instance), and a
+     * provided imported instance overlays the default. The JVM leg
+     * stays an honest E6000 in this revision (non-nullable
+     * imported-class fields are a sibling-lane deliverable, absent
+     * from the canonical tree), so the matrix-mandated both-backends
+     * record lands with that lane; this step keeps the LuaJIT half
+     * executed through the production pipeline, never silent.
+     */
+    private void importedPlanEvidence() {
+        String label = "imported-class-plan [luajit, evidence]";
+        try {
+            Path mainSource = nativeFixtures.resolve(
+                "imported-plan-main.deal");
+            Path modSource = nativeFixtures.resolve("imported-plan-mod.deal");
+            if (!Files.isRegularFile(mainSource)
+                    || !Files.isRegularFile(modSource)) {
+                throw new GateFailure("imported-plan oracle fixture missing: "
+                    + mainSource + " / " + modSource);
+            }
+            Path project = Files.createTempDirectory("v12feature-plan-");
+            copyBytes(mainSource, project.resolve("src/main.deal"));
+            copyBytes(modSource, project.resolve("src/mod.deal"));
+            writeText(project.resolve("deal.json"), "{\n"
+                + "  \"languageVersion\": \"1.2\",\n"
+                + "  \"moduleRoots\": [\"src\"],\n"
+                + "  \"backend\": \"luajit\",\n"
+                + "  \"output\": \"build/lua\"\n"
+                + "}\n");
+            Path entryFile = project.resolve("src/main.deal")
+                .toAbsolutePath().normalize();
+            ProjectLocator.LocateResult located =
+                ProjectLocator.locate(entryFile.toString(), null);
+            if (located.context() == null) {
+                throw new GateFailure("imported-plan project did not locate: "
+                    + (located.e2010() != null ? located.e2010().message()
+                        : located.cliDiagnostic().message()));
+            }
+            var invocation = CompilerProfileProvider.resolveCommonShadow(
+                SemanticProfile.DEAL_V1_2_INT32, ReleaseState.PRE_ACTIVATION,
+                CapabilityRegistry.releaseRegistry());
+            ByteArrayOutputStream captured = new ByteArrayOutputStream();
+            PrintStream originalOut = System.out;
+            PrintStream originalErr = System.err;
+            boolean compiled;
+            List<CompilerDiagnostic> planDiagnostics;
+            try {
+                System.setOut(new PrintStream(captured, true,
+                    StandardCharsets.UTF_8));
+                System.setErr(new PrintStream(captured, true,
+                    StandardCharsets.UTF_8));
+                CompilationOrchestrator orchestrator =
+                    new CompilationOrchestrator(located.context(), entryFile,
+                        false, false, false, false, null, invocation);
+                try {
+                    compiled = orchestrator.compile();
+                } catch (IOException e) {
+                    throw new GateFailure("imported-plan orchestrator I/O: "
+                        + e);
+                }
+                planDiagnostics = orchestrator.diagnostics();
+            } finally {
+                System.out.flush();
+                System.err.flush();
+                System.setOut(originalOut);
+                System.setErr(originalErr);
+            }
+            if (!compiled) {
+                throw new GateFailure("imported-plan compile failed: "
+                    + planDiagnostics);
+            }
+            Path outputRoot = Path.of(
+                located.context().outputPath().absoluteNormalizedPath());
+            Path entryArtifact = outputRoot.resolve("main.lua");
+            if (!Files.isRegularFile(entryArtifact)) {
+                throw new GateFailure("imported-plan entry artifact missing: "
+                    + entryArtifact);
+            }
+            writeText(outputRoot.resolve("v12_runner.lua"), LUA_RUNNER);
+            RunOutcome run = runContained(outputRoot.toString(),
+                List.of("luajit", "v12_runner.lua",
+                    entryArtifact.getFileName().toString()));
+            if (run.exitCode != 0 || run.containmentFailure()) {
+                throw new GateFailure("imported-plan execution failed (exit "
+                    + run.exitCode + ", failure token '"
+                    + run.failureToken + "'): " + run.stdout + run.stderr);
+            }
+            if (run.stdout.contains("DEAL_ERROR_CODE")) {
+                throw new GateFailure("imported-plan oracle raised a DEAL "
+                    + "error: " + run.stdout + run.stderr);
+            }
             record(label, true);
         } catch (GateFailure failure) {
             record(label, false);
@@ -2402,6 +2714,67 @@ private final Path repoRoot;
             .append("non-null declared token\")\n");
         valueCase(sb, exports, "fixture_call_count", List.of(), "1",
             "the pointer default invoked the native provider exactly once");
+        // C-struct construction phase order (int32/bytes page D5): the
+        // production class_plan_ phases — provided fields into
+        // unpublished slots first, omitted required defaults second,
+        // validation third, publication fourth — pinned through the
+        // observable same-module-cell default.
+        sb.append("-- ===== C-struct construction phase order =====\n")
+            .append("local okr3_, rr3_ = pcall(function()\n")
+            .append("  return ").append(m)
+            .append("_EXPORTS[\"fixture_reset_counter\"].f(CF, CL, CC)\n")
+            .append("end)\n")
+            .append("assert(okr3_, \"fixture_reset_counter failed: \" ")
+            .append(".. tostring(rr3_))\n")
+            .append("-- provided overlay: a provided pointer field never ")
+            .append("invokes the\n")
+            .append("-- omitted-default evaluator (phase 1 before phase 2)\n")
+            .append("local ok_, dcp_ = pcall(function()\n")
+            .append("  return __rt.class_plan_(").append(m)
+            .append("_ID_PtrBox, ").append(m)
+            .append("_PLAN_PtrBox, { p = vh_ }, CF, CL, CC)\n")
+            .append("end)\n")
+            .append("assert(ok_, \"provided-pointer construction failed: \" ")
+            .append(".. tostring(dcp_))\n")
+            .append("assert(type(dcp_.p) == \"table\" and dcp_.p.__ptr ~= nil ")
+            .append("and dcp_.p.__classname == ").append(m)
+            .append("_ID_Handle, \"the provided pointer publishes ")
+            .append("unchanged\")\n");
+        valueCase(sb, exports, "fixture_call_count", List.of(), "0",
+            "the provided field never invoked the omitted-default evaluator");
+        sb.append("-- provided-before-validation: a bad provided value fails ")
+            .append("phase 3 with\n")
+            .append("-- no omitted-default side effects and no publication\n")
+            .append("local ok_, dbv_ = pcall(function()\n")
+            .append("  return __rt.class_plan_(").append(m)
+            .append("_ID_PtrBox, ").append(m)
+            .append("_PLAN_PtrBox, { p = \"not-a-token\" }, CF, CL, CC)\n")
+            .append("end)\n")
+            .append("assert(not ok_ and type(dbv_) == \"table\" and ")
+            .append("dbv_.code == \"E8001\", \"the bad provided pointer ")
+            .append("fails validation, got \" .. tostring(dbv_))\n");
+        valueCase(sb, exports, "fixture_call_count", List.of(), "0",
+            "the failed attempt ran no default evaluator");
+        sb.append("-- extra provided field: E8007 before defaults and ")
+            .append("validation\n")
+            .append("local ok_, dx_ = pcall(function()\n")
+            .append("  return __rt.class_plan_(").append(m)
+            .append("_ID_Pair, ").append(m)
+            .append("_PLAN_Pair, { z = 1 }, CF, CL, CC)\n")
+            .append("end)\n")
+            .append("assert(not ok_ and type(dx_) == \"table\" and ")
+            .append("dx_.code == \"E8007\", \"the extra field raises ")
+            .append("E8007, got \" .. tostring(dx_))\n");
+        sb.append("-- scalar struct provided overlay publishes after ")
+            .append("validation\n")
+            .append("local ok_, dp_ = pcall(function()\n")
+            .append("  return __rt.class_plan_(").append(m)
+            .append("_ID_Pair, ").append(m)
+            .append("_PLAN_Pair, { x = 9, y = 2.5 }, CF, CL, CC)\n")
+            .append("end)\n")
+            .append("assert(ok_ and dp_.x == 9 and dp_.y == 2.5, \"provided ")
+            .append("scalar fields publish after validation, got \" ")
+            .append(".. tostring(dp_))\n");
         // Exact ready replay: identical content, fresh UNBOUND bindings.
         sb.append("-- ===== exact ready replay =====\n")
             .append("local r1_ = ").append(m).append("_BINDINGS()\n")
@@ -2516,6 +2889,69 @@ private final Path repoRoot;
             .append("end)\n")
             .append("assert(ok3_ and v3_ == 42, \"previously published modules ")
             .append("stay callable after an unrelated cdef failure\")\n");
+        // Cdef certainty uncertainty overlap (runtime page D1 rule 6):
+        // a fresh module whose bundle claims the indeterminate_failed
+        // entry's owned name fails FFI_LIBRARY_LOAD in the registry
+        // preflight — before any cdef call, cast, or library open (the
+        // open-count event file stays at one) — and its bindings stay
+        // UNBOUND; the overlap rejection is pinned by its exact message.
+        sb.append("-- ===== uncertainty overlap rejection =====\n")
+            .append("local overlap_key_ = \"ffi:@$external/native/overlap\"\n")
+            .append("local overlap_bundle_ = {\n")
+            .append("  bundleDigest = \"ob\", identityDigest = \"oi\",\n")
+            .append("  fullContent = \"overlap-content\",\n")
+            .append("  nativeLibrary = { kind = \"ABSOLUTE_PATH\", loaderText = ")
+            .append(luaString("/v12-overlap-present.so"))
+            .append(" },\n")
+            .append("  entries = { { entryDigest = \"e\",\n")
+            .append("      fullText = \"typedef int32_t (*v12_bad_fn_)")
+            .append("(no_such_type);\",\n")
+            .append("      ownedNames = { \"v12_bad_fn_\" } } },\n")
+            .append("  functions = { { dealName = \"v12_bad\", cSymbol = ")
+            .append("\"v12_bad\", privateFunctionPointerType = \"v12_bad_fn_\",\n")
+            .append("      orderedParams = {}, returnType = { kind = \"INT\", ")
+            .append("canonicalDescriptor = \"int\" } } },\n")
+            .append("  classes = {},\n")
+            .append("}\n")
+            .append("local overlap_b_ = { moduleKey = overlap_key_, state = ")
+            .append("\"UNBOUND\", cells = { v12_bad = { state = \"UNBOUND\", ")
+            .append("wrapper = nil, errorValue = nil } } }\n")
+            .append("local oko_, eo_ = pcall(function()\n")
+            .append("  return __rt.load_ffi(overlap_key_, overlap_bundle_, {}, ")
+            .append("overlap_b_, F, FL, FC)\n")
+            .append("end)\n")
+            .append("assert(not oko_ and type(eo_) == \"table\" and ")
+            .append("eo_.code == \"FFI_LIBRARY_LOAD\" and ")
+            .append("tostring(eo_.message):find(\"overlaps an uncertain or ")
+            .append("blocked record\", 1, true) ~= nil, ")
+            .append("\"the overlapping module fails the uncertain-record ")
+            .append("preflight, got \" .. tostring(eo_))\n")
+            .append("assert(overlap_b_.state == \"FAILED\", \"the rejected ")
+            .append("overlap bindings end FAILED\")\n")
+            .append("local o5_, c5_ = v12_count_lines(").append(events)
+            .append(")\n")
+            .append("assert(o5_ == 1, \"the overlap preflight rejects before ")
+            .append("any library open or cast\")\n");
+        // Non-overlapping modules remain loadable after the uncertain
+        // record: a fresh cross-module replay key loads the registered
+        // bundle and publishes working wrappers in the same run.
+        sb.append("-- ===== non-overlapping module after the failure =====\n")
+            .append("local after_key_ = ").append(m)
+            .append("_KEY .. \"#after\"\n")
+            .append("local ab_ = ").append(m).append("_BINDINGS()\n")
+            .append("ab_.moduleKey = after_key_\n")
+            .append("local ae_ = __rt.load_ffi(after_key_, ").append(m)
+            .append("_BUNDLE, ").append(m)
+            .append("_PLANS, ab_, F, FL, FC)\n")
+            .append("assert(type(ae_) == \"table\" and ae_[")
+            .append(luaString("fixture_add_int"))
+            .append("] ~= nil, \"a non-overlapping module stays loadable ")
+            .append("after the uncertain record\")\n")
+            .append("local ok4_, v4_ = pcall(function()\n")
+            .append("  return ae_[\"fixture_add_int\"].f(20, 22, CF, CL, CC)\n")
+            .append("end)\n")
+            .append("assert(ok4_ and v4_ == 42, \"the post-failure ")
+            .append("non-overlapping module stays callable\")\n");
     }
 
     private void dualBattery(StringBuilder sb, int index,

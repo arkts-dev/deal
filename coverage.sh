@@ -184,7 +184,6 @@ TEST_SOURCES+=(
 )
 
 # =========================================================================
-# =========================================================================
 TEST_SOURCES+=(
   'deal/test/conformance/CorpusFrontendResolver.java'
   'deal/test/conformance/JvmLane.java'
@@ -606,8 +605,6 @@ for pid in $BACKGROUND_PIDS; do
 done
 if [ "$BACKGROUND_FAILED" -eq 1 ]; then
   echo "=== A background test suite failed ===" >&2
-
-
   exit 1
 fi
 trap - EXIT

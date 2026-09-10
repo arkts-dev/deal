@@ -1,0 +1,47 @@
+// ISSUE-0165 BYTES_CORE nested-arrays row (int32/bytes page D3/D8):
+// bytes[][] allocation and reads on both backends — every element is a
+// bytes reference, so per-element identity, aliasing through an array
+// reference copy, and mutation visibility pin the reference semantics
+// through the nested container boundary.
+function mk(v: int): bytes {
+  let b: bytes = bytes(2);
+  b[0] = v;
+  return b;
+}
+
+export function main(): null {
+  let rows: bytes[][] = [[mk(1), mk(2)], [mk(3), mk(4)]];
+  if (rows[1][0][0] !== 3) {
+    throw { code: "TEST_FAIL", message: "nested bytes read mismatch" };
+  }
+  // Per-element identity: replacing an element never touches its
+  // neighbor.
+  let target: bytes = mk(9);
+  rows[0][1] = target;
+  if (rows[0][0][0] !== 1 || rows[0][1][0] !== 9) {
+    throw { code: "TEST_FAIL", message: "nested bytes element write mismatch" };
+  }
+  // Aliasing: a reference copy of the outer array observes and mutates
+  // the same elements.
+  let alias: bytes[][] = rows;
+  alias[1][1][0] = 7;
+  if (rows[1][1][0] !== 7) {
+    throw { code: "TEST_FAIL", message: "nested bytes aliasing mismatch" };
+  }
+  // Mutation through a borrowed element reference is visible through the
+  // container.
+  let borrowed: bytes = rows[0][0];
+  borrowed[1] = 200;
+  if (rows[0][0][1] !== 200) {
+    throw { code: "TEST_FAIL", message: "nested bytes mutation visibility mismatch" };
+  }
+  // Zero fill and immutable length inside the nested elements.
+  let fresh: bytes[][] = [[bytes(2)]];
+  if (fresh[0][0][0] !== 0 || fresh[0][0][1] !== 0) {
+    throw { code: "TEST_FAIL", message: "nested bytes zero fill mismatch" };
+  }
+  if (fresh[0][0].length !== 2) {
+    throw { code: "TEST_FAIL", message: "nested bytes length mismatch" };
+  }
+  return null;
+}

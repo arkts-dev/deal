@@ -66,14 +66,15 @@ public record V12FeatureMetadata(
         ManifestPolicy manifestPolicy,
         NativeBlock nativePlan,
         IdentityArtifact identityArtifact,
-        ProviderVariants providerVariants) {
+        ProviderVariants providerVariants,
+        ArtifactScan artifactScan) {
 
     /** The exact sidecar member set (version 1). */
     static final Set<String> CLOSED_MEMBERS = Set.of(
         "version", "feature", "spec", "description", "expected",
         "backends", "invocation", "oracle", "support", "linkedRecord",
         "manifestErrorFragment", "manifestPolicy", "native",
-        "identityArtifact", "providerVariants");
+        "identityArtifact", "providerVariants", "artifactScan");
 
     /** The exact backend spellings (declarations page D12). */
     static final Set<String> BACKEND_NAMES = Set.of("luajit", "jvm");
@@ -217,6 +218,27 @@ public record V12FeatureMetadata(
             Objects.requireNonNull(variantB, "variantB");
             oracleResults = List.copyOf(
                 Objects.requireNonNull(oracleResults, "oracleResults"));
+        }
+    }
+
+    /**
+     * The optional canonical-descriptor artifact-scan pin (int32/bytes
+     * page D7, {@code descriptor-identity-propagation}): every backend's
+     * emitted artifact set must carry each {@code requiredText} fragment
+     * (the canonical descriptor spellings the fixture produces) and must
+     * never carry any {@code forbiddenText} fragment (legacy descriptor
+     * spellings — {@code T[]}, {@code T|null}, dotted class paths, bare
+     * class names). The scan is a production-path gate check over the
+     * pure emitted artifact set: canonical descriptors are emitted and
+     * legacy descriptors are neither emitted nor accepted.
+     */
+    public record ArtifactScan(List<String> requiredText,
+                               List<String> forbiddenText) {
+        public ArtifactScan {
+            requiredText = List.copyOf(
+                Objects.requireNonNull(requiredText, "requiredText"));
+            forbiddenText = List.copyOf(
+                Objects.requireNonNull(forbiddenText, "forbiddenText"));
         }
     }
 
@@ -409,10 +431,19 @@ public record V12FeatureMetadata(
             }
         }
 
+        ArtifactScan artifactScan = null;
+        if (fields.get("artifactScan") != null) {
+            artifactScan = parseArtifactScan(sidecarPath,
+                fields.get("artifactScan"));
+            if (artifactScan == null) {
+                return fail(sidecarPath, "malformed artifactScan field");
+            }
+        }
+
         V12FeatureMetadata record = new V12FeatureMetadata(1, feature, spec,
             description, expected, backends, invocation, oracle, support,
             linkedRecord, manifestErrorFragment, manifestPolicy, nativePlan,
-            identityArtifact, providerVariants);
+            identityArtifact, providerVariants, artifactScan);
 
         String violation = validateConditionalRules(record);
         if (violation != null) {
@@ -485,6 +516,14 @@ public record V12FeatureMetadata(
                 && !(record.expected() instanceof CompileOk)
                 && !(record.expected() instanceof RuntimeOk)) {
             return "identityArtifact requires a compile-ok or runtime-ok "
+                + "expectation (artifact inspection needs a successful "
+                + "compile, and every malformed-manifest policy forces a "
+                + "compile-error)";
+        }
+        if (record.artifactScan() != null
+                && !(record.expected() instanceof CompileOk)
+                && !(record.expected() instanceof RuntimeOk)) {
+            return "artifactScan requires a compile-ok or runtime-ok "
                 + "expectation (artifact inspection needs a successful "
                 + "compile, and every malformed-manifest policy forces a "
                 + "compile-error)";
@@ -571,6 +610,54 @@ public record V12FeatureMetadata(
             return null;
         }
         return new IdentityArtifact(descriptor.value());
+    }
+
+    /**
+     * The closed {@code artifactScan} block: an object with exactly the
+     * members {@code requiredText} (a non-empty array of non-empty
+     * strings every emitted artifact set must carry) and
+     * {@code forbiddenText} (an array of non-empty strings that must
+     * never appear in any emitted artifact — the legacy descriptor
+     * spellings the canonical migration rejects).
+     */
+    private static ArtifactScan parseArtifactScan(String path,
+                                                  JsonValue value) {
+        if (!(value instanceof JsonValue.ObjectVal obj)) {
+            return null;
+        }
+        Map<String, JsonValue> members = obj.members();
+        if (members.size() != 2
+                || !(members.get("requiredText")
+                    instanceof JsonValue.ArrayVal required)
+                || !(members.get("forbiddenText")
+                    instanceof JsonValue.ArrayVal forbidden)) {
+            return null;
+        }
+        List<String> requiredText = new ArrayList<>();
+        for (JsonValue element : required.elements()) {
+            if (!(element instanceof JsonValue.StringVal s)
+                    || s.value().isEmpty()) {
+                fail(path, "artifactScan requiredText must be an array of "
+                    + "non-empty strings");
+                return null;
+            }
+            requiredText.add(s.value());
+        }
+        if (requiredText.isEmpty()) {
+            fail(path, "artifactScan requiredText must be non-empty");
+            return null;
+        }
+        List<String> forbiddenText = new ArrayList<>();
+        for (JsonValue element : forbidden.elements()) {
+            if (!(element instanceof JsonValue.StringVal s)
+                    || s.value().isEmpty()) {
+                fail(path, "artifactScan forbiddenText must be an array of "
+                    + "non-empty strings");
+                return null;
+            }
+            forbiddenText.add(s.value());
+        }
+        return new ArtifactScan(requiredText, forbiddenText);
     }
 
     /**

@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "feature": "bytes-descriptors",
+  "spec": "spec-v1.2.md §Runtime type descriptor format",
+  "description": "canonical descriptor emission on both backends: the emitted artifact set carries the canonical recursive descriptor spellings (bytes, ?bytes, [bytes], [[bytes]]) and never carries a legacy descriptor spelling (bytes|null or the legacy bytes[] descriptor text)",
+  "expected": "runtime-ok",
+  "backends": ["luajit", "jvm"],
+  "invocation": "direct-main",
+  "support": [],
+  "artifactScan": {
+    "requiredText": ["bytes", "?bytes", "[bytes]", "[[bytes]]"],
+    "forbiddenText": ["bytes|null", "\"bytes[]\""]
+  }
+}
