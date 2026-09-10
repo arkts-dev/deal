@@ -26,11 +26,13 @@ import deal.semantic.RequirementManifestResult;
 import deal.semantic.SemanticLowerer;
 import deal.semantic.SemanticOracle;
 import deal.semantic.SemanticRuntimeModel;
+import deal.semantic.ir.AdaptSourceRef;
 import deal.semantic.ir.AsyncLinkKind;
 import deal.semantic.ir.AsyncStartSource;
 import deal.semantic.ir.AsyncTokenId;
 import deal.semantic.ir.BoundaryKind;
 import deal.semantic.ir.CallMode;
+import deal.semantic.ir.CaptureMode;
 import deal.semantic.ir.ConstructKind;
 import deal.semantic.ir.ExecutableLoweredProject;
 import deal.semantic.ir.ExternalExecutionOwner;
@@ -83,7 +85,7 @@ import java.util.Set;
  *       target-signature {@code FUNCTION_PARAMETER} boundaries (the
  *       complete set), the leading-M projection with trailing arguments
  *       evaluated/checked/dropped, the SHARED_CELL live re-read, the
- *       REEVALUATE_THUNK per-invoke re-execution, and the E8010
+ *       VALUE-retained source body invoked per invocation, and the E8010
  *       {@code FUNCTION_SIGNATURE} projection for a wrong loaded
  *       value;</li>
  *   <li>{@code CALL(HOST)} with the pinned {@code DEAL_TO_HOST}+
@@ -612,8 +614,9 @@ public class CallMachineIntegrationTest {
         }
     }
 
-    static void testAdapterThunkInvocation() {
-        System.out.println("-- Adapter invocation: REEVALUATE_THUNK re-executes per invoke --");
+    static void testAdapterValueInvocation() {
+        System.out.println("-- Adapter invocation: VALUE retains the "
+            + "function-expression source; the retained closure executes per invoke --");
         String source = CONSOLE
             + "function mark(s: string, v: int): int { console.log(s); return v; }\n"
             + "export function main(): null {\n"
@@ -624,12 +627,33 @@ public class CallMachineIntegrationTest {
             + "  if (r1 === 6 && r2 === 15) { console.log(\"thunk-ok\"); }\n"
             + "  else { console.log(\"bad\"); }\n"
             + "}\n";
-        SemanticRuntimeModel.ConsumerRun run = runSingle(source, "adapter thunk",
-            Map.of(), Map.of(), null);
+        LoweredSingle lowered = lowerSingle(source, "adapter VALUE", Set.of(),
+            Map.of(), Map.of());
+        if (lowered == null) {
+            return;
+        }
+        LoweredModuleUnit unit = lowered.lowered().result.lowering().unit();
+        // A function-expression source adapts as VALUE (an
+        // already-materialized function-value operand — no thunk
+        // block exists): pin the recorded capture mode.
+        List<SemanticOp> adapts = ofKind(unit.ops(), SemanticOpKind.FUNCTION_ADAPT);
+        check(adapts.size() == 1, "the unit carries exactly one FUNCTION_ADAPT");
+        if (adapts.size() == 1) {
+            KindPayload.FunctionAdaptPayload payload =
+                (KindPayload.FunctionAdaptPayload) adapts.get(0).payload();
+            check(payload.mode() == CaptureMode.VALUE
+                    && payload.source() instanceof AdaptSourceRef.Value,
+                "the function-expression source adapts as VALUE with a retained "
+                    + "materialized source operand");
+        }
+        SemanticRuntimeModel.ConsumerRun run = SemanticOracle.execute(unit,
+            lowered.lowered().result.lowering().table());
         if (run != null) {
-            // The thunk re-executes per invocation (the console effect
-            // repeats); trailing arguments are still evaluated/checked.
-            assertRunSuccess(run, "adapter thunk",
+            // The VALUE-retained closure body executes once per
+            // invocation (the repeated "thunk" prints come from the
+            // retained source body, never from a re-evaluated thunk);
+            // trailing arguments are still evaluated/checked/dropped.
+            assertRunSuccess(run, "adapter VALUE",
                 List.of("thunk", "thunk", "thunk-ok"), "null");
         }
     }
@@ -828,6 +852,117 @@ public class CallMachineIntegrationTest {
             check(returnBoundaryStarts == 1,
                 "exactly one EXTERNAL_RETURN boundary executes (the callee RETURN's); "
                     + "got " + returnBoundaryStarts);
+        }
+    }
+
+    /**
+     * Cross-unit chain execution (the review-finding regression): the
+     * callee body's ASSIGN address chain completes its operand
+     * producers in the callee unit and resolves its normalize/length
+     * facts there — never through the entry module's Execution fields.
+     */
+    static void testExternalCallCalleeChain() {
+        System.out.println("-- CALL(EXTERNAL) callee chain: the callee body's ASSIGN "
+            + "completes operands and normalize/length facts in the callee unit --");
+        ModuleResolver aResolver = stdlibResolver();
+        CheckedSlice sliceA = checkSlice(
+            "export function store(xs: int[], i: int, v: int): int {\n"
+                + "  xs[i + 0] = v * 2;\n"
+                + "  return xs[i];\n"
+                + "}\n",
+            aResolver, "module a (chain callee)");
+        if (sliceA == null) {
+            return;
+        }
+        CheckedModuleInput inputA = new CheckedModuleInput(MODULE_A, "a.deal",
+            Path.of("a.deal"), sliceA.program(), sliceA.checks(),
+            importsOf(sliceA.program(), Map.of()),
+            exportsOf(sliceA.program()), CheckedModuleKind.IMPLEMENTATION);
+        String mainSource = CONSOLE
+            + "import * as a from \"./a\"\n"
+            + "export function main(): null {\n"
+            + "  let xs: int[] = [0, 0, 0];\n"
+            + "  let r: int = a.store(xs, 1, 42);\n"
+            + "  if (r === 84 && xs[1] === 84) { console.log(\"external-chain-ok\"); }\n"
+            + "  else { console.log(\"bad\"); }\n"
+            + "}\n";
+        ModuleResolver mainResolver = resolverWith(Map.of("./a", Map.of("store",
+            new Type.Func(List.of(new Type.Array(Type.Int.INSTANCE), Type.Int.INSTANCE,
+                Type.Int.INSTANCE), Type.Int.INSTANCE))));
+        CheckedSlice sliceMain = checkSlice(mainSource, mainResolver,
+            "module main (chain caller)");
+        if (sliceMain == null) {
+            return;
+        }
+        CheckedModuleInput inputMain = new CheckedModuleInput(MODULE_MAIN, SOURCE_ID,
+            Path.of("test.deal"), sliceMain.program(), sliceMain.checks(),
+            importsOf(sliceMain.program(), Map.of("./a", ExternalModuleKind.IMPLEMENTATION)),
+            exportsOf(sliceMain.program()), CheckedModuleKind.IMPLEMENTATION);
+        List<ModuleFact> facts = List.of(
+            new ModuleFact("a.deal", MODULE_A, false, false, sliceA.program(), Map.of(),
+                sliceA.symbols(), sliceA.checks(), List.of()),
+            new ModuleFact(SOURCE_ID, MODULE_MAIN, false, false, sliceMain.program(),
+                Map.of(), sliceMain.symbols(), sliceMain.checks(), List.of()));
+        CheckedProject project = buildProject(facts, MODULE_MAIN);
+        if (project == null) {
+            return;
+        }
+        SemanticIdAllocator allocator =
+            SemanticIdAllocator.over(List.of(MODULE_A, MODULE_MAIN));
+        LoweredE7 loweredA = lowerE7(inputA, project, project.manifests.get(0).coverage(),
+            MODULE_A, Map.of(), Map.of(), Set.of(), "module a (chain callee)", allocator);
+        if (loweredA == null) {
+            return;
+        }
+        LoweredE7 loweredMain = lowerE7(inputMain, project,
+            project.manifests.get(1).coverage(), MODULE_MAIN,
+            Map.of(MODULE_A, ModuleRoute.SHARED),
+            Map.of(MODULE_A, loweredA.result.externalEntries()), Set.of(),
+            "module main (chain caller)", allocator);
+        if (loweredMain == null) {
+            return;
+        }
+        LoweredModuleUnit unitA = loweredA.result.lowering().unit();
+        LoweredModuleUnit unitMain = loweredMain.result.lowering().unit();
+        check(ofKind(unitA.ops(), SemanticOpKind.EXTERNAL_ENTRY).size() == 1
+                && ofKind(unitA.ops(), SemanticOpKind.ASSIGN).size() == 1,
+            "module a records one EXTERNAL_ENTRY and one callee ASSIGN chain");
+        ExecutableLoweredProject projectIr = new ExecutableLoweredProject(
+            SemanticProfile.DEAL_V1_2_INT32, project.index.index,
+            Map.of(MODULE_A, unitA, MODULE_MAIN, unitMain), MODULE_MAIN);
+        Optional<CompilerDiagnostic> validation = SemanticIrValidator.validate(projectIr,
+            new SemanticIrValidator.ComparisonFacts(project.index.digest(),
+                SemanticProfile.DEAL_V1_2_INT32, REGISTRY_HASH));
+        check(validation.isEmpty(), "the chain project validates: " + validation);
+        if (validation.isPresent()) {
+            return;
+        }
+        SemanticRuntimeModel.ConsumerRun run = SemanticOracle.execute(projectIr,
+            Map.of(MODULE_A, loweredA.result.lowering().table(),
+                MODULE_MAIN, loweredMain.result.lowering().table()),
+            null);
+        if (run != null) {
+            // receiver → key → RHS in the callee unit, then the
+            // committed value observed by the caller: the chain's operand
+            // producers (the key/RHS subexpressions) and the
+            // normalize/length facts resolved in the callee unit — the
+            // finding-2 regression.
+            assertRunSuccess(run, "external callee chain",
+                List.of("external-chain-ok"), "null");
+            long arrayWrites = 0;
+            for (SemanticRuntimeModel.TraceEvent event : run.trace()) {
+                if (event.kind() == SemanticOpKind.BOUNDARY
+                        && event.phase() == SemanticRuntimeModel.Phase.START) {
+                    SemanticOp op = opById(unitA.ops(), event.op());
+                    if (op != null
+                            && boundaryKind(op) == BoundaryKind.ARRAY_ELEMENT_ASSIGNMENT) {
+                        arrayWrites++;
+                    }
+                }
+            }
+            check(arrayWrites == 1,
+                "the callee chain runs exactly one ARRAY_ELEMENT_ASSIGNMENT bounds "
+                    + "boundary; got " + arrayWrites);
         }
     }
 
@@ -1344,11 +1479,101 @@ public class CallMachineIntegrationTest {
             SemanticOp ret = opById(unit.ops(), payload.returnBoundaryOpId());
             check(ret != null && boundaryKind(ret) == BoundaryKind.DEAL_TO_HOST,
                 "the callback's single return boundary is DEAL_TO_HOST");
+            OpId callbackOp = callbacks.get(0).opId();
             SemanticRuntimeModel.ConsumerRun run = SemanticOracle.invokeCallback(unit,
                 lowered.lowered().result.lowering().table(), payload.function(),
                 List.of(new SemanticOracle.Value.IntValue(32)));
             if (run != null) {
                 assertRunSuccess(run, "callback invoke", List.of(), "int:42");
+                // The invocation op's own events: one START carrying
+                // the scripted argument inputs with no parentOpId (the
+                // scenario InvokeCallback step triggers it) and one
+                // SUCCESS publishing the checked value — symmetric
+                // with the external-entry arms.
+                List<SemanticRuntimeModel.TraceEvent> callbackEvents =
+                    new ArrayList<>();
+                for (SemanticRuntimeModel.TraceEvent event : run.trace()) {
+                    if (event.kind() == SemanticOpKind.CALLBACK_INVOKE) {
+                        callbackEvents.add(event);
+                    }
+                }
+                check(callbackEvents.size() == 2
+                        && callbackEvents.get(0).phase() == SemanticRuntimeModel.Phase.START
+                        && callbackEvents.get(0).parentOp() == null
+                        && callbackEvents.get(0).inputs().equals(List.of("int:32"))
+                        && callbackEvents.get(1).phase() == SemanticRuntimeModel.Phase.SUCCESS
+                        && callbackEvents.get(1).parentOp() == null
+                        && "int:42".equals(callbackEvents.get(1).output()),
+                    "the CALLBACK_INVOKE op emits its own START (scripted inputs, no "
+                        + "parentOpId) and SUCCESS (checked value) events: "
+                        + callbackEvents);
+                // The parameter boundaries nest directly under the
+                // invocation op; the single return boundary is the body
+                // RETURN's child, and the RETURN's payload names the
+                // callback op as its enclosing invocation (the closed
+                // D13 table: DEAL_TO_HOST by the executed body's RETURN).
+                int parameterBoundaryEvents = 0;
+                int returnBoundaryEvents = 0;
+                boolean nested = true;
+                for (SemanticRuntimeModel.TraceEvent event : run.trace()) {
+                    if (event.kind() != SemanticOpKind.BOUNDARY) {
+                        continue;
+                    }
+                    SemanticOp boundary = opById(unit.ops(), event.op());
+                    if (boundary != null
+                            && boundaryKind(boundary) == BoundaryKind.HOST_TO_DEAL) {
+                        parameterBoundaryEvents++;
+                        nested &= callbackOp.equals(event.parentOp());
+                    } else if (boundary != null
+                            && boundaryKind(boundary) == BoundaryKind.DEAL_TO_HOST) {
+                        returnBoundaryEvents++;
+                        boolean parented = event.parentOp() != null;
+                        if (parented) {
+                            SemanticOp parent = opById(unit.ops(), event.parentOp());
+                            parented = parent != null
+                                && parent.kind() == SemanticOpKind.RETURN;
+                        }
+                        nested &= parented;
+                    } else {
+                        nested = false;
+                    }
+                }
+                boolean retNamesCallback = false;
+                for (SemanticOp op : ofKind(unit.ops(), SemanticOpKind.RETURN)) {
+                    KindPayload.ReturnPayload retPayload =
+                        (KindPayload.ReturnPayload) op.payload();
+                    if (callbackOp.equals(retPayload.enclosingInvocationOpId())) {
+                        retNamesCallback = true;
+                    }
+                }
+                check(parameterBoundaryEvents == 2 && returnBoundaryEvents == 2
+                        && nested && retNamesCallback,
+                    "the callback's boundary events nest per the closed chain "
+                        + "(HOST_TO_DEAL directly under the invocation op; "
+                        + "DEAL_TO_HOST under the body RETURN whose payload names "
+                        + "the invocation op); got " + parameterBoundaryEvents
+                        + " parameter and " + returnBoundaryEvents
+                        + " return events, nested=" + nested
+                        + ", retNamesCallback=" + retNamesCallback);
+                // A failing parameter boundary propagates: the op's
+                // FAILURE event closes its START with the same error.
+                SemanticRuntimeModel.ConsumerRun badRun = SemanticOracle.invokeCallback(
+                    unit, lowered.lowered().result.lowering().table(), payload.function(),
+                    List.of(new SemanticOracle.Value.StrValue("nope")));
+                assertRunFailure(badRun, "callback bad argument", "E8001");
+                boolean hasCallbackFailure = false;
+                for (SemanticRuntimeModel.TraceEvent event : badRun.trace()) {
+                    if (event.kind() == SemanticOpKind.CALLBACK_INVOKE
+                            && event.phase() == SemanticRuntimeModel.Phase.FAILURE
+                            && event.parentOp() == null
+                            && event.error() != null
+                            && event.error().code().equals("E8001")) {
+                        hasCallbackFailure = true;
+                    }
+                }
+                check(hasCallbackFailure,
+                    "the callback FAILURE event carries the propagated E8001 with no "
+                        + "parentOpId");
             }
         }
     }
@@ -1406,9 +1631,10 @@ public class CallMachineIntegrationTest {
             testIndirectCalls();
             testAdapterSharedCellInvocation();
             testAdapterRetargetE8010();
-            testAdapterThunkInvocation();
+            testAdapterValueInvocation();
             testHostCall();
             testExternalCallSharedBody();
+            testExternalCallCalleeChain();
             testExternalCallRetainedAbi();
             testAsyncDirect();
             testAsyncHost();

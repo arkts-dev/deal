@@ -530,7 +530,6 @@ public final class SemanticOracle {
         final UnitState entry;
         /** The entry module's op index (single-unit aliases). */
         final Map<OpId, SemanticOp> opsById = new HashMap<>();
-        final Map<OpId, List<SemanticOp>> childrenByParent = new HashMap<>();
         /** One async task/operation state per canonical token identity. */
         final Map<Long, Task> tasks = new LinkedHashMap<>();
         /** The deterministic FIFO queue of pending DEAL body tasks. */
@@ -549,8 +548,6 @@ public final class SemanticOracle {
          * effects and fail the trace pairing.
          */
         final java.util.Set<OpId> ownedChildren = new java.util.HashSet<>();
-        /** The payload-owned children only (closure computation excludes them). */
-        final java.util.Set<OpId> structuralOwned;
         final Map<ValueId, Value> values = new HashMap<>();
         final Map<String, Cell> cells = new HashMap<>();
         /**
@@ -586,12 +583,6 @@ public final class SemanticOracle {
             for (SemanticOp op : unit.ops()) {
                 opsById.put(op.opId(), op);
             }
-            for (SemanticOp op : unit.ops()) {
-                OpId parent = op.origin().parentOpId();
-                if (parent != null) {
-                    childrenByParent.computeIfAbsent(parent, k -> new ArrayList<>()).add(op);
-                }
-            }
             // Payload-referenced children (executed exactly once by their
             // owner arm in payload order) plus boundary children of
             // MEMBER_READ/STDLIB_CALL (their owner arms' single-child
@@ -601,7 +592,8 @@ public final class SemanticOracle {
             // position inside the chain, never at their flat block-list
             // position (the hoisted-operand interleaving the parity
             // fixtures pin).
-            structuralOwned = ChainOperandCompletion.structuralOwners(unit);
+            java.util.Set<OpId> structuralOwned =
+                ChainOperandCompletion.structuralOwners(unit);
             ownedChildren.addAll(structuralOwned);
             ChainOperandCompletion.registerChainOperandOwners(unit, structuralOwned,
                 ownedChildren);
@@ -638,13 +630,8 @@ public final class SemanticOracle {
             for (SemanticOp op : entryUnit.ops()) {
                 opsById.put(op.opId(), op);
             }
-            for (SemanticOp op : entryUnit.ops()) {
-                OpId parent = op.origin().parentOpId();
-                if (parent != null) {
-                    childrenByParent.computeIfAbsent(parent, k -> new ArrayList<>()).add(op);
-                }
-            }
-            structuralOwned = ChainOperandCompletion.structuralOwners(entryUnit);
+            java.util.Set<OpId> structuralOwned =
+                ChainOperandCompletion.structuralOwners(entryUnit);
             ownedChildren.addAll(structuralOwned);
             ChainOperandCompletion.registerChainOperandOwners(entryUnit, structuralOwned,
                 ownedChildren);
@@ -657,6 +644,19 @@ public final class SemanticOracle {
             final StructuredBodyTable table;
             final Map<OpId, SemanticOp> opsById = new HashMap<>();
             final Map<OpId, List<SemanticOp>> childrenByParent = new HashMap<>();
+            /**
+             * The payload-owned children only: the chain executor's
+             * operand-completion rule computes each child's producing
+             * closure against its own unit's structural set — never
+             * against the skip set, which already contains the chain's
+             * own operand producers.
+             */
+            final Set<OpId> structuralOwned;
+            /**
+             * The block-walk skip set: {@code structuralOwned} plus every
+             * chain child's operand closure (the chain arm executes
+             * those at the consuming child's position).
+             */
             final Set<OpId> ownedChildren;
 
             UnitState(LoweredModuleUnit unit, StructuredBodyTable table) {
@@ -672,10 +672,10 @@ public final class SemanticOracle {
                             k -> new ArrayList<>()).add(op);
                     }
                 }
-                Set<OpId> structural = ChainOperandCompletion.structuralOwners(unit);
-                ownedChildren = new HashSet<>(structural);
-                ChainOperandCompletion.registerChainOperandOwners(unit, structural,
-                    ownedChildren);
+                structuralOwned = ChainOperandCompletion.structuralOwners(unit);
+                ownedChildren = new HashSet<>(structuralOwned);
+                ChainOperandCompletion.registerChainOperandOwners(unit,
+                    structuralOwned, ownedChildren);
                 // The nested source ASYNC_START of an adapter-over-async
                 // task executes under its outer op's arm, never at its
                 // flat block-list position.
@@ -1320,7 +1320,7 @@ public final class SemanticOracle {
 
         /** The single child op parented to {@code op}, or null. */
         private SemanticOp singleChild(SemanticOp op) {
-            List<SemanticOp> children = childrenByParent.get(op.opId());
+            List<SemanticOp> children = stateOf(op.opId()).childrenByParent.get(op.opId());
             if (children == null || children.isEmpty()) {
                 return null;
             }
@@ -1679,8 +1679,9 @@ public final class SemanticOracle {
                 case KindPayload.DeletePayload delete -> delete.childOps();
                 default -> List.of();
             };
+            Map<OpId, SemanticOp> ops = stateOf(chain.opId()).opsById;
             for (OpId childId : children) {
-                SemanticOp child = opsById.get(childId);
+                SemanticOp child = ops.get(childId);
                 if (child.kind() == SemanticOpKind.INDEX_NORMALIZE
                         && child.result() instanceof ValueId normalizeResult) {
                     array = (NormalizedSlot.ArraySlot)
@@ -1749,8 +1750,9 @@ public final class SemanticOracle {
          * only after the key child completed).
          */
         private void completeChainOperands(SemanticOp child) {
+            UnitState owner = stateOf(child.opId());
             for (SemanticOp producer : ChainOperandCompletion.operandProducersOf(
-                    child, unit, structuralOwned)) {
+                    child, owner.unit, owner.structuralOwned)) {
                 execute(producer);
             }
         }
@@ -2434,104 +2436,124 @@ public final class SemanticOracle {
         }
 
         /**
-         * The CALLBACK_INVOKE execution (host-driven, top-level): the
-         * {@code HOST_TO_DEAL} parameter boundaries in one-based order,
-         * the resolved execution binding, and the single
+         * The CALLBACK_INVOKE execution (host-driven, top-level): one
+         * START event with the scripted argument inputs and no
+         * {@code parentOpId} (the scenario {@code InvokeCallback} step
+         * triggers it), the {@code HOST_TO_DEAL} parameter boundaries in
+         * one-based order, the resolved execution binding, and the single
          * {@code DEAL_TO_HOST} return boundary — by the executed body's
          * {@code RETURN} for bodies and DEAL-body-source adapters, by the
          * callback op for host/external functions and host/external-source
-         * adapters. Sync functions only.
+         * adapters — then the op's terminal event (SUCCESS with the
+         * checked value, or FAILURE with the propagated error). Sync
+         * functions only.
          */
         private Value executeCallback(SemanticOp callback, List<Value> args) {
             KindPayload.CallbackInvokePayload payload =
                 (KindPayload.CallbackInvokePayload) callback.payload();
-            List<Value> checked = new ArrayList<>();
-            for (int i = 0; i < payload.parameterBoundaryOpIds().size(); i++) {
-                SemanticOp boundary = opOf(payload.parameterBoundaryOpIds().get(i));
-                Value arg = i < args.size() ? args.get(i) : Value.MissingValue.INSTANCE;
-                putValue(((KindPayload.BoundaryPayload) boundary.payload()).input(), arg);
-                checked.add(runBoundaryChild(boundary, arg,
-                    BoundaryContext.parameter(i + 1)));
+            List<String> inputs = new ArrayList<>();
+            for (Value arg : args) {
+                inputs.add(atomOf(arg));
             }
-            FunctionExecutionBinding binding = resolveBindingOf(payload.function());
-            switch (binding) {
-                case FunctionExecutionBinding.LoweredBody body -> {
-                    UnitState state = stateOf(callback.opId());
-                    bindParamCells(state, body.blockId(),
-                        payload.descriptor().paramTypes().size(), checked);
-                    frames.add(0, body.functionId());
-                    try {
-                        return runBodyBlock(body.blockId(),
-                            payload.descriptor().paramTypes().size(), state);
-                    } finally {
-                        frames.remove(0);
-                        popParamCells();
+            emitStart(callback, inputs);
+            try {
+                List<Value> checked = new ArrayList<>();
+                for (int i = 0; i < payload.parameterBoundaryOpIds().size(); i++) {
+                    SemanticOp boundary = opOf(payload.parameterBoundaryOpIds().get(i));
+                    Value arg = i < args.size() ? args.get(i)
+                        : Value.MissingValue.INSTANCE;
+                    putValue(((KindPayload.BoundaryPayload) boundary.payload()).input(),
+                        arg);
+                    checked.add(runBoundaryChild(boundary, arg,
+                        BoundaryContext.parameter(i + 1)));
+                }
+                FunctionExecutionBinding binding = resolveBindingOf(payload.function());
+                Value returned = switch (binding) {
+                    case FunctionExecutionBinding.LoweredBody body -> {
+                        UnitState state = stateOf(callback.opId());
+                        bindParamCells(state, body.blockId(),
+                            payload.descriptor().paramTypes().size(), checked);
+                        frames.add(0, body.functionId());
+                        try {
+                            yield runBodyBlock(body.blockId(),
+                                payload.descriptor().paramTypes().size(), state);
+                        } finally {
+                            frames.remove(0);
+                            popParamCells();
+                        }
                     }
-                }
-                case FunctionExecutionBinding.AdapterBinding adapter -> {
-                    int m = adapter.sourceSignature().paramTypes().size();
-                    Value sourceValue = loadAdapterSource(callback, adapter);
-                    checkAdapterSourceSignature(callback, adapter, sourceValue);
-                    FunctionExecutionBinding sourceBinding =
-                        resolveBindingOfValue(sourceValue);
-                    List<Value> leading = List.copyOf(checked.subList(0, m));
-                    return switch (sourceBinding) {
-                        case FunctionExecutionBinding.LoweredBody body -> {
-                            UnitState state = stateOf(callback.opId());
-                            bindParamCells(state, body.blockId(), m, leading);
-                            frames.add(0, body.functionId());
-                            try {
-                                yield runBodyBlock(body.blockId(), m, state);
-                            } finally {
-                                frames.remove(0);
-                                popParamCells();
+                    case FunctionExecutionBinding.AdapterBinding adapter -> {
+                        int m = adapter.sourceSignature().paramTypes().size();
+                        Value sourceValue = loadAdapterSource(callback, adapter);
+                        checkAdapterSourceSignature(callback, adapter, sourceValue);
+                        FunctionExecutionBinding sourceBinding =
+                            resolveBindingOfValue(sourceValue);
+                        List<Value> leading = List.copyOf(checked.subList(0, m));
+                        yield switch (sourceBinding) {
+                            case FunctionExecutionBinding.LoweredBody body -> {
+                                UnitState state = stateOf(callback.opId());
+                                bindParamCells(state, body.blockId(), m, leading);
+                                frames.add(0, body.functionId());
+                                try {
+                                    yield runBodyBlock(body.blockId(), m, state);
+                                } finally {
+                                    frames.remove(0);
+                                    popParamCells();
+                                }
                             }
-                        }
-                        case FunctionExecutionBinding.HostFunction host -> {
-                            Value value = invokeHostRequest(callback, host.hostModuleId(),
-                                host.exportName(), host.descriptor(), leading);
-                            yield runBoundaryChild(opOf(payload.returnBoundaryOpId()),
-                                value, BoundaryContext.none());
-                        }
-                        case FunctionExecutionBinding.HostFunctionValue hostValue -> {
-                            Value value = invokeHostRequest(callback,
-                                hostValue.hostModuleId(),
-                                "@value#" + hostValue.materializingBoundaryOpId().id(),
-                                hostValue.descriptor(), leading);
-                            yield runBoundaryChild(opOf(payload.returnBoundaryOpId()),
-                                value, BoundaryContext.none());
-                        }
-                        case FunctionExecutionBinding.ExternalFunction external -> {
-                            Value value = invokeHostRequest(callback, external.moduleId(),
-                                external.exportName(), external.descriptor(), leading);
-                            yield runBoundaryChild(opOf(payload.returnBoundaryOpId()),
-                                value, BoundaryContext.none());
-                        }
-                        case FunctionExecutionBinding.AdapterBinding nested ->
-                            throw new IllegalStateException("adapter-of-adapter "
-                                + "invocation is outside the statically-resolved slice "
-                                + "(ISSUE-0531)");
-                    };
-                }
-                case FunctionExecutionBinding.HostFunction host -> {
-                    Value value = invokeHostRequest(callback, host.hostModuleId(),
-                        host.exportName(), host.descriptor(), checked);
-                    return runBoundaryChild(opOf(payload.returnBoundaryOpId()), value,
-                        BoundaryContext.none());
-                }
-                case FunctionExecutionBinding.HostFunctionValue hostValue -> {
-                    Value value = invokeHostRequest(callback, hostValue.hostModuleId(),
-                        "@value#" + hostValue.materializingBoundaryOpId().id(),
-                        hostValue.descriptor(), checked);
-                    return runBoundaryChild(opOf(payload.returnBoundaryOpId()), value,
-                        BoundaryContext.none());
-                }
-                case FunctionExecutionBinding.ExternalFunction external -> {
-                    Value value = invokeHostRequest(callback, external.moduleId(),
-                        external.exportName(), external.descriptor(), checked);
-                    return runBoundaryChild(opOf(payload.returnBoundaryOpId()), value,
-                        BoundaryContext.none());
-                }
+                            case FunctionExecutionBinding.HostFunction host -> {
+                                Value value = invokeHostRequest(callback,
+                                    host.hostModuleId(), host.exportName(),
+                                    host.descriptor(), leading);
+                                yield runBoundaryChild(opOf(payload.returnBoundaryOpId()),
+                                    value, BoundaryContext.none());
+                            }
+                            case FunctionExecutionBinding.HostFunctionValue hostValue -> {
+                                Value value = invokeHostRequest(callback,
+                                    hostValue.hostModuleId(),
+                                    "@value#" + hostValue.materializingBoundaryOpId().id(),
+                                    hostValue.descriptor(), leading);
+                                yield runBoundaryChild(opOf(payload.returnBoundaryOpId()),
+                                    value, BoundaryContext.none());
+                            }
+                            case FunctionExecutionBinding.ExternalFunction external -> {
+                                Value value = invokeHostRequest(callback,
+                                    external.moduleId(), external.exportName(),
+                                    external.descriptor(), leading);
+                                yield runBoundaryChild(opOf(payload.returnBoundaryOpId()),
+                                    value, BoundaryContext.none());
+                            }
+                            case FunctionExecutionBinding.AdapterBinding nested ->
+                                throw new IllegalStateException("adapter-of-adapter "
+                                    + "invocation is outside the statically-resolved "
+                                    + "slice (ISSUE-0531)");
+                        };
+                    }
+                    case FunctionExecutionBinding.HostFunction host -> {
+                        Value value = invokeHostRequest(callback, host.hostModuleId(),
+                            host.exportName(), host.descriptor(), checked);
+                        yield runBoundaryChild(opOf(payload.returnBoundaryOpId()), value,
+                            BoundaryContext.none());
+                    }
+                    case FunctionExecutionBinding.HostFunctionValue hostValue -> {
+                        Value value = invokeHostRequest(callback, hostValue.hostModuleId(),
+                            "@value#" + hostValue.materializingBoundaryOpId().id(),
+                            hostValue.descriptor(), checked);
+                        yield runBoundaryChild(opOf(payload.returnBoundaryOpId()), value,
+                            BoundaryContext.none());
+                    }
+                    case FunctionExecutionBinding.ExternalFunction external -> {
+                        Value value = invokeHostRequest(callback, external.moduleId(),
+                            external.exportName(), external.descriptor(), checked);
+                        yield runBoundaryChild(opOf(payload.returnBoundaryOpId()), value,
+                            BoundaryContext.none());
+                    }
+                };
+                emitSuccess(callback, atomOf(returned));
+                return returned;
+            } catch (DealFailure failure) {
+                emitFailure(callback, failure);
+                throw failure;
             }
         }
 
@@ -2686,7 +2708,7 @@ public final class SemanticOracle {
 
         /** The STDLIB_PARAMETER child for the i-th argument, or null. */
         private SemanticOp parameterBoundaryOf(SemanticOp op, int index) {
-            List<SemanticOp> children = childrenByParent.get(op.opId());
+            List<SemanticOp> children = stateOf(op.opId()).childrenByParent.get(op.opId());
             if (children == null) {
                 return null;
             }
@@ -2888,7 +2910,7 @@ public final class SemanticOracle {
 
         /** The STDLIB_RETURN child, or null. */
         private SemanticOp returnBoundaryOf(SemanticOp op) {
-            List<SemanticOp> children = childrenByParent.get(op.opId());
+            List<SemanticOp> children = stateOf(op.opId()).childrenByParent.get(op.opId());
             if (children == null) {
                 return null;
             }
