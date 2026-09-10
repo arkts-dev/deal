@@ -213,11 +213,33 @@ public class LoweringSupportTest {
             && manifest.capabilities().equals(EnumSet.of(SemanticCapability.FOUNDATION_VALUES));
     }
 
+    /**
+     * The ISSUE-0239 MODULES import claim plus FOUNDATION_VALUES: an
+     * importing module with no other trigger claims exactly these two
+     * capabilities (the reserved parent verification-3 plan-time edge
+     * reroute condition; an export declaration or the entry delegation
+     * never claims it).
+     */
+    private static boolean claimsFoundationAndModules(SemanticRequirementManifest manifest) {
+        return manifest != null
+            && manifest.capabilities().equals(EnumSet.of(
+                SemanticCapability.FOUNDATION_VALUES, SemanticCapability.MODULES));
+    }
+
     /** The I3 signed32 claim: exactly FOUNDATION_VALUES + SIGNED_INT32, nothing else. */
     private static boolean claimsSignedInt32(SemanticRequirementManifest manifest) {
         return manifest != null
             && manifest.capabilities().equals(EnumSet.of(
                 SemanticCapability.FOUNDATION_VALUES, SemanticCapability.SIGNED_INT32));
+    }
+
+    /** I3 signed32 plus the ISSUE-0239 MODULES arms (importing/imported-by). */
+    private static boolean claimsSignedInt32AndModules(
+            SemanticRequirementManifest manifest) {
+        return manifest != null
+            && manifest.capabilities().equals(EnumSet.of(
+                SemanticCapability.FOUNDATION_VALUES, SemanticCapability.SIGNED_INT32,
+                SemanticCapability.MODULES));
     }
 
     // =========================================================================
@@ -370,7 +392,7 @@ public class LoweringSupportTest {
             if (result == null) {
                 return;
             }
-            check(claimsOnlyFoundation(manifestOf(result, "a")),
+            check(claimsFoundationAndModules(manifestOf(result, "a")),
                 "module A exporting the live stdlib table claims nothing — A contains no "
                     + "nowMillis member access");
             check(claimsConflict(manifestOf(result, "main")),
@@ -415,9 +437,9 @@ public class LoweringSupportTest {
             if (result == null) {
                 return;
             }
-            check(claimsOnlyFoundation(manifestOf(result, "a")),
+            check(claimsFoundationAndModules(manifestOf(result, "a")),
                 "the std/time importer A claims nothing (no member access)");
-            check(claimsOnlyFoundation(manifestOf(result, "b")),
+            check(claimsFoundationAndModules(manifestOf(result, "b")),
                 "the non-accessing intermediate B claims nothing (no member access)");
             check(claimsConflict(manifestOf(result, "main")),
                 "C claims via Arm C through the non-claiming intermediate B: C's closure "
@@ -530,7 +552,7 @@ public class LoweringSupportTest {
             if (result == null) {
                 return;
             }
-            check(claimsOnlyFoundation(manifestOf(result, "main")),
+            check(claimsFoundationAndModules(manifestOf(result, "main")),
                 "a module importing std/time without any member access of nowMillis does "
                     + "not claim STDLIB_TIME_CONFLICT");
         } finally {
@@ -573,14 +595,15 @@ public class LoweringSupportTest {
             }
             check(claimsConflict(manifestOf(triggers, "main")),
                 "an alias bound to std/time triggers the claim");
-            check(claimsOnlyFoundation(manifestOf(other, "main")),
+            check(claimsFoundationAndModules(manifestOf(other, "main")),
                 "an identically-named alias bound to another module does not trigger: the "
                     + "join matches the resolved ModuleSymbol name against the module's "
                     + "ImportDeclaration records, and the resolved target is not std/time");
-            check(claimsSignedInt32(manifestOf(other, "other")),
-                "the other module exporting nowMillis claims only FOUNDATION_VALUES + "
-                    + "SIGNED_INT32 (its return 0 int literal is CONST(Int) — the I3 "
-                    + "derivation row claims at the construct kind, never the magnitude) "
+            check(claimsSignedInt32AndModules(manifestOf(other, "other")),
+                "the other module exporting nowMillis claims FOUNDATION_VALUES + "
+                    + "SIGNED_INT32 + MODULES (its return 0 int literal is CONST(Int) "
+                    + "— the I3 derivation row claims at the construct kind, never the "
+                    + "magnitude; the imported-by arm adds MODULES) "
                     + "and never STDLIB_TIME_CONFLICT");
         } finally {
             deleteRecursively(tmp);
@@ -649,7 +672,7 @@ public class LoweringSupportTest {
             if (result == null) {
                 return;
             }
-            check(claimsOnlyFoundation(manifestOf(result, "a")),
+            check(claimsFoundationAndModules(manifestOf(result, "a")),
                 "the std/time importer A exporting an unrelated table claims nothing");
             check(claimsConflict(manifestOf(result, "main")),
                 "a module in the transitive closure reading an unrelated table's "
@@ -686,6 +709,83 @@ public class LoweringSupportTest {
             check(claimsConflict(manifestOf(result, "main")),
                 "a module importing a claiming module claims even when it never invokes "
                     + "the wrapper (Arm D over-claim — same safe LEGACY direction)");
+        } finally {
+            deleteRecursively(tmp);
+        }
+    }
+
+    static void testModulesImportClaim() throws Exception {
+        System.out.println("-- ISSUE-0239 E10 plan-time arm: import declarations claim "
+            + "MODULES; exports and the entry delegation never do --");
+
+        Path tmp = Files.createTempDirectory("deal-manifest-e10-import");
+        try {
+            // An import declaration of any resolved kind claims MODULES
+            // (the reserved parent verification-3 plan-time edge reroute
+            // condition): the over-claim only forces LEGACY post-activation.
+            RequirementManifestResult importer = compileAndCompute(tmp.resolve("imp"),
+                Map.of(
+                    "lib.deal", """
+                        export function greet(): string {
+                          return "ok"
+                        }
+                        """,
+                    "main.deal", """
+                        import * as lib from "./lib"
+
+                        export function main(): null {
+                          return null
+                        }
+                        """), "main.deal");
+            if (importer == null) {
+                return;
+            }
+            check(claimsFoundationAndModules(manifestOf(importer, "main")),
+                "an import declaration claims MODULES (ISSUE-0239 E10 plan-time arm): "
+                    + manifestOf(importer, "main").capabilities());
+            check(claimsFoundationAndModules(manifestOf(importer, "lib")),
+                "the implementation dependency claims MODULES through the "
+                    + "imported-by arm (the reverse edge of the import graph — the "
+                    + "retained-caller ABI facts stay SHADOW in this slice): "
+                    + manifestOf(importer, "lib").capabilities());
+            // An import-free single-module project with exports claims
+            // nothing beyond FOUNDATION_VALUES (+SIGNED_INT32): export
+            // declarations and the entry delegation never claim MODULES.
+            RequirementManifestResult single = compileAndCompute(tmp.resolve("single"),
+                Map.of("main.deal", """
+                    export function value(): int {
+                      return 42
+                    }
+                    export function main(): null {
+                      return null
+                    }
+                    """), "main.deal");
+            if (single == null) {
+                return;
+            }
+            check(claimsSignedInt32(manifestOf(single, "main")),
+                "the import-free single-module project claims exactly "
+                    + "FOUNDATION_VALUES + SIGNED_INT32 (exports and the entry "
+                    + "delegation never claim MODULES): "
+                    + manifestOf(single, "main").capabilities());
+
+            // A stdlib import claims MODULES even without any cataloged
+            // call (the import-observation row attaches to the import
+            // declaration itself).
+            RequirementManifestResult stdlib = compileAndCompute(tmp.resolve("stdimp"),
+                Map.of("main.deal", """
+                    import * as console from "std/console"
+
+                    export function main(): null {
+                      return null
+                    }
+                    """), "main.deal");
+            if (stdlib == null) {
+                return;
+            }
+            check(claimsFoundationAndModules(manifestOf(stdlib, "main")),
+                "a call-free stdlib import claims MODULES from the import declaration: "
+                    + manifestOf(stdlib, "main").capabilities());
         } finally {
             deleteRecursively(tmp);
         }
@@ -1325,6 +1425,7 @@ public class LoweringSupportTest {
         testOverClaimDirectImporterUnrelatedTable();
         testOverClaimClosureMemberUnrelatedTable();
         testOverClaimPropagatedNeverInvokes();
+        testModulesImportClaim();
         testSignedInt32LiteralClaims();
         testSignedInt32UnaryBinaryClaims();
         testIntrinsicConversionClaims();

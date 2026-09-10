@@ -55,6 +55,7 @@ import deal.semantic.ir.ResolvedImport;
 import deal.semantic.ir.SemanticCapability;
 import deal.semantic.ir.SemanticOpKind;
 import deal.types.Type;
+import deal.types.Types;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -63,9 +64,11 @@ import java.util.Deque;
 import java.util.EnumMap;
 import java.util.EnumSet;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.Objects;
 
 /**
@@ -261,6 +264,23 @@ public final class LoweringSupport {
             // by component: the access arms plus the cross-component
             // propagated claims, then the component union assigned to
             // every member (never a fixpoint iteration).
+            // The ISSUE-0239 E10 imported-by arm's gate: the set of
+            // implementation modules imported by another implementation
+            // module (the reverse edge of the import graph, computed over
+            // the index in one pass — a dependency module's artifact must
+            // carry the retained-caller ABI surface while the emission
+            // owned wrapper/init facts stay SHADOW).
+            Set<ModuleId> implementationDependencies = new LinkedHashSet<>();
+            for (ExternalModuleInterface entry : index.modules().values()) {
+                if (entry.kind() != ExternalModuleKind.IMPLEMENTATION) {
+                    continue;
+                }
+                for (ResolvedImport resolvedImport : entry.imports()) {
+                    if (resolvedImport.kind() == ExternalModuleKind.IMPLEMENTATION) {
+                        implementationDependencies.add(resolvedImport.resolvedModuleId());
+                    }
+                }
+            }
             Map<ModuleId, SemanticRequirementManifest> byId = new LinkedHashMap<>();
             List<SemanticRequirementManifest> manifests = new ArrayList<>();
             List<CheckedModuleInput> currentComponent = new ArrayList<>();
@@ -290,13 +310,15 @@ public final class LoweringSupport {
                     currentComponentId = componentId;
                     continue;
                 }
-                finalizeComponent(currentComponent, graph, closureHasTime, byId, manifests);
+                finalizeComponent(currentComponent, graph, closureHasTime, byId,
+                    manifests, implementationDependencies);
                 currentComponent = new ArrayList<>();
                 currentComponent.add(module);
                 currentComponentId = componentId;
             }
             if (!currentComponent.isEmpty()) {
-                finalizeComponent(currentComponent, graph, closureHasTime, byId, manifests);
+                finalizeComponent(currentComponent, graph, closureHasTime, byId,
+                    manifests, implementationDependencies);
             }
             return new RequirementManifestResult(manifests, List.of());
         } catch (FactDefect defect) {
@@ -315,7 +337,8 @@ public final class LoweringSupport {
                                           ImportGraph graph,
                                           Map<ModuleId, Boolean> closureHasTime,
                                           Map<ModuleId, SemanticRequirementManifest> byId,
-                                          List<SemanticRequirementManifest> manifests)
+                                          List<SemanticRequirementManifest> manifests,
+                                          Set<ModuleId> implementationDependencies)
             throws FactDefect {
         Map<ModuleId, Boolean> baseClaims = new LinkedHashMap<>();
         Map<ModuleId, ModuleScan> scans = new LinkedHashMap<>();
@@ -397,6 +420,26 @@ public final class LoweringSupport {
             // nothing.
             if (scans.get(module.moduleId()).classConstruct) {
                 capabilities.add(SemanticCapability.CLASSES);
+            }
+            // The modules epic's plan-time arms (ISSUE-0239, E10): a
+            // module whose shared artifact cannot yet carry a fact
+            // claims the owning capability so F4 rule 4 reroutes it
+            // LEGACY at plan time post-activation (the reserved parent
+            // verification-3 plan-time edge reroute conditions — an
+            // over-claim only forces LEGACY, never E6005 and never a
+            // within-run fallback).
+            if (scans.get(module.moduleId()).importsModule
+                    || implementationDependencies.contains(module.moduleId())) {
+                capabilities.add(SemanticCapability.MODULES);
+            }
+            if (scans.get(module.moduleId()).exportedCalledFromSource
+                    || scans.get(module.moduleId()).awaitsAsync
+                    || scans.get(module.moduleId()).declaresAsyncFunction
+                    || scans.get(module.moduleId()).functionContainer) {
+                capabilities.add(SemanticCapability.CALLS);
+            }
+            if (scans.get(module.moduleId()).bytesInContainer) {
+                capabilities.add(SemanticCapability.CONTAINERS_AND_STRINGS);
             }
             SemanticRequirementManifest manifest = new SemanticRequirementManifest(
                 module.moduleId(), capabilities, scans.get(module.moduleId()).coverage);
@@ -696,6 +739,43 @@ public final class LoweringSupport {
          *  epic's arms lower to a class op. Type-only references never
          *  set it. */
         boolean classConstruct;
+
+        /** The ISSUE-0239 {@code MODULES} trigger: any import
+         *  declaration in the module's checked source (the reserved
+         *  parent verification-3 plan-time edge reroute condition — the
+         *  over-claim only forces LEGACY post-activation). */
+        boolean importsModule;
+
+        /** The ISSUE-0239 {@code CALLS} trigger: a direct call of one of
+         *  the module's own exported functions from source (the
+         *  single-invocation-shape guard's plan-time arm — an exported
+         *  function called from source would carry two invocation shapes
+         *  under the statically-resolved call machine; ISSUE-0531's
+         *  runtime selection is the deferred closure). */
+        boolean exportedCalledFromSource;
+
+        /** The module's exported names (the export-fact arm's gate). */
+        final Set<String> exportNames = new LinkedHashSet<>();
+
+        /** The ISSUE-0239 {@code CALLS} async trigger: any await
+         *  expression in the module's checked source (ASYNC_START/AWAIT
+         *  execution stays SHADOW in this slice). */
+        boolean awaitsAsync;
+
+        /** The ISSUE-0239 {@code CALLS} async-declaration trigger: any
+         *  async function declaration or expression in the module's
+         *  checked source (the retained async-export wrapper protocol
+         *  and async body execution stay SHADOW in this slice). */
+        boolean declaresAsyncFunction;
+
+        /** The ISSUE-0239 container trigger: a for-of iterable whose
+         *  checked type carries a function type (function elements are
+         *  called through the iteration binding). */
+        boolean functionContainer;
+        /** The ISSUE-0239 container trigger: a for-of iterable whose
+         *  checked type carries bytes (backend-owned value semantics). */
+        boolean bytesInContainer;
+
         final Map<ConstructKind, List<SemanticOpKind>> coverage =
             new EnumMap<>(ConstructKind.class);
 
@@ -706,6 +786,9 @@ public final class LoweringSupport {
 
     private static ModuleScan scanModule(CheckedModuleInput module) throws FactDefect {
         ModuleScan scan = new ModuleScan();
+        for (deal.semantic.ir.ExportInterface export : module.exports()) {
+            scan.exportNames.add(export.name());
+        }
         // The checker's module root table is the site scope at module
         // level; nested scopes are entered per walked statement below
         // (mirroring TypeChecker.walkStatement).
@@ -744,7 +827,10 @@ public final class LoweringSupport {
             checkerScope = stmtScope;
         }
         switch (statement) {
-            case ImportDeclaration ignored -> scan.cover(ConstructKind.IMPORT_EXPORT_ENTRY);
+            case ImportDeclaration ignored -> {
+                scan.cover(ConstructKind.IMPORT_EXPORT_ENTRY);
+                scan.importsModule = true;
+            }
             case ExportDeclaration exportDeclaration -> {
                 scan.cover(ConstructKind.IMPORT_EXPORT_ENTRY);
                 walkStatement(exportDeclaration.declaration(), module, scan, checkerScope);
@@ -765,6 +851,9 @@ public final class LoweringSupport {
             }
             case FunctionDeclaration functionDeclaration -> {
                 scan.cover(ConstructKind.FUNCTION_DECLARATION_EXPRESSION);
+                if (functionDeclaration.isAsync()) {
+                    scan.declaresAsyncFunction = true;
+                }
                 if (functionDeclaration.body() != null) {
                     walkStatement(functionDeclaration.body(), module, scan, checkerScope);
                 }
@@ -811,6 +900,13 @@ public final class LoweringSupport {
             }
             case ForOfStatement forOfStatement -> {
                 scan.cover(ConstructKind.IF_WHILE_FOR_FOR_OF);
+                Type iterableType = checkedType(module, forOfStatement.iterable());
+                if (Types.containsBytes(iterableType)) {
+                    scan.bytesInContainer = true;
+                }
+                if (containsFunction(iterableType)) {
+                    scan.functionContainer = true;
+                }
                 walkExpression(forOfStatement.iterable(), module, scan, checkerScope);
                 walkStatement(forOfStatement.body(), module, scan, checkerScope);
             }
@@ -955,6 +1051,13 @@ public final class LoweringSupport {
                             && "int".equals(intrinsic.name())) {
                         scan.signedInt32 = true;
                     }
+                    // The ISSUE-0239 CALLS plan-time arm: a direct call
+                    // of one of the module's own exported functions (the
+                    // single-invocation-shape guard's route consequence).
+                    if (symbol instanceof Symbol.FunctionSymbol
+                            && scan.exportNames.contains(identifier.name())) {
+                        scan.exportedCalledFromSource = true;
+                    }
                 }
                 walkExpression(callExpr.callee(), module, scan, checkerScope);
                 for (ExpressionNode argument : callExpr.args()) {
@@ -1003,6 +1106,9 @@ public final class LoweringSupport {
             }
             case FunctionExpr functionExpr -> {
                 scan.cover(ConstructKind.FUNCTION_DECLARATION_EXPRESSION);
+                if (functionExpr.isAsync()) {
+                    scan.declaresAsyncFunction = true;
+                }
                 walkStatement(functionExpr.body(), module, scan, checkerScope);
             }
             case HasExpr hasExpr -> {
@@ -1030,9 +1136,25 @@ public final class LoweringSupport {
             }
             case AwaitExpression awaitExpression -> {
                 scan.cover(ConstructKind.AWAIT_ASYNC_CALL);
+                scan.awaitsAsync = true;
                 walkExpression(awaitExpression.callee(), module, scan, checkerScope);
             }
         }
+    }
+
+    /** True iff the checked type carries a function type (arrays and
+     *  nullables recurse). */
+    private static boolean containsFunction(Type type) {
+        if (type instanceof Type.Func) {
+            return true;
+        }
+        if (type instanceof Type.Array array) {
+            return containsFunction(array.element());
+        }
+        if (type instanceof Type.Nullable nullable) {
+            return containsFunction(nullable.inner());
+        }
+        return false;
     }
 
     private static void walkElements(List<ExpressionNode> elements, CheckedModuleInput module,

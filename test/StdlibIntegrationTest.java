@@ -2018,9 +2018,10 @@ public final class StdlibIntegrationTest {
                     promoted, checked.input(), checked.index(),
                     manifests.manifests(), Target.LUAJIT, Set.of());
                 check(planned != null && !planned.hasErrors() && planned.plan() != null
-                        && planned.plan().entries().get(libId) == ModuleRoute.SHARED,
-                    "T5c: rule 4 routes the value-read module SHARED on the promoted "
-                        + "profile (no forced-LEGACY arm exists): "
+                        && planned.plan().entries().get(libId) == ModuleRoute.LEGACY,
+                    "T5c: rule 4 routes the value-read module LEGACY on the promoted "
+                        + "profile (the ISSUE-0239 MODULES import arm — the parent "
+                        + "verification-3 plan-time reroute, never E6005): "
                         + (planned == null ? "null" : planned.diagnostics()));
             }
         } finally {

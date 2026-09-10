@@ -814,7 +814,10 @@ public class ModuleSystemTest {
 
         String luaOutput = Files.readString(outputFile);
         check(luaOutput.contains("greet"), "Output contains greet");
-        check(luaOutput.contains("exports.greet = greet"), "Exports greet");
+        check(luaOutput.contains(
+                "__exports[\"greet\"] = {__kind = \"function\", sig = \"()->string\", f = "),
+            "Exports greet (the ISSUE-0239 shared-emitter publication shape, the "
+                + "retained wrapper ABI)");
     }
 
     // =========================================================================

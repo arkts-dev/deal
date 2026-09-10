@@ -1077,6 +1077,13 @@ public class HistoricalRegressionCatalogTest {
             "the plan-time CLASSES arm (the class epic's landed claim, "
                 + "ISSUE-0516) derives the claim for a class source — "
                 + "never fixture-asserted: " + classManifests);
+        boolean claimsEvaluationOrder = classManifests.stream().anyMatch(
+            m -> m.capabilities().contains(SemanticCapability.EVALUATION_ORDER));
+        check(!claimsEvaluationOrder,
+            "today's LoweringSupport does not claim EVALUATION_ORDER for "
+                + "a branch-free class source (no route-time arm claims "
+                + "EVALUATION_ORDER — the mismatch probe uses a "
+                + "capability the manifests genuinely do not require)");
 
         // Missing catalog entry.
         LegacyCapabilityCatalog.AssignmentValidation missingEntry =
