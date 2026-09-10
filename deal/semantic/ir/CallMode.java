@@ -15,7 +15,13 @@ public enum CallMode {
     /** A call whose callee binding is recorded inline (static). */
     DIRECT,
 
-    /** A call resolving the callee {@code ValueId}'s allocation identity at execution. */
+    /**
+     * A call resolving the callee {@code ValueId}'s allocation identity
+     * at execution — the mode of both the statically registered
+     * {@code Indirect} callee and the dynamically resolved
+     * {@link KindPayload.CallCallee.Dynamic} callee (the latter is
+     * admissible only under this mode).
+     */
     INDIRECT,
 
     /** A call to an imported host function or host-materialized function value. */

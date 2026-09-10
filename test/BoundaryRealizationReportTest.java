@@ -617,7 +617,7 @@ public class BoundaryRealizationReportTest {
             new KindPayload.CallPayload(CallMode.HOST,
                 new KindPayload.CallCallee.Static(new FunctionExecutionBinding.HostFunction(
                     HOST_MOD, "f", SIG_II)),
-                SIG_II, List.of(paramBoundary), returnBoundary, null, null),
+                SIG_II, List.of(paramBoundary), returnBoundary, null, null, null),
             nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE, null));
 
         LoweredModuleUnit unit = unit(ops);

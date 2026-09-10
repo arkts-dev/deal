@@ -522,7 +522,7 @@ public class SemanticIrValidatorTest {
                 new KindPayload.CallPayload(CallMode.DIRECT,
                     new KindPayload.CallCallee.Static(new FunctionExecutionBinding.LoweredBody(
                         new FunctionId(1), new BlockId(1))),
-                    SIG_II, List.of(paramBoundary), returnBoundary, new BlockId(1), null),
+                    SIG_II, List.of(paramBoundary), returnBoundary, null, new BlockId(1), null),
                 nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE, null));
             units.put("CALL", unit(ops));
         }
@@ -854,7 +854,7 @@ public class SemanticIrValidatorTest {
             ops.add(opWith(callOp, SemanticOpKind.CALL,
                 new KindPayload.CallPayload(CallMode.INDIRECT,
                     new KindPayload.CallCallee.Indirect(new ValueId(9)),
-                    SIG_II, List.of(paramBoundary), returnBoundary, null, null),
+                    SIG_II, List.of(paramBoundary), returnBoundary, null, null, null),
                 nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE, null));
             passingSweep("call mode INDIRECT", ops, bindings, callModes, "INDIRECT");
         }
@@ -872,7 +872,7 @@ public class SemanticIrValidatorTest {
                 new KindPayload.CallPayload(CallMode.HOST,
                     new KindPayload.CallCallee.Static(new FunctionExecutionBinding.HostFunction(
                         new ModuleId("host.a"), "f", SIG_II)),
-                    SIG_II, List.of(paramBoundary), returnBoundary, null, null),
+                    SIG_II, List.of(paramBoundary), returnBoundary, null, null, null),
                 nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE, null));
             passingSweep("call mode HOST", ops, callModes, "HOST");
             track(policies, "HOST_PARAMETER");
@@ -899,7 +899,7 @@ public class SemanticIrValidatorTest {
                     new KindPayload.CallCallee.Static(
                         new FunctionExecutionBinding.ExternalFunction(MOD, "f", SIG_II,
                             ExternalExecutionOwner.SHARED_BODY)),
-                    SIG_II, List.of(paramBoundary), null, null, entryOp),
+                    SIG_II, List.of(paramBoundary), null, null, null, entryOp),
                 nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE, null));
             passingSweep("call mode EXTERNAL SHARED_BODY", ops, callModes, "EXTERNAL");
             track(boundaryKinds, "EXTERNAL_PARAMETER");
@@ -919,7 +919,7 @@ public class SemanticIrValidatorTest {
                     new KindPayload.CallCallee.Static(
                         new FunctionExecutionBinding.ExternalFunction(MOD, "f", SIG_II,
                             ExternalExecutionOwner.RETAINED_ABI)),
-                    SIG_II, List.of(paramBoundary), returnBoundary, null, null),
+                    SIG_II, List.of(paramBoundary), returnBoundary, null, null, null),
                 nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE, null));
             passingSweep("call mode EXTERNAL RETAINED_ABI", ops, Set.of(), null);
         }
@@ -1098,7 +1098,7 @@ public class SemanticIrValidatorTest {
                 new KindPayload.CallPayload(CallMode.DIRECT,
                     new KindPayload.CallCallee.Static(new FunctionExecutionBinding.LoweredBody(
                         new FunctionId(1), new BlockId(1))),
-                    SIG_FF, List.of(paramBoundary), returnBoundary, new BlockId(1), null),
+                    SIG_FF, List.of(paramBoundary), returnBoundary, null, new BlockId(1), null),
                 null, null, FailurePolicyId.NO_DEAL_FAILURE, null));
             passingSweep("policy FUNCTION_SIGNATURE", ops, policies, "FUNCTION_SIGNATURE");
         }
@@ -1289,7 +1289,7 @@ public class SemanticIrValidatorTest {
                 new KindPayload.CallPayload(CallMode.DIRECT,
                     new KindPayload.CallCallee.Static(new FunctionExecutionBinding.LoweredBody(
                         new FunctionId(1), new BlockId(1))),
-                    SIG_II, List.of(paramBoundary), returnBoundary, new BlockId(1), null),
+                    SIG_II, List.of(paramBoundary), returnBoundary, null, new BlockId(1), null),
                 nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE, null));
         }
 
@@ -1324,7 +1324,7 @@ public class SemanticIrValidatorTest {
                     new KindPayload.CallCallee.Static(
                         new FunctionExecutionBinding.ExternalFunction(MOD, "f", SIG_II,
                             ExternalExecutionOwner.RETAINED_ABI)),
-                    SIG_II, List.of(paramBoundary), returnBoundary, null, null),
+                    SIG_II, List.of(paramBoundary), returnBoundary, null, null, null),
                 nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE, null));
             track(boundaryKindsTest, "EXTERNAL_PARAMETER");
             track(boundaryKindsTest, "EXTERNAL_RETURN");
@@ -1461,7 +1461,7 @@ public class SemanticIrValidatorTest {
                         new KindPayload.CallCallee.Static(
                             new FunctionExecutionBinding.LoweredBody(
                                 new FunctionId(1), new BlockId(1))),
-                        SIG_II, List.of(paramBoundary), returnBoundary, new BlockId(1), null),
+                        SIG_II, List.of(paramBoundary), returnBoundary, null, new BlockId(1), null),
                     nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE, null));
                 yield ops;
             }

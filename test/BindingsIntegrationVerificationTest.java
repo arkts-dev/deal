@@ -1048,7 +1048,7 @@ public class BindingsIntegrationVerificationTest {
         SemanticOp call = irValueOp(new OpId(MODULE, 9201L), SemanticOpKind.CALL,
             new KindPayload.CallPayload(CallMode.INDIRECT,
                 new KindPayload.CallCallee.Indirect(calleeValue), INNER_SIG,
-                List.of(), null, null, null),
+                List.of(), null, null, null, null),
             callResult, INNER_SIG, List.of(calleeValue), List.of(INNER_SIG));
         AdaptSourceRef.Thunk callThunk = AdapterThunkConstruction.buildThunk(callThunkBlock,
             List.of(call), List.of(callCapture));
@@ -2139,7 +2139,7 @@ public class BindingsIntegrationVerificationTest {
                     new FunctionExecutionBinding.LoweredBody(declaredFunction,
                         declaredBody)),
                 new RuntimeDescriptor.Func(List.of(), declaredSignature),
-                List.of(), boundaryOpId, declaredBody, null),
+                List.of(), boundaryOpId, null, declaredBody, null),
             new ValueId(driveVal++), null, List.of(), List.of(),
             FailurePolicyId.NO_DEAL_FAILURE, null));
 

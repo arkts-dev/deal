@@ -486,7 +486,8 @@ public class BoundaryIntegrationTest {
                 new KindPayload.CallCallee.Static(
                     new FunctionExecutionBinding.LoweredBody(new FunctionId(1),
                         new BlockId(1))),
-                FUNC_PARAM_CALL, List.of(paramBoundary), retBoundary, new BlockId(1), null),
+                FUNC_PARAM_CALL, List.of(paramBoundary), retBoundary, null,
+                new BlockId(1), null),
             nextValue(), BOOLEAN, FailurePolicyId.NO_DEAL_FAILURE, null));
 
         // 10-11. ARRAY_ELEMENT_READ int under INDEX_READ — negative index first.
@@ -535,7 +536,7 @@ public class BoundaryIntegrationTest {
             new KindPayload.CallPayload(CallMode.HOST,
                 new KindPayload.CallCallee.Static(
                     new FunctionExecutionBinding.HostFunction(HOST_MOD, "add", HOST_SIG)),
-                HOST_SIG, List.of(hostPb1, hostPb2), hostRb, null, null),
+                HOST_SIG, List.of(hostPb1, hostPb2), hostRb, null, null, null),
             nextValue(), STRING, FailurePolicyId.NO_DEAL_FAILURE, null));
 
         // 16-17. ARRAY_ELEMENT_DELETE int under DELETE ARRAY_SLOT — bounds first.

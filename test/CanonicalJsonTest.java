@@ -152,7 +152,7 @@ public class CanonicalJsonTest {
 
     /** Stored golden: SHA-256 of the canonical JSON of {@link #pinnedSnapshot()}. */
     private static final String PINNED_SNAPSHOT_DIGEST_GOLDEN =
-        "572e2212c4933641f6e74026983e1f1e90b647f8c6b19ca43e35e767d793a92b";
+        "810fcc608b7e27fa3dd23ec391e0d38aee56bf5e4ad0f7ef2f32fb91538545fb";
 
     /** Stored golden: {@code LoweringContextHash.of(DEAL_V1_2_INT32, REGISTRY_HASH)}. */
     private static final String PINNED_LOWERING_CONTEXT_GOLDEN =
@@ -208,6 +208,7 @@ public class CanonicalJsonTest {
                 LIB, "add", intInt, ExternalExecutionOwner.SHARED_BODY)),
             intInt,
             List.of(new OpId(APP, 10), new OpId(APP, 11)),
+            null,
             null,
             null,
             new OpId(LIB, 3));
@@ -787,14 +788,14 @@ public class CanonicalJsonTest {
         KindPayload.CallPayload direct = new KindPayload.CallPayload(CallMode.DIRECT,
             new KindPayload.CallCallee.Static(new FunctionExecutionBinding.LoweredBody(
                 new FunctionId(0), new BlockId(0))),
-            sig1, List.of(), null, new BlockId(0), null);
+            sig1, List.of(), null, null, new BlockId(0), null);
         String callDigest = digest(snapshotFor(direct, SemanticOpKind.CALL,
             RuntimeDescriptor.Int.INSTANCE, List.of(), FailurePolicyId.NO_DEAL_FAILURE,
             PLACEHOLDER_DIGEST));
         KindPayload.CallPayload external = new KindPayload.CallPayload(CallMode.EXTERNAL,
             new KindPayload.CallCallee.Static(new FunctionExecutionBinding.LoweredBody(
                 new FunctionId(0), new BlockId(0))),
-            sig1, List.of(), null, new BlockId(0), null);
+            sig1, List.of(), null, null, new BlockId(0), null);
         check(!callDigest.equals(digest(snapshotFor(external, SemanticOpKind.CALL,
                 RuntimeDescriptor.Int.INSTANCE, List.of(), FailurePolicyId.NO_DEAL_FAILURE,
                 PLACEHOLDER_DIGEST))),
@@ -802,7 +803,7 @@ public class CanonicalJsonTest {
         KindPayload.CallPayload wider = new KindPayload.CallPayload(CallMode.DIRECT,
             new KindPayload.CallCallee.Static(new FunctionExecutionBinding.LoweredBody(
                 new FunctionId(0), new BlockId(0))),
-            sig2, List.of(), null, new BlockId(0), null);
+            sig2, List.of(), null, null, new BlockId(0), null);
         check(!callDigest.equals(digest(snapshotFor(wider, SemanticOpKind.CALL,
                 RuntimeDescriptor.Int.INSTANCE, List.of(), FailurePolicyId.NO_DEAL_FAILURE,
                 PLACEHOLDER_DIGEST))),
@@ -1143,7 +1144,7 @@ public class CanonicalJsonTest {
             case CALL -> new KindPayload.CallPayload(CallMode.DIRECT,
                 new KindPayload.CallCallee.Static(
                     new FunctionExecutionBinding.LoweredBody(new FunctionId(0), b0)),
-                SIG, List.of(), null, b0, null);
+                SIG, List.of(), null, null, b0, null);
             case EXTERNAL_ENTRY -> new KindPayload.ExternalEntryPayload(
                 "export", new FunctionId(0), SIG, false, o0, null);
             case CALLBACK_INVOKE -> new KindPayload.CallbackInvokePayload(
