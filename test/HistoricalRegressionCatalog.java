@@ -533,7 +533,7 @@ public final class HistoricalRegressionCatalog {
                     "deal/codegen/jvm/JvmBackend.java:10853",
                     "unsupported(\"delete of this target shape\", ds.span());"),
                 new ExactTextAnchor("e6000-rejection-mapping",
-                    "deal/codegen/jvm/JvmBackend.java:17214-17218",
+                    "deal/codegen/jvm/JvmBackend.java:17278-17282",
                     "DiagnosticCode.E6000")),
             "2e59af9ca7698ff4453f3bf8c9cf2b8c2e6d0775e51ef7c79c0630530bcbaa33"),
 
