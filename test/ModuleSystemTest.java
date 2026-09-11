@@ -692,20 +692,28 @@ public class ModuleSystemTest {
     private static void testModuleOutsideCycle() throws Exception {
         System.out.println("-- Module Outside Declaration-Only Cycle --");
 
-        // A and B form a declaration-only cycle
-        // C depends on A (module outside cycle that depends on cycle module)
+        // A and B form a type-only cycle: each module references the
+        // other exclusively in type positions (qualified class
+        // annotations) — v1.2 function bodies count as ordinary
+        // runtime edges (provider-versioned-default-plans D7(a)), so
+        // the cycle must carry no runtime edge to stay legal.
+        // C depends on A (module outside cycle that depends on cycle
+        // module).
         writeFile("src/ocA.deal", """
             import * as B from "./ocB"
-            export function foo(x: int): int { return B.transform(x); }
+            export class TA { tag: int = 1; }
+            export function value(): int { return 42; }
+            export function foo(x: B.TB): B.TB { return x; }
             """);
         writeFile("src/ocB.deal", """
             import * as A from "./ocA"
-            export function transform(x: int): int { return x + 1; }
+            export class TB { tag: int = 2; }
+            export function transform(x: A.TA): A.TA { return x; }
             """);
         writeFile("src/ocC.deal", """
             import * as A from "./ocA"
             export function main(): null { return null; }
-            export function run(): int { return A.foo(10); }
+            export function run(): int { return A.value(); }
             """);
 
         Path entryFile = tmpDir.resolve("src/ocC.deal").toAbsolutePath();
@@ -1071,16 +1079,22 @@ public class ModuleSystemTest {
     private static void testCircularImportDeclarationOnly() throws Exception {
         System.out.println("-- Circular Import: Declaration-Only (allowed) --");
 
-        // Both modules only use each other in function bodies.
-        // No top-level runtime expressions reference the cyclic import.
+        // Both modules reference the cyclic import exclusively in
+        // type positions (qualified class annotations). v1.2 function
+        // bodies count as ordinary runtime edges
+        // (provider-versioned-default-plans D7(a)), so any call
+        // through the cyclic import inside a body makes the cycle a
+        // runtime SCC and E2005; a type-only cycle stays legal.
         writeFile("src/da.deal", """
             import * as B from "./db"
             export function main(): null { return null; }
-            export function foo(x: int): int { return B.get(x); }
+            export class A1 { tag: int = 1; }
+            export function foo(x: B.B1): B.B1 { return x; }
             """);
         writeFile("src/db.deal", """
             import * as A from "./da"
-            export function get(x: int): int { return x + 1; }
+            export class B1 { tag: int = 2; }
+            export function get(x: A.A1): A.A1 { return x; }
             """);
 
         Path entryFile = tmpDir.resolve("src/da.deal").toAbsolutePath();
@@ -1162,32 +1176,41 @@ public class ModuleSystemTest {
     private static void testTwoDisconnectedCyclesBothDecl() throws Exception {
         System.out.println("-- Two Disconnected Cycles: Both Declaration-Only --");
 
-        // SCC1: A↔B — declaration-only
+        // SCC1: A↔B — type-only (qualified class annotations only;
+        // v1.2 function bodies count as ordinary runtime edges,
+        // provider-versioned-default-plans D7(a))
         writeFile("src/tdc2_a.deal", """
             import * as B from "./tdc2_b"
-            export function callB(x: int): int { return B.transform(x); }
+            export class TA { tag: int = 1; }
+            export function val(): int { return 1; }
+            export function callB(x: B.TB): B.TB { return x; }
             """);
         writeFile("src/tdc2_b.deal", """
             import * as A from "./tdc2_a"
-            export function transform(x: int): int { return x + 1; }
+            export class TB { tag: int = 2; }
+            export function transform(x: A.TA): A.TA { return x; }
             """);
 
-        // SCC2: C↔D — declaration-only
+        // SCC2: C↔D — type-only
         writeFile("src/tdc2_c.deal", """
             import * as D from "./tdc2_d"
-            export function callD(x: int): int { return D.convert(x); }
+            export class TC { tag: int = 3; }
+            export function val(): int { return 2; }
+            export function callD(x: D.TD): D.TD { return x; }
             """);
         writeFile("src/tdc2_d.deal", """
             import * as C from "./tdc2_c"
-            export function convert(x: int): int { return C.callD(x) + 2; }
+            export class TD { tag: int = 4; }
+            export function convert(x: C.TC): C.TC { return x; }
             """);
 
-        // Entry: imports A first, then C
+        // Entry: imports A first, then C — its calls are ordinary
+        // edges out of the cycles (acyclic)
         writeFile("src/tdc2_entry.deal", """
             import * as A from "./tdc2_a"
             import * as C from "./tdc2_c"
             export function main(): null { return null; }
-            export function test(): int { return A.callB(1) + C.callD(2); }
+            export function test(): int { return A.val() + C.val(); }
             """);
 
         Path entryFile = tmpDir.resolve("src/tdc2_entry.deal").toAbsolutePath();

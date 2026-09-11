@@ -132,6 +132,29 @@ TEST_MAINS+=(
 )
 
 # =========================================================================
+# ISSUE-0543 (merged runtime dependency graph): the digest-free SCC
+# pass over the merged ordinary (RUNTIME_USE) + default
+# (DEFERRED_DEFAULT_BINDING) edges over the one RuntimeImportDependency
+# carrier, E2005 with per-edge notes for default-only/ordinary-only/
+# mixed runtime SCCs, the publication gate (no plan, FFI metadata, or
+# artifact on E2005), type-only cycle legality, the acyclic path —
+# provider digests requested only after the SCC pass, final
+# digest-bearing dependency records, completed plans, and the
+# initialization order preserving first-import order — exercised
+# through the real orchestrator path (ProjectLocator -> production
+# CompilationOrchestrator -> compile()) plus direct unit pins of the
+# shared ordering algorithm. Joined here at the gate-script level, like
+# the ISSUE-0541/0542 suites, so the single compile/test-list authority
+# file (tools/gate-manifest.sh) stays untouched.
+# =========================================================================
+TEST_SOURCES+=(
+  'test/ModuleDependencyGraphTest.java'
+)
+TEST_MAINS+=(
+  'fg|=== Running Module Dependency Graph Tests (ISSUE-0543) ===|java -ea -cp build deal.test.ModuleDependencyGraphTest'
+)
+
+# =========================================================================
 # ISSUE-0474 + ISSUE-0475 (Coverage Manifest Validator and Corpus
 # Check): the reusable C7 validation component, its synthetic 26/0 unit
 # matrix, and the real-manifest 82/0 mechanical check join the compile
