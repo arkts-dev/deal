@@ -13932,19 +13932,24 @@ public final class JvmBackend {
 
     /**
      * A direct call through a function-typed class field
-     * ({@code h.cb(args)} — ISSUE-0549): the field stores the shared
-     * wrapper reference, so the call emits
-     * {@code (<receiver>).<field>.invoke(args)}. The receiver (the
-     * field-read object) evaluates exactly once BEFORE the arguments
-     * (spec-v1.2 §Operational semantics: the callee — receiver included
-     * — runs before the arguments, left to right): an effectful receiver
+     * ({@code h.cb(args)} — ISSUE-0549, ISSUE-0548 callee-first): the
+     * field stores the shared wrapper reference, so the call emits a
+     * FIELD-READ materialization into a wrapper temporary followed by
+     * a dispatch through that temporary's {@code invoke}. The receiver
+     * (the field-read object) evaluates exactly once BEFORE the field
+     * read, and the FIELD READ itself runs at the callee's evaluation
+     * position — before every argument (spec-v1.2 §Operational
+     * semantics rule 1: LuaJIT evaluates {@code h.cb} completely
+     * first, so an argument side effect that reassigns the called
+     * field must not change the invoked value): an effectful receiver
      * materializes into a fresh temporary immediately after its
-     * evaluation, so its side effects precede every argument's hoisted
-     * statements. Arguments route through the same declared-parameter
-     * boundary adaptation every indirect call uses, and the await site
-     * keeps its pinned completion checks (a bytes completion is proven
-     * by the emitted wrapper return type — spec-v1.2 §JVM backend
-     * contract).
+     * evaluation, the field read materializes into a wrapper
+     * temporary declared next — before any argument hoist — and the
+     * dispatch goes through that temporary. Arguments route through
+     * the same declared-parameter boundary adaptation every indirect
+     * call uses, and the await site keeps its pinned completion checks
+     * (a bytes completion is proven by the emitted wrapper return type
+     * — spec-v1.2 §JVM backend contract).
      */
     private String emitClassFieldCall(MemberAccessExpr mae, CallExpr call,
             Type.Func f) {
@@ -13961,14 +13966,25 @@ public final class JvmBackend {
             preStatementsDeclareTemps = true;
             recv = tmp;
         }
+        String shape = registerWrapperShape(f);
+        if (shape == null) {
+            unsupported("function values whose signature contains "
+                + "unsupported carriers (table | null positions and "
+                + "host-class carriers — deferred to the ISSUE-0110 "
+                + "descriptor join)", call.callee().span());
+            return "null";
+        }
+        String calleeTemp = nextFunctionValueTempName();
+        preStatements.add(new PreLine(shape + " " + calleeTemp + " = "
+            + recv + "." + javaName(mae.field()) + ";", 0));
+        preStatementsDeclareTemps = true;
         List<String> argCodes = emitOperandsInOrder(call.args(),
             f.paramTypes());
         for (int i = 0; i < argCodes.size(); i++) {
             argCodes.set(i, boundaryArgCode(call.args().get(i),
                 argCodes.get(i), f.paramTypes().get(i)));
         }
-        return recv + "." + javaName(mae.field()) + ".invoke("
-            + String.join(", ", argCodes) + ")";
+        return calleeTemp + ".invoke(" + String.join(", ", argCodes) + ")";
     }
 
     /**
