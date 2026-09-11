@@ -519,18 +519,18 @@ public final class HistoricalRegressionCatalog {
             "32885541def6bb9f0cef3f5fa49d963e1e2da4ecafeddbcfbb82c49bdfe679d3"),
         new Row(SemanticCapability.CONTAINERS_AND_STRINGS,
             "jvm-array-index-delete-e6000",
-            "deal/codegen/jvm/JvmBackend.java:10646",
+            "deal/codegen/jvm/JvmBackend.java:10665",
             Authority.BACKEND_SOURCE_JVM, Family.ARRAY_DELETE,
             ExpectationClass.BackendReject,
             "E6000",
             List.of(
                 new ExactTextAnchor("delete-target-shape-rejection",
-                    "deal/codegen/jvm/JvmBackend.java:10646",
+                    "deal/codegen/jvm/JvmBackend.java:10665",
                     "unsupported(\"delete of this target shape\", ds.span());"),
                 new ExactTextAnchor("e6000-rejection-mapping",
-                    "deal/codegen/jvm/JvmBackend.java:16854-16858",
+                    "deal/codegen/jvm/JvmBackend.java:16926-16930",
                     "DiagnosticCode.E6000")),
-            "1152ac6c236b86a6427f89ca74bcabd3895fcb582d7549f5bdcc9948421c6d51"),
+            "a9dddf1ad396a3e7a769e14d57260a2d4b719b078f2bb24018751a52c8a7519f"),
 
         // EVALUATION_ORDER — WRITE_ORDER (array-write evaluation order)
         fixtureRow(SemanticCapability.EVALUATION_ORDER, Family.WRITE_ORDER,
