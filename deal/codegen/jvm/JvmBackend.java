@@ -2625,13 +2625,14 @@ public final class JvmBackend {
                 // is a host-module import. Its declared function exports
                 // emit per-alias wrapper methods with load-time presence
                 // checks and call-time boundary checks; ISSUE-0303
-                // (jvm-v12-host-abi-completion D1/D4) lifts the declared
-                // array/function/class shapes onto those wrappers and the
-                // synthesized shared records. Declared exports with
-                // shapes the extended boundary still rejects (table
-                // carriers and class-element arrays in function
-                // parameter/return positions — the host wrapper seam
-                // has no class-element array carrier; bytes parameters
+                // (jvm-v12-host-abi-completion D1/D4; ISSUE-0570 lifts
+                // class-element arrays onto the wrapper seam) lifts the
+                // declared array/function/class shapes onto those
+                // wrappers and the synthesized shared records. Declared
+                // exports with shapes the extended boundary still
+                // rejects (table carriers and arrays whose element —
+                // through nullable/nested-array recursion — is a class
+                // other than a declared host class; bytes parameters
                 // and returns ride the shared $DealRt.Bytes carrier) are
                 // E6000 at the import statement, never silently
                 // miscompiled.
@@ -4732,6 +4733,11 @@ public final class JvmBackend {
         emitLine("// fails E8010 and a properly wrapped $DealRt.FnValue with a");
         emitLine("// byte-equal descriptor passes; class-typed returns validate nominal");
         emitLine("// identity through the shared seam (E8001 for a foreign identity).");
+        emitLine("// ISSUE-0570: class-element array returns ride the shared");
+        emitLine("// per-class $HostArr$ carrier with the same D2 boundary checks");
+        emitLine("// (carrier/wrong-kind element failures wrap as E8010) and the");
+        emitLine("// nominal E8001 propagates for a foreign-identity element — the");
+        emitLine("// class-typed identity rule extended to class elements.");
         emitLine("static java.lang.Object __hostCheck(java.lang.String desc, java.lang.Object v, java.lang.String fn, boolean completion) {");
         emitLine("    java.lang.String d = desc;");
         emitLine("    while (d.startsWith(\"?\")) {");
@@ -4741,6 +4747,7 @@ public final class JvmBackend {
         emitLine("    if (d.startsWith(\"[\")) {");
         emitLine("        try { return $hostCheckArray(d, v); }");
         emitLine("        catch (DealError inner) {");
+        emitLine("            if (\"E8001\".equals(inner.code) && inner.getMessage().startsWith(\"expected instance of \")) throw inner;");
         emitLine("            throw new DealError(completion ? \"E8001\" : \"E8010\", (completion ? \"expected \" : \"host function '\" + fn + \"' return value 1 type mismatch: expected \") + desc + \", got \" + inner.getMessage());");
         emitLine("        }");
         emitLine("    }");
@@ -4799,7 +4806,11 @@ public final class JvmBackend {
         emitLine("// prefix through. The checked value crosses to the host method as");
         emitLine("// the shared carrier (array wrapper / typed $DealRt function");
         emitLine("// wrapper / synthesized record), never a converted or lambda");
-        emitLine("// value.");
+        emitLine("// value. ISSUE-0570: class-element array parameters ride the");
+        emitLine("// shared per-class $HostArr$ carrier with the same D2 boundary");
+        emitLine("// checks (carrier/wrong-kind element failures wrap as E8010) and");
+        emitLine("// the nominal E8001 propagates for a foreign-identity element —");
+        emitLine("// the class-typed identity rule extended to class elements.");
         emitLine("static java.lang.Object __hostParamCheck(int i, java.lang.String desc, java.lang.Object v) {");
         emitLine("    java.lang.String d = desc;");
         emitLine("    while (d.startsWith(\"?\")) {");
@@ -4811,6 +4822,7 @@ public final class JvmBackend {
         emitLine("        if (d.startsWith(\"[\")) return $hostCheckArray(d, v);");
         emitLine("        return $check(desc, v);");
         emitLine("    } catch (DealError inner) {");
+        emitLine("        if (\"E8001\".equals(inner.code) && inner.getMessage().startsWith(\"expected instance of \")) throw inner;");
         emitLine("        throw new DealError(\"E8010\", \"parameter \" + i + \" type mismatch: \" + inner.getMessage());");
         emitLine("    }");
         emitLine("}");
@@ -5743,9 +5755,15 @@ public final class JvmBackend {
         // pinned E8010 "parameter {i} type mismatch" / "return value 1
         // type mismatch" (never an internal E8001/E8003 crossing the
         // boundary), exactly the LuaJIT check_array -> check_type
-        // reference shape. A descriptor without a generated row (a
-        // class-array descriptor, whose carrier $check gates in its own
-        // branches) falls through with the carrier already validated.
+        // reference shape. The ISSUE-0570 class-element rows validate
+        // the $HostArr$ carrier's elements through the nominal record
+        // identity: a foreign-identity element raises E8001 "expected
+        // instance of ..." (the seams propagate it unchanged — the
+        // class-typed identity rule) and a wrong-kind element raises
+        // E8003 (wrapped E8010 by the seams). A descriptor without a
+        // generated row (a class-array descriptor whose carrier $check
+        // gates in its own branches) falls through with the carrier
+        // already validated.
         emitLine("static java.lang.Object $hostCheckArray(java.lang.String descriptor, java.lang.Object v) {");
         indent++;
         emitLine("java.lang.Object a = $check(descriptor, v);");
@@ -6429,18 +6447,33 @@ public final class JvmBackend {
     }
 
     /**
-     * Registers the shared-seam nominal branch for one declared host
-     * class (ISSUE-0303 D4): the emitted {@code $check(descriptor, v)}
-     * helper accepts exactly the synthesized shared record class and
-     * raises E8001 with the pinned expected/got identity messages for a
-     * foreign-identity or non-class value — the same branch shape
-     * {@link #emitClass} appends for project classes. Registered once
-     * per class identity.
+     * Registers the shared-seam branches for one declared host class
+     * (ISSUE-0303 D4; ISSUE-0570 adds the class-element array rows):
+     * the emitted {@code $check(descriptor, v)} helper accepts exactly
+     * the synthesized shared record class and raises E8001 with the
+     * pinned expected/got identity messages for a foreign-identity or
+     * non-class value — the same branch shape {@link #emitClass}
+     * appends for project classes. The class-element ARRAY descriptors
+     * ({@code [<identity>]} / {@code [?<identity>]}) dispatch on the
+     * shared per-class {@code $HostArr$} {@code __RefArray} carrier
+     * (the single wrapper serving both the plain and nullable-element
+     * shapes; a wrong carrier raises E8001 {@code expected array} and
+     * an array-mode {@code $DealRt.Table} converts with element-level
+     * E8003), and the host-boundary {@code $hostCheckArray} rows
+     * re-check the carrier's elements (a Java host can construct the
+     * wrapper with junk elements, so the boundary never trusts it by
+     * construction): a wrong-kind element raises E8003 (the boundary
+     * seams wrap it as the pinned E8010 parameter/return mismatch) and
+     * a foreign-identity element raises the nominal E8001
+     * {@code expected instance of ...} which the boundary seams
+     * propagate unchanged — the class-typed identity rule (D4)
+     * extended to class elements. Registered once per class identity.
      */
     private void registerHostClassCheckBranch(Type.Class c) {
         String identity = classCheckDescriptor(c);
         if (!emittedHostClassBranches.add(identity)) return;
         String record = hostRecordJavaRef(c);
+        String arr = hostClassArrayWrapperRef(c);
         classCheckBranches.add("if (descriptor.equals("
             + quoteJavaString(identity) + ")) {");
         classCheckBranches.add("    if (v instanceof " + record + " b) return b;");
@@ -6449,6 +6482,78 @@ public final class JvmBackend {
             + identity + ", got \" + actualIdentity);");
         classCheckBranches.add("    throw new DealError(\"E8001\", \"expected class instance, got \" + $describe(v));");
         classCheckBranches.add("}");
+        // ISSUE-0570: the class-element array descriptors in the shared
+        // seam — [<identity>] and [?<identity>] dispatch on the shared
+        // per-class $HostArr$ carrier (the same branch shape emitClass
+        // appends for project-class arrays: carrier identity, an
+        // array-mode $DealRt.Table converted element-wise with E8003 at
+        // the first failing index, E8001 "expected array" otherwise).
+        classCheckBranches.add("if (descriptor.equals("
+            + quoteJavaString("[" + identity + "]") + ")) {");
+        classCheckBranches.add("    if (v instanceof " + arr + " a) return a;");
+        classCheckBranches.add("    if (v instanceof $DealRt.Table t && t.$array() != null) {");
+        classCheckBranches.add("        java.util.ArrayList<java.lang.Object> a = t.$array();");
+        classCheckBranches.add("        java.lang.Object[] data = new java.lang.Object[a.size()];");
+        classCheckBranches.add("        for (int i = 0; i < a.size(); i++) {");
+        classCheckBranches.add("            try { data[i] = $check("
+            + quoteJavaString(identity) + ", a.get(i)); }");
+        classCheckBranches.add("            catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); }");
+        classCheckBranches.add("        }");
+        classCheckBranches.add("        return new " + arr + "(data);");
+        classCheckBranches.add("    }");
+        classCheckBranches.add("    throw new DealError(\"E8001\", \"expected array, got \" + $describe(v));");
+        classCheckBranches.add("}");
+        classCheckBranches.add("if (descriptor.equals("
+            + quoteJavaString("[?" + identity + "]") + ")) {");
+        classCheckBranches.add("    if (v instanceof " + arr + " a) return a;");
+        classCheckBranches.add("    if (v instanceof $DealRt.Table t && t.$array() != null) {");
+        classCheckBranches.add("        java.util.ArrayList<java.lang.Object> a = t.$array();");
+        classCheckBranches.add("        java.lang.Object[] data = new java.lang.Object[a.size()];");
+        classCheckBranches.add("        for (int i = 0; i < a.size(); i++) {");
+        classCheckBranches.add("            try { data[i] = $check("
+            + quoteJavaString("?" + identity) + ", a.get(i)); }");
+        classCheckBranches.add("            catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); }");
+        classCheckBranches.add("        }");
+        classCheckBranches.add("        return new " + arr + "(data);");
+        classCheckBranches.add("    }");
+        classCheckBranches.add("    throw new DealError(\"E8001\", \"expected array, got \" + $describe(v));");
+        classCheckBranches.add("}");
+        // The host-boundary element re-check rows (ISSUE-0570): the Java
+        // host can construct the $HostArr$ wrapper with junk elements,
+        // so $hostCheckArray re-validates every element through the
+        // nominal record identity. A foreign-identity element raises the
+        // pinned E8001 "expected instance of ..." (the seams propagate
+        // it unchanged — the class-typed identity rule); a wrong-kind
+        // element (or a null element in the plain C[] shape) raises
+        // E8003, which the boundary seams wrap as E8010
+        // "parameter {i} type mismatch" / "return value 1 type
+        // mismatch".
+        hostRefArrayCheckBranches.add("if (descriptor.equals("
+            + quoteJavaString("[" + identity + "]") + ")) {");
+        hostRefArrayCheckBranches.add("    " + arr + " w = (" + arr + ") a;");
+        hostRefArrayCheckBranches.add("    for (int i = 0; i < w.data.length; i++) {");
+        hostRefArrayCheckBranches.add("        java.lang.Object e = w.data[i];");
+        hostRefArrayCheckBranches.add("        if (e instanceof " + record + ") continue;");
+        hostRefArrayCheckBranches.add("        java.lang.String id = $identityOf(e);");
+        hostRefArrayCheckBranches.add("        if (id != null) throw new DealError(\"E8001\", \"expected instance of "
+            + identity + ", got \" + id);");
+        hostRefArrayCheckBranches.add("        throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\");");
+        hostRefArrayCheckBranches.add("    }");
+        hostRefArrayCheckBranches.add("    return a;");
+        hostRefArrayCheckBranches.add("}");
+        hostRefArrayCheckBranches.add("if (descriptor.equals("
+            + quoteJavaString("[?" + identity + "]") + ")) {");
+        hostRefArrayCheckBranches.add("    " + arr + " w = (" + arr + ") a;");
+        hostRefArrayCheckBranches.add("    for (int i = 0; i < w.data.length; i++) {");
+        hostRefArrayCheckBranches.add("        java.lang.Object e = w.data[i];");
+        hostRefArrayCheckBranches.add("        if (e == null || e instanceof " + record + ") continue;");
+        hostRefArrayCheckBranches.add("        java.lang.String id = $identityOf(e);");
+        hostRefArrayCheckBranches.add("        if (id != null) throw new DealError(\"E8001\", \"expected instance of "
+            + identity + ", got \" + id);");
+        hostRefArrayCheckBranches.add("        throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\");");
+        hostRefArrayCheckBranches.add("    }");
+        hostRefArrayCheckBranches.add("    return a;");
+        hostRefArrayCheckBranches.add("}");
     }
 
     /**
@@ -6641,20 +6746,21 @@ public final class JvmBackend {
     /**
      * Validates every declared export of a host module against the
      * supported shapes (ISSUE-0100; ISSUE-0303 D1/D4 lifts the
-     * array/function/class shapes — jvm-v12-host-abi-completion).
+     * array/function/class shapes — jvm-v12-host-abi-completion;
+     * ISSUE-0570 lifts class-element arrays in wrapper positions).
      * Supported: function exports whose parameters and returns are
      * int/number/boolean/string/bytes/null, arrays of supported element
      * shapes, function types, declared host classes, and their nullable
-     * forms; class exports (declared host classes) whose field types
-     * are supported shapes. Function parameter/return positions reject
-     * class-element arrays (see {@link #hostShapeSupported} — the host
-     * wrapper seam has no class-element array carrier), while record
-     * fields keep them (their storage maps onto the per-class
-     * {@code $HostArr$} wrapper). Everything else — table carriers
-     * and class-typed positions naming anything but a declared host
-     * class — is an E6000 at the import statement, never a silently
-     * miscompiled artifact. Returns true when every declared export is
-     * supported.
+     * forms — including arrays whose element (through
+     * nullable/nested-array recursion) is a declared host class, which
+     * the wrapper seam carries on the shared per-class
+     * {@code $HostArr$} carrier with the D2 boundary checks; class
+     * exports (declared host classes) whose field types are supported
+     * shapes. Everything else — table carriers, class-element arrays
+     * whose class is not a declared host class, and class-typed
+     * positions naming anything but a declared host class — is an
+     * E6000 at the import statement, never a silently miscompiled
+     * artifact. Returns true when every declared export is supported.
      */
     private boolean validateHostExports(String raw, Map<String, Type> exports,
                                         Span span) {
@@ -6712,7 +6818,8 @@ public final class JvmBackend {
     }
 
     /** True when the declared shape is one the extended host boundary
-     * can validate (ISSUE-0303 D1): primitives/string/null, declared
+     * can validate (ISSUE-0303 D1; ISSUE-0570 lifts class-element
+     * arrays in wrapper positions): primitives/string/null, declared
      * host classes, arrays of supported elements, function signatures
      * over supported shapes, and their nullable forms. Table carriers
      * stay out (E6000); bytes parameters/returns ride the shared
@@ -6721,17 +6828,19 @@ public final class JvmBackend {
      *
      * <p>{@code classArraysSupported} distinguishes the two positions
      * the gate serves. Function parameters/returns pass {@code false}:
-     * the host WRAPPER seam has no class-element array carrier there —
-     * {@link #arrayWrapperName} returns null for a class element, so
-     * the wrapper emission would publish a {@code static null ...}
-     * return type and an {@code Object}-typed load-time signature that
-     * javac rejects or E8011-rejects after CLI success
-     * (review-reproduced {@code make(): ServerConfig[]}); the shape is
-     * an import-time E6000, never a silently miscompiled artifact.
-     * Synthesized host-class record FIELDS pass {@code true}: their
-     * storage maps through {@link #hostRecordFieldJavaType} onto the
-     * per-class {@code $DealRt.$HostArr$...} {@code __RefArray} wrapper
-     * emitted beside the record (the presence fixture's
+     * arrays whose element (through nullable/nested-array recursion)
+     * is a DECLARED host class join the wrapper seam on the shared
+     * per-class {@code $DealRt.$HostArr$} {@code __RefArray} carrier
+     * emitted beside the synthesized record (the single wrapper serves
+     * both the {@code C[]} and {@code (C | null)[]} shapes — the
+     * ISSUE-0570 acceptance remediation, jvm-v12-host-abi-completion
+     * D1's blanket gate removal); any other class element still has no
+     * wrapper-seam carrier there and the shape is an import-time E6000,
+     * never a silently miscompiled artifact. Synthesized host-class
+     * record FIELDS pass {@code true}: their storage maps through
+     * {@link #hostRecordFieldJavaType} onto the per-class
+     * {@code $DealRt.$HostArr$...} {@code __RefArray} wrapper emitted
+     * beside the record (the presence fixture's
      * {@code peers?: Config[]} field). */
     private boolean hostShapeSupported(Type t,
             boolean classArraysSupported) {
@@ -6741,16 +6850,18 @@ public final class JvmBackend {
         }
         if (t instanceof Type.Array a) {
             if (!classArraysSupported) {
-                // Class-element arrays (declared host class or nullable
-                // thereof; the element recursion propagates the
-                // rejection through nested arrays) have no wrapper-seam
-                // carrier — fail the shape closed at the import instead
-                // of publishing an artifact javac rejects after CLI
+                // ISSUE-0570: declared-host-class element arrays join
+                // the wrapper seam (the shared per-class $HostArr$
+                // carrier emitted beside the synthesized record); any
+                // other class element has no wrapper-seam carrier —
+                // fail the shape closed at the import instead of
+                // publishing an artifact javac rejects after CLI
                 // success.
                 Type elem = a.element();
                 Type elemInner = elem instanceof Type.Nullable en
                     ? en.inner() : elem;
-                if (elemInner instanceof Type.Class) return false;
+                if (elemInner instanceof Type.Class c
+                        && !isDeclaredHostClass(c)) return false;
             }
             return hostShapeSupported(a.element(), classArraysSupported);
         }
@@ -16329,6 +16440,12 @@ public final class JvmBackend {
                 case Type.String ignored -> "java.lang.String";
                 case Type.Boolean ignored -> "java.lang.Boolean";
                 case Type.Class c -> {
+                    // ISSUE-0570: declared host-class elements — plain
+                    // and nullable-element — store Object references
+                    // inside the shared per-class $HostArr$ carrier.
+                    if (isDeclaredHostClass(c)) {
+                        yield "java.lang.Object";
+                    }
                     if (localClassJavaType(c, span) == null) yield null;
                     yield "java.lang.Object";
                 }
@@ -16357,6 +16474,13 @@ public final class JvmBackend {
                 }
             };
             case Type.Class c -> {
+                // ISSUE-0570: declared host-class elements store Object
+                // references inside the shared per-class $HostArr$
+                // __RefArray carrier emitted beside the synthesized
+                // record.
+                if (isDeclaredHostClass(c)) {
+                    yield "java.lang.Object";
+                }
                 if (isLocalClassType(c)) {
                     if (localClassJavaType(c, span) == null) yield null;
                 } else {
@@ -16429,7 +16553,17 @@ public final class JvmBackend {
                     case Type.Number ignored -> "$DealRt.__NumberOrNullArray";
                     case Type.String ignored -> "$DealRt.__StringOrNullArray";
                     case Type.Boolean ignored -> "$DealRt.__BooleanOrNullArray";
-                    case Type.Class c -> classOrNullArrayWrapperName(c.name());
+                    case Type.Class c -> {
+                        // ISSUE-0570: declared host classes — plain and
+                        // nullable-element — share the one per-class
+                        // $HostArr$ __RefArray subclass emitted beside
+                        // the synthesized record (the same carrier the
+                        // record fields use).
+                        if (isDeclaredHostClass(c)) {
+                            yield hostClassArrayWrapperRef(c);
+                        }
+                        yield classOrNullArrayWrapperName(c.name());
+                    }
                     case Type.Func f -> "$DealRt."
                         + refArrayWrapperId(element);
                     case Type.Bytes ignored -> "$DealRt.__BytesOrNullArray";
@@ -16437,6 +16571,14 @@ public final class JvmBackend {
                 };
             }
             case Type.Class c -> {
+                // ISSUE-0570: a declared host class element maps to the
+                // shared per-class $HostArr$ __RefArray subclass emitted
+                // beside the synthesized record (the same carrier the
+                // record fields use) — the wrapper seam and typed
+                // positions carry it across the host boundary.
+                if (isDeclaredHostClass(c)) {
+                    return hostClassArrayWrapperRef(c);
+                }
                 return isLocalClassType(c)
                     ? classArrayWrapperName(c.name())
                     : importedArrayWrapperName(c);

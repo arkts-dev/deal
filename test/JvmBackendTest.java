@@ -429,7 +429,7 @@ public class JvmBackendTest {
             new TestCase("testSharedCarrierCheckBehaviors", () -> testSharedCarrierCheckBehaviors()),
             new TestCase("testSharedCarrierCrossModuleIdentity", () -> testSharedCarrierCrossModuleIdentity()),
             new TestCase("testSharedCarrierHostClassShapes", () -> testSharedCarrierHostClassShapes()),
-            new TestCase("testHostClassArraySeamRejected", () -> testHostClassArraySeamRejected()),
+            new TestCase("testHostClassArraySeamRuntime", () -> testHostClassArraySeamRuntime()),
             new TestCase("testSharedCarrierIndirectClassShape", () -> testSharedCarrierIndirectClassShape()),
             new TestCase("testCrossModuleFunctionValues", () -> testCrossModuleFunctionValues()),
             new TestCase("testUseBeforeDeclarationRejected", () -> testUseBeforeDeclarationRejected()),
@@ -6376,27 +6376,32 @@ public class JvmBackendTest {
     }
 
     /**
-     * ISSUE-0303 review-cycle-3 correction: declared host-class ARRAY
-     * parameters/returns are rejected with E6000 at the import
-     * statement — the host wrapper seam has no class-element array
-     * carrier (pre-fix the wrapper published a {@code static null ...}
-     * return type and an {@code Object}-typed load-time signature that
-     * javac rejected or E8011-rejected after CLI success). The record
-     * FIELD position keeps class-element arrays: their storage maps
-     * onto the per-class {@code $DealRt.$HostArr$...} wrapper emitted
-     * beside the synthesized record (the presence fixture's peers
-     * pin).
+     * ISSUE-0570 acceptance remediation: declared host-class ARRAY
+     * parameters/returns execute on the shared per-class
+     * {@code $DealRt.$HostArr$...} {@code __RefArray} carrier — the
+     * remaining import-time E6000 is removed
+     * (jvm-v12-host-abi-completion D1's blanket gate removal). The
+     * wrapper seam keeps the D2 boundary checks: carrier and
+     * wrong-kind element failures raise E8010 (parameter {i} / return
+     * value 1 mismatch) and a foreign-identity element raises the
+     * pinned nominal E8001 (the class-typed identity rule extended to
+     * class elements). The nullable-array and nullable-element forms
+     * join the same carrier, and the record FIELD position keeps its
+     * existing class-element array storage (the presence fixture's
+     * peers pin).
      */
-    private static void testHostClassArraySeamRejected()
+    private static void testHostClassArraySeamRuntime()
             throws Exception {
-        System.out.println("-- Host class-array seam rejection (ISSUE-0303 review) --");
+        System.out.println("-- Host class-array seam runtime support "
+            + "(ISSUE-0570) --");
 
         writeFile("deal.json", """
             {
               "languageVersion": "1.2",
               "moduleRoots": ["src"],
               "externals": {
-                "host/cfg": { "declaration": "bindings/cfg.d.deal" }
+                "host/cfg": { "declaration": "bindings/cfg.d.deal" },
+                "host/other": { "declaration": "bindings/other.d.deal" }
               }
             }
             """);
@@ -6405,42 +6410,204 @@ public class JvmBackendTest {
               port: int;
             }
             export function make(): ServerConfig[];
+            export function makeMaybe(): ServerConfig[] | null;
+            export function makeForeign(): ServerConfig[];
+            export function makeJunk(): ServerConfig[];
+            export function makeBadCarrier(): ServerConfig[];
+            export function makeWithNull(): ServerConfig[];
             export function take(cfgs: ServerConfig[]): int;
+            export function takeMaybe(cfgs: (ServerConfig | null)[]): int;
+            """);
+        writeFile("bindings/other.d.deal", """
+            export class ServerConfig {
+              value: string;
+            }
             """);
         writeFile("src/entry.deal", """
             import * as cfg from "host/cfg"
+            import * as other from "host/other"
             export function main(): null { return null; }
-            export function run(): int { let cs = cfg.make(); return cs.length; }
+            export function run(): int { let cs = cfg.make(); if (cs.length !== 2) { throw { code: "TEST_FAIL", message: "host class array return length mismatch" }; } return cfg.take(cs); }
+            export function runMaybe(): int { let cs = cfg.makeMaybe(); if (cs !== null) { return cs.length; } return 0; }
+            export function runTakeMaybe(): int { let holder: table = { v: cfg.make() }; let cs: (cfg.ServerConfig | null)[] = holder.v; return cfg.takeMaybe(cs); }
+            export function runForeign(): int { let cs = cfg.makeForeign(); return cs.length; }
+            export function runForeignParam(): int { let cs = cfg.makeForeign(); return cfg.take(cs); }
+            export function runJunk(): int { let cs = cfg.makeJunk(); return cs.length; }
+            export function runBadCarrier(): int { let cs = cfg.makeBadCarrier(); return cs.length; }
+            export function runParamCarrier(): int { let holder: table = { v: "x" }; return cfg.take(holder.v); }
+            export function runParamNullElem(): int { let cs = cfg.makeWithNull(); return cfg.take(cs); }
             """);
 
         Path entryFile = tmpDir.get().resolve("src/entry.deal")
             .toAbsolutePath().normalize();
-        Path outputRoot = tmpDir.get().resolve("build/class_array_seam");
+        Path outputRoot = tmpDir.get().resolve("build/class_array_runtime");
         List<Path> roots = List.of(
             tmpDir.get().resolve("src").toAbsolutePath());
-        Map<String, String> externals = Map.of("host/cfg",
-            tmpDir.get().resolve("bindings/cfg.d.deal").toString());
+        Map<String, String> externals = Map.of(
+            "host/cfg",
+            tmpDir.get().resolve("bindings/cfg.d.deal").toString(),
+            "host/other",
+            tmpDir.get().resolve("bindings/other.d.deal").toString());
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entryFile, outputRoot, false, false, false, Backend.JVM,
             externals, roots, Path.of(".").toAbsolutePath().normalize());
         boolean ok = orchestrator.compile();
-        check(!ok, "the class-array host export shapes fail the compile: "
-            + orchestrator.diagnostics());
-        check(orchestrator.diagnostics().stream()
-                .anyMatch(d -> "E6000".equals(d.code())
-                    && d.message().contains("unsupported return type")
-                    && d.message().contains("ServerConfig")),
-            "the class-array return is E6000 at the import: "
-                + orchestrator.diagnostics());
-        check(orchestrator.diagnostics().stream()
-                .anyMatch(d -> "E6000".equals(d.code())
-                    && d.message().contains("unsupported parameter type")),
-            "the class-array parameter is E6000 at the import: "
-                + orchestrator.diagnostics());
-        check(!Files.exists(outputRoot.resolve("Entry.java")),
-            "no artifact is published for the rejected module (the "
-                + "pre-fix wrapper emitted 'static null ...' and javac "
-                + "rejected the published artifact after CLI success)");
+        check(ok, "the class-array host export shapes compile (the "
+            + "import-time E6000 is gone): " + orchestrator.diagnostics());
+        Path artifact = outputRoot.resolve("Entry.java");
+        check(ok && Files.exists(artifact),
+            "the entry artifact is published for the class-array project");
+        if (ok && Files.exists(artifact)) {
+            String java = Files.readString(artifact);
+            check(java.contains("$HostArr$host$scfg$ServerConfig"),
+                "the wrapper seam and the shared scope reference the "
+                    + "per-class $HostArr$ carrier");
+            check(java.contains("$Host$host$sother$ServerConfig"),
+                "the second declared host class's record is synthesized "
+                    + "in the shared scope");
+        }
+        if (ok) {
+            Files.writeString(outputRoot.resolve("HostCfg.java"), """
+                public final class HostCfg {
+                    public static final java.util.Map<String, Object> ServerConfig_defaults =
+                        java.util.Map.of("port", Integer.valueOf(8080));
+                    public static Object make() {
+                        return new $DealRt.$HostArr$host$scfg$ServerConfig(new Object[] {
+                            new $DealRt.$Host$host$scfg$ServerConfig(Integer.valueOf(11)),
+                            new $DealRt.$Host$host$scfg$ServerConfig(Integer.valueOf(22))
+                        });
+                    }
+                    public static Object makeMaybe() { return null; }
+                    public static Object makeForeign() {
+                        return new $DealRt.$HostArr$host$scfg$ServerConfig(new Object[] {
+                            new $DealRt.$Host$host$sother$ServerConfig("x")
+                        });
+                    }
+                    public static Object makeJunk() {
+                        return new $DealRt.$HostArr$host$scfg$ServerConfig(new Object[] { "junk" });
+                    }
+                    public static Object makeBadCarrier() {
+                        return new $DealRt.__StringArray(new String[] { "a" });
+                    }
+                    public static Object makeWithNull() {
+                        return new $DealRt.$HostArr$host$scfg$ServerConfig(new Object[] { null });
+                    }
+                    public static Object take($DealRt.$HostArr$host$scfg$ServerConfig cfgs) {
+                        int t = 0;
+                        for (java.lang.Object o : cfgs.data) {
+                            t += ((Integer) (($DealRt.$Host$host$scfg$ServerConfig) o).port).intValue();
+                        }
+                        return Integer.valueOf(t);
+                    }
+                    public static Object takeMaybe($DealRt.$HostArr$host$scfg$ServerConfig cfgs) {
+                        return Integer.valueOf(cfgs.data.length);
+                    }
+                }
+                """);
+            Files.writeString(outputRoot.resolve("HostOther.java"), """
+                public final class HostOther {
+                    public static final java.util.Map<String, Object> ServerConfig_defaults =
+                        java.util.Map.of("value", new Object());
+                }
+                """);
+
+            // Success scenario: the plain and nullable forms cross the
+            // boundary on the one shared carrier (33 / 0 / 2).
+            ExecResult okRun = runJvmArtifacts(outputRoot, parseProgram("""
+                import * as cfg from "host/cfg"
+                export function main(): null { return null; }
+                export function run(): int { return 1; }
+                export function runMaybe(): int { return 1; }
+                export function runTakeMaybe(): int { return 1; }
+                """), "Entry");
+            check(okRun.exitCode() == 0
+                    && okRun.output().equals("33\n0\n2"),
+                "the class-array project executes against the real host "
+                    + "(33/0/2): " + okRun.output());
+
+            // Foreign-identity element on the RETURN side: the nominal
+            // E8001 propagates unchanged (never wrapped E8010).
+            ExecResult foreign = runJvmArtifacts(outputRoot, parseProgram("""
+                import * as cfg from "host/cfg"
+                export function main(): null { return null; }
+                export function runForeign(): int { return 1; }
+                """), "Entry");
+            check(foreign.exitCode() == 1
+                    && foreign.output().contains("DEAL_ERROR_CODE: E8001")
+                    && foreign.output().contains("expected instance of"),
+                "a foreign-identity class element in a host class-array "
+                    + "RETURN raises the pinned nominal E8001: "
+                    + foreign.output());
+
+            // Foreign-identity element on the PARAMETER side: same E8001.
+            ExecResult foreignParam = runJvmArtifacts(outputRoot,
+                parseProgram("""
+                    import * as cfg from "host/cfg"
+                    export function main(): null { return null; }
+                    export function runForeignParam(): int { return 1; }
+                    """), "Entry");
+            check(foreignParam.exitCode() == 1
+                    && foreignParam.output().contains("DEAL_ERROR_CODE: E8001")
+                    && foreignParam.output().contains("expected instance of"),
+                "a foreign-identity class element in a host class-array "
+                    + "PARAMETER raises the pinned nominal E8001: "
+                    + foreignParam.output());
+
+            // Wrong-kind element (return side): E8010 return mismatch
+            // wrapping the E8003 element failure.
+            ExecResult junk = runJvmArtifacts(outputRoot, parseProgram("""
+                import * as cfg from "host/cfg"
+                export function main(): null { return null; }
+                export function runJunk(): int { return 1; }
+                """), "Entry");
+            check(junk.exitCode() == 1
+                    && junk.output().contains("DEAL_ERROR_CODE: E8010")
+                    && junk.output().contains("array element 1 type mismatch"),
+                "a wrong-kind element in a host class-array return "
+                    + "raises E8010: " + junk.output());
+
+            // Wrong carrier (return side): E8010.
+            ExecResult badCarrier = runJvmArtifacts(outputRoot,
+                parseProgram("""
+                    import * as cfg from "host/cfg"
+                    export function main(): null { return null; }
+                    export function runBadCarrier(): int { return 1; }
+                    """), "Entry");
+            check(badCarrier.exitCode() == 1
+                    && badCarrier.output().contains("DEAL_ERROR_CODE: E8010"),
+                "a wrong carrier in a host class-array return raises "
+                    + "E8010: " + badCarrier.output());
+
+            // Wrong carrier (parameter side, table-read deferral):
+            // E8010 parameter mismatch at the call.
+            ExecResult paramCarrier = runJvmArtifacts(outputRoot,
+                parseProgram("""
+                    import * as cfg from "host/cfg"
+                    export function main(): null { return null; }
+                    export function runParamCarrier(): int { return 1; }
+                    """), "Entry");
+            check(paramCarrier.exitCode() == 1
+                    && paramCarrier.output().contains("DEAL_ERROR_CODE: E8010")
+                    && paramCarrier.output().contains("parameter 1 type mismatch"),
+                "a non-array argument at a host class-array parameter "
+                    + "raises E8010 parameter mismatch: "
+                    + paramCarrier.output());
+
+            // Null element crossing the plain C[] parameter: E8010
+            // (the single carrier serves both shapes, so the element
+            // row rejects the null).
+            ExecResult paramNull = runJvmArtifacts(outputRoot,
+                parseProgram("""
+                    import * as cfg from "host/cfg"
+                    export function main(): null { return null; }
+                    export function runParamNullElem(): int { return 1; }
+                    """), "Entry");
+            check(paramNull.exitCode() == 1
+                    && paramNull.output().contains("DEAL_ERROR_CODE: E8010")
+                    && paramNull.output().contains("array element 1 type mismatch"),
+                "a null element crossing the plain C[] parameter raises "
+                    + "E8010: " + paramNull.output());
+        }
 
         // The record FIELD position keeps class-element arrays: the
         // presence-shape peers field still compiles through the
@@ -6458,19 +6625,21 @@ public class JvmBackendTest {
             export function run(): string { return cfg.ping(); }
             """);
         Path outputRoot2 = tmpDir.get().resolve("build/class_array_field");
+        Map<String, String> externals2 = Map.of("host/cfg",
+            tmpDir.get().resolve("bindings/cfg.d.deal").toString());
         CompilationOrchestrator orchestrator2 = new CompilationOrchestrator(
             entryFile, outputRoot2, false, false, false, Backend.JVM,
-            externals, roots, Path.of(".").toAbsolutePath().normalize());
+            externals2, roots, Path.of(".").toAbsolutePath().normalize());
         boolean ok2 = orchestrator2.compile();
         check(ok2, "a class-array host-class FIELD stays supported (the "
             + "record storage maps onto the $HostArr$ carrier): "
             + orchestrator2.diagnostics());
         if (ok2) {
-            Path artifact = outputRoot2.resolve("Entry.java");
-            check(Files.exists(artifact),
+            Path artifact2 = outputRoot2.resolve("Entry.java");
+            check(Files.exists(artifact2),
                 "field-variant entry artifact published");
-            if (Files.exists(artifact)) {
-                String java = Files.readString(artifact);
+            if (Files.exists(artifact2)) {
+                String java = Files.readString(artifact2);
                 check(java.contains("$HostArr$host$scfg$ServerConfig"),
                     "the shared scope emits the per-class $HostArr$ "
                         + "wrapper for the class-array field");
