@@ -1,10 +1,28 @@
 // @spec: Async/Await — bytes-bearing async function values
-// @description: First-class async(bytes)->bytes values assign to typed locals, containerize in nullable arrays (null and real elements), and complete exactly once through await with the canonical async(bytes)->bytes descriptor (v1.2)
+// @description: First-class async(bytes)->bytes values assign to typed locals, containerize in nullable arrays (null and real elements), complete exactly once through await with the canonical async(bytes)->bytes descriptor, flow through bytes[] signatures and callbacks, discard-await exactly once, propagate errors, and hold in class fields with the DEAL null preserved (v1.2)
 // @expected: runtime-ok
 // @features: bytes, async, functions
 
 async function echo(b: bytes): bytes {
   return b;
+}
+
+async function countArr(a: bytes[]): int {
+  return a.length;
+}
+
+async function applyBytes(f: async (b: bytes) => bytes, b: bytes): bytes {
+  return await f(b);
+}
+
+async function failEcho(b: bytes): bytes {
+  throw { code: "E_TEST", message: "boom" };
+}
+
+export class Holder {
+  cb: async (b: bytes) => bytes = echo;
+  maybe: (async (b: bytes) => bytes) | null = null;
+  n: int = 7;
 }
 
 export async function test_bytes_async_closure(): int {
@@ -22,6 +40,70 @@ export async function test_bytes_async_closure(): int {
     if (again[0] !== 0) {
       throw { code: "TEST_FAIL", message: "containerized async invoke failed" };
     }
+  } else {
+    throw { code: "TEST_FAIL", message: "containerized async value lost" };
+  }
+  // async function expression: awaited value roundtrip
+  let f2: async (b: bytes) => bytes = async function(b: bytes): bytes {
+    let echoed: bytes = bytes(b.length);
+    echoed[0] = b[0];
+    return echoed;
+  };
+  let r2: bytes = await f2(bytes(1));
+  if (r2.length !== 1 || r2[0] !== 0) {
+    throw { code: "TEST_FAIL", message: "async fn expr await failed" };
+  }
+  // bytes[] signature through await
+  let arr: bytes[] = [bytes(2), bytes(3)];
+  let n: int = await countArr(arr);
+  if (n !== 2) {
+    throw { code: "TEST_FAIL", message: "bytes[] async signature failed" };
+  }
+  // callback position: an async bytes fn passed as a parameter
+  let via: bytes = await applyBytes(echo, bytes(4));
+  if (via.length !== 4) {
+    throw { code: "TEST_FAIL", message: "async bytes callback failed" };
+  }
+  // discard await evaluates exactly once with the completion check
+  let hits: int = 0;
+  async function counter(b: bytes): bytes {
+    hits = hits + 1;
+    return b;
+  }
+  await counter(bytes(1));
+  if (hits !== 1) {
+    throw { code: "TEST_FAIL", message: "discard await count failed" };
+  }
+  // error propagation through await
+  let caught: boolean = false;
+  try {
+    await failEcho(bytes(1));
+  } catch (e) {
+    caught = e.code === "E_TEST";
+  }
+  if (!caught) {
+    throw { code: "TEST_FAIL", message: "async error propagation failed" };
+  }
+  // class fields hold async bytes fn references (wrapper identity,
+  // the DEAL null for the nullable field)
+  let h: Holder = { cb: echo, maybe: null, n: 9 };
+  let viaField: bytes = await h.cb(bytes(5));
+  if (viaField.length !== 5 || h.n !== 9) {
+    throw { code: "TEST_FAIL", message: "class field async invoke failed" };
+  }
+  let m: (async (b: bytes) => bytes) | null = h.maybe;
+  if (m !== null) {
+    throw { code: "TEST_FAIL", message: "nullable field default failed" };
+  }
+  h.maybe = echo;
+  let m2: (async (b: bytes) => bytes) | null = h.maybe;
+  if (m2 !== null) {
+    let viaMaybe: bytes = await m2(bytes(6));
+    if (viaMaybe.length !== 6) {
+      throw { code: "TEST_FAIL", message: "nullable field invoke failed" };
+    }
+  } else {
+    throw { code: "TEST_FAIL", message: "nullable field write failed" };
   }
   return 0;
 }

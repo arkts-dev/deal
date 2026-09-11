@@ -10331,6 +10331,10 @@ public class JvmBackendTest {
             "(bytes)->bytes uses the shared Y-segment wrapper shape");
         check(artifact.contains("static abstract class FnA1_Y_R_Y"),
             "async(bytes)->bytes uses the distinct async wrapper shape");
+        check(artifact.contains(
+                "final java.lang.String descriptor = \"async(bytes)->bytes\";"),
+            "the async bytes wrapper carries the complete canonical "
+                + "async(bytes)->bytes descriptor");
         check(!artifact.contains(
                 "if (v instanceof $DealRt.Bytes) throw new DealError("
                     + "\"E8001\", \"unsupported type for JSON encoding: "
@@ -10489,6 +10493,78 @@ public class JvmBackendTest {
         check(asyncContainer.output().contains("0"),
             "containerized async bytes value completes with the zero-filled "
                 + "first byte: " + asyncContainer.output());
+        // ISSUE-0549 (async bytes closure): function-typed class fields
+        // hold async bytes-bearing wrapper references (the DEAL null for
+        // the nullable form), direct member calls dispatch the field's
+        // invoke through the await-site completion check, discard awaits
+        // evaluate exactly once, awaited errors propagate, and bytes[]
+        // signatures/callbacks flow through await.
+        ExecResult asyncFieldCall = runInt32Project("""
+            async function echo(b: bytes): bytes { return b; }
+            export class Holder {
+              cb: async (b: bytes) => bytes = echo;
+              maybe: (async (b: bytes) => bytes) | null = null;
+              n: int = 7;
+            }
+            export function main(): null { return null; }
+            export async function test(): int {
+              let h: Holder = { cb: echo, maybe: null, n: 9 };
+              let via: bytes = await h.cb(bytes(5));
+              let m: (async (b: bytes) => bytes) | null = h.maybe;
+              if (m !== null) { throw { code: "TEST_FAIL", message: "null field" }; }
+              h.maybe = echo;
+              let m2: (async (b: bytes) => bytes) | null = h.maybe;
+              if (m2 !== null) {
+                let again: bytes = await m2(bytes(6));
+                return via.length + h.n + again.length;
+              }
+              throw { code: "TEST_FAIL", message: "field write" };
+            }
+            """, "async_bytes_field_call");
+        check(asyncFieldCall.exitCode() == 0,
+            "async bytes class-field call run exits 0: "
+                + asyncFieldCall.output());
+        check(asyncFieldCall.output().contains("20"),
+            "class fields hold the async bytes wrapper reference (5 + 9 + 6 "
+                + "= 20) with the DEAL null default preserved: "
+                + asyncFieldCall.output());
+        ExecResult asyncClosureBattery = runInt32Project("""
+            async function echo(b: bytes): bytes { return b; }
+            async function countArr(a: bytes[]): int { return a.length; }
+            async function applyBytes(f: async (b: bytes) => bytes, b: bytes): bytes {
+              return await f(b);
+            }
+            async function failEcho(b: bytes): bytes {
+              throw { code: "E_TEST", message: "boom" };
+            }
+            export function main(): null { return null; }
+            export async function test(): int {
+              let arr: bytes[] = [bytes(2), bytes(3)];
+              let n: int = await countArr(arr);
+              let via: bytes = await applyBytes(echo, bytes(4));
+              let hits: int = 0;
+              async function counter(b: bytes): bytes {
+                hits = hits + 1;
+                return b;
+              }
+              await counter(bytes(1));
+              let caught: boolean = false;
+              try {
+                await failEcho(bytes(1));
+              } catch (e) {
+                caught = e.code === "E_TEST";
+              }
+              if (!caught) { throw { code: "TEST_FAIL", message: "propagate" }; }
+              return n * 10 + via.length + hits;
+            }
+            """, "async_bytes_closure_battery");
+        check(asyncClosureBattery.exitCode() == 0,
+            "async bytes closure battery run exits 0: "
+                + asyncClosureBattery.output());
+        check(asyncClosureBattery.output().contains("25"),
+            "bytes[] signature (2), callback (4), and exactly-once discard "
+                + "await (1) complete through await: 2*10 + 4 + 1 = 25: "
+                + asyncClosureBattery.output());
         // The @jsonable C$toJson surface validates table fields through
         // the emitted __jsonShape walk — deal/runtime.lua's
         // _json_table_shape mirror, before std/json's encode_value ever

@@ -172,7 +172,7 @@ public final class LegacyCapabilityCatalog {
      *       rejection evidence (backends {@code ["luajit"]} only).</li>
      *   <li>{@code jvm-array-index-delete-e6000} — the retained JVM
      *       rejects every remaining delete target shape with E6000 at
-     *       {@code deal/codegen/jvm/JvmBackend.java:9901}; the code
+     *       {@code deal/codegen/jvm/JvmBackend.java:9920}; the code
      *       locator pins the retained rejection.</li>
      * </ul>
      * Rows are added only with in-tree evidence: the entry id must be
@@ -187,7 +187,7 @@ public final class LegacyCapabilityCatalog {
         new Row("jvm-array-index-delete-e6000",
             Target.JVM,
             List.of(SemanticCapability.CONTAINERS_AND_STRINGS),
-            "deal/codegen/jvm/JvmBackend.java:9901",
+            "deal/codegen/jvm/JvmBackend.java:9920",
             ExpectationClass.BackendReject)
     );
 
