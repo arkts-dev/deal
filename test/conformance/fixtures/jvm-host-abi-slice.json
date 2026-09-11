@@ -417,6 +417,54 @@
       ]
     },
     {
+      "name": "jvm-host-array-param-nested-read-ok",
+      "description": "A table read NESTED inside a host-call argument (an array-literal element consumed by an index read) keeps its pinned read-site typed check — the D2 read-site deferral covers only the DIRECT whole-argument read, so the artifact stays javac-valid and the checked elements flow through the boundary (review-cycle-2 finding-1 regression: pre-fix, the depth counter deferred the nested read too and the published artifact was javac-rejected)",
+      "modules": {
+        "bindings/log.d.deal": "export function join(sep: string, parts: string[]): string;",
+        "entry.deal": "import * as host from \"host/log\"\nexport function main(): null { return null; }\nexport function run(): string { let holder: table = { item: [\"a\", \"b\"] }; return host.join(\"-\", [holder.item[0]]); }"
+      },
+      "entry": "entry.deal",
+      "hosts": {
+        "host/log": {
+          "declaration": "bindings/log.d.deal",
+          "java": "public final class HostLog {\n    public static Object join(String sep, $DealRt.__StringArray parts) { return String.join(sep, parts.data); }\n}\n"
+        }
+      },
+      "expectedOutput": "a",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-host-array-return-element-bad",
+      "description": "A host-supplied element-mismatched typed wrapper (a Java null element inside a string[] carrier) fails the return boundary with E8010 — the boundary iterates the wrapper's elements against the element descriptor and never trusts the host's carriers by identity (review-cycle-2 finding-2 regression: pre-fix, the identity-only $checkArray fast path let the invalid element cross)",
+      "modules": {
+        "bindings/log.d.deal": "export function split(s: string): string[];",
+        "entry.deal": "import * as host from \"host/log\"\nexport function main(): null { return null; }\nexport function run(): string { let parts: string[] = host.split(\"ignored\"); return parts[0]; }"
+      },
+      "entry": "entry.deal",
+      "hosts": {
+        "host/log": {
+          "declaration": "bindings/log.d.deal",
+          "java": "public final class HostLog {\n    public static Object split(String s) { return new $DealRt.__StringArray(new String[] {null, \"x\"}); }\n}\n"
+        }
+      },
+      "expectedOutput": null,
+      "expectedError": "E8010",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
       "name": "jvm-host-function-param",
       "description": "A DEAL function value passed into a host function-typed parameter arrives as its typed $DealRt wrapper and the host invokes it through the wrapper's typed invoke (no lambda conversion)",
       "modules": {

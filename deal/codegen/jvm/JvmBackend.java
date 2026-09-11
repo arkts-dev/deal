@@ -1162,6 +1162,21 @@ public final class JvmBackend {
      * emitted {@code $checkArray} helper. */
     private final List<String> refArrayCheckBranches = new ArrayList<>();
 
+    /**
+     * Host-boundary element-validating rows for the generated
+     * {@code $hostCheckArray} helper (ISSUE-0303 D2): one row per
+     * registered nested-array/function-array element shape, appended
+     * by {@link #registerRefArrayShape} beside the {@code $checkArray}
+     * branch. The host is exactly the producer whose values the
+     * boundary must not trust by construction, so the host rows
+     * iterate the typed wrapper's elements through {@code $check}
+     * (E8003 {@code array element {i} type mismatch} at the first
+     * failing index — the boundary wraps it as E8010) instead of the
+     * identity-only {@code $checkArray} fast path.
+     */
+    private final List<String> hostRefArrayCheckBranches =
+        new ArrayList<>();
+
     /** Element shapes whose {@code [D]} branch is registered (one branch
      * per shape). */
     private final Set<Type> refArrayCheckElements = new LinkedHashSet<>();
@@ -1337,15 +1352,21 @@ public final class JvmBackend {
     private int currentModuleStatementIndex = -1;
 
     /**
-     * ISSUE-0303 D2 read-site deferral: {@code > 0} while a host-call's
-     * arguments are being emitted. A typed table read whose value
-     * materializes a host argument must not pre-raise its own E8001 —
-     * the read yields the raw value and the host-call boundary raises
-     * E8010 (the only read-shape in the corpus with a changed check
-     * site; let/assignment/return-boundary typed reads keep their
-     * pinned read-site checks).
+     * ISSUE-0303 D2 read-site deferral: the exact table-read nodes
+     * that are DIRECT host-call argument expressions while a host
+     * call's arguments are being emitted (identity-keyed — a nested
+     * read inside the argument is a different node and never defers).
+     * A typed table read whose value materializes a host argument must
+     * not pre-raise its own E8001 — the direct read yields the raw
+     * value and the host-call boundary raises E8010 (the only
+     * read-shape in the corpus with a changed check site;
+     * let/assignment/return-boundary typed reads and reads nested
+     * inside a host-call argument keep their pinned read-site checks,
+     * so every statically-typed consumption site of a nested read
+     * still receives the checked wrapper and artifacts stay valid
+     * Java).
      */
-    private int hostArgDeferDepth = 0;
+    private Set<ExpressionNode> deferredHostArgReads = null;
 
     /** The host-class identity descriptors whose nominal {@code $check}
      * branches were already appended to {@link #classCheckBranches}
@@ -4712,7 +4733,7 @@ public final class JvmBackend {
         emitLine("        d = d.substring(1);");
         emitLine("    }");
         emitLine("    if (d.startsWith(\"[\")) {");
-        emitLine("        try { return $checkArray(d, v); }");
+        emitLine("        try { return $hostCheckArray(d, v); }");
         emitLine("        catch (DealError inner) {");
         emitLine("            throw new DealError(completion ? \"E8001\" : \"E8010\", (completion ? \"expected \" : \"host function '\" + fn + \"' return value 1 type mismatch: expected \") + desc + \", got \" + inner.getMessage());");
         emitLine("        }");
@@ -4780,8 +4801,10 @@ public final class JvmBackend {
         emitLine("        d = d.substring(1);");
         emitLine("    }");
         emitLine("    if (d.indexOf('@') == 0) return $check(desc, v);");
-        emitLine("    try { return $check(desc, v); }");
-        emitLine("    catch (DealError inner) {");
+        emitLine("    try {");
+        emitLine("        if (d.startsWith(\"[\")) return $hostCheckArray(d, v);");
+        emitLine("        return $check(desc, v);");
+        emitLine("    } catch (DealError inner) {");
         emitLine("        throw new DealError(\"E8010\", \"parameter \" + i + \" type mismatch: \" + inner.getMessage());");
         emitLine("    }");
         emitLine("}");
@@ -5698,6 +5721,46 @@ public final class JvmBackend {
         emitLine("static $DealRt.__NumberOrNullArray $dynamicNumberOrNullArray(java.lang.Object v) { if (v instanceof $DealRt.Table t && t.$array() != null) { java.util.ArrayList<java.lang.Object> a = t.$array(); java.lang.Double[] data = new java.lang.Double[a.size()]; for (int i = 0; i < a.size(); i++) { try { data[i] = (java.lang.Double) $check(\"?number\", a.get(i)); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return new $DealRt.__NumberOrNullArray(data); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
         emitLine("static $DealRt.__StringOrNullArray $dynamicStringOrNullArray(java.lang.Object v) { if (v instanceof $DealRt.Table t && t.$array() != null) { java.util.ArrayList<java.lang.Object> a = t.$array(); java.lang.String[] data = new java.lang.String[a.size()]; for (int i = 0; i < a.size(); i++) { try { data[i] = (java.lang.String) $check(\"?string\", a.get(i)); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return new $DealRt.__StringOrNullArray(data); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
         emitLine("static $DealRt.__BooleanOrNullArray $dynamicBooleanOrNullArray(java.lang.Object v) { if (v instanceof $DealRt.Table t && t.$array() != null) { java.util.ArrayList<java.lang.Object> a = t.$array(); java.lang.Boolean[] data = new java.lang.Boolean[a.size()]; for (int i = 0; i < a.size(); i++) { try { data[i] = (java.lang.Boolean) $check(\"?boolean\", a.get(i)); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return new $DealRt.__BooleanOrNullArray(data); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
+        // Host-boundary array validation (ISSUE-0303 D2): the host is
+        // exactly the producer whose values the boundary must not trust
+        // by construction — a Java host implementation can construct an
+        // element-mismatched wrapper (e.g. a __StringArray whose data
+        // carries a Java null) and the identity-only $checkArray fast
+        // path would let it cross. $hostCheckArray normalizes the
+        // carrier through the shared $check rows (typed wrapper
+        // identity, the [?T] widening conversions, the dynamic
+        // array-mode Table conversion) and then iterates the wrapper's
+        // elements against the element descriptor through the $check
+        // element row, raising E8003 "array element {i} type mismatch"
+        // at the first failing index — the boundary seams
+        // (__hostCheck/__hostParamCheck) wrap that failure as the
+        // pinned E8010 "parameter {i} type mismatch" / "return value 1
+        // type mismatch" (never an internal E8001/E8003 crossing the
+        // boundary), exactly the LuaJIT check_array -> check_type
+        // reference shape. A descriptor without a generated row (a
+        // class-array descriptor, whose carrier $check gates in its own
+        // branches) falls through with the carrier already validated.
+        emitLine("static java.lang.Object $hostCheckArray(java.lang.String descriptor, java.lang.Object v) {");
+        indent++;
+        emitLine("java.lang.Object a = $check(descriptor, v);");
+        emitLine(int32Mode
+            ? "if (descriptor.equals(\"[int]\")) { $DealRt.__IntArray w = ($DealRt.__IntArray) a; for (int i = 0; i < w.data.length; i++) { try { $check(\"int\", java.lang.Integer.valueOf(w.data[i])); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return a; }"
+            : "if (descriptor.equals(\"[int]\")) { $DealRt.__IntArray w = ($DealRt.__IntArray) a; for (int i = 0; i < w.data.length; i++) { try { $check(\"int\", java.lang.Long.valueOf(w.data[i])); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return a; }");
+        emitLine("if (descriptor.equals(\"[number]\")) { $DealRt.__NumberArray w = ($DealRt.__NumberArray) a; for (int i = 0; i < w.data.length; i++) { try { $check(\"number\", java.lang.Double.valueOf(w.data[i])); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return a; }");
+        emitLine("if (descriptor.equals(\"[string]\")) { $DealRt.__StringArray w = ($DealRt.__StringArray) a; for (int i = 0; i < w.data.length; i++) { try { $check(\"string\", w.data[i]); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return a; }");
+        emitLine("if (descriptor.equals(\"[boolean]\")) { $DealRt.__BooleanArray w = ($DealRt.__BooleanArray) a; for (int i = 0; i < w.data.length; i++) { try { $check(\"boolean\", java.lang.Boolean.valueOf(w.data[i])); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return a; }");
+        emitLine("if (descriptor.equals(\"[bytes]\")) { $DealRt.__BytesArray w = ($DealRt.__BytesArray) a; for (int i = 0; i < w.data.length; i++) { try { $check(\"bytes\", w.data[i]); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return a; }");
+        emitLine("if (descriptor.equals(\"[?int]\")) { $DealRt.__IntOrNullArray w = ($DealRt.__IntOrNullArray) a; for (int i = 0; i < w.data.length; i++) { try { $check(\"?int\", w.data[i]); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return a; }");
+        emitLine("if (descriptor.equals(\"[?number]\")) { $DealRt.__NumberOrNullArray w = ($DealRt.__NumberOrNullArray) a; for (int i = 0; i < w.data.length; i++) { try { $check(\"?number\", w.data[i]); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return a; }");
+        emitLine("if (descriptor.equals(\"[?string]\")) { $DealRt.__StringOrNullArray w = ($DealRt.__StringOrNullArray) a; for (int i = 0; i < w.data.length; i++) { try { $check(\"?string\", w.data[i]); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return a; }");
+        emitLine("if (descriptor.equals(\"[?boolean]\")) { $DealRt.__BooleanOrNullArray w = ($DealRt.__BooleanOrNullArray) a; for (int i = 0; i < w.data.length; i++) { try { $check(\"?boolean\", w.data[i]); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return a; }");
+        emitLine("if (descriptor.equals(\"[?bytes]\")) { $DealRt.__BytesOrNullArray w = ($DealRt.__BytesOrNullArray) a; for (int i = 0; i < w.data.length; i++) { try { $check(\"?bytes\", w.data[i]); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return a; }");
+        for (String branch : hostRefArrayCheckBranches) {
+            emitLine(branch);
+        }
+        emitLine("return a;");
+        indent--;
+        emitLine("}");
     }
 
     // =========================================================================
@@ -13728,20 +13791,37 @@ public final class JvmBackend {
             // against the declared parameter descriptor at the call
             // (E8010 'parameter {i} type mismatch' — the HOST_PARAMETER
             // boundary). The read-site target stays the declared
-            // parameter type, but a typed table read materializing a
-            // host argument yields the raw value (the deferral flag
-            // below), so the boundary — never the read site — raises
-            // the mismatch.
+            // parameter type, but a table read whose value IS the whole
+            // host-call argument yields the raw value (the
+            // identity-keyed deferral set below — ONLY the direct read
+            // defers; a read nested inside the argument expression is a
+            // different node and keeps its pinned read-site check), so
+            // the boundary — never the read site — raises the mismatch
+            // exactly like the LuaJIT untyped-read reference. Nested
+            // reads keep their typed $check, which keeps every
+            // statically-typed consumption site (index-read receiver,
+            // array-literal element, helper-call argument) javac-valid.
             List<Type> argTargets = new ArrayList<>(call.args().size());
             for (int i = 0; i < call.args().size(); i++) {
                 argTargets.add(f.paramTypes().get(i));
             }
-            hostArgDeferDepth++;
+            Set<ExpressionNode> deferredReads = null;
+            for (ExpressionNode arg : call.args()) {
+                if (arg instanceof MemberAccessExpr) {
+                    if (deferredReads == null) {
+                        deferredReads = java.util.Collections.newSetFromMap(
+                            new java.util.IdentityHashMap<>());
+                    }
+                    deferredReads.add(arg);
+                }
+            }
+            Set<ExpressionNode> prevDeferredReads = deferredHostArgReads;
+            deferredHostArgReads = deferredReads;
             List<String> argCodes;
             try {
                 argCodes = emitOperandsInOrder(call.args(), argTargets);
             } finally {
-                hostArgDeferDepth--;
+                deferredHostArgReads = prevDeferredReads;
             }
             StringBuilder sb = new StringBuilder(
                 hostWrapperName(id.name(), mae.field())).append('(');
@@ -14813,14 +14893,22 @@ public final class JvmBackend {
         String obj = emitExpression(mae.object());
         Type target = typeOf(mae);
         String get = "(" + obj + ").get(" + quoteJavaString(mae.field()) + ")";
-        if (hostArgDeferDepth > 0) {
-            // ISSUE-0303 D2 read-site deferral: a typed table read
-            // whose value materializes a host-call argument yields the
-            // raw value — the host-call boundary raises E8010 at the
-            // call, never a masking read-site E8001/E8003 (the only
-            // read-shape in the corpus with a changed check site). The
-            // receiver evaluates exactly once in order, exactly like
-            // the checked nullable/array branches below.
+        if (deferredHostArgReads != null
+                && deferredHostArgReads.contains(mae)) {
+            // ISSUE-0303 D2 read-site deferral: ONLY a typed table read
+            // whose value is the whole (direct) host-call argument
+            // yields the raw value — the host-call boundary raises
+            // E8010 at the call, never a masking read-site E8001/E8003
+            // (the only read-shape in the corpus with a changed check
+            // site). A read nested inside the argument expression is a
+            // different node and keeps its pinned read-site check, so
+            // its statically-typed consumers still receive the checked
+            // carrier (pre-fix, the depth counter deferred every nested
+            // read too and a checker-legal program published an
+            // artifact javac rejected: Object cannot be converted to
+            // __StringArray). The receiver evaluates exactly once in
+            // order, exactly like the checked nullable/array branches
+            // below.
             String temp = nextEvalTempName();
             preStatements.add(new PreLine(
                 "java.lang.Object " + temp + " = " + get + ";", 0));
@@ -16525,6 +16613,28 @@ public final class JvmBackend {
             for (String line : body.toString().split("\n", -1)) {
                 if (line.isEmpty()) continue;
                 refArrayCheckBranches.add("    " + line);
+            }
+            // ISSUE-0303 D2: the host-boundary row for the same shape —
+            // $hostCheckArray re-checks the typed wrapper's elements
+            // through the $check element row, so a host-supplied
+            // element-mismatched wrapper never crosses a host boundary.
+            StringBuilder hostBody = new StringBuilder();
+            hostBody.append("if (descriptor.equals(")
+                .append(quoteJavaString("[" + elemDesc + "]"))
+                .append(")) {\n");
+            hostBody.append("    ").append(ref).append(" w = (")
+                .append(ref).append(") a;\n");
+            hostBody.append("    for (int i = 0; i < w.data.length; i++) {\n");
+            hostBody.append("        try { $check(")
+                .append(quoteJavaString(elemDesc))
+                .append(", w.data[i]); }\n");
+            hostBody.append("        catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); }\n");
+            hostBody.append("    }\n");
+            hostBody.append("    return a;\n");
+            hostBody.append("}\n");
+            for (String line : hostBody.toString().split("\n", -1)) {
+                if (line.isEmpty()) continue;
+                hostRefArrayCheckBranches.add("    " + line);
             }
         }
     }
