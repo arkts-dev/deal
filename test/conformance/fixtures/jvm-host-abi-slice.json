@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "description": "JVM host ABI slice (ISSUE-0100). JVM-only multi-module fixtures: each fixture writes its 'modules' (relative .deal paths, including the host .d.deal declarations) plus 'entry' under a temp project root, and — when the fixture declares 'hosts' — a real deal.json whose externals map wires each raw host import path to its declaration (the spec manifest form). The runner then executes the real whole-project pipeline: CompilationOrchestrator with Backend.JVM (externals-gated host resolution, module discovery, signature extraction, dependency ordering, name resolution, type checking, per-module JvmBackend codegen) → the host implementation classes are compiled with javac together with every emitted .java artifact plus a runner class → java executes the emitted artifacts (the harness fails a fixture whose parser/checker/module-discovery yields no compile, whose codegen leaves no artifact, whose host implementation is missing, or whose JVM execution is bypassed). ISSUE-0106 migrates every fixture to the v1.2 module shape: entry modules export non-async main(): null (the v1.2 entry gate) and the v1.1 module-level executable statements are wrapped inside main() so the load-time and boundary checks stay observable. Covered host ABI forms (spec-v1.2 §Modules, declarations, standard library, and host ABI + §JVM value mapping): declared export exposure through load-time-validated reflective wrappers, missing declared exports as load-time E8011 errors, extra host exports ignored, sync return boundary checks (E8010 for wrong runtime kinds, including Java null crossing a non-nullable boundary — the spec's no-unvalidated-null rule), nullable returns accepting Java null as the DEAL null sentinel, the null return boundary (E8010 for a non-null host result), the int safe-range return boundary (E8004), the ISSUE-0106 v1.2 boundary string validation at the host return boundary (E8010 for sync returns — plain and nullable string descriptors — and E8001 for async completion values when the returned java.lang.String carries unpaired UTF-16 surrogate code units, spec-v1.2 §String escapes and Unicode / §JVM value mapping), host function parameter adaptation (declared primitive/string/nullable parameters arriving as their JVM mappings), async host operation shape checks (E8010 for a non-operation), async completion value checks (E8001 at the await site, with the spec-permitting blocking JVM await lowering), and one frontend E2009 compile-error gate rejected before any backend. ISSUE-0303 (jvm-v12-host-abi-completion) extends the slice to the array/function/class/prewrapped shapes: declared array parameters/returns flow on the shared $DealRt wrappers with E8010 at the call boundary (array carrier/element mismatches included, never a masking read-site error), function-typed parameters arrive as the typed $DealRt wrapper (the host invokes through the typed invoke; no lambda conversion), function-typed returns are never wrapped (a raw value fails E8010, a byte-equal descriptor passes), declared host classes synthesize shared $DealRt records with canonical externals identity and the preserved defaults-map construction seam (E8007 for an extra provided name), and the pre-wrapped pair executes against declared-shape hosts whose declared-descriptor enforcement raises E8010 on the junk return.",
+  "description": "JVM host ABI slice (ISSUE-0100). JVM-only multi-module fixtures: each fixture writes its 'modules' (relative .deal paths, including the host .d.deal declarations) plus 'entry' under a temp project root, and — when the fixture declares 'hosts' — a real deal.json whose externals map wires each raw host import path to its declaration (the spec manifest form). The runner then executes the real whole-project pipeline: CompilationOrchestrator with Backend.JVM (externals-gated host resolution, module discovery, signature extraction, dependency ordering, name resolution, type checking, per-module JvmBackend codegen) → the host implementation classes are compiled with javac together with every emitted .java artifact plus a runner class → java executes the emitted artifacts (the harness fails a fixture whose parser/checker/module-discovery yields no compile, whose codegen leaves no artifact, whose host implementation is missing, or whose JVM execution is bypassed). ISSUE-0106 migrates every fixture to the v1.2 module shape: entry modules export non-async main(): null (the v1.2 entry gate) and the v1.1 module-level executable statements are wrapped inside main() so the load-time and boundary checks stay observable. Covered host ABI forms (spec-v1.2 §Modules, declarations, standard library, and host ABI + §JVM value mapping): declared export exposure through load-time-validated reflective wrappers, missing declared exports as load-time E8011 errors, extra host exports ignored, sync return boundary checks (E8010 for wrong runtime kinds, including Java null crossing a non-nullable boundary — the spec's no-unvalidated-null rule), nullable returns accepting Java null as the DEAL null sentinel, the null return boundary (E8010 for a non-null host result), the int safe-range return boundary (E8004), the ISSUE-0106 v1.2 boundary string validation at the host return boundary (E8010 for sync returns — plain and nullable string descriptors — and E8001 for async completion values when the returned java.lang.String carries unpaired UTF-16 surrogate code units, spec-v1.2 §String escapes and Unicode / §JVM value mapping), host function parameter adaptation (declared primitive/string/nullable parameters arriving as their JVM mappings), async host operation shape checks (E8010 for a non-operation), async completion value checks (E8001 at the await site, with the spec-permitting blocking JVM await lowering), and one frontend E2009 compile-error gate rejected before any backend. ISSUE-0303 (jvm-v12-host-abi-completion) extends the slice to the array/function/class/prewrapped shapes: declared array parameters/returns flow on the shared $DealRt wrappers with E8010 at the call boundary (array carrier/element mismatches included, never a masking read-site error), function-typed parameters arrive as the typed $DealRt wrapper (the host invokes through the typed invoke; no lambda conversion), function-typed returns are never wrapped (a raw value fails E8010, a byte-equal descriptor passes), declared host classes synthesize shared $DealRt records with canonical externals identity and the preserved defaults-map construction seam (E8007 for an extra provided name), the pre-wrapped pair executes against declared-shape hosts whose declared-descriptor enforcement raises E8010 on the junk return, and declared host-class ARRAY parameters/returns are rejected with E6000 at the import statement (the host wrapper seam has no class-element array carrier — pre-fix the wrapper published 'static null ...' artifacts javac rejected after CLI success; the per-class $HostArr$ carrier keeps serving record-field storage).",
   "tests": [
     {
       "name": "jvm-host-export-presence",
@@ -751,6 +751,54 @@
       "expectedError": "E8011",
       "expectedExitCode": 1,
       "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-host-class-array-return-e6000",
+      "description": "A declared host-class ARRAY return is rejected with E6000 at the import statement — the host wrapper seam has no class-element array carrier (review-cycle-3 finding: pre-fix the wrapper emitted 'static null ...' and javac rejected the published artifact after CLI success); the nullable-array return form is rejected the same way and no entry artifact is written",
+      "modules": {
+        "bindings/cfg.d.deal": "export class ServerConfig {\n  port: int;\n}\nexport function make(): ServerConfig[];\nexport function makeMaybe(): ServerConfig[] | null;",
+        "entry.deal": "import * as cfg from \"host/cfg\"\nexport function main(): null { return null; }\nexport function run(): int { let cs = cfg.make(); return cs.length; }"
+      },
+      "entry": "entry.deal",
+      "hosts": {
+        "host/cfg": {
+          "declaration": "bindings/cfg.d.deal",
+          "java": "public final class HostCfg {\n    public static final java.util.Map<String, Object> ServerConfig_defaults = java.util.Map.of(\"port\", Integer.valueOf(8080));\n}\n"
+        }
+      },
+      "expectedOutput": null,
+      "expectedError": null,
+      "expectedExitCode": null,
+      "expectedCompileError": "E6000",
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-host-class-array-param-e6000",
+      "description": "A declared host-class ARRAY parameter is rejected with E6000 at the import statement — the host wrapper seam has no class-element array carrier (review-cycle-3 finding: pre-fix the load-time signature check fell back to Object.class, so a $HostArr$-declaring host implementation failed E8011 after CLI success, and __hostParamCheck had no element-checked row for the shape); the nullable-element array form is rejected the same way and no entry artifact is written",
+      "modules": {
+        "bindings/cfg.d.deal": "export class ServerConfig {\n  port: int;\n}\nexport function take(cfgs: ServerConfig[]): int;\nexport function takeMaybe(cfgs: (ServerConfig | null)[]): int;",
+        "entry.deal": "import * as cfg from \"host/cfg\"\nexport function main(): null { return null; }\nexport function run(): int { return cfg.take([]); }"
+      },
+      "entry": "entry.deal",
+      "hosts": {
+        "host/cfg": {
+          "declaration": "bindings/cfg.d.deal",
+          "java": "public final class HostCfg {\n    public static final java.util.Map<String, Object> ServerConfig_defaults = java.util.Map.of(\"port\", Integer.valueOf(8080));\n}\n"
+        }
+      },
+      "expectedOutput": null,
+      "expectedError": null,
+      "expectedExitCode": null,
+      "expectedCompileError": "E6000",
       "irContains": [],
       "irNotContains": [],
       "backends": [

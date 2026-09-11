@@ -2627,8 +2627,10 @@ public final class JvmBackend {
                 // array/function/class shapes onto those wrappers and the
                 // synthesized shared records. Declared exports with
                 // shapes the extended boundary still rejects (table and
-                // bytes carriers) are E6000 at the import statement,
-                // never silently miscompiled.
+                // bytes carriers, and class-element arrays in function
+                // parameter/return positions — the host wrapper seam
+                // has no class-element array carrier) are E6000 at the
+                // import statement, never silently miscompiled.
                 Map<String, Type> hostExports = hostModules.get(imp.modulePath());
                 if (hostExports != null) {
                     if (validateHostExports(imp.modulePath(), hostExports,
@@ -6566,11 +6568,15 @@ public final class JvmBackend {
      * int/number/boolean/string/null, arrays of supported element
      * shapes, function types, declared host classes, and their nullable
      * forms; class exports (declared host classes) whose field types
-     * are supported shapes. Everything else — table/bytes carriers and
-     * class-typed positions naming anything but a declared host class —
-     * is an E6000 at the import statement, never a silently
-     * miscompiled artifact. Returns true when every declared export is
-     * supported.
+     * are supported shapes. Function parameter/return positions reject
+     * class-element arrays (see {@link #hostShapeSupported} — the host
+     * wrapper seam has no class-element array carrier), while record
+     * fields keep them (their storage maps onto the per-class
+     * {@code $HostArr$} wrapper). Everything else — table/bytes
+     * carriers and class-typed positions naming anything but a
+     * declared host class — is an E6000 at the import statement,
+     * never a silently miscompiled artifact. Returns true when every
+     * declared export is supported.
      */
     private boolean validateHostExports(String raw, Map<String, Type> exports,
                                         Span span) {
@@ -6580,7 +6586,7 @@ public final class JvmBackend {
             Type t = e.getValue();
             if (t instanceof Type.Func f) {
                 for (Type pt : f.paramTypes()) {
-                    if (!hostShapeSupported(pt)) {
+                    if (!hostShapeSupported(pt, false)) {
                         unsupported("host export '" + name + "' of module '"
                             + raw + "' declares unsupported parameter type '"
                             + typeName(pt) + "'", span);
@@ -6588,7 +6594,7 @@ public final class JvmBackend {
                     }
                 }
                 Type ret = f.returnType();
-                if (!hostShapeSupported(ret)) {
+                if (!hostShapeSupported(ret, false)) {
                     unsupported("host export '" + name + "' of module '"
                         + raw + "' declares unsupported return type '"
                         + typeName(ret) + "'", span);
@@ -6610,7 +6616,7 @@ public final class JvmBackend {
                     continue;
                 }
                 for (HostModuleDeclarations.HostField hf : fields) {
-                    if (!hostShapeSupported(hf.type())) {
+                    if (!hostShapeSupported(hf.type(), true)) {
                         unsupported("host class '" + name + "' field '"
                             + hf.declaration().name() + "' of type "
                             + typeName(hf.type()), span);
@@ -6632,16 +6638,51 @@ public final class JvmBackend {
      * host classes, arrays of supported elements, function signatures
      * over supported shapes, and their nullable forms. Table and bytes
      * carriers stay out (E6000 — the recursive bytes closure is
-     * ISSUE-0160's; C FFI host entries stay E6003). */
-    private boolean hostShapeSupported(Type t) {
+     * ISSUE-0160's; C FFI host entries stay E6003).
+     *
+     * <p>{@code classArraysSupported} distinguishes the two positions
+     * the gate serves. Function parameters/returns pass {@code false}:
+     * the host WRAPPER seam has no class-element array carrier there —
+     * {@link #arrayWrapperName} returns null for a class element, so
+     * the wrapper emission would publish a {@code static null ...}
+     * return type and an {@code Object}-typed load-time signature that
+     * javac rejects or E8011-rejects after CLI success
+     * (review-reproduced {@code make(): ServerConfig[]}); the shape is
+     * an import-time E6000, never a silently miscompiled artifact.
+     * Synthesized host-class record FIELDS pass {@code true}: their
+     * storage maps through {@link #hostRecordFieldJavaType} onto the
+     * per-class {@code $DealRt.$HostArr$...} {@code __RefArray} wrapper
+     * emitted beside the record (the presence fixture's
+     * {@code peers?: Config[]} field). */
+    private boolean hostShapeSupported(Type t,
+            boolean classArraysSupported) {
         if (t instanceof Type.Null) return true;
-        if (t instanceof Type.Nullable n) return hostShapeSupported(n.inner());
-        if (t instanceof Type.Array a) return hostShapeSupported(a.element());
+        if (t instanceof Type.Nullable n) {
+            return hostShapeSupported(n.inner(), classArraysSupported);
+        }
+        if (t instanceof Type.Array a) {
+            if (!classArraysSupported) {
+                // Class-element arrays (declared host class or nullable
+                // thereof; the element recursion propagates the
+                // rejection through nested arrays) have no wrapper-seam
+                // carrier — fail the shape closed at the import instead
+                // of publishing an artifact javac rejects after CLI
+                // success.
+                Type elem = a.element();
+                Type elemInner = elem instanceof Type.Nullable en
+                    ? en.inner() : elem;
+                if (elemInner instanceof Type.Class) return false;
+            }
+            return hostShapeSupported(a.element(), classArraysSupported);
+        }
         if (t instanceof Type.Func f) {
             for (Type pt : f.paramTypes()) {
-                if (!hostShapeSupported(pt)) return false;
+                if (!hostShapeSupported(pt, classArraysSupported)) {
+                    return false;
+                }
             }
-            return hostShapeSupported(f.returnType());
+            return hostShapeSupported(f.returnType(),
+                classArraysSupported);
         }
         if (t instanceof Type.Class c) return isDeclaredHostClass(c);
         return switch (t) {

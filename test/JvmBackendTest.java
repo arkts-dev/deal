@@ -429,6 +429,7 @@ public class JvmBackendTest {
             new TestCase("testSharedCarrierCheckBehaviors", () -> testSharedCarrierCheckBehaviors()),
             new TestCase("testSharedCarrierCrossModuleIdentity", () -> testSharedCarrierCrossModuleIdentity()),
             new TestCase("testSharedCarrierHostClassShapes", () -> testSharedCarrierHostClassShapes()),
+            new TestCase("testHostClassArraySeamRejected", () -> testHostClassArraySeamRejected()),
             new TestCase("testSharedCarrierIndirectClassShape", () -> testSharedCarrierIndirectClassShape()),
             new TestCase("testCrossModuleFunctionValues", () -> testCrossModuleFunctionValues()),
             new TestCase("testUseBeforeDeclarationRejected", () -> testUseBeforeDeclarationRejected()),
@@ -6372,6 +6373,109 @@ public class JvmBackendTest {
         check(exec.exitCode() == 0,
             "the host-class artifact set runs against the real host "
                 + "class (exit 0): " + exec.output());
+    }
+
+    /**
+     * ISSUE-0303 review-cycle-3 correction: declared host-class ARRAY
+     * parameters/returns are rejected with E6000 at the import
+     * statement — the host wrapper seam has no class-element array
+     * carrier (pre-fix the wrapper published a {@code static null ...}
+     * return type and an {@code Object}-typed load-time signature that
+     * javac rejected or E8011-rejected after CLI success). The record
+     * FIELD position keeps class-element arrays: their storage maps
+     * onto the per-class {@code $DealRt.$HostArr$...} wrapper emitted
+     * beside the synthesized record (the presence fixture's peers
+     * pin).
+     */
+    private static void testHostClassArraySeamRejected()
+            throws Exception {
+        System.out.println("-- Host class-array seam rejection (ISSUE-0303 review) --");
+
+        writeFile("deal.json", """
+            {
+              "languageVersion": "1.2",
+              "moduleRoots": ["src"],
+              "externals": {
+                "host/cfg": { "declaration": "bindings/cfg.d.deal" }
+              }
+            }
+            """);
+        writeFile("bindings/cfg.d.deal", """
+            export class ServerConfig {
+              port: int;
+            }
+            export function make(): ServerConfig[];
+            export function take(cfgs: ServerConfig[]): int;
+            """);
+        writeFile("src/entry.deal", """
+            import * as cfg from "host/cfg"
+            export function main(): null { return null; }
+            export function run(): int { let cs = cfg.make(); return cs.length; }
+            """);
+
+        Path entryFile = tmpDir.get().resolve("src/entry.deal")
+            .toAbsolutePath().normalize();
+        Path outputRoot = tmpDir.get().resolve("build/class_array_seam");
+        List<Path> roots = List.of(
+            tmpDir.get().resolve("src").toAbsolutePath());
+        Map<String, String> externals = Map.of("host/cfg",
+            tmpDir.get().resolve("bindings/cfg.d.deal").toString());
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputRoot, false, false, false, Backend.JVM,
+            externals, roots, Path.of(".").toAbsolutePath().normalize());
+        boolean ok = orchestrator.compile();
+        check(!ok, "the class-array host export shapes fail the compile: "
+            + orchestrator.diagnostics());
+        check(orchestrator.diagnostics().stream()
+                .anyMatch(d -> "E6000".equals(d.code())
+                    && d.message().contains("unsupported return type")
+                    && d.message().contains("ServerConfig")),
+            "the class-array return is E6000 at the import: "
+                + orchestrator.diagnostics());
+        check(orchestrator.diagnostics().stream()
+                .anyMatch(d -> "E6000".equals(d.code())
+                    && d.message().contains("unsupported parameter type")),
+            "the class-array parameter is E6000 at the import: "
+                + orchestrator.diagnostics());
+        check(!Files.exists(outputRoot.resolve("Entry.java")),
+            "no artifact is published for the rejected module (the "
+                + "pre-fix wrapper emitted 'static null ...' and javac "
+                + "rejected the published artifact after CLI success)");
+
+        // The record FIELD position keeps class-element arrays: the
+        // presence-shape peers field still compiles through the
+        // per-class $HostArr$ carrier.
+        writeFile("bindings/cfg.d.deal", """
+            export class ServerConfig {
+              port: int;
+              peers?: ServerConfig[];
+            }
+            export function ping(): string;
+            """);
+        writeFile("src/entry.deal", """
+            import * as cfg from "host/cfg"
+            export function main(): null { return null; }
+            export function run(): string { return cfg.ping(); }
+            """);
+        Path outputRoot2 = tmpDir.get().resolve("build/class_array_field");
+        CompilationOrchestrator orchestrator2 = new CompilationOrchestrator(
+            entryFile, outputRoot2, false, false, false, Backend.JVM,
+            externals, roots, Path.of(".").toAbsolutePath().normalize());
+        boolean ok2 = orchestrator2.compile();
+        check(ok2, "a class-array host-class FIELD stays supported (the "
+            + "record storage maps onto the $HostArr$ carrier): "
+            + orchestrator2.diagnostics());
+        if (ok2) {
+            Path artifact = outputRoot2.resolve("Entry.java");
+            check(Files.exists(artifact),
+                "field-variant entry artifact published");
+            if (Files.exists(artifact)) {
+                String java = Files.readString(artifact);
+                check(java.contains("$HostArr$host$scfg$ServerConfig"),
+                    "the shared scope emits the per-class $HostArr$ "
+                        + "wrapper for the class-array field");
+            }
+        }
     }
 
     /**
