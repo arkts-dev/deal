@@ -1593,6 +1593,105 @@ public class LoweringSupportTest {
                         + "FOUNDATION_VALUES + SIGNED_INT32 (one call site, no CALLS "
                         + "claim): " + manifestOf(called, "main").capabilities());
             }
+            // The declaration-order-independence pin (ISSUE-0239 E10):
+            // the identical module with the entry function declared
+            // first (the conventional v1.2 layout) counts the call site
+            // exactly like the callee-first layout — the call accounting
+            // collects the called symbols over the whole statement walk
+            // and the never-called arm runs after it, so a call site
+            // walked before the callee's declaration is never lost.
+            RequirementManifestResult calledMainFirst =
+                compileAndCompute(tmp.resolve("called-main-first"),
+                Map.of("main.deal", """
+                    export function main(): null {
+                      helper(1)
+                      return null
+                    }
+
+                    function helper(x: int): int {
+                      return x
+                    }
+                    """), "main.deal");
+            if (calledMainFirst != null) {
+                check(claimsSignedInt32(manifestOf(calledMainFirst, "main")),
+                    "the main-first called non-exported declaration claims exactly "
+                        + "FOUNDATION_VALUES + SIGNED_INT32 (declaration-order-"
+                        + "independent call accounting, one call site, no CALLS "
+                        + "claim): " + manifestOf(calledMainFirst, "main")
+                            .capabilities());
+            }
+        } finally {
+            deleteRecursively(tmp);
+        }
+    }
+
+    static void testE10StoredFunctionExpressionArm() throws Exception {
+        System.out.println("-- ISSUE-0239 E10 arm: a stored/embedded function "
+            + "expression claims CALLS --");
+
+        Path tmp = Files.createTempDirectory("deal-manifest-e10-storedfn");
+        try {
+            RequirementManifestResult binding = compileAndCompute(
+                tmp.resolve("binding"), Map.of("main.deal", """
+                    export function main(): null {
+                      let g: () => int = function(): int { return 7 }
+                      return null
+                    }
+                    """), "main.deal");
+            if (binding != null) {
+                check(manifestOf(binding, "main").capabilities().contains(
+                        SemanticCapability.CALLS),
+                    "a function expression stored in a binding initializer claims "
+                        + "CALLS (its body's RETURN boundary names no invocation; "
+                        + "F4 rule 4 reroutes LEGACY, never E6005): "
+                        + manifestOf(binding, "main").capabilities());
+            }
+            RequirementManifestResult arrayElement = compileAndCompute(
+                tmp.resolve("array"), Map.of("main.deal", """
+                    export function main(): null {
+                      let fs: (() => int)[] = [function(): int { return 7 }]
+                      return null
+                    }
+                    """), "main.deal");
+            if (arrayElement != null) {
+                check(manifestOf(arrayElement, "main").capabilities().contains(
+                        SemanticCapability.CALLS),
+                    "a function expression embedded in an array literal element "
+                        + "claims CALLS: "
+                        + manifestOf(arrayElement, "main").capabilities());
+            }
+            RequirementManifestResult tableField = compileAndCompute(
+                tmp.resolve("table"), Map.of("main.deal", """
+                    export function main(): null {
+                      let t: table = { f: function(): int { return 7 } }
+                      return null
+                    }
+                    """), "main.deal");
+            if (tableField != null) {
+                check(manifestOf(tableField, "main").capabilities().contains(
+                        SemanticCapability.CALLS),
+                    "a function expression embedded in a table literal field "
+                        + "claims CALLS: "
+                        + manifestOf(tableField, "main").capabilities());
+            }
+            // The directly-invoked shape (an IIFE callee) claims CALLS
+            // through the dynamic-callee arm (the callee is not a
+            // statically-resolved identifier) — the stored-expression
+            // arm's exemption never leaves an IIFE unclaimed.
+            RequirementManifestResult iife = compileAndCompute(
+                tmp.resolve("iife"), Map.of("main.deal", """
+                    export function main(): null {
+                      let x: int = (function(): int { return 7 })()
+                      return null
+                    }
+                    """), "main.deal");
+            if (iife != null) {
+                check(manifestOf(iife, "main").capabilities().contains(
+                        SemanticCapability.CALLS),
+                    "a directly-invoked function expression claims CALLS through "
+                        + "the dynamic-callee arm (never an unclaimed stored shape): "
+                        + manifestOf(iife, "main").capabilities());
+            }
         } finally {
             deleteRecursively(tmp);
         }
@@ -1635,6 +1734,7 @@ public class LoweringSupportTest {
         testE10NestedFunctionArm();
         testE10AdapterCreationArm();
         testE10UncalledDeclarationArm();
+        testE10StoredFunctionExpressionArm();
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {

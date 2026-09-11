@@ -1865,6 +1865,18 @@ public final class LuaSemanticEmitter {
 -- ==== shared runtime prelude ====
 local __MISSING = setmetatable({}, {__tostring = function() return "missing" end})
 local __NULL = setmetatable({}, {__tostring = function() return "null" end})
+-- The member-read helper (ISSUE-0239 E10): a present key yields the
+-- stored value (a present null is the plain nil stored by the write
+-- paths); an absent key yields the internal MISSING sentinel — exactly
+-- JvmRuntime.Table.read's present/absent split, so the contextual
+-- table-read boundary decides null-vs-error identically on both
+-- targets. The __keys marker sub-table is the same one the TABLE_NEW /
+-- MEMBER_WRITE / MEMBER_DELETE / INDEX_WRITE / INDEX_DELETE paths
+-- maintain, so read and write presence stay consistent.
+local function __member(t, k)
+  if t.__keys[k] then return t[k] end
+  return __MISSING
+end
 local function __esc(s)
   if s == nil then return "" end
   local out = {}

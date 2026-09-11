@@ -45,15 +45,21 @@ import java.util.stream.Stream;
  *       (never E6005, never a within-run fallback);</li>
  *   <li>the retained {@code DEAL_ERROR_CODE: <code>} terminal contract
  *       (E8004 out of the shared artifact);</li>
- *   <li>the plan-time LEGACY reroute of every shape without a shared
- *       representation — the adapter-invocation module compiles through
- *       the retained route with zero semantic/one retained artifact and
- *       an all-LEGACY plan (never E6005, never a within-run fallback);
- *       after the corrected scan arms no public source can reach the
- *       shared-lowering E6005 path anymore;</li>
+ *   <li>the plan-time LEGACY reroute of every named shape without a
+ *       shared representation — the adapter-invocation module and the
+ *       stored/embedded function-expression shapes (binding, array
+ *       literal, table literal) compile through the retained route with
+ *       zero semantic/one retained artifact and an all-LEGACY plan
+ *       (never E6005, never a within-run fallback);</li>
+ *   <li>the SHARED table member read — the emitted {@code __member}
+ *       helper resolves present and absent keys identically to
+ *       {@code JvmRuntime.Table.read} on both targets and the published
+ *       artifacts load and run;</li>
  *   <li>the atomic publication failure preservation — a failing compile
- *       publishes nothing and preserves the prior artifact set
- *       byte-for-byte with no staging/retired siblings surviving.</li>
+ *       drives the residual public shared-lowering E6005 (the
+ *       function-typed table member read, R-FUNCTION-BINDING), publishes
+ *       nothing, and preserves the prior artifact set byte-for-byte with
+ *       no staging/retired siblings surviving.</li>
  * </ul>
  */
 public class SemanticProductionGateTest {
@@ -199,13 +205,6 @@ public class SemanticProductionGateTest {
         "{\n  \"languageVersion\": \"1.2\",\n  \"moduleRoots\": [\"src\"],\n"
             + "  \"output\": \"out\",\n  \"backend\": \"jvm\"\n}\n";
 
-    private static final String DEAL_JSON_JVM_FFI =
-        "{\n  \"languageVersion\": \"1.2\",\n  \"moduleRoots\": [\"src\"],\n"
-            + "  \"output\": \"out\",\n  \"backend\": \"jvm\",\n"
-            + "  \"externals\": {\n    \"native/ffi\": {\n"
-            + "      \"declaration\": \"bindings/ffi.d.deal\",\n"
-            + "      \"nativeLibrary\": \"libm.so\"\n    }\n  }\n}\n";
-
     private static final String ADD_MAIN_SOURCE =
         "export function add(x: int, y: int): int {\n  return x + y\n}\n\n"
             + "export function main(): null {\n  return null\n}\n";
@@ -213,6 +212,10 @@ public class SemanticProductionGateTest {
     private static final String OVERFLOW_SOURCE =
         "export function main(): null {\n  let x: int = 2147483647 + 1\n"
             + "  return null\n}\n";
+
+    private static final String TABLE_MEMBER_READ_SOURCE =
+        "export function main(): null {\n  let t: table = { a: 1 }\n"
+            + "  let x: int = t.a\n  return null\n}\n";
 
     private static void testAllSharedLuaJit() throws Exception {
         System.out.println("-- All-shared LuaJIT: semantic IR artifact runs (success + E8004) --");
@@ -333,6 +336,71 @@ public class SemanticProductionGateTest {
         }
     }
 
+    private static void testSharedTableMemberReadRuns() throws Exception {
+        System.out.println("-- SHARED table member read: the emitted __member helper "
+            + "runs on both targets --");
+
+        // The cycle-2 critical shape: any MEMBER_READ references the
+        // prelude helper __member, so a program reading a table field
+        // publishes an artifact that runs clean (never a nil-global
+        // crash). Present-key reads yield the stored value on both
+        // targets, exactly JvmRuntime.Table.read's split.
+        Path project = Files.createTempDirectory("deal-e10-tmember-lua-");
+        try {
+            write(project, "deal.json", DEAL_JSON_LUA);
+            write(project, "src/main.deal", TABLE_MEMBER_READ_SOURCE);
+            CompilationOrchestrator orchestrator =
+                compileProject(project, "src/main.deal", "out");
+            check(orchestrator.semanticEmissionCount() == 1
+                    && orchestrator.retainedEmissionCount() == 0,
+                "the table-member-read module emits one semantic/zero retained "
+                    + "artifacts: semantic=" + orchestrator.semanticEmissionCount()
+                    + " retained=" + orchestrator.retainedEmissionCount());
+            RoutePlanResult plan = orchestrator.routePlan();
+            check(plan != null && !plan.hasErrors() && plan.plan() != null
+                    && plan.plan().entries().values().stream()
+                        .allMatch(route -> route == ModuleRoute.SHARED),
+                "the post-flip plan routes the table-member-read module SHARED");
+            ProcessOutcome run = runProcess(project.resolve("out"),
+                List.of("luajit", "main.lua"));
+            check(run.exitCode() == 0 && run.output().isEmpty(),
+                "the shared LuaJIT table-member-read artifact runs clean: exit="
+                    + run.exitCode() + " output=" + run.output().replace("\n", "\\n"));
+        } finally {
+            deleteRecursively(project);
+        }
+
+        Path jvmProject = Files.createTempDirectory("deal-e10-tmember-jvm-");
+        try {
+            write(jvmProject, "deal.json", DEAL_JSON_JVM);
+            write(jvmProject, "src/main.deal", TABLE_MEMBER_READ_SOURCE);
+            CompilationOrchestrator orchestrator =
+                compileProject(jvmProject, "src/main.deal", "out");
+            check(orchestrator.semanticEmissionCount() == 1
+                    && orchestrator.retainedEmissionCount() == 0,
+                "the JVM table-member-read module emits one semantic/zero retained "
+                    + "artifacts: semantic=" + orchestrator.semanticEmissionCount()
+                    + " retained=" + orchestrator.retainedEmissionCount());
+            Path out = jvmProject.resolve("out");
+            String buildCp = Path.of("build").toAbsolutePath().normalize().toString();
+            ProcessOutcome javac = runProcess(jvmProject, List.of(
+                "javac", "--release", "25", "-proc:none", "-cp", buildCp,
+                "-d", out.toString(), out.resolve("Main.java").toString()));
+            check(javac.exitCode() == 0,
+                "the shared JVM table-member-read artifact compiles: "
+                    + javac.output().replace("\n", "\\n"));
+            if (javac.exitCode() == 0) {
+                ProcessOutcome run = runProcess(out, List.of(
+                    "java", "-cp", buildCp + File.pathSeparator + out, "Main"));
+                check(run.exitCode() == 0 && run.output().isEmpty(),
+                    "the shared JVM table-member-read artifact runs clean: exit="
+                        + run.exitCode() + " output=" + run.output().replace("\n", "\\n"));
+            }
+        } finally {
+            deleteRecursively(jvmProject);
+        }
+    }
+
     private static void testRouteSelectionWithoutFallback() throws Exception {
         System.out.println("-- Route selection: multi-module LEGACY, dual-shape LEGACY, no fallback --");
 
@@ -397,7 +465,8 @@ public class SemanticProductionGateTest {
             + "are LEGACY, never E6005 --");
 
         // The review-verified corpus shapes (directive lines stripped) plus
-        // the adapter-invocation shape: every module without a shared
+        // the adapter-invocation shape and the stored/embedded
+        // function-expression shapes: every module without a shared
         // representation claims its owning capability at plan time, so F4
         // rule 4 reroutes it LEGACY — zero semantic/one retained artifact,
         // an all-LEGACY plan, and the retained v1.2 route compiles and
@@ -440,7 +509,26 @@ public class SemanticProductionGateTest {
                 + "  }\n"
                 + "  return result;\n"
                 + "}\n"
-                + "export function main(): null {\n  return null\n}\n");
+                + "export function main(): null {\n  return null\n}\n",
+            // The cycle-2 stored/embedded function-expression shapes: a
+            // closure stored in a binding initializer, an array literal
+            // element, or a table literal field whose body has no direct
+            // invocation — its RETURN boundary names no invocation shape
+            // (R-BOUNDARY-TRIPLE), so the scan arm claims CALLS and F4
+            // rule 4 reroutes the module LEGACY at plan time (never
+            // E6005, never a within-run fallback).
+            "stored-closure-binding", "export function main(): null {\n"
+                + "  let g: () => int = function(): int { return 7 }\n"
+                + "  return null\n"
+                + "}\n",
+            "stored-closure-array", "export function main(): null {\n"
+                + "  let fs: (() => int)[] = [function(): int { return 7 }]\n"
+                + "  return null\n"
+                + "}\n",
+            "stored-closure-table", "export function main(): null {\n"
+                + "  let t: table = { f: function(): int { return 7 } }\n"
+                + "  return null\n"
+                + "}\n");
         for (Map.Entry<String, String> fixture : fixtures.entrySet()) {
             Path project = Files.createTempDirectory(
                 "deal-e10-reroute-" + fixture.getKey() + "-");
@@ -488,24 +576,25 @@ public class SemanticProductionGateTest {
             Map<String, String> prior = fingerprint(project.resolve("out"));
 
             // A failing recompile through the same real pipeline: the
-            // @extern-c FFI declaration is rejected with E6003
-            // (FFI_UNSUPPORTED_BACKEND) after checking — nothing stages,
-            // nothing publishes, and the prior artifact set stays
-            // byte-for-byte with no staging/retired residue. The former
-            // E6005 shared-lowering trigger (an adapter invocation) is no
-            // longer publicly reachable: the corrected plan-time scan arms
-            // reroute every shape without a shared representation LEGACY
-            // (pinned by testAdapterShapeReroutesLegacy), so the generic
-            // whole-set failure contract is pinned here and the
-            // stager-level discard paths stay pinned in
+            // residual public shared-lowering E6005 shape — a
+            // function-typed table member read (the MEMBER_READ result
+            // resolves no FunctionExecutionBinding, R-FUNCTION-BINDING)
+            // — routes SHARED and fails the compile inside the shared
+            // lowering; nothing stages, nothing publishes, and the prior
+            // artifact set stays byte-for-byte with no staging/retired
+            // residue. The cycle-2 named reroute shapes (stored/embedded
+            // function expressions, adapters, bytes, recursion, class
+            // literals) reroute LEGACY at plan time — pinned by
+            // testAdapterShapeReroutesLegacy — so this residual shape is
+            // the public E6005 the atomicity contract is pinned against;
+            // the stager-level discard paths stay pinned in
             // StagingPublicationTest/PublicationStagerTest.
-            write(project, "deal.json", DEAL_JSON_JVM_FFI);
-            write(project, "bindings/ffi.d.deal",
-                "// @extern-c\nexport function cFn(x: int): int;\n");
             write(project, "src/main.deal",
-                "import * as ffi from \"native/ffi\"\n\n"
+                "function one2(): int {\n  return 1\n}\n\n"
                     + "export function main(): null {\n"
-                    + "  ffi.cFn(1)\n"
+                    + "  let t: table = { f: one2 }\n"
+                    + "  let g: () => int = t.f\n"
+                    + "  one2()\n"
                     + "  return null\n"
                     + "}\n");
             Path entryFile = project.resolve("src/main.deal").toAbsolutePath()
@@ -525,11 +614,11 @@ public class SemanticProductionGateTest {
                 invocation);
             boolean compiled = failing.compile();
             check(!compiled,
-                "the @extern-c recompile fails (nothing publishes)");
+                "the shared-lowering E6005 recompile fails (nothing publishes)");
             check(failing.diagnostics().stream()
-                    .anyMatch(d -> "E6003".equals(d.code())),
-                "the failure is the FFI rejection E6003: "
-                    + failing.diagnostics());
+                    .anyMatch(d -> "E6005".equals(d.code())),
+                "the failure is the shared-lowering E6005 (never a frontend "
+                    + "rejection): " + failing.diagnostics());
             Map<String, String> after = fingerprint(project.resolve("out"));
             check(prior.equals(after),
                 "the prior artifact set is preserved byte-for-byte after the failed "
@@ -580,6 +669,7 @@ public class SemanticProductionGateTest {
         testEmitterSeam();
         testAllSharedLuaJit();
         testAllSharedJvm();
+        testSharedTableMemberReadRuns();
         testRouteSelectionWithoutFallback();
         testAdapterShapeReroutesLegacy();
         testFailurePreservesPriorArtifacts();
