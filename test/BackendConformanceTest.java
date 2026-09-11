@@ -241,7 +241,14 @@ import javax.tools.ToolProvider;
  * out-of-bounds indexes with no append, E8013 values outside 0..255,
  * the receiver/index/RHS single-evaluation write order with
  * validation after the RHS and no storage change on a failed write,
- * the empty buffer, and function parameter/return flow).
+ * the empty buffer, function parameter/return flow, the ISSUE-0547
+ * cross-backend container parity cases, and one LuaJIT-only
+ * reference pin — {@code jvm-bytes-lua-ref-reassigned-adapter} — for
+ * the reassigned module-binding arity-adapter shape the JVM slice
+ * conservatively rejects with a reason-bearing non-bytes E6000
+ * (pinned in {@code JvmBackendTest.testRecursiveBytesClosureLane};
+ * LuaJIT's (bytes,int)-&gt;bytes adapter re-reads the chunk local live,
+ * so {@code id = stamp} retargets it).
  *
  *
  * <h2>Multi-module fixtures (ISSUE-0096)</h2>

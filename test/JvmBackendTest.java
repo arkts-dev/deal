@@ -11118,6 +11118,49 @@ public class JvmBackendTest {
                 "no E6000 names bytes nesting or function shape: "
                     + res.diagnostics());
         }
+
+        // ---- Live module-field rebinding (the criterion's
+        // module-binding surface; the LuaJIT side is pinned by
+        // jvm-bytes-lua-ref-reassigned-adapter in
+        // jvm-bytes-slice.json) ----
+        // An arity adapter over a module-level function re-reads the
+        // chunk local live on LuaJIT (id = stamp retargets the
+        // (bytes,int)->bytes adapter), so the JVM backend must never
+        // snapshot: it retains the reason-bearing E6000 for the
+        // module-binding reassignment — never bytes nesting or function
+        // shape.
+        Frontend moduleRebind = compileFrontend("""
+            function id(b: bytes): bytes { return b; }
+            function stamp(b: bytes): bytes { b[0] = 5; return b; }
+            export function main(): null { return null; }
+            export function test(): int {
+              let h: (b: bytes, extra: int) => bytes = id;
+              id = stamp;
+              return 0;
+            }
+            """, "jvmtest-bytes-closure-module-rebind.deal");
+        check(moduleRebind.errors().isEmpty(),
+            "bytes closure module-rebind adapter probe frontend clean "
+                + "(LuaJIT compiles and retargets this shape; the JVM "
+                + "backend rejects it): " + moduleRebind.errors());
+        if (moduleRebind.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                moduleRebind.program(), moduleRebind.checkResult(),
+                "jvmtest-bytes-closure-module-rebind.deal", "main",
+                Map.of(), Map.of(), Map.of(), true,
+                SemanticProfile.DEAL_V1_2_INT32);
+            check(res.hasErrors() && res.diagnostics().stream()
+                    .anyMatch(d -> "E6000".equals(d.code())
+                        && d.message().contains("assignment to 'id'")),
+                "the module-binding reassignment guard fires with the "
+                    + "assignment reason (never bytes): "
+                    + res.diagnostics());
+            check(res.diagnostics().stream()
+                    .noneMatch(d -> "E6000".equals(d.code())
+                        && d.message().contains("bytes")),
+                "no E6000 names bytes nesting or function shape: "
+                    + res.diagnostics());
+        }
     }
 
     /** The combined T1+T3 verification (ISSUE-0394): the profile flows

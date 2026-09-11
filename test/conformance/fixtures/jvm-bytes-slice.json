@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "description": "JVM bytes ops/identity slice (jvm-v12-int32-bytes D3/D4; the BackendConformanceTest passing pins the lane contract names): the v1.2 bytes core on the retained JVM backend — bytes(length) lowers to a fresh zero-filled $DealRt.Bytes wrapper, b.length is the immutable signed-int32 logical allocation length, reads yield the unsigned 0..255 byte, a write mutates exactly one byte and returns the written value, reference-copy assignment/aliasing with reference identity equality (alias ===, distinct buffers !==, nullable-vs-null), E8012 for negative allocation length and out-of-bounds indexes (bytes never append), E8013 for values outside 0..255 after the receiver/index/RHS all evaluated, failed writes changing no storage, and the empty buffer. Every case runs the real frontend (lexer → parser → name resolver → type checker) under the A5 per-case invocation (COMMON_SHADOW + DEAL_V1_2_INT32 — no case is catalogued as legacy-dependent) → real JvmBackend codegen → javac → java executing the emitted artifact; a bypassed codegen or JVM execution produces no output and fails the fixture. Result-value assertions are JVM-only (the runner prints the test export's return value).",
+  "description": "JVM bytes ops/identity slice (jvm-v12-int32-bytes D3/D4; the BackendConformanceTest passing pins the lane contract names): the v1.2 bytes core on the retained JVM backend — bytes(length) lowers to a fresh zero-filled $DealRt.Bytes wrapper, b.length is the immutable signed-int32 logical allocation length, reads yield the unsigned 0..255 byte, a write mutates exactly one byte and returns the written value, reference-copy assignment/aliasing with reference identity equality (alias ===, distinct buffers !==, nullable-vs-null), E8012 for negative allocation length and out-of-bounds indexes (bytes never append), E8013 for values outside 0..255 after the receiver/index/RHS all evaluated, failed writes changing no storage, and the empty buffer. Every case runs the real frontend (lexer → parser → name resolver → type checker) under the A5 per-case invocation (COMMON_SHADOW + DEAL_V1_2_INT32 — no case is catalogued as legacy-dependent) → real JvmBackend codegen → javac → java executing the emitted artifact; a bypassed codegen or JVM execution produces no output and fails the fixture. Result-value assertions are JVM-only (the runner prints the test export's return value). One LuaJIT-only fixture (jvm-bytes-lua-ref-reassigned-adapter, the ISSUE-0548 adapter-lane rebinding reference) pins the live module-binding re-read semantics of the (bytes,int)->bytes arity-extension adapter that the JVM slice conservatively rejects with a reason-bearing non-bytes E6000 (pinned in JvmBackendTest.testRecursiveBytesClosureLane), mirroring the int siblings jvm-fv-lua-ref-reassigned-adapter and jvm-async-lua-ref-reassigned-adapter.",
   "tests": [
     {
       "name": "jvm-bytes-zero-fill-alloc",
@@ -409,6 +409,20 @@
       "irNotContains": [],
       "backends": [
         "jvm"
+      ]
+    },
+    {
+      "name": "jvm-bytes-lua-ref-reassigned-adapter",
+      "description": "LuaJIT reference semantics for the reassigned module-binding adapter shape that the JVM slice conservatively rejects with E6000 (pinned in JvmBackendTest.testRecursiveBytesClosureLane, the ISSUE-0548 live module-field rebinding criterion): LuaJIT's (bytes,int)->bytes arity-extension adapter re-reads the module-level chunk local live on every invoke, so id = stamp retargets the earlier adapter (h(bytes(1), 999)[0] = 5, the extra target parameter silently ignored), while the JVM backend retains the reason-bearing E6000 for the module-binding reassignment — never bytes. The statement reassignment mirrors the int sibling jvm-fv-lua-ref-reassigned-adapter (an assignment expression is not Lua-emittable in a statement position)",
+      "source": "import * as console from \"std/console\"\nfunction id(b: bytes): bytes { return b; }\nfunction stamp(b: bytes): bytes { b[0] = 5; return b; }\nexport function test(): null {\n  let h: (b: bytes, v: int) => bytes = id;\n  id = stamp;\n  let out: bytes = h(bytes(1), 999);\n  if (out[0] === 5) { console.log(\"jvm-bytes-lua-ref-reassigned-adapter-ok\"); }\n}",
+      "expectedOutput": "jvm-bytes-lua-ref-reassigned-adapter-ok",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "luajit"
       ]
     },
     {
