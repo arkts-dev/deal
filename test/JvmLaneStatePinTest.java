@@ -47,8 +47,8 @@ import java.util.List;
  * </ul>
  *
  * <p>The closed JVM lane state (ISSUE-0307): exit code 0 — every one
- * of the 354 on-disk applicable backend-runtime fixtures passes the
- * real pipeline (denominator 354, passed 354, failed 0, skipped 0,
+ * of the 360 on-disk applicable backend-runtime fixtures passes the
+ * real pipeline (denominator 360, passed 360, failed 0, skipped 0,
  * known-fail 0, pass rate 100.0%). The four final gap families closed
  * with their dispositions: the Error literal default filling (the
  * builtin {@code code}/{@code message} defaults to {@code ""}), the
@@ -56,9 +56,14 @@ import java.util.List;
  * the host export used as a first-class function value (the per-export
  * shared wrapper carrier keeps the identical E8010 boundary check), and
  * the eight ISSUE-0504 host-boundary fixtures (the boxed int/Integer
- * carrier class literals match the declared host shapes). The LuaJIT
- * lane (consequence, pinned): exit code 0 with
- * {@code Total: 549, Passed: 549}.
+ * carrier class literals match the declared host shapes). ISSUE-0550
+ * (the dynamic boundary rows) then lands the six dynamic
+ * bytes-boundary fixtures — the two runtime-ok fixtures and the four
+ * runtime-error fixtures whose pinned E8001/E8003/E8010 codes match
+ * the real JVM emissions at the code-level needle — so the closed
+ * summary moves to denominator 360, passed 360, pass rate 100.0%. The
+ * LuaJIT lane (consequence, pinned): exit code 0 with
+ * {@code Total: 555, Passed: 555}.
  *
  * <p>The test runs from the repository root (the {@code run_tests.sh}
  * contract, like {@code ConformanceTest}); {@code run_tests.sh}
@@ -87,7 +92,7 @@ public class JvmLaneStatePinTest {
 
     private static final String JVM_GATES_PASSED =
         "Gates PASSED: frontend 100%; backend-runtime zero applicable "
-            + "failures AND 100% of the unchanged 354-test denominator "
+            + "failures AND 100% of the unchanged 360-test denominator "
             + "through codegen, javac, and java; zero skips (no registry "
             + "\u2014 zero by construction); zero stale known-fail markers; "
             + "zero probe runner exceptions.";
@@ -105,9 +110,16 @@ public class JvmLaneStatePinTest {
     // shapes under DEAL_V1_2_INT32). The registry itself is retired —
     // removed, never retained empty — so the gate records skipped 0 by
     // construction and the closed summary reads 354/354 at 100.0%.
+    // ISSUE-0550 (the dynamic boundary rows) then lands the six dynamic
+    // bytes-boundary fixtures — the two runtime-ok fixtures
+    // (bytes-dynamic-boundary-ok, bytes-dynamic-nullable-function-ok)
+    // and the four runtime-error fixtures (the pinned E8001/E8003/E8010
+    // codes match the real JVM emissions at the code-level needle, so
+    // they need no skip entry here) — so the closed summary moves to
+    // 360/360 at 100.0%.
     private static final String JVM_SUMMARY =
-        "Backend-runtime on JVM: denominator 354 (every on-disk runtime "
-            + "test, unchanged), passed 354, failed 0, skipped 0 (no "
+        "Backend-runtime on JVM: denominator 360 (every on-disk runtime "
+            + "test, unchanged), passed 360, failed 0, skipped 0 (no "
             + "registry \u2014 zero skips by construction), known-fail 0 "
             + "(tracked) \u2014 pass rate 100.0%";
 
@@ -146,13 +158,16 @@ public class JvmLaneStatePinTest {
     // companions) and the backend-runtime phase reads 357/357; the
     // three ISSUE-0160 recursive bytes-closure corpus fixtures then
     // land on top (599 discovered), so the summary reads 549 recorded
-    // results and the backend-runtime phase reads 360/360.
+    // results and the backend-runtime phase reads 360/360; the six
+    // ISSUE-0550 dynamic boundary-row fixtures then land on top (605
+    // discovered), so the summary reads 555 recorded results and the
+    // backend-runtime phase reads 366/366.
     private static final String LUA_SUMMARY =
-        "Total: 549, Passed: 549, Failed: 0, Skipped: 0, "
+        "Total: 555, Passed: 555, Failed: 0, Skipped: 0, "
             + "KnownFailures (tracked): 0, StagedFailures (tracked): 0";
 
     private static final String LUA_PHASE =
-        "  LuaJIT backend-runtime conformance (v1.2): 360/360 passed, "
+        "  LuaJIT backend-runtime conformance (v1.2): 366/366 passed, "
             + "0 failed, 0 skipped, 0 known-fail (tracked), 0 "
             + "staged-fail (tracked)";
 
@@ -163,7 +178,7 @@ public class JvmLaneStatePinTest {
     private static final String LUA_PROFILE_AUTHORITY =
         "Profile-authority accounting: 1 legacy-authority result(s) "
             + "(LEGACY_REGRESSION + LEGACY_SAFE_INT \u2014 zero "
-            + "v1.2/promotion credit; 1 passed, 0 failed), 598 v1.2-credit "
+            + "v1.2/promotion credit; 1 passed, 0 failed), 604 v1.2-credit "
             + "result(s) (COMMON_SHADOW + DEAL_V1_2_INT32)";
 
 

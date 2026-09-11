@@ -15330,6 +15330,24 @@ public final class JvmBackend {
                 // "expected bytes, got {actual}".
                 return "(($DealRt.Bytes) $check(\"?bytes\", " + temp + "))";
             }
+            if (inner instanceof Type.Func f) {
+                // ISSUE-0550 (dynamic boundary rows): a ?(bytes)->bytes
+                // read routes through the canonical seam's ? strip plus
+                // the function row — Java null (the DEAL null) passes,
+                // a wrapper whose carried descriptor byte-equals the
+                // expected canonical text passes, a descriptor delta
+                // raises E8010 and a non-wrapper raises E8001 "expected
+                // function".
+                String shape = registerWrapperShape(f);
+                if (shape == null) {
+                    unsupported("table field reads with target type "
+                        + typeName(target), mae.span());
+                    return "null";
+                }
+                return "((" + shape + ") $check("
+                    + quoteJavaString("?" + typeDescriptor(f)) + ", "
+                    + temp + "))";
+            }
             if (inner instanceof Type.Int || inner instanceof Type.Number
                     || inner instanceof Type.Boolean
                     || inner instanceof Type.String) {

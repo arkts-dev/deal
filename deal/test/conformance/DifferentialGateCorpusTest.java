@@ -106,14 +106,14 @@ public class DifferentialGateCorpusTest {
      * bytes-function-array-closure) with their three-backend runtime-ok
      * sidecars: total 596 -> 599, backend-runtime 386 -> 389,
      * runtime-ok 258 -> 261. */
-    private static final int TOTAL_FIXTURES = 599;
+    private static final int TOTAL_FIXTURES = 605;
     private static final int FRONTEND_FIXTURES = 210;
-    private static final int BACKEND_RUNTIME_FIXTURES = 389;
+    private static final int BACKEND_RUNTIME_FIXTURES = 395;
     private static final int COMPILE_OK = 64;
     private static final int COMPILE_ERROR = 131;
-    private static final int RUNTIME_OK = 261;
-    private static final int RUNTIME_ERROR = 93;
-    private static final int RUNTIME_ERROR_SIDECARS = 93;
+    private static final int RUNTIME_OK = 263;
+    private static final int RUNTIME_ERROR = 97;
+    private static final int RUNTIME_ERROR_SIDECARS = 97;
     private static final int COMPANIONS = 50;
     private static final int KNOWN_FAIL = 0;
     private static final int COMPILE_PINS = 4;

@@ -1,0 +1,42 @@
+// @spec: Runtime execution model — Runtime type descriptor format
+// @description: Canonical bytes rows at dynamic boundaries (ISSUE-0550): a table-held bytes value crossing the `bytes` row passes with reference identity, the `?bytes` row passes the DEAL null and a real buffer, and a (bytes)->bytes wrapper crossing the function row passes with its byte-equal carried descriptor.
+// @expected: runtime-ok
+// @features: descriptors, bytes, functions, dynamic-boundaries
+
+export function test_bytes_dynamic_boundary_ok(): string {
+  // Accepted bytes: the shared bytes carrier crosses the `bytes` row
+  // unchanged; reads observe the stored buffer's contents.
+  let holder: table = { b: bytes(2) };
+  let b: bytes = holder.b;
+  if (b.length !== 2 || b[0] !== 0) {
+    throw { code: "TEST_FAIL", message: "accepted bytes boundary mismatch" };
+  }
+  // Nullable pass-through: the `?bytes` row passes the DEAL null and a
+  // real buffer with the same reference identity.
+  let holderNull: table = { n: null };
+  let nb: bytes | null = holderNull.n;
+  if (nb !== null) {
+    throw { code: "TEST_FAIL", message: "nullable null pass-through mismatch" };
+  }
+  let nb2: bytes | null = holder.b;
+  if (nb2 !== null) {
+    if (nb2.length !== 2) {
+      throw { code: "TEST_FAIL", message: "nullable bytes pass-through mismatch" };
+    }
+  } else {
+    throw { code: "TEST_FAIL", message: "nullable bytes value lost" };
+  }
+  // Accepted function wrapper: a (bytes)->bytes value crosses the
+  // function row and stays callable with the same buffer reference.
+  let id: (x: bytes) => bytes = function(x: bytes): bytes { return x; };
+  let holderFn: table = { f: id };
+  let f: (x: bytes) => bytes = holderFn.f;
+  if (f(b) !== b) {
+    throw { code: "TEST_FAIL", message: "function row identity mismatch" };
+  }
+  return "dynamic bytes boundary ok";
+}
+
+export function main(): null {
+  return null;
+}

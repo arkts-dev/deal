@@ -122,8 +122,14 @@ import java.util.concurrent.atomic.AtomicInteger;
  *   <li>frontend-classified files: 100% pass (zero failed);</li>
  *   <li>backend-runtime: zero applicable failures AND 100% of the
  *       on-disk backend-runtime denominator (the per-run
- *       {@code runtimeDenominator()} count — 354) passing through the
- *       frontend → CompilationOrchestrator → JVM codegen → javac →
+ *       {@code runtimeDenominator()} count — 360, the closed 354
+ *       plus the six ISSUE-0550 dynamic bytes-boundary fixtures:
+ *       bytes-dynamic-boundary-ok, bytes-dynamic-wrong-kind-e8001,
+ *       bytes-dynamic-nested-first-element-e8003,
+ *       bytes-dynamic-function-mismatch-e8010,
+ *       bytes-dynamic-nullable-function-ok, and
+ *       bytes-dynamic-async-function-mismatch-e8010) passing through
+ *       the frontend → CompilationOrchestrator → JVM codegen → javac →
  *       JVM pipeline — zero skipped, zero stale known-fail markers;</li>
  *   <li>the classified runtime total equals the on-disk denominator
  *       (a missing or deferred runtime fixture fails the gate);</li>

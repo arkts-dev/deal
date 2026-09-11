@@ -528,9 +528,9 @@ public final class HistoricalRegressionCatalog {
                     "deal/codegen/jvm/JvmBackend.java:10853",
                     "unsupported(\"delete of this target shape\", ds.span());"),
                 new ExactTextAnchor("e6000-rejection-mapping",
-                    "deal/codegen/jvm/JvmBackend.java:17196-17200",
+                    "deal/codegen/jvm/JvmBackend.java:17214-17218",
                     "DiagnosticCode.E6000")),
-            "955fe742600f69051a0862510de0a050df5cb0392162bb1f28a6072182dcf545"),
+            "2e59af9ca7698ff4453f3bf8c9cf2b8c2e6d0775e51ef7c79c0630530bcbaa33"),
 
         // EVALUATION_ORDER — WRITE_ORDER (array-write evaluation order)
         fixtureRow(SemanticCapability.EVALUATION_ORDER, Family.WRITE_ORDER,

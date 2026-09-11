@@ -141,7 +141,15 @@ public class JvmLaneTest {
     // shared wrapper carrier, but the JVM DEALRuntimeError snapshot
     // carries no column field (ISSUE-0276), so the lane cannot
     // serialize the canonical error snapshot.
-    private static final int SKIP_REGISTRY_ENTRIES = 20;
+    // ISSUE-0550 (the dynamic boundary rows) then adds the four
+    // tracked runtime-error entries for the landed dynamic
+    // bytes-boundary fixtures (JVM-GAP-BYTES): each raises its
+    // pinned E8001/E8003/E8010 on the JVM lane, but the JVM
+    // DEALRuntimeError snapshot carries no column field (ISSUE-0276),
+    // so the lane cannot serialize the canonical error snapshot. The
+    // two runtime-ok dynamic fixtures carry no entries (they pass the
+    // real pipeline, verified this run).
+    private static final int SKIP_REGISTRY_ENTRIES = 24;
 
     public static void main(String[] args) throws Exception {
         System.out.println("=== JVM Lane Tests (ISSUE-0355) ===\n");

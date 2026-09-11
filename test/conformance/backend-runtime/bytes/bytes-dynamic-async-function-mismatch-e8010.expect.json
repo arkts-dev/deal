@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "backends": [
+    "luajit",
+    "jvm",
+    "js"
+  ],
+  "expected": {
+    "mode": "runtime-error",
+    "transcript": {
+      "stdout": "DEAL_ERROR_CODE: E8010\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8010\",\"message\":\"function signature mismatch: expected async(bytes)->bytes, got (int)->int\",\"sourceFile\":\"backend-runtime/bytes/bytes-dynamic-async-function-mismatch-e8010.deal\",\"line\":12,\"column\":16,\"expected\":\"async(bytes)->bytes\",\"actual\":\"(int)->int\"}\n",
+      "stderr": ""
+    },
+    "exitCode": 1,
+    "error": {
+      "code": "E8010",
+      "message": "function signature mismatch: expected async(bytes)->bytes, got (int)->int",
+      "sourceFile": "backend-runtime/bytes/bytes-dynamic-async-function-mismatch-e8010.deal",
+      "line": 12,
+      "column": 16,
+      "expected": "async(bytes)->bytes",
+      "actual": "(int)->int"
+    }
+  }
+}

@@ -410,6 +410,49 @@
       "backends": [
         "jvm"
       ]
+    },
+    {
+      "name": "jvm-bytes-dynamic-boundary-parity",
+      "description": "ISSUE-0550 dynamic-row parity: a table-held bytes value crossing the `bytes` row passes with reference identity and the `?bytes` row passes the DEAL null (cross-backend with luajit)",
+      "source": "import * as console from \"std/console\"\nexport function test(): null {\n  let holder: table = { b: bytes(2) };\n  let b: bytes = holder.b;\n  let holderNull: table = { n: null };\n  let nb: bytes | null = holderNull.n;\n  if (b.length === 2 && nb === null) {\n    console.log(\"dynamic-ok\");\n  }\n}\n",
+      "expectedOutput": "dynamic-ok",
+      "expectedError": null,
+      "expectedExitCode": null,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm",
+        "luajit"
+      ]
+    },
+    {
+      "name": "jvm-bytes-dynamic-wrong-kind-e8001",
+      "description": "ISSUE-0550 dynamic-row pin: a string crossing the dynamic `bytes` row raises E8001 (the row accepts only the shared bytes carrier)",
+      "source": "export function test(): null {\n  let holder: table = { b: \"not-bytes\" };\n  let b: bytes = holder.b;\n  return null;\n}\n",
+      "expectedOutput": null,
+      "expectedError": "E8001",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-bytes-dynamic-function-mismatch-e8010",
+      "description": "ISSUE-0550 dynamic-row pin: a wrapper whose carried descriptor differs byte-for-byte from the expected canonical (bytes)->bytes text raises E8010 at the dynamic function row",
+      "source": "function asInt(x: int): int { return x; }\nexport function test(): null {\n  let holder: table = { f: asInt };\n  let f: (b: bytes) => bytes = holder.f;\n  return null;\n}\n",
+      "expectedOutput": null,
+      "expectedError": "E8010",
+      "expectedExitCode": 1,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "jvm"
+      ]
     }
   ]
 }

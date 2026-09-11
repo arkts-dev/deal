@@ -1,0 +1,16 @@
+// @spec: Runtime execution model — Runtime type descriptor format
+// @description: A dynamic nested array crossing the recursive [[bytes]] row raises E8003 at the first failing index (element 1) with expected "[bytes]" and actual "table" (ISSUE-0550).
+// @expected: runtime-error E8003
+// @features: descriptors, bytes, dynamic-boundaries
+
+import * as json from "std/json"
+
+export function test_bytes_dynamic_nested_first_element(): int {
+  let t: table = json.parse("{\"values\":[[\"x\"],[\"y\"]]}");
+  let xs: bytes[][] = t.values;
+  return xs[0].length;
+}
+
+export function main(): null {
+  return null;
+}

@@ -1796,6 +1796,43 @@ public class JvmLane implements Lane {
                 + "lane cannot serialize the canonical error snapshot.",
             "JVM-GAP-BYTES");
 
+        // ---- JVM-GAP-BYTES: the dynamic boundary rows (ISSUE-0550) ----
+        // The dynamic bytes rows landed with ISSUE-0550: the emitted
+        // $check bytes row, the [bytes]/[?bytes]/[[bytes]]/function-row
+        // realization, and the ?(bytes)->bytes nullable-function row all
+        // raise their pinned E8001/E8003/E8010 codes on the real JVM
+        // pipeline (JvmConformanceTest passes every new fixture, so no
+        // entry lands in that registry). The four runtime-error fixtures
+        // below stay tracked here for the differential gate's canonical
+        // snapshot requirement: the captured JVM DEALRuntimeError
+        // carries no column field (ISSUE-0276 owns the backend
+        // convergence), so the lane cannot serialize the canonical
+        // snapshot and never fabricates one.
+        skip("backend-runtime/bytes/bytes-dynamic-wrong-kind-e8001.deal",
+            "the fixture raises E8001 on the JVM lane, but the JVM "
+                + "DEALRuntimeError snapshot carries no column field "
+                + "(ISSUE-0276 owns the backend convergence), so the "
+                + "lane cannot serialize the canonical error snapshot.",
+            "JVM-GAP-BYTES");
+        skip("backend-runtime/bytes/bytes-dynamic-nested-first-element-e8003.deal",
+            "the fixture raises E8003 on the JVM lane, but the JVM "
+                + "DEALRuntimeError snapshot carries no column field "
+                + "(ISSUE-0276 owns the backend convergence), so the "
+                + "lane cannot serialize the canonical error snapshot.",
+            "JVM-GAP-BYTES");
+        skip("backend-runtime/bytes/bytes-dynamic-function-mismatch-e8010.deal",
+            "the fixture raises E8010 on the JVM lane, but the JVM "
+                + "DEALRuntimeError snapshot carries no column field "
+                + "(ISSUE-0276 owns the backend convergence), so the "
+                + "lane cannot serialize the canonical error snapshot.",
+            "JVM-GAP-BYTES");
+        skip("backend-runtime/bytes/bytes-dynamic-async-function-mismatch-e8010.deal",
+            "the fixture raises E8010 on the JVM lane, but the JVM "
+                + "DEALRuntimeError snapshot carries no column field "
+                + "(ISSUE-0276 owns the backend convergence), so the "
+                + "lane cannot serialize the canonical error snapshot.",
+            "JVM-GAP-BYTES");
+
         // ---- JVM-GAP-ERROR-LITERAL-DEFAULTS: RETIRED with the
         // completion gate closure (ISSUE-0307) ----
         // rtc-015-error-default-code pins the Error literal without a

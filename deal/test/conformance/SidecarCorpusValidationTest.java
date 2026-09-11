@@ -224,7 +224,7 @@ public class SidecarCorpusValidationTest {
      * adds the three closure fixtures with their three-backend
      * runtime-ok sidecars: 258 -> 261. */
 
-    private static final int RUNTIME_OK_COUNT = 261;
+    private static final int RUNTIME_OK_COUNT = 263;
 
     /**
      * The exact runtime-error population (ISSUE-0350 completeness, plus
@@ -280,7 +280,7 @@ public class SidecarCorpusValidationTest {
      * to the emitted E8001, 037-runtime-source-div-zero E8005,
      * 038-runtime-source-throw PINNED_THROW): 83 -> 93.
  */
-    private static final int RUNTIME_ERROR_COUNT = 93;
+    private static final int RUNTIME_ERROR_COUNT = 97;
 
 
 

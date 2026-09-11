@@ -33,11 +33,13 @@ import java.util.Set;
  *       {@code error-handling/try-catch.deal} plus two more converged
  *       cases) passes byte-exact on all three lanes;</li>
  *   <li>the failure set is exactly the tracked non-fatal set (the
- *       20 JVM registry entries — the ten ISSUE-0504
+ *       24 JVM registry entries — the ten ISSUE-0504
  *       host-boundary E8011 carrier mismatches and the rtc-015 /
  *       phase-order entries promoted by the ISSUE-0307 completion
  *       gate closure, the single retained alias-as-value entry
- *       tracked with the ISSUE-0276 snapshot reason) plus
+ *       tracked with the ISSUE-0276 snapshot reason, and the four
+ *       ISSUE-0550 dynamic bytes-boundary runtime-error entries
+ *       tracked with the same ISSUE-0276 snapshot reason) plus
  *       the enumerated differential failures — every one naming
  *       fixture,
  *       backend, and the closed mismatch class with the first differing
@@ -104,8 +106,8 @@ public class DifferentialGateLanesCorpusTest {
      * host-boundary runtime-ok fixtures with their uniform three-backend
      * sidecars; the three ISSUE-0160 recursive bytes-closure fixtures
      * land on top). */
-    private static final int TOTAL_FIXTURES = 599;
-    private static final int RUNTIME_CASES = 354;
+    private static final int TOTAL_FIXTURES = 605;
+    private static final int RUNTIME_CASES = 360;
     private static final int FRONTEND_COMPILED = 191;
     private static final int COMPILE_PINS = 4;
 
@@ -130,15 +132,18 @@ public class DifferentialGateLanesCorpusTest {
      * with the ISSUE-0276 snapshot reason: the fixture now compiles
      * and raises its pinned E8010 through the per-export shared
      * wrapper carrier, but the JVM DEALRuntimeError snapshot carries
-     * no column field.) */
+     * no column field. The ISSUE-0550 dynamic boundary rows then
+     * absorbed the four runtime-error dynamic bytes-boundary fixtures
+     * (JVM-GAP-BYTES, the same ISSUE-0276 no-column reason), so the
+     * landed registry count is 24.) */
     private static final int KNOWN_FAILURES_TRACKED = 0;
-    private static final int SKIP_REGISTRY_ENTRIES = 20;
+    private static final int SKIP_REGISTRY_ENTRIES = 24;
 
     /** The per-backend pass/fail counters of the full run. */
     private static final Map<String, int[]> PER_BACKEND = Map.of(
-        "luajit", new int[] {322, 32},
-        "jvm", new int[] {261, 93},
-        "js", new int[] {324, 30});
+        "luajit", new int[] {328, 32},
+        "jvm", new int[] {263, 97},
+        "js", new int[] {329, 31});
 
     /** The designated converged subset (task criterion (a)): every lane
      * of every fixture here passes byte-exact. */
@@ -153,6 +158,10 @@ public class DifferentialGateLanesCorpusTest {
     /** The tracked non-fatal registry set (the live pre-flip JVM
      * registry entries, every one still failing on the jvm lane). */
     private static final Set<String> TRACKED_REGISTRY = Set.of(
+        "backend-runtime/bytes/bytes-dynamic-async-function-mismatch-e8010.deal",
+        "backend-runtime/bytes/bytes-dynamic-function-mismatch-e8010.deal",
+        "backend-runtime/bytes/bytes-dynamic-nested-first-element-e8003.deal",
+        "backend-runtime/bytes/bytes-dynamic-wrong-kind-e8001.deal",
         "backend-runtime/bytes/bytes-index-bounds.deal",
         "backend-runtime/bytes/bytes-write-range.deal",
         "backend-runtime/class-runtime-errors/dynamic-bad-class-array-element-e8001.deal",
@@ -309,6 +318,7 @@ public class DifferentialGateLanesCorpusTest {
         "backend-runtime/tables/table-dynamic-read-runtime-error.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/tables/table-missing-read-nonnullable-error.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/type-system/dynamic-array-element-e8003.deal | js | TRANSCRIPT_MISMATCH",
+        "backend-runtime/bytes/bytes-dynamic-nested-first-element-e8003.deal | js | TRANSCRIPT_MISMATCH",
         "backend-runtime/type-system/dynamic-nonfunction-to-function-e8001.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/type-system/dynamic-return-e8001.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/type-system/dynamic-to-int-param-e8001.deal | js | TRANSCRIPT_MISMATCH",

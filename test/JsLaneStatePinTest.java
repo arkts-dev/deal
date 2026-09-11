@@ -42,7 +42,7 @@ import java.util.List;
  *       activated invocation (the gate validity condition
  *       {@code expectation(fixture) == landed std/time.js behavior}
  *       holds — js-v12-completion-architecture D5), the frontend and
- *       companion gates are green (6/6 and 29/29), all 354
+ *       companion gates are green (6/6 and 29/29), all 360
  *       node-executed backend-runtime tests pass with zero failures and
  *       zero skips (pass rate 100.0%), and the {@code Gates PASSED}
  *       line prints. The three former owner-delegated lane divergences
@@ -83,22 +83,24 @@ public class JsLaneStatePinTest {
      * host-boundary fixtures — the byte-exact HOST_JS boundary mirror
      * provides the six invoked exports, so all eight pass the closed
      * gate — and the denominator moves 343 -> 351; the three
-     * ISSUE-0160 closure fixtures then move it to 354. */
+     * ISSUE-0160 closure fixtures then move it to 354; the six
+     * ISSUE-0550 dynamic boundary-row fixtures then move it to 360
+     * (the JS lane passes every one at the code level). */
     private static final String SUMMARY_FRONTEND =
         "Frontend (backend-neutral compile-ok/compile-error): total 6, "
             + "passed 6, failed 0";
     private static final String SUMMARY_RUNTIME =
-        "Backend-runtime on Node: denominator 354 (every on-disk "
+        "Backend-runtime on Node: denominator 360 (every on-disk "
             + "runtime-ok/runtime-error test plus every known-fail "
-            + "probe), passed 354, failed 0, skipped 0 (no skip registry "
+            + "probe), passed 360, failed 0, skipped 0 (no skip registry "
             + "— zero skips by construction), known-fail 0 (tracked), "
-            + "node subprocess runs 354 — pass rate 100.0%";
+            + "node subprocess runs 360 — pass rate 100.0%";
     private static final String SUMMARY_COMPANIONS =
         "classified 29 (on-disk @expected: companion 29), passed 29, "
             + "failed 0";
     private static final String GATES_PASSED_LINE =
         "Gates PASSED: frontend 100%; backend-runtime on node zero "
-            + "applicable failures AND 100% of the node-executed 354-test"
+            + "applicable failures AND 100% of the node-executed 360-test"
             + " denominator; zero skipped (no skip registry); zero stale "
             + "known-fail markers; companion counts equal the on-disk "
             + "corpus and every companion standalone-compiles and "

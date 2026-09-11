@@ -1,0 +1,27 @@
+// @spec: Runtime execution model — Runtime type descriptor format
+// @description: The nullable ?(bytes)->bytes row passes the DEAL null and a real (bytes)->bytes wrapper crossing a dynamic boundary (ISSUE-0550).
+// @expected: runtime-ok
+// @features: descriptors, bytes, functions, dynamic-boundaries
+
+export function test_bytes_dynamic_nullable_function_ok(): string {
+  let id: (b: bytes) => bytes = function(b: bytes): bytes { return b; };
+  let holderNull: table = { f: null };
+  let f: ((b: bytes) => bytes) | null = holderNull.f;
+  if (f !== null) {
+    throw { code: "TEST_FAIL", message: "nullable function null pass-through mismatch" };
+  }
+  let holderFn: table = { g: id };
+  let g: ((b: bytes) => bytes) | null = holderFn.g;
+  if (g !== null) {
+    if (g(bytes(1)).length !== 1) {
+      throw { code: "TEST_FAIL", message: "nullable function call mismatch" };
+    }
+  } else {
+    throw { code: "TEST_FAIL", message: "nullable function value lost" };
+  }
+  return "dynamic ?(bytes)->bytes ok";
+}
+
+export function main(): null {
+  return null;
+}
