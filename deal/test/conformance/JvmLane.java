@@ -158,17 +158,23 @@ import java.util.concurrent.TimeUnit;
  * <p>Pre-flip skip tolerance (G2/G8): the lane keeps the absorbed
  * {@code JvmConformanceTest} skip registry ({@link #skipRegistry()},
  * the capability-skip baseline with its gap ids, minus the entries the
- * stale-skip gate promoted after the lane landed) and validates it
- * against the on-disk corpus at construction — a stale entry naming a
- * missing or non-runtime-classified fixture is recorded in
+ * stale-skip gate promoted after the lane landed — including the ten
+ * entries the ISSUE-0307 completion gate closure promoted: the eight
+ * host-boundary fixtures, rtc-015-error-default-code, and
+ * plan-phase-order-provided-before-defaults now pass the real
+ * pipeline) and validates it against the on-disk corpus at
+ * construction — a stale entry naming a missing or
+ * non-runtime-classified fixture is recorded in
  * {@link #registryDefects()} with a promotion instruction. The gate
  * applies the tolerance through {@link #preFlipSkipRegistry()}: a
  * registry-tracked fixture whose lane outcome still fails is reported
  * tracked non-fatal with its gap id; a fixture that starts passing
  * fails the gate with a promotion instruction. The flip (T14) deletes
- * the registry with its mechanisms; until then the legacy
- * {@code JvmConformanceTest} keeps running unchanged in
- * {@code run_tests.sh} (G5's temporary-coexistence window).</p>
+ * the registry with its mechanisms; until then the retained
+ * {@code JvmConformanceTest} gate — CLOSED by ISSUE-0307 (its own
+ * registry retired, zero skips, 100% of the 354-test denominator) —
+ * keeps running in {@code run_tests.sh} inside the pin test (G5's
+ * temporary-coexistence window).</p>
  *
  * <p>The lane changes no production file: it reuses the real
  * {@link JvmBackend} as-is; any JVM divergence found is a differential
@@ -1790,72 +1796,25 @@ public class JvmLane implements Lane {
                 + "lane cannot serialize the canonical error snapshot.",
             "JVM-GAP-BYTES");
 
-        // ---- JVM-GAP-ERROR-LITERAL-DEFAULTS: the LuaJIT-owned Error
-        // literal default filling (ISSUE-0502, new gap id) ----
+        // ---- JVM-GAP-ERROR-LITERAL-DEFAULTS: RETIRED with the
+        // completion gate closure (ISSUE-0307) ----
         // rtc-015-error-default-code pins the Error literal without a
-        // code field defaulting to the empty string; JvmBackend rejects
-        // the literal shape with E6000, so the fixture passes only on
-        // LuaJIT (and Node at T14).
-        skip("backend-runtime/error-handling/rtc-015-error-default-code.deal",
-            "E6000: JvmBackend does not support an Error literal without "
-                + "both code and message fields (LuaJIT-owned default "
-                + "filling).", "JVM-GAP-ERROR-LITERAL-DEFAULTS");
+        // code field defaulting to the empty string; JvmBackend's
+        // emitErrorLiteral now fills the builtin {code="", message=""}
+        // defaults for omitted fields (spec-v1.2 §Error type), so the
+        // fixture passes the real pipeline and the stale-skip gate
+        // forced the entry out.
 
         // ---- ISSUE-0504: the eight converted host-boundary fixtures
-        // (v12-gap-suite-integration D9) import host/boundary, whose
-        // verbatim gap HostBoundary.java declares the legacy long/Long
-        // int carriers while the lane-wide activated DEAL_V1_2_INT32
-        // profile resolves the declared int and int | null parameters
-        // as int/Integer (JvmBackend.hostParamClassLiteral under
-        // int32Mode). The module-level load-time presence check
-        // validates every declared export, so the declared echoInt
-        // export raises E8011 before any call and every fixture that
-        // imports host/boundary fails on JVM. The sanctioned D10
-        // disposition is one JVM-GAP-HOST-ABI-SHAPES entry per
-        // fixture; the oracles stay unweakened. ----
-        skip("backend-runtime/host-abi/host-boundary-repeat-call.deal",
-            "E8011 load-time signature mismatch: the verbatim gap "
-                + "HostBoundary declares echoInt(long) where the "
-                + "int32-activated JVM host slice resolves the declared "
-                + "int parameter as int (the load-time export check "
-                + "raises E8011 for the declared echoInt export, so "
-                + "every fixture importing host/boundary fails before "
-                + "any call).", "JVM-GAP-HOST-ABI-SHAPES");
-        skip("backend-runtime/host-abi/host-boundary-null-narrowing.deal",
-            "E8011 load-time signature mismatch (verbatim gap "
-                + "HostBoundary echoInt(long) vs the int32-activated "
-                + "int parameter resolution).",
-            "JVM-GAP-HOST-ABI-SHAPES");
-        skip("backend-runtime/host-abi/host-boundary-int-minimum-param.deal",
-            "E8011 load-time signature mismatch (verbatim gap "
-                + "HostBoundary echoInt(long) vs the int32-activated "
-                + "int parameter resolution).",
-            "JVM-GAP-HOST-ABI-SHAPES");
-        skip("backend-runtime/host-abi/host-boundary-number-roundtrip.deal",
-            "E8011 load-time signature mismatch (verbatim gap "
-                + "HostBoundary echoInt(long) vs the int32-activated "
-                + "int parameter resolution).",
-            "JVM-GAP-HOST-ABI-SHAPES");
-        skip("backend-runtime/host-abi/host-boundary-boolean-roundtrip.deal",
-            "E8011 load-time signature mismatch (verbatim gap "
-                + "HostBoundary echoInt(long) vs the int32-activated "
-                + "int parameter resolution).",
-            "JVM-GAP-HOST-ABI-SHAPES");
-        skip("backend-runtime/host-abi/host-boundary-unicode-string-roundtrip.deal",
-            "E8011 load-time signature mismatch (verbatim gap "
-                + "HostBoundary echoInt(long) vs the int32-activated "
-                + "int parameter resolution).",
-            "JVM-GAP-HOST-ABI-SHAPES");
-        skip("backend-runtime/host-abi/host-boundary-nullable-int-null-roundtrip.deal",
-            "E8011 load-time signature mismatch (verbatim gap "
-                + "HostBoundary echoInt(long)/nullableInt(Long) vs the "
-                + "int32-activated int/Integer parameter resolution).",
-            "JVM-GAP-HOST-ABI-SHAPES");
-        skip("backend-runtime/host-abi/host-boundary-nullable-int-value-roundtrip.deal",
-            "E8011 load-time signature mismatch (verbatim gap "
-                + "HostBoundary echoInt(long)/nullableInt(Long) vs the "
-                + "int32-activated int/Integer parameter resolution).",
-            "JVM-GAP-HOST-ABI-SHAPES");
+        // RETIRED with the completion gate closure (ISSUE-0307) ----
+        // The boxed int/Integer carrier class literals now match the
+        // declared host shapes under DEAL_V1_2_INT32
+        // (JvmBackend.hostParamClassLiteral resolves a nullable primitive
+        // parameter as the boxed reference — spec-v1.2 §JVM value
+        // mapping), and the harness HostBoundary carries the
+        // int/Integer shapes, so every fixture importing host/boundary
+        // passes the real pipeline and the stale-skip gate forced the
+        // eight entries out.
         // ---- JVM-GAP-HOST-ABI-SHAPES: retired with the host ABI shapes
         // lane (ISSUE-0303, jvm-v12-host-abi-completion) ----
         // The 12 pinned fixtures — host-array-return-ok, host-rest-ok,
@@ -1877,30 +1836,27 @@ public class JvmLane implements Lane {
         // (host-class-default-isolation, host-class-extra-field E8007,
         // plan-host-discriminator) went green with the synthesized
         // records and were removed with their promotion; the
-        // stale-skip gate forced the removals. The remaining entry pins
-        // the alias-as-value shape (a host export used as a first-class
-        // function value), which stays E6000.
+        // stale-skip gate forced the removals. The remaining entry
+        // tracks the alias-as-value shape (a host export used as a
+        // first-class function value), which now compiles and raises
+        // its pinned E8010 through the per-export shared wrapper
+        // carrier (ISSUE-0307) — the entry stays only for the
+        // ISSUE-0276 snapshot-column reason.
 
-        // ---- JVM-GAP-DEFAULTS-PLANS: the v1.2 default-plan lane
-        // (ISSUE-0340, LuaJIT-owned) ----
+        // ---- JVM-GAP-DEFAULTS-PLANS: RETIRED with the completion gate
+        // closure (ISSUE-0307) ----
         // The defaults corpus pins per-attempt default plans: imported
         // defaults run in the declaring module's scope through the
         // provider's published plan records — the ISSUE-0544 lowering
         // epic lifted the JVM imported-non-literal-default plan-shape
         // guard, so plan-imported-provider-scope passes the real
-        // pipeline (promoted with its registry entry removed). The
-        // phase-order fixture probes provided-value evaluation before
-        // defaults with a caught E8002: the JVM slice rejects the
-        // Error-typed nullable local plus the catch-assignment pattern
-        // of that probe, so it stays a LuaJIT/JS-lane pin until the JVM
-        // Error-literal/catch-assignment slice lands.
-        skip("backend-runtime/defaults/plan-phase-order-provided-before-defaults.deal",
-            "E6000: the Error | null catch-probe local and the "
-                + "catch-block assignment are outside the JVM slice "
-                + "(class-typed local values are local-module-class "
-                + "only and catch assignments reject forward "
-                + "references), so the caught-E8002 phase-order probe "
-                + "cannot compile.", "JVM-GAP-DEFAULTS-PLANS");
+        // pipeline. The phase-order fixture probes provided-value
+        // evaluation before defaults with a caught E8002: the JVM slice
+        // now supports the Error-typed nullable catch-probe local
+        // (nullableJavaType maps Error | null to
+        // java.lang.RuntimeException) and the catch-block assignment,
+        // so the fixture passes the real pipeline and the stale-skip
+        // gate forced the entry out.
 
         // ---- JVM-GAP-XMOD-FNVALUE: retired with the shared runtime
         // value surface (ISSUE-0301) ----
@@ -1908,11 +1864,18 @@ public class JvmLane implements Lane {
         // pipeline on the shared $DealRt wrapper carriers and were
         // removed with their promotion; the stale-skip gate forced the
         // removals. host-async-shape-value (a host export used as a
-        // first-class function value) stays with the host ABI shapes
-        // lane below.
+        // first-class function value) now COMPILES and raises its
+        // pinned E8010 through the per-export shared wrapper carrier
+        // (ISSUE-0307), but the captured DEALRuntimeError snapshot
+        // carries no column field (ISSUE-0276 owns the backend
+        // convergence), so the lane cannot serialize the canonical
+        // error snapshot and the entry stays tracked with that reason.
         skip("backend-runtime/host-abi/host-async-shape-value.deal",
-            "E6000: module aliases used as values (host async export "
-                + "as a function value).", "JVM-GAP-HOST-ABI-SHAPES");
+            "the fixture raises E8010 on the JVM lane, but the JVM "
+                + "DEALRuntimeError snapshot carries no column field "
+                + "(ISSUE-0276 owns the backend convergence), so the "
+                + "lane cannot serialize the canonical error snapshot.",
+            "JVM-GAP-HOST-ABI-SHAPES");
 
         // ---- JVM-GAP-XMOD-ARRAY: retired with the shared runtime value
         // surface (ISSUE-0301) ----

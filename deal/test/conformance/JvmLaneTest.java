@@ -129,7 +129,19 @@ public class JvmLaneTest {
     // (44 - 14 = 30: the single retained alias-as-value entry plus the
     // eight ISSUE-0504 host-boundary entries keep JVM-GAP-HOST-ABI-SHAPES
     // live).
-    private static final int SKIP_REGISTRY_ENTRIES = 30;
+    // ISSUE-0307 (the completion gate closure) then removed the ten
+    // entries whose fixtures now pass the real pipeline: the eight
+    // host-boundary fixtures (the boxed int/Integer carrier class
+    // literals match the declared host shapes), the rtc-015 Error
+    // literal default (JVM-GAP-ERROR-LITERAL-DEFAULTS retires with its
+    // only entry), and plan-phase-order-provided-before-defaults
+    // (JVM-GAP-DEFAULTS-PLANS retires with its only entry). The
+    // host-async-shape-value entry stays tracked: the fixture now
+    // compiles and raises its pinned E8010 through the per-export
+    // shared wrapper carrier, but the JVM DEALRuntimeError snapshot
+    // carries no column field (ISSUE-0276), so the lane cannot
+    // serialize the canonical error snapshot.
+    private static final int SKIP_REGISTRY_ENTRIES = 20;
 
     public static void main(String[] args) throws Exception {
         System.out.println("=== JVM Lane Tests (ISSUE-0355) ===\n");
@@ -1273,11 +1285,15 @@ public class JvmLaneTest {
         }
         check(gapIds.containsAll(Set.of("JVM-GAP-STDJSON",
                 "JVM-GAP-HOST-ABI-SHAPES",
-                "JVM-GAP-BYTES", "JVM-GAP-DEFAULTS-PLANS",
-                "JVM-GAP-ERROR-LITERAL-DEFAULTS"))
-                && !gapIds.contains("JVM-GAP-JSONABLE-RESIDUAL"),
-            "the absorbed registry spans the five live gap families "
-                + "(JVM-GAP-JSONABLE-RESIDUAL retired with ISSUE-0302), "
+                "JVM-GAP-BYTES"))
+                && !gapIds.contains("JVM-GAP-JSONABLE-RESIDUAL")
+                && !gapIds.contains("JVM-GAP-DEFAULTS-PLANS")
+                && !gapIds.contains("JVM-GAP-ERROR-LITERAL-DEFAULTS"),
+            "the absorbed registry spans the three live gap families "
+                + "(JVM-GAP-JSONABLE-RESIDUAL retired with ISSUE-0302; "
+                + "JVM-GAP-DEFAULTS-PLANS and "
+                + "JVM-GAP-ERROR-LITERAL-DEFAULTS retired with the "
+                + "ISSUE-0307 completion gate closure), "
                 + "got: " + gapIds);
     }
 

@@ -76,14 +76,17 @@ reads yield `table | null`), nested (multi-dimensional) array fields,
 function-typed fields, arrays of non-primitive non-class elements —
 are documented there.
 
-## ISSUE-0102 — JVM conformance promotion slice
+## ISSUE-0102 — JVM conformance promotion gate (CLOSED — ISSUE-0307)
 
 The promotion gate (`deal.test.JvmConformanceTest`, run by
-`run_tests.sh`) executes every existing backend-runtime conformance
-test through the real whole-project pipeline (CompilationOrchestrator →
-JvmBackend → javac → java) and requires at least 65% of the unchanged
-255-test denominator to pass with zero unclassified skips. The backend
-work that gate drove:
+`run_tests.sh` inside `deal.test.JvmLaneStatePinTest`) executes every
+existing backend-runtime conformance test through the real
+whole-project pipeline (CompilationOrchestrator →
+JvmBackend → javac → java) and — since the ISSUE-0307 completion gate
+closure — requires zero applicable failures AND 100% of the unchanged
+354-test on-disk denominator with zero skips (the skip registry is
+retired, never retained empty, and the classifier has no fallback skip
+branch). The backend work that gate drove:
 
 - **Control flow** — C-style `for` loops (plain head form; a
   transformed `while (true)` form when the initializer/condition/update

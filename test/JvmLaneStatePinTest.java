@@ -16,11 +16,9 @@ import java.util.List;
 
 /**
  * JVM lane-state pin test (ISSUE-0378 D5) — the anti-hollow evidence
-
  * owner for the activated JVM corpus lane, re-pinned by the
- * disposition-application unit (ISSUE-0380) to the post-unit green
- * lane state.
-
+ * completion gate closure (ISSUE-0307) to the closed lane state:
+ * zero skips, 100% of the on-disk denominator, no registry.
  *
  * <p>The test owns two pin families:
  * <ul>
@@ -31,112 +29,36 @@ import java.util.List;
  *       CapabilityRegistry.releaseRegistry())} invocation (purpose
  *       PUBLIC_BUILD, semantic profile {@code DEAL_V1_2_INT32}, release
  *       state {@code V1_2_ACTIVE}), and the lane source text carries
- *       zero catalog-seam {@code invocationFor} call sites.</li>
+ *       zero catalog-seam {@code invocationFor} call sites AND zero
+ *       skip-registry surface (no {@code JVM-GAP-} token, no
+ *       {@code SkipEntry}, no {@code SKIPS} registry — the registry is
+ *       retired, not retained empty — zero skips by construction).</li>
  *   <li><b>Exact-output pins</b>: the test runs the real JVM lane
  *       ({@code java -ea -cp build deal.test.JvmConformanceTest
  *       test/conformance/}) and the real LuaJIT lane
  *       ({@code java -ea -cp build deal.test.ConformanceTest
  *       test/conformance/}) as subprocesses and asserts the captured
-
- *       outputs field-exactly: both exit codes, the verbatim
- *       passing-fixture lines, the exact {@code ] FAIL (} line set
- *       (post-ISSUE-0303: EMPTY on the JVM lane — the host ABI shapes
- *       lane retired its 15 green entries, the prewrapped pair
- *       included), zero GATE
- *       FAILURE lines, no STAGED-FAIL line on either lane, the green
- *       {@code Gates PASSED} banner on the JVM lane, and the pinned
- *       summary numbers. Every assertion matches captured real-run
- *       output text — never a paraphrase.</li>
+ *       outputs field-exactly: both exit codes, the exact
+ *       {@code ] FAIL (} line set (EMPTY on both lanes), zero GATE
+ *       FAILURE lines, no SKIP line, no STAGED-FAIL line, the green
+ *       {@code Gates PASSED} banner, and the pinned summary numbers.
+ *       Every assertion matches captured real-run output text — never
+ *       a paraphrase.</li>
  * </ul>
  *
- * <p>The post-unit JVM lane state: exit code 0 — the shared time
- * fixture flipped to {@code runtime-error E8004} passes under the
- * activated profile with {@code OK (found DEAL_ERROR_CODE: E8004)},
- * and the promoted
- * {@code backend-runtime/arithmetic/int-add-overflow.deal} passes the
- * same way, so the stale-known-fail gate no longer names it, and the
- * {@code ] FAIL (} set is EMPTY (ISSUE-0303 retired the 15 host ABI
- * shapes entries, the prewrapped pair included). ISSUE-0158
- * (the JVM bytes core lane) then promoted the nine bytes skip
- * entries — the direct bytes surface passes the real pipeline and
- * the stale-skip gate forced the entries out — so the summary moved
- * again to {@code passed 265, failed 0, skipped 36 ... pass rate
- * 88.0%} with the single retained bytes skip (the recursive
- * bytes-bearing wrapper closure, ISSUE-0160). ISSUE-0547 (the
- * ISSUE-0160 container step) then landed the two new
- * bytes-container corpus fixtures —
- * {@code bytes-array-container-ops} and {@code bytes-nested-arrays}
- * — passing the real pipeline on every lane, so the summary moved to
- * {@code passed 267, failed 0, skipped 36 ... pass rate 88.1%} over
- * the 303-fixture denominator with the single retained bytes skip
- * unchanged. ISSUE-0502 (the gap-suite runtime population landing)
- * then adds forty runtime fixtures on top (30 runtime-ok — the
- * promoted gap bytes-boundary-order included — and 10
- * runtime-error; the one companion is never counted). Thirty-four of
- * them pass the real JVM pipeline; five — the E8012/E8013 gap bytes
- * runtime-error fixtures — also pass this lane (its code-level
- * DEAL_ERROR_CODE needle matches their real JVM emissions) and only
- * the rtc-015 Error-literal-defaults probe needs the one new skip
- * entry, so the summary moved to {@code passed 306, failed 0,
- * skipped 37 ... pass rate 89.2%} over the 343-fixture denominator.
- * ISSUE-0303 (jvm-v12-host-abi-completion) then retired the 15 host
- * ABI shapes entries — the 12 pinned fixtures plus the three
- * host-class companions — so the summary moved again to
- * {@code passed 321, failed 0, skipped 22 ... pass rate 93.6%} over
- * the 343-fixture denominator with the single retained
- * alias-as-value entry (host-async-shape-value, E6000). The LuaJIT lane
- * (consequence, pinned): exit code 0 — the flipped time fixture
- * passes as {@code runtime-error E8004} under its legacy-authority
- * catalog row (zero v1.2 credit), the staged registry entry is
- * removed (no STAGED-FAIL line), the promoted int-add-overflow
- * passes, and the summary reads {@code Total: 498, Passed: 498}
- * (ISSUE-0501 lands the 63 compile-classified gap fixtures under
- * {@code frontend/}; ISSUE-0500 then co-lands the preserved gap
- * resolution subtree and the transformed direct declaration fixture:
- * 545 discovered, 49 companions, 496 recorded results; this tree
- * promotes the last known-fail — the frontend FFI-manifest fixture —
- * to compile-error E2010, so zero known-fail remains tracked;
- * ISSUE-0547 then adds the two bytes-container fixtures: 547
- * discovered, 498 recorded results) and zero staged failures.
- * ISSUE-0502 (the gap-suite runtime population landing) then adds
- * forty-one fixtures on top — 30 runtime-ok (the promoted gap
- * bytes-boundary-order included, its retained-known-fail marker
- * forced off by the zero-skip promotion gate after ISSUE-0158 lifted
- * the E3019 bytes-equality gate), 10 runtime-error, and 1 companion —
- * so the JVM summary moved to {@code passed 306, failed 0, skipped 37
- * ... pass rate 89.2%} over the 343-fixture denominator and the LuaJIT
- * summary reads {@code Total: 538, Passed: 538} with zero tracked
- * known-fails and zero staged failures.
- * ISSUE-0302 (the std/json boundary and @jsonable completion) then
- * promoted the thirteen JVM-GAP-STDJSON entries and the four
- * JVM-GAP-JSONABLE-RESIDUAL entries — json.parse/json.stringify
- * run through the shared JSON runtime, the fromJson top-level gate
- * and the provided-fields-before-defaults phase order land, and
- * nested array fields and table-field nested arrays roundtrip.
- * ISSUE-0504 (the host ABI conversion leaf) then lands the eight
- * host-boundary fixtures, so the JVM summary moves to {@code passed
- * 323, failed 0, skipped 28 ... pass rate 92.0%} over the
- * 351-fixture denominator (the eight JVM-GAP-HOST-ABI-SHAPES skip
- * entries) and the LuaJIT summary reads {@code Total: 546,
- * Passed: 546} with zero tracked known-fails and zero staged
- * failures. The ISSUE-0160 recursive bytes-bearing wrapper closure
- * then promoted the last bytes skip ({@code bytes-descriptor-boundary})
- * and added the three closure corpus fixtures, so the JVM summary
- * moves to {@code passed 327, failed 0, skipped 27 ... pass rate
- * 92.4%} over the 354-fixture denominator; ISSUE-0544 (the
- * lowering epic) then lifted the imported-non-literal-default
- * plan-shape guard (plan-imported-provider-scope passes the real
- * pipeline), so the summary moves to {@code passed 328, failed 0,
- * skipped 26 ... pass rate 92.7%} over the same denominator, and
- * the LuaJIT summary reads {@code Total: 549, Passed: 549} with
- * zero tracked known-fails and zero staged failures. ISSUE-0303
- * (jvm-v12-host-abi-completion) then retires the host ABI shapes lane
- * on the same base: the fourteen promoted host-abi fixtures pass the
- * real pipeline (twelve pinned fixtures plus three host-class
- * companions, minus the already-absent prewrapped-ok), so the JVM
- * summary moves again to the re-pinned numbers below over the
- * 354-fixture denominator (denominator 354, passed 343, skipped 11,
- * pass rate 96.9%).
+ * <p>The closed JVM lane state (ISSUE-0307): exit code 0 — every one
+ * of the 354 on-disk applicable backend-runtime fixtures passes the
+ * real pipeline (denominator 354, passed 354, failed 0, skipped 0,
+ * known-fail 0, pass rate 100.0%). The four final gap families closed
+ * with their dispositions: the Error literal default filling (the
+ * builtin {@code code}/{@code message} defaults to {@code ""}), the
+ * Error-typed nullable catch-probe local and catch-block assignment,
+ * the host export used as a first-class function value (the per-export
+ * shared wrapper carrier keeps the identical E8010 boundary check), and
+ * the eight ISSUE-0504 host-boundary fixtures (the boxed int/Integer
+ * carrier class literals match the declared host shapes). The LuaJIT
+ * lane (consequence, pinned): exit code 0 with
+ * {@code Total: 549, Passed: 549}.
  *
  * <p>The test runs from the repository root (the {@code run_tests.sh}
  * contract, like {@code ConformanceTest}); {@code run_tests.sh}
@@ -165,71 +87,29 @@ public class JvmLaneStatePinTest {
 
     private static final String JVM_GATES_PASSED =
         "Gates PASSED: frontend 100%; backend-runtime zero applicable "
+            + "failures AND 100% of the unchanged 354-test denominator "
+            + "through codegen, javac, and java; zero skips (no registry "
+            + "\u2014 zero by construction); zero stale known-fail markers; "
+            + "zero probe runner exceptions.";
 
-            + "failures AND >= 80% pass rate over the unchanged 354-test "
-            + "denominator; zero unclassified skips; zero stale skips; "
-            + "zero stale known-fail markers; zero probe runner "
-            + "exceptions.";
 
-
-    // ISSUE-0380 (the disposition-application unit) flipped the time
-    // fixture to runtime-error E8004 and promoted int-add-overflow, so
-    // the summary moved from "passed 254, failed 1 ... pass rate 84.4%"
-    // to "passed 256, failed 0 ... pass rate 85.0%". ISSUE-0158 (the
-    // JVM bytes core lane) then promoted the nine bytes skip entries
-    // (only the recursive bytes-bearing wrapper-closure fixture stays
-    // skipped, ISSUE-0160), so the summary moved to "passed 265,
-    // denominator 301 ... pass rate 88.0%". ISSUE-0547 (the ISSUE-0160
-    // container step) adds the two bytes-container fixtures, which pass
-    // the real pipeline, so the summary moved to "passed 267,
-    // denominator 303 ... pass rate 88.1%". ISSUE-0502
-    // (the gap-suite runtime population landing) adds forty runtime
-    // fixtures on top (30 runtime-ok — the promoted gap
-    // bytes-boundary-order included — and 10 runtime-error; the one
-    // companion is never counted). Thirty-four of them pass the real
-    // JVM pipeline; five — the E8012/E8013 gap bytes runtime-error
-    // fixtures — also pass this lane (its code-level DEAL_ERROR_CODE
-    // needle matches their real JVM emissions, so they need no skip
-    // entry here; only the differential gate's absorbed registry
-    // tracks them for the snapshot column field) and only the
-    // rtc-015 Error-literal-defaults probe needs the one new skip
-    // entry, so the summary moved to the re-pinned numbers below
-    // (denominator 343, pass rate 89.2%). ISSUE-0302 (std/json
-    // boundary and @jsonable completion) then promoted the thirteen
-    // JVM-GAP-STDJSON entries and the four JVM-GAP-JSONABLE-RESIDUAL
-    // entries — json.parse/json.stringify run through the shared JSON
-    // runtime, the fromJson top-level gate and phase order land, and
-    // nested arrays roundtrip — so the summary moved to the re-pinned
-    // numbers below (the retained skips: the recursive bytes-bearing
-    // wrapper closure, the two default-plan fixtures, the sixteen
-    // host-ABI shapes, and the rtc-015 Error-literal-defaults probe).
-    // ISSUE-0504 (the host ABI conversion leaf) then lands the eight
-    // host-boundary fixtures, each carrying a JVM-GAP-HOST-ABI-SHAPES
-    // skip entry — the verbatim gap HostBoundary declares long/Long
-    // int carriers while the activated DEAL_V1_2_INT32 profile
-    // resolves the declared int / int | null parameters as
-    // int/Integer, so the module-level load-time export check raises
-    // E8011 for every fixture importing host/boundary — so the
-    // summary moves to the re-pinned numbers below (denominator 351,
-    // pass rate 92.0%). The ISSUE-0160 recursive bytes-bearing
-    // wrapper closure then promoted the last bytes skip
-    // (bytes-descriptor-boundary) and added the three closure corpus
-    // fixtures (bytes-array-closure, bytes-async-closure,
-    // bytes-function-array-closure), moving the summary to the final
-    // re-pinned numbers below. ISSUE-0544 (the lowering epic) then
-    // lifted the imported-non-literal-default plan-shape guard, so
-    // plan-imported-provider-scope passed the lane (passed 327 ->
-    // 328, skipped 27 -> 26). ISSUE-0303 (jvm-v12-host-abi-completion)
-    // then retires the host ABI shapes lane on the same base: the
-    // fourteen promoted host-abi fixtures pass the real pipeline
-    // (twelve pinned fixtures plus three host-class companions, minus
-    // the already-absent prewrapped-ok), so the summary moves again to
-    // the re-pinned numbers below (denominator 354, passed 343,
-    // skipped 11, pass rate 96.9%).
+    // ISSUE-0307 (the completion gate closure) retired the last eleven
+    // skip entries with their dispositions: the Error literal default
+    // filling (rtc-015), the Error-typed nullable catch-probe local and
+    // catch-block assignment (plan-phase-order), the host export used as
+    // a first-class function value (host-async-shape-value — the
+    // per-export shared wrapper carrier keeps the identical E8010
+    // boundary check, so the fixture passes its pinned runtime-error
+    // E8010), and the eight ISSUE-0504 host-boundary fixtures (the boxed
+    // int/Integer carrier class literals now match the declared host
+    // shapes under DEAL_V1_2_INT32). The registry itself is retired —
+    // removed, never retained empty — so the gate records skipped 0 by
+    // construction and the closed summary reads 354/354 at 100.0%.
     private static final String JVM_SUMMARY =
         "Backend-runtime on JVM: denominator 354 (every on-disk runtime "
-            + "test, unchanged), passed 343, failed 0, skipped 11 "
-            + "(classified), known-fail 0 (tracked) \u2014 pass rate 96.9%";
+            + "test, unchanged), passed 354, failed 0, skipped 0 (no "
+            + "registry \u2014 zero skips by construction), known-fail 0 "
+            + "(tracked) \u2014 pass rate 100.0%";
 
     private static final String JVM_PROFILE_AUTHORITY =
         "Profile-authority accounting: 0 legacy-authority fixture(s) "
@@ -421,6 +301,18 @@ public class JvmLaneStatePinTest {
                 + "sites");
         check(laneSource.contains("LANE_INVOCATION"),
             "the lane source must expose the LANE_INVOCATION constant");
+
+        // ISSUE-0307 gate closure: the skip registry is RETIRED — the
+        // lane source carries no registry surface and no gap language
+        // (zero skips by construction, never empty skip machinery —
+        // jvm-v12-completion-architecture D3).
+        check(!laneSource.contains("JVM-GAP-"),
+            "the lane source must carry zero gap-language tokens "
+                + "(the skip registry is retired, not retained empty)");
+        check(!laneSource.contains("SkipEntry")
+                && !laneSource.contains("SKIPS"),
+            "the lane source must carry no skip-registry surface "
+                + "(no SkipEntry record, no SKIPS map)");
     }
 
     // =========================================================================
@@ -451,6 +343,9 @@ public class JvmLaneStatePinTest {
         check(!out.contains("STAGED-FAIL"),
             "the JVM lane carries no staged-failure registry: its output "
                 + "must contain no STAGED-FAIL line");
+        check(!out.contains("SKIP ("),
+            "the closed JVM lane prints no SKIP line — the registry is "
+                + "retired and every fixture passes the real pipeline");
 
         check(!out.contains("GATE FAILURE"),
             "the JVM lane must print no GATE FAILURE line post-unit");

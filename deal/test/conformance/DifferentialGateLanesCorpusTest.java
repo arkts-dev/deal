@@ -33,9 +33,11 @@ import java.util.Set;
  *       {@code error-handling/try-catch.deal} plus two more converged
  *       cases) passes byte-exact on all three lanes;</li>
  *   <li>the failure set is exactly the tracked non-fatal set (the
- *       30 JVM registry entries — the eight ISSUE-0504
- *       host-boundary E8011 carrier mismatches retained and the
- *       fourteen ISSUE-0303 host ABI shape promotions applied) plus
+ *       20 JVM registry entries — the ten ISSUE-0504
+ *       host-boundary E8011 carrier mismatches and the rtc-015 /
+ *       phase-order entries promoted by the ISSUE-0307 completion
+ *       gate closure, the single retained alias-as-value entry
+ *       tracked with the ISSUE-0276 snapshot reason) plus
  *       the enumerated differential failures — every one naming
  *       fixture,
  *       backend, and the closed mismatch class with the first differing
@@ -111,35 +113,31 @@ public class DifferentialGateLanesCorpusTest {
      * marker was promoted by ISSUE-0477, so the counter is zero — the
      * ISSUE-0502 gap bytes-boundary-order fixture passes every lane
      * and lands promoted as runtime-ok, contributing no known-fail
-     * counter and no differential triples — and the JVM bytes core
-     * lane promoted the nine bytes registry entries, so the registry
-     * count is the canonical 39 plus the six ISSUE-0502 additions
-     * plus the eight ISSUE-0504 host-boundary additions, minus the
-     * seven runtime-ok std/json fixtures ISSUE-0302 promoted out of
-     * the registry (the four jsonable residuals and the three stdlib
-     * pins; the ten std/json runtime-error fixtures stay tracked with
-     * the ISSUE-0276 snapshot reason), so the count was the landed
-     * 46; the ISSUE-0160 recursive bytes-bearing closure then
-     * promoted the last bytes entry (bytes-descriptor-boundary) out
-     * of the registry — the closure carriers landed, the fixture
-     * passes the lane, and the stale-skip gate forced the entry out —
-     * so the count dropped to 45; ISSUE-0544 (the lowering epic) then
-     * lifted the imported-non-literal-default plan-shape guard, so
-     * plan-imported-provider-scope passed the lane and its registry
-     * entry was removed — so the count is the landed 44; the JVM host
-     * ABI shapes lane (ISSUE-0303) then promoted the fourteen host-abi
-     * registry entries — the 12 pinned fixtures plus the three
-     * host-class companions, minus the already-absent prewrapped-ok —
-     * while the eight ISSUE-0504 host-boundary E8011 carrier
-     * mismatches stay tracked, so the landed registry count is 44
-     * minus the fourteen ISSUE-0303 promotions). */
+     * counter and no differential triples. The registry count
+     * descended through the lane promotions: the canonical 39 plus
+     * the six ISSUE-0502 additions plus the eight ISSUE-0504
+     * host-boundary additions, minus the seven runtime-ok std/json
+     * fixtures ISSUE-0302 promoted out of the registry, minus the
+     * ISSUE-0160 recursive bytes-bearing closure entry, minus the
+     * ISSUE-0544 imported-non-literal-default entry, minus the
+     * fourteen ISSUE-0303 host ABI shape promotions — the landed 30.
+     * The ISSUE-0307 completion gate closure then promoted the ten
+     * entries whose fixtures now pass the real pipeline: the eight
+     * host-boundary fixtures (the boxed int/Integer carrier class
+     * literals match the declared host shapes), the rtc-015 Error
+     * literal default, and plan-phase-order-provided-before-defaults
+     * — the landed 20. The host-async-shape-value entry stays tracked
+     * with the ISSUE-0276 snapshot reason: the fixture now compiles
+     * and raises its pinned E8010 through the per-export shared
+     * wrapper carrier, but the JVM DEALRuntimeError snapshot carries
+     * no column field.) */
     private static final int KNOWN_FAILURES_TRACKED = 0;
-    private static final int SKIP_REGISTRY_ENTRIES = 30;
+    private static final int SKIP_REGISTRY_ENTRIES = 20;
 
     /** The per-backend pass/fail counters of the full run. */
     private static final Map<String, int[]> PER_BACKEND = Map.of(
         "luajit", new int[] {322, 32},
-        "jvm", new int[] {251, 103},
+        "jvm", new int[] {261, 93},
         "js", new int[] {324, 30});
 
     /** The designated converged subset (task criterion (a)): every lane
@@ -162,16 +160,7 @@ public class DifferentialGateLanesCorpusTest {
         "backend-runtime/class-runtime-errors/dynamic-bad-class-return-e8001.deal",
         "backend-runtime/class-runtime-errors/dynamic-bad-imported-class-param-e8001.deal",
         "backend-runtime/class-runtime-errors/dynamic-bad-nullable-class-e8001.deal",
-        "backend-runtime/defaults/plan-phase-order-provided-before-defaults.deal",
         "backend-runtime/host-abi/host-async-shape-value.deal",
-        "backend-runtime/host-abi/host-boundary-boolean-roundtrip.deal",
-        "backend-runtime/host-abi/host-boundary-int-minimum-param.deal",
-        "backend-runtime/host-abi/host-boundary-null-narrowing.deal",
-        "backend-runtime/host-abi/host-boundary-nullable-int-null-roundtrip.deal",
-        "backend-runtime/host-abi/host-boundary-nullable-int-value-roundtrip.deal",
-        "backend-runtime/host-abi/host-boundary-number-roundtrip.deal",
-        "backend-runtime/host-abi/host-boundary-repeat-call.deal",
-        "backend-runtime/host-abi/host-boundary-unicode-string-roundtrip.deal",
         "backend-runtime/runtime-errors/json-stringify-function-e8001.deal",
         "backend-runtime/source-location-precision/class-param-error-source.deal",
         "backend-runtime/source-location/bytes-index-bounds-source.deal",
@@ -183,8 +172,7 @@ public class DifferentialGateLanesCorpusTest {
         "backend-runtime/bytes/bytes-negative-read-error.deal",
         "backend-runtime/bytes/bytes-read-at-length-error.deal",
         "backend-runtime/bytes/bytes-write-at-length-error.deal",
-        "backend-runtime/bytes/bytes-write-negative-error.deal",
-        "backend-runtime/error-handling/rtc-015-error-default-code.deal");
+        "backend-runtime/bytes/bytes-write-negative-error.deal");
 
     /** The enumerated differential failures of the full run — every
      * non-tracked failing lane outcome as {@code fixture | backend |

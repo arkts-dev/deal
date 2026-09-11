@@ -306,9 +306,13 @@ TEST_MAINS+=(
 # CompilationOrchestrator -> JvmBackend codegen -> javac -> real java
 # subprocess) and reuses the shared canonical ErrorSnapshot serializer
 # verbatim. Pre-flip, the lane keeps the absorbed skip registry as
-# tracked non-fatal paths (G8); JvmConformanceTest keeps running
-# unchanged in run_tests.sh until the flip retires it (G5's
-# temporary-coexistence window).
+# tracked non-fatal paths (G8 — the 20 ISSUE-0276 snapshot-column
+# entries after the ISSUE-0307 completion gate closure promoted the
+# ten host-boundary/rtc-015/phase-order entries). The retained
+# JvmConformanceTest gate is CLOSED (ISSUE-0307): its skip registry is
+# retired — zero skips, 100% of the 354-test on-disk denominator — and
+# the real gate runs unchanged on every run inside the pin test
+# (G5's temporary-coexistence window).
 # =========================================================================
 TEST_SOURCES+=(
   'deal/test/conformance/JvmLane.java'
@@ -486,14 +490,17 @@ TEST_MAINS+=(
   'fg|=== Running Semantic Production Gate Tests (ISSUE-0239) ===|java -ea -cp build deal.test.SemanticProductionGateTest'
 )
 
+# =========================================================================
 # ISSUE-0378 D5 (JvmLaneStatePinTest substitution): the pin test owns
 # both raw lane runs. It launches the real LuaJIT lane and the real JVM
-# lane as subprocesses and asserts their captured failure sets
-# field-exactly, so the gate stays green on the sanctioned pinned
-# staged state while both raw lanes still run - inside the pin test -
-# on every gate run. The two raw lane launches are substituted by the
-# single pin-test launch; the fail-closed background wait and every
-# other suite stay.
+# lane as subprocesses and asserts their captured closed-state outputs
+# field-exactly — the JVM gate closed by ISSUE-0307 (354/354, zero
+# skips, no registry, the 100% Gates PASSED banner) and the LuaJIT lane
+# at 549/549 — so the gate stays green while both real lanes still run -
+# inside the pin test - on every gate run. The two raw lane launches
+# are substituted by the single pin-test launch; the fail-closed
+# background wait and every other suite stay.
+# =========================================================================
 TEST_SOURCES+=( 'test/JvmLaneStatePinTest.java' )
 
 REBUILT_MAINS=()
@@ -503,7 +510,7 @@ for record in "${TEST_MAINS[@]}"; do
       # Removed: the LuaJIT lane runs inside the pin test instead.
       ;;
     'bg|=== Launching JVM Conformance Tests (background; ISSUE-0102 origin — ISSUE-0168 capability accounting) ===|java -ea -cp build deal.test.JvmConformanceTest test/conformance/')
-      REBUILT_MAINS+=( 'bg|=== Launching JVM Lane State Pin Tests (ISSUE-0378: both real lanes run inside the pin test with field-exact failure-set assertions) ===|java -ea -cp build deal.test.JvmLaneStatePinTest' )
+      REBUILT_MAINS+=( 'bg|=== Launching JVM Lane State Pin Tests (ISSUE-0378: both real lanes run inside the pin test with field-exact closed-state assertions) ===|java -ea -cp build deal.test.JvmLaneStatePinTest' )
       ;;
     *)
       REBUILT_MAINS+=( "$record" )

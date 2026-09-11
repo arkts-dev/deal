@@ -61,25 +61,28 @@ import java.util.concurrent.atomic.AtomicInteger;
  * {@code deal.test.BackendConformanceTest} (this lane only validates
  * the catalog at startup; it never routes a fixture through it).
  *
- * <h2>Post-unit green state (the disposition landed; the pinned
- * staged state closed)</h2>
+ * <h2>Closed gate state (ISSUE-0307: zero skips, 100% denominator)</h2>
  *
- * <p>The disposition-application unit landed: the stdlib-edge
- * epoch-millisecond fixture now carries the branch-1 expectation
- * {@code runtime-error E8004} (the retained {@code nowMillis}
- * {@code ()->int} route raises E8004 at the declared {@code int}
- * boundary), so the lane records it as PASS — the lane never names or
- * skips it. The restored corpus fixture
- * {@code backend-runtime/arithmetic/int-add-overflow.deal} promoted to
- * {@code runtime-error E8004} (the gate-closure promotion dropped its
- * known-fail marker, ISSUE-0378 D3's pinned promotion instruction),
- * and its probe passes under the activated {@code intAdd}. Both former
- * sanctioned staged failures are gone; the lane's only remaining
- * non-passing lines are the classified skip entries (below). The
+ * <p>The completion gate is closed: every applicable backend-runtime
+ * fixture passes the real pipeline and the skip registry is RETIRED —
+ * removed, never retained as empty machinery
+ * (jvm-v12-completion-architecture D3). The last four gap families
+ * closed with their dispositions: the Error literal default filling
+ * (the builtin {@code code}/{@code message} defaults to {@code ""},
+ * spec-v1.2 §Error type — rtc-015-error-default-code passes), the
+ * Error-typed nullable catch-probe local and catch-block assignment
+ * (plan-phase-order-provided-before-defaults passes), the host export
+ * used as a first-class function value (the per-export shared wrapper
+ * carrier keeps the identical E8010/E8001 boundary checks —
+ * host-async-shape-value passes as its pinned runtime-error E8010),
+ * and the eight ISSUE-0504 host-boundary fixtures (the boxed int/
+ * Integer carrier class literals match the declared host shapes under
+ * DEAL_V1_2_INT32 — every host-boundary fixture passes). The
  * anti-hollow evidence owner is {@code test/JvmLaneStatePinTest.java}:
  * it runs this lane and the real LuaJIT lane as subprocesses and
- * asserts the captured failure sets field-exactly on every gate run
- * ({@code run_tests.sh} substitutes it for the raw lane launches).</p>
+ * asserts the captured closed-state output field-exactly on every gate
+ * run ({@code run_tests.sh} substitutes it for the raw lane
+ * launches).</p>
  *
  * <h2>Classification policy (deterministic, documented)</h2>
  *
@@ -97,143 +100,35 @@ import java.util.concurrent.atomic.AtomicInteger;
  *       shared {@code deal.test.ConformanceTest} gate.</li>
  *   <li><b>Known-fail</b> ({@code @expected: known-fail MODE}): the
  *       intentionally unsupported v1.2 cases tracked by their
- *       {@code @issue} (ISSUE-0111 signed int32 / bytes). The runner
- *       executes the underlying mode through the real JVM pipeline and
- *       records a non-fatal tracked KNOWN-FAIL while the case still
- *       fails; when it starts passing, the gate FAILS with a promotion
- *       instruction (drop the marker) — promotion is forced. The
- *       restored {@code arithmetic/int-add-overflow.deal} promoted in
- *       the gate-closure change (its probe passes under the activated
- *       invocation), so the corpus carries zero known-fail markers on
- *       the JVM lane today.</li>
+ *       {@code @issue}. The runner executes the underlying mode
+ *       through the real JVM pipeline and records a non-fatal tracked
+ *       KNOWN-FAIL while the case still fails; when it starts passing,
+ *       the gate FAILS with a promotion instruction (drop the marker)
+ *       — promotion is forced. The corpus carries zero known-fail
+ *       markers on the JVM lane today (the int32/bytes promotions
+ *       landed with their lanes).</li>
  *   <li><b>Backend-runtime tests</b> ({@code runtime-ok} /
- *       {@code runtime-error CODE}): JVM-applicable and must pass
- *       through the whole pipeline UNLESS the explicit skip registry
- *       (below) classifies them. Every skip carries a documented reason
- *       and a gap id; the registry is validated against the
- *       on-disk corpus (a stale entry naming a missing file fails the
- *       run, and there is no fallback skip branch — zero unclassified
- *       skips by construction).</li>
+ *       {@code runtime-error CODE}): every on-disk runtime-classified
+ *       fixture is JVM-applicable and must pass through the whole
+ *       pipeline. There is NO skip classification: the classifier has
+ *       no registry and no fallback skip branch, so a SKIPPED outcome
+ *       is impossible by construction — the gate asserts the zero count
+ *       and the gate's evidence owner pins the registry-less source.
+ *       Zero skips by construction, never empty skip machinery.</li>
  * </ol>
- *
- * <h2>The skip registry (ISSUE-0102)</h2>
- *
- * <ul>
- *   <li><b>JVM-GAP-STDJSON</b> — RETIRED (ISSUE-0302): {@code std/json}
- *       joins the supported stdlib set — {@code json.parse} lowers to
- *       the emitted {@code __jsonParse} + {@code __jsonTableValue}
- *       pair, {@code json.stringify} to {@code __jsonStringify} — so
- *       the nine dynamic-boundary fixtures, the function-stringify
- *       E8001 pair, the int32-boundary parse, the roundtrip and
- *       bytes-error pins, and the keys-nonstring-exclusion table pin
- *       pass the real pipeline, and the stale-skip gate forced the 13
- *       registry entries out.</li>
- *   <li><b>JVM-GAP-JSONABLE-RESIDUAL</b> — RETIRED (ISSUE-0302): the
- *       {@code C$fromJson} top-level input gate (scalar/null/non-empty
- *       array → the DEAL null; {@code []}/{@code {}} collapse to the
- *       defaulted instance), the provided-fields-before-defaults phase
- *       order, fresh per-level nested-array decoder locals (javac
- *       validity), and the recursive {@code __jsonAppend} array
- *       serialization close the four residual fixtures, and the
- *       stale-skip gate forced the registry entries out.
- *       {@code jsonable-tojson-rejects-cyclic-table.deal} stays
- *       unregistered — it passes on JVM (the cycle detection raises
- *       E8001), so a skip entry would be stale by construction.</li>
- *   <li><b>JVM-GAP-HOST-ABI-SHAPES</b> (9 entries) — the array/
- *       function/class/prewrapped shapes retired with ISSUE-0303
- *       (jvm-v12-host-abi-completion): declared array/function-typed
- *       host parameters and returns, declared host class exports with
- *       synthesized shared records, and the pre-wrapped fixtures via
- *       declared-shape Java hosts all pass the real pipeline (15
- *       entries removed with their promotions). The retained entries
- *       pin the host async export used as a first-class function
- *       value (module aliases as values stay E6000) and the eight
- *       ISSUE-0504 host-boundary E8011 legacy long/Long carrier
- *       signature mismatches under the int32-activated profile.</li>
- *   <li><b>JVM-GAP-XMOD-FNVALUE</b> — RETIRED with the shared runtime
- *       value surface (ISSUE-0301): the four cross-module function-value
- *       fixtures pass the real pipeline on the shared $DealRt wrapper
- *       carriers, and the stale-skip gate forced the registry entries
- *       out. The gap-suite fixture
- *       {@code modules/cross-module-shared-state-closure.deal}
- *       (ISSUE-0502) passes the real pipeline on the same carrier
- *       surface, so it carries no entry (a skip entry would be stale
- *       and fail the gate deterministically).</li>
- *   <li><b>JVM-GAP-XMOD-ARRAY</b> — RETIRED with the shared runtime
- *       value surface (ISSUE-0301): await-returning-array-indexed
- *       passes the real pipeline on the shared $DealRt array carriers,
- *       and the stale-skip gate forced the registry entry out.</li>
- *   <li><b>JVM-GAP-ASYNC-FNEXPR</b> — RETIRED (ISSUE-0304): async
- *       function expressions and block-level async function
- *       declarations emit through the sync closure machinery with
- *       async descriptors, so async-fn-expr.deal and
- *       async-await-statement.deal pass the real pipeline and the
- *       stale-skip gate forced the registry entries out.</li>
- *   <li><b>JVM-GAP-DESCRIPTORS</b> — RETIRED with the canonical matcher
- *       realization (ISSUE-0301): the emitted $check function row raises
- *       E8010 on a carried-descriptor delta, so
- *       canonical-sig-mismatch-e8010 passes and the stale-skip gate
- *       forced the entry out.</li>
- *   <li><b>JVM-GAP-DEFAULTS-PLANS</b> (2 entries) — the v1.2
- *       default-plan lane (ISSUE-0340, LuaJIT-owned): imported
- *       non-literal defaults evaluate in the declaring module's scope
- *       under LuaJIT (E6000 on the JVM imported-class slice) and the
- *       phase-order Error-catch probe is outside the JVM slice.</li>
- *   <li><b>JVM-GAP-INT32</b> — the signed-int32 runtime gate: the
- *       retained v1.2 JVM route (the ISSUE-0375 carrier switch plus the
- *       profile-selected helper bodies) now raises E8004 for every
- *       arithmetic/conversion/negation/absInt case, so the skip entries
- *       were removed with their promotions (the A5 seam promotions and
- *       the ISSUE-0397 I6 int32-math-abs-min absInt long-magnitude
- *       arm); the gap keeps no entries.</li>
- *   <li><b>JVM-GAP-BYTES</b> — RETIRED (ISSUE-0160): the bytes
- *       runtime lane landed with ISSUE-0158 (zero-fill allocation,
- *       E8012/E8013, single-evaluation writes, class fields all pass
- *       on JVM), and the recursive bytes-bearing array/nullable/
- *       function wrapper closure landed with the ISSUE-0160 closure —
- *       bytes[] / (bytes | null)[] / (bytes)-&gt;bytes carriers, the
- *       pinned JSON bytes rejection, and the host bytes ABI arms — so
- *       bytes-descriptor-boundary.deal passes the real pipeline and
- *       the stale-skip gate forced the entry out. ISSUE-0502 (the
- *       gap-suite runtime population) lands the eight promoted gap
- *       bytes fixtures <b>without entries</b>: every one passes the
- *       real JVM pipeline on the ISSUE-0158 direct bytes lane
- *       (verified this run — a skip entry would be stale and fail
- *       the gate deterministically), so no entry lands.</li>
- *   <li><b>JVM-GAP-ERROR-LITERAL-DEFAULTS</b> (1 entry) — the Error
- *       literal default-filling lane (ISSUE-0502, new gap id):
- *       JvmBackend raises E6000 on an Error literal without both code
- *       and message fields (probed this run: the fixture still fails
- *       on the real JVM pipeline, so the entry is live), so
- *       {@code error-handling/rtc-015-error-default-code.deal} passes
- *       only on LuaJIT (and Node at the T14 flip).</li>
- * </ul>
  *
  * <h2>Gates</h2>
  * <ul>
  *   <li>frontend-classified files: 100% pass (zero failed);</li>
- *   <li>backend-runtime: zero applicable failures AND at least 80% of
- *       the on-disk backend-runtime tests (the per-run
- *       {@code runtimeDenominator()} count — 354 with the restored
- *       known-fail fixture, the two ISSUE-0547 bytes-container
- *       fixtures, the forty ISSUE-0502 gap-suite runtime fixtures,
- *       the eight ISSUE-0504 host-boundary fixtures, and the three
- *       ISSUE-0160 recursive bytes-closure fixtures)
- *       pass through the frontend →
- *       CompilationOrchestrator → JVM codegen → javac → JVM
- *       pipeline — on the post-unit tree the lane passes the two
- *       former staged cases (the flipped time fixture and the promoted
- *       int-add-overflow fixture) and fails exactly nothing, and
- *       {@code test/JvmLaneStatePinTest.java} asserts that captured
- *       set field-exactly on every gate run;</li>
- *   <li>zero unclassified skips (by construction — the classifier has
- *       no fallback skip branch, and the registry is validated);</li>
- *   <li>zero stale skips and zero stale known-fail markers (promotion
- *       is forced);</li>
+ *   <li>backend-runtime: zero applicable failures AND 100% of the
+ *       on-disk backend-runtime denominator (the per-run
+ *       {@code runtimeDenominator()} count — 354) passing through the
+ *       frontend → CompilationOrchestrator → JVM codegen → javac →
+ *       JVM pipeline — zero skipped, zero stale known-fail markers;</li>
+ *   <li>the classified runtime total equals the on-disk denominator
+ *       (a missing or deferred runtime fixture fails the gate);</li>
  *   <li>zero probe runner exceptions (a probe crash is never silent
- *       evidence);</li>
- *   <li>the classified runtime total equals the on-disk
- *       denominator;</li>
+ *       evidence — retained while the known-fail mechanism exists);</li>
  *   <li>the runner exits non-zero when any gate fails.</li>
  * </ul>
  */
@@ -267,242 +162,15 @@ public class JvmConformanceTest {
     }
 
     // =========================================================================
-    // Applicability policy: the explicit skip registry
+    // Applicability policy (ISSUE-0307 gate closure): no skip registry
     // =========================================================================
-
-    /** One skip-registry entry: corpus-relative path, documented reason,
-     * and gap id. */
-    private record SkipEntry(String path, String reason, String gapId) {}
-
-    /** The complete skip registry. Every entry must name an on-disk
-     * runtime-classified corpus test; the runner validates the registry
-     * against the corpus so a stale entry fails the run. */
-    private static final Map<String, SkipEntry> SKIPS = new LinkedHashMap<>();
-    static {
-        // ---- JVM-GAP-DESCRIPTORS: retired with the canonical matcher
-        // realization (ISSUE-0301) ----
-        // The emitted $check function row (jvm-v12-runtime-value-surface
-        // D5) raises E8010 "function signature mismatch: expected {D},
-        // got {actual}" on any carried-descriptor delta, so
-        // canonical-sig-mismatch-e8010 passes the real pipeline and the
-        // stale-skip gate forced the entry's removal.
-
-        // ---- JVM-GAP-INT32: the signed-int32 runtime gate ----
-        // The v1.2 corpus pins int as [-2147483648, 2147483647] with E8004
-        // on every out-of-range arithmetic result and conversion. The
-        // profile-selected JVM int32 helper bodies landed (ISSUE-0394),
-        // so the activated lane-wide invocation raises E8004 for the
-        // arithmetic/conversion/negation cases — those entries became
-        // stale under the A5 seam and were removed with the promotions.
-        // The restored corpus fixture arithmetic/int-add-overflow.deal
-        // promoted in the gate-closure change (ISSUE-0378 D3's pinned
-        // promotion instruction: set '@expected: runtime-error E8004',
-        // drop the '@issue' tag): its runtime-error E8004 probe passes
-        // under the activated intAdd, so it records PASS and the
-        // stale-known-fail gate is silent — never a skip entry. The
-        // final entry — the std/math.absInt(-2147483648) residual —
-        // was resolved by ISSUE-0397 I6: the emitted int32 absInt arm
-        // now promotes the int-carrier operand to long before
-        // java.lang.Math.abs, so the MIN_VALUE magnitude (2147483648)
-        // reaches the int32 checkInt gate and raises E8004
-        // (int32-math-abs-min pins the promoted case on both retained
-        // routes), and the stale skip was removed.
-        // ---- JVM-GAP-BYTES: RETIRED (ISSUE-0160 recursive bytes
-        // closure) ----
-        // The direct bytes lane landed with ISSUE-0158: bytes(n)
-        // allocation (zero-filled byte[]), b.length, unsigned reads,
-        // E8012 index bounds, E8013 value range, single-evaluation
-        // writes, reference aliasing, and bytes-typed class fields all
-        // pass the real pipeline — their skip entries became stale and
-        // the stale-skip gate forced them out with the promotion. The
-        // last entry pinned the RECURSIVE bytes-bearing container/
-        // function closure (bytes[] / ?bytes / (bytes)->bytes array+
-        // function carriers): the closure landed with ISSUE-0160 (the
-        // shared __BytesArray/__BytesOrNullArray carriers, the bytes
-        // wrapper signatures, and the [bytes]/[?bytes] $checkArray
-        // rows), so bytes-descriptor-boundary.deal passes the real
-        // pipeline and the stale-skip gate forced the entry out.
-        // The eight promoted gap bytes fixtures carry NO entries: the
-        // ISSUE-0158 direct bytes lane passes every one on the real
-        // JVM pipeline (bytes-class-default, bytes-write-zero,
-        // bytes-zero-length, bytes-negative-length-error,
-        // bytes-negative-read-error, bytes-read-at-length-error,
-        // bytes-write-at-length-error, bytes-write-negative-error —
-        // verified this run), so skip entries would be stale and fail
-        // the gate deterministically.
-
-        // ---- JVM-GAP-ERROR-LITERAL-DEFAULTS: the LuaJIT-owned Error
-        // literal default filling (ISSUE-0502, new gap id) ----
-        // rtc-015-error-default-code pins the Error literal without a
-        // code field defaulting to the empty string; JvmBackend rejects
-        // the literal shape with E6000, so the fixture passes only on
-        // LuaJIT (and Node at T14).
-        skip("backend-runtime/error-handling/rtc-015-error-default-code.deal",
-            "E6000: JvmBackend does not support an Error literal without "
-                + "both code and message fields (LuaJIT-owned default "
-                + "filling).", "JVM-GAP-ERROR-LITERAL-DEFAULTS");
-
-        // ---- ISSUE-0504: the eight converted host-boundary fixtures
-        // (v12-gap-suite-integration D9) import host/boundary, whose
-        // verbatim gap HostBoundary.java declares the legacy long/Long
-        // int carriers while the lane-wide activated DEAL_V1_2_INT32
-        // profile resolves the declared int and int | null parameters
-        // as int/Integer (JvmBackend.hostParamClassLiteral under
-        // int32Mode). The module-level load-time presence check
-        // validates every declared export, so the declared echoInt
-        // export raises E8011 before any call and every fixture that
-        // imports host/boundary fails on JVM. The sanctioned D10
-        // disposition is one JVM-GAP-HOST-ABI-SHAPES entry per
-        // fixture; the oracles stay unweakened. ----
-        skip("backend-runtime/host-abi/host-boundary-repeat-call.deal",
-            "E8011 load-time signature mismatch: the verbatim gap "
-                + "HostBoundary declares echoInt(long) where the "
-                + "int32-activated JVM host slice resolves the declared "
-                + "int parameter as int (the load-time export check "
-                + "raises E8011 for the declared echoInt export, so "
-                + "every fixture importing host/boundary fails before "
-                + "any call).", "JVM-GAP-HOST-ABI-SHAPES");
-        skip("backend-runtime/host-abi/host-boundary-null-narrowing.deal",
-            "E8011 load-time signature mismatch (verbatim gap "
-                + "HostBoundary echoInt(long) vs the int32-activated "
-                + "int parameter resolution).",
-            "JVM-GAP-HOST-ABI-SHAPES");
-        skip("backend-runtime/host-abi/host-boundary-int-minimum-param.deal",
-            "E8011 load-time signature mismatch (verbatim gap "
-                + "HostBoundary echoInt(long) vs the int32-activated "
-                + "int parameter resolution).",
-            "JVM-GAP-HOST-ABI-SHAPES");
-        skip("backend-runtime/host-abi/host-boundary-number-roundtrip.deal",
-            "E8011 load-time signature mismatch (verbatim gap "
-                + "HostBoundary echoInt(long) vs the int32-activated "
-                + "int parameter resolution).",
-            "JVM-GAP-HOST-ABI-SHAPES");
-        skip("backend-runtime/host-abi/host-boundary-boolean-roundtrip.deal",
-            "E8011 load-time signature mismatch (verbatim gap "
-                + "HostBoundary echoInt(long) vs the int32-activated "
-                + "int parameter resolution).",
-            "JVM-GAP-HOST-ABI-SHAPES");
-        skip("backend-runtime/host-abi/host-boundary-unicode-string-roundtrip.deal",
-            "E8011 load-time signature mismatch (verbatim gap "
-                + "HostBoundary echoInt(long) vs the int32-activated "
-                + "int parameter resolution).",
-            "JVM-GAP-HOST-ABI-SHAPES");
-        skip("backend-runtime/host-abi/host-boundary-nullable-int-null-roundtrip.deal",
-            "E8011 load-time signature mismatch (verbatim gap "
-                + "HostBoundary echoInt(long)/nullableInt(Long) vs the "
-                + "int32-activated int/Integer parameter resolution).",
-            "JVM-GAP-HOST-ABI-SHAPES");
-        skip("backend-runtime/host-abi/host-boundary-nullable-int-value-roundtrip.deal",
-            "E8011 load-time signature mismatch (verbatim gap "
-                + "HostBoundary echoInt(long)/nullableInt(Long) vs the "
-                + "int32-activated int/Integer parameter resolution).",
-            "JVM-GAP-HOST-ABI-SHAPES");
-        // ---- JVM-GAP-HOST-ABI-SHAPES: retired with the host ABI shapes
-        // lane (ISSUE-0303, jvm-v12-host-abi-completion) ----
-        // The 12 pinned fixtures — host-array-return-ok, host-rest-ok,
-        // host-rest-bad (E8010), host-boundary-apply-function,
-        // host-nullable-function-param, host-nullable-function-param-bad
-        // (E8010), host-nullable-function-return-ok,
-        // host-nullable-function-return-bad (E8010), host-class-export,
-        // host-export-presence, host-prewrapped-ok, host-prewrapped-bad
-        // (E8010 on the discard path) — pass the real pipeline on the
-        // nine HOST_JAVA implementations: array parameters/returns flow
-        // on the shared wrappers, function parameters arrive as the
-        // typed $DealRt wrapper (the host invokes through the typed
-        // invoke; no lambda conversion), function-typed returns are
-        // never wrapped (a raw value fails E8010, a byte-equal
-        // descriptor passes), declared host classes synthesize shared
-        // $DealRt records with canonical externals identity and the
-        // preserved defaults-map construction seam, and the prewrapped
-        // pair executes against declared-shape hosts whose
-        // declared-descriptor enforcement raises E8010 on the junk
-        // return. The three host-class companions
-        // (host-class-default-isolation, host-class-extra-field E8007,
-        // plan-host-discriminator) went green with the synthesized
-        // records and were removed with their promotion; the
-        // stale-skip gate forced the removals. The remaining entry pins
-        // the alias-as-value shape (a host export used as a first-class
-        // function value), which stays E6000.
-
-        // ---- JVM-GAP-DEFAULTS-PLANS: the v1.2 default-plan lane
-        // (ISSUE-0340, LuaJIT-owned) ----
-        // The defaults corpus pins per-attempt default plans: imported
-        // defaults run in the declaring module's scope through the
-        // provider's published plan records — the ISSUE-0544 lowering
-        // epic lifted the JVM imported-non-literal-default plan-shape
-        // guard, so plan-imported-provider-scope passes the real
-        // pipeline (promoted with its skip entry removed). The
-        // phase-order fixture probes provided-value evaluation before
-        // defaults with a caught E8002 (an Error | null local with a
-        // catch-block assignment): the JVM slice rejects the
-        // Error-typed nullable local plus the catch-assignment pattern
-        // of that probe, so it stays a LuaJIT/JS-lane pin until the JVM
-        // Error-literal/catch-assignment slice lands.
-        skip("backend-runtime/defaults/plan-phase-order-provided-before-defaults.deal",
-            "E6000: the Error | null catch-probe local and the "
-                + "catch-block assignment are outside the JVM slice "
-                + "(class-typed local values are local-module-class "
-                + "only and catch assignments reject forward "
-                + "references), so the caught-E8002 phase-order probe "
-                + "cannot compile.", "JVM-GAP-DEFAULTS-PLANS");
-
-        // ---- JVM-GAP-XMOD-FNVALUE: retired with the shared runtime
-        // value surface (ISSUE-0301) ----
-        // The four cross-module function-value fixtures
-        // (closure-returned-from-module, imported-closure-factory,
-        // imported-recursive-callback, imported-async-function-value)
-        // pass the real pipeline on the shared $DealRt wrapper carriers
-        // and were removed with their promotion; the stale-skip gate
-        // forced the removals. host-async-shape-value (a host export
-        // used as a first-class function value) stays with the host ABI
-        // shapes lane below — the host wrapper surface is
-        // jvm-v12-host-abi-completion's.
-        skip("backend-runtime/host-abi/host-async-shape-value.deal",
-            "E6000: module aliases used as values (host async export "
-                + "as a function value).", "JVM-GAP-HOST-ABI-SHAPES");
-
-        // ---- JVM-GAP-XMOD-ARRAY: retired with the shared runtime value
-        // surface (ISSUE-0301) ----
-        // await-returning-array-indexed passes the real pipeline on the
-        // shared $DealRt array carriers and was removed with its
-        // promotion; the stale-skip gate forced the removal.
-
-        // ---- JVM-GAP-ASYNC-FNEXPR: RETIRED (ISSUE-0304) ----
-        // async-fn-expr.deal and async-await-statement.deal pass the
-        // real pipeline — async function expressions emit through the
-        // sync closure machinery with the async descriptor marker and
-        // blocking bodies, block-level async functions declare through
-        // the cell + anonymous-wrapper path, and the discard-position
-        // await statement evaluates exactly once with the completion
-        // check — so the registry entries were removed and the
-        // stale-skip gate forced the removal.
-    }
-
-    private static void skip(String path, String reason, String gapId) {
-        SKIPS.put(path, new SkipEntry(path, reason, gapId));
-    }
-
-    /** Gap id → human-readable lane description, for the summary's
-     * skip-group report. */
-    private static final Map<String, String> FOLLOW_UP_GAPS = Map.of(
-        "JVM-GAP-HOST-ABI-SHAPES", "JVM host ABI residual — the host "
-            + "async export used as a first-class function value "
-            + "(module aliases as values stay E6000; the array/"
-            + "function/class/prewrapped shapes retired with "
-            + "ISSUE-0303) and the E8011 legacy long/Long carrier "
-            + "signature mismatches of the verbatim gap host "
-            + "implementations under the int32-activated profile",
-        "JVM-GAP-DEFAULTS-PLANS", "v1.2 default-plan lane — the "
-            + "ISSUE-0544 lowering epic lifted the imported-non-literal-"
-            + "default plan-shape guard (imported defaults run through "
-            + "the provider's published plan records); the phase-order "
-            + "Error-catch probe stays outside the JVM slice (ISSUE-0340 "
-            + "is the LuaJIT emitter cutover)",
-        "JVM-GAP-ERROR-LITERAL-DEFAULTS", "Error literal default "
-            + "filling — JvmBackend raises E6000 on an Error literal "
-            + "without both code and message fields (LuaJIT-owned "
-            + "default filling)"
-    );
+    // The skip registry is RETIRED — removed, never retained as empty
+    // machinery (jvm-v12-completion-architecture D3). The classifier has
+    // no registry and no fallback skip branch, so a SKIPPED outcome is
+    // impossible by construction: every runtime-classified on-disk
+    // fixture is APPLICABLE and must pass the real pipeline. The gate
+    // report asserts the zero skip count, and the evidence owner
+    // (JvmLaneStatePinTest) pins this registry-less source.
 
     // =========================================================================
     // Host modules for the JVM-applicable host-ABI corpus tests
@@ -576,18 +244,18 @@ public class JvmConformanceTest {
                 + "}\n"),
         Map.entry("boundary",
             "public final class HostBoundary {\n"
-                + "  private static long nextValue;\n"
+                + "  private static int nextValue;\n"
                 + "\n"
-                + "  public static Object intValue() { return Long.valueOf(17L); }\n"
+                + "  public static Object intValue() { return Integer.valueOf(17); }\n"
                 + "  public static Object stringValue() { return \"host\"; }\n"
                 + "  public static Object nullableString(boolean flag) { return flag ? \"host\" : null; }\n"
                 + "  public static Object nullValue() { return null; }\n"
-                + "  public static Object nextValue() { nextValue += 1L; return Long.valueOf(nextValue); }\n"
-                + "  public static Object echoInt(long value) { return Long.valueOf(value); }\n"
+                + "  public static Object nextValue() { nextValue += 1; return Integer.valueOf(nextValue); }\n"
+                + "  public static Object echoInt(int value) { return Integer.valueOf(value); }\n"
                 + "  public static Object echoNumber(double value) { return Double.valueOf(value); }\n"
                 + "  public static Object echoBoolean(boolean value) { return Boolean.valueOf(value); }\n"
                 + "  public static Object echoString(String value) { return value; }\n"
-                + "  public static Object nullableInt(Long value) { return value; }\n"
+                + "  public static Object nullableInt(Integer value) { return value; }\n"
                 + "  public static Object extraExport() { return \"ignored\"; }\n"
                 + "}\n"),
         Map.entry("nullreturn_bad",
@@ -705,19 +373,18 @@ public class JvmConformanceTest {
     private enum Kind {
         /** compile-ok / compile-error — backend-neutral frontend gate. */
         FRONTEND,
-        /** runtime-ok / runtime-error — JVM-applicable backend test. */
+        /** runtime-ok / runtime-error — JVM-applicable backend test.
+         *  ISSUE-0307 gate closure: the skip classification no longer
+         *  exists — the registry was retired and the classifier has no
+         *  fallback skip branch, so every runtime-classified on-disk
+         *  fixture is APPLICABLE (zero skips by construction). */
         APPLICABLE,
-        /** runtime test skipped under a catalog gap id — its
-         *  underlying runtime mode is probed through the real
-         *  pipeline each run (a passing probe is a stale registry
-         *  entry that fails the gate). */
-        SKIPPED,
         /** known-fail MODE — tracked follow-up issue; run + stale-checked. */
         KNOWN_FAIL
     }
 
     private record Classified(TestFile test, Kind kind, String expectedCode,
-            String skipReason, String skipGapId) {}
+            String knownFailIssue) {}
 
     private record Outcome(TestFile test, Classified classified,
             boolean pass, String message) {}
@@ -740,18 +407,14 @@ public class JvmConformanceTest {
     private static final AtomicInteger legacyAuthorityFailed =
         new AtomicInteger();
     private static final AtomicInteger applicableFailed = new AtomicInteger();
-    private static final AtomicInteger applicableSkipped = new AtomicInteger();
     private static final AtomicInteger knownFailTotal = new AtomicInteger();
     private static final AtomicInteger knownFailTracked = new AtomicInteger();
     private static final AtomicInteger knownFailStale = new AtomicInteger();
-    private static final AtomicInteger staleSkip = new AtomicInteger();
     private static final AtomicInteger probeHarnessFailed =
         new AtomicInteger();
 
     private static final List<Outcome> outcomes =
         Collections.synchronizedList(new ArrayList<>());
-    private static final Map<String, Integer> skipGroupCounts =
-        Collections.synchronizedMap(new LinkedHashMap<>());
     private static final Map<String, Integer> knownFailByIssue =
         Collections.synchronizedMap(new LinkedHashMap<>());
 
@@ -765,9 +428,11 @@ public class JvmConformanceTest {
      * Strict no-skip mode (release-r0-r3-strict-gate-mechanics S3;
      * release-pipeline-strict-mode-and-evidence D2(c)): when the gate
      * scripts export DEAL_STRICT=1, the runner JVM inherits it and the
-     * skip/known-fail recording statements below are hard gate failures
+     * known-fail recording statement below is a hard gate failure
      * instead of tracked evidence. Dev mode leaves the flag unset and
-     * records exactly as before.
+     * records exactly as before. (The skip-recording seam was retired
+     * with the registry — ISSUE-0307: the classifier has no skip
+     * branch at all.)
      */
     private static final boolean STRICT_MODE =
         System.getenv("DEAL_STRICT") != null;
@@ -838,15 +503,12 @@ public class JvmConformanceTest {
             .filter(c -> c.kind() == Kind.FRONTEND).count();
         int applicable = (int) tests.stream()
             .filter(c -> c.kind() == Kind.APPLICABLE).count();
-        int skipped = (int) tests.stream()
-            .filter(c -> c.kind() == Kind.SKIPPED).count();
         int knownFail = (int) tests.stream()
             .filter(c -> c.kind() == Kind.KNOWN_FAIL).count();
         System.out.println("Discovered " + tests.size() + " conformance "
             + "test(s): " + frontend + " frontend-classified, "
             + applicable + " JVM-applicable backend-runtime, "
-            + skipped + " skipped (classified), " + knownFail
-            + " known-fail (tracked)");
+            + knownFail + " known-fail (tracked)");
         System.out.println();
 
         // Deterministic execution order: sorted by corpus-relative path.
@@ -871,7 +533,7 @@ public class JvmConformanceTest {
 
         List<Outcome> sorted = new ArrayList<>(outcomes);
         sorted.sort(Comparator.comparing(o -> o.test().relativePath()));
-        printReport(sorted, applicable + skipped + knownFail);
+        printReport(sorted, applicable + knownFail);
     }
 
     /** Probes that both {@code javac} and {@code java} are invocable and
@@ -952,11 +614,10 @@ public class JvmConformanceTest {
 
     /**
      * The deterministic applicability policy. See the class javadoc.
-     * The {@link Kind#SKIPPED} branch is only ever reached through a
-     * registry entry with a reason and a gap id — there is no
-     * unclassified fallback skip branch, and every registry entry
-     * must be reached by classification (a dead entry fails
-     * validation).
+     * ISSUE-0307 gate closure: there is no skip classification — the
+     * registry was retired and no fallback skip branch exists, so every
+     * runtime-classified on-disk fixture is APPLICABLE (zero skips by
+     * construction, never empty skip machinery).
      */
     private static List<Classified> classifyAll(List<TestFile> tests) {
         List<Classified> result = new ArrayList<>();
@@ -974,97 +635,28 @@ public class JvmConformanceTest {
                     throw new IllegalStateException("known-fail without "
                         + "@issue in " + test.relativePath());
                 }
-                result.add(new Classified(test, Kind.KNOWN_FAIL, code, null,
+                result.add(new Classified(test, Kind.KNOWN_FAIL, code,
                     test.issue()));
             } else if (expected.startsWith("compile-ok")) {
-                result.add(new Classified(test, Kind.FRONTEND, "", null,
-                    null));
+                result.add(new Classified(test, Kind.FRONTEND, "", null));
             } else if (expected.startsWith("compile-error ")) {
                 result.add(new Classified(test, Kind.FRONTEND,
                     expected.substring("compile-error ".length()).trim(),
-                    null, null));
+                    null));
             } else if (expected.startsWith("runtime-ok")
                     || expected.startsWith("runtime-error ")) {
                 String code = expected.startsWith("runtime-error ")
                     ? expected.substring("runtime-error ".length()).trim()
                     : "";
-                SkipEntry entry = SKIPS.get(test.relativePath());
-                if (entry != null) {
-                    result.add(new Classified(test, Kind.SKIPPED, code,
-                        entry.reason(), entry.gapId()));
-                } else {
-                    result.add(new Classified(test, Kind.APPLICABLE, code,
-                        null, null));
-                }
+                result.add(new Classified(test, Kind.APPLICABLE, code,
+                    null));
             } else {
                 // Unknown @expected is a harness failure, never a skip.
                 throw new IllegalStateException("unknown @expected '"
                     + expected + "' in " + test.relativePath());
             }
         }
-        validateRegistry(tests, result);
         return result;
-    }
-
-    /**
-     * Validates the explicit skip registry against the on-disk corpus.
-     * Every entry must name an existing, discovered, runtime-classified
-     * (runtime-ok / runtime-error) backend-runtime test, carry a reason
-     * and a catalog gap id, and be reached by classification — no skip
-     * without a reason or gap id, no unknown gap id, and no dead entry
-     * (a missing, frontend-classified, companion, or known-fail file
-     * fails the run naming the entry).
-     */
-    private static void validateRegistry(List<TestFile> discovered,
-            List<Classified> classified) {
-        Map<String, TestFile> byPath = new LinkedHashMap<>();
-        for (TestFile test : discovered) {
-            byPath.put(test.relativePath(), test);
-        }
-        Set<String> skippedPaths = new HashSet<>();
-        for (Classified c : classified) {
-            if (c.kind() == Kind.SKIPPED) {
-                skippedPaths.add(c.test().relativePath());
-            }
-        }
-        for (SkipEntry entry : SKIPS.values()) {
-            Path file = conformanceRoot.resolve(entry.path());
-            if (!Files.isRegularFile(file)) {
-                throw new IllegalStateException("skip registry entry "
-                    + entry.path() + " does not name an on-disk corpus "
-                    + "test — the registry must stay current");
-            }
-            if (entry.reason() == null || entry.reason().isEmpty()
-                    || entry.gapId() == null || entry.gapId().isEmpty()) {
-                throw new IllegalStateException("skip registry entry "
-                    + entry.path() + " lacks a reason or gap id");
-            }
-            if (!FOLLOW_UP_GAPS.containsKey(entry.gapId())) {
-                throw new IllegalStateException("skip registry entry "
-                    + entry.path() + " cites unknown gap id '"
-                    + entry.gapId() + "' — the gap id must be a "
-                    + "FOLLOW_UP_GAPS catalog key");
-            }
-            TestFile named = byPath.get(entry.path());
-            if (named == null) {
-                throw new IllegalStateException("skip registry entry "
-                    + entry.path() + " does not name a discovered "
-                    + "backend-runtime corpus test — dead entry");
-            }
-            if (!named.expected().startsWith("runtime-ok")
-                    && !named.expected().startsWith("runtime-error ")) {
-                throw new IllegalStateException("skip registry entry "
-                    + entry.path() + " names a non-runtime-classified "
-                    + "file (@expected: '" + named.expected() + "') — "
-                    + "dead entry; the registry may only name "
-                    + "runtime-ok / runtime-error tests");
-            }
-            if (!skippedPaths.contains(entry.path())) {
-                throw new IllegalStateException("skip registry entry "
-                    + entry.path() + " is not reached by classification "
-                    + "— dead entry");
-            }
-        }
     }
 
     // =========================================================================
@@ -1079,7 +671,6 @@ public class JvmConformanceTest {
                 case FRONTEND -> runFrontend(classified);
                 case APPLICABLE -> runApplicable(classified);
                 case KNOWN_FAIL -> runKnownFail(classified);
-                case SKIPPED -> runSkippedProbe(classified);
             };
             if (outcome != null) {
                 outcomes.add(outcome);
@@ -1098,15 +689,15 @@ public class JvmConformanceTest {
             } else {
                 // A runner exception (an Error, or anything thrown
                 // before runApplicable's internal Exception catch)
-                // escaping a SKIPPED or KNOWN_FAIL probe is an explicit
+                // escaping a KNOWN_FAIL probe is an explicit
                 // harness failure — never an applicable failure, never
-                // a tracked skip.
+                // a tracked result.
                 probeHarnessFailed.incrementAndGet();
                 log("  [" + classified.test().relativePath()
-                    + "] FAIL (runner exception during skip/known-fail "
+                    + "] FAIL (runner exception during known-fail "
                     + "probe — harness failure): " + e.getMessage());
                 outcomes.add(new Outcome(classified.test(), classified,
-                    false, "runner exception during skip/known-fail "
+                    false, "runner exception during known-fail "
                     + "probe — harness failure: " + e.getMessage()));
             }
         } finally {
@@ -1496,51 +1087,6 @@ public class JvmConformanceTest {
         log("  [" + test.relativePath() + "] KNOWN-FAIL (" + mode
             + " not yet satisfied on JVM; tracked by " + test.issue()
             + ") — " + probe.message());
-        return null;
-    }
-
-    // =========================================================================
-    // Skip probes (D1): every SKIPPED entry runs its underlying mode
-    // through the real pipeline; a passing probe is a stale entry
-    // =========================================================================
-
-    /**
-     * Executes a SKIPPED entry's underlying runtime mode through the
-     * real pipeline (orchestrator → JvmBackend codegen → javac → java)
-     * with {@code knownFailProbe=true}, so no branch touches the
-     * applicable counters. A failing probe is tracked evidence: one
-     * {@code applicableSkipped} plus the per-gap count, and the skip
-     * line carries the live probe message. A passing probe means the
-     * registry entry is stale: {@code staleSkip} increments, the
-     * promotion instruction is logged, a failed Outcome is recorded,
-     * and the gate fails.
-     */
-    private static Outcome runSkippedProbe(Classified classified) {
-        TestFile test = classified.test();
-        Outcome probe = runApplicable(classified, true);
-        if (probe.pass()) {
-            staleSkip.incrementAndGet();
-            log("  [" + test.relativePath()
-                + "] FAIL (STALE skip: " + test.relativePath()
-                + " now passes on JVM — remove the skip-registry entry)");
-            return new Outcome(test, classified, false,
-                "stale skip; remove the skip-registry entry");
-        }
-        // The strict recording seam (S3): the first gap-cataloged skip
-        // recording attempt terminates the runner before
-        // applicableSkipped or skipGroupCounts is touched.
-        if (STRICT_MODE) {
-            System.err.println("STRICT_SKIP_DETECTED ("
-                + test.relativePath() + ": skip "
-                + classified.skipGapId() + " — "
-                + classified.skipReason() + ")");
-            System.exit(1);
-        }
-        applicableSkipped.incrementAndGet();
-        skipGroupCounts.merge(classified.skipGapId(), 1, Integer::sum);
-        log("  [" + test.relativePath() + "] SKIP ("
-            + classified.skipGapId() + "): " + classified.skipReason()
-            + " — probe: " + probe.message());
         return null;
     }
 
@@ -2155,36 +1701,24 @@ public class JvmConformanceTest {
             + "compile-error): total %d, passed %d, failed %d%n",
             ft, fp, ff);
 
-        int at = applicableTotal.get();
         int ap = applicablePassed.get();
         int af = applicableFailed.get();
-        int as = applicableSkipped.get();
         int kf = knownFailTracked.get();
         int denominator = runtimeDenominator();
         double pct = denominator == 0 ? 0.0
             : (ap * 100.0 / denominator);
         System.out.printf("Backend-runtime on JVM: denominator %d "
             + "(every on-disk runtime test, unchanged), passed %d, "
-            + "failed %d, skipped %d (classified), known-fail %d "
+            + "failed %d, skipped 0 (no registry — zero skips by "
+            + "construction), known-fail %d "
             + "(tracked) — pass rate %.1f%%%n",
-            denominator, ap, af, as, kf, pct);
+            denominator, ap, af, kf, pct);
         System.out.println("Profile-authority accounting: "
             + legacyAuthorityResults.get()
             + " legacy-authority fixture(s) (LEGACY_REGRESSION + "
             + "LEGACY_SAFE_INT — zero v1.2/promotion credit; "
             + legacyAuthorityPassed.get() + " passed, "
             + legacyAuthorityFailed.get() + " failed)");
-        System.out.println();
-
-        System.out.println("Skipped backend-runtime groups (every skip "
-            + "carries a reason and a gap id):");
-        List<String> gaps = new ArrayList<>(skipGroupCounts.keySet());
-        Collections.sort(gaps);
-        for (String gapId : gaps) {
-            System.out.printf("  %-30s %-60s %d test(s)%n",
-                gapId, FOLLOW_UP_GAPS.getOrDefault(gapId, ""),
-                skipGroupCounts.get(gapId));
-        }
         System.out.println();
 
         System.out.println("Known-fail groups (tracked follow-up issues):");
@@ -2227,19 +1761,12 @@ public class JvmConformanceTest {
                 + " stale known-fail marker(s) — promote the fixture(s)");
             ok = false;
         }
-        if (staleSkip.get() > 0) {
-            System.out.println("GATE FAILURE: " + staleSkip.get()
-                + " stale skip-registry entry (or entries) now pass on "
-                + "JVM — promotion instruction: remove the "
-                + "skip-registry entry (or entries)");
-            ok = false;
-        }
         if (probeHarnessFailed.get() > 0) {
             System.out.println("GATE FAILURE: probeHarnessFailed = "
                 + probeHarnessFailed.get() + " — a runner exception "
-                + "escaped a skip/known-fail probe (harness failure; a "
+                + "escaped a known-fail probe (harness failure; a "
                 + "probe crash is never silent evidence and never a "
-                + "tracked skip)");
+                + "tracked result)");
             ok = false;
         }
         if (ff > 0) {
@@ -2253,10 +1780,11 @@ public class JvmConformanceTest {
                 + "applicable failures required");
             ok = false;
         }
-        if (pct < 80.0) {
+        if (pct < 100.0) {
             System.out.println("GATE FAILURE: backend-runtime pass rate "
-                + pct + "% below the 80% threshold (denominator "
-                + denominator + ")");
+                + pct + "% below the 100% threshold (denominator "
+                + denominator + " — every on-disk applicable runtime "
+                + "test must pass through codegen, javac, and java)");
             ok = false;
         }
         if (runtimeTotal != denominator) {
@@ -2269,10 +1797,11 @@ public class JvmConformanceTest {
             System.exit(1);
         }
         System.out.println("Gates PASSED: frontend 100%; backend-runtime "
-            + "zero applicable failures AND >= 80% pass rate over the "
-            + "unchanged " + denominator
-            + "-test denominator; zero unclassified skips; zero stale "
-            + "skips; zero stale known-fail markers; zero probe runner "
+            + "zero applicable failures AND 100% of the unchanged "
+            + denominator
+            + "-test denominator through codegen, javac, and java; "
+            + "zero skips (no registry — zero by construction); zero "
+            + "stale known-fail markers; zero probe runner "
             + "exceptions.");
     }
 }

@@ -6326,6 +6326,25 @@ public final class JvmBackend {
                 }
             }
         }
+        // ISSUE-0307 gate closure: the per-export first-class
+        // function-value carrier fields (the alias-as-value shape — a
+        // host function export read as a VALUE yields the stable shared
+        // wrapper instance whose invoke delegates to the emitted
+        // wrapper method, so the identical argument/async/boundary
+        // checks run on the indirect call). Registration here is
+        // idempotent with the project-wide shape pre-registration.
+        for (Map.Entry<String, String> e : hostAliases.entrySet()) {
+            String alias = e.getKey();
+            Map<String, Type> exports = hostModules.get(e.getValue());
+            for (Map.Entry<String, Type> ex : exports.entrySet()) {
+                if (ex.getValue() instanceof Type.Func f) {
+                    String shape = registerWrapperShape(f);
+                    if (shape != null) {
+                        emitHostFnValueField(alias, ex.getKey(), f, shape);
+                    }
+                }
+            }
+        }
     }
 
     /** Emitted name of the load-time presence-check method for a host
@@ -6345,6 +6364,61 @@ public final class JvmBackend {
      * route through it. */
     private String hostWrapperName(String alias, String exportName) {
         return "__host$" + javaName(alias) + "$" + javaName(exportName);
+    }
+
+    /** Emitted name of the per-export first-class function-value carrier
+     * field ({@code $host$<alias>$<fn>$fn}) — a shared {@code $DealRt}
+     * wrapper instance whose {@code invoke} delegates to the emitted
+     * wrapper method (ISSUE-0307 gate closure: the alias-as-value
+     * shape). The {@code $host$} prefix is reserved — {@link #javaName}
+     * can never produce it (DEAL identifiers cannot contain
+     * {@code $}), so no user binding collides. */
+    private String hostFnValueFieldName(String alias, String exportName) {
+        return "$host$" + javaName(alias) + "$" + javaName(exportName)
+            + "$fn";
+    }
+
+    /**
+     * Emits the per-export first-class function-value carrier field
+     * (ISSUE-0307 gate closure): a {@code host.fetchValue} member read
+     * used as a VALUE yields this stable wrapper instance, so
+     * {@code op === host.fetchValue} holds across reads exactly like
+     * LuaJIT's single wrapped module-table entry, and every indirect
+     * call through the value dispatches the identical emitted wrapper
+     * method — argument checks (E8010), the async operation shape check
+     * (E8010), the blocking join, and the declared return/completion
+     * check (E8010/E8001) run on the same path the direct call uses.
+     * The invoke body only reads the cached {@code Method} field at
+     * call time, so the field initializer is safe before the import's
+     * load-time static block has run (the wrapper method is only ever
+     * invoked after module load).
+     */
+    private void emitHostFnValueField(String alias, String exportName,
+                                      Type.Func f, String shape) {
+        StringBuilder body = new StringBuilder();
+        body.append("static final ").append(shape).append(' ')
+            .append(hostFnValueFieldName(alias, exportName))
+            .append(" = new ").append(shape).append("() {\n");
+        List<String> argNames = new ArrayList<>();
+        String ret = silentReturnJavaType(f.returnType());
+        body.append("    public ").append(ret).append(" invoke(");
+        for (int i = 0; i < f.paramTypes().size(); i++) {
+            if (i > 0) body.append(", ");
+            body.append(silentJavaLocalType(f.paramTypes().get(i)))
+                .append(" p").append(i);
+            argNames.add("p" + i);
+        }
+        body.append(") { ");
+        if ("void".equals(ret)) {
+            body.append(hostWrapperName(alias, exportName)).append('(')
+                .append(String.join(", ", argNames)).append("); }");
+        } else {
+            body.append("return ").append(hostWrapperName(alias, exportName))
+                .append('(').append(String.join(", ", argNames))
+                .append("); }");
+        }
+        body.append("\n};\n");
+        emitLine(body.toString());
     }
 
     /** Emitted name of the load-time-captured {@code <C>_defaults} map
@@ -6805,20 +6879,23 @@ public final class JvmBackend {
                 : record + ".class";
         }
         return switch (inner) {
-            case Type.Int ignored -> int32Mode ? "int.class" : "long.class";
-            case Type.Number ignored -> "double.class";
-            case Type.Boolean ignored -> "boolean.class";
+            // ISSUE-0307 gate closure: a nullable primitive parameter
+            // resolves its class literal as the BOXED reference
+            // (spec-v1.2 §JVM value mapping: T | null -> the boxed
+            // reference; Java null is the DEAL null), so the load-time
+            // export check matches the declared host shape — the
+            // pre-closure stripping resolved ?int as the primitive
+            // int.class and rejected the boxed host carriers.
+            case Type.Int ignored -> t instanceof Type.Nullable
+                ? (int32Mode ? "java.lang.Integer.class"
+                    : "java.lang.Long.class")
+                : (int32Mode ? "int.class" : "long.class");
+            case Type.Number ignored -> t instanceof Type.Nullable
+                ? "java.lang.Double.class" : "double.class";
+            case Type.Boolean ignored -> t instanceof Type.Nullable
+                ? "java.lang.Boolean.class" : "boolean.class";
             case Type.String ignored -> "java.lang.String.class";
             case Type.Bytes ignored -> "$DealRt.Bytes.class";
-            case Type.Nullable n -> switch (n.inner()) {
-                case Type.Int ignored ->
-                    int32Mode ? "java.lang.Integer.class" : "java.lang.Long.class";
-                case Type.Number ignored -> "java.lang.Double.class";
-                case Type.Boolean ignored -> "java.lang.Boolean.class";
-                case Type.String ignored -> "java.lang.String.class";
-                case Type.Bytes ignored -> "$DealRt.Bytes.class";
-                default -> "java.lang.Object.class";
-            };
             default -> "java.lang.Object.class";
         };
     }
@@ -11038,7 +11115,12 @@ public final class JvmBackend {
     /** Emits a builtin Error object literal as a DealError construction
      * (ISSUE-0102): the code and message values evaluate left-to-right
      * in literal order, exactly where LuaJIT evaluates the literal's
-     * fields. */
+     * fields. An omitted {@code code} or {@code message} field takes
+     * the builtin default {@code ""} (spec-v1.2 §Error type — the
+     * builtin class declares {@code code: string = ""} and
+     * {@code message: string = ""}), exactly where the LuaJIT emitter
+     * fills the omission from the seeded builtin defaults table
+     * (ISSUE-0307 gate closure — the rtc-015 corpus pin). */
     private String emitErrorLiteral(ObjectLiteralExpr ol) {
         List<ExpressionNode> values = new ArrayList<>();
         for (Property prop : ol.properties()) {
@@ -11054,11 +11136,8 @@ public final class JvmBackend {
                 messageCode = codes.get(i);
             }
         }
-        if (codeCode == null || messageCode == null) {
-            unsupported("Error literal without both code and message "
-                + "fields", ol.span());
-            return "null";
-        }
+        if (codeCode == null) codeCode = "\"\"";
+        if (messageCode == null) messageCode = "\"\"";
         return "new DealError(" + codeCode + ", " + messageCode + ")";
     }
 
@@ -14209,6 +14288,47 @@ public final class JvmBackend {
     private String emitMemberAccessValue(MemberAccessExpr mae) {
         Type objType = typeOf(mae.object());
         if (mae.object() instanceof IdentifierExpr id) {
+            // ISSUE-0307 gate closure: a HOST module's function export
+            // used as a VALUE reads the per-export wrapper-carrier field
+            // ({@code $host$<alias>$<fn>$fn}) — the shared $DealRt
+            // wrapper with the canonical descriptor, so the value flows
+            // into function-typed locals/parameters and an indirect call
+            // through it runs the identical emitted wrapper method the
+            // direct call uses (argument checks, the async operation
+            // shape check E8010, the blocking join, and the declared
+            // return/completion check E8010/E8001 — the
+            // host-async-shape-value corpus pin).
+            String hostRaw = hostAliases.get(id.name());
+            if (hostRaw != null) {
+                if (currentModuleStatementIndex >= 0) {
+                    Integer importIdx =
+                        importAliasStatementIndices.get(id.name());
+                    if (importIdx != null
+                            && importIdx > currentModuleStatementIndex) {
+                        unsupported("module-level use of import '"
+                            + id.name() + "' as a value before its import "
+                            + "statement (LuaJIT loads the host module at "
+                            + "the import's source position and fails at "
+                            + "load for an earlier use; Java would "
+                            + "silently skip the load-time presence "
+                            + "check)", mae.span());
+                        return "null";
+                    }
+                }
+                Map<String, Type> exports = hostModules.get(hostRaw);
+                Type exportType =
+                    exports == null ? null : exports.get(mae.field());
+                if (exportType instanceof Type.Func f
+                        && registerWrapperShape(f) != null) {
+                    return hostFnValueFieldName(id.name(), mae.field());
+                }
+                unsupported("host export '" + mae.field()
+                    + "' of module '" + hostRaw
+                    + "' used as a value (only declared function "
+                    + "exports with representable signatures are "
+                    + "supported)", mae.span());
+                return "null";
+            }
             String module = importAliases.get(id.name());
             if (module != null
                     && !SUPPORTED_STDLIB_MODULES.contains(module)
@@ -16108,6 +16228,14 @@ public final class JvmBackend {
             case Type.Boolean ignored -> "java.lang.Boolean";
             case Type.String ignored -> "java.lang.String";
             case Type.Class c -> {
+                // ISSUE-0307 gate closure: the builtin Error inner maps
+                // to java.lang.RuntimeException exactly like the
+                // non-nullable arm of {@link #javaLocalType} — the
+                // nullable catch-probe local shape (Error | null)
+                // stores the DEAL null as the plain Java reference.
+                if (isBuiltinErrorType(c)) {
+                    yield "java.lang.RuntimeException";
+                }
                 // A nullable imported class (C | null where C is declared
                 // by an imported module) maps to the DECLARING module's
                 // generated nested class — the same reference the
