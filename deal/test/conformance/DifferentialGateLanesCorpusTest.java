@@ -105,13 +105,15 @@ public class DifferentialGateLanesCorpusTest {
      * runtime-error, +1 companion; ISSUE-0504 lands the eight
      * host-boundary runtime-ok fixtures with their uniform three-backend
      * sidecars; the three ISSUE-0160 recursive bytes-closure fixtures
-     * land on top; ISSUE-0550 (the JVM dynamic boundary rows) then
-     * lands the six dynamic bytes-boundary fixtures (total 599 -> 605,
-     * runtime cases 354 -> 360); ISSUE-0507 then lands the nineteen
-     * FFI files — total 605 -> 624, runtime cases 360 -> 375,
-     * frontend-compiled 191 -> 192). */
-    private static final int TOTAL_FIXTURES = 624;
-    private static final int RUNTIME_CASES = 375;
+     * land on top; ISSUE-0548 (the JVM sync function-shape closure)
+     * then lands the six sync bytes-function fixtures (total 599 ->
+     * 606, runtime cases 354 -> 360); ISSUE-0550 (the JVM dynamic
+     * boundary rows) then lands the six dynamic bytes-boundary
+     * fixtures (total 606 -> 612, runtime cases 360 -> 366);
+     * ISSUE-0507 then lands the nineteen FFI files — total 612 -> 630,
+     * runtime cases 366 -> 381, frontend-compiled 191 -> 192). */
+    private static final int TOTAL_FIXTURES = 630;
+    private static final int RUNTIME_CASES = 381;
     private static final int FRONTEND_COMPILED = 192;
     private static final int COMPILE_PINS = 4;
     /** Pre-flip accounting pins (G8; the last on-disk known-fail
@@ -142,21 +144,26 @@ public class DifferentialGateLanesCorpusTest {
     private static final int KNOWN_FAILURES_TRACKED = 0;
     private static final int SKIP_REGISTRY_ENTRIES = 24;
 
-    /** The per-backend pass/fail counters of the full run. ISSUE-0507:
-     * every FFI runtime fixture passes on all three lanes — luajit
-     * executes through the production load_ffi path, jvm/js match the
-     * sanctioned compile-reject E6006 divergence — so each backend's
-     * pass counter grows by 15 and the failure counters are unchanged.
-     * the canonical pairs plus the ISSUE-0507 +15 passes; the
-     * ISSUE-0550 dynamic boundary rows then absorbed the four
-     * runtime-error dynamic bytes-boundary fixtures into the jvm
-     * registry and added the two runtime-ok passes, so the canonical
-     * pairs are the ones below and the merged pins are those pairs
-     * plus the ISSUE-0507 +15 passes. */
+    /** The per-backend pass/fail counters of the full run. The
+     * ISSUE-0548 sync function-shape closure adds six runtime
+     * fixtures — five runtime-ok passes on every lane, the
+     * bytes-fn-adapter-e8010 runtime-error fixture passing on luajit
+     * and failing on jvm (PROCESS_FAILURE) and js (TRANSCRIPT_MISMATCH)
+     * — so each backend gains five passes, luajit six, and jvm/js one
+     * failure. ISSUE-0507: every FFI runtime fixture passes on all
+     * three lanes — luajit executes through the production load_ffi
+     * path, jvm/js match the sanctioned compile-reject E6006
+     * divergence — so each backend's pass counter grows by 15 and the
+     * failure counters are unchanged. The ISSUE-0550 dynamic boundary
+     * rows then absorbed the four runtime-error dynamic
+     * bytes-boundary fixtures into the jvm registry and added the two
+     * runtime-ok passes, so the canonical pairs plus the ISSUE-0548
+     * six-runtime deltas and the ISSUE-0507 +15 passes are the merged
+     * pins below. */
     private static final Map<String, int[]> PER_BACKEND = Map.of(
-        "luajit", new int[] {343, 32},
-        "jvm", new int[] {278, 97},
-        "js", new int[] {344, 31});
+        "luajit", new int[] {349, 32},
+        "jvm", new int[] {283, 98},
+        "js", new int[] {349, 32});
 
     /** The designated converged subset (task criterion (a)): every lane
      * of every fixture here passes byte-exact. */
@@ -234,6 +241,8 @@ public class DifferentialGateLanesCorpusTest {
         "backend-runtime/control-flow-errors/error-inside-while-loop.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/defaults/plan-host-discriminator.deal | js | PROCESS_FAILURE",
         "backend-runtime/descriptors/canonical-sig-mismatch-e8010.deal | jvm | PROCESS_FAILURE",
+        "backend-runtime/bytes/bytes-fn-adapter-e8010.deal | js | TRANSCRIPT_MISMATCH",
+        "backend-runtime/bytes/bytes-fn-adapter-e8010.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/host-abi/host-async-bad.deal | js | TRANSCRIPT_MISMATCH",
         "backend-runtime/host-abi/host-async-bad.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/host-abi/host-async-shape-bad.deal | jvm | PROCESS_FAILURE",

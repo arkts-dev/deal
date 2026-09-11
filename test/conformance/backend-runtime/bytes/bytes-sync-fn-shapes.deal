@@ -1,0 +1,83 @@
+// @spec: Functions — bytes-bearing sync function values
+// @description: sync bytes-bearing function declarations, expressions, returns, callbacks, array/nullable parameter shapes, container storage/read/invocation, and reference preservation (v1.2)
+// @expected: runtime-ok
+// @features: bytes, functions, arrays
+
+function id(b: bytes): bytes { return b; }
+
+function firstOf(xs: bytes[]): int { return xs[0][0]; }
+
+function firstMaybe(xs: (bytes | null)[], v: int): int {
+  let head: bytes | null = xs[0];
+  if (head !== null) {
+    head[0] = v;
+    return head[0];
+  }
+  return -1;
+}
+
+function maybeLen(b: bytes | null): int {
+  if (b !== null) { return b.length; }
+  return -1;
+}
+
+function apply(cb: (b: bytes) => bytes, b: bytes): bytes { return cb(b); }
+
+export function test_bytes_sync_fn_shapes(): int {
+  let f: (b: bytes) => bytes = id;
+  let g: (b: bytes) => bytes = function(b: bytes): bytes { return b; };
+  let via: bytes = apply(id, bytes(2));
+  if (via[0] !== 0) {
+    throw { code: "TEST_FAIL", message: "callback invoke failed" };
+  }
+  let viaExpr: bytes = apply(g, bytes(3));
+  if (viaExpr.length !== 3) {
+    throw { code: "TEST_FAIL", message: "expression callback failed" };
+  }
+  if (f !== id) {
+    throw { code: "TEST_FAIL", message: "fn identity failed" };
+  }
+  if (f === g) {
+    throw { code: "TEST_FAIL", message: "distinct fn identity failed" };
+  }
+  let one: bytes[] = [bytes(1)];
+  one[0][0] = 9;
+  if (firstOf(one) !== 9) {
+    throw { code: "TEST_FAIL", message: "array param failed" };
+  }
+  let mn: (bytes | null)[] = [];
+  mn[mn.length] = bytes(1);
+  mn[mn.length] = null;
+  if (firstMaybe(mn, 7) !== 7) {
+    throw { code: "TEST_FAIL", message: "nullable array param failed" };
+  }
+  if (maybeLen(null) !== -1) {
+    throw { code: "TEST_FAIL", message: "nullable param null failed" };
+  }
+  if (maybeLen(bytes(5)) !== 5) {
+    throw { code: "TEST_FAIL", message: "nullable param value failed" };
+  }
+  let fs: ((b: bytes) => bytes)[] = [id, g];
+  fs[fs.length] = id;
+  if (fs[2](bytes(2))[0] !== 0) {
+    throw { code: "TEST_FAIL", message: "fn array failed" };
+  }
+  let ns: (((b: bytes) => bytes) | null)[] = [];
+  ns[ns.length] = id;
+  ns[ns.length] = null;
+  ns[ns.length] = g;
+  let pick: ((b: bytes) => bytes) | null = ns[2];
+  if (pick !== null) {
+    if (pick(bytes(4)).length !== 4) {
+      throw { code: "TEST_FAIL", message: "nullable fn array failed" };
+    }
+  }
+  if (ns[1] !== null) {
+    throw { code: "TEST_FAIL", message: "nullable fn null slot failed" };
+  }
+  return 0;
+}
+
+export function main(): null {
+  return null;
+}

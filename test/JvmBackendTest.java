@@ -10575,6 +10575,16 @@ public class JvmBackendTest {
             export class Holder { payload: table = {}; }
             function id(b: bytes): bytes { return b; }
             async function echo(b: bytes): bytes { return b; }
+            function bump(b: bytes, v: int): bytes { b[0] = b[0] + v; return b; }
+            function picker(): (b: bytes) => bytes { return id; }
+            function combine(f: (b: bytes) => bytes): (b: bytes) => bytes {
+              return f;
+            }
+            class Box {
+              cb: (b: bytes) => bytes = id;
+              both: (b: bytes, v: int) => bytes = bump;
+              maybe: ((b: bytes) => bytes) | null = null;
+            }
             export function main(): null { return null; }
             export function run(): int {
               let b: bytes = bytes(2);
@@ -10586,7 +10596,9 @@ public class JvmBackendTest {
               t.x = b;
               let c: bytes = t.x;
               let d: bytes | null = t.x;
-              return xs[0][0] + b.length;
+              let box: Box = {};
+              let via: bytes = box.cb(bytes(1));
+              return xs[0][0] + b.length + via.length;
             }
             """, "bytes_closure_artifact");
         check(artifact.contains(
@@ -10627,12 +10639,63 @@ public class JvmBackendTest {
             "an array-mode table converts through $dynamicBytesOrNullArray");
         check(artifact.contains("static abstract class Fn1_Y_R_Y"),
             "(bytes)->bytes uses the shared Y-segment wrapper shape");
+        check(artifact.contains(
+                "static abstract class Fn1_Y_R_Y implements FnValue {\n"
+                    + "        final java.lang.String descriptor = "
+                    + "\"(bytes)->bytes\";"),
+            "the (bytes)->bytes wrapper carries the complete canonical "
+                + "descriptor text (bytes)->bytes");
         check(artifact.contains("static abstract class FnA1_Y_R_Y"),
             "async(bytes)->bytes uses the distinct async wrapper shape");
         check(artifact.contains(
                 "final java.lang.String descriptor = \"async(bytes)->bytes\";"),
             "the async bytes wrapper carries the complete canonical "
                 + "async(bytes)->bytes descriptor");
+        check(artifact.contains("static abstract class Fn2_Y_I_R_Y"),
+            "(bytes,int)->bytes uses the two-parameter Y-segment wrapper "
+                + "shape (ISSUE-0548 sync function-shape closure)");
+        check(artifact.contains(
+                "static abstract class Fn2_Y_I_R_Y implements FnValue {\n"
+                    + "        final java.lang.String descriptor = "
+                    + "\"(bytes,int)->bytes\";"),
+            "the (bytes,int)->bytes wrapper carries the complete "
+                + "canonical descriptor text (bytes,int)->bytes");
+        check(artifact.contains(
+                "static abstract class Fn0_R_$$lbytes$r$m$gbytes "
+                    + "implements FnValue {"),
+            "()->(bytes)->bytes uses the descriptor-escaped nested "
+                + "function shape id");
+        check(artifact.contains(
+                "        final java.lang.String descriptor = "
+                    + "\"()->(bytes)->bytes\";"),
+            "the ()->(bytes)->bytes wrapper carries the complete "
+                + "canonical descriptor text ()->(bytes)->bytes");
+        check(artifact.contains(
+                "static abstract class "
+                    + "Fn1_$$lbytes$r$m$gbytes_R_$$lbytes$r$m$gbytes "
+                    + "implements FnValue {"),
+            "((bytes)->bytes)->(bytes)->bytes uses the descriptor-escaped "
+                + "nested function shape id");
+        check(artifact.contains(
+                "        final java.lang.String descriptor = "
+                    + "\"((bytes)->bytes)->(bytes)->bytes\";"),
+            "the ((bytes)->bytes)->(bytes)->bytes wrapper carries the "
+                + "complete canonical descriptor text");
+        check(artifact.contains("$DealRt.Fn1_Y_R_Y cb;"),
+            "a plain class field of bytes-bearing function type stores "
+                + "the shared wrapper reference");
+        check(artifact.contains("$DealRt.Fn2_Y_I_R_Y both;"),
+            "a two-parameter class field of bytes-bearing function "
+                + "type stores the shared wrapper reference");
+        check(artifact.contains("$DealRt.Fn1_Y_R_Y maybe;"),
+            "a nullable class field of bytes-bearing function type "
+                + "stores the shared wrapper reference (Java null is "
+                + "the DEAL null)");
+        check(artifact.contains("$DealRt.Bytes via = (box).cb.invoke("),
+            "a call through a class field holding a bytes-bearing "
+                + "function value dispatches through the field's wrapper "
+                + "invoke");
+>>>>>>> 845185e5 (ISSUE-0548-sync-bytes-function-shape-closure)
         check(!artifact.contains(
                 "if (v instanceof $DealRt.Bytes) throw new DealError("
                     + "\"E8001\", \"unsupported type for JSON encoding: "

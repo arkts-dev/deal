@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "backends": ["luajit", "jvm", "js"],
+  "expected": {
+    "mode": "runtime-error",
+    "transcript": {
+      "stdout": "DEAL_ERROR_CODE: E8010\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8010\",\"message\":\"function signature mismatch: expected (bytes,int)->bytes, got (bytes)->bytes\",\"sourceFile\":\"backend-runtime/bytes/bytes-fn-adapter-e8010.deal\",\"line\":8,\"column\":21,\"expected\":\"(bytes,int)->bytes\",\"actual\":\"(bytes)->bytes\"}\n",
+      "stderr": ""
+    },
+    "exitCode": 1,
+    "error": {
+      "code": "E8010",
+      "message": "function signature mismatch: expected (bytes,int)->bytes, got (bytes)->bytes",
+      "sourceFile": "backend-runtime/bytes/bytes-fn-adapter-e8010.deal",
+      "line": 8,
+      "column": 21,
+      "expected": "(bytes,int)->bytes",
+      "actual": "(bytes)->bytes"
+    }
+  }
+}

@@ -1,0 +1,27 @@
+// @spec: Functions — cross-module bytes-bearing function values
+// @description: bytes-bearing function values imported and exported across module boundaries keep one shared wrapper, complete canonical descriptors, and reference identity (v1.2)
+// @expected: runtime-ok
+// @features: bytes, functions, modules
+
+import * as Lib from "./bytes-fn-xmod-lib";
+
+export function test_bytes_fn_xmod(): int {
+  let f: (b: bytes) => bytes = Lib.makeId();
+  let g: (b: bytes) => bytes = Lib.makeId();
+  if (f(bytes(2)).length !== 2) {
+    throw { code: "TEST_FAIL", message: "imported fn invoke failed" };
+  }
+  if (!Lib.sameId(f, g)) {
+    throw { code: "TEST_FAIL", message: "imported fn identity failed" };
+  }
+  let m: (b: bytes) => bytes = Lib.makeId();
+  let h: (b: bytes, v: int) => bytes = m;
+  if (h(bytes(1), 5)[0] !== 0) {
+    throw { code: "TEST_FAIL", message: "imported fn adapter failed" };
+  }
+  return 0;
+}
+
+export function main(): null {
+  return null;
+}

@@ -42,7 +42,7 @@ import java.util.List;
  *       activated invocation (the gate validity condition
  *       {@code expectation(fixture) == landed std/time.js behavior}
  *       holds — js-v12-completion-architecture D5), the frontend and
- *       companion gates are green (7/7 and 32/32), all 375
+ *       companion gates are green (7/7 and 33/33), all 381
  *       node-executed backend-runtime tests pass with zero failures and
  *       zero skips (pass rate 100.0%), and the {@code Gates PASSED}
  *       line prints. The three former owner-delegated lane divergences
@@ -88,27 +88,30 @@ public class JsLaneStatePinTest {
      * provides the six invoked exports, so all eight pass the closed
      * gate — and the denominator moves 343 -> 351; the three
      * ISSUE-0160 closure fixtures then move it to 354; the six
-     * ISSUE-0550 dynamic boundary-row fixtures then move it to 360
+     * ISSUE-0548 sync bytes-function fixtures then move it to 360
+     * (the six all run as node subprocesses); the six
+     * ISSUE-0550 dynamic boundary-row fixtures then move it to 366
      * (the JS lane passes every one at the code level). The ISSUE-0507
      * FFI additions then move the frontend total 6 -> 7, the
-     * denominator 360 -> 375 (the fifteen runtime-classified FFI
+     * denominator 366 -> 381 (the fifteen runtime-classified FFI
      * fixtures compile-reject at the import-site arm and add no node
-     * subprocess runs), and the companions 29 -> 32. */
+     * subprocess runs), and the companions 29 -> 32, plus the
+     * ISSUE-0548 bytes-fn-xmod companion -> 33. */
     private static final String SUMMARY_FRONTEND =
         "Frontend (backend-neutral compile-ok/compile-error): total 7, "
             + "passed 7, failed 0";
     private static final String SUMMARY_RUNTIME =
-        "Backend-runtime on Node: denominator 375 (every on-disk "
+        "Backend-runtime on Node: denominator 381 (every on-disk "
             + "runtime-ok/runtime-error test plus every known-fail "
-            + "probe), passed 375, failed 0, skipped 0 (no skip registry "
+            + "probe), passed 381, failed 0, skipped 0 (no skip registry "
             + "— zero skips by construction), known-fail 0 (tracked), "
-            + "node subprocess runs 360 — pass rate 100.0%";
+            + "node subprocess runs 366 — pass rate 100.0%";
     private static final String SUMMARY_COMPANIONS =
-        "classified 32 (on-disk @expected: companion 32), passed 32, "
+        "classified 33 (on-disk @expected: companion 33), passed 33, "
             + "failed 0";
     private static final String GATES_PASSED_LINE =
         "Gates PASSED: frontend 100%; backend-runtime on node zero "
-            + "applicable failures AND 100% of the node-executed 375-test"
+            + "applicable failures AND 100% of the node-executed 381-test"
             + " denominator; zero skipped (no skip registry); zero stale "
             + "known-fail markers; companion counts equal the on-disk "
             + "corpus and every companion standalone-compiles and "
@@ -237,9 +240,8 @@ public class JsLaneStatePinTest {
             "test/conformance/");
         check(run.exitCode() == 0,
             "the closed JS gate exits 0 (the ISSUE-0331 completion gate "
-                + "closure: all 375 applicable fixtures pass with 360 "
+                + "closure: all 381 applicable fixtures pass with 366 "
                 + "node subprocess runs, zero "
-                + "skips), got " + run.exitCode());
 
         String out = run.output();
         checkZeroFailureLines(out);

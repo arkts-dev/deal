@@ -1,0 +1,43 @@
+// @spec: Functions — arity extension over bytes-bearing signatures
+// @description: compatible M<N prefix adapters over bytes-bearing function values delegate only the source prefix and silently ignore extras (v1.2)
+// @expected: runtime-ok
+// @features: bytes, functions, arity
+
+function id(b: bytes): bytes { return b; }
+
+function bump(b: bytes, v: int): bytes {
+  b[0] = b[0] + v;
+  return b;
+}
+
+export function test_bytes_fn_adapters(): int {
+  let h: (b: bytes, v: int) => bytes = id;
+  let out: bytes = h(bytes(2), 999);
+  if (out[0] !== 0) {
+    throw { code: "TEST_FAIL", message: "adapter ignored extra failed" };
+  }
+  let b: bytes = bytes(1);
+  let again: bytes = h(b, 12345);
+  if (again !== b) {
+    throw { code: "TEST_FAIL", message: "adapter prefix identity failed" };
+  }
+  let h2: (b: bytes, v: int) => bytes = id;
+  if (h2(bytes(1), 1)[0] !== 0) {
+    throw { code: "TEST_FAIL", message: "second adapter failed" };
+  }
+  let two: (b: bytes, v: int, extra: string) => bytes = id;
+  let r: bytes = two(bytes(2), 7, "ignored");
+  if (r[0] !== 0) {
+    throw { code: "TEST_FAIL", message: "three-param adapter failed" };
+  }
+  let withBump: (b: bytes, v: int) => bytes = bump;
+  let rb: bytes = withBump(bytes(2), 5);
+  if (rb[0] !== 5) {
+    throw { code: "TEST_FAIL", message: "same-arity failed" };
+  }
+  return 0;
+}
+
+export function main(): null {
+  return null;
+}

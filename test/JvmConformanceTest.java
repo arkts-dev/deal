@@ -77,7 +77,24 @@ import java.util.concurrent.atomic.AtomicInteger;
  * host-async-shape-value passes as its pinned runtime-error E8010),
  * and the eight ISSUE-0504 host-boundary fixtures (the boxed int/
  * Integer carrier class literals match the declared host shapes under
- * DEAL_V1_2_INT32 — every host-boundary fixture passes). The
+ * DEAL_V1_2_INT32 — every host-boundary fixture passes). ISSUE-0548
+ * (the sync bytes-function shape closure) then lands the six sync
+ * bytes-function fixtures plus their companion (bytes-sync-fn-shapes,
+ * bytes-fn-adapters, bytes-fn-adapter-e8010, bytes-identity-equality,
+ * bytes-nested-fn-shapes, bytes-fn-xmod): the wrapper shapes, the
+ * prefix adapters, the E8010 check position, the reference-identity
+ * equality, and the bytes-bearing class-field function slots all pass
+ * the real pipeline on the closed gate — zero skips, zero entries. The
+ * adapter live-rebinding criterion splits by surface: the module-level
+ * binding reassignment stays a LuaJIT-only reference pin
+ * ({@code jvm-bytes-lua-ref-reassigned-adapter} in
+ * {@code jvm-bytes-slice.json} — the adapter re-reads the chunk local
+ * live, so {@code id = stamp} retargets it) because the JVM backend
+ * retains the reason-bearing E6000 for that reassignment, never a
+ * bytes reason (pinned in {@code JvmBackendTest
+ * .testRecursiveBytesClosureLane}), while the reachable class-field
+ * re-read surface ({@code box.cb = picker(); box.cb(...)}) passes the
+ * real pipeline in bytes-nested-fn-shapes.deal. The
  * anti-hollow evidence owner is {@code test/JvmLaneStatePinTest.java}:
  * it runs this lane and the real LuaJIT lane as subprocesses and
  * asserts the captured closed-state output field-exactly on every gate
@@ -122,8 +139,12 @@ import java.util.concurrent.atomic.AtomicInteger;
  *   <li>frontend-classified files: 100% pass (zero failed);</li>
  *   <li>backend-runtime: zero applicable failures AND 100% of the
  *       on-disk backend-runtime denominator (the per-run
- *       {@code runtimeDenominator()} count — 375, the closed 354
- *       plus the six ISSUE-0550 dynamic bytes-boundary fixtures:
+ *       {@code runtimeDenominator()} count — 381: the closed 354
+ *       plus the six ISSUE-0548 sync bytes-function fixtures
+ *       (bytes-sync-fn-shapes, bytes-fn-adapters,
+ *       bytes-fn-adapter-e8010, bytes-identity-equality,
+ *       bytes-nested-fn-shapes, bytes-fn-xmod) plus the six
+ *       ISSUE-0550 dynamic bytes-boundary fixtures:
  *       bytes-dynamic-boundary-ok, bytes-dynamic-wrong-kind-e8001,
  *       bytes-dynamic-nested-first-element-e8003,
  *       bytes-dynamic-function-mismatch-e8010,

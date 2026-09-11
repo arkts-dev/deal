@@ -1,0 +1,14 @@
+// @expected: companion
+// @description: Classified support module — compiled by the companion
+// catalog when a parent conformance fixture imports it. The v1.2 gate
+// (ISSUE-0107) removes unclassified skips: every .deal file carries an
+// explicit classification, and companions must keep compiling standalone.
+// @spec: Functions — bytes-bearing cross-module function values
+
+function id(b: bytes): bytes { return b; }
+
+export function makeId(): (b: bytes) => bytes { return id; }
+
+export function sameId(f: (b: bytes) => bytes, g: (b: bytes) => bytes): boolean {
+  return f === g;
+}

@@ -222,14 +222,19 @@ public class SidecarCorpusValidationTest {
      * host-boundary-nullable-int-value-roundtrip — the host +8 delta:
      * 250 -> 258. ISSUE-0160 (the recursive bytes-bearing closure)
      * adds the three closure fixtures with their three-backend
-     * runtime-ok sidecars: 258 -> 261. ISSUE-0550 (the JVM dynamic
+     * runtime-ok sidecars: 258 -> 261. ISSUE-0548 (the JVM sync
+     * function-shape closure) adds the five sync bytes-function
+     * runtime-ok fixtures with their uniform three-backend sidecars
+     * (bytes-sync-fn-shapes, bytes-fn-adapters,
+     * bytes-identity-equality, bytes-nested-fn-shapes,
+     * bytes-fn-xmod): 261 -> 266. ISSUE-0550 (the JVM dynamic
      * boundary rows) then adds the two runtime-ok dynamic
      * bytes-boundary fixtures with their three-backend runtime-ok
-     * sidecars: 261 -> 263. ISSUE-0507 then adds the ten
+     * sidecars: 266 -> 268. ISSUE-0507 then adds the ten
      * runtime-ok FFI fixtures under backend-runtime/ffi/ with their
-     * divergent C6 sidecars: 263 -> 273. */
+     * divergent C6 sidecars: 268 -> 278. */
 
-    private static final int RUNTIME_OK_COUNT = 273;
+    private static final int RUNTIME_OK_COUNT = 278;
 
     /**
      * The exact runtime-error population (ISSUE-0350 completeness, plus
@@ -283,14 +288,19 @@ public class SidecarCorpusValidationTest {
      * (rtc-035-remainder-zero-error re-pinned to the emitted E8005),
      * and source-location +3 (036-runtime-source-array-oob re-pinned
      * to the emitted E8001, 037-runtime-source-div-zero E8005,
-     * 038-runtime-source-throw PINNED_THROW): 83 -> 93. ISSUE-0550
+     * 038-runtime-source-throw PINNED_THROW): 83 -> 93.
+     * ISSUE-0548 adds the sync bytes-function arity-extension
+     * check-position fixture bytes-fn-adapter-e8010 with its
+     * three-backend runtime-error sidecar pinning the LuaJIT
+     * reference span (the canonical E8010 signature-mismatch
+     * framing): 93 -> 94. ISSUE-0550
      * (the JVM dynamic boundary rows) then adds the four runtime-error
      * dynamic bytes-boundary fixtures with their canonical-snapshot
-     * sidecars: 93 -> 97. ISSUE-0507
+     * sidecars: 94 -> 98. ISSUE-0507
      * adds the five runtime-error FFI fixtures under
-     * backend-runtime/ffi/ with their divergent C6 sidecars: 97 -> 102.
+     * backend-runtime/ffi/ with their divergent C6 sidecars: 98 -> 103.
  */
-    private static final int RUNTIME_ERROR_COUNT = 102;
+    private static final int RUNTIME_ERROR_COUNT = 103;
 
 
 

@@ -47,8 +47,8 @@ import java.util.List;
  * </ul>
  *
  * <p>The closed JVM lane state (ISSUE-0307): exit code 0 — every one
- * of the 375 on-disk applicable backend-runtime fixtures passes the
- * real pipeline (denominator 375, passed 375, failed 0, skipped 0,
+ * of the 381 on-disk applicable backend-runtime fixtures passes the
+ * real pipeline (denominator 381, passed 381, failed 0, skipped 0,
  * known-fail 0, pass rate 100.0%). The four final gap families closed
  * with their dispositions: the Error literal default filling (the
  * builtin {@code code}/{@code message} defaults to {@code ""}), the
@@ -56,25 +56,31 @@ import java.util.List;
  * the host export used as a first-class function value (the per-export
  * shared wrapper carrier keeps the identical E8010 boundary check), and
  * the eight ISSUE-0504 host-boundary fixtures (the boxed int/Integer
- * carrier class literals match the declared host shapes). ISSUE-0550
+ * carrier class literals match the declared host shapes). ISSUE-0548
+ * (the sync bytes-function shape closure) then lands the six sync
+ * bytes-function fixtures plus their companion on the closed gate —
+ * wrapper shapes, prefix adapters, the E8010 check position,
+ * reference-identity equality, and bytes-bearing class-field function
+ * slots all pass the real pipeline — so the denominator moves to 360
+ * and the summary stays at 100.0%. ISSUE-0550
  * (the dynamic boundary rows) then lands the six dynamic
  * bytes-boundary fixtures — the two runtime-ok fixtures and the four
  * runtime-error fixtures whose pinned E8001/E8003/E8010 codes match
  * the real JVM emissions at the code-level needle — so the closed
- * summary moves to denominator 360, passed 360, pass rate 100.0%.
+ * summary moves to denominator 366, passed 366, pass rate 100.0%.
  * ISSUE-0507
  * (FFI candidate fixture conformance) then adds the sixteen FFI
  * fixtures under {@code backend-runtime/ffi/}: the fifteen
  * runtime-classified fixtures pass the real pipeline as
  * compile-reject E6006 FFI_UNSUPPORTED_BACKEND (the sanctioned C6
  * divergence) and the async-declaration fixture passes the frontend
- * gate as E7002, so the summary moved again to denominator 375,
- * passed 375, failed 0, skipped 0, known-fail 0, pass rate 100.0%.
+ * gate as E7002, so the summary moved again to denominator 381,
+ * passed 381, failed 0, skipped 0, known-fail 0, pass rate 100.0%.
  * The LuaJIT lane (consequence, pinned): exit code 0 with
- * {@code Total: 571, Passed: 571} (624 discovered - 53 companions)
- * with the backend-runtime phase at 382/382, and the
- * profile-authority accounting reads 623 v1.2-credit results
- * (624 - 1 legacy).
+ * {@code Total: 576, Passed: 576} (630 discovered - 54 companions)
+ * with the backend-runtime phase at 388/388, and the
+ * profile-authority accounting reads 629 v1.2-credit results
+ * (630 - 1 legacy).
  *
  * <p>The test runs from the repository root (the {@code run_tests.sh}
  * contract, like {@code ConformanceTest}); {@code run_tests.sh}
@@ -103,7 +109,7 @@ public class JvmLaneStatePinTest {
 
     private static final String JVM_GATES_PASSED =
         "Gates PASSED: frontend 100%; backend-runtime zero applicable "
-            + "failures AND 100% of the unchanged 375-test denominator "
+            + "failures AND 100% of the unchanged 381-test denominator "
             + "through codegen, javac, and java; zero skips (no registry "
             + "\u2014 zero by construction); zero stale known-fail markers; "
             + "zero probe runner exceptions.";
@@ -121,24 +127,29 @@ public class JvmLaneStatePinTest {
     // shapes under DEAL_V1_2_INT32). The registry itself is retired —
     // removed, never retained empty — so the gate records skipped 0 by
     // construction and the closed summary reads 354/354 at 100.0%.
+    // ISSUE-0548 (the sync bytes-function shape closure) then lands the
+    // six sync bytes-function fixtures plus their companion on the
+    // closed gate — every one passes the real pipeline — so the
+    // summary moves to the re-pinned numbers below (denominator 360,
+    // passed 360) and the closed summary reads 360/360 at 100.0%.
     // ISSUE-0550 (the dynamic boundary rows) then lands the six dynamic
     // bytes-boundary fixtures — the two runtime-ok fixtures
     // (bytes-dynamic-boundary-ok, bytes-dynamic-nullable-function-ok)
     // and the four runtime-error fixtures (the pinned E8001/E8003/E8010
     // codes match the real JVM emissions at the code-level needle, so
     // they need no skip entry here) — so the closed summary moves to
-    // 360/360 at 100.0%.
+    // 366/366 at 100.0%.
     // ISSUE-0507 (FFI candidate fixture conformance) then adds the
     // fifteen runtime-classified FFI fixtures, every one passing the
     // real pipeline as the sanctioned compile-reject E6006
     // FFI_UNSUPPORTED_BACKEND divergence (the async-declaration
     // fixture is frontend-classified and never enters this
     // denominator), so the closed summary moves again to the re-pinned
-    // numbers below (denominator 375, passed 375, skipped 0, pass rate
+    // numbers below (denominator 381, passed 381, skipped 0, pass rate
     // 100.0%).
     private static final String JVM_SUMMARY =
-        "Backend-runtime on JVM: denominator 375 (every on-disk runtime "
-            + "test, unchanged), passed 375, failed 0, skipped 0 (no "
+        "Backend-runtime on JVM: denominator 381 (every on-disk runtime "
+            + "test, unchanged), passed 381, failed 0, skipped 0 (no "
             + "registry \u2014 zero skips by construction), known-fail 0 "
             + "(tracked) \u2014 pass rate 100.0%";
 
@@ -177,22 +188,27 @@ public class JvmLaneStatePinTest {
     // companions) and the backend-runtime phase reads 357/357; the
     // three ISSUE-0160 recursive bytes-closure corpus fixtures then
     // land on top (599 discovered), so the summary reads 549 recorded
-    // results and the backend-runtime phase reads 360/360; the six
-    // ISSUE-0550 dynamic boundary-row fixtures then land on top (605
-    // discovered), so the summary reads 555 recorded results and the
-    // backend-runtime phase reads 366/366. ISSUE-0507
+    // results and the backend-runtime phase reads 360/360. ISSUE-0548
+    // (the JVM sync function-shape closure) then lands the six sync
+    // bytes-function fixtures plus their companion on top (606
+    // discovered, 51 companions), so the summary reads the re-pinned
+    // 555 recorded results and the backend-runtime phase reads 366/366;
+    // the six
+    // ISSUE-0550 dynamic boundary-row fixtures then land on top (612
+    // discovered), so the summary reads 561 recorded results and the
+    // backend-runtime phase reads 372/372. ISSUE-0507
     // (FFI candidate fixture conformance) then adds the nineteen FFI
     // files — the sixteen fixtures (ten runtime-ok, five runtime-error,
     // one compile-error E7002) plus their three companion support
-    // declarations — so the summary reads 571 recorded results
-    // (624 discovered - 53 companions, zero tracked known-fail) and the
-    // backend-runtime phase reads 382/382.
+    // declarations — so the summary reads 576 recorded results
+    // (630 discovered - 54 companions, zero tracked known-fail) and the
+    // backend-runtime phase reads 388/388.
     private static final String LUA_SUMMARY =
-        "Total: 571, Passed: 571, Failed: 0, Skipped: 0, "
+        "Total: 576, Passed: 576, Failed: 0, Skipped: 0, "
             + "KnownFailures (tracked): 0, StagedFailures (tracked): 0";
 
     private static final String LUA_PHASE =
-        "  LuaJIT backend-runtime conformance (v1.2): 382/382 passed, "
+        "  LuaJIT backend-runtime conformance (v1.2): 388/388 passed, "
             + "0 failed, 0 skipped, 0 known-fail (tracked), 0 "
             + "staged-fail (tracked)";
 
@@ -203,7 +219,7 @@ public class JvmLaneStatePinTest {
     private static final String LUA_PROFILE_AUTHORITY =
         "Profile-authority accounting: 1 legacy-authority result(s) "
             + "(LEGACY_REGRESSION + LEGACY_SAFE_INT \u2014 zero "
-            + "v1.2/promotion credit; 1 passed, 0 failed), 623 v1.2-credit "
+            + "v1.2/promotion credit; 1 passed, 0 failed), 629 v1.2-credit "
             + "result(s) (COMMON_SHADOW + DEAL_V1_2_INT32)";
 
 

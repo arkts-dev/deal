@@ -1,0 +1,59 @@
+// @spec: Functions — nested sync bytes-bearing function signatures
+// @description: a first-class function value returning another bytes-bearing function, nested wrapper shapes, and class fields holding bytes-bearing function values — plain and nullable slots with a default-provided function reference (v1.2)
+// @expected: runtime-ok
+// @features: bytes, functions, classes
+
+function id(b: bytes): bytes { return b; }
+
+function picker(): (b: bytes) => bytes { return id; }
+
+function combine(f: (b: bytes) => bytes): (b: bytes) => bytes {
+  return f;
+}
+
+class Holder {
+  cb: (b: bytes) => bytes = id;
+  maybe: ((b: bytes) => bytes) | null = null;
+}
+
+export function test_bytes_nested_fn_shapes(): int {
+  let f: () => (b: bytes) => bytes = picker;
+  let g: (b: bytes) => bytes = f();
+  if (g(bytes(2)).length !== 2) {
+    throw { code: "TEST_FAIL", message: "nested fn return failed" };
+  }
+  let h: (b: bytes) => bytes = combine(id);
+  if (h(bytes(3)).length !== 3) {
+    throw { code: "TEST_FAIL", message: "fn-of-fn failed" };
+  }
+  let box: Holder = {};
+  if (box.cb(bytes(1)).length !== 1) {
+    throw { code: "TEST_FAIL", message: "class field fn failed" };
+  }
+  let stored: ((b: bytes) => bytes) | null = box.maybe;
+  if (stored !== null) {
+    throw { code: "TEST_FAIL", message: "nullable fn field default failed" };
+  }
+  box.cb = picker();
+  if (box.cb(bytes(4)).length !== 4) {
+    throw { code: "TEST_FAIL", message: "class field fn write failed" };
+  }
+  box.maybe = id;
+  let via: ((b: bytes) => bytes) | null = box.maybe;
+  if (via !== null) {
+    let out: bytes = via(bytes(5));
+    if (out.length !== 5) {
+      throw { code: "TEST_FAIL", message: "nullable fn field write failed" };
+    }
+  }
+  let list: (() => (b: bytes) => bytes)[] = [picker];
+  let again: (b: bytes) => bytes = list[0]();
+  if (again(bytes(4)).length !== 4) {
+    throw { code: "TEST_FAIL", message: "nested fn array failed" };
+  }
+  return 0;
+}
+
+export function main(): null {
+  return null;
+}

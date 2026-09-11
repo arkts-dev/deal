@@ -105,37 +105,46 @@ public class DifferentialGateCorpusTest {
      * three closure fixtures (bytes-array-closure, bytes-async-closure,
      * bytes-function-array-closure) with their three-backend runtime-ok
      * sidecars: total 596 -> 599, backend-runtime 386 -> 389,
-     * runtime-ok 258 -> 261. ISSUE-0550 (the JVM dynamic boundary
-     * rows) then adds the six dynamic bytes-boundary fixtures — the
-     * two runtime-ok fixtures (bytes-dynamic-boundary-ok,
+     * runtime-ok 258 -> 261. ISSUE-0548 (the JVM sync function-shape
+     * closure) then adds the six sync bytes-function fixtures plus
+     * their companion — five runtime-ok sidecars
+     * (bytes-sync-fn-shapes, bytes-fn-adapters,
+     * bytes-identity-equality, bytes-nested-fn-shapes,
+     * bytes-fn-xmod) and one runtime-error sidecar
+     * (bytes-fn-adapter-e8010) — in the same change: total 599 -> 606,
+     * backend-runtime 389 -> 396, runtime-ok 261 -> 266,
+     * runtime-error 93 -> 94, companions 50 -> 51. ISSUE-0550 (the
+     * JVM dynamic boundary rows) then adds the six dynamic
+     * bytes-boundary fixtures — the two runtime-ok fixtures
+     * (bytes-dynamic-boundary-ok,
      * bytes-dynamic-nullable-function-ok) and the four runtime-error
      * fixtures (bytes-dynamic-wrong-kind-e8001,
      * bytes-dynamic-nested-first-element-e8003,
      * bytes-dynamic-function-mismatch-e8010,
      * bytes-dynamic-async-function-mismatch-e8010) with their
-     * canonical-snapshot sidecars: total 599 -> 605, backend-runtime
-     * 389 -> 395, runtime-ok 261 -> 263, runtime-error 93 -> 97; the
+     * canonical-snapshot sidecars: total 606 -> 612, backend-runtime
+     * 396 -> 402, runtime-ok 266 -> 268, runtime-error 94 -> 98; the
      * frontend populations, compile-ok (64), compile-error (131),
-     * companions (50), the known-fail population, and the compile
+     * companions (51), the known-fail population, and the compile
      * pins (4) are unchanged. ISSUE-0507 (FFI candidate fixture
      * conformance) then lands the nineteen FFI files under
      * {@code backend-runtime/ffi/} — the sixteen fixtures (ten
      * runtime-ok, five runtime-error, one compile-error E7002) plus
      * their three companion support declarations — in the same change:
-     * total 605 -> 624, backend-runtime 395 -> 414, runtime-ok
-     * 263 -> 273, runtime-error 97 -> 102, compile-error 131 -> 132,
-     * companions 50 -> 53; the frontend population (210), compile-ok
+     * total 612 -> 630, backend-runtime 402 -> 420, runtime-ok
+     * 268 -> 278, runtime-error 98 -> 103, compile-error 131 -> 132,
+     * companions 51 -> 54; the frontend population (210), compile-ok
      * (64), the known-fail population (0), and the compile pins (4)
      * are unchanged. */
-    private static final int TOTAL_FIXTURES = 624;
+    private static final int TOTAL_FIXTURES = 630;
     private static final int FRONTEND_FIXTURES = 210;
-    private static final int BACKEND_RUNTIME_FIXTURES = 414;
+    private static final int BACKEND_RUNTIME_FIXTURES = 420;
     private static final int COMPILE_OK = 64;
     private static final int COMPILE_ERROR = 132;
-    private static final int RUNTIME_OK = 273;
-    private static final int RUNTIME_ERROR = 102;
-    private static final int RUNTIME_ERROR_SIDECARS = 102;
-    private static final int COMPANIONS = 53;
+    private static final int RUNTIME_OK = 278;
+    private static final int RUNTIME_ERROR = 103;
+    private static final int RUNTIME_ERROR_SIDECARS = 103;
+    private static final int COMPANIONS = 54;
     private static final int KNOWN_FAIL = 0;
     private static final int COMPILE_PINS = 4;
 
