@@ -470,22 +470,17 @@ public class JvmConformanceTest {
         // ---- JVM-GAP-DEFAULTS-PLANS: the v1.2 default-plan lane
         // (ISSUE-0340, LuaJIT-owned) ----
         // The defaults corpus pins per-attempt default plans: imported
-        // non-literal defaults run in the declaring module's scope under
-        // LuaJIT (the provider's module-local default function executes
-        // through the imported plan), and the phase-order fixture probes
-        // provided-value evaluation before defaults with a caught E8002
-        // (an Error | null local with a catch-block assignment). The JVM
-        // backend evaluates defaults inline per call and rejects
-        // non-literal defaults on imported classes with E6000
-        // (JvmBackend's declared scope), and its slice rejects the
+        // defaults run in the declaring module's scope through the
+        // provider's published plan records — the ISSUE-0544 lowering
+        // epic lifted the JVM imported-non-literal-default plan-shape
+        // guard, so plan-imported-provider-scope passes the real
+        // pipeline (promoted with its skip entry removed). The
+        // phase-order fixture probes provided-value evaluation before
+        // defaults with a caught E8002 (an Error | null local with a
+        // catch-block assignment): the JVM slice rejects the
         // Error-typed nullable local plus the catch-assignment pattern
-        // of the phase-order probe. Both fixtures stay LuaJIT/JS-lane
-        // pins until JVM default plans land (ISSUE-0277).
-        skip("backend-runtime/defaults/plan-imported-provider-scope.deal",
-            "E6000: non-literal default expression on an imported class "
-                + "(JVM defaults evaluate in the declaring module's "
-                + "scope under LuaJIT; the JVM imported-class slice "
-                + "rejects them).", "JVM-GAP-DEFAULTS-PLANS");
+        // of that probe, so it stays a LuaJIT/JS-lane pin until the JVM
+        // Error-literal/catch-assignment slice lands.
         skip("backend-runtime/defaults/plan-phase-order-provided-before-defaults.deal",
             "E6000: the Error | null catch-probe local and the "
                 + "catch-block assignment are outside the JVM slice "
@@ -551,11 +546,12 @@ public class JvmConformanceTest {
             + "function wrapper closure ((bytes)->bytes signatures), "
             + "which stays E6000 until the later ISSUE-0160 function "
             + "steps",
-        "JVM-GAP-DEFAULTS-PLANS", "v1.2 default-plan lane — imported "
-            + "non-literal defaults evaluate in the declaring module's "
-            + "scope under LuaJIT (E6000 on the JVM imported-class "
-            + "slice) and the phase-order Error-catch probe is outside "
-            + "the JVM slice (ISSUE-0340 is the LuaJIT emitter cutover)",
+        "JVM-GAP-DEFAULTS-PLANS", "v1.2 default-plan lane — the "
+            + "ISSUE-0544 lowering epic lifted the imported-non-literal-"
+            + "default plan-shape guard (imported defaults run through "
+            + "the provider's published plan records); the phase-order "
+            + "Error-catch probe stays outside the JVM slice (ISSUE-0340 "
+            + "is the LuaJIT emitter cutover)",
         "JVM-GAP-ERROR-LITERAL-DEFAULTS", "Error literal default "
             + "filling — JvmBackend raises E6000 on an Error literal "
             + "without both code and message fields (LuaJIT-owned "

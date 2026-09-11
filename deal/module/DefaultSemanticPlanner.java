@@ -246,7 +246,15 @@ public final class DefaultSemanticPlanner {
             }
             if (cf.optional()) {
                 // An optional field's declared default is checked but
-                // never evaluates: no plan entry and no occurrence.
+                // never evaluates (D2, runtime page D1): the plan entry
+                // keeps the field declared — in class source order,
+                // optional with no default expression, so construction
+                // and fromJson accept provided values for it — while no
+                // default expression, no runtime resource occurrence,
+                // and no evaluator ever exist for it. The recorded IR
+                // stays an input for the serializer's metadata only.
+                entries.add(new CompilerClassDefaultEntry(cf.name(),
+                    fieldType, runtimeTypeDescriptor, true, null));
                 continue;
             }
             ResolvedDefaultExpression expression =

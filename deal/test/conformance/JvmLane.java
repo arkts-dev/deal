@@ -1921,20 +1921,16 @@ public class JvmLane implements Lane {
         // ---- JVM-GAP-DEFAULTS-PLANS: the v1.2 default-plan lane
         // (ISSUE-0340, LuaJIT-owned) ----
         // The defaults corpus pins per-attempt default plans: imported
-        // non-literal defaults run in the declaring module's scope under
-        // LuaJIT, and the phase-order fixture probes provided-value
-        // evaluation before defaults with a caught E8002. The JVM
-        // backend evaluates defaults inline per call and rejects
-        // non-literal defaults on imported classes with E6000, and its
-        // slice rejects the Error-typed nullable local plus the
-        // catch-assignment pattern of the phase-order probe. Both
-        // fixtures stay LuaJIT/JS-lane pins until JVM default plans land
-        // (ISSUE-0277).
-        skip("backend-runtime/defaults/plan-imported-provider-scope.deal",
-            "E6000: non-literal default expression on an imported class "
-                + "(JVM defaults evaluate in the declaring module's "
-                + "scope under LuaJIT; the JVM imported-class slice "
-                + "rejects them).", "JVM-GAP-DEFAULTS-PLANS");
+        // defaults run in the declaring module's scope through the
+        // provider's published plan records — the ISSUE-0544 lowering
+        // epic lifted the JVM imported-non-literal-default plan-shape
+        // guard, so plan-imported-provider-scope passes the real
+        // pipeline (promoted with its registry entry removed). The
+        // phase-order fixture probes provided-value evaluation before
+        // defaults with a caught E8002: the JVM slice rejects the
+        // Error-typed nullable local plus the catch-assignment pattern
+        // of that probe, so it stays a LuaJIT/JS-lane pin until the JVM
+        // Error-literal/catch-assignment slice lands.
         skip("backend-runtime/defaults/plan-phase-order-provided-before-defaults.deal",
             "E6000: the Error | null catch-probe local and the "
                 + "catch-block assignment are outside the JVM slice "

@@ -117,7 +117,10 @@ public class JvmLaneTest {
     // while the int32-activated profile resolves the declared int /
     // int | null parameters as int/Integer, so the load-time export
     // check raises E8011 for every fixture importing host/boundary.
-    private static final int SKIP_REGISTRY_ENTRIES = 46;
+    // ISSUE-0544 (the lowering epic) lifts the imported-non-literal-
+    // default plan-shape guard, so plan-imported-provider-scope passes
+    // the real pipeline and its registry entry is removed.
+    private static final int SKIP_REGISTRY_ENTRIES = 45;
 
     public static void main(String[] args) throws Exception {
         System.out.println("=== JVM Lane Tests (ISSUE-0355) ===\n");

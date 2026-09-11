@@ -283,6 +283,31 @@ public final class CompilationOrchestrator {
         new LinkedHashMap<>();
 
     /**
+     * The LuaJIT codegen results of this compile (ISSUE-0544 lowering
+     * observability, the JVM {@code jvmGeneratedResults} precedent):
+     * module source path &rarr; the {@link LuaBackend.GenerationResult}
+     * the backend generated for every module it accepted — including the
+     * realized {@code RuntimeClassDefaultPlan}s the lowering epic
+     * consumed. Read-only; empty before the LuaJIT codegen phase runs
+     * or when the backend rejected every module.
+     */
+    private final Map<String, LuaBackend.GenerationResult>
+        luaGeneratedResults = new LinkedHashMap<>();
+
+    /**
+     * The JavaScript codegen results of this compile (ISSUE-0544
+     * lowering observability, the JVM {@code jvmGeneratedResults}
+     * precedent): module source path &rarr; the
+     * {@link JsBackend.JsCodegenResult} the backend generated for every
+     * module it accepted — including the realized
+     * {@code RuntimeClassDefaultPlan}s the lowering epic consumed.
+     * Read-only; empty before the JS codegen phase runs or when the
+     * backend rejected every module.
+     */
+    private final Map<String, JsBackend.JsCodegenResult>
+        jsGeneratedResults = new LinkedHashMap<>();
+
+    /**
      * The {@code --diagnostics-json} output path, or {@code null} when the
      * structured document was not requested. When set, the orchestrator
      * writes the {@link DiagnosticStructuredOutput} document for every
@@ -1892,6 +1917,52 @@ public final class CompilationOrchestrator {
     }
 
     /**
+     * The LuaJIT codegen results keyed by module source path (the
+     * {@link #jvmGeneratedResults()} accessor's Lua mirror, ISSUE-0544):
+     * each entry carries the backend's realized runtime default plans
+     * for the module. Read-only; empty before the LuaJIT codegen phase.
+     */
+    public Map<String, LuaBackend.GenerationResult>
+            luaGeneratedResults() {
+        return Collections.unmodifiableMap(luaGeneratedResults);
+    }
+
+    /**
+     * The JS codegen results keyed by module source path (the
+     * {@link #jvmGeneratedResults()} accessor's JS mirror, ISSUE-0544):
+     * each entry carries the backend's realized runtime default plans
+     * for the module. Read-only; empty before the JS codegen phase.
+     */
+    public Map<String, JsBackend.JsCodegenResult> jsGeneratedResults() {
+        return Collections.unmodifiableMap(jsGeneratedResults);
+    }
+
+    /**
+     * The completed default plans of this compile keyed by module path
+     * (ISSUE-0544, the lowering epic's backend seam): module path
+     * &rarr; the module's completed {@link PlannedDefaultClass} list in
+     * planning order. Built from {@link #completedDefaultPlans()} (keyed
+     * by module source path) so the three backends consume one uniform
+     * plan surface — each backend keys its own module's plans by its
+     * module path and the JVM backend additionally resolves imported
+     * providers' plans through the imported module paths. Empty before
+     * the graph phase succeeds or when it published no plan.
+     */
+    public Map<String, List<PlannedDefaultClass>>
+            completedPlansByModulePath() {
+        Map<String, List<PlannedDefaultClass>> byModulePath =
+            new LinkedHashMap<>();
+        for (ModuleInfo info : modules.values()) {
+            List<PlannedDefaultClass> plans =
+                completedDefaultPlans.get(info.sourcePath);
+            if (plans != null && !plans.isEmpty()) {
+                byModulePath.put(info.modulePath, plans);
+            }
+        }
+        return Collections.unmodifiableMap(byModulePath);
+    }
+
+    /**
      * The merged final digest-bearing runtime dependency records of
      * this compile (ISSUE-0543): ordinary {@code RUNTIME_USE} records
      * in first-occurrence order followed by the per-plan
@@ -2525,7 +2596,8 @@ public final class CompilationOrchestrator {
             stager.stageTree(), stageOutputPath, outputRoot, liveOutputPath,
             sourceMap, importResolutions, hostModules, ffiModules,
             context.manifestDirectory(),
-            isEntry, identityIndex, invocation.semanticProfile());
+            isEntry, identityIndex, invocation.semanticProfile(),
+            completedPlansByModulePath());
         // Native ranged backend list (T12): the backend emits
         // CompilerDiagnostic entries directly, so the orchestrator merge
         // needs no boundary conversion — real spans keep their exact
@@ -2540,6 +2612,7 @@ public final class CompilationOrchestrator {
                 + gen.diagnostics());
             return;
         }
+        luaGeneratedResults.put(info.sourcePath, gen);
 
         long modElapsed = System.currentTimeMillis() - modStart;
         log("  Generated: " + liveOutputPath + " (" + modElapsed + "ms)");
@@ -2749,7 +2822,7 @@ public final class CompilationOrchestrator {
                 isEntry, isEntry, identityIndex,
                 identityIndex.moduleIdentityLookup(),
                 invocation.semanticProfile(), projectShapes,
-                classDeclaringModules);
+                classDeclaringModules, completedPlansByModulePath());
             for (CompilerDiagnostic d : res.diagnostics()) {
                 diagnostics.add(d);
                 hasErrors = true;
@@ -2934,7 +3007,8 @@ public final class CompilationOrchestrator {
                 importResolutions, hostModules, externCImports, isEntry,
                 identityIndex, identityIndex.moduleIdentityLookup(),
                 sourceMap ? new SourceMapGenerator() : null,
-                invocation.semanticProfile());
+                invocation.semanticProfile(),
+                completedPlansByModulePath());
             // Native ranged backend list (T12): the backend emits
             // CompilerDiagnostic entries directly, so the orchestrator
             // merge needs no boundary conversion — real spans keep their
@@ -2952,6 +3026,7 @@ public final class CompilationOrchestrator {
             }
             cleanModules.add(info);
             results.put(info, res);
+            jsGeneratedResults.put(info.sourcePath, res);
         }
 
         // Pass 2: write artifacts for clean modules only. With the

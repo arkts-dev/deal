@@ -17,7 +17,13 @@ import deal.identity.CanonicalClassIdentity;
 import deal.identity.CanonicalClassIdentityIndex;
 import deal.identity.CanonicalModuleIdentity;
 import deal.identity.ProjectModuleIdentity;
+import deal.module.CompilerClassDefaultEntry;
+import deal.module.CompilerClassDefaultPlan;
 import deal.module.ModuleIdentityResolver;
+import deal.module.PlannedDefaultClass;
+import deal.module.RuntimeClassDefaultPlan;
+import deal.module.RuntimeDefaultEvaluator;
+import deal.module.RuntimeDefaultPlanLowering;
 import deal.semantic.ir.SemanticProfile;
 import deal.types.Type;
 import deal.types.Types;
@@ -117,6 +123,26 @@ public final class LuaBackend implements Visitor<Void> {
     // instead of the raw require — the first argument is never the dotted
     // importResolutions value for that key.
     private Map<String, Map<String, Type>> hostModules = Map.of();
+
+    // ISSUE-0544 (the lowering epic): module path → the module's
+    // completed PlannedDefaultClass list (the graph-published plans),
+    // passed by the orchestrator. The emitter consumes the published
+    // CompilerClassDefaultPlan of every visited class declaration and
+    // realizes the runtime plan (entry order, canonical descriptors,
+    // optional flags, evaluators only on required-present entries) plus
+    // the labelled evaluator closures. Empty on the standalone
+    // entry points (the synthesized fallback path stays).
+    private Map<String, List<PlannedDefaultClass>> plansByModulePath =
+        Map.of();
+
+    // ISSUE-0544: the realized RuntimeClassDefaultPlans of this module,
+    // in class source order — the carrier-side realization data (the
+    // evaluator invocation seams execute inside the generated artifact,
+    // never in-process; see runtimePlans()). Attached to the
+    // GenerationResult for the compiler-to-lowerer verification battery
+    // and the later FFI identity consumption.
+    private final List<RuntimeClassDefaultPlan> runtimePlans =
+        new ArrayList<>();
 
     // Extern-C imports (emitter page D6): raw import path -> the metadata
     // phase's generated module (descriptor, cdef bundle, retained plans,
@@ -446,7 +472,22 @@ public final class LuaBackend implements Visitor<Void> {
      * the compilation instead of being silently dropped.
      */
     public record GenerationResult(String lua,
-                                   List<CompilerDiagnostic> diagnostics) {}
+                                   List<CompilerDiagnostic> diagnostics,
+                                   List<RuntimeClassDefaultPlan> runtimePlans) {
+
+        /** Backward-compatible two-component constructor: the runtime
+         * plan realization list is empty (no published plan consumed —
+         * the standalone entry points). */
+        public GenerationResult(String lua,
+                                List<CompilerDiagnostic> diagnostics) {
+            this(lua, diagnostics, List.of());
+        }
+
+        public GenerationResult {
+            diagnostics = List.copyOf(diagnostics);
+            runtimePlans = List.copyOf(runtimePlans);
+        }
+    }
 
     /**
      * Shared generation core: builds a backend instance, generates the
@@ -464,6 +505,30 @@ public final class LuaBackend implements Visitor<Void> {
             SourceMapGenerator smg,
             ModuleIdentityResolver.IdentityIndex identityIndex,
             SemanticProfile semanticProfile) {
+        return generateResult(program, result, sourcePath, modulePath,
+            importResolutions, hostModules, ffiModules, manifestDirectory,
+            entryModule, smg, identityIndex, semanticProfile, Map.of());
+    }
+
+    /**
+     * Plan-carrying generation core (ISSUE-0544): the orchestrator
+     * passes the compilation's completed default plans keyed by module
+     * path ({@code CompilationOrchestrator#completedPlansByModulePath});
+     * the backend consumes this module's published plans for every
+     * visited class declaration. The standalone entry points pass
+     * {@code Map.of()} and keep the synthesized fallback emission.
+     */
+    private static GenerationResult generateResult(ProgramNode program,
+            CheckResult result, String sourcePath, String modulePath,
+            Map<String, String> importResolutions,
+            Map<String, Map<String, Type>> hostModules,
+            Map<String, FfiGeneratedModule> ffiModules,
+            String manifestDirectory,
+            boolean entryModule,
+            SourceMapGenerator smg,
+            ModuleIdentityResolver.IdentityIndex identityIndex,
+            SemanticProfile semanticProfile,
+            Map<String, List<PlannedDefaultClass>> plansByModulePath) {
         LuaBackend backend = new LuaBackend(result.typeMap(),
             result.symbolTable(), semanticProfile);
         backend.identityIndex = identityIndex;
@@ -480,6 +545,7 @@ public final class LuaBackend implements Visitor<Void> {
         backend.ffiAliasFunctions.clear();
         backend.entryModule = entryModule;
         backend.sourceMapGenerator = smg;
+        backend.plansByModulePath = Map.copyOf(plansByModulePath);
         backend.emitHeader();
         backend.emitLine("");
 
@@ -487,7 +553,22 @@ public final class LuaBackend implements Visitor<Void> {
         backend.emitJsonableCode();
         backend.emitExports();
         return new GenerationResult(backend.out.toString(),
-            backend.diagnostics());
+            backend.diagnostics(), backend.runtimePlans());
+    }
+
+    /**
+     * The realized {@link RuntimeClassDefaultPlan}s of this module in
+     * class source order (ISSUE-0544): one per published plan the
+     * emitter consumed, with per-entry semantic digests (the compiler
+     * plan's), implementation digests over the generated evaluator
+     * artifact text, and the carrier-side zero-argument invocation seam.
+     * The invocation seam is the carrier-side shape of the generated
+     * Lua closure — the real evaluator executes inside the generated
+     * artifact on every construction attempt, so an in-process
+     * {@code invoke()} call is a lowering-contract misuse and raises.
+     */
+    private List<RuntimeClassDefaultPlan> runtimePlans() {
+        return List.copyOf(runtimePlans);
     }
 
     /**
@@ -797,11 +878,40 @@ public final class LuaBackend implements Visitor<Void> {
                                        ModuleIdentityResolver.IdentityIndex identityIndex,
                                        SemanticProfile semanticProfile)
                                        throws IOException {
+        return generateToFile(program, result, sourcePath, modulePath,
+            outputRoot, outputPath, liveRoot, livePath, emitSourceMap,
+            importResolutions, hostModules, ffiModules, manifestDirectory,
+            entryModule, identityIndex, semanticProfile, Map.of());
+    }
+
+    /**
+     * Plan-carrying staged-write production seam (ISSUE-0544): the same
+     * staged-write contract as the overload above, with the
+     * compilation's completed default plans keyed by module path
+     * ({@code CompilationOrchestrator#completedPlansByModulePath}) —
+     * the published-plan consumption surface of the lowering epic.
+     */
+    public static GenerationResult generateToFile(ProgramNode program,
+                                       CheckResult result,
+                                       String sourcePath, String modulePath,
+                                       Path outputRoot, Path outputPath,
+                                       Path liveRoot, Path livePath,
+                                       boolean emitSourceMap,
+                                       Map<String, String> importResolutions,
+                                       Map<String, Map<String, Type>> hostModules,
+                                       Map<String, FfiGeneratedModule> ffiModules,
+                                       String manifestDirectory,
+                                       boolean entryModule,
+                                       ModuleIdentityResolver.IdentityIndex identityIndex,
+                                       SemanticProfile semanticProfile,
+                                       Map<String, List<PlannedDefaultClass>>
+                                           plansByModulePath)
+                                       throws IOException {
         SourceMapGenerator smg = emitSourceMap ? new SourceMapGenerator() : null;
         GenerationResult gen = generateResult(program, result, sourcePath,
             modulePath, importResolutions, hostModules, ffiModules,
             manifestDirectory, entryModule, smg, identityIndex,
-            semanticProfile);
+            semanticProfile, plansByModulePath);
         String luaSource = gen.lua();
         boolean hasErrors = gen.diagnostics().stream()
             .anyMatch(d -> "error".equals(d.severity()));
@@ -1467,6 +1577,201 @@ public final class LuaBackend implements Visitor<Void> {
     @Override
     public Void visit(ClassDeclaration node) {
         String name = node.name();
+        CompilerClassDefaultPlan publishedPlan = publishedPlanFor(node);
+        String planText = publishedPlan != null
+            ? emitPublishedPlan(publishedPlan)
+            : synthesizedPlan(node);
+        if (publishedPlan != null) {
+            // The label line: one pinned evaluator label per
+            // required-present entry (D2), emitted as a Lua comment
+            // directly above the plan assignment so the generated
+            // artifact carries the (classIdentity, fieldName,
+            // semanticDigest) triple of every evaluator it creates.
+            for (CompilerClassDefaultEntry entry
+                    : publishedPlan.orderedFields()) {
+                if (entry.optional()) {
+                    continue;
+                }
+                emitLine("-- default evaluator "
+                    + RuntimeDefaultPlanLowering.labelOf(
+                        identityText(publishedPlan.classIdentity()),
+                        entry.name(),
+                        entry.defaultExpression().semanticDigest()));
+            }
+        }
+
+        emitLine("-- Class: " + name);
+        if (moduleScope) {
+            emitLine(LuaAbi.namespaceAssignment(
+                LuaAbi.helperKey(name, LuaAbi.HelperKind.PLAN),
+                planText));
+            emitLine(LuaAbi.namespaceAssignment(
+                LuaAbi.helperKey(name, LuaAbi.HelperKind.META),
+                "__rt.export_class(\"" + qualifiedClassName(name) + "\")"));
+            // A module-level declaration is chunk-visible at the chunk-end
+            // export statements (its artifacts are __deal namespace
+            // fields, visible everywhere): record it as the last
+            // chunk-visible declaration of this name (D2.6 export-value
+            // parity, see emitExports).
+            lastChunkVisibleClassDecl.put(name,
+                ChunkVisibleClassDecl.MODULE_LEVEL);
+        } else {
+            emitLine("local " + LuaAbi.helperKey(name, LuaAbi.HelperKind.PLAN)
+                + " = " + planText);
+            emitLine("local " + LuaAbi.helperKey(name, LuaAbi.HelperKind.META)
+                + " = __rt.export_class(\"" + qualifiedClassName(name) + "\")");
+            // Track the declaration so construction sites that resolve to
+            // the root ClassSymbol of the same name reference the bare
+            // <C>_plan local (Lua lexical scoping) instead of the
+            // __deal namespace entry (nested shadowing, D2.6).
+            recordNestedClassDeclaration(name);
+            // A nested declaration in a chunk-level bare block emits
+            // chunk-level locals that stay visible for the rest of the
+            // chunk, including at the chunk-end export statements; it is
+            // therefore chunk-visible and records here. Declarations in
+            // function/branch/loop/try scopes have an active frame and
+            // are invisible at chunk end — they must not record (the
+            // pre-namespace backend's bare export names resolved to nil
+            // for them, never to an inner-scope local).
+            if (nestedClassDeclFrames.isEmpty()) {
+                lastChunkVisibleClassDecl.put(name,
+                    ChunkVisibleClassDecl.NESTED);
+            }
+        }
+        emitLine();
+        return null;
+    }
+
+    /**
+     * The published compiler plan of this exact class declaration, or
+     * {@code null} when the graph published no plan for it (host
+     * declarations live outside plan space; a checker-error program
+     * publishes no plan and the compilation fails before codegen). The
+     * declaration match is reference identity first — the planner
+     * consumed the same AST the emitter walks — with the name/position
+     * pair as the defensive fallback (ISSUE-0544, the published-plan
+     * consumption seam).
+     */
+    private CompilerClassDefaultPlan publishedPlanFor(
+            ClassDeclaration node) {
+        if (identityIndex == null) {
+            return null;
+        }
+        List<PlannedDefaultClass> plans = plansByModulePath.get(modulePath);
+        if (plans == null) {
+            return null;
+        }
+        for (PlannedDefaultClass planned : plans) {
+            ClassDeclaration declaration = planned.declaration();
+            if (declaration == node
+                    || (declaration.name().equals(node.name())
+                        && declaration.span().startLine()
+                            == node.span().startLine()
+                        && declaration.span().startColumn()
+                            == node.span().startColumn())) {
+                return planned.plan();
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Emits the runtime default-plan table of a published compiler plan
+     * (ISSUE-0544, runtime page D1/D2): one entry per plan entry in
+     * class source order with {@code name}, the plan's canonical
+     * {@code descriptor}, the {@code optional} flag, and an
+     * {@code evaluator} exactly on required-present entries — a
+     * labelled zero-argument closure over the declaring module's scope,
+     * created here at load and never invoked during lowering or load.
+     * Every evaluator label is a Lua comment directly above the
+     * closure; the realized {@link RuntimeClassDefaultPlan} carrier
+     * (digests, labels, presence) is appended for the result surface.
+     */
+    private String emitPublishedPlan(CompilerClassDefaultPlan plan) {
+        String identityText = identityText(plan.classIdentity());
+        List<RuntimeDefaultPlanLowering.EvaluatorRealization>
+            realizations = new ArrayList<>();
+        StringBuilder table = new StringBuilder("{\n");
+        for (int i = 0; i < plan.orderedFields().size(); i++) {
+            CompilerClassDefaultEntry entry = plan.orderedFields().get(i);
+            if (i > 0) {
+                table.append(",\n");
+            }
+            table.append("  { name = \"").append(entry.name())
+                .append("\", descriptor = \"")
+                .append(escapeLuaStringNoQuotes(
+                    entry.runtimeTypeDescriptor()))
+                .append("\", optional = ")
+                .append(entry.optional());
+            if (!entry.optional()) {
+                String evaluator = "function() return "
+                    + emitExpression(entry.defaultExpression()
+                        .expressionAst())
+                    + " end";
+                String label = RuntimeDefaultPlanLowering.labelOf(
+                    identityText, entry.name(),
+                    entry.defaultExpression().semanticDigest());
+                table.append(",\n    -- default evaluator ")
+                    .append(label).append("\n    evaluator = ")
+                    .append(evaluator);
+                realizations.add(new RuntimeDefaultPlanLowering
+                    .EvaluatorRealization(label, evaluator,
+                        artifactInvocationSeam(label)));
+            }
+            table.append(" }");
+        }
+        table.append("\n}");
+        runtimePlans.add(RuntimeDefaultPlanLowering.realize(plan,
+            identityText, realizations).plan());
+        return table.toString();
+    }
+
+    /**
+     * The carrier-side zero-argument invocation seam of a generated
+     * Lua evaluator (ISSUE-0544): the real evaluator is the generated
+     * closure — it executes inside the artifact exactly once per
+     * omitted required entry per construction attempt — so an
+     * in-process {@code invoke()} is a lowering-contract misuse and
+     * raises. Nothing in the production pipeline invokes the seam
+     * in-process; it carries the label so the misuse names its
+     * evaluator.
+     */
+    private RuntimeDefaultEvaluator.Invocation artifactInvocationSeam(
+            String label) {
+        return () -> {
+            throw new UnsupportedOperationException(
+                "the LuaJIT default evaluator " + label + " executes"
+                    + " inside the generated artifact; the carrier-side"
+                    + " invocation seam is never invoked in-process");
+        };
+    }
+
+    /**
+     * The canonical descriptor text of a published plan's class
+     * identity, through the compilation's one descriptor service
+     * (identity carriage). Defensive: the planner only publishes plans
+     * for identities the index registered.
+     */
+    private String identityText(
+            deal.identity.CanonicalClassIdentity identity) {
+        String text = identityIndex.descriptorTextFor(identity);
+        if (text == null) {
+            throw new IllegalStateException(
+                "published default plan has no canonical identity text: "
+                    + identity);
+        }
+        return text;
+    }
+
+    /**
+     * The synthesized pre-plan fallback plan table (the emitter page D4
+     * shape, retained verbatim): used only when the graph published no
+     * plan for the visited declaration — the standalone entry points and
+     * checker-error programs. Plan-bearing classes never reach this
+     * path in the production pipeline (E4001/E3020 gates), so the
+     * zero-value evaluator branches stay defensive.
+     */
+    private String synthesizedPlan(ClassDeclaration node) {
         StringBuilder plan = new StringBuilder("{");
         boolean first = true;
         for (ClassField field : node.fields()) {
@@ -1498,47 +1803,7 @@ public final class LuaBackend implements Visitor<Void> {
             plan.append(" }");
         }
         plan.append("}");
-
-        emitLine("-- Class: " + name);
-        if (moduleScope) {
-            emitLine(LuaAbi.namespaceAssignment(
-                LuaAbi.helperKey(name, LuaAbi.HelperKind.PLAN),
-                plan.toString()));
-            emitLine(LuaAbi.namespaceAssignment(
-                LuaAbi.helperKey(name, LuaAbi.HelperKind.META),
-                "__rt.export_class(\"" + qualifiedClassName(name) + "\")"));
-            // A module-level declaration is chunk-visible at the chunk-end
-            // export statements (its artifacts are __deal namespace
-            // fields, visible everywhere): record it as the last
-            // chunk-visible declaration of this name (D2.6 export-value
-            // parity, see emitExports).
-            lastChunkVisibleClassDecl.put(name,
-                ChunkVisibleClassDecl.MODULE_LEVEL);
-        } else {
-            emitLine("local " + LuaAbi.helperKey(name, LuaAbi.HelperKind.PLAN)
-                + " = " + plan.toString());
-            emitLine("local " + LuaAbi.helperKey(name, LuaAbi.HelperKind.META)
-                + " = __rt.export_class(\"" + qualifiedClassName(name) + "\")");
-            // Track the declaration so construction sites that resolve to
-            // the root ClassSymbol of the same name reference the bare
-            // <C>_plan local (Lua lexical scoping) instead of the
-            // __deal namespace entry (nested shadowing, D2.6).
-            recordNestedClassDeclaration(name);
-            // A nested declaration in a chunk-level bare block emits
-            // chunk-level locals that stay visible for the rest of the
-            // chunk, including at the chunk-end export statements; it is
-            // therefore chunk-visible and records here. Declarations in
-            // function/branch/loop/try scopes have an active frame and
-            // are invisible at chunk end — they must not record (the
-            // pre-namespace backend's bare export names resolved to nil
-            // for them, never to an inner-scope local).
-            if (nestedClassDeclFrames.isEmpty()) {
-                lastChunkVisibleClassDecl.put(name,
-                    ChunkVisibleClassDecl.NESTED);
-            }
-        }
-        emitLine();
-        return null;
+        return plan.toString();
     }
 
     private String defaultValueForTypeNode(TypeNode typeNode) {

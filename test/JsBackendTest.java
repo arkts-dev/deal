@@ -1296,12 +1296,15 @@ public class JsBackendTest {
                 + "$classname: \"@Main/Inner\" };"),
             "the inline META pair carries the canonical identity text");
 
-        // A scope-local default function is captured by the thunk.
+        // A scope-local default function is captured by the thunk
+        // (the required-present field carries the evaluator; an optional
+        // field's declared default is checker-validated metadata that
+        // never evaluates — D1).
         JsBackend.JsCodegenResult func = generate("""
             export function test(): int {
               let seed: int = 40;
               function next(): int { return seed + 2; }
-              class Inner { v?: int = next(); }
+              class Inner { v: int = next(); }
               return 1;
             }
             """, "nestedclass-func");
@@ -1393,32 +1396,23 @@ public class JsBackendTest {
         System.out.println("-- Node: nested-class defaults scope and per-construction evaluation --");
         if (!nodeAvailable) { skipNode("nested-class defaults scope"); return; }
 
-        // A block-level class whose optional default calls a scope-local
-        // function: two constructions observe independent evaluations of
-        // the capturing default (40 + 2 then 100 + 2).
+        // A block-level class whose required default calls a
+        // scope-local function: two constructions observe independent
+        // evaluations of the capturing default (40 + 2 then 100 + 2).
+        // (An optional field's declared default never evaluates — D1 —
+        // so the required-present form pins the capture.)
         NodeResult run = runDealNode("""
             export function test(): int {
               let seed: int = 40;
               function next(): int { return seed + 2; }
               class Inner {
-                v?: int = next();
+                v: int = next();
               }
               let a: Inner = { };
               seed = 100;
               let b: Inner = { };
-              if (!has(a.v) || !has(b.v)) { return 0; }
-              let av: int | null = a.v;
-              if (av !== null) {
-                if (av !== 42) { return 0; }
-              } else {
-                return 0;
-              }
-              let bv: int | null = b.v;
-              if (bv !== null) {
-                if (bv !== 102) { return 0; }
-              } else {
-                return 0;
-              }
+              if (a.v !== 42) { return 0; }
+              if (b.v !== 102) { return 0; }
               return 1;
             }
             """, "nestedclass-node");
@@ -1475,15 +1469,9 @@ public class JsBackendTest {
         NodeResult shadow = runDealNode("""
             class Shadowed { v: int = 1; }
             export function test(): int {
-              class Shadowed { w?: int = 2; }
+              class Shadowed { w: int = 2; }
               let s: Shadowed = { };
-              if (!has(s.w)) { return 0; }
-              let w: int | null = s.w;
-              if (w !== null) {
-                if (w !== 2) { return 0; }
-              } else {
-                return 0;
-              }
+              if (s.w !== 2) { return 0; }
               return 1;
             }
             """, "nestedclass-shadow");
