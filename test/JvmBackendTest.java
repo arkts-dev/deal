@@ -8079,11 +8079,20 @@ public class JvmBackendTest {
 
         // The default orchestrator invocation is now the committed
         // V1_2_ACTIVE public build: it plumbs the int32 mode. The
-        // explicit PRE_ACTIVATION invocation keeps the legacy mode for
-        // the negative-control comparison (the internal matrix row).
+        // ISSUE-0239 E10 plan-time arm reroutes the dual-shape
+        // fixture (an exported function called from source) LEGACY,
+        // so the retained backend still emits it and the recorded
+        // result proves the plumb end to end; the explicit
+        // PRE_ACTIVATION invocation keeps the legacy mode for the
+        // negative-control comparison (the internal matrix row).
+        writeFile("src/plumb_dual.deal",
+            "export function run(): int { return 41 + 1; }\n"
+                + "export function main(): null { run() return null; }\n");
+        Path dualEntryFile = tmpDir.get().resolve("src/plumb_dual.deal")
+            .toAbsolutePath().normalize();
         CompilationOrchestrator defaultOrchestrator =
             new CompilationOrchestrator(
-                entryFile, outputRoot, false, false, false, Backend.JVM,
+                dualEntryFile, outputRoot, false, false, false, Backend.JVM,
                 null, roots, Path.of(".").toAbsolutePath().normalize());
         boolean defaultOk = defaultOrchestrator.compile();
         check(defaultOk, "default orchestrator compile succeeds: "
@@ -8095,10 +8104,11 @@ public class JvmBackendTest {
         if (defaultOk) {
             JvmBackend.JvmCodegenResult plumbed =
                 defaultOrchestrator.jvmGeneratedResults()
-                    .get(entryFile.toString());
+                    .get(dualEntryFile.toString());
             check(plumbed != null && plumbed.int32Mode(),
                 "the default invocation plumbs the int32 mode into the "
-                    + "backend post-flip");
+                    + "backend post-flip (the dual-shape module reroutes "
+                    + "LEGACY at plan time under the ISSUE-0239 arm)");
         }
 
         CompilationOrchestrator legacyOrchestrator =

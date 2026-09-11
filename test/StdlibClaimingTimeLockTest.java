@@ -1247,10 +1247,13 @@ public class StdlibClaimingTimeLockTest {
                 }
             }
 
-            // Rule 4 (V1_2_ACTIVE promotion gate): with FOUNDATION_VALUES
-            // promoted (the module's only manifest capability — the read
-            // added no rule), the module routes SHARED and the common
-            // unit fails with E6005 while the gap is open; no reroute.
+            // Rule 4 (V1_2_ACTIVE promotion gate): the ISSUE-0239 MODULES
+            // import arm covers the value-read module — the manifest
+            // claims MODULES, so with FOUNDATION_VALUES promoted alone
+            // the module reroutes LEGACY at plan time (zero diagnostics,
+            // never E6005); the common unit failing with E6005 is the
+            // shadow-request arm above (rule 5), and no production
+            // reroute or node-level fallback exists.
             CapabilityRegistry promoted = CapabilityRegistry.releaseRegistry()
                 .withState(deal.semantic.ir.SemanticCapability.FOUNDATION_VALUES,
                     Target.LUAJIT, CapabilityRegistry.State.PROMOTED);
@@ -1260,20 +1263,17 @@ public class StdlibClaimingTimeLockTest {
                     promoted, checked.input(), checked.index(),
                     manifests.manifests(), Target.LUAJIT, Set.of());
                 check(planned != null && !planned.hasErrors() && planned.plan() != null
-                        && planned.plan().entries().get(libId) == ModuleRoute.SHARED,
-                    "rule 4: on the promoted profile the value-read module routes "
-                        + "SHARED (no forced-LEGACY arm exists): "
+                        && planned.plan().entries().get(libId) == ModuleRoute.LEGACY,
+                    "rule 4: the value-read module's manifest claims MODULES (the "
+                        + "ISSUE-0239 import arm), so the promoted profile routes it "
+                        + "LEGACY at plan time (the parent verification-3 reroute): "
                         + (planned == null ? "null" : planned.diagnostics()));
                 if (planned != null && !planned.hasErrors() && planned.plan() != null) {
                     check(planned.diagnostics().isEmpty()
-                            && planned.plan().entries().get(libId) == ModuleRoute.SHARED,
-                        "the route stays SHARED with zero diagnostics — no reroute "
-                            + "and no node-level fallback are applied");
+                            && planned.plan().entries().get(libId) == ModuleRoute.LEGACY,
+                        "the route is LEGACY with zero diagnostics — the plan-time "
+                            + "reroute, never E6005 and never a node-level fallback");
                 }
-                SemanticLowerer.LoweringResult lowering = lowerSubject(checked, "lib");
-                check(lowering != null && lowering.hasErrors() && lowering.unit() == null,
-                    "the promoted-profile common unit containing the read fails with "
-                        + "E6005 while the gap is open");
             }
         } finally {
             deleteRecursively(tmp);
@@ -1338,13 +1338,29 @@ public class StdlibClaimingTimeLockTest {
                         + "is shadowed (silent, zero diagnostics)");
             }
 
-            // With FOUNDATION_VALUES + STDLIB_SEMANTICS promoted the
-            // module routes SHARED — the plan-time claim made the gate
-            // cover it before lowering.
+            // The fixture's non-exported `main` is never called from
+            // source, so the ISSUE-0239 never-called arm claims CALLS
+            // too (an uncalled non-exported declared function cannot
+            // lower under the statically-resolved call machine — an
+            // over-claim only forces LEGACY).
+            check(libManifest != null && libManifest.capabilities().contains(
+                    deal.semantic.ir.SemanticCapability.CALLS),
+                "the fixture's manifest carries the ISSUE-0239 CALLS claim "
+                    + "(the uncalled non-exported main): "
+                    + (libManifest == null ? "none" : libManifest.capabilities()));
+
+            // With FOUNDATION_VALUES + STDLIB_SEMANTICS + MODULES +
+            // CALLS promoted the module routes SHARED — the plan-time
+            // claims (the stdlib arm, the ISSUE-0239 import arm, and the
+            // never-called arm) made the gate cover it before lowering.
             CapabilityRegistry promoted = CapabilityRegistry.releaseRegistry()
                 .withState(deal.semantic.ir.SemanticCapability.FOUNDATION_VALUES,
                     Target.LUAJIT, CapabilityRegistry.State.PROMOTED)
                 .withState(deal.semantic.ir.SemanticCapability.STDLIB_SEMANTICS,
+                    Target.LUAJIT, CapabilityRegistry.State.PROMOTED)
+                .withState(deal.semantic.ir.SemanticCapability.MODULES,
+                    Target.LUAJIT, CapabilityRegistry.State.PROMOTED)
+                .withState(deal.semantic.ir.SemanticCapability.CALLS,
                     Target.LUAJIT, CapabilityRegistry.State.PROMOTED);
             CompilerInvocation activePromoted = publicV12Active(promoted);
             {
@@ -1354,7 +1370,8 @@ public class StdlibClaimingTimeLockTest {
                 check(planned != null && !planned.hasErrors() && planned.plan() != null
                         && planned.plan().entries().get(libId) == ModuleRoute.SHARED,
                     "rule 4 routes the stdlib module SHARED once every manifest "
-                        + "capability is promoted for the target: "
+                        + "capability (STDLIB_SEMANTICS + MODULES + CALLS) is "
+                        + "promoted for the target: "
                         + (planned == null ? "null" : planned.diagnostics()));
             }
         } finally {

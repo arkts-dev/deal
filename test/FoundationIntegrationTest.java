@@ -1295,7 +1295,6 @@ public class FoundationIntegrationTest {
                 }
 
                 export function main(): null {
-                  add(2147483647, 1)
                   return null
                 }
                 """);
@@ -1368,6 +1367,54 @@ public class FoundationIntegrationTest {
                     "the post-flip shared plan has empty shadowModules "
                         + "(production SHARED, never shadow)");
             }
+
+            // ISSUE-0239 E10 plan-time arm: an exported function called
+            // from source carries two invocation shapes under the
+            // statically-resolved call machine (ISSUE-0531's runtime
+            // selection), so the manifest claims CALLS and the post-flip
+            // plan reroutes the module LEGACY — never E6005, never a
+            // within-run fallback. The retained route compiles the
+            // dual-shape module end to end.
+            Path dualSrc = tmp.resolve("dualsrc");
+            Files.createDirectories(dualSrc);
+            Files.writeString(dualSrc.resolve("main.deal"), """
+                export function add(x: int, y: int): int {
+                  return x + y
+                }
+
+                export function main(): null {
+                  add(2147483647, 1)
+                  return null
+                }
+                """);
+            CompilerInvocation dualInvocation = CompilerProfileProvider.resolve(
+                ReleaseState.V1_2_ACTIVE,
+                ReleaseConfiguration.releaseCapabilityRegistry());
+            CompilationOrchestrator dualOrchestrator =
+                new CompilationOrchestrator(
+                    dualSrc.resolve("main.deal").toAbsolutePath(),
+                    tmp.resolve("build-dual"), false, false, false, false,
+                    Backend.LUAJIT, null, List.of(dualSrc.toAbsolutePath()),
+                    Path.of("std").toAbsolutePath().normalize(), null,
+                    dualInvocation);
+            boolean dualOk = dualOrchestrator.compile();
+            check(dualOk, "the post-flip dual-shape build compiles on the retained "
+                + "route: " + dualOrchestrator.diagnostics());
+            RequirementManifestResult dualManifests =
+                dualOrchestrator.requirementManifests();
+            check(dualManifests != null && !dualManifests.hasErrors()
+                    && dualManifests.manifests().get(0).capabilities()
+                        .contains(SemanticCapability.CALLS),
+                "the dual-shape module's manifest claims CALLS (the ISSUE-0239 "
+                    + "plan-time arm)");
+            RoutePlanResult dualPlan = dualOrchestrator.routePlan();
+            check(dualPlan != null && !dualPlan.hasErrors()
+                    && dualPlan.plan() != null
+                    && dualPlan.plan().entries().values().stream()
+                        .allMatch(route -> route == ModuleRoute.LEGACY),
+                "the dual-shape module reroutes LEGACY at plan time post-flip "
+                    + "(CALLS not promoted — the parent verification-3 reroute, "
+                    + "never E6005)");
 
             // An internal V1_2_ACTIVE construction over the all-SHADOW
             // release default derives DEAL_V1_2_INT32 (the A1 row).
@@ -3184,14 +3231,21 @@ public class FoundationIntegrationTest {
             // public build) and only then fails the DEAL_V1_2_INT32 gate
             // facts.
             CompilerInvocation publicInvocation = publicBuildInvocation(assertedState);
-            SignedInt32Corpus.Case intCase = SignedInt32Corpus.CASES.stream()
-                .filter(c -> c.name().equals("add_overflow_max"))
-                .findFirst().orElseThrow();
+            // The post-flip gate fixture is an import-free single-shape
+            // int-using module (the ISSUE-0239 E10 plan-time arms reroute
+            // dual-shape modules — an exported function called from
+            // source — and importers LEGACY while CALLS/MODULES stay
+            // SHADOW; the single-shape shape keeps the SHARED pin exact).
             Path tmp = Files.createTempDirectory("deal-int32-activated");
             try {
                 Path src = tmp.resolve("src");
                 Files.createDirectories(src);
-                Files.writeString(src.resolve("main.deal"), intCase.source());
+                Files.writeString(src.resolve("main.deal"), """
+                    export function main(): null {
+                      let x: int = 2147483647 + 1
+                      return null
+                    }
+                    """);
                 CompilationOrchestrator orchestrator = compile(
                     src.resolve("main.deal").toAbsolutePath(), tmp.resolve("build"),
                     Backend.LUAJIT, List.of(src.toAbsolutePath()),

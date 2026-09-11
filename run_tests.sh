@@ -466,6 +466,25 @@ TEST_SOURCES+=(
 TEST_MAINS+=(
   'fg|=== Running E12 Public Activation Release Action Tests (ISSUE-0490) ===|java -ea -cp build deal.test.E12ActivationReleaseTest'
 )
+# =========================================================================
+# ISSUE-0239 (E10, the modules epic — production semantic-IR emission and
+# atomic publication): the production gate compiles the applicable
+# runtime fixtures through the real post-flip orchestrator on both
+# targets and executes the emitted artifacts through the real toolchains
+# (luajit; javac --release 25 -proc:none + java), pinning the production
+# emitter seam (LoweredModuleUnit + StructuredBodyTable, never
+# AST/CheckResult), the ModuleRoutePlan selection without fallback (one
+# semantic/zero retained artifacts for the all-shared single-module
+# projects; zero semantic/two retained for the multi-module graph; the
+# dual-shape plan-time reroute), the retained DEAL_ERROR_CODE contract,
+# and the atomic publication failure preservation (a failed shared
+# lowering publishes nothing and preserves the prior artifact set
+# byte-for-byte).
+# =========================================================================
+TEST_SOURCES+=( 'test/SemanticProductionGateTest.java' )
+TEST_MAINS+=(
+  'fg|=== Running Semantic Production Gate Tests (ISSUE-0239) ===|java -ea -cp build deal.test.SemanticProductionGateTest'
+)
 
 # ISSUE-0378 D5 (JvmLaneStatePinTest substitution): the pin test owns
 # both raw lane runs. It launches the real LuaJIT lane and the real JVM

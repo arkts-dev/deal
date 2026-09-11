@@ -271,10 +271,32 @@ public final class JvmRuntime {
         return "E9999;" + esc(String.valueOf(e)) + ";-;-;-;-;-";
     }
 
+    /**
+     * The protocol-channel gate (ISSUE-0239 E10): the conformance
+     * consumers keep the channel on (the default), while a production
+     * artifact disables it at startup so no trace/effect record ever
+     * reaches stderr from a production run.
+     */
+    private static volatile boolean traceEnabled = true;
+
+    /**
+     * Sets the protocol-channel gate. Production artifacts call this
+     * with {@code false} before executing any operation; the conformance
+     * harness never calls it, so its per-process default stays on.
+     *
+     * @param enabled whether the dedicated trace/effect channel is active
+     */
+    public static void setTraceEnabled(boolean enabled) {
+        traceEnabled = enabled;
+    }
+
     /** Emits one protocol trace line to the dedicated channel (stderr). */
     public static void ev(String module, String op, String phase, String kind,
                           String digest, String parent, List<String> inputs,
                           String output, String errtext) {
+        if (!traceEnabled) {
+            return;
+        }
         StringBuilder line = new StringBuilder();
         line.append("T|").append(seq++).append('|').append(module).append('|').append(op)
             .append('|').append(phase).append('|').append(kind).append('|').append(digest)
@@ -298,6 +320,9 @@ public final class JvmRuntime {
     public static void console(String text) {
         PrintStream out = new PrintStream(System.out, true, StandardCharsets.UTF_8);
         out.println(text);
+        if (!traceEnabled) {
+            return;
+        }
         PrintStream err = new PrintStream(System.err, true, StandardCharsets.UTF_8);
         err.println("F|CONSOLE_WRITE|" + esc(text));
     }

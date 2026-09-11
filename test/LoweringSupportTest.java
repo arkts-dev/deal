@@ -213,11 +213,33 @@ public class LoweringSupportTest {
             && manifest.capabilities().equals(EnumSet.of(SemanticCapability.FOUNDATION_VALUES));
     }
 
+    /**
+     * The ISSUE-0239 MODULES import claim plus FOUNDATION_VALUES: an
+     * importing module with no other trigger claims exactly these two
+     * capabilities (the reserved parent verification-3 plan-time edge
+     * reroute condition; an export declaration or the entry delegation
+     * never claims it).
+     */
+    private static boolean claimsFoundationAndModules(SemanticRequirementManifest manifest) {
+        return manifest != null
+            && manifest.capabilities().equals(EnumSet.of(
+                SemanticCapability.FOUNDATION_VALUES, SemanticCapability.MODULES));
+    }
+
     /** The I3 signed32 claim: exactly FOUNDATION_VALUES + SIGNED_INT32, nothing else. */
     private static boolean claimsSignedInt32(SemanticRequirementManifest manifest) {
         return manifest != null
             && manifest.capabilities().equals(EnumSet.of(
                 SemanticCapability.FOUNDATION_VALUES, SemanticCapability.SIGNED_INT32));
+    }
+
+    /** I3 signed32 plus the ISSUE-0239 MODULES arms (importing/imported-by). */
+    private static boolean claimsSignedInt32AndModules(
+            SemanticRequirementManifest manifest) {
+        return manifest != null
+            && manifest.capabilities().equals(EnumSet.of(
+                SemanticCapability.FOUNDATION_VALUES, SemanticCapability.SIGNED_INT32,
+                SemanticCapability.MODULES));
     }
 
     // =========================================================================
@@ -370,7 +392,7 @@ public class LoweringSupportTest {
             if (result == null) {
                 return;
             }
-            check(claimsOnlyFoundation(manifestOf(result, "a")),
+            check(claimsFoundationAndModules(manifestOf(result, "a")),
                 "module A exporting the live stdlib table claims nothing — A contains no "
                     + "nowMillis member access");
             check(claimsConflict(manifestOf(result, "main")),
@@ -415,9 +437,9 @@ public class LoweringSupportTest {
             if (result == null) {
                 return;
             }
-            check(claimsOnlyFoundation(manifestOf(result, "a")),
+            check(claimsFoundationAndModules(manifestOf(result, "a")),
                 "the std/time importer A claims nothing (no member access)");
-            check(claimsOnlyFoundation(manifestOf(result, "b")),
+            check(claimsFoundationAndModules(manifestOf(result, "b")),
                 "the non-accessing intermediate B claims nothing (no member access)");
             check(claimsConflict(manifestOf(result, "main")),
                 "C claims via Arm C through the non-claiming intermediate B: C's closure "
@@ -530,7 +552,7 @@ public class LoweringSupportTest {
             if (result == null) {
                 return;
             }
-            check(claimsOnlyFoundation(manifestOf(result, "main")),
+            check(claimsFoundationAndModules(manifestOf(result, "main")),
                 "a module importing std/time without any member access of nowMillis does "
                     + "not claim STDLIB_TIME_CONFLICT");
         } finally {
@@ -573,14 +595,15 @@ public class LoweringSupportTest {
             }
             check(claimsConflict(manifestOf(triggers, "main")),
                 "an alias bound to std/time triggers the claim");
-            check(claimsOnlyFoundation(manifestOf(other, "main")),
+            check(claimsFoundationAndModules(manifestOf(other, "main")),
                 "an identically-named alias bound to another module does not trigger: the "
                     + "join matches the resolved ModuleSymbol name against the module's "
                     + "ImportDeclaration records, and the resolved target is not std/time");
-            check(claimsSignedInt32(manifestOf(other, "other")),
-                "the other module exporting nowMillis claims only FOUNDATION_VALUES + "
-                    + "SIGNED_INT32 (its return 0 int literal is CONST(Int) — the I3 "
-                    + "derivation row claims at the construct kind, never the magnitude) "
+            check(claimsSignedInt32AndModules(manifestOf(other, "other")),
+                "the other module exporting nowMillis claims FOUNDATION_VALUES + "
+                    + "SIGNED_INT32 + MODULES (its return 0 int literal is CONST(Int) "
+                    + "— the I3 derivation row claims at the construct kind, never the "
+                    + "magnitude; the imported-by arm adds MODULES) "
                     + "and never STDLIB_TIME_CONFLICT");
         } finally {
             deleteRecursively(tmp);
@@ -649,7 +672,7 @@ public class LoweringSupportTest {
             if (result == null) {
                 return;
             }
-            check(claimsOnlyFoundation(manifestOf(result, "a")),
+            check(claimsFoundationAndModules(manifestOf(result, "a")),
                 "the std/time importer A exporting an unrelated table claims nothing");
             check(claimsConflict(manifestOf(result, "main")),
                 "a module in the transitive closure reading an unrelated table's "
@@ -686,6 +709,83 @@ public class LoweringSupportTest {
             check(claimsConflict(manifestOf(result, "main")),
                 "a module importing a claiming module claims even when it never invokes "
                     + "the wrapper (Arm D over-claim — same safe LEGACY direction)");
+        } finally {
+            deleteRecursively(tmp);
+        }
+    }
+
+    static void testModulesImportClaim() throws Exception {
+        System.out.println("-- ISSUE-0239 E10 plan-time arm: import declarations claim "
+            + "MODULES; exports and the entry delegation never do --");
+
+        Path tmp = Files.createTempDirectory("deal-manifest-e10-import");
+        try {
+            // An import declaration of any resolved kind claims MODULES
+            // (the reserved parent verification-3 plan-time edge reroute
+            // condition): the over-claim only forces LEGACY post-activation.
+            RequirementManifestResult importer = compileAndCompute(tmp.resolve("imp"),
+                Map.of(
+                    "lib.deal", """
+                        export function greet(): string {
+                          return "ok"
+                        }
+                        """,
+                    "main.deal", """
+                        import * as lib from "./lib"
+
+                        export function main(): null {
+                          return null
+                        }
+                        """), "main.deal");
+            if (importer == null) {
+                return;
+            }
+            check(claimsFoundationAndModules(manifestOf(importer, "main")),
+                "an import declaration claims MODULES (ISSUE-0239 E10 plan-time arm): "
+                    + manifestOf(importer, "main").capabilities());
+            check(claimsFoundationAndModules(manifestOf(importer, "lib")),
+                "the implementation dependency claims MODULES through the "
+                    + "imported-by arm (the reverse edge of the import graph — the "
+                    + "retained-caller ABI facts stay SHADOW in this slice): "
+                    + manifestOf(importer, "lib").capabilities());
+            // An import-free single-module project with exports claims
+            // nothing beyond FOUNDATION_VALUES (+SIGNED_INT32): export
+            // declarations and the entry delegation never claim MODULES.
+            RequirementManifestResult single = compileAndCompute(tmp.resolve("single"),
+                Map.of("main.deal", """
+                    export function value(): int {
+                      return 42
+                    }
+                    export function main(): null {
+                      return null
+                    }
+                    """), "main.deal");
+            if (single == null) {
+                return;
+            }
+            check(claimsSignedInt32(manifestOf(single, "main")),
+                "the import-free single-module project claims exactly "
+                    + "FOUNDATION_VALUES + SIGNED_INT32 (exports and the entry "
+                    + "delegation never claim MODULES): "
+                    + manifestOf(single, "main").capabilities());
+
+            // A stdlib import claims MODULES even without any cataloged
+            // call (the import-observation row attaches to the import
+            // declaration itself).
+            RequirementManifestResult stdlib = compileAndCompute(tmp.resolve("stdimp"),
+                Map.of("main.deal", """
+                    import * as console from "std/console"
+
+                    export function main(): null {
+                      return null
+                    }
+                    """), "main.deal");
+            if (stdlib == null) {
+                return;
+            }
+            check(claimsFoundationAndModules(manifestOf(stdlib, "main")),
+                "a call-free stdlib import claims MODULES from the import declaration: "
+                    + manifestOf(stdlib, "main").capabilities());
         } finally {
             deleteRecursively(tmp);
         }
@@ -1306,6 +1406,298 @@ public class LoweringSupportTest {
     }
 
     // =========================================================================
+    // 11. ISSUE-0239 E10 plan-time arms: bytes values, class literals,
+    //     dynamic calls, nested functions, adapters, uncalled declarations
+    // =========================================================================
+
+    static void testE10BytesValueArm() throws Exception {
+        System.out.println("-- ISSUE-0239 E10 arm: bytes-typed values claim "
+            + "CONTAINERS_AND_STRINGS --");
+
+        Path tmp = Files.createTempDirectory("deal-manifest-e10-bytes");
+        try {
+            RequirementManifestResult result = compileAndCompute(tmp,
+                Map.of("main.deal", """
+                    export function test_bytes_length(): null {
+                      let n: int = 3;
+                      let b: bytes = bytes(n);
+                      if (b.length !== 3) {
+                        throw { code: "TEST_FAIL", message: "bytes: length mismatch" };
+                      }
+                      return null;
+                    }
+
+                    export function main(): null {
+                      return null;
+                    }
+                    """), "main.deal");
+            if (result == null) {
+                return;
+            }
+            check(manifestOf(result, "main").capabilities().contains(
+                    SemanticCapability.CONTAINERS_AND_STRINGS),
+                "the bytes(...) call and the bytes .length read claim "
+                    + "CONTAINERS_AND_STRINGS (ISSUE-0158 boundary, never E6005): "
+                    + manifestOf(result, "main").capabilities());
+        } finally {
+            deleteRecursively(tmp);
+        }
+    }
+
+    static void testE10ClassLiteralArm() throws Exception {
+        System.out.println("-- ISSUE-0239 E10 arm: a class-typed object literal claims "
+            + "CLASSES --");
+
+        Path tmp = Files.createTempDirectory("deal-manifest-e10-classlit");
+        try {
+            RequirementManifestResult result = compileAndCompute(tmp,
+                Map.of("main.deal", """
+                    export function main(): null {
+                      throw { code: "TEST_FAIL", message: "boom" }
+                    }
+                    """), "main.deal");
+            if (result == null) {
+                return;
+            }
+            check(manifestOf(result, "main").capabilities().contains(
+                    SemanticCapability.CLASSES),
+                "the builtin Error literal of the throw claims CLASSES at the "
+                    + "literal position (no declaring declaration exists): "
+                    + manifestOf(result, "main").capabilities());
+        } finally {
+            deleteRecursively(tmp);
+        }
+    }
+
+    static void testE10DynamicCallArm() throws Exception {
+        System.out.println("-- ISSUE-0239 E10 arm: a call of a function-typed variable "
+            + "claims CALLS --");
+
+        Path tmp = Files.createTempDirectory("deal-manifest-e10-dyncall");
+        try {
+            RequirementManifestResult result = compileAndCompute(tmp,
+                Map.of("main.deal", """
+                    export function main(): null {
+                      let f: () => int = function(): int { return 1 }
+                      f()
+                      return null
+                    }
+                    """), "main.deal");
+            if (result == null) {
+                return;
+            }
+            check(manifestOf(result, "main").capabilities().contains(
+                    SemanticCapability.CALLS),
+                "the call of the function-typed local claims CALLS (dynamic "
+                    + "resolution is ISSUE-0531's): "
+                    + manifestOf(result, "main").capabilities());
+        } finally {
+            deleteRecursively(tmp);
+        }
+    }
+
+    static void testE10NestedFunctionArm() throws Exception {
+        System.out.println("-- ISSUE-0239 E10 arm: a nested function declaration claims "
+            + "CALLS --");
+
+        Path tmp = Files.createTempDirectory("deal-manifest-e10-nested");
+        try {
+            RequirementManifestResult result = compileAndCompute(tmp,
+                Map.of("main.deal", """
+                    export function main(): null {
+                      function down(n: int): int {
+                        if (n === 0) { return 0; }
+                        return down(n - 1);
+                      }
+                      down(2)
+                      return null
+                    }
+                    """), "main.deal");
+            if (result == null) {
+                return;
+            }
+            check(manifestOf(result, "main").capabilities().contains(
+                    SemanticCapability.CALLS),
+                "the nested local function declaration (recursion shape) claims "
+                    + "CALLS: " + manifestOf(result, "main").capabilities());
+        } finally {
+            deleteRecursively(tmp);
+        }
+    }
+
+    static void testE10AdapterCreationArm() throws Exception {
+        System.out.println("-- ISSUE-0239 E10 arm: an adapter-creation position claims "
+            + "CALLS --");
+
+        Path tmp = Files.createTempDirectory("deal-manifest-e10-adapter");
+        try {
+            RequirementManifestResult result = compileAndCompute(tmp,
+                Map.of("main.deal", """
+                    export function main(): null {
+                      let f: (a: int, b: int) => int = one
+                      f(1, 2)
+                      return null
+                    }
+                    function one(x: int): int {
+                      return x
+                    }
+                    """), "main.deal");
+            if (result == null) {
+                return;
+            }
+            check(manifestOf(result, "main").capabilities().contains(
+                    SemanticCapability.CALLS),
+                "the assignable-but-not-exact initializer position produces "
+                    + "FUNCTION_ADAPT and claims CALLS (the closed D15 creation "
+                    + "rule): " + manifestOf(result, "main").capabilities());
+        } finally {
+            deleteRecursively(tmp);
+        }
+    }
+
+    static void testE10UncalledDeclarationArm() throws Exception {
+        System.out.println("-- ISSUE-0239 E10 arm: an uncalled non-exported declared "
+            + "function claims CALLS; a called one does not --");
+
+        Path tmp = Files.createTempDirectory("deal-manifest-e10-uncalled");
+        try {
+            RequirementManifestResult uncalled = compileAndCompute(tmp.resolve("uncalled"),
+                Map.of("main.deal", """
+                    function orphan(): int { return 1 }
+
+                    export function main(): null {
+                      return null
+                    }
+                    """), "main.deal");
+            if (uncalled != null) {
+                check(manifestOf(uncalled, "main").capabilities().contains(
+                        SemanticCapability.CALLS),
+                    "the never-called non-exported declaration claims CALLS (its "
+                        + "single return boundary names no invocation): "
+                        + manifestOf(uncalled, "main").capabilities());
+            }
+            RequirementManifestResult called = compileAndCompute(tmp.resolve("called"),
+                Map.of("main.deal", """
+                    function helper(x: int): int {
+                      return x
+                    }
+
+                    export function main(): null {
+                      helper(1)
+                      return null
+                    }
+                    """), "main.deal");
+            if (called != null) {
+                check(claimsSignedInt32(manifestOf(called, "main")),
+                    "the called non-exported declaration claims exactly "
+                        + "FOUNDATION_VALUES + SIGNED_INT32 (one call site, no CALLS "
+                        + "claim): " + manifestOf(called, "main").capabilities());
+            }
+            // The declaration-order-independence pin (ISSUE-0239 E10):
+            // the identical module with the entry function declared
+            // first (the conventional v1.2 layout) counts the call site
+            // exactly like the callee-first layout — the call accounting
+            // collects the called symbols over the whole statement walk
+            // and the never-called arm runs after it, so a call site
+            // walked before the callee's declaration is never lost.
+            RequirementManifestResult calledMainFirst =
+                compileAndCompute(tmp.resolve("called-main-first"),
+                Map.of("main.deal", """
+                    export function main(): null {
+                      helper(1)
+                      return null
+                    }
+
+                    function helper(x: int): int {
+                      return x
+                    }
+                    """), "main.deal");
+            if (calledMainFirst != null) {
+                check(claimsSignedInt32(manifestOf(calledMainFirst, "main")),
+                    "the main-first called non-exported declaration claims exactly "
+                        + "FOUNDATION_VALUES + SIGNED_INT32 (declaration-order-"
+                        + "independent call accounting, one call site, no CALLS "
+                        + "claim): " + manifestOf(calledMainFirst, "main")
+                            .capabilities());
+            }
+        } finally {
+            deleteRecursively(tmp);
+        }
+    }
+
+    static void testE10StoredFunctionExpressionArm() throws Exception {
+        System.out.println("-- ISSUE-0239 E10 arm: a stored/embedded function "
+            + "expression claims CALLS --");
+
+        Path tmp = Files.createTempDirectory("deal-manifest-e10-storedfn");
+        try {
+            RequirementManifestResult binding = compileAndCompute(
+                tmp.resolve("binding"), Map.of("main.deal", """
+                    export function main(): null {
+                      let g: () => int = function(): int { return 7 }
+                      return null
+                    }
+                    """), "main.deal");
+            if (binding != null) {
+                check(manifestOf(binding, "main").capabilities().contains(
+                        SemanticCapability.CALLS),
+                    "a function expression stored in a binding initializer claims "
+                        + "CALLS (its body's RETURN boundary names no invocation; "
+                        + "F4 rule 4 reroutes LEGACY, never E6005): "
+                        + manifestOf(binding, "main").capabilities());
+            }
+            RequirementManifestResult arrayElement = compileAndCompute(
+                tmp.resolve("array"), Map.of("main.deal", """
+                    export function main(): null {
+                      let fs: (() => int)[] = [function(): int { return 7 }]
+                      return null
+                    }
+                    """), "main.deal");
+            if (arrayElement != null) {
+                check(manifestOf(arrayElement, "main").capabilities().contains(
+                        SemanticCapability.CALLS),
+                    "a function expression embedded in an array literal element "
+                        + "claims CALLS: "
+                        + manifestOf(arrayElement, "main").capabilities());
+            }
+            RequirementManifestResult tableField = compileAndCompute(
+                tmp.resolve("table"), Map.of("main.deal", """
+                    export function main(): null {
+                      let t: table = { f: function(): int { return 7 } }
+                      return null
+                    }
+                    """), "main.deal");
+            if (tableField != null) {
+                check(manifestOf(tableField, "main").capabilities().contains(
+                        SemanticCapability.CALLS),
+                    "a function expression embedded in a table literal field "
+                        + "claims CALLS: "
+                        + manifestOf(tableField, "main").capabilities());
+            }
+            // The directly-invoked shape (an IIFE callee) claims CALLS
+            // through the dynamic-callee arm (the callee is not a
+            // statically-resolved identifier) — the stored-expression
+            // arm's exemption never leaves an IIFE unclaimed.
+            RequirementManifestResult iife = compileAndCompute(
+                tmp.resolve("iife"), Map.of("main.deal", """
+                    export function main(): null {
+                      let x: int = (function(): int { return 7 })()
+                      return null
+                    }
+                    """), "main.deal");
+            if (iife != null) {
+                check(manifestOf(iife, "main").capabilities().contains(
+                        SemanticCapability.CALLS),
+                    "a directly-invoked function expression claims CALLS through "
+                        + "the dynamic-callee arm (never an unclaimed stored shape): "
+                        + manifestOf(iife, "main").capabilities());
+            }
+        } finally {
+            deleteRecursively(tmp);
+        }
+    }
+
+    // =========================================================================
     // Main
     // =========================================================================
 
@@ -1325,6 +1717,7 @@ public class LoweringSupportTest {
         testOverClaimDirectImporterUnrelatedTable();
         testOverClaimClosureMemberUnrelatedTable();
         testOverClaimPropagatedNeverInvokes();
+        testModulesImportClaim();
         testSignedInt32LiteralClaims();
         testSignedInt32UnaryBinaryClaims();
         testIntrinsicConversionClaims();
@@ -1335,6 +1728,13 @@ public class LoweringSupportTest {
         testDeterminismByteIdentical();
         testNoFrontendMutationAndRecompute();
         testCombinedDependencies();
+        testE10BytesValueArm();
+        testE10ClassLiteralArm();
+        testE10DynamicCallArm();
+        testE10NestedFunctionArm();
+        testE10AdapterCreationArm();
+        testE10UncalledDeclarationArm();
+        testE10StoredFunctionExpressionArm();
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {

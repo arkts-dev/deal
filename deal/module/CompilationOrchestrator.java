@@ -5,9 +5,11 @@ import deal.checker.*;
 import deal.codegen.Backend;
 import deal.codegen.SourceMapGenerator;
 import deal.codegen.jvm.JvmBackend;
+import deal.codegen.jvm.JvmSemanticEmitter;
 import deal.codegen.js.HostModuleDeclarations;
 import deal.codegen.js.JsBackend;
 import deal.codegen.lua.LuaBackend;
+import deal.codegen.lua.LuaSemanticEmitter;
 import deal.identity.CanonicalModuleIdentity;
 import deal.identity.ProjectModuleIdentity;
 import deal.ir.IrDumper;
@@ -42,11 +44,34 @@ import deal.semantic.CompilerProfileProvider;
 import deal.semantic.LoweringSupport;
 import deal.semantic.MigrationPlanner;
 import deal.semantic.ModuleFact;
+import deal.semantic.ModuleRoute;
+import deal.semantic.ModuleRoutePlan;
 import deal.semantic.ReleaseConfiguration;
 import deal.semantic.RequirementManifestResult;
 import deal.semantic.RoutePlanResult;
+import deal.semantic.ArtifactOwner;
+import deal.semantic.CheckedModuleInput;
+import deal.semantic.SemanticLowerer;
+import deal.semantic.SemanticRequirementManifest;
+import deal.semantic.StagedArtifact;
+import deal.semantic.StagedArtifactSet;
+import deal.semantic.TargetAbiValidator;
+import deal.semantic.TargetModuleAbi;
 import deal.semantic.Target;
+import deal.semantic.ir.ClassFactoryId;
+import deal.semantic.ir.ClassId;
+import deal.semantic.ir.ClassInterface;
+import deal.semantic.ir.ExternalModuleInterface;
+import deal.semantic.ir.FieldInterface;
+import deal.semantic.ir.FunctionSignatureAbi;
+import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.ModuleId;
+import deal.semantic.ir.OpId;
+import deal.semantic.ir.RuntimeDescriptor;
+import deal.semantic.ir.SemanticIdAllocator;
+import deal.semantic.ir.SemanticOp;
+import deal.semantic.ir.SemanticOpKind;
+import deal.semantic.ir.SyncInvocationEntry;
 import deal.types.Type;
 import deal.types.Types;
 
@@ -197,6 +222,40 @@ public final class CompilationOrchestrator {
      * into {@link #diagnostics()}.
      */
     private RoutePlanResult routePlan;
+
+    /**
+     * The ISSUE-0239 E10 per-route emission counters of this compile:
+     * {@code semanticEmissionCount} modules were SHARED-routed and
+     * emitted from validated semantic IR by the shared emitter;
+     * {@code retainedEmissionCount} modules were LEGACY-routed and
+     * emitted by the retained backend. Both are zero before phase 4 and
+     * read-only after it.
+     */
+    private int semanticEmissionCount = 0;
+    private int retainedEmissionCount = 0;
+
+    /**
+     * The project-wide semantic-id allocator of the shared route
+     * (ISSUE-0239 E10): one allocator over the dependency-ordered
+     * implementation modules, created at the first SHARED lowering.
+     */
+    private SemanticIdAllocator sharedAllocator;
+
+    /**
+     * The lowered callees' recorded {@code EXTERNAL_ENTRY} op ids by
+     * module, filled in dependency order as SHARED modules lower
+     * (ISSUE-0239 E10: the caller-side {@code externalEntryRef}
+     * resolution).
+     */
+    private final Map<ModuleId, Map<String, OpId>> sharedCalleeEntries =
+        new HashMap<>();
+
+    /**
+     * The emitted SHARED-owner ABI manifests of this compile (ISSUE-0239
+     * E10): one per SHARED-routed module, validated against the staged
+     * set and the interface index before publication.
+     */
+    private final List<TargetModuleAbi> emittedSharedAbis = new ArrayList<>();
 
     private final Map<String, ModuleInfo> modules = new LinkedHashMap<>();
     private final List<CompilerDiagnostic> diagnostics = new ArrayList<>();
@@ -812,6 +871,28 @@ public final class CompilationOrchestrator {
      */
     public RoutePlanResult routePlan() {
         return routePlan;
+    }
+
+    /**
+     * The number of SHARED-routed modules emitted from validated
+     * semantic IR in phase 4 of this compile (ISSUE-0239 E10) — zero
+     * before the codegen phase runs.
+     *
+     * @return the semantic-emission count
+     */
+    public int semanticEmissionCount() {
+        return semanticEmissionCount;
+    }
+
+    /**
+     * The number of LEGACY-routed modules emitted by the retained
+     * backend in phase 4 of this compile (ISSUE-0239 E10) — zero before
+     * the codegen phase runs.
+     *
+     * @return the retained-emission count
+     */
+    public int retainedEmissionCount() {
+        return retainedEmissionCount;
     }
 
     // =========================================================================
@@ -2473,12 +2554,25 @@ public final class CompilationOrchestrator {
                 // it; the local legacy dialect producer is retired.
                 ModuleIdentityResolver.IdentityIndex identityIndex =
                     buildCanonicalIdentitySurface();
+                // ISSUE-0239 E10 dispatch: the ModuleRoutePlan selects the
+                // emitter per module — SHARED-routed modules lower to
+                // validated semantic IR and emit through the shared
+                // emitter; LEGACY-routed modules keep the retained
+                // backend. No within-run fallback exists: a shared
+                // lowering/emission failure fails the compile and
+                // publishes nothing.
+                for (CheckedModuleInput checked : sharedModulesInDependencyOrder()) {
+                    emitSharedLuaModule(checked);
+                }
                 for (ModuleInfo info : modules.values()) {
                     if (info.isDeclarationFile) continue;
+                    if (routeOf(info) == ModuleRoute.SHARED) continue;
                     codegenLuaModule(info, identityIndex);
+                    retainedEmissionCount++;
                 }
                 copyRuntimeLibrary();
                 copyStdlibModules();
+                validateMixedEdges();
             }
         } catch (IOException stagingFailure) {
             // A staging write failure (D4): nothing is published, the
@@ -2505,6 +2599,285 @@ public final class CompilationOrchestrator {
             pendingStageFailure = failure;
         }
         hasErrors = true;
+    }
+
+    // =========================================================================
+    // Phase 4 shared-route emission (ISSUE-0239 E10): the ModuleRoutePlan
+    // selects semantic or retained emission per module with no within-run
+    // fallback
+    // =========================================================================
+
+    /**
+     * The production route of one implementation module (ISSUE-0239
+     * E10): the plan's entry for the module, or {@code LEGACY} when the
+     * compile's backend has no closed route-plan target (JS), the plan
+     * phase did not produce, or the module is absent from the plan — a
+     * defensive LEGACY selection over incomplete plan facts only, never
+     * a within-run reroute of a SHARED plan entry.
+     *
+     * @param info the implementation module; non-null
+     * @return the planned route ({@code LEGACY} when no SHARED entry exists)
+     */
+    private ModuleRoute routeOf(ModuleInfo info) {
+        if (routePlan == null || routePlan.hasErrors() || routePlan.plan() == null) {
+            return ModuleRoute.LEGACY;
+        }
+        ModuleRoute route = routePlan.plan().entries().get(new ModuleId(info.modulePath));
+        return route == null ? ModuleRoute.LEGACY : route;
+    }
+
+    /**
+     * The SHARED-routed implementation modules in the checked project's
+     * dependency order (ISSUE-0239 E10) — the lowering/emission order of
+     * the shared route (never the discovery-map insertion order, which
+     * is entry-first).
+     *
+     * @return the shared modules in dependency order
+     */
+    private List<CheckedModuleInput> sharedModulesInDependencyOrder() {
+        List<CheckedModuleInput> shared = new ArrayList<>();
+        if (checkedProjectBuild == null || checkedProjectBuild.hasErrors()
+                || checkedProjectBuild.input() == null) {
+            return shared;
+        }
+        for (CheckedModuleInput checked : checkedProjectBuild.input().modules()) {
+            if (routePlan == null || routePlan.hasErrors() || routePlan.plan() == null) {
+                continue;
+            }
+            if (routePlan.plan().entries().get(checked.moduleId()) == ModuleRoute.SHARED) {
+                shared.add(checked);
+            }
+        }
+        return shared;
+    }
+
+    /** The requirement manifest of one implementation module (E10). */
+    private SemanticRequirementManifest manifestOf(ModuleId moduleId) {
+        if (requirementManifests == null || requirementManifests.hasErrors()
+                || requirementManifests.manifests() == null) {
+            return null;
+        }
+        for (SemanticRequirementManifest manifest : requirementManifests.manifests()) {
+            if (manifest.moduleId().equals(moduleId)) {
+                return manifest;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Lowers one SHARED-routed module through the full-program E7 walk
+     * (ISSUE-0239 E10): the dependency-ordered project allocator, the
+     * already-lowered callees' recorded {@code EXTERNAL_ENTRY} op ids,
+     * and the plan's route facts. The unit is validated by the lowerer;
+     * a failure is the returned E6005 — never a reroute.
+     */
+    private SemanticLowerer.FullProgramE7Result lowerSharedModule(
+            CheckedModuleInput module) {
+        if (sharedAllocator == null) {
+            List<ModuleId> order = checkedProjectBuild.input().modules().stream()
+                .map(CheckedModuleInput::moduleId).toList();
+            sharedAllocator = SemanticIdAllocator.over(order);
+        }
+        SemanticRequirementManifest manifest = manifestOf(module.moduleId());
+        if (manifest == null) {
+            throw new IllegalStateException("shared module '" + module.moduleId()
+                + "' has no requirement manifest (producer defect)");
+        }
+        return SemanticLowerer.lowerModuleFullProgramE7(
+            module, invocation.semanticProfile(), manifest.constructCoverage(),
+            checkedProjectBuild.index().interfaceIndexDigest(),
+            invocation.capabilityRegistryHash(), sharedAllocator,
+            routePlan.plan().entries(), sharedCalleeEntries, Set.of());
+    }
+
+    /** True iff the module's source path is the selected entry file. */
+    private boolean isEntryModule(CheckedModuleInput checked) {
+        for (Map.Entry<String, ModuleInfo> entry : modules.entrySet()) {
+            if (entry.getValue().modulePath.equals(checked.moduleId().path())) {
+                return Path.of(entry.getValue().sourcePath).toAbsolutePath()
+                    .normalize().equals(entryFile.toAbsolutePath().normalize());
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Emits one SHARED-routed module through the shared LuaJIT emitter
+     * into the staging tree (ISSUE-0239 E10) and records its emitted ABI
+     * manifest. A lowering/emission failure merges E6005 and fails the
+     * compile — no artifact stages for the module and nothing publishes.
+     */
+    private void emitSharedLuaModule(CheckedModuleInput checked) throws IOException {
+        SemanticLowerer.FullProgramE7Result lowered = lowerSharedModule(checked);
+        if (lowered.lowering().hasErrors()) {
+            diagnostics.addAll(lowered.lowering().diagnostics());
+            hasErrors = true;
+            log("  Shared lowering failed for " + checked.moduleId() + ": "
+                + lowered.lowering().diagnostics());
+            return;
+        }
+        sharedCalleeEntries.put(checked.moduleId(), lowered.externalEntries());
+        String artifactPath = checked.moduleId().path().replace('.', '/') + ".lua";
+        String source;
+        try {
+            source = LuaSemanticEmitter.emitProductionModule(
+                lowered.lowering().unit(), lowered.lowering().table(),
+                isEntryModule(checked));
+        } catch (IllegalStateException emitterGap) {
+            failSharedEmission(checked.moduleId().path(), emitterGap);
+            return;
+        }
+        Path stageOutputPath = stager.stagePath(artifactPath);
+        Files.writeString(stageOutputPath, source, StandardCharsets.UTF_8);
+        recordSharedAbi(checked.moduleId(), lowered, artifactPath, "exports");
+        semanticEmissionCount++;
+        log("  Generated (shared semantic IR): " + outputRoot.resolve(artifactPath));
+    }
+
+    /**
+     * Emits one SHARED-routed module through the shared JVM emitter into
+     * the staging tree (ISSUE-0239 E10) under the retained layout's
+     * class name, and records its emitted ABI manifest. A
+     * lowering/emission failure merges E6005 and fails the compile.
+     */
+    private void emitSharedJvmModule(CheckedModuleInput checked) throws IOException {
+        SemanticLowerer.FullProgramE7Result lowered = lowerSharedModule(checked);
+        if (lowered.lowering().hasErrors()) {
+            diagnostics.addAll(lowered.lowering().diagnostics());
+            hasErrors = true;
+            log("  Shared lowering failed for " + checked.moduleId() + ": "
+                + lowered.lowering().diagnostics());
+            return;
+        }
+        sharedCalleeEntries.put(checked.moduleId(), lowered.externalEntries());
+        String className = JvmBackend.classNameFor(checked.moduleId().path());
+        JvmSemanticEmitter.EmissionResult emission;
+        try {
+            emission = JvmSemanticEmitter.emitProductionModule(
+                lowered.lowering().unit(), lowered.lowering().table(),
+                isEntryModule(checked), className);
+        } catch (IllegalStateException emitterGap) {
+            failSharedEmission(checked.moduleId().path(), emitterGap);
+            return;
+        }
+        Path stageOutputPath = stager.stagePath(className + ".java");
+        Files.writeString(stageOutputPath, emission.source(), StandardCharsets.UTF_8);
+        recordSharedAbi(checked.moduleId(), lowered, className + ".java", "main");
+        semanticEmissionCount++;
+        log("  Generated (shared semantic IR): "
+            + outputRoot.resolve(className + ".java"));
+    }
+
+    /**
+     * The fail-closed emitter-coverage gate (ISSUE-0239 E10): an op kind
+     * outside the shared emitters' closed production set is E6005 —
+     * never a crash, never a within-run reroute, and the failed module
+     * stages no artifact (the publication transaction then preserves
+     * the prior set).
+     */
+    private void failSharedEmission(String modulePath, IllegalStateException gap) {
+        diagnostics.add(deal.semantic.ir.FailureContractRegistry.e6005(
+            new deal.semantic.ir.LoweringFailureDetail(modulePath,
+                deal.semantic.ir.SemanticCapability.MODULES,
+                "SHARED_EMITTER_COVERAGE",
+                invocation.semanticProfile(),
+                deal.semantic.ir.LoweredModuleUnit.FORMAT_VERSION,
+                "CompilationOrchestrator SHARED_EMITTER_COVERAGE ("
+                    + gap.getMessage() + ")")));
+        hasErrors = true;
+        log("  Shared emission failed for " + modulePath + ": " + gap.getMessage());
+    }
+
+    /**
+     * Records the emitted SHARED-owner ABI manifest of one module
+     * (ISSUE-0239 E10): the planner-owned class facts copied from the
+     * index, the exported descriptors from the unit's
+     * {@code EXPORT_PUBLISH} payloads, one sync-invocation entry per
+     * export (the recorded {@code EXTERNAL_ENTRY} op id, or the entry
+     * delegation's wrapper name for {@code main}), one wrapper ABI per
+     * function export, and the staged load key/initialization entry.
+     */
+    private void recordSharedAbi(ModuleId moduleId,
+                                 SemanticLowerer.FullProgramE7Result lowered,
+                                 String loadKey, String initializationEntry) {
+        ExternalModuleInterface indexEntry =
+            checkedProjectBuild.index().modules().get(moduleId);
+        if (indexEntry == null) {
+            throw new IllegalStateException("shared module '" + moduleId
+                + "' has no interface index entry (producer defect)");
+        }
+        Map<String, RuntimeDescriptor> descriptors = new LinkedHashMap<>();
+        Map<String, SyncInvocationEntry> syncEntries = new LinkedHashMap<>();
+        Map<String, FunctionSignatureAbi> wrappers = new LinkedHashMap<>();
+        Map<String, OpId> entries = lowered.externalEntries();
+        for (SemanticOp op : lowered.lowering().unit().ops()) {
+            if (op.kind() != SemanticOpKind.EXPORT_PUBLISH) {
+                continue;
+            }
+            KindPayload.ExportPublishPayload payload =
+                (KindPayload.ExportPublishPayload) op.payload();
+            descriptors.put(payload.name(), payload.descriptor());
+            OpId entryOpId = entries.get(payload.name());
+            if (entryOpId != null) {
+                syncEntries.put(payload.name(),
+                    new SyncInvocationEntry.ExternalEntry(entryOpId));
+            } else {
+                // main: the ENTRY_INVOKE delegation owns its invocation
+                // shape; the retained-layout wrapper name stands in.
+                syncEntries.put(payload.name(),
+                    new SyncInvocationEntry.AbiWrapper(payload.name()));
+            }
+            if (payload.descriptor() instanceof RuntimeDescriptor.Func func) {
+                wrappers.put(payload.name(), new FunctionSignatureAbi(
+                    payload.name(), func.canonicalSpecText()));
+            }
+        }
+        Map<ClassId, ClassFactoryId> factoryAbi = new LinkedHashMap<>();
+        Map<ClassId, List<FieldInterface>> layoutAbi = new LinkedHashMap<>();
+        for (ClassInterface classEntry : indexEntry.classes()) {
+            factoryAbi.put(classEntry.classId(), classEntry.constructionEntry());
+            layoutAbi.put(classEntry.classId(), classEntry.fields());
+        }
+        Target target = backend == Backend.JVM ? Target.JVM : Target.LUAJIT;
+        emittedSharedAbis.add(new TargetModuleAbi(moduleId, target,
+            ArtifactOwner.SHARED, invocation.semanticProfile(), factoryAbi,
+            layoutAbi, descriptors, loadKey, initializationEntry, wrappers,
+            syncEntries, List.of()));
+    }
+
+    /**
+     * Stage-time mixed-edge validation (ISSUE-0239 E10): every emitted
+     * SHARED ABI manifest and the plan's plan-time retained records are
+     * validated against the staged set and the interface index before
+     * publication. A failure is E6005 — nothing publishes and the prior
+     * live set stays untouched (the publication transaction owns the
+     * all-or-nothing swap).
+     */
+    private void validateMixedEdges() throws IOException {
+        if (emittedSharedAbis.isEmpty()) {
+            return;
+        }
+        if (routePlan == null || routePlan.hasErrors() || routePlan.plan() == null) {
+            throw new IllegalStateException("shared ABI manifests exist without a "
+                + "route plan (producer defect)");
+        }
+        List<StagedArtifact> staged = new ArrayList<>();
+        for (deal.publication.Artifact artifact : stager.stagedSet().artifacts()) {
+            staged.add(new StagedArtifact(artifact.relativePath(),
+                artifact.content()));
+        }
+        StagedArtifactSet stagedSet = new StagedArtifactSet(staged);
+        List<TargetModuleAbi> abiEdges = new ArrayList<>(routePlan.plan().abiEdges());
+        abiEdges.addAll(emittedSharedAbis);
+        Optional<CompilerDiagnostic> failure = TargetAbiValidator.validate(
+            stagedSet, routePlan.plan(), abiEdges,
+            checkedProjectBuild.index(), invocation.semanticProfile());
+        if (failure.isPresent()) {
+            diagnostics.add(failure.get());
+            hasErrors = true;
+            log("  Mixed-edge validation failed: " + failure.get());
+        }
     }
 
     /**
@@ -2806,6 +3179,9 @@ public final class CompilationOrchestrator {
         Map<ModuleInfo, JvmBackend.JvmCodegenResult> results = new LinkedHashMap<>();
         for (ModuleInfo info : modules.values()) {
             if (info.isDeclarationFile) continue;
+            if (routeOf(info) == ModuleRoute.SHARED) {
+                continue; // ISSUE-0239 E10: emitted by the shared emitter
+            }
             JvmImportContext ctx = jvmImportContextOf(info);
             boolean isEntry = info.sourcePath.equals(entryFile.toString());
             // ISSUE-0374 profile plumb: the backend derives its
@@ -2863,8 +3239,17 @@ public final class CompilationOrchestrator {
             // tree; the live root is written only by the publish step.
             Path stageOutputPath = stager.stagePath(className + ".java");
             Files.writeString(stageOutputPath, res.source());
+            retainedEmissionCount++;
             log("  Generated: " + outputRoot.resolve(className + ".java"));
         }
+        // ISSUE-0239 E10: SHARED-routed modules lower to validated
+        // semantic IR and emit through the shared JVM emitter — no
+        // within-run fallback: a shared lowering/emission failure fails
+        // the compile and publishes nothing.
+        for (CheckedModuleInput checked : sharedModulesInDependencyOrder()) {
+            emitSharedJvmModule(checked);
+        }
+        validateMixedEdges();
     }
 
     /**

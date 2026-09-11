@@ -79,6 +79,31 @@ public final class JvmSemanticEmitter {
         return new Session(unit, table).emit();
     }
 
+    /**
+     * Emits the production JVM module artifact for the validated unit
+     * (ISSUE-0239 E10): the conformance trace protocol is suppressed, a
+     * DEAL failure publishes the retained {@code DEAL_ERROR_CODE: <code>}
+     * line on stdout and exits 1, and the {@code ENTRY_INVOKE} delegation
+     * executes only for the entry module. The class name is the retained
+     * backend's derivation ({@code JvmBackend.classNameFor(modulePath)}),
+     * so the emitted artifact set keeps the retained layout.
+     *
+     * @param unit        the validated lowered module unit; non-null
+     * @param table       the unit's produced block-membership table; non-null
+     * @param entryModule whether this module is the selected entry module
+     * @param className   the retained-layout class name of the artifact
+     * @return the emitted production artifact
+     */
+    public static EmissionResult emitProductionModule(LoweredModuleUnit unit,
+                                                      StructuredBodyTable table,
+                                                      boolean entryModule,
+                                                      String className) {
+        Objects.requireNonNull(unit, "unit must not be null");
+        Objects.requireNonNull(table, "table must not be null");
+        Objects.requireNonNull(className, "className must not be null");
+        return new Session(unit, table, false, entryModule, className).emit();
+    }
+
     // =========================================================================
     // Session
     // =========================================================================
@@ -91,6 +116,12 @@ public final class JvmSemanticEmitter {
         final java.util.Set<OpId> ownedChildren = new java.util.HashSet<>();
         /** The payload-owned children only (closure computation excludes them). */
         final java.util.Set<OpId> structuralOwned;
+        /** Production mode: no trace protocol, DEAL_ERROR_CODE terminal. */
+        final boolean trace;
+        /** The selected entry module runs the ENTRY_INVOKE delegation. */
+        final boolean entryModule;
+        /** Ops the block walk skips (the entry delegation of a non-entry module). */
+        final java.util.Set<OpId> skippedOps = new java.util.HashSet<>();
         final StringBuilder out = new StringBuilder();
         /** The enclosing TRY_CATCH depth: transfers inside a try body
          *  signal via JvmRuntime.Transfer and re-apply in the dispatch. */
@@ -100,14 +131,25 @@ public final class JvmSemanticEmitter {
         final String className;
 
         Session(LoweredModuleUnit unit, StructuredBodyTable table) {
+            this(unit, table, true, true, null);
+        }
+
+        Session(LoweredModuleUnit unit, StructuredBodyTable table, boolean trace,
+                boolean entryModule, String className) {
             this.unit = unit;
             this.table = table;
-            String path = unit.moduleId().path();
-            StringBuilder name = new StringBuilder("SharedM");
-            for (char c : path.toCharArray()) {
-                name.append(Character.isJavaIdentifierPart(c) ? c : '_');
+            this.trace = trace;
+            this.entryModule = entryModule;
+            if (className != null) {
+                this.className = className;
+            } else {
+                String path = unit.moduleId().path();
+                StringBuilder name = new StringBuilder("SharedM");
+                for (char c : path.toCharArray()) {
+                    name.append(Character.isJavaIdentifierPart(c) ? c : '_');
+                }
+                this.className = name.toString();
             }
-            this.className = name.toString();
             for (SemanticOp op : unit.ops()) {
                 opsById.put(op.opId(), op);
                 if (op.kind() == SemanticOpKind.BINDING_ALLOC) {
@@ -120,6 +162,22 @@ public final class JvmSemanticEmitter {
             ownedChildren.addAll(structuralOwned);
             ChainOperandCompletion.registerChainOperandOwners(unit, structuralOwned,
                 ownedChildren);
+            if (!entryModule) {
+                // A non-entry module never runs its ENTRY_INVOKE delegation
+                // (the retained emitter invokes main() only from the entry
+                // module): skip the entry op and its delegated CALL.
+                for (SemanticOp op : unit.ops()) {
+                    if (op.kind() != SemanticOpKind.ENTRY_INVOKE) {
+                        continue;
+                    }
+                    skippedOps.add(op.opId());
+                    for (SemanticOp candidate : unit.ops()) {
+                        if (op.opId().equals(candidate.origin().parentOpId())) {
+                            skippedOps.add(candidate.opId());
+                        }
+                    }
+                }
+            }
         }
 
         // -- naming ---------------------------------------------------------------
@@ -285,14 +343,27 @@ public final class JvmSemanticEmitter {
             // main.
             out.append("  public static void main(String[] args) {\n");
             out.append("    JvmRuntime.setModule(MODULE);\n");
-            out.append("    try {\n");
-            emitBlockOps(unit.moduleInit().initBlock(), 3);
-            out.append("      System.err.println(\"R|success|null\");\n");
-            out.append("      System.err.flush();\n");
-            out.append("    } catch (JvmRuntime.DealError e) {\n");
-            out.append("      System.err.println(\"R|failure|\" + JvmRuntime.errtext(e));\n");
-            out.append("      System.err.flush();\n");
-            out.append("    }\n");
+            out.append("    JvmRuntime.setTraceEnabled(").append(trace).append(");\n");
+            if (trace) {
+                out.append("    try {\n");
+                emitBlockOps(unit.moduleInit().initBlock(), 3);
+                out.append("      System.err.println(\"R|success|null\");\n");
+                out.append("      System.err.flush();\n");
+                out.append("    } catch (JvmRuntime.DealError e) {\n");
+                out.append("      System.err.println(\"R|failure|\" + JvmRuntime.errtext(e));\n");
+                out.append("      System.err.flush();\n");
+                out.append("    }\n");
+            } else {
+                // Production terminal: a DEAL failure publishes the
+                // retained DEAL_ERROR_CODE line on stdout and exits 1.
+                out.append("    try {\n");
+                emitBlockOps(unit.moduleInit().initBlock(), 3);
+                out.append("    } catch (JvmRuntime.DealError e) {\n");
+                out.append("      System.out.println(\"DEAL_ERROR_CODE: \" + e.code);\n");
+                out.append("      System.out.flush();\n");
+                out.append("      System.exit(1);\n");
+                out.append("    }\n");
+            }
             out.append("  }\n");
             out.append("}\n");
             return new EmissionResult(className, out.toString());
@@ -344,6 +415,9 @@ public final class JvmSemanticEmitter {
                 if (ownedChildren.contains(opId)) {
                     continue;
                 }
+                if (skippedOps.contains(opId)) {
+                    continue;
+                }
                 emitOp(opsById.get(opId), indent);
             }
         }
@@ -392,6 +466,8 @@ public final class JvmSemanticEmitter {
                 case DISCARD -> emitDiscard(op, indent);
                 case MODULE_IMPORT -> emitModuleImport(op, indent);
                 case EXPORT_READ -> emitExportRead(op, indent);
+                case EXPORT_PUBLISH -> emitExportPublish(op, indent);
+                case EXTERNAL_ENTRY -> emitExternalEntryRecord(op, indent);
                 case ENTRY_INVOKE -> emitEntryInvoke(op, indent);
                 default -> throw new IllegalStateException("op kind " + op.kind()
                     + " has no shared-JVM emission in this decomposition-tail domain");
@@ -407,6 +483,9 @@ public final class JvmSemanticEmitter {
         }
 
         private void emitStart(SemanticOp op, int indent) {
+            if (!trace) {
+                return;
+            }
             StringBuilder inputs = new StringBuilder();
             for (int i = 0; i < op.operands().size(); i++) {
                 if (i > 0) {
@@ -426,6 +505,9 @@ public final class JvmSemanticEmitter {
 
         /** START with the closed slot atom for the second operand (slot ops). */
         private void emitSlotOperandStart(SemanticOp op, int indent) {
+            if (!trace) {
+                return;
+            }
             StringBuilder inputs = new StringBuilder();
             inputs.append("JvmRuntime.atom(").append(slot(op.operands().get(0)))
                 .append(", ").append(javaString(staticKind(op.operandTypes().get(0))))
@@ -452,6 +534,9 @@ public final class JvmSemanticEmitter {
 
         private void emitBoundaryStart(SemanticOp boundary, String inputExpr,
                                        RuntimeDescriptor inputDescriptor, int indent) {
+            if (!trace) {
+                return;
+            }
             out.append(indent(indent)).append("JvmRuntime.ev(MODULE, ")
                 .append(javaString(opKey(boundary.opId()))).append(", \"START\", ")
                 .append("\"BOUNDARY\", ")
@@ -464,6 +549,9 @@ public final class JvmSemanticEmitter {
 
         private void emitBoundarySuccess(SemanticOp boundary, String valueExpr,
                                          RuntimeDescriptor descriptor, int indent) {
+            if (!trace) {
+                return;
+            }
             out.append(indent(indent)).append("JvmRuntime.ev(MODULE, ")
                 .append(javaString(opKey(boundary.opId()))).append(", \"SUCCESS\", ")
                 .append("\"BOUNDARY\", ")
@@ -475,6 +563,9 @@ public final class JvmSemanticEmitter {
 
         private void emitResultSuccess(SemanticOp op, String valueExpr,
                                        RuntimeDescriptor resultDescriptor, int indent) {
+            if (!trace) {
+                return;
+            }
             out.append(indent(indent)).append("JvmRuntime.ev(MODULE, ")
                 .append(javaString(opKey(op.opId()))).append(", \"SUCCESS\", ")
                 .append(javaString(op.kind().name())).append(", ")
@@ -485,6 +576,9 @@ public final class JvmSemanticEmitter {
         }
 
         private void emitPlainSuccess(SemanticOp op, int indent) {
+            if (!trace) {
+                return;
+            }
             out.append(indent(indent)).append("JvmRuntime.ev(MODULE, ")
                 .append(javaString(opKey(op.opId()))).append(", \"SUCCESS\", ")
                 .append(javaString(op.kind().name())).append(", ")
@@ -495,6 +589,9 @@ public final class JvmSemanticEmitter {
 
         /** The raw SUCCESS emission of a structure closed by a transfer. */
         private void emitClosedSuccess(SemanticOp op, int indent) {
+            if (!trace) {
+                return;
+            }
             out.append(indent(indent)).append("JvmRuntime.ev(MODULE, ")
                 .append(javaString(opKey(op.opId()))).append(", \"SUCCESS\", ")
                 .append(javaString(op.kind().name())).append(", ")
@@ -575,6 +672,9 @@ public final class JvmSemanticEmitter {
 
         private void emitFailureEvent(OpId id, String kindName, SemanticOp op,
                                       String errExpr, int indent) {
+            if (!trace) {
+                return;
+            }
             out.append(indent(indent)).append("JvmRuntime.ev(MODULE, ")
                 .append(javaString(opKey(id))).append(", \"FAILURE\", ")
                 .append(javaString(kindName)).append(", ")
@@ -925,12 +1025,14 @@ public final class JvmSemanticEmitter {
         /** A free BOUNDARY op: the runtime check over the payload input. */
         private void emitFreeBoundary(SemanticOp op, int indent) {
             KindPayload.BoundaryPayload payload = (KindPayload.BoundaryPayload) op.payload();
-            out.append(indent(indent)).append("JvmRuntime.ev(MODULE, ")
+            if (trace) {
+                out.append(indent(indent)).append("JvmRuntime.ev(MODULE, ")
                 .append(javaString(opKey(op.opId()))).append(", \"START\", ")
                 .append("\"BOUNDARY\", ")
                 .append(javaString(op.contract().canonicalDigest())).append(", ")
                 .append(javaString(parentKey(op.origin().parentOpId())))
                 .append(", List.of(), null, null);\n");
+            }
             out.append(indent(indent)).append("Object __fb_").append(op.opId().id())
                 .append(" = JvmRuntime.bcheck(")
                 .append(javaString(descriptorText(payload.descriptor()))).append(", ")
@@ -1759,6 +1861,34 @@ public final class JvmSemanticEmitter {
         }
 
         private void emitDiscard(SemanticOp op, int indent) {
+            emitStart(op, indent);
+            emitPlainSuccess(op, indent);
+        }
+
+        /**
+         * {@code EXPORT_PUBLISH} — the checked {@code MODULE_EXPORT}
+         * boundary (its owned child) then the publication record. The
+         * production export transport is the retained layout's artifact
+         * ABI; the record itself needs no further runtime action.
+         */
+        private void emitExportPublish(SemanticOp op, int indent) {
+            emitStart(op, indent);
+            for (SemanticOp candidate : opsById.values()) {
+                if (candidate.kind() == SemanticOpKind.BOUNDARY
+                        && op.opId().equals(candidate.origin().parentOpId())) {
+                    emitFreeBoundary(candidate, indent + 1);
+                }
+            }
+            emitPlainSuccess(op, indent);
+        }
+
+        /**
+         * {@code EXTERNAL_ENTRY} — the callee-unit invocation record of a
+         * function callable across a shared/shadow edge: production export
+         * transport is the retained layout's artifact ABI, so the record
+         * needs no runtime action.
+         */
+        private void emitExternalEntryRecord(SemanticOp op, int indent) {
             emitStart(op, indent);
             emitPlainSuccess(op, indent);
         }

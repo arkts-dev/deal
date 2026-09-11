@@ -80,7 +80,29 @@ public final class LuaSemanticEmitter {
     public static String emitModule(LoweredModuleUnit unit, StructuredBodyTable table) {
         Objects.requireNonNull(unit, "unit must not be null");
         Objects.requireNonNull(table, "table must not be null");
-        return new Session(unit, table).emit();
+        return new Session(unit, table, true, true).emit();
+    }
+
+    /**
+     * Emits the production LuaJIT module artifact for the validated unit
+     * (ISSUE-0239 E10): the conformance trace protocol is suppressed, a
+     * DEAL failure publishes the retained {@code DEAL_ERROR_CODE: <code>}
+     * line on stdout and exits 1, the chunk returns its export table
+     * (the retained-caller ABI surface), and the {@code ENTRY_INVOKE}
+     * delegation executes only for the entry module.
+     *
+     * @param unit        the validated lowered module unit; non-null
+     * @param table       the unit's produced block-membership table; non-null
+     * @param entryModule whether this module is the selected entry module
+     *                    (runs the {@code ENTRY_INVOKE} delegation)
+     * @return the production artifact source text
+     */
+    public static String emitProductionModule(LoweredModuleUnit unit,
+                                              StructuredBodyTable table,
+                                              boolean entryModule) {
+        Objects.requireNonNull(unit, "unit must not be null");
+        Objects.requireNonNull(table, "table must not be null");
+        return new Session(unit, table, false, entryModule).emit();
     }
 
     // =========================================================================
@@ -95,17 +117,34 @@ public final class LuaSemanticEmitter {
         final java.util.Set<OpId> ownedChildren = new java.util.HashSet<>();
         /** The payload-owned children only (closure computation excludes them). */
         final java.util.Set<OpId> structuralOwned;
+        /** Production mode: no trace protocol, DEAL_ERROR_CODE terminal. */
+        final boolean trace;
+        /** The selected entry module runs the ENTRY_INVOKE delegation. */
+        final boolean entryModule;
+        /** Ops the block walk skips (the entry delegation of a non-entry module). */
+        final java.util.Set<OpId> skippedOps = new java.util.HashSet<>();
         final StringBuilder out = new StringBuilder();
         /** The enclosing TRY_CATCH depth: transfers inside a pcall body
          *  must signal instead of goto/return (Lua closures cannot jump
          *  to the enclosing function's labels). */
         int tryDepth = 0;
+        /** The function id of the factory currently being emitted (the
+         *  per-function return-trampoline label suffix): every RETURN of
+         *  the body jumps to the function's trampoline label — the last
+         *  statement of the closure body — because a raw Lua return
+         *  followed by a structure's closing label (a return inside a
+         *  branch/loop/for-each block) or by the trampoline label itself
+         *  (a top-level return before the tail) is invalid Lua. */
+        FunctionId currentFunctionId = null;
         /** Structure ancestors are computed statically from the block tree
          *  per transfer (never a runtime-sensitive stack). */
 
-        Session(LoweredModuleUnit unit, StructuredBodyTable table) {
+        Session(LoweredModuleUnit unit, StructuredBodyTable table, boolean trace,
+                boolean entryModule) {
             this.unit = unit;
             this.table = table;
+            this.trace = trace;
+            this.entryModule = entryModule;
             for (SemanticOp op : unit.ops()) {
                 opsById.put(op.opId(), op);
                 if (op.kind() == SemanticOpKind.BINDING_ALLOC) {
@@ -121,6 +160,22 @@ public final class LuaSemanticEmitter {
             ownedChildren.addAll(structuralOwned);
             ChainOperandCompletion.registerChainOperandOwners(unit, structuralOwned,
                 ownedChildren);
+            if (!entryModule) {
+                // A non-entry module never runs its ENTRY_INVOKE delegation
+                // (the retained emitter invokes main() only from the entry
+                // module): skip the entry op and its delegated CALL.
+                for (SemanticOp op : unit.ops()) {
+                    if (op.kind() != SemanticOpKind.ENTRY_INVOKE) {
+                        continue;
+                    }
+                    skippedOps.add(op.opId());
+                    for (SemanticOp candidate : unit.ops()) {
+                        if (op.opId().equals(candidate.origin().parentOpId())) {
+                            skippedOps.add(candidate.opId());
+                        }
+                    }
+                }
+            }
         }
 
         // -- naming ---------------------------------------------------------------
@@ -147,6 +202,10 @@ public final class LuaSemanticEmitter {
 
         String fnFactory(FunctionId id) {
             return "F" + id.id();
+        }
+
+        String returnLabel(FunctionId id) {
+            return "__ret" + id.id();
         }
 
         // -- static kinds -----------------------------------------------------------
@@ -281,6 +340,23 @@ public final class LuaSemanticEmitter {
             out.append("local __frames, __seq, __module, __allocIds, __allocNext = {}, "
                 + "0, nil, {}, 1\n");
             out.append(PRELUDE);
+            if (!trace) {
+                // Production: the event helpers are no-ops.
+                out.append("__ev = function() end\n");
+                out.append("__normalizeEvent = function() end\n");
+            }
+            // The export-publication helper and the export table are
+            // declared in both modes: every E7-lowered unit with exports
+            // carries EXPORT_PUBLISH ops (SemanticLowerer's emitE7Terminals)
+            // whose publication emission references both names — a
+            // trace-mode session over such a unit must emit valid Lua too
+            // (production-only is the `return __exports` terminal, not the
+            // declaration).
+            out.append("local function __unfn(v)\n"
+                + "  if type(v) == \"table\" and v.__fn ~= nil then return v.__fn end\n"
+                + "  return v\n"
+                + "end\n");
+            out.append("local __exports = {}\n");
             out.append("\n__module = ").append(luaString(unit.moduleId().path()))
                 .append("\n");
             // One env table carries every slot and cell (LuaJIT's upvalue
@@ -311,12 +387,27 @@ public final class LuaSemanticEmitter {
             out.append("local __mainOk, __mainErr = pcall(function()\n");
             emitBlockOps(unit.moduleInit().initBlock());
             out.append("end)\n");
-            out.append("if __mainOk then\n");
-            out.append("  io.stderr:write(\"R|success|null\\n\")\n");
-            out.append("else\n");
-            out.append("  io.stderr:write(\"R|failure|\"..__errtext(__mainErr)..\"\\n\")\n");
-            out.append("end\n");
-            out.append("io.stderr:flush()\n");
+            if (trace) {
+                out.append("if __mainOk then\n");
+                out.append("  io.stderr:write(\"R|success|null\\n\")\n");
+                out.append("else\n");
+                out.append("  io.stderr:write(\"R|failure|\"..__errtext(__mainErr)..\"\\n\")\n");
+                out.append("end\n");
+                out.append("io.stderr:flush()\n");
+            } else {
+                // Production terminal: a DEAL failure publishes the
+                // retained DEAL_ERROR_CODE line on stdout and exits 1; a
+                // non-DEAL failure rethrows; success returns the exports.
+                out.append("if not __mainOk then\n");
+                out.append("  if type(__mainErr) == \"table\" and __mainErr.__d then\n");
+                out.append("    print(\"DEAL_ERROR_CODE: \"..__mainErr.code)\n");
+                out.append("  else\n");
+                out.append("    error(__mainErr, 0)\n");
+                out.append("  end\n");
+                out.append("  os.exit(1)\n");
+                out.append("end\n");
+                out.append("return __exports\n");
+            }
             return out.toString();
         }
 
@@ -337,6 +428,7 @@ public final class LuaSemanticEmitter {
             out.append("    local __args = {...}\n");
             int argIndex = 1;
             List<OpId> bodyOps = table.blockOps().get(function.body());
+            currentFunctionId = functionId;
             int paramCount = function.descriptor().paramTypes().size();
             for (int i = 0; i < paramCount && i < bodyOps.size(); i++) {
                 SemanticOp op = opsById.get(bodyOps.get(i));
@@ -359,14 +451,25 @@ public final class LuaSemanticEmitter {
                 }
                 emitOp(opsById.get(bodyOps.get(i)));
             }
+            // The function's return trampoline: every RETURN of the
+            // body jumps here (a raw Lua return inside a structure block
+            // would be followed by the structure's closing label, and a
+            // trailing label after a raw top-level return is equally
+            // invalid — one uniform trampoline keeps every shape valid).
+            out.append("::").append(returnLabel(functionId)).append("::\n");
+            out.append("  return __rvcT\n");
             out.append("  end\n");
             out.append("end\n");
+            currentFunctionId = null;
         }
 
         /** Emits the ops of one block inline. */
         private void emitBlockOps(BlockId block) {
             for (OpId opId : table.blockOps().get(block)) {
                 if (ownedChildren.contains(opId)) {
+                    continue;
+                }
+                if (skippedOps.contains(opId)) {
                     continue;
                 }
                 emitOp(opsById.get(opId));
@@ -419,6 +522,8 @@ public final class LuaSemanticEmitter {
                 case DISCARD -> emitDiscard(op);
                 case MODULE_IMPORT -> emitModuleImport(op);
                 case EXPORT_READ -> emitExportRead(op);
+                case EXPORT_PUBLISH -> emitExportPublish(op);
+                case EXTERNAL_ENTRY -> emitExternalEntryRecord(op);
                 case ENTRY_INVOKE -> emitEntryInvoke(op);
                 default -> throw new IllegalStateException("op kind " + op.kind()
                     + " has no shared-LuaJIT emission in this decomposition-tail "
@@ -1270,9 +1375,11 @@ public final class LuaSemanticEmitter {
                 }
                 out.append("io.write(").append(textExpr).append("..\"\\n\")\n");
                 out.append("io.stdout:flush()\n");
-                out.append("io.stderr:write(\"F|CONSOLE_WRITE|\"..__esc(")
-                    .append(textExpr).append(")..\"\\n\")\n");
-                out.append("io.stderr:flush()\n");
+                if (trace) {
+                    out.append("io.stderr:write(\"F|CONSOLE_WRITE|\"..__esc(")
+                        .append(textExpr).append(")..\"\\n\")\n");
+                    out.append("io.stderr:flush()\n");
+                }
             }
             String target = slot((ValueId) op.result());
             out.append(target).append(" = nil\n");
@@ -1630,7 +1737,20 @@ public final class LuaSemanticEmitter {
                 out.append("error({__tr = true, t = \"return\", v = __rvcT}, 0)\n");
             } else {
                 emitTransferClosures(op, null, false);
-                out.append("return __rvcT\n");
+                if (currentFunctionId != null) {
+                    // Jump to the function's return trampoline — the last
+                    // statement of the closure body. A raw Lua return
+                    // would be followed by a structure's closing label
+                    // (a return inside a branch/loop/for-each block) or by
+                    // the trampoline label itself (a top-level return
+                    // before the tail) — both invalid Lua.
+                    out.append("goto ").append(returnLabel(currentFunctionId))
+                        .append("\n");
+                } else {
+                    // Defensive: a RETURN outside any factory emission
+                    // (never produced by the walk) keeps the plain form.
+                    out.append("return __rvcT\n");
+                }
             }
         }
 
@@ -1663,6 +1783,48 @@ public final class LuaSemanticEmitter {
         }
 
         private void emitDiscard(SemanticOp op) {
+            emitStart(op);
+            emitPlainSuccess(op);
+        }
+
+        /**
+         * {@code EXPORT_PUBLISH} — the checked {@code MODULE_EXPORT}
+         * boundary (its owned child) then the export-table publication of
+         * the callable function value (the wrapper's closure, unwrapped
+         * so a retained caller can invoke it directly).
+         */
+        private void emitExportPublish(SemanticOp op) {
+            KindPayload.ExportPublishPayload payload =
+                (KindPayload.ExportPublishPayload) op.payload();
+            emitStart(op);
+            SemanticOp boundary = boundaryChildOf(op);
+            if (boundary != null) {
+                KindPayload.BoundaryPayload boundaryPayload =
+                    (KindPayload.BoundaryPayload) boundary.payload();
+                emitBoundaryStart(boundary, slot(payload.value()),
+                    boundaryPayload.descriptor());
+                out.append("__chk = __bcheck(")
+                    .append(luaString(descriptorText(boundaryPayload.descriptor())))
+                    .append(", ")
+                    .append(luaString(staticKind(boundaryPayload.descriptor())))
+                    .append(", ").append(slot(payload.value())).append(")\n");
+                emitBoundarySuccess(boundary, "__chk", boundaryPayload.descriptor());
+            }
+            out.append("__exports[").append(luaString(payload.name()))
+                .append("] = {__kind = \"function\", sig = ")
+                .append(luaString(payload.descriptor().canonicalSpecText()))
+                .append(", f = __unfn(").append(slot(payload.value()))
+                .append(")}\n");
+            emitPlainSuccess(op);
+        }
+
+        /**
+         * {@code EXTERNAL_ENTRY} — the callee-unit invocation record of a
+         * function callable across a shared/shadow edge: the exports table
+         * already publishes the callable value under the export name, so
+         * the record needs no runtime action.
+         */
+        private void emitExternalEntryRecord(SemanticOp op) {
             emitStart(op);
             emitPlainSuccess(op);
         }
@@ -1703,6 +1865,18 @@ public final class LuaSemanticEmitter {
 -- ==== shared runtime prelude ====
 local __MISSING = setmetatable({}, {__tostring = function() return "missing" end})
 local __NULL = setmetatable({}, {__tostring = function() return "null" end})
+-- The member-read helper (ISSUE-0239 E10): a present key yields the
+-- stored value (a present null is the plain nil stored by the write
+-- paths); an absent key yields the internal MISSING sentinel — exactly
+-- JvmRuntime.Table.read's present/absent split, so the contextual
+-- table-read boundary decides null-vs-error identically on both
+-- targets. The __keys marker sub-table is the same one the TABLE_NEW /
+-- MEMBER_WRITE / MEMBER_DELETE / INDEX_WRITE / INDEX_DELETE paths
+-- maintain, so read and write presence stay consistent.
+local function __member(t, k)
+  if t.__keys[k] then return t[k] end
+  return __MISSING
+end
 local function __esc(s)
   if s == nil then return "" end
   local out = {}
@@ -1863,6 +2037,13 @@ local function __bcheck(desc, staticKind, v)
     return __bcheck(string.sub(desc, 10, -2), staticKind, v)
   elseif string.sub(desc, 1, 9) == "function(" then
     if type(v) == "function" then
+      local carried = v.__sig or ""
+      if carried == desc then return v end
+      return error(__failExpr("E8010",
+        "function signature mismatch: expected "..desc..", got "..carried,
+        "-", desc, carried), 0)
+    end
+    if type(v) == "table" and v.__fn ~= nil then
       local carried = v.__sig or ""
       if carried == desc then return v end
       return error(__failExpr("E8010",
