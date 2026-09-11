@@ -381,17 +381,23 @@ public class RuntimeDefaultLoweringTest {
             String js = Files.readString(
                 project.js.outputRoot.resolve("main.js"));
             check(js.contains("/* default evaluator (@src/Shape, x, "
-                    + semanticX + ") */ 1"),
-                "the JS thunk carries the pinned x evaluator label");
-            int jsIdxX = js.indexOf("[\"x\"]");
-            int jsIdxT = js.indexOf("[\"t\"]");
-            int jsIdxOpt = js.indexOf("[\"opt\"]");
-            int jsIdxCall = js.indexOf("[\"call\"]");
+                    + semanticX + ") */ () => 1"),
+                "the JS plan list carries the pinned x evaluator label"
+                    + " on its zero-argument closure");
+            int jsIdxX = js.indexOf("name: \"x\"");
+            int jsIdxT = js.indexOf("name: \"t\"");
+            int jsIdxOpt = js.indexOf("name: \"opt\"");
+            int jsIdxCall = js.indexOf("name: \"call\"");
             check(jsIdxX >= 0 && jsIdxT > jsIdxX && jsIdxOpt > jsIdxT
                     && jsIdxCall > jsIdxOpt,
-                "the JS thunk keeps entry order (x, t, opt, call)");
-            check(js.contains("[\"opt\"]: $rt.MISSING"),
-                "the JS optional entry is $rt.MISSING (never evaluates)");
+                "the JS plan list keeps entry order (x, t, opt, call)");
+            check(js.contains("{ name: \"opt\", descriptor: \"string\","
+                    + " optional: true }"),
+                "the JS optional entry carries no evaluator");
+            check(js.contains("$rt.classPlan(\"@src/Shape\", Shape$plan,"
+                    + " provided, $file, $line, $column)"),
+                "the JS construction closure consumes the plan through"
+                    + " $rt.classPlan");
 
             String java = Files.readString(
                 project.jvm.outputRoot.resolve("Main.java"));

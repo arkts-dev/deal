@@ -480,6 +480,119 @@ test("jsonParseValue/jsonEncodeValue roundtrip the marked Map shapes", function(
 });
 
 // =========================================================================
+// $rt.classPlan: the plan-driven four-phase construction entry (ISSUE-0545)
+// =========================================================================
+
+// The pinned plan-entry shape { name, descriptor, optional, evaluator? }
+// in class source order; the evaluator closures are created at load and
+// never invoked there — classPlan invokes exactly the omitted required
+// entries once per attempt.
+function planEntry(name, descriptor, optional, evaluator) {
+  const e = { name: name, descriptor: descriptor, optional: !!optional };
+  if (evaluator !== undefined) {
+    e.evaluator = evaluator;
+  }
+  return e;
+}
+
+test("classPlan tags and publishes with provided values and absent optionals", function() {
+  const plan = [planEntry("name", "string", false, () => "Ada"),
+    planEntry("nick", "string", true)];
+  const u = rt.classPlan("@m/U", plan, { name: "Bob" }, ...LOC);
+  assertEqual(u.$kind, "class", "kind tag");
+  assertEqual(u.$classname, "@m/U", "identity tag");
+  assertEqual(u.name, "Bob", "provided value");
+  assertEqual(u.nick, rt.MISSING, "absent optional materializes as MISSING");
+});
+
+test("classPlan omitted required defaults evaluate exactly once per attempt in plan order", function() {
+  const order = [];
+  const plan = [planEntry("a", "int", false, () => { order.push("a"); return 1; }),
+    planEntry("b", "int", false, () => { order.push("b"); return 2; })];
+  const u = rt.classPlan("C", plan, null, ...LOC);
+  const v = rt.classPlan("C", plan, null, ...LOC);
+  assertEqual(order.join(","), "a,b,a,b", "declaration-order evaluation, once per attempt");
+  assertEqual(u.a + u.b + v.a + v.b, 6, "per-attempt results");
+});
+
+test("classPlan provided fields suppress their evaluators", function() {
+  let runs = 0;
+  const plan = [planEntry("a", "int", false, () => { runs++; return 1; }),
+    planEntry("b", "int", false, () => { runs++; return 2; })];
+  const u = rt.classPlan("C", plan, { a: 5, b: 6 }, ...LOC);
+  assertEqual(runs, 0, "no default ran for a provided field");
+  assertEqual(u.a + u.b, 11, "provided values stored");
+});
+
+test("classPlan extra provided field raises E8007 with zero default evaluation", function() {
+  let runs = 0;
+  const plan = [planEntry("a", "int", false, () => { runs++; return 1; })];
+  assertError(() => rt.classPlan("C", plan, { extra: 1 }, ...LOC), "E8007",
+    "extra field 'extra' in class 'C'", "extra-key rejection");
+  assertEqual(runs, 0, "no default evaluated before the E8007");
+});
+
+test("classPlan phase 3 validates provided fields and evaluated defaults in plan order", function() {
+  const plan = [planEntry("a", "int", false, () => 1),
+    planEntry("nick", "?string", true)];
+  assertError(() => rt.classPlan("C", plan, { a: "not-an-int" }, ...LOC), "E8001",
+    "expected int", "provided-value validation");
+  assertError(() => rt.classPlan("C", plan, { a: 1, nick: 42 }, ...LOC), "E8001",
+    "expected string", "nullable optional validation");
+  const u = rt.classPlan("C", plan, { a: 1, nick: null }, ...LOC);
+  assertEqual(u.nick, null, "explicit null on a nullable optional stays present-null");
+});
+
+test("classPlan evaluator-raised DEAL errors propagate unchanged", function() {
+  const plan = [planEntry("a", "int", false, () => rt.fail("E8002", "evaluator boom", ...LOC))];
+  const err = assertError(() => rt.classPlan("C", plan, null, ...LOC), "E8002",
+    "evaluator boom", "evaluator failure propagates");
+  assertEqual(err.$dealCode, "E8002", "error code preserved");
+});
+
+test("classPlan malformed plan shapes fail closed with E8001", function() {
+  assertError(() => rt.classPlan("C", { length: 1 }, null, ...LOC), "E8001",
+    "class default plan must be a table", "non-array plan");
+  assertError(() => rt.classPlan("C", ["x"], null, ...LOC), "E8001",
+    "malformed class default plan entry", "non-object entry");
+  assertError(() => rt.classPlan("C", [{ name: 1, descriptor: "int", optional: false }], null, ...LOC),
+    "E8001", "malformed class default plan entry", "non-string name");
+  assertError(() => rt.classPlan("C", [{ name: "x", descriptor: 2, optional: false }], null, ...LOC),
+    "E8001", "malformed class default plan entry", "non-string descriptor");
+  assertError(() => rt.classPlan("C", [{ name: "x", descriptor: "int", optional: "yes" }], null, ...LOC),
+    "E8001", "malformed class default plan entry", "non-boolean optional");
+  assertError(() => rt.classPlan("C", [{ name: "x", descriptor: "int", optional: false, evaluator: 3 }],
+    null, ...LOC), "E8001", "malformed class default plan entry", "non-function evaluator");
+  assertError(() => rt.classPlan("C", [planEntry("x", "int", false, () => 1),
+    planEntry("x", "int", false, () => 2)], null, ...LOC), "E8001",
+    "duplicate field in class default plan: 'x'", "duplicate names");
+  assertError(() => rt.classPlan("C", [planEntry("a", "int", false, () => 1)], 42, ...LOC),
+    "E8001", "class field values must be a table", "non-table provided");
+});
+
+test("jsonFromDocument consumes plan-carrying per-entry evaluators (omitted required only)", function() {
+  let runs = 0;
+  const fields = [f("a", "int", false, false), f("b", "int", false, false)];
+  fields[0].evaluator = () => { runs++; return 1; };
+  fields[1].evaluator = () => { runs++; return 2; };
+  // Extra keys and provided-value failures still precede every default.
+  assertNull(rt.jsonFromJson("@m/C", fields, null, '{"extra":1}', ...LOC), "extra-key gate");
+  assertEqual(runs, 0, "no default ran after the extra-key rejection");
+  assertNull(rt.jsonFromJson("@m/C", fields, null, '{"b":"x"}', ...LOC), "decode gate");
+  assertEqual(runs, 0, "no default ran after the provided-value failure");
+  // Omitted required defaults evaluate exactly once per attempt.
+  const u = rt.jsonFromJson("@m/C", fields, null, '{"b":20}', ...LOC);
+  assert(u !== null, "valid decode");
+  assertEqual(runs, 1, "only the omitted a default ran");
+  assertEqual(u.a, 1, "evaluated default");
+  assertEqual(u.b, 20, "provided value");
+  // Fully provided documents run no defaults at all.
+  const v = rt.jsonFromJson("@m/C", fields, null, '{"a":5,"b":6}', ...LOC);
+  assert(v !== null && v.a === 5 && v.b === 6, "fully provided decode");
+  assertEqual(runs, 1, "no default ran for provided fields");
+});
+
+// =========================================================================
 
 if (failed > 0) {
   console.log("");

@@ -180,6 +180,30 @@ TEST_MAINS+=(
 )
 
 # =========================================================================
+# ISSUE-0545 (construction-phase consumption and repeated-attempt/
+# composition verification): the runtime consumption battery — repeated
+# real constructions prove counts, ordering, freshness, isolation,
+# retained function/bytes references, optional omission, failure
+# timing, retained effects, and zero import-time evaluation across the
+# normal, C-struct, and JSON construction paths on all three backends
+# (LuaJIT/JVM/JavaScript real artifacts; the C-struct path runs the
+# GCC-built committed native fixture through production load_ffi), plus
+# the end-to-end composition scenario over the semantic identity,
+# canonical descriptor, declaration marker, and bytes-value contracts
+# with the stable-identity, provider-sensitive-identity, and
+# broken-dependency negative arms. Joined here at the gate-script
+# level, like the ISSUE-0541/0542/0543/0544 suites, so the single
+# compile/test-list authority file (tools/gate-manifest.sh) stays
+# untouched.
+# =========================================================================
+TEST_SOURCES+=(
+  'test/RuntimeConstructionPhasesTest.java'
+)
+TEST_MAINS+=(
+  'fg|=== Running Runtime Construction Phases Tests (ISSUE-0545) ===|java -ea -cp build deal.test.RuntimeConstructionPhasesTest'
+)
+
+# =========================================================================
 # ISSUE-0474 + ISSUE-0475 (Coverage Manifest Validator and Corpus
 # Check): the reusable C7 validation component, its synthetic 26/0 unit
 # matrix, and the real-manifest 82/0 mechanical check join the compile

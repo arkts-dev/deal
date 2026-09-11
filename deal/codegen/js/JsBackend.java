@@ -825,12 +825,18 @@ public final class JsBackend {
         for (StatementNode stmt : program.statements()) {
             switch (stmt) {
                 case ClassDeclaration cd -> predeclares.add(
-                    "let " + cd.name() + "$new; let " + cd.name() + "$meta;");
+                    "let " + cd.name() + "$new; let " + cd.name() + "$meta;"
+                        + (publishedPlanFor(cd) != null
+                            ? " let " + cd.name() + "$plan;"
+                            : ""));
                 case ExportDeclaration ed -> {
                     switch (ed.declaration()) {
                         case ClassDeclaration cd -> predeclares.add(
                             "let " + cd.name() + "$new; let "
                                 + cd.name() + "$meta;"
+                                + (publishedPlanFor(cd) != null
+                                    ? " let " + cd.name() + "$plan;"
+                                    : "")
                                 + (cd.isJsonable()
                                     ? " let " + cd.name() + "$fromJson; let "
                                         + cd.name() + "$toJson; let "
@@ -1808,21 +1814,45 @@ public final class JsBackend {
         for (String label : defaultEvaluatorLabels(cd)) {
             line("// default evaluator " + label);
         }
-        // The class comment lands BEFORE the thunk is assembled: the
-        // thunk's captured expression mappings rebase against the
-        // already-appended comment line, exactly like the pre-plan
+        // The class comment lands BEFORE the plan/thunk text is
+        // assembled: the captured expression mappings rebase against
+        // the already-appended comment line, exactly like the pre-plan
         // emission (js-v12-source-maps D2 exactness).
         out.append("// Class: ").append(cd.name())
-            .append(" — construction closure, defaults thunk, and metadata.\n");
-        String thunk = classDefaultsThunk(cd);
-        line(cd.name() + "$new = (provided, $file, $line, $column) => "
-            + "$rt.makeClass(" + jsStringLiteral(cd.name()) + ", "
-            + jsStringLiteral(qualifiedClassName(cd.name())) + ", "
-            + thunk + ", provided, $file, $line, $column);");
-        line(cd.name() + "$meta = { $kind: \"class\", $classname: "
-            + jsStringLiteral(qualifiedClassName(cd.name())) + " };");
-        if (cd.isJsonable() && statementDepth == 0) {
-            emitJsonableArtifacts(cd, thunk);
+            .append(" — construction closure, defaults plan, and metadata.\n");
+        String identity = qualifiedClassName(cd.name());
+        CompilerClassDefaultPlan plan = publishedPlanFor(cd);
+        if (plan != null) {
+            // ISSUE-0545 (the construction-consumption epic, runtime
+            // page D4/D6): a plan-bearing class constructs through
+            // $rt.classPlan over its published runtime plan list — the
+            // per-entry shape {name, descriptor, optional, evaluator}
+            // with labelled zero-argument evaluator closures created at
+            // load and never invoked there. $rt.classPlan realizes the
+            // four pinned phases: extra-key E8007 before any default,
+            // omitted required defaults exactly once per attempt in
+            // plan order, per-field canonical validation, tag/publish.
+            String planList = publishedPlanList(plan);
+            line(cd.name() + "$plan = " + planList + ";");
+            line(cd.name() + "$new = (provided, $file, $line, $column) => "
+                + "$rt.classPlan(" + jsStringLiteral(identity) + ", "
+                + cd.name() + "$plan, provided, $file, $line, $column);");
+            line(cd.name() + "$meta = { $kind: \"class\", $classname: "
+                + jsStringLiteral(identity) + " };");
+            if (cd.isJsonable() && statementDepth == 0) {
+                emitJsonableArtifacts(cd, plan);
+            }
+        } else {
+            String thunk = classDefaultsThunk(cd);
+            line(cd.name() + "$new = (provided, $file, $line, $column) => "
+                + "$rt.makeClass(" + jsStringLiteral(cd.name()) + ", "
+                + jsStringLiteral(identity) + ", "
+                + thunk + ", provided, $file, $line, $column);");
+            line(cd.name() + "$meta = { $kind: \"class\", $classname: "
+                + jsStringLiteral(identity) + " };");
+            if (cd.isJsonable() && statementDepth == 0) {
+                emitJsonableArtifacts(cd, thunk);
+            }
         }
         out.append("\n");
     }
@@ -1878,7 +1908,38 @@ public final class JsBackend {
             + "(v, $file, $line, $column) => $rt.jsonToJson("
             + jsStringLiteral(identity) + ", v, " + cd.name() + "$fields, "
             + "$file, $line, $column));");
-        line(cd.name() + "$fields = " + jsonFieldsArray(cd.fields()) + ";");
+        line(cd.name() + "$fields = "
+            + jsonFieldsArray(cd.fields(), null, null) + ";");
+    }
+
+    /**
+     * The plan-bearing JSONable variant (ISSUE-0545, runtime page D5):
+     * the {@code C$fromJson} wrapper passes the published plan's
+     * per-entry evaluator carriers through the descriptor array (the
+     * walker consumes exactly the omitted required entries, once per
+     * attempt — no thunk, so no eager default evaluation) while the
+     * {@code C$toJson} wrapper and the exported descriptor shape stay
+     * byte-identical to the thunk form.
+     */
+    private void emitJsonableArtifacts(ClassDeclaration cd,
+                                       CompilerClassDefaultPlan plan) {
+        String identity = qualifiedClassName(cd.name());
+        out.append("// Jsonable: ").append(cd.name())
+            .append(" — C$fromJson/C$toJson wrappers and the hidden")
+            .append(" C$fields descriptor export.\n");
+        line(cd.name() + "$fromJson = $rt.function("
+            + jsStringLiteral("(string)->?" + identity) + ", "
+            + "(s, $file, $line, $column) => $rt.jsonFromJson("
+            + jsStringLiteral(identity) + ", " + cd.name() + "$fields, "
+            + "null, s, $file, $line, $column));");
+        line(cd.name() + "$toJson = $rt.function("
+            + jsStringLiteral("(" + identity + ")->string") + ", "
+            + "(v, $file, $line, $column) => $rt.jsonToJson("
+            + jsStringLiteral(identity) + ", v, " + cd.name() + "$fields, "
+            + "$file, $line, $column));");
+        line(cd.name() + "$fields = "
+            + jsonFieldsArray(cd.fields(), plan,
+                cd.name() + "$plan") + ";");
     }
 
     /**
@@ -1889,11 +1950,17 @@ public final class JsBackend {
      * declaration flags {@code optional}/{@code nullable}/
      * {@code hasDefault}.
      */
-    private String jsonFieldsArray(List<ClassField> fields) {
+    private String jsonFieldsArray(List<ClassField> fields,
+                                   CompilerClassDefaultPlan plan,
+                                   String planBinding) {
         StringBuilder sb = new StringBuilder("[");
         for (int i = 0; i < fields.size(); i++) {
             if (i > 0) sb.append(", ");
-            sb.append(jsonFieldEntry(fields.get(i)));
+            CompilerClassDefaultEntry planEntry = plan == null
+                ? null : plan.orderedFields().get(i);
+            sb.append(jsonFieldEntry(fields.get(i), planEntry,
+                planBinding, i, plan == null ? null
+                    : identityText(plan.classIdentity())));
         }
         return sb.append("]").toString();
     }
@@ -1906,8 +1973,20 @@ public final class JsBackend {
      * pair carries the canonical identity text and the nested
      * descriptor array for class-typed fields, and {@code element}
      * carries the element entry for array-typed fields.
+     *
+     * <p>Plan-bearing entries additionally carry the published plan's
+     * labelled zero-argument evaluator closure under {@code evaluator}
+     * — a reference to the class's module-local {@code <C>$plan[i]}
+     * entry, created at load and never invoked there (ISSUE-0545,
+     * runtime page D1/D5): {@code $jsonFromDocument} invokes exactly
+     * the omitted required entries once per attempt, in descriptor
+     * order. Optional entries carry no evaluator key (a declared
+     * default on an optional field never evaluates).</p>
      */
-    private String jsonFieldEntry(ClassField cf) {
+    private String jsonFieldEntry(ClassField cf,
+                                  CompilerClassDefaultEntry planEntry,
+                                  String planBinding, int planIndex,
+                                  String planIdentityText) {
         TypeNode base = cf.type();
         if (base instanceof NullableType nt) {
             base = nt.innerType();
@@ -1920,6 +1999,14 @@ public final class JsBackend {
         sb.append(", optional: ").append(cf.optional())
             .append(", nullable: ").append(cf.nullable())
             .append(", hasDefault: ").append(cf.defaultExpr().isPresent());
+        if (planEntry != null && !planEntry.optional()) {
+            String label = RuntimeDefaultPlanLowering.labelOf(
+                planIdentityText, cf.name(),
+                planEntry.defaultExpression().semanticDigest());
+            sb.append(", evaluator: /* default evaluator ")
+                .append(label).append(" */ ").append(planBinding)
+                .append("[").append(planIndex).append("].evaluator");
+        }
         return sb.append(" }").toString();
     }
 
@@ -2021,7 +2108,7 @@ public final class JsBackend {
         if (isIntrinsicError(cls) || isDeclaredInThisModule(cls)) {
             Symbol sym = symbols.resolve(cls.name());
             if (sym instanceof Symbol.ClassSymbol cs) {
-                return jsonFieldsArray(cs.fields());
+                return jsonFieldsArray(cs.fields(), null, null);
             }
             return "[]";
         }
@@ -2105,13 +2192,13 @@ public final class JsBackend {
      * {@code $rt.MISSING}; default expressions evaluate fresh on every
      * construction (spec §Construction); the remaining required fields
      * carry their zero-value placeholders (dead entries — the checker's
-     * E4001 requires every literal to provide them).
+     * E4001 requires every literal to provide them). Reached only when
+     * the graph published no plan for the visited declaration (the
+     * standalone entry points and checker-error programs): plan-bearing
+     * classes construct through {@code $rt.classPlan} over the
+     * published plan list instead (ISSUE-0545, {@link #visit(ClassDeclaration)}).
      */
     private String classDefaultsThunk(ClassDeclaration cd) {
-        CompilerClassDefaultPlan plan = publishedPlanFor(cd);
-        if (plan != null) {
-            return publishedDefaultsThunk(plan);
-        }
         StringBuilder sb = new StringBuilder("() => ({");
         boolean first = true;
         for (ClassField field : cd.fields()) {
@@ -2125,49 +2212,55 @@ public final class JsBackend {
     }
 
     /**
-     * The published plan's per-construction defaults-thunk projection
-     * (ISSUE-0544, runtime page D1/D2/D6): one entry per plan entry in
-     * class source order with a computed key — the declared-name set
-     * {@code $rt.makeClass}/{@code $jsonFromDocument} validate against.
-     * A required-present entry evaluates its labelled evaluator
-     * expression on every thunk invocation (once per construction
-     * attempt — fresh mutable literals, re-executed calls, function
-     * results retained by reference); an optional entry stores
-     * {@code $rt.MISSING} and NEVER evaluates (a declared default on an
-     * optional field is checker-validated metadata only, D1). Each
-     * evaluator label is a JS block comment directly before the entry
-     * value. The realized {@link RuntimeClassDefaultPlan} carrier
-     * (digests, labels, presence) is appended exactly once here — the
-     * declaration site builds one thunk text shared by the construction
-     * closure and the @jsonable wrappers.
+     * The published plan's runtime plan-list projection (ISSUE-0545,
+     * runtime page D1/D2/D6): one entry per plan entry in class source
+     * order with the pinned entry shape
+     * {@code {name, descriptor, optional, evaluator?}} — the declared-
+     * name set and the canonical descriptors {@code $rt.classPlan}
+     * validates against. A required-present entry carries its labelled
+     * zero-argument evaluator closure — created here at load, closing
+     * over the declaring module's scope, never invoked during lowering
+     * or load; {@code $rt.classPlan} invokes it exactly once per
+     * omitted required entry per construction attempt (fresh mutable
+     * literals, re-executed calls, function results retained by
+     * reference). An optional entry carries no evaluator and NEVER
+     * evaluates (a declared default on an optional field is
+     * checker-validated metadata only, D1). Each evaluator label is a
+     * JS block comment directly before the closure. The realized
+     * {@link RuntimeClassDefaultPlan} carrier (digests, labels,
+     * presence) is appended exactly once here; the @jsonable wrappers
+     * reference the same per-entry closures through the descriptor
+     * array's {@code evaluator} keys.
      */
-    private String publishedDefaultsThunk(CompilerClassDefaultPlan plan) {
+    private String publishedPlanList(CompilerClassDefaultPlan plan) {
         String identityText = identityText(plan.classIdentity());
         List<RuntimeDefaultPlanLowering.EvaluatorRealization>
             realizations = new ArrayList<>();
-        StringBuilder sb = new StringBuilder("() => ({");
+        StringBuilder sb = new StringBuilder("[");
         for (int i = 0; i < plan.orderedFields().size(); i++) {
             CompilerClassDefaultEntry entry = plan.orderedFields().get(i);
             if (i > 0) {
                 sb.append(",");
             }
-            sb.append(" [").append(jsStringLiteral(entry.name()))
-                .append("]: ");
-            if (entry.optional()) {
-                sb.append("$rt.MISSING");
-                continue;
+            sb.append("{ name: ").append(jsStringLiteral(entry.name()))
+                .append(", descriptor: ")
+                .append(jsStringLiteral(entry.runtimeTypeDescriptor()))
+                .append(", optional: ").append(entry.optional());
+            if (!entry.optional()) {
+                String label = RuntimeDefaultPlanLowering.labelOf(
+                    identityText, entry.name(),
+                    entry.defaultExpression().semanticDigest());
+                String evaluator = "() => " + emitExpression(
+                    entry.defaultExpression().expressionAst());
+                sb.append(", evaluator: /* default evaluator ")
+                    .append(label).append(" */ ").append(evaluator);
+                realizations.add(new RuntimeDefaultPlanLowering
+                    .EvaluatorRealization(label, evaluator,
+                        artifactInvocationSeam(label)));
             }
-            String label = RuntimeDefaultPlanLowering.labelOf(identityText,
-                entry.name(), entry.defaultExpression().semanticDigest());
-            String evaluator = emitExpression(
-                entry.defaultExpression().expressionAst());
-            sb.append("/* default evaluator ").append(label).append(" */ ")
-                .append(evaluator);
-            realizations.add(new RuntimeDefaultPlanLowering
-                .EvaluatorRealization(label, evaluator,
-                    artifactInvocationSeam(label)));
+            sb.append(" }");
         }
-        sb.append(" })");
+        sb.append("]");
         runtimePlans.add(RuntimeDefaultPlanLowering.realize(plan,
             identityText, realizations).plan());
         return sb.toString();
@@ -2175,9 +2268,9 @@ public final class JsBackend {
 
     /**
      * The carrier-side zero-argument invocation seam of a generated JS
-     * evaluator (ISSUE-0544): the real evaluator is the generated
-     * thunk-entry expression — it executes inside the artifact exactly
-     * once per omitted required entry per construction attempt — so an
+     * evaluator (ISSUE-0544/0545): the real evaluator is the generated
+     * plan-entry closure — it executes inside the artifact exactly once
+     * per omitted required entry per construction attempt — so an
      * in-process {@code invoke()} is a lowering-contract misuse and
      * raises. Nothing in the production pipeline invokes the seam
      * in-process; it carries the label so the misuse names its
@@ -2742,6 +2835,8 @@ public final class JsBackend {
         Set<String> hoisted = new LinkedHashSet<>();
         Set<String> hoistedClasses = new LinkedHashSet<>();
         Map<String, String> firstKind = new LinkedHashMap<>();
+        Map<String, ClassDeclaration> classDeclarations =
+            new LinkedHashMap<>();
         for (StatementNode stmt : statements) {
             switch (stmt) {
                 case FunctionDeclaration fd -> {
@@ -2751,6 +2846,7 @@ public final class JsBackend {
                 case ClassDeclaration cd -> {
                     hoistedClasses.add(cd.name());
                     firstKind.putIfAbsent(cd.name(), "class");
+                    classDeclarations.putIfAbsent(cd.name(), cd);
                 }
                 case ExportDeclaration ed -> {
                     switch (ed.declaration()) {
@@ -2761,6 +2857,7 @@ public final class JsBackend {
                         case ClassDeclaration cd -> {
                             hoistedClasses.add(cd.name());
                             firstKind.putIfAbsent(cd.name(), "class");
+                            classDeclarations.putIfAbsent(cd.name(), cd);
                         }
                         default -> {
                             // Unreachable: ExportDeclaration wraps only
@@ -2780,7 +2877,15 @@ public final class JsBackend {
             }
         }
         for (String name : hoistedClasses) {
-            line("let " + name + "$new; let " + name + "$meta;");
+            // A plan-bearing class additionally predeclares its
+            // scope-local plan binding (ISSUE-0545): the declaration
+            // site assigns the plan list, and $rt.classPlan construction
+            // sites in the same list resolve through the hoisted
+            // binding, exactly like the $new/$meta pair.
+            line("let " + name + "$new; let " + name + "$meta;"
+                + (publishedPlanFor(classDeclarations.get(name)) != null
+                    ? " let " + name + "$plan;"
+                    : ""));
             if ("class".equals(firstKind.get(name))) {
                 declareLocalClass(name);
             }

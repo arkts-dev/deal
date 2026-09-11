@@ -719,13 +719,19 @@ function $jsonEntryDescriptor($entry) {
 // provided-field decode, the omitted-required defaults, the final
 // validation, and the publish — D2 steps 3-8). Never mutates the
 // document. Throws on validation failure — jsonFromJson's outer catch
-// collapses every throw to the DEAL null — and the defaults thunk runs
-// only after every provided value decoded (parent D5: a provided-value
-// failure runs no defaults). Nested class decode passes null as the
-// defaults thunk: the pinned descriptor shape carries no nested defaults
-// surface (className + fields only, D2), so an omitted required field of
-// a nested class stays absent while absent nested optionals still
-// materialize as $rt.MISSING.
+// collapses every throw to the DEAL null — and defaults run only after
+// every provided value decoded (parent D5: a provided-value failure
+// runs no defaults). Omitted required defaults come from the plan-
+// carrying entry shape first (an entry with an `evaluator` function
+// key invokes its labelled zero-argument evaluator exactly once per
+// attempt, in descriptor-array order — ISSUE-0545, the
+// runtime-default-evaluators-and-construction-phases D1 plan
+// projection); the legacy defaults thunk stays the fallback for host
+// declarations and the pinned probe surface. Nested class decode
+// passes null as the defaults thunk: the pinned descriptor shape
+// carries no nested defaults surface (className + fields only, D2), so
+// an omitted required field of a nested class stays absent while
+// absent nested optionals still materialize as $rt.MISSING.
 function $jsonFromDocument($identity, $doc, $fields, $defaultsThunk, $file, $line, $column) {
   // Top-level gate (D3): only a JSON object may decode; a scalar, JSON
   // null, or a non-empty array returns the DEAL null. The empty object
@@ -778,16 +784,23 @@ function $jsonFromDocument($identity, $doc, $fields, $defaultsThunk, $file, $lin
       $rt.fail("E8001", "class defaults must be a table", $file, $line, $column);
     }
   }
-  // Publish scaffold (D2 step 8): provided values, then the thunk's
-  // defaults, then $rt.MISSING for absent optionals — all own-property
-  // writes via $rt.setProp. An omitted required field without a default
-  // (nested decode) stays absent.
+  // Publish scaffold (D2 step 8): provided values, then the omitted
+  // required defaults — the plan-carrying per-entry evaluator first
+  // (ISSUE-0545: exactly one invocation per omitted required entry per
+  // attempt, in descriptor-array order; the emitter's plan projection
+  // carries the labelled zero-argument evaluator closures created at
+  // load and never invoked there), then the thunk fallback (host
+  // declarations and the probe surface), then $rt.MISSING for absent
+  // optionals — all own-property writes via $rt.setProp. An omitted
+  // required field without a default (nested decode) stays absent.
   const $instance = {};
   for (let $i = 0; $i < $fields.length; $i++) {
     const $entry = $fields[$i];
     const $name = $entry.name;
     if ($provided.has($name)) {
       $rt.setProp($instance, $name, $provided.get($name));
+    } else if (typeof $entry.evaluator === "function" && !$entry.optional) {
+      $rt.setProp($instance, $name, $entry.evaluator());
     } else if ($defaults !== null && Object.prototype.hasOwnProperty.call($defaults, $name)) {
       $rt.setProp($instance, $name, $defaults[$name]);
     } else if ($entry.optional) {
@@ -1690,6 +1703,110 @@ const $rt = {
     $rt.setProp($instance, "$kind", "class");
     $rt.setProp($instance, "$classname", identity);
     return $instance;
+  },
+
+  // classPlan: the plan-driven class construction entry (ISSUE-0545,
+  // runtime-default-evaluators-and-construction-phases D4 — the
+  // __rt.class_plan_ mirror, deal/runtime.lua:1388-1434) over the
+  // published runtime plan list
+  //   [ { name, descriptor, optional, evaluator? }, ... ]
+  // in class source order. The emitter creates the labelled
+  // zero-argument evaluator closures at module load and never invokes
+  // them there; the provided object literal already evaluated its field
+  // expressions left-to-right at the construction call site.
+  //
+  // The four construction phases:
+  //  1. Provided fields copy into unpublished slots. An extra provided
+  //     name raises E8007 immediately — no default evaluation and no
+  //     field validation has run.
+  //  2. Omitted required-present defaults invoke their evaluator()
+  //     exactly once per attempt, in plan order. Optional omissions
+  //     stay absent ($rt.MISSING). Evaluator results are retained by
+  //     reference — no generic deep copy (typed mutable literals are
+  //     freshly constructed inside the generated evaluator).
+  //  3. Every present field validates against its canonical descriptor
+  //     in plan order through the canonical matcher rows ($rt.checkType).
+  //  4. Tag $kind = "class", $classname = identity, publish.
+  //
+  // Failure publishes no instance (the slots are local and discarded);
+  // completed evaluator or nested-construction side effects are not
+  // rolled back; one attempt per construction with independent
+  // unpublished slots.
+  //
+  // Fail-closed plan-shape validation mirrors plan_declared_names
+  // (deal/runtime.lua:1337-1365): the plan must be an array of entries
+  // with a string name, a string canonical descriptor, a boolean
+  // optional flag, and a null-or-function evaluator; duplicate names
+  // reject.
+  classPlan: function $classPlan(identity, plan, provided, file, line, column) {
+    if (!$Array.isArray(plan)) {
+      $rt.fail("E8001", "class default plan must be a table", file, line, column);
+    }
+    const $declared = new $Map();
+    for (let $i = 0; $i < plan.length; $i++) {
+      const $entry = plan[$i];
+      if ($entry === null || typeof $entry !== "object"
+          || typeof $entry.name !== "string"
+          || typeof $entry.descriptor !== "string"
+          || typeof $entry.optional !== "boolean"
+          || ($entry.evaluator !== null && $entry.evaluator !== $undefined
+              && typeof $entry.evaluator !== "function")) {
+        $rt.fail("E8001", "malformed class default plan entry", file, line, column);
+      }
+      if ($declared.has($entry.name)) {
+        $rt.fail("E8001", "duplicate field in class default plan: '" + $entry.name + "'", file, line, column);
+      }
+      $declared.set($entry.name, true);
+    }
+    // Phase 1: provided fields into unpublished slots; an extra name
+    // raises E8007 before any default evaluation or field validation.
+    const $slots = {};
+    const $providedNames = new $Map();
+    if (provided !== null && provided !== $undefined) {
+      if (!$isPlainObject(provided)) {
+        $rt.fail("E8001", "class field values must be a table", file, line, column);
+      }
+      const $providedKeys = Object.keys(provided);
+      for (let $i = 0; $i < $providedKeys.length; $i++) {
+        const $key = $providedKeys[$i];
+        if (!$declared.has($key)) {
+          $rt.fail("E8007", "extra field '" + $key + "' in class '" + identity + "'", file, line, column);
+        }
+        $rt.setProp($slots, $key, provided[$key]);
+        $providedNames.set($key, true);
+      }
+    }
+    // Phase 2: omitted required defaults invoke their evaluator()
+    // exactly once per attempt, in plan order; optional omissions stay
+    // absent.
+    for (let $i = 0; $i < plan.length; $i++) {
+      const $entry = plan[$i];
+      if ($providedNames.has($entry.name)) {
+        continue;
+      }
+      if (typeof $entry.evaluator === "function" && !$entry.optional) {
+        $rt.setProp($slots, $entry.name, $entry.evaluator());
+      } else if ($entry.optional) {
+        $rt.setProp($slots, $entry.name, $MISSING);
+      }
+    }
+    // Phase 3: validate every present field against its canonical
+    // descriptor in plan order through the canonical matcher rows.
+    for (let $i = 0; $i < plan.length; $i++) {
+      const $entry = plan[$i];
+      if (!Object.prototype.hasOwnProperty.call($slots, $entry.name)) {
+        continue;
+      }
+      if ($slots[$entry.name] === $MISSING) {
+        continue;
+      }
+      $rt.setProp($slots, $entry.name,
+        $rt.checkType($entry.descriptor, $slots[$entry.name], file, line, column));
+    }
+    // Phase 4: tag and publish.
+    $rt.setProp($slots, "$kind", "class");
+    $rt.setProp($slots, "$classname", identity);
+    return $slots;
   },
 
   // optRead: optional-field reads map MISSING -> null; every other value —
