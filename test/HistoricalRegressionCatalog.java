@@ -524,23 +524,23 @@ public final class HistoricalRegressionCatalog {
             "d4922a15c959c0c3f961aa1197885a988f4de5cd62a93903953bbe48459ff8a8"),
         new Row(SemanticCapability.CONTAINERS_AND_STRINGS,
             "jvm-array-index-delete-e6000",
-            "deal/codegen/jvm/JvmBackend.java:10901",
+            "deal/codegen/jvm/JvmBackend.java:11496",
             Authority.BACKEND_SOURCE_JVM, Family.ARRAY_DELETE,
             ExpectationClass.BackendReject,
             "E6000",
             List.of(
                 new ExactTextAnchor("delete-target-shape-rejection",
-                    "deal/codegen/jvm/JvmBackend.java:10901",
+                    "deal/codegen/jvm/JvmBackend.java:11496",
                     "unsupported(\"delete of this target shape\", ds.span());"),
                 new ExactTextAnchor("e6000-rejection-mapping",
-                    "deal/codegen/jvm/JvmBackend.java:17408-17412",
+                    "deal/codegen/jvm/JvmBackend.java:18002-18006",
                     "DiagnosticCode.E6000")),
-            // ISSUE-0552 (the JVM bytes integrated-verification lane
-            // state) added the D5 construction phase-3 deferral seam
-            // (+19 lines above the narrowed span), so the narrowed span
-            // moved 10882 -> 10901 and the E6000 mapping span moved
-            // 17307-17311 -> 17408-17412 with the recomputed baseline
-            // digest.
+            // ISSUE-0161 (MR-0387) rebase onto the canonical bffda3e6e
+            // (ISSUE-0507/0548/0550/0551/0552): the async-export host
+            // surface inserted text before both anchors, so the
+            // ISSUE-0552 anchors (10901 / 17408-17412) relocated to the
+            // post-rebase spans; the baseline digest is re-derived by
+            // the real catalog run over the relocated spans.
             "a3604a5bb49ff52256c814044921e6838a195649b33f847d49d96ef7e31d9877"),
 
         // EVALUATION_ORDER — WRITE_ORDER (array-write evaluation order)
