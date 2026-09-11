@@ -135,8 +135,8 @@ import java.util.List;
  * real pipeline (twelve pinned fixtures plus three host-class
  * companions, minus the already-absent prewrapped-ok), so the JVM
  * summary moves again to the re-pinned numbers below over the
- * 354-fixture denominator (denominator 354, passed 342, skipped 12,
- * pass rate 96.6%).
+ * 354-fixture denominator (denominator 354, passed 343, skipped 11,
+ * pass rate 96.9%).
  *
  * <p>The test runs from the repository root (the {@code run_tests.sh}
  * contract, like {@code ConformanceTest}); {@code run_tests.sh}
@@ -224,12 +224,12 @@ public class JvmLaneStatePinTest {
     // fourteen promoted host-abi fixtures pass the real pipeline
     // (twelve pinned fixtures plus three host-class companions, minus
     // the already-absent prewrapped-ok), so the summary moves again to
-    // the re-pinned numbers below (denominator 354, passed 342,
-    // skipped 12, pass rate 96.6%).
+    // the re-pinned numbers below (denominator 354, passed 343,
+    // skipped 11, pass rate 96.9%).
     private static final String JVM_SUMMARY =
         "Backend-runtime on JVM: denominator 354 (every on-disk runtime "
-            + "test, unchanged), passed 342, failed 0, skipped 12 "
-            + "(classified), known-fail 0 (tracked) \u2014 pass rate 96.6%";
+            + "test, unchanged), passed 343, failed 0, skipped 11 "
+            + "(classified), known-fail 0 (tracked) \u2014 pass rate 96.9%";
 
     private static final String JVM_PROFILE_AUTHORITY =
         "Profile-authority accounting: 0 legacy-authority fixture(s) "

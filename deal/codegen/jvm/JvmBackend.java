@@ -233,7 +233,9 @@ import java.util.function.Function;
  * pre-wrapped sig-table form stays a LuaJIT host-loader mechanism;
  * the JVM prewrapped fixtures execute against declared-shape Java
  * hosts whose declared-descriptor enforcement raises E8010 on the
- * junk return. Table-typed and bytes-bearing host shapes stay E6000.
+ * junk return. Bytes parameters/returns arrive on the shared
+ * {@code $DealRt.Bytes} carrier (ISSUE-0160 D5, landed in the
+ * canonical base); table-typed host shapes stay E6000.
  * ISSUE-0106 adds Unicode scalar-value STRING
  * for-of — one string containing exactly one scalar value per
  * iteration, a fresh binding per iteration (spec-v1.2 §For-of) — and
@@ -2626,11 +2628,13 @@ public final class JvmBackend {
                 // (jvm-v12-host-abi-completion D1/D4) lifts the declared
                 // array/function/class shapes onto those wrappers and the
                 // synthesized shared records. Declared exports with
-                // shapes the extended boundary still rejects (table and
-                // bytes carriers, and class-element arrays in function
+                // shapes the extended boundary still rejects (table
+                // carriers and class-element arrays in function
                 // parameter/return positions — the host wrapper seam
-                // has no class-element array carrier) are E6000 at the
-                // import statement, never silently miscompiled.
+                // has no class-element array carrier; bytes parameters
+                // and returns ride the shared $DealRt.Bytes carrier) are
+                // E6000 at the import statement, never silently
+                // miscompiled.
                 Map<String, Type> hostExports = hostModules.get(imp.modulePath());
                 if (hostExports != null) {
                     if (validateHostExports(imp.modulePath(), hostExports,
@@ -6565,18 +6569,18 @@ public final class JvmBackend {
      * supported shapes (ISSUE-0100; ISSUE-0303 D1/D4 lifts the
      * array/function/class shapes — jvm-v12-host-abi-completion).
      * Supported: function exports whose parameters and returns are
-     * int/number/boolean/string/null, arrays of supported element
+     * int/number/boolean/string/bytes/null, arrays of supported element
      * shapes, function types, declared host classes, and their nullable
      * forms; class exports (declared host classes) whose field types
      * are supported shapes. Function parameter/return positions reject
      * class-element arrays (see {@link #hostShapeSupported} — the host
      * wrapper seam has no class-element array carrier), while record
      * fields keep them (their storage maps onto the per-class
-     * {@code $HostArr$} wrapper). Everything else — table/bytes
-     * carriers and class-typed positions naming anything but a
-     * declared host class — is an E6000 at the import statement,
-     * never a silently miscompiled artifact. Returns true when every
-     * declared export is supported.
+     * {@code $HostArr$} wrapper). Everything else — table carriers
+     * and class-typed positions naming anything but a declared host
+     * class — is an E6000 at the import statement, never a silently
+     * miscompiled artifact. Returns true when every declared export is
+     * supported.
      */
     private boolean validateHostExports(String raw, Map<String, Type> exports,
                                         Span span) {
@@ -6636,9 +6640,10 @@ public final class JvmBackend {
     /** True when the declared shape is one the extended host boundary
      * can validate (ISSUE-0303 D1): primitives/string/null, declared
      * host classes, arrays of supported elements, function signatures
-     * over supported shapes, and their nullable forms. Table and bytes
-     * carriers stay out (E6000 — the recursive bytes closure is
-     * ISSUE-0160's; C FFI host entries stay E6003).
+     * over supported shapes, and their nullable forms. Table carriers
+     * stay out (E6000); bytes parameters/returns ride the shared
+     * {@code $DealRt.Bytes} carrier (ISSUE-0160 D5). C FFI host
+     * entries stay E6003.
      *
      * <p>{@code classArraysSupported} distinguishes the two positions
      * the gate serves. Function parameters/returns pass {@code false}:
