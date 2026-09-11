@@ -299,3 +299,84 @@ structural, not semantic:
 No acceptance criterion changed; criteria 1-4 stay met on both
 backends. Every re-pin is tree-derived from the real gate run on the
 rebased tree.
+## Update: rebase onto the canonical 2538b1709 base (engine-imported revision, MR-0459 JVM bytes async closure)
+
+The canonical line landed far past the MR's approved base (b1931b66b)
+while MR-0387 was pending: MR-0459/ISSUE-0549 (JVM async bytes closure
+and await completion), MR-0452/ISSUE-0239 (production semantic-IR
+emission and atomic publication), ISSUE-0306 (recursive bytes-bearing
+type closure on JVM), MR-0456/ISSUE-0544 (backend evaluator lowering),
+MR-0455/ISSUE-0517 (class construction integration tail), MR-0454/
+ISSUE-0543 (merged runtime dependency graph), MR-0446/ISSUE-0542
+(DefaultSemanticSerializer), MR-0432/ISSUE-0531 (dynamic invocation IR),
+MR-0431/ISSUE-0515 (JSON class walkers), MR-0442/ISSUE-0302 (std/json
+boundary and @jsonable completion on JVM), MR-0380/ISSUE-0165
+(production ISSUE-0111 feature/native release gate), MR-0436/ISSUE-0504
+(host ABI conversion), MR-0449/ISSUE-0236 (call state machine), and the
+ISSUE-0557/0561/0316 lanes. The rebase replayed all 14 MR-0387 commits
+onto 2538b1709. The reconciliation is structural, not semantic:
+
+1. `deal/codegen/jvm/JvmBackend.java` — the canonical ISSUE-0306/
+   ISSUE-0549 bytes machinery (the E8 recursive bytes-bearing function
+   wrapper closure, the async bytes closure, the `__BytesArray`/
+   `__BytesOrNullArray` carriers with the past-end nil parity, and the
+   `hasTableCarrier` table-only annotation gate) supersedes this MR's
+   co-landed bytes closure entirely: the cycle-2 E8 flip commits and
+   the cycle-3 past-end parity commit resolve as no-ops for the
+   backend source, and the canonical helpers stay exclusively. The
+   MR's remaining production delta is the async-export host invocation
+   surface — the `ASYNC_EXPORT_HOST_ARG` argv marker, the reserved
+   `$AsyncExportHost` launcher, the `$exports` registry,
+   `$asyncExportSelect`, `$asyncExportHost`, the closed envelope
+   emitters, the throwable classifier, the JSON value encoder, and the
+   `$check` null row — landing on top of the canonical structure. The
+   cycle-3 parity pins (`test/JvmBackendTest.
+   testBytesArrayPastEndReadsYieldTheDealNull` and the
+   `jvm-bytes-arr-past-end-null-parity` /
+   `jvm-bytes-arr-negative-read-e8002` fixtures) are retained verbatim:
+   the canonical emitted helpers match their pinned text exactly.
+2. `test/HistoricalRegressionCatalog.java` — the array-delete
+   code-contract row re-locates to the post-change spans
+   (`JvmBackend.java:10515`, `16428-16432`; the async-export surface
+   inserts ~595 lines before both anchors) with the tree-derived
+   baseline digest `751ff2314ae38bc85e426123c08c037535c597bf7d0357430680d5a1ca8f8939`
+   (the digest covers the locator strings, so the relocation re-derives
+   it over the unchanged span bytes).
+3. `deal/test/conformance/DifferentialGateLanesCorpusTest.java` /
+   `JvmLane.java` / `JvmLaneTest.java` — no MR delta remains: the
+   canonical line already retired the bytes-descriptor-boundary
+   registry entry with the ISSUE-0306 closure (registry 44, luajit
+   322/32, jvm 242/112, js 324/30), so the MR's pre-flip re-pin commits
+   resolve against the canonical pins.
+4. `test/JvmConformanceTest.java` / `test/JvmLaneStatePinTest.java` /
+   `deal/codegen/jvm/README.md` — no MR delta remains: the canonical
+   trees already record the ISSUE-0160 closure history, the
+   `JVM-GAP-BYTES` retirement, and the post-closure lane summary, so
+   the MR's reconciliation commits resolve as no-ops for these files.
+5. `test/conformance/fixtures/jvm-v1.2-known-fail.json` — the
+   `jvm-bytes-buffer-ops` promotion description re-states the rebased
+   history truthfully (ISSUE-0158 core, ISSUE-0306/0549 closure; the
+   promotion re-verified by this rebase).
+
+No acceptance criterion changed; criteria 1-4 stay met on both
+backends. Every re-pin is tree-derived from the real gate run on the
+rebased tree.
+
+### Verification on the final rebased commit
+
+- Engine gate `flock /tmp/igelhaus-deal-tests.lock ./run_tests.sh
+  --jobs 1`: exit 0 (`=== All Tests Passed ===`).
+- Async-export suites: JvmAsyncExportInvokerTest OK (38, incl.
+  `productionCompiledAsyncBytesOracleCompletesNull` asserting
+  Result.Value("null", "null") with the no-await E3014 /
+  incorrect-output TEST_FAIL / no-call TEST_FAIL controls over real
+  bytes on the JVM lane), LuaJitAsyncExportInvokerTest OK (49),
+  JvmRegistryAsyncExportBoundaryTest OK (6), RegistryAsyncExportBoundaryTest
+  OK (5).
+- Bytes parity pins green on both backends:
+  `jvm-bytes-arr-past-end-null-parity` and
+  `jvm-bytes-arr-negative-read-e8002` (real luajit + emitted JVM
+  artifact), and `JvmBackendTest.testBytesArrayPastEndReadsYieldTheDealNull`
+  against the canonical emitted helper text.
+- HistoricalRegressionCatalogTest 152/0 with the re-derived digest and
+  relocated anchors.
