@@ -10691,11 +10691,15 @@ public class JvmBackendTest {
             "a nullable class field of bytes-bearing function type "
                 + "stores the shared wrapper reference (Java null is "
                 + "the DEAL null)");
-        check(artifact.contains("$DealRt.Bytes via = (box).cb.invoke("),
+        check(artifact.contains(
+                "$DealRt.Fn1_Y_R_Y __fn0 = (box).cb;"),
             "a call through a class field holding a bytes-bearing "
-                + "function value dispatches through the field's wrapper "
-                + "invoke");
->>>>>>> 845185e5 (ISSUE-0548-sync-bytes-function-shape-closure)
+                + "function value materializes the callee FIELD READ "
+                + "into a wrapper temporary at the callee's evaluation "
+                + "position");
+        check(artifact.contains("$DealRt.Bytes via = __fn0.invoke("),
+            "the call through the class field dispatches through the "
+                + "materialized wrapper temporary's invoke");
         check(!artifact.contains(
                 "if (v instanceof $DealRt.Bytes) throw new DealError("
                     + "\"E8001\", \"unsupported type for JSON encoding: "
@@ -10785,6 +10789,16 @@ public class JvmBackendTest {
                 "let xs: bytes[] = [];\n"
                     + "      return xs[0][0];",
                 "E8001"),
+            new ClosurePin("callee-first-field-read",
+                "function markOne(b: bytes | null): bytes { if (b !== null) { b[0] = 1; return b; } return bytes(0); }\n"
+                    + "    function markTwo(b: bytes | null): bytes { if (b !== null) { b[0] = 2; return b; } return bytes(0); }\n"
+                    + "    class Box { cb: (b: bytes | null) => bytes = markOne; }\n"
+                    + "    function retarget(box: Box): table { box.cb = markTwo; return { x: bytes(1) }; }\n",
+                "let box: Box = {};\n"
+                    + "      let r: bytes = box.cb(retarget(box).x);\n"
+                    + "      if (r[0] !== 1) { throw { code: \"TEST_FAIL\", message: \"callee-first field read\" }; }\n"
+                    + "      return r[0];",
+                "1"),
             new ClosurePin("json-rejection",
                 "// @jsonable\nexport class Holder { payload: table = {}; }\n",
                 "let h: Holder = { payload: { inner: {} } };\n"

@@ -1,5 +1,5 @@
 // @spec: Functions — nested sync bytes-bearing function signatures
-// @description: a first-class function value returning another bytes-bearing function, nested wrapper shapes, and class fields holding bytes-bearing function values — plain and nullable slots with a default-provided function reference (v1.2)
+// @description: a first-class function value returning another bytes-bearing function, nested wrapper shapes, class fields holding bytes-bearing function values — plain, nullable, and nullable-parameter slots with a default-provided function reference — and the callee-first evaluation pin for a call through a class field whose argument side effect reassigns the called field (spec Operational semantics rule 1; v1.2)
 // @expected: runtime-ok
 // @features: bytes, functions, classes
 
@@ -11,9 +11,29 @@ function combine(f: (b: bytes) => bytes): (b: bytes) => bytes {
   return f;
 }
 
+function idMaybe(b: bytes | null): bytes {
+  if (b !== null) { b[0] = 1; return b; }
+  return bytes(0);
+}
+
+function markTwo(b: bytes | null): bytes {
+  if (b !== null) { b[0] = 2; return b; }
+  return bytes(0);
+}
+
 class Holder {
   cb: (b: bytes) => bytes = id;
   maybe: ((b: bytes) => bytes) | null = null;
+  cbMaybe: (b: bytes | null) => bytes = idMaybe;
+}
+
+// The reassignment lives INSIDE the call argument: the callee field
+// read must happen first (spec Operational semantics rule 1 — LuaJIT
+// reads box.cbMaybe before evaluating any argument), so the call
+// invokes the pre-reassignment binding.
+function retarget(box: Holder): table {
+  box.cbMaybe = markTwo;
+  return { x: bytes(1) };
 }
 
 export function test_bytes_nested_fn_shapes(): int {
@@ -45,6 +65,10 @@ export function test_bytes_nested_fn_shapes(): int {
     if (out.length !== 5) {
       throw { code: "TEST_FAIL", message: "nullable fn field write failed" };
     }
+  }
+  let ordered: bytes = box.cbMaybe(retarget(box).x);
+  if (ordered[0] !== 1) {
+    throw { code: "TEST_FAIL", message: "callee-first field read failed" };
   }
   let list: (() => (b: bytes) => bytes)[] = [picker];
   let again: (b: bytes) => bytes = list[0]();

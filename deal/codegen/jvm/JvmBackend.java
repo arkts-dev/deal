@@ -13993,13 +13993,22 @@ public final class JvmBackend {
             // bytes-bearing function value (`box.cb(args)`) dispatches
             // through the field's shared wrapper reference — the
             // receiver is an identifier (the non-identifier gate above
-            // stays), the checker typed the member as the field's
-            // declared function type, and the receiver evaluates before
-            // the arguments (an identifier read is side-effect-free, so
-            // the inline placement preserves the strict callee-first
-            // order). The nullable-receiver unwrap mirrors the member
-            // value read (the checker-gated `!== null` guard protects
-            // the dereference).
+            // stays) and the checker typed the member as the field's
+            // declared function type. The callee is the FIELD READ
+            // `(box).cb`, not the identifier read alone: an argument
+            // side effect can reassign the called field, so the read
+            // must run at the callee's evaluation position — BEFORE
+            // every argument's hoisted pre-statements — exactly like
+            // the sibling non-identifier callee path materializes
+            // `picker()` into a fresh temporary declared at its
+            // evaluation position (spec §Operational semantics rule 1:
+            // LuaJIT evaluates `box.cb` completely before any
+            // argument). The temporary lands first in the ordered
+            // preStatements list, so the field read precedes any
+            // argument hoist (e.g. a `?bytes` table-read argument's
+            // Object materialization). The nullable-receiver unwrap
+            // mirrors the member value read (the checker-gated
+            // `!== null` guard protects the dereference).
             Type memberObjType = typeOf(mae.object());
             if (memberObjType instanceof Type.Nullable nn
                     && nn.inner() instanceof Type.Class) {
@@ -14010,12 +14019,17 @@ public final class JvmBackend {
                     && typeOf(mae) instanceof Type.Func f
                     && Types.containsBytes(f)
                     && registerWrapperShape(f) != null) {
+                String shape = registerWrapperShape(f);
+                String calleeTemp = nextFunctionValueTempName();
+                preStatements.add(new PreLine(shape + " " + calleeTemp
+                    + " = (" + emitExpression(mae.object()) + ")."
+                    + javaName(mae.field()) + ";", 0));
+                preStatementsDeclareTemps = true;
                 List<Type> argTargets = f.paramTypes();
                 List<String> argCodes = emitOperandsInOrder(call.args(),
                     argTargets);
-                StringBuilder sb = new StringBuilder("(")
-                    .append(emitExpression(mae.object())).append(").")
-                    .append(javaName(mae.field())).append(".invoke(");
+                StringBuilder sb = new StringBuilder(calleeTemp)
+                    .append(".invoke(");
                 for (int i = 0; i < argCodes.size(); i++) {
                     if (i > 0) sb.append(", ");
                     sb.append(boundaryArgCode(call.args().get(i),
