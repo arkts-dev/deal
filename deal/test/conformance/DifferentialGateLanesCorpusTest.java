@@ -33,7 +33,7 @@ import java.util.Set;
  *       {@code error-handling/try-catch.deal} plus two more converged
  *       cases) passes byte-exact on all three lanes;</li>
  *   <li>the failure set is exactly the tracked non-fatal set (the
- *       45 JVM registry entries, including the eight ISSUE-0504
+ *       44 JVM registry entries, including the eight ISSUE-0504
  *       host-boundary E8011 carrier mismatches) plus the enumerated differential
  *       failures — every one naming fixture,
  *       backend, and the closed mismatch class with the first differing
@@ -121,14 +121,17 @@ public class DifferentialGateLanesCorpusTest {
      * promoted the last bytes entry (bytes-descriptor-boundary) out
      * of the registry — the closure carriers landed, the fixture
      * passes the lane, and the stale-skip gate forced the entry out —
-     * so the count is the landed 45). */
+     * so the count dropped to 45; ISSUE-0544 (the lowering epic) then
+     * lifted the imported-non-literal-default plan-shape guard, so
+     * plan-imported-provider-scope passed the lane and its registry
+     * entry was removed — so the count is the landed 44). */
     private static final int KNOWN_FAILURES_TRACKED = 0;
-    private static final int SKIP_REGISTRY_ENTRIES = 45;
+    private static final int SKIP_REGISTRY_ENTRIES = 44;
 
     /** The per-backend pass/fail counters of the full run. */
     private static final Map<String, int[]> PER_BACKEND = Map.of(
         "luajit", new int[] {322, 32},
-        "jvm", new int[] {241, 113},
+        "jvm", new int[] {242, 112},
         "js", new int[] {324, 30});
 
     /** The designated converged subset (task criterion (a)): every lane
@@ -152,7 +155,6 @@ public class DifferentialGateLanesCorpusTest {
         "backend-runtime/class-runtime-errors/dynamic-bad-imported-class-param-e8001.deal",
         "backend-runtime/class-runtime-errors/dynamic-bad-nullable-class-e8001.deal",
         "backend-runtime/defaults/plan-host-discriminator.deal",
-        "backend-runtime/defaults/plan-imported-provider-scope.deal",
         "backend-runtime/defaults/plan-phase-order-provided-before-defaults.deal",
         "backend-runtime/host-abi/host-array-return-ok.deal",
         "backend-runtime/host-abi/host-async-shape-value.deal",

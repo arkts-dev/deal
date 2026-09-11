@@ -112,7 +112,12 @@ import java.util.List;
  * then promoted the last bytes skip ({@code bytes-descriptor-boundary})
  * and added the three closure corpus fixtures, so the JVM summary
  * moves to {@code passed 327, failed 0, skipped 27 ... pass rate
- * 92.4%} over the 354-fixture denominator and the LuaJIT summary
+ * 92.4%} over the 354-fixture denominator; ISSUE-0544 (the
+ * lowering epic) then lifted the imported-non-literal-default
+ * plan-shape guard (plan-imported-provider-scope passes the real
+ * pipeline), so the summary moves to {@code passed 328, failed 0,
+ * skipped 26 ... pass rate 92.7%} over the same denominator, and
+ * the LuaJIT summary
  * reads {@code Total: 549, Passed: 549} with zero tracked
  * known-fails and zero staged failures.
  * failures.
@@ -205,11 +210,14 @@ public class JvmLaneStatePinTest {
     // (bytes-descriptor-boundary) and added the three closure corpus
     // fixtures (bytes-array-closure, bytes-async-closure,
     // bytes-function-array-closure), moving the summary to the final
-    // re-pinned numbers below.
+    // re-pinned numbers below. ISSUE-0544 (the lowering epic) then
+    // lifted the imported-non-literal-default plan-shape guard, so
+    // plan-imported-provider-scope passed the lane (passed 327 ->
+    // 328, skipped 27 -> 26) — the final re-pinned numbers below.
     private static final String JVM_SUMMARY =
         "Backend-runtime on JVM: denominator 354 (every on-disk runtime "
-            + "test, unchanged), passed 327, failed 0, skipped 27 "
-            + "(classified), known-fail 0 (tracked) \u2014 pass rate 92.4%";
+            + "test, unchanged), passed 328, failed 0, skipped 26 "
+            + "(classified), known-fail 0 (tracked) \u2014 pass rate 92.7%";
 
     private static final String JVM_PROFILE_AUTHORITY =
         "Profile-authority accounting: 0 legacy-authority fixture(s) "

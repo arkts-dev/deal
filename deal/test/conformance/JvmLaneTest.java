@@ -121,7 +121,10 @@ public class JvmLaneTest {
     // last bytes entry (bytes-descriptor-boundary): the closure
     // carriers landed, the fixture passes the lane, and the
     // stale-skip gate forced the entry out.
-    private static final int SKIP_REGISTRY_ENTRIES = 45;
+    // ISSUE-0544 (the lowering epic) lifts the imported-non-literal-
+    // default plan-shape guard, so plan-imported-provider-scope passes
+    // the real pipeline and its registry entry is removed.
+    private static final int SKIP_REGISTRY_ENTRIES = 44;
 
     public static void main(String[] args) throws Exception {
         System.out.println("=== JVM Lane Tests (ISSUE-0355) ===\n");
