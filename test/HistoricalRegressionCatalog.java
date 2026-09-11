@@ -521,7 +521,7 @@ public final class HistoricalRegressionCatalog {
             // extern-C codegen seam (+21 lines above the span) moved the
             // narrowed span 2434-2437 -> 2455-2458 with the recomputed
             // baseline digest.
-            "32885541def6bb9f0cef3f5fa49d963e1e2da4ecafeddbcfbb82c49bdfe679d3"),
+            "d4922a15c959c0c3f961aa1197885a988f4de5cd62a93903953bbe48459ff8a8"),
         new Row(SemanticCapability.CONTAINERS_AND_STRINGS,
             "jvm-array-index-delete-e6000",
             "deal/codegen/jvm/JvmBackend.java:10853",
