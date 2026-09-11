@@ -128,6 +128,14 @@ public final class LuaSemanticEmitter {
          *  must signal instead of goto/return (Lua closures cannot jump
          *  to the enclosing function's labels). */
         int tryDepth = 0;
+        /** The function id of the factory currently being emitted (the
+         *  per-function return-trampoline label suffix): every RETURN of
+         *  the body jumps to the function's trampoline label — the last
+         *  statement of the closure body — because a raw Lua return
+         *  followed by a structure's closing label (a return inside a
+         *  branch/loop/for-each block) or by the trampoline label itself
+         *  (a top-level return before the tail) is invalid Lua. */
+        FunctionId currentFunctionId = null;
         /** Structure ancestors are computed statically from the block tree
          *  per transfer (never a runtime-sensitive stack). */
 
@@ -194,6 +202,10 @@ public final class LuaSemanticEmitter {
 
         String fnFactory(FunctionId id) {
             return "F" + id.id();
+        }
+
+        String returnLabel(FunctionId id) {
+            return "__ret" + id.id();
         }
 
         // -- static kinds -----------------------------------------------------------
@@ -329,23 +341,27 @@ public final class LuaSemanticEmitter {
                 + "0, nil, {}, 1\n");
             out.append(PRELUDE);
             if (!trace) {
-                // Production: the event helpers are no-ops and the export
-                // table carries the retained-caller ABI surface.
+                // Production: the event helpers are no-ops.
                 out.append("__ev = function() end\n");
                 out.append("__normalizeEvent = function() end\n");
-                out.append("local function __unfn(v)\n"
-                    + "  if type(v) == \"table\" and v.__fn ~= nil then return v.__fn end\n"
-                    + "  return v\n"
-                    + "end\n");
             }
+            // The export-publication helper and the export table are
+            // declared in both modes: every E7-lowered unit with exports
+            // carries EXPORT_PUBLISH ops (SemanticLowerer's emitE7Terminals)
+            // whose publication emission references both names — a
+            // trace-mode session over such a unit must emit valid Lua too
+            // (production-only is the `return __exports` terminal, not the
+            // declaration).
+            out.append("local function __unfn(v)\n"
+                + "  if type(v) == \"table\" and v.__fn ~= nil then return v.__fn end\n"
+                + "  return v\n"
+                + "end\n");
+            out.append("local __exports = {}\n");
             out.append("\n__module = ").append(luaString(unit.moduleId().path()))
                 .append("\n");
             // One env table carries every slot and cell (LuaJIT's upvalue
             // limit never binds the function bodies).
             out.append("local S = {}\n");
-            if (!trace) {
-                out.append("local __exports = {}\n");
-            }
             // Hoisted shared temps (goto can never jump into a local's
             // scope; every check/return temp is a top-level assignment).
             out.append("local __chk, __rvT, __rvcT, __okT, __resT, __terrT, "
@@ -412,6 +428,7 @@ public final class LuaSemanticEmitter {
             out.append("    local __args = {...}\n");
             int argIndex = 1;
             List<OpId> bodyOps = table.blockOps().get(function.body());
+            currentFunctionId = functionId;
             int paramCount = function.descriptor().paramTypes().size();
             for (int i = 0; i < paramCount && i < bodyOps.size(); i++) {
                 SemanticOp op = opsById.get(bodyOps.get(i));
@@ -434,8 +451,16 @@ public final class LuaSemanticEmitter {
                 }
                 emitOp(opsById.get(bodyOps.get(i)));
             }
+            // The function's return trampoline: every RETURN of the
+            // body jumps here (a raw Lua return inside a structure block
+            // would be followed by the structure's closing label, and a
+            // trailing label after a raw top-level return is equally
+            // invalid — one uniform trampoline keeps every shape valid).
+            out.append("::").append(returnLabel(functionId)).append("::\n");
+            out.append("  return __rvcT\n");
             out.append("  end\n");
             out.append("end\n");
+            currentFunctionId = null;
         }
 
         /** Emits the ops of one block inline. */
@@ -1712,7 +1737,20 @@ public final class LuaSemanticEmitter {
                 out.append("error({__tr = true, t = \"return\", v = __rvcT}, 0)\n");
             } else {
                 emitTransferClosures(op, null, false);
-                out.append("return __rvcT\n");
+                if (currentFunctionId != null) {
+                    // Jump to the function's return trampoline — the last
+                    // statement of the closure body. A raw Lua return
+                    // would be followed by a structure's closing label
+                    // (a return inside a branch/loop/for-each block) or by
+                    // the trampoline label itself (a top-level return
+                    // before the tail) — both invalid Lua.
+                    out.append("goto ").append(returnLabel(currentFunctionId))
+                        .append("\n");
+                } else {
+                    // Defensive: a RETURN outside any factory emission
+                    // (never produced by the walk) keeps the plain form.
+                    out.append("return __rvcT\n");
+                }
             }
         }
 

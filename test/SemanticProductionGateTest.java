@@ -45,8 +45,14 @@ import java.util.stream.Stream;
  *       (never E6005, never a within-run fallback);</li>
  *   <li>the retained {@code DEAL_ERROR_CODE: <code>} terminal contract
  *       (E8004 out of the shared artifact);</li>
- *   <li>the atomic publication failure preservation — a failed shared
- *       lowering publishes nothing and preserves the prior artifact set
+ *   <li>the plan-time LEGACY reroute of every shape without a shared
+ *       representation — the adapter-invocation module compiles through
+ *       the retained route with zero semantic/one retained artifact and
+ *       an all-LEGACY plan (never E6005, never a within-run fallback);
+ *       after the corrected scan arms no public source can reach the
+ *       shared-lowering E6005 path anymore;</li>
+ *   <li>the atomic publication failure preservation — a failing compile
+ *       publishes nothing and preserves the prior artifact set
  *       byte-for-byte with no staging/retired siblings surviving.</li>
  * </ul>
  */
@@ -192,6 +198,13 @@ public class SemanticProductionGateTest {
     private static final String DEAL_JSON_JVM =
         "{\n  \"languageVersion\": \"1.2\",\n  \"moduleRoots\": [\"src\"],\n"
             + "  \"output\": \"out\",\n  \"backend\": \"jvm\"\n}\n";
+
+    private static final String DEAL_JSON_JVM_FFI =
+        "{\n  \"languageVersion\": \"1.2\",\n  \"moduleRoots\": [\"src\"],\n"
+            + "  \"output\": \"out\",\n  \"backend\": \"jvm\",\n"
+            + "  \"externals\": {\n    \"native/ffi\": {\n"
+            + "      \"declaration\": \"bindings/ffi.d.deal\",\n"
+            + "      \"nativeLibrary\": \"libm.so\"\n    }\n  }\n}\n";
 
     private static final String ADD_MAIN_SOURCE =
         "export function add(x: int, y: int): int {\n  return x + y\n}\n\n"
@@ -379,8 +392,88 @@ public class SemanticProductionGateTest {
         }
     }
 
+    private static void testAdapterShapeReroutesLegacy() throws Exception {
+        System.out.println("-- Plan-time reroute: shapes without a shared representation "
+            + "are LEGACY, never E6005 --");
+
+        // The review-verified corpus shapes (directive lines stripped) plus
+        // the adapter-invocation shape: every module without a shared
+        // representation claims its owning capability at plan time, so F4
+        // rule 4 reroutes it LEGACY — zero semantic/one retained artifact,
+        // an all-LEGACY plan, and the retained v1.2 route compiles and
+        // runs the program as before (the parent epic's "unsupported
+        // capabilities choose legacy and are not errors").
+        Map<String, String> fixtures = Map.of(
+            "adapter", "export function main(): null {\n"
+                + "  let f: (a: int, b: int) => int = one\n"
+                + "  f(1, 2)\n"
+                + "  return null\n"
+                + "}\n"
+                + "function one(x: int): int {\n  return x\n}\n",
+            "bytes-length", "export function test_bytes_length(): null {\n"
+                + "  let n: int = 3;\n"
+                + "  let b: bytes = bytes(n);\n"
+                + "  if (b.length !== 3) {\n"
+                + "    throw { code: \"TEST_FAIL\", message: \"bytes: length mismatch\" };\n"
+                + "  }\n"
+                + "  return null;\n"
+                + "}\n"
+                + "export function main(): null {\n  return null\n}\n",
+            "direct-recursion", "export function test_direct_recursion(): int {\n"
+                + "  let downCalls: int = 0;\n"
+                + "  function down(n: int): int {\n"
+                + "    downCalls = downCalls + 1;\n"
+                + "    if (n === 0) { return 0; }\n"
+                + "    return down(n - 1);\n"
+                + "  }\n"
+                + "  let result: int = down(8);\n"
+                + "  return 0;\n"
+                + "}\n"
+                + "export function main(): null {\n  return null\n}\n",
+            "closure-capture", "export function test_closure(): int {\n"
+                + "  let x: int = 1;\n"
+                + "  let f: () => int = function(): int { return x; };\n"
+                + "  x = 2;\n"
+                + "  let result: int = f();\n"
+                + "  if (result !== 2) {\n"
+                + "    throw { code: \"TEST_FAIL\", message: \"closure capture result mismatch after x = 2\" };\n"
+                + "  }\n"
+                + "  return result;\n"
+                + "}\n"
+                + "export function main(): null {\n  return null\n}\n");
+        for (Map.Entry<String, String> fixture : fixtures.entrySet()) {
+            Path project = Files.createTempDirectory(
+                "deal-e10-reroute-" + fixture.getKey() + "-");
+            try {
+                write(project, "deal.json", DEAL_JSON_LUA);
+                write(project, "src/main.deal", fixture.getValue());
+                CompilationOrchestrator orchestrator =
+                    compileProject(project, "src/main.deal", "out");
+                check(orchestrator.semanticEmissionCount() == 0
+                        && orchestrator.retainedEmissionCount() == 1,
+                    fixture.getKey() + ": the module reroutes LEGACY at plan time: "
+                        + "semantic=" + orchestrator.semanticEmissionCount()
+                        + " retained=" + orchestrator.retainedEmissionCount());
+                RoutePlanResult plan = orchestrator.routePlan();
+                check(plan != null && !plan.hasErrors() && plan.plan() != null
+                        && plan.plan().entries().values().stream()
+                            .allMatch(route -> route == ModuleRoute.LEGACY),
+                    fixture.getKey() + ": the plan is all-LEGACY at plan time "
+                        + "(never E6005, never a within-run fallback)");
+                ProcessOutcome run = runProcess(project.resolve("out"),
+                    List.of("luajit", "main.lua"));
+                check(run.exitCode() == 0,
+                    fixture.getKey() + ": the retained artifact set runs: exit="
+                        + run.exitCode() + " output="
+                        + run.output().replace("\n", "\\n"));
+            } finally {
+                deleteRecursively(project);
+            }
+        }
+    }
+
     private static void testFailurePreservesPriorArtifacts() throws Exception {
-        System.out.println("-- Atomic publication: a failed shared lowering preserves the prior set --");
+        System.out.println("-- Atomic publication: a failing compile preserves the prior set --");
 
         Path project = Files.createTempDirectory("deal-e10-atomic-");
         try {
@@ -394,18 +487,27 @@ public class SemanticProductionGateTest {
                 "the first compile publishes the semantic artifact set");
             Map<String, String> prior = fingerprint(project.resolve("out"));
 
-            // A SHARED-routed module the shared emitters cannot emit (an
-            // adapter invocation whose source identity is not statically
-            // fixed — the E7 walk produces the FUNCTION_ADAPT op) fails
-            // closed with E6005: nothing publishes and the prior set is
-            // untouched.
+            // A failing recompile through the same real pipeline: the
+            // @extern-c FFI declaration is rejected with E6003
+            // (FFI_UNSUPPORTED_BACKEND) after checking — nothing stages,
+            // nothing publishes, and the prior artifact set stays
+            // byte-for-byte with no staging/retired residue. The former
+            // E6005 shared-lowering trigger (an adapter invocation) is no
+            // longer publicly reachable: the corrected plan-time scan arms
+            // reroute every shape without a shared representation LEGACY
+            // (pinned by testAdapterShapeReroutesLegacy), so the generic
+            // whole-set failure contract is pinned here and the
+            // stager-level discard paths stay pinned in
+            // StagingPublicationTest/PublicationStagerTest.
+            write(project, "deal.json", DEAL_JSON_JVM_FFI);
+            write(project, "bindings/ffi.d.deal",
+                "// @extern-c\nexport function cFn(x: int): int;\n");
             write(project, "src/main.deal",
-                "export function main(): null {\n"
-                    + "  let f: (a: int, b: int) => int = one\n"
-                    + "  f(1, 2)\n"
+                "import * as ffi from \"native/ffi\"\n\n"
+                    + "export function main(): null {\n"
+                    + "  ffi.cFn(1)\n"
                     + "  return null\n"
-                    + "}\n"
-                    + "function one(x: int): int {\n  return x\n}\n");
+                    + "}\n");
             Path entryFile = project.resolve("src/main.deal").toAbsolutePath()
                 .normalize();
             ProjectLocator.LocateResult located = ProjectLocator.locate(
@@ -423,11 +525,10 @@ public class SemanticProductionGateTest {
                 invocation);
             boolean compiled = failing.compile();
             check(!compiled,
-                "the unlowerable shared module fails the compile (never a within-run "
-                    + "fallback)");
+                "the @extern-c recompile fails (nothing publishes)");
             check(failing.diagnostics().stream()
-                    .anyMatch(d -> "E6005".equals(d.code())),
-                "the failure is E6005 (the shared-emitter coverage gate): "
+                    .anyMatch(d -> "E6003".equals(d.code())),
+                "the failure is the FFI rejection E6003: "
                     + failing.diagnostics());
             Map<String, String> after = fingerprint(project.resolve("out"));
             check(prior.equals(after),
@@ -480,6 +581,7 @@ public class SemanticProductionGateTest {
         testAllSharedLuaJit();
         testAllSharedJvm();
         testRouteSelectionWithoutFallback();
+        testAdapterShapeReroutesLegacy();
         testFailurePreservesPriorArtifacts();
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {

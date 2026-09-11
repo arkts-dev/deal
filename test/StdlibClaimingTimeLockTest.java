@@ -1338,16 +1338,29 @@ public class StdlibClaimingTimeLockTest {
                         + "is shadowed (silent, zero diagnostics)");
             }
 
-            // With FOUNDATION_VALUES + STDLIB_SEMANTICS + MODULES
-            // promoted the module routes SHARED — the plan-time claims
-            // (the stdlib arm plus the ISSUE-0239 import arm) made the
-            // gate cover it before lowering.
+            // The fixture's non-exported `main` is never called from
+            // source, so the ISSUE-0239 never-called arm claims CALLS
+            // too (an uncalled non-exported declared function cannot
+            // lower under the statically-resolved call machine — an
+            // over-claim only forces LEGACY).
+            check(libManifest != null && libManifest.capabilities().contains(
+                    deal.semantic.ir.SemanticCapability.CALLS),
+                "the fixture's manifest carries the ISSUE-0239 CALLS claim "
+                    + "(the uncalled non-exported main): "
+                    + (libManifest == null ? "none" : libManifest.capabilities()));
+
+            // With FOUNDATION_VALUES + STDLIB_SEMANTICS + MODULES +
+            // CALLS promoted the module routes SHARED — the plan-time
+            // claims (the stdlib arm, the ISSUE-0239 import arm, and the
+            // never-called arm) made the gate cover it before lowering.
             CapabilityRegistry promoted = CapabilityRegistry.releaseRegistry()
                 .withState(deal.semantic.ir.SemanticCapability.FOUNDATION_VALUES,
                     Target.LUAJIT, CapabilityRegistry.State.PROMOTED)
                 .withState(deal.semantic.ir.SemanticCapability.STDLIB_SEMANTICS,
                     Target.LUAJIT, CapabilityRegistry.State.PROMOTED)
                 .withState(deal.semantic.ir.SemanticCapability.MODULES,
+                    Target.LUAJIT, CapabilityRegistry.State.PROMOTED)
+                .withState(deal.semantic.ir.SemanticCapability.CALLS,
                     Target.LUAJIT, CapabilityRegistry.State.PROMOTED);
             CompilerInvocation activePromoted = publicV12Active(promoted);
             {
@@ -1357,8 +1370,8 @@ public class StdlibClaimingTimeLockTest {
                 check(planned != null && !planned.hasErrors() && planned.plan() != null
                         && planned.plan().entries().get(libId) == ModuleRoute.SHARED,
                     "rule 4 routes the stdlib module SHARED once every manifest "
-                        + "capability (STDLIB_SEMANTICS + MODULES) is promoted "
-                        + "for the target: "
+                        + "capability (STDLIB_SEMANTICS + MODULES + CALLS) is "
+                        + "promoted for the target: "
                         + (planned == null ? "null" : planned.diagnostics()));
             }
         } finally {
