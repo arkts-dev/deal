@@ -6564,10 +6564,10 @@ public final class JvmBackend {
      * the module are the functions the earlier slices emit, so a class body
      * contributes no method surface. Required-present primitive
      * fields ({@code int}/{@code number}/{@code boolean}/{@code string}
-     * with defaults) and required-present nullable primitive/class
-     * fields ({@code f: T | null}, defaulting to the DEAL null) are in
-     * scope; optional fields (nullable reads and presence checks), and
-     * array/class/table-typed (non-nullable) fields are E6000 — except
+     * with defaults), required-present nullable primitive/class
+     * fields ({@code f: T | null}), and bytes-bearing sync/async
+     * function-typed fields (ISSUE-0549 wrapper references, nullable
+     * form included) are in scope; optional fields and the other shapes are E6000 — except
      * on an {@code @jsonable} class, where the JSON serialization slice
      * additionally supports optional fields (Missing-sentinel storage
      * with {@code has()} presence checks), table fields (JSON-object
@@ -6718,11 +6718,20 @@ public final class JvmBackend {
                     || nn.inner() instanceof Type.String
                     || nn.inner() instanceof Type.Bytes
                     || (nn.inner() instanceof Type.Class cls
-                        && isLocalClassType(cls));
+                        && isLocalClassType(cls))
+                    // ISSUE-0549 (async bytes closure): a nullable
+                    // field holding a bytes-bearing function value
+                    // (async(bytes)->bytes or its sync counterpart)
+                    // stores the shared wrapper reference — Java null
+                    // is the DEAL null. Non-bytes function fields stay
+                    // E6000 (the ISSUE-0110 descriptor join).
+                    || (nn.inner() instanceof Type.Func f
+                        && Types.containsBytes(f));
                 if (!innerOk) {
                     unsupported("class fields of type " + typeName(fieldType)
-                        + " (only primitive, bytes, and local class "
-                        + "nullable fields are supported)", cf.span());
+                        + " (only primitive, bytes, local class, and "
+                        + "bytes-bearing function nullable fields are "
+                        + "supported)", cf.span());
                     return;
                 }
             } else if (!(fieldType instanceof Type.Int)
@@ -6734,11 +6743,21 @@ public final class JvmBackend {
                     && !(fieldType instanceof Type.Array)
                     && !(fieldType instanceof Type.Class cls
                         && isLocalClassType(cls)
-                        && !isBuiltinErrorType(cls))) {
+                        && !isBuiltinErrorType(cls))
+                    // ISSUE-0549 (async bytes closure): a function-typed
+                    // field whose signature carries bytes anywhere
+                    // (async(bytes)->bytes, (bytes[])->?bytes, and their
+                    // containerized/nested forms — the BytesClosure
+                    // signatures) stores the shared wrapper reference.
+                    // Non-bytes function fields stay E6000 (the
+                    // ISSUE-0110 descriptor join).
+                    && !(fieldType instanceof Type.Func f
+                        && Types.containsBytes(f))) {
                 unsupported("class fields of type " + typeName(fieldType)
                     + " (only primitive fields, nullable primitive/"
                     + "class fields, and local bytes/array/table/class "
-                    + "fields are supported)", cf.span());
+                    + "and bytes-bearing function fields are "
+                    + "supported)", cf.span());
                 return;
             }
             String javaType = javaLocalType(fieldType, cf.span());
@@ -12584,6 +12603,18 @@ public final class JvmBackend {
 
     private String emitCall(CallExpr call) {
         if (call.callee() instanceof MemberAccessExpr mae) {
+            // ISSUE-0549 (async bytes closure): a direct call through a
+            // function-typed class field (`h.cb(args)` — the field
+            // stores the shared wrapper reference for bytes-bearing
+            // sync/async signatures) dispatches the FIELD's invoke, the
+            // same shape the local/parameter indirect-call path emits,
+            // so `await h.cb(args)` applies the identical await-site
+            // completion check.
+            Type calleeType = typeOf(mae);
+            if (calleeType instanceof Type.Func
+                    && typeOf(mae.object()) instanceof Type.Class) {
+                return emitClassFieldCall(mae, call, (Type.Func) calleeType);
+            }
             return emitMemberAccessCall(mae, call);
         }
         if (call.callee() instanceof IdentifierExpr id) {
@@ -12814,6 +12845,47 @@ public final class JvmBackend {
         }
         unsupported("calls through non-identifier callees", call.span());
         return "null";
+    }
+
+    /**
+     * A direct call through a function-typed class field
+     * ({@code h.cb(args)} — ISSUE-0549): the field stores the shared
+     * wrapper reference, so the call emits
+     * {@code (<receiver>).<field>.invoke(args)}. The receiver (the
+     * field-read object) evaluates exactly once BEFORE the arguments
+     * (spec-v1.2 §Operational semantics: the callee — receiver included
+     * — runs before the arguments, left to right): an effectful receiver
+     * materializes into a fresh temporary immediately after its
+     * evaluation, so its side effects precede every argument's hoisted
+     * statements. Arguments route through the same declared-parameter
+     * boundary adaptation every indirect call uses, and the await site
+     * keeps its pinned completion checks (a bytes completion is proven
+     * by the emitted wrapper return type — spec-v1.2 §JVM backend
+     * contract).
+     */
+    private String emitClassFieldCall(MemberAccessExpr mae, CallExpr call,
+            Type.Func f) {
+        String obj = emitExpression(mae.object());
+        String recv;
+        if (isPureAfterEmission(mae.object())) {
+            recv = "(" + obj + ")";
+        } else {
+            String clsRef = javaLocalType(typeOf(mae.object()), mae.span());
+            if (clsRef == null) return "null";
+            String tmp = nextEvalTempName();
+            preStatements.add(new PreLine(clsRef + " " + tmp + " = "
+                + obj + ";", 0));
+            preStatementsDeclareTemps = true;
+            recv = tmp;
+        }
+        List<String> argCodes = emitOperandsInOrder(call.args(),
+            f.paramTypes());
+        for (int i = 0; i < argCodes.size(); i++) {
+            argCodes.set(i, boundaryArgCode(call.args().get(i),
+                argCodes.get(i), f.paramTypes().get(i)));
+        }
+        return recv + "." + javaName(mae.field()) + ".invoke("
+            + String.join(", ", argCodes) + ")";
     }
 
     /**
