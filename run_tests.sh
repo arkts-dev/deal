@@ -503,6 +503,24 @@ TEST_MAINS+=(
 )
 
 # =========================================================================
+# ISSUE-0517 (class-construction integration tail): the real
+# end-to-end semantic-IR pipeline suite driving local/imported
+# construction, provided/default order, mutable-default freshness,
+# E8007, field failures, presence states, nested factory parenting,
+# JSON round trips, null-on-input-failure, and first serialization
+# failure through the production lowerer (lowerModuleClassCore with
+# every production validator) and the assembled ClassOpsExecutor with
+# the production BoundaryExecutor and JsonClassAlgorithmAdapter
+# delegates. Joined here at the gate-script level, like the
+# ISSUE-0474/0475 suites, so the single compile/test-list authority
+# file (tools/gate-manifest.sh) stays untouched.
+# =========================================================================
+TEST_SOURCES+=( 'test/ClassConstructionIntegrationTailTest.java' )
+TEST_MAINS+=(
+  'fg|=== Running Class Construction Integration Tail Tests (ISSUE-0517) ===|java -ea -cp build deal.test.ClassConstructionIntegrationTailTest'
+)
+
+# =========================================================================
 # DEALPG4 fail-closed toolchain preflight (ISSUE-0183,
 # fail-closed-toolchain-preflight D1/D2/D5): one ordered, fail-closed
 # phase sequence P0-P5 shared verbatim with coverage.sh via
