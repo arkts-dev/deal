@@ -155,6 +155,31 @@ TEST_MAINS+=(
 )
 
 # =========================================================================
+# ISSUE-0544 (backend evaluator lowering and runtime plan realization):
+# the compiler-to-lowerer battery — every published compiler default
+# plan realized as executable LuaJIT, JVM, and JavaScript runtime plans
+# (entry order, canonical descriptors, optional flags, evaluators
+# exactly on required-present entries, labelled zero-argument evaluator
+# closures over the declaring module scope, zero import-time
+# evaluation, per-construction freshness, bytes reference retention,
+# imported provider plans after dependency-ordered initialization, and
+# the host defaults-map exemption) — exercised through the real
+# orchestrator path (ProjectLocator -> production
+# CompilationOrchestrator -> compile()) with real luajit / node /
+# javac+java artifact execution plus the realized
+# RuntimeClassDefaultPlan carriers and the D3 digests. Joined here at
+# the gate-script level, like the ISSUE-0541/0542/0543 suites, so the
+# single compile/test-list authority file
+# (tools/gate-manifest.sh) stays untouched.
+# =========================================================================
+TEST_SOURCES+=(
+  'test/RuntimeDefaultLoweringTest.java'
+)
+TEST_MAINS+=(
+  'fg|=== Running Runtime Default Lowering Tests (ISSUE-0544) ===|java -ea -cp build deal.test.RuntimeDefaultLoweringTest'
+)
+
+# =========================================================================
 # ISSUE-0474 + ISSUE-0475 (Coverage Manifest Validator and Corpus
 # Check): the reusable C7 validation component, its synthetic 26/0 unit
 # matrix, and the real-manifest 82/0 mechanical check join the compile

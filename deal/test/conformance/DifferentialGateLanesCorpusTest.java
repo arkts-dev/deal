@@ -118,12 +118,12 @@ public class DifferentialGateLanesCorpusTest {
      * the ISSUE-0276 snapshot reason), so the count is the landed
      * 46). */
     private static final int KNOWN_FAILURES_TRACKED = 0;
-    private static final int SKIP_REGISTRY_ENTRIES = 46;
+    private static final int SKIP_REGISTRY_ENTRIES = 45;
 
     /** The per-backend pass/fail counters of the full run. */
     private static final Map<String, int[]> PER_BACKEND = Map.of(
         "luajit", new int[] {319, 32},
-        "jvm", new int[] {237, 114},
+        "jvm", new int[] {238, 113},
         "js", new int[] {321, 30});
 
     /** The designated converged subset (task criterion (a)): every lane
@@ -148,7 +148,6 @@ public class DifferentialGateLanesCorpusTest {
         "backend-runtime/class-runtime-errors/dynamic-bad-imported-class-param-e8001.deal",
         "backend-runtime/class-runtime-errors/dynamic-bad-nullable-class-e8001.deal",
         "backend-runtime/defaults/plan-host-discriminator.deal",
-        "backend-runtime/defaults/plan-imported-provider-scope.deal",
         "backend-runtime/defaults/plan-phase-order-provided-before-defaults.deal",
         "backend-runtime/host-abi/host-array-return-ok.deal",
         "backend-runtime/host-abi/host-async-shape-value.deal",

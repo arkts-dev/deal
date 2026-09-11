@@ -8658,10 +8658,11 @@ public class JvmBackendTest {
         check(!nullableReqJava.contains("java.lang.Integer f0 = (java.lang.System.currentTimeMillis() / 1000L)"),
             "no javac-rejected long-to-Integer default field slot");
 
-        // Jsonable optional int default via $fromJsonValue: the Object
-        // slot stores checkInt's Integer (never an unchecked boxed Long),
-        // and the boundary raise converts to the DEAL null like the
-        // required variant.
+        // Jsonable optional int default: a declared default on an
+        // OPTIONAL field is checker-validated metadata that NEVER
+        // evaluates (provider-versioned-default-plans D2, runtime page
+        // D1) — the omitted field stays ABSENT ($MISSING), so fromJson
+        // publishes a live instance and no boundary ever raises.
         String optSource = """
             import * as time from "std/time"
             // @jsonable
@@ -8679,22 +8680,24 @@ public class JvmBackendTest {
         check(opt.exitCode() == 0,
             "jsonable optional-int default run exits 0 (never-throw): "
                 + opt.output());
-        check(opt.output().contains("null-ok"),
-            "jsonable optional-int default boundary raise converts to "
-                + "the DEAL null (no unchecked boxed-Long instance): "
-                + opt.output());
+        check(opt.output().contains("bad"),
+            "the optional default never evaluates: fromJson publishes a "
+                + "live instance with the omitted field absent (the "
+                + "probe returns \"bad\"): " + opt.output());
         String optJava = int32Artifact(optSource, "jsonable_opt_default_artifact");
-        check(optJava.contains("java.lang.Object f0 = 0;")
-                && optJava.contains(
-                    "f0 = checkInt((java.lang.System.currentTimeMillis() / 1000L) * 1000L);"),
-            "the jsonable optional-int default Object slot gates through "
-                + "checkInt at the ISSUE-0302 omitted-default phase: "
+        check(optJava.contains("java.lang.Object f0 = $MISSING;"),
+            "the jsonable optional-int slot holds the Missing sentinel "
+                + "placeholder (the declared default never runs): "
+                + optJava.lines().filter(l -> l.contains("f0 = "))
+                .findFirst().orElse("<missing>"));
+        check(!optJava.contains("f0 = checkInt("),
+            "no default evaluation at the jsonable optional-int slot: "
                 + optJava.lines().filter(l -> l.contains("f0 = "))
                 .findFirst().orElse("<missing>"));
 
         // Jsonable optional int default at direct construction: the
-        // constructor optional slot raises exactly E8004 once at the
-        // boundary (no never-throw wrapper on the construction path).
+        // omitted optional field stays absent — no default evaluation,
+        // no E8004 raise, the construction succeeds.
         String ctorSource = """
             import * as time from "std/time"
             // @jsonable
@@ -8708,18 +8711,19 @@ public class JvmBackendTest {
             }
             """;
         ExecResult ctor = runInt32Project(ctorSource, "jsonable_ctor_opt_slot");
-        check(ctor.exitCode() == 1,
-            "jsonable constructor optional slot run exits 1: "
+        check(ctor.exitCode() == 0,
+            "jsonable constructor optional slot run exits 0 (the "
+                + "optional default never evaluates): " + ctor.output());
+        check(ctor.output().contains("ok")
+                && !ctor.output().contains("DEAL_ERROR_CODE"),
+            "jsonable constructor optional slot never raises (no "
+                + "default evaluation at construction): "
                 + ctor.output());
-        check(countOccurrences(ctor.output(),
-                "DEAL_ERROR_CODE: E8004 int out of safe range") == 1,
-            "jsonable constructor optional slot raises exactly E8004 "
-                + "once at the boundary: " + ctor.output());
         String ctorJava = int32Artifact(ctorSource,
             "jsonable_ctor_opt_slot_artifact");
-        check(ctorJava.contains("new $C_C(checkInt((java.lang.System.currentTimeMillis() / 1000L) * 1000L))"),
-            "the jsonable constructor optional slot gates through "
-                + "checkInt: "
+        check(ctorJava.contains("return new $C_C(f0);"),
+            "the jsonable constructor optional slot constructs with the "
+                + "Missing sentinel slot (never the default expression): "
                 + ctorJava.lines().filter(l -> l.contains("new $C_C"))
                 .findFirst().orElse("<missing>"));
 
@@ -11982,8 +11986,12 @@ public class JvmBackendTest {
             + "compiles: " + orchestrator4.diagnostics());
         if (success4 && Files.exists(outputDir4.resolve("Entry.java"))) {
             String java = Files.readString(outputDir4.resolve("Entry.java"));
-            check(java.contains("new Lib.$C_Point(10, 20)"),
-                "the empty literal emits every default inline: " + java);
+            check(java.contains(
+                    "new Lib.$C_Point(Lib.$default$$C_Point$x(), "
+                        + "Lib.$default$$C_Point$y())"),
+                "the empty literal routes every omitted default through"
+                    + " the provider's published-plan evaluator methods"
+                    + " (ISSUE-0544 E7): " + java);
             check(java.contains("new Lib.$C_Point(2, 5)"),
                 "provided fields land in declaration order regardless of "
                 + "literal order: " + java);

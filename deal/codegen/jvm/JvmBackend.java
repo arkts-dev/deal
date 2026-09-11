@@ -12,7 +12,15 @@ import deal.identity.CanonicalClassIdentity;
 import deal.identity.CanonicalClassIdentityIndex;
 import deal.identity.CanonicalModuleIdentity;
 import deal.identity.ProjectModuleIdentity;
+import deal.module.CompilerClassDefaultEntry;
+import deal.module.CompilerClassDefaultPlan;
+import deal.module.DefaultRuntimeAbiVersion;
 import deal.module.ModuleIdentityResolver;
+import deal.module.PlannedDefaultClass;
+import deal.module.ResolvedDefaultExpression;
+import deal.module.RuntimeClassDefaultPlan;
+import deal.module.RuntimeDefaultEvaluator;
+import deal.module.RuntimeDefaultPlanLowering;
 import deal.diagnostics.DiagnosticCode;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.semantic.ir.SemanticProfile;
@@ -658,11 +666,23 @@ public final class JvmBackend {
      */
     public record JvmCodegenResult(String className, String source,
                                    List<CompilerDiagnostic> diagnostics,
-                                   boolean int32Mode) {
+                                   boolean int32Mode,
+                                   List<RuntimeClassDefaultPlan> runtimePlans) {
+
+        /** Backward-compatible four-component constructor: the runtime
+         * plan realization list is empty (no published plan consumed —
+         * the standalone entry points). */
+        public JvmCodegenResult(String className, String source,
+                                List<CompilerDiagnostic> diagnostics,
+                                boolean int32Mode) {
+            this(className, source, diagnostics, int32Mode, List.of());
+        }
+
         public JvmCodegenResult {
             Objects.requireNonNull(className, "className must not be null");
             Objects.requireNonNull(source, "source must not be null");
             diagnostics = List.copyOf(diagnostics);
+            runtimePlans = List.copyOf(runtimePlans);
         }
 
         /** True when at least one error-level diagnostic was recorded. */
@@ -800,6 +820,37 @@ public final class JvmBackend {
      * runtime over the {@code $DealRt.Table} carrier.
      */
     private final Map<String, String> importAliases = new LinkedHashMap<>();
+
+    // ISSUE-0544 (the lowering epic): module path → the module's
+    // completed PlannedDefaultClass list (the graph-published plans),
+    // passed by the orchestrator. The emitter consumes the published
+    // CompilerClassDefaultPlan of every module-level class declaration
+    // and realizes the E7 runtime plan: per-class static plan records
+    // ({name, descriptor, optional, evaluator} in class source order)
+    // plus labelled zero-argument static evaluator methods created at
+    // load and invoked once per omitted required entry per construction
+    // attempt. Imported construction consumes the provider module's
+    // plan records after the dependency-ordered initialization trigger.
+    // Empty on the standalone entry points (the inline fallback path
+    // stays).
+    private Map<String, List<PlannedDefaultClass>> plansByModulePath =
+        Map.of();
+
+    // ISSUE-0544: the realized RuntimeClassDefaultPlans of this module,
+    // in class source order — the carrier-side realization data (the
+    // JVM invocation seam invokes the generated static evaluator method
+    // reflectively once the artifact is compiled; see
+    // jvmInvocationSeam). Attached to the JvmCodegenResult for the
+    // compiler-to-lowerer verification battery and the later FFI
+    // identity consumption.
+    private final List<RuntimeClassDefaultPlan> runtimePlans =
+        new ArrayList<>();
+
+    // The generated module class name (ISSUE-0544): the JVM invocation
+    // seam resolves the static evaluator methods of the generated
+    // artifact through this class once the artifact is compiled, and
+    // the plan records reference the module class by name.
+    private String generatedClassName = null;
 
     /**
      * The stdlib modules whose declared functions the JVM slice can
@@ -2090,6 +2141,40 @@ public final class JvmBackend {
                                             SemanticProfile semanticProfile,
                                             List<Type> sharedShapes,
                                             Map<CanonicalClassIdentity, String> sharedClassDeclarations) {
+        return generate(program, result, sourcePath, modulePath,
+            importResolutions, importedClasses, hostModules, isEntry,
+            emitSharedTable, identityIndex, moduleIdentities,
+            semanticProfile, sharedShapes, sharedClassDeclarations,
+            Map.of());
+    }
+
+    /**
+     * Plan-carrying production generate entry (ISSUE-0544): the same
+     * identity-carriage contract as the overload above with the
+     * compilation's completed default plans keyed by module path
+     * ({@code CompilationOrchestrator#completedPlansByModulePath}) —
+     * the published-plan consumption surface of the lowering epic. The
+     * emitter consumes this module's plans for the E7 realization
+     * (static per-class plan records plus labelled zero-argument
+     * evaluator methods) and the imported providers' plans for imported
+     * construction (dependency-ordered initialization holds through the
+     * import trigger). The standalone entry points pass {@code Map.of()}
+     * and keep the inline fallback emission.
+     */
+    public static JvmCodegenResult generate(ProgramNode program, CheckResult result,
+                                            String sourcePath, String modulePath,
+                                            Map<String, String> importResolutions,
+                                            Map<String, Map<String, ClassDeclaration>> importedClasses,
+                                            Map<String, Map<String, Type>> hostModules,
+                                            boolean isEntry,
+                                            boolean emitSharedTable,
+                                            CanonicalClassIdentityIndex identityIndex,
+                                            Function<String, CanonicalModuleIdentity> moduleIdentities,
+                                            SemanticProfile semanticProfile,
+                                            List<Type> sharedShapes,
+                                            Map<CanonicalClassIdentity, String> sharedClassDeclarations,
+                                            Map<String, List<PlannedDefaultClass>>
+                                                plansByModulePath) {
         Objects.requireNonNull(semanticProfile,
             "semanticProfile must not be null");
         JvmBackend backend = new JvmBackend(result.typeMap(), result.symbolTable(),
@@ -2097,6 +2182,7 @@ public final class JvmBackend {
             hostModules, isEntry, emitSharedTable, semanticProfile,
             sharedShapes, identityIndex, moduleIdentities,
             sharedClassDeclarations);
+        backend.plansByModulePath = Map.copyOf(plansByModulePath);
         return backend.generateProgram(program);
     }
 
@@ -2401,6 +2487,7 @@ public final class JvmBackend {
         computeForwardFieldViolations();
 
         String className = classNameFor(modulePath);
+        this.generatedClassName = className;
         // Defensive: a generated DEAL class name must never collide with the
         // module class name (reachable only for a module path whose derived
         // class name starts with the $C_ prefix, e.g. a path segment
@@ -2517,7 +2604,7 @@ public final class JvmBackend {
         }
 
         return new JvmCodegenResult(className, out.toString(), diagnostics,
-            int32Mode);
+            int32Mode, List.copyOf(runtimePlans));
     }
 
     /**
@@ -4861,6 +4948,29 @@ public final class JvmBackend {
         emitLine("    // carries the complete canonical descriptor text so signature");
         emitLine("    // checks are byte comparisons across module boundaries.");
         emitLine("    interface FnValue { java.lang.String descriptor(); }");
+        // The zero-argument default-evaluator seam (ISSUE-0544, the E7
+        // realization): every plan record's required-entry evaluator is
+        // a method reference to the declaring module's static evaluator
+        // method — a labelled zero-argument closure over the declaring
+        // module's scope, created at load and never invoked there.
+        emitLine("    interface Fn0 { java.lang.Object invoke(); }");
+        // The static per-class default-plan entry record (ISSUE-0544,
+        // runtime page D1/D3): one ordered entry per declared field —
+        // {name, canonical descriptor, optional, evaluator?} — with an
+        // evaluator exactly on required-present entries (null on
+        // optional entries). The DefaultRuntimeAbiVersion constant is
+        // pinned compiler-side; the record shape is the ABI's JVM
+        // realization.
+        emitLine("    static final class DefaultPlanEntry {");
+        emitLine("        final java.lang.String name;");
+        emitLine("        final java.lang.String descriptor;");
+        emitLine("        final boolean optional;");
+        emitLine("        final Fn0 evaluator;");
+        emitLine("        DefaultPlanEntry(java.lang.String name, java.lang.String descriptor, boolean optional, Fn0 evaluator) {");
+        emitLine("            this.name = name; this.descriptor = descriptor;");
+        emitLine("            this.optional = optional; this.evaluator = evaluator;");
+        emitLine("        }");
+        emitLine("    }");
         emitLine("    // ---- shared per-element-shape array carriers (ISSUE-0301 D3) ----");
         emitLine("    // The wrapper classes move here from the per-module scope:");
         emitLine("    // identity stable across appends, aliases observe every write,");
@@ -6834,6 +6944,21 @@ public final class JvmBackend {
         if (jsonable) {
             emitJsonablePublicHelpers(cd, gen);
         }
+
+        // ISSUE-0544 (the E7 realization): the published compiler
+        // default plan of this module-level class — the static
+        // per-class plan record ({name, descriptor, optional,
+        // evaluator?} in class source order, the DefaultRuntimeAbiVersion
+        // "1" shape) plus the labelled zero-argument static evaluator
+        // methods. The evaluator methods are created at load and never
+        // invoked there; construction sites and the @jsonable
+        // fromJsonValue phase invoke them exactly once per omitted
+        // required entry per attempt. No published plan (the standalone
+        // entry points) keeps the inline fallback emission.
+        CompilerClassDefaultPlan plan = publishedPlanFor(cd);
+        if (plan != null) {
+            emitDefaultPlanRealization(cd, plan);
+        }
     }
 
     // =========================================================================
@@ -7282,7 +7407,7 @@ public final class JvmBackend {
         // provided-value failure carries zero default side effects.
         for (int i = 0; i < types.size(); i++) {
             ClassField cf = cd.fields().get(i);
-            String placeholder = cf.optional() && cf.defaultExpr().isEmpty()
+            String placeholder = cf.optional()
                 ? jsonableMissingRef(cd) : zeroValueFor(cf.type());
             emitLine(fieldTypes.get(i) + " f" + i + " = " + placeholder
                 + ";");
@@ -7295,19 +7420,24 @@ public final class JvmBackend {
             indent--;
             emitLine("}");
         }
-        // Phase 2: omitted defaults, in declared-field order, evaluated
-        // inline at the call (the same per-construction default
-        // freshness the constructor path implements). An optional
-        // field stays ABSENT ($MISSING) — or present with its
-        // inline-evaluated default when one is declared (LuaJIT keeps
-        // the defaults-table entry for optional-with-default fields).
+        // Phase 2: omitted required defaults, in declared-field order,
+        // through the published plan's labelled zero-argument
+        // evaluators (ISSUE-0544) — created at load, invoked exactly
+        // once per attempt, the same per-construction freshness the
+        // constructor path implements. An optional field stays ABSENT
+        // ($MISSING): a declared default on an optional field is
+        // checker-validated metadata that NEVER evaluates (D1).
         for (int i = 0; i < types.size(); i++) {
             ClassField cf = cd.fields().get(i);
             emitLine("if (!provided" + i + ") {");
             indent++;
             String defaultCode;
-            if (cf.optional() && cf.defaultExpr().isEmpty()) {
+            if (cf.optional()) {
                 defaultCode = jsonableMissingRef(cd);
+            } else if (cf.defaultExpr().isPresent()
+                    && publishedPlanFor(cd) != null) {
+                defaultCode = defaultEvaluatorName(cd.name(), cf.name())
+                    + "()";
             } else if (cf.defaultExpr().isPresent()) {
                 ExpressionNode def = cf.defaultExpr().get();
                 if (typeOf(def) == Type.Error.INSTANCE) {
@@ -10077,7 +10207,7 @@ public final class JvmBackend {
             return "null";
         }
         return emitClassConstructorCall(cd, classNameForClass(cd.name()),
-            obj, true);
+            obj, true, null, publishedPlanFor(cd));
     }
 
     /**
@@ -10136,9 +10266,19 @@ public final class JvmBackend {
                 return "null";
             }
         }
+        // ISSUE-0544 (the E7 plan-shape guard lift): when the
+        // provider module's published plan exists for this class, its
+        // labelled zero-argument evaluator methods realize every
+        // required default in the DECLARING module's scope — the
+        // construction site references them instead of re-emitting the
+        // default in the importing module's scope. Without a published
+        // plan (the standalone entry points), non-literal defaults
+        // keep the E6000 guard: an inline re-emission would silently
+        // bind the importing module's identifiers.
         for (ClassField cf : cd.fields()) {
             if (cf.defaultExpr().isPresent()
-                    && !(cf.defaultExpr().get() instanceof LiteralExpr)) {
+                    && !(cf.defaultExpr().get() instanceof LiteralExpr)
+                    && publishedPlanForModule(module, cd) == null) {
                 unsupported("construction of imported class '" + cd.name()
                     + "' whose field '" + cf.name() + "' has a "
                     + "non-literal default (imported defaults evaluate "
@@ -10151,7 +10291,8 @@ public final class JvmBackend {
         }
         String moduleClass = classNameFor(module);
         return emitClassConstructorCall(cd,
-            moduleClass + "." + classNameForClass(cd.name()), obj, false);
+            moduleClass + "." + classNameForClass(cd.name()), obj, false,
+            moduleClass, publishedPlanForModule(module, cd));
     }
 
     /**
@@ -10172,7 +10313,9 @@ public final class JvmBackend {
      */
     private String emitClassConstructorCall(ClassDeclaration cd, String ctorExpr,
                                             ObjectLiteralExpr obj,
-                                            boolean localDefaults) {
+                                            boolean localDefaults,
+                                            String providerRef,
+                                            CompilerClassDefaultPlan planForCtor) {
         List<ExpressionNode> valueNodes = new ArrayList<>();
         List<Type> valueTargets = new ArrayList<>();
         for (Property prop : obj.properties()) {
@@ -10240,29 +10383,15 @@ public final class JvmBackend {
             ExpressionNode valueNode = providedNodes.get(cf.name());
             if (cf.optional() && cd.isJsonable()) {
                 // An optional field of an @jsonable class contributes ONE
-                // Object argument: the
-                // provided value (the DEAL null for an explicit null),
-                // the inline-evaluated default when one is declared, or
-                // the Missing sentinel for an omitted no-default field.
-                // The three states stay distinguishable: absent is the
-                // sentinel reference, present-null is the DEAL null.
-                if (code == null && cf.defaultExpr().isPresent()) {
-                    valueNode = cf.defaultExpr().get();
-                    if (localDefaults) {
-                        if (typeOf(valueNode) == Type.Error.INSTANCE) {
-                            unsupported("default expression of field '"
-                                + cf.name() + "' of class '" + cd.name()
-                                + "' (unresolved default-expression type)",
-                                valueNode.span());
-                            code = zeroValueFor(cf.type());
-                        } else {
-                            code = emitExpressionFor(valueNode,
-                                classFieldDeclaredType(cd, cf));
-                        }
-                    } else {
-                        code = emitExpression(valueNode);
-                    }
-                }
+                // Object argument: the provided value (the DEAL null for
+                // an explicit null) or the Missing sentinel for an
+                // omitted field. A declared default on an optional field
+                // is checker-validated metadata that NEVER evaluates
+                // (provider-versioned-default-plans D2, runtime page D1):
+                // an omitted optional field stays absent, so no default
+                // runs here — the three states stay distinguishable
+                // (absent is the sentinel reference, present-null is the
+                // DEAL null).
                 if (code != null && valueNode != null
                         && (localDefaults
                             || providedNodes.containsKey(cf.name()))
@@ -10291,28 +10420,42 @@ public final class JvmBackend {
                 args.add(code);
                 continue;
             }
-            if (code == null && cf.defaultExpr().isPresent()) {
-                valueNode = cf.defaultExpr().get();
-                if (localDefaults) {
-                    if (typeOf(valueNode) == Type.Error.INSTANCE) {
-                        // The checker records every default subexpression's
-                        // type (ISSUE-0095 rework); Type.Error here means the
-                        // frontend reported errors — record an honest E6000,
-                        // never emit an artifact javac would reject.
-                        unsupported("default expression of field '" + cf.name()
-                            + "' of class '" + cd.name()
-                            + "' (unresolved default-expression type)",
-                            valueNode.span());
-                        code = zeroValueFor(cf.type());
-                    } else {
-                        code = emitExpressionFor(valueNode,
-                            classFieldDeclaredType(cd, cf));
-                    }
+            if (code == null && cf.defaultExpr().isPresent()
+                    && !cf.optional()) {
+                if (planForCtor != null) {
+                    // ISSUE-0544: the published plan's labelled
+                    // zero-argument evaluator — created at load in the
+                    // DECLARING module's scope, invoked exactly once per
+                    // omitted required entry per attempt. The evaluator
+                    // method already applies the boolean/null/int
+                    // boundaries, so the construction site passes its
+                    // result through unchanged (valueNode stays null —
+                    // the inline coercion paths below skip).
+                    code = (providerRef == null ? "" : providerRef + ".")
+                        + defaultEvaluatorName(cd.name(), cf.name()) + "()";
                 } else {
-                    // Imported defaults are literal constants (validated
-                    // by emitImportedClassConstruction); they emit
-                    // standalone and carry no nil-aware boolean shape.
-                    code = emitExpression(valueNode);
+                    valueNode = cf.defaultExpr().get();
+                    if (localDefaults) {
+                        if (typeOf(valueNode) == Type.Error.INSTANCE) {
+                            // The checker records every default subexpression's
+                            // type (ISSUE-0095 rework); Type.Error here means the
+                            // frontend reported errors — record an honest E6000,
+                            // never emit an artifact javac would reject.
+                            unsupported("default expression of field '" + cf.name()
+                                + "' of class '" + cd.name()
+                                + "' (unresolved default-expression type)",
+                                valueNode.span());
+                            code = zeroValueFor(cf.type());
+                        } else {
+                            code = emitExpressionFor(valueNode,
+                                classFieldDeclaredType(cd, cf));
+                        }
+                    } else {
+                        // Imported defaults are literal constants (validated
+                        // by emitImportedClassConstruction); they emit
+                        // standalone and carry no nil-aware boolean shape.
+                        code = emitExpression(valueNode);
+                    }
                 }
             }
             if (code != null && valueNode != null
@@ -10331,7 +10474,7 @@ public final class JvmBackend {
             }
             boolean optional = cf.optional();
             boolean presence = provided.containsKey(cf.name())
-                || cf.defaultExpr().isPresent();
+                || (!cf.optional() && cf.defaultExpr().isPresent());
             if (code == null && optional && !presence) {
                 // A missing optional field constructs as the DEAL null,
                 // not present (has() is false, reads yield null).
@@ -10360,6 +10503,249 @@ public final class JvmBackend {
             }
         }
         return "new " + ctorExpr + "(" + String.join(", ", args) + ")";
+    }
+
+    /**
+     * The published compiler plan of this exact class declaration, or
+     * {@code null} when the graph published no plan for it (host
+     * declarations live outside plan space; the standalone entry points
+     * pass no plan surface). The declaration match is reference identity
+     * first — the planner consumed the same AST the emitter walks — with
+     * the name/position pair as the defensive fallback (ISSUE-0544, the
+     * published-plan consumption seam).
+     */
+    private CompilerClassDefaultPlan publishedPlanFor(
+            ClassDeclaration node) {
+        if (node == null || identityIndex == null) {
+            return null;
+        }
+        List<PlannedDefaultClass> plans = plansByModulePath.get(modulePath);
+        if (plans == null) {
+            return null;
+        }
+        for (PlannedDefaultClass planned : plans) {
+            ClassDeclaration declaration = planned.declaration();
+            if (declaration == node
+                    || (declaration.name().equals(node.name())
+                        && declaration.span().startLine()
+                            == node.span().startLine()
+                        && declaration.span().startColumn()
+                            == node.span().startColumn())) {
+                return planned.plan();
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The published compiler plan of an imported class, looked up by
+     * the declaring module path plus the declaration name/position pair
+     * (the consumer receives the provider's own declaration objects, so
+     * reference identity holds as well; the position pair is the
+     * defensive fallback).
+     */
+    private CompilerClassDefaultPlan publishedPlanForModule(
+            String declaringModulePath, ClassDeclaration node) {
+        if (node == null || identityIndex == null) {
+            return null;
+        }
+        List<PlannedDefaultClass> plans =
+            plansByModulePath.get(declaringModulePath);
+        if (plans == null) {
+            return null;
+        }
+        for (PlannedDefaultClass planned : plans) {
+            ClassDeclaration declaration = planned.declaration();
+            if (declaration == node
+                    || (declaration.name().equals(node.name())
+                        && declaration.span().startLine()
+                            == node.span().startLine()
+                        && declaration.span().startColumn()
+                            == node.span().startColumn())) {
+                return planned.plan();
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The deterministic static evaluator method name of one defaulted
+     * entry ({@code $default$<C>$<field>}): the {@code $} prefix is
+     * unreachable from {@link #javaName} (user identifiers cannot
+     * contain {@code $} and underscores escape), so no user binding can
+     * collide, and the {@code <C>} component is the generated nested
+     * class name, which is unique per module-level declaration.
+     */
+    private String defaultEvaluatorName(String className, String fieldName) {
+        return "$default$" + classNameForClass(className) + "$"
+            + javaName(fieldName);
+    }
+
+    /** The deterministic per-class plan record name ({@code $plan$<C>}). */
+    private String planRecordName(String className) {
+        return "$plan$" + classNameForClass(className);
+    }
+
+    /**
+     * The canonical descriptor text of a published plan's class
+     * identity, through the compilation's one descriptor service
+     * (identity carriage). Defensive: the planner only publishes plans
+     * for identities the index registered.
+     */
+    private String identityText(
+            deal.identity.CanonicalClassIdentity identity) {
+        String text = identityIndex.descriptorTextFor(identity);
+        if (text == null) {
+            throw new IllegalStateException(
+                "published default plan has no canonical identity text: "
+                    + identity);
+        }
+        return text;
+    }
+
+    /**
+     * The carrier-side zero-argument invocation seam of a generated JVM
+     * evaluator (ISSUE-0544, runtime page D3): a lazy reflective
+     * invocation of the generated static evaluator method — once the
+     * artifact is compiled and its module class is on the classpath,
+     * {@code invoke()} executes the real generated evaluator exactly
+     * once per call. Nothing in the production pipeline invokes the
+     * seam in-process (the construction sites call the generated method
+     * directly); it carries the real invocation so the
+     * compiler-to-lowerer verification battery exercises the generated
+     * evaluator through the carrier.
+     */
+    private RuntimeDefaultEvaluator.Invocation jvmInvocationSeam(
+            String methodName) {
+        return () -> {
+            // The generated module class resolves through the calling
+            // thread's context class loader, so the verification
+            // battery (and any in-process consumer) can invoke the
+            // real compiled evaluator by loading the artifact's output
+            // directory first.
+            try {
+                ClassLoader loader = Thread.currentThread()
+                    .getContextClassLoader();
+                java.lang.reflect.Method method = (loader == null
+                        ? Class.forName(generatedClassName)
+                        : Class.forName(generatedClassName, true, loader))
+                    .getDeclaredMethod(methodName);
+                method.setAccessible(true);
+                return method.invoke(null);
+            } catch (ReflectiveOperationException e) {
+                throw new IllegalStateException(
+                    "the JVM default evaluator " + methodName
+                        + " of generated module " + generatedClassName
+                        + " could not be invoked reflectively", e);
+            }
+        };
+    }
+
+    /**
+     * Emits the E7 realization of one published plan (ISSUE-0544): the
+     * labelled zero-argument static evaluator methods (one per
+     * required-present entry, in class source order, each a closure over
+     * the declaring module's static scope) followed by the static
+     * per-class plan record with one ordered
+     * {@code $DealRt.DefaultPlanEntry} per entry — evaluator references
+     * exactly on required entries, {@code null} on optional entries.
+     * The realized {@link RuntimeClassDefaultPlan} carrier (digests,
+     * labels, presence) is appended for the result surface.
+     */
+    private void emitDefaultPlanRealization(ClassDeclaration cd,
+            CompilerClassDefaultPlan plan) {
+        String identityText = identityText(plan.classIdentity());
+        List<RuntimeDefaultPlanLowering.EvaluatorRealization>
+            realizations = new ArrayList<>();
+        for (CompilerClassDefaultEntry entry : plan.orderedFields()) {
+            if (entry.optional()) {
+                continue;
+            }
+            ResolvedDefaultExpression def = entry.defaultExpression();
+            String label = RuntimeDefaultPlanLowering.labelOf(identityText,
+                entry.name(), def.semanticDigest());
+            String methodName = defaultEvaluatorName(cd.name(),
+                entry.name());
+            Type fieldType = entry.resolvedFieldType();
+            String javaType = javaLocalType(fieldType,
+                def.expressionAst().span());
+            if (javaType == null) {
+                unsupported("default evaluator of field '" + entry.name()
+                    + "' of class '" + cd.name() + "' of type "
+                    + typeName(fieldType),
+                    def.expressionAst().span());
+                continue;
+            }
+            emitLine("// default evaluator " + label);
+            emitLine("static " + javaType + " " + methodName + "() {");
+            indent++;
+            // The evaluator body is a function frame: it runs at
+            // construction time, never at load, so the load-time
+            // call/value guards (currentModuleStatementIndex >= 0)
+            // must not apply inside it — same save/restore the emitted
+            // DEAL function bodies use.
+            boolean savedModuleLevel = moduleLevel;
+            int savedModuleIndex = currentModuleStatementIndex;
+            currentModuleStatementIndex = -1;
+            moduleLevel = false;
+            String code;
+            try {
+                code = emitExpressionFor(def.expressionAst(), fieldType);
+                if (needsBooleanBoundary(def.expressionAst(), fieldType)) {
+                    code = "booleanNotNull(" + code + ")";
+                }
+                code = coerceNullValueCode(code, def.expressionAst(),
+                    javaType, def.expressionAst().span());
+                // ISSUE-0375 D3 seam: the default expression is a
+                // declared int boundary — a wider (time) value crosses
+                // through the signed32 checkInt inside the evaluator,
+                // exactly like the former inline omitted-default phase
+                // did.
+                code = adaptIntBoundary(def.expressionAst(), code,
+                    fieldType);
+            } finally {
+                currentModuleStatementIndex = savedModuleIndex;
+                moduleLevel = savedModuleLevel;
+            }
+            flushPreStatements();
+            emitLine("return " + code + ";");
+            indent--;
+            emitLine("}");
+            realizations.add(new RuntimeDefaultPlanLowering
+                .EvaluatorRealization(label,
+                    "static " + javaType + " " + methodName + "() {"
+                        + " return " + code + "; }",
+                    jvmInvocationSeam(methodName)));
+        }
+        boolean complete = plan.orderedFields().stream()
+            .filter(e -> !e.optional()).count() == realizations.size();
+        if (complete) {
+            runtimePlans.add(RuntimeDefaultPlanLowering.realize(plan,
+                identityText, realizations).plan());
+        }
+        // The static per-class plan record: ordered entries {name,
+        // canonical descriptor, optional, evaluator?} — the JVM
+        // realization of the RuntimeClassDefaultPlan shape
+        // (DefaultRuntimeAbiVersion "1").
+        emitLine("// Runtime default plan for " + cd.name()
+            + " — ordered entries {name, descriptor, optional,"
+            + " evaluator} (DefaultRuntimeAbiVersion \""
+            + DefaultRuntimeAbiVersion.CURRENT.version() + "\")");
+        emitLine("static final $DealRt.DefaultPlanEntry[] "
+            + planRecordName(cd.name())
+            + " = new $DealRt.DefaultPlanEntry[] {");
+        indent++;
+        for (CompilerClassDefaultEntry entry : plan.orderedFields()) {
+            String evaluatorRef = entry.optional() ? "null"
+                : generatedClassName + "::"
+                    + defaultEvaluatorName(cd.name(), entry.name());
+            emitLine("new $DealRt.DefaultPlanEntry("
+                + quoteJavaString(entry.name()) + ", "
+                + quoteJavaString(entry.runtimeTypeDescriptor()) + ", "
+                + entry.optional() + ", " + evaluatorRef + "),");
+        }
+        indent--;
+        emitLine("};");
     }
 
     /** A placeholder for the defensive missing-required-field branch (the
