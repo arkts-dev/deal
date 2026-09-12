@@ -1370,6 +1370,25 @@ public final class JvmBackend {
      */
     private Set<ExpressionNode> deferredHostArgReads = null;
 
+    /**
+     * D5 phase-order deferral for class-construction provided values
+     * (identity-keyed, set only while one construction's provided
+     * values are being emitted): a table read provided to a plain
+     * {@code bytes} field yields the raw value at phase 1 and
+     * validates against the field's canonical descriptor at phase 3 —
+     * after every omitted required default of the attempt ran once —
+     * exactly like the LuaJIT reference's {@code class_plan_} order
+     * (provided slots → defaults → per-field canonical validation →
+     * publish). The read-site E8001 would otherwise fire during phase
+     * 1 and suppress the defaults the reference still runs (a
+     * side-effect-count divergence pinned by the
+     * bytes-class-default-integration fixture). Only the direct
+     * provided-value read defers; a read nested inside the provided
+     * expression is a different node and keeps its pinned read-site
+     * check.
+     */
+    private Set<ExpressionNode> deferredConstructionReads = null;
+
     /** The host-class identity descriptors whose nominal {@code $check}
      * branches were already appended to {@link #classCheckBranches}
      * (ISSUE-0303 D4 — one branch per class identity per module). */
@@ -11567,7 +11586,34 @@ public final class JvmBackend {
             }
             valueTargets.add(fieldType);
         }
-        List<String> codes = emitOperandsInOrder(valueNodes, valueTargets);
+        // D5 phase-order deferral: a table read provided to a plain
+        // bytes field evaluates raw at phase 1 and validates against
+        // the field's canonical descriptor at phase 3, after every
+        // omitted required default of the attempt ran once (the
+        // LuaJIT class_plan_ order — the read-site E8001 would
+        // otherwise fire during phase 1 and suppress the defaults the
+        // reference still runs).
+        Set<ExpressionNode> deferredReads = null;
+        for (Property prop : obj.properties()) {
+            if (prop.value() instanceof MemberAccessExpr mae
+                    && typeOf(mae.object()) instanceof Type.Table
+                    && isDeferredConstructionProvidedField(cd,
+                        prop.name())) {
+                if (deferredReads == null) {
+                    deferredReads = java.util.Collections.newSetFromMap(
+                        new java.util.IdentityHashMap<>());
+                }
+                deferredReads.add(mae);
+            }
+        }
+        Set<ExpressionNode> prevDeferredConstruction = deferredConstructionReads;
+        deferredConstructionReads = deferredReads;
+        List<String> codes;
+        try {
+            codes = emitOperandsInOrder(valueNodes, valueTargets);
+        } finally {
+            deferredConstructionReads = prevDeferredConstruction;
+        }
         // The constructor arguments run in field DECLARATION order, but
         // LuaJIT evaluates the provided-fields table in LITERAL order — an
         // effectful provided value whose literal position differs from its
@@ -11689,6 +11735,26 @@ public final class JvmBackend {
                         code = emitExpression(valueNode);
                     }
                 }
+                if (deferredReads != null) {
+                    // D5 phase 2 must complete before the phase-3
+                    // provided-value validation below: the omitted
+                    // default evaluation materializes into a temporary
+                    // (in class source order, after the phase-1
+                    // provided temps) so a raising phase-3 check still
+                    // observes every default of the attempt exactly
+                    // once — the LuaJIT class_plan_ order.
+                    Type defaultFieldType = classFieldDeclaredType(cd, cf);
+                    String defaultJava = defaultFieldType == null ? null
+                        : javaLocalType(defaultFieldType, cf.span());
+                    if (defaultJava != null) {
+                        String temp = nextEvalTempName();
+                        preStatements.add(new PreLine(
+                            defaultJava + " " + temp + " = " + code + ";",
+                            0));
+                        preStatementsDeclareTemps = true;
+                        code = temp;
+                    }
+                }
             }
             if (code != null && valueNode != null
                     && (localDefaults || providedNodes.containsKey(cf.name()))
@@ -11722,12 +11788,23 @@ public final class JvmBackend {
                 Type declaredFieldType = classFieldDeclaredType(cd, cf);
                 String fieldJava = declaredFieldType == null ? null
                     : javaLocalType(declaredFieldType, cf.span());
-                code = coerceNullValueCode(code, valueNode, fieldJava,
-                    valueNode.span());
-                // ISSUE-0375 D3 seam: a class-construction field value
-                // is a declared int boundary — a wider (time) value
-                // crosses through the signed32 checkInt.
-                code = adaptIntBoundary(valueNode, code, declaredFieldType);
+                if (deferredReads != null && deferredReads.contains(valueNode)) {
+                    // D5 phase 3: the dynamic provided value validates
+                    // against the field's canonical descriptor — after
+                    // every omitted default above ran once — exactly
+                    // where LuaJIT's class_plan_ validates present
+                    // fields. A failed check publishes no instance (the
+                    // constructor never runs).
+                    code = "(($DealRt.Bytes) $check(\"bytes\", "
+                        + code + "))";
+                } else {
+                    code = coerceNullValueCode(code, valueNode, fieldJava,
+                        valueNode.span());
+                    // ISSUE-0375 D3 seam: a class-construction field value
+                    // is a declared int boundary — a wider (time) value
+                    // crosses through the signed32 checkInt.
+                    code = adaptIntBoundary(valueNode, code, declaredFieldType);
+                }
             }
             args.add(code);
             if (cf.optional()) {
@@ -11735,6 +11812,27 @@ public final class JvmBackend {
             }
         }
         return "new " + ctorExpr + "(" + String.join(", ", args) + ")";
+    }
+
+    /**
+     * True when the provided value of the named class field defers its
+     * dynamic table-read boundary check to the D5 phase-3 validation
+     * (the plain {@code bytes} field shape): the raw read lands in the
+     * phase-1 unpublished slot and the canonical descriptor check runs
+     * after the attempt's defaults, exactly like the LuaJIT
+     * {@code class_plan_} order. Only the plain bytes field defers
+     * today — the shape the
+     * bytes-class-default-integration fixture pins.
+     */
+    private boolean isDeferredConstructionProvidedField(
+            ClassDeclaration cd, String fieldName) {
+        for (ClassField cf : cd.fields()) {
+            if (cf.name().equals(fieldName)) {
+                return classFieldDeclaredType(cd, cf)
+                    instanceof Type.Bytes;
+            }
+        }
+        return false;
     }
 
     /**
@@ -15263,8 +15361,10 @@ public final class JvmBackend {
         String obj = emitExpression(mae.object());
         Type target = typeOf(mae);
         String get = "(" + obj + ").get(" + quoteJavaString(mae.field()) + ")";
-        if (deferredHostArgReads != null
-                && deferredHostArgReads.contains(mae)) {
+        if ((deferredHostArgReads != null
+                && deferredHostArgReads.contains(mae))
+                || (deferredConstructionReads != null
+                    && deferredConstructionReads.contains(mae))) {
             // ISSUE-0303 D2 read-site deferral: ONLY a typed table read
             // whose value is the whole (direct) host-call argument
             // yields the raw value — the host-call boundary raises
@@ -15278,7 +15378,8 @@ public final class JvmBackend {
             // artifact javac rejected: Object cannot be converted to
             // __StringArray). The receiver evaluates exactly once in
             // order, exactly like the checked nullable/array branches
-            // below.
+            // below. The same deferral applies to a construction
+            // provided value whose field validates at phase 3 (D5).
             String temp = nextEvalTempName();
             preStatements.add(new PreLine(
                 "java.lang.Object " + temp + " = " + get + ";", 0));

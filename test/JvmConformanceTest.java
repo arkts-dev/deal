@@ -139,7 +139,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  *   <li>frontend-classified files: 100% pass (zero failed);</li>
  *   <li>backend-runtime: zero applicable failures AND 100% of the
  *       on-disk backend-runtime denominator (the per-run
- *       {@code runtimeDenominator()} count — 388: the closed 354
+ *       {@code runtimeDenominator()} count — 389: the closed 354
  *       plus the six ISSUE-0548 sync bytes-function fixtures
  *       (bytes-sync-fn-shapes, bytes-fn-adapters,
  *       bytes-fn-adapter-e8010, bytes-identity-equality,
@@ -158,7 +158,13 @@ import java.util.concurrent.atomic.AtomicInteger;
  *       host-bytes-no-call-on-failure,
  *       host-bytes-param-mismatch-e8010,
  *       host-bytes-return-mismatch-e8010, bytes-module-identity, and
- *       stdlib/json/json-stringify-nested-bytes-error) passing through
+ *       stdlib/json/json-stringify-nested-bytes-error — plus the
+ *       ISSUE-0552 integrated-verification fixture
+ *       (bytes-class-default-integration: nested bytes[] and
+ *       bytes[][] defaults, sync/async first-class function defaults,
+ *       once-per-attempt evaluation with zero load-time runs, fresh
+ *       isolated buffers, retained host-returned identity,
+ *       validation failure, and JSON rejection)) passing through
  *       the frontend → CompilationOrchestrator → JVM codegen → javac →
  *       JVM pipeline — zero skipped, zero stale known-fail markers;</li>
  *   <li>the classified runtime total equals the on-disk denominator
@@ -398,9 +404,11 @@ public class JvmConformanceTest {
         Map.entry("bytes_roundtrip",
             "public final class HostBytes_roundtrip {\n"
                 + "  private static int calls;\n"
+                + "  private static $DealRt.Bytes shared = new $DealRt.Bytes(new byte[2]);\n"
                 + "  public static Object echoBytes($DealRt.Bytes b) { calls += 1; return b; }\n"
                 + "  public static Object nullableBytes($DealRt.Bytes b) { calls += 1; return b; }\n"
                 + "  public static Object makeBytes(int n) { calls += 1; return new $DealRt.Bytes(new byte[n]); }\n"
+                + "  public static Object sharedBytes() { return shared; }\n"
                 + "  public static int readByte($DealRt.Bytes b) { calls += 1; return b.data[0] & 0xFF; }\n"
                 + "  public static int callCount() { return calls; }\n"
                 + "  public static Object badBytesReturn() { calls += 1; return \"not-bytes\"; }\n"

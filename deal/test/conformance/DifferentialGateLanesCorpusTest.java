@@ -116,9 +116,14 @@ public class DifferentialGateLanesCorpusTest {
      * seven backend-runtime fixtures — five host-bytes fixtures, the
      * bytes module-identity fixture, and the nested JSON bytes
      * fixture — plus one companion (bytes_module_lib.deal): total
-     * 631 -> 639, runtime cases 381 -> 388). */
-    private static final int TOTAL_FIXTURES = 639;
-    private static final int RUNTIME_CASES = 388;
+     * 631 -> 639, runtime cases 381 -> 388). ISSUE-0552 (the JVM
+     * bytes integrated-verification lane state) then lands its one
+     * backend-runtime fixture
+     * (bytes-class-default-integration.deal) with its uniform
+     * three-backend runtime-ok sidecar: total 639 -> 640, runtime
+     * cases 388 -> 389). */
+    private static final int TOTAL_FIXTURES = 640;
+    private static final int RUNTIME_CASES = 389;
     private static final int FRONTEND_COMPILED = 192;
     private static final int COMPILE_PINS = 4;
     /** Pre-flip accounting pins (G8; the last on-disk known-fail
@@ -181,11 +186,18 @@ public class DifferentialGateLanesCorpusTest {
      * source-map sidecar), and the jvm legs raise their pinned codes
      * but the captured JVM DEALRuntimeError carries no column
      * (ISSUE-0276), so they are tracked in the registry set above
-     * instead. */
+     * instead. ISSUE-0552 (the JVM bytes integrated-verification lane
+     * state) then adds its one runtime-ok fixture passing on the
+     * luajit and jvm lanes; the plan-less JsLane class-default path
+     * (the lane compiles without the published plan machinery, so its
+     * makeClass overlay runs no phase-3 provided-value validation) does
+     * not raise the pinned E8001 and fails the fixture's transcript,
+     * so luajit/jvm each gain one pass and js gains one failure (the
+     * merged pins below). */
     private static final Map<String, int[]> PER_BACKEND = Map.of(
-        "luajit", new int[] {353, 35},
-        "jvm", new int[] {287, 101},
-        "js", new int[] {355, 33});
+        "luajit", new int[] {354, 35},
+        "jvm", new int[] {288, 101},
+        "js", new int[] {355, 34});
 
     /** The designated converged subset (task criterion (a)): every lane
      * of every fixture here passes byte-exact. */
@@ -383,7 +395,16 @@ public class DifferentialGateLanesCorpusTest {
         "backend-runtime/host-abi/host-bytes-param-mismatch-e8010.deal | luajit | PROCESS_FAILURE",
         "backend-runtime/host-abi/host-bytes-return-mismatch-e8010.deal | luajit | PROCESS_FAILURE",
         "backend-runtime/stdlib/json/json-stringify-nested-bytes-error.deal | js | TRANSCRIPT_MISMATCH",
-        "backend-runtime/stdlib/json/json-stringify-nested-bytes-error.deal | luajit | PROCESS_FAILURE");
+        "backend-runtime/stdlib/json/json-stringify-nested-bytes-error.deal | luajit | PROCESS_FAILURE",
+        // ISSUE-0552 (the JVM bytes integrated-verification lane
+        // state): the new runtime-ok fixture passes the luajit and jvm
+        // lanes; the plan-less JsLane class-default path (the lane
+        // compiles without the published plan machinery, so its
+        // makeClass overlay runs no phase-3 provided-value
+        // validation) accepts the wrong-kind provided value, the
+        // fixture's pinned E8001 never raises, and the TEST_FAIL
+        // transcript diverges.
+        "backend-runtime/bytes/bytes-class-default-integration.deal | js | TRANSCRIPT_MISMATCH");
 
     /** Representative pinned first-difference details (the gate's
      * bounded-context reports), asserted verbatim. */

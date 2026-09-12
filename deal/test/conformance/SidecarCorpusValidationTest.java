@@ -237,9 +237,13 @@ public class SidecarCorpusValidationTest {
      * fixtures with their three-backend sidecars in the same change:
      * host-bytes-roundtrip, host-bytes-nullable-roundtrip,
      * host-bytes-no-call-on-failure, and bytes-module-identity:
-     * 278 -> 282. */
+     * 278 -> 282. ISSUE-0552 (the JVM bytes
+     * integrated-verification lane state) then adds the one
+     * runtime-ok integration fixture
+     * (bytes-class-default-integration) with its uniform
+     * three-backend runtime-ok sidecar: 282 -> 283. */
 
-    private static final int RUNTIME_OK_COUNT = 282;
+    private static final int RUNTIME_OK_COUNT = 283;
 
     /**
      * The exact runtime-error population (ISSUE-0350 completeness, plus

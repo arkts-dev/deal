@@ -2,12 +2,14 @@
 // @description: Host-module declaration fixture for the host-bytes-*
 // conformance tests (ISSUE-0551): plain and nullable bytes
 // parameters/returns on the shared carrier, a fresh-buffer maker, a
-// byte reader, a call counter (the no-call-on-failure probe), and a
-// wrong-kind return probe.
+// shared-buffer provider (the retained-identity default probe,
+// ISSUE-0552), a byte reader, a call counter (the
+// no-call-on-failure probe), and a wrong-kind return probe.
 
 export function echoBytes(b: bytes): bytes;
 export function nullableBytes(b: bytes | null): bytes | null;
 export function makeBytes(n: int): bytes;
+export function sharedBytes(): bytes;
 export function readByte(b: bytes): int;
 export function callCount(): int;
 export function badBytesReturn(): bytes;

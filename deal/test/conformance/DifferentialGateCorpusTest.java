@@ -146,13 +146,23 @@ public class DifferentialGateCorpusTest {
      * 421 -> 429, runtime-ok 278 -> 282, runtime-error 103 -> 106,
      * companions 54 -> 55; the frontend populations, compile-ok (64),
      * compile-error (132), the known-fail population (0), and the
-     * compile pins (4) are unchanged. */
-    private static final int TOTAL_FIXTURES = 639;
+     * compile pins (4) are unchanged. ISSUE-0552 (the JVM bytes
+     * integrated-verification lane state) then adds its one
+     * backend-runtime fixture
+     * (bytes-class-default-integration.deal — nested bytes defaults,
+     * sync/async first-class function defaults, freshness, isolation,
+     * retained identity, validation failure, and JSON rejection):
+     * total 639 -> 640, backend-runtime 429 -> 430, runtime-ok
+     * 282 -> 283; the frontend population (210), compile-ok (64),
+     * compile-error (132), runtime-error (106), companions (55), the
+     * known-fail population (0), and the compile pins (4) are
+     * unchanged. */
+    private static final int TOTAL_FIXTURES = 640;
     private static final int FRONTEND_FIXTURES = 210;
-    private static final int BACKEND_RUNTIME_FIXTURES = 429;
+    private static final int BACKEND_RUNTIME_FIXTURES = 430;
     private static final int COMPILE_OK = 64;
     private static final int COMPILE_ERROR = 132;
-    private static final int RUNTIME_OK = 282;
+    private static final int RUNTIME_OK = 283;
     private static final int RUNTIME_ERROR = 106;
     private static final int RUNTIME_ERROR_SIDECARS = 106;
     private static final int COMPANIONS = 55;
