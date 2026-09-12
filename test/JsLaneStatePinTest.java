@@ -103,8 +103,6 @@ public class JsLaneStatePinTest {
             + "probe), passed 375, failed 0, skipped 0 (no skip registry "
             + "— zero skips by construction), known-fail 0 (tracked), "
             + "node subprocess runs 360 — pass rate 100.0%";
-            + "— zero skips by construction), known-fail 0 (tracked), "
-            + "node subprocess runs 360 — pass rate 100.0%";
     private static final String SUMMARY_COMPANIONS =
         "classified 32 (on-disk @expected: companion 32), passed 32, "
             + "failed 0";
