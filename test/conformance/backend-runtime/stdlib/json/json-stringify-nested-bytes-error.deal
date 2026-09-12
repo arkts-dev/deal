@@ -1,0 +1,30 @@
+// @spec: Standard library declarations — std/json.d.deal
+// @description: json.stringify rejects bytes at every reachable nesting with the pinned unsupported-type message: a bytes value nested four tables deep, a bytes[] typed array inside a table bucket, and a table-held bytes leaf in a sibling branch — all through record-mode table nesting.
+// @expected: runtime-error E8001
+// @features: stdlib, json, bytes, runtime-errors, v1.2
+
+import * as json from "std/json";
+
+export function test_json_stringify_nested_bytes_error(): string {
+  let b: bytes = bytes(1);
+  b[0] = 65;
+  let arr: bytes[] = [b];
+  let outer: table = { level1: {} };
+  let level1: table = outer.level1;
+  let inner2: table = {};
+  level1.level2 = inner2;
+  let level2: table = level1.level2;
+  let inner3: table = {};
+  level2.level3 = inner3;
+  let level3: table = level2.level3;
+  level3.bucket = arr;
+  let innerList: table = {};
+  level2.list = innerList;
+  let list: table = level2.list;
+  list.item = b;
+  return json.stringify(outer);
+}
+
+export function main(): null {
+  return null;
+}

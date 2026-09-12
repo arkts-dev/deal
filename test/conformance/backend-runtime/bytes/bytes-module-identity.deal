@@ -1,0 +1,44 @@
+// @spec: Bytes — Modules
+// @description: Imports/exports preserve bytes carriers, canonical descriptors, and reference identity: a closure factory exported from a library keeps one captured buffer identity across repeated calls, mutation is visible through every import-path alias, and a bytes-bearing function value created in the library round-trips through import, invocation, and a dynamic table read that byte-checks its canonical descriptor.
+// @expected: runtime-ok
+// @features: bytes, modules, functions, tables
+
+import * as Lib from "./bytes_module_lib"
+
+export function test_bytes_module_identity(): string {
+  let getShared: () => bytes = Lib.makeShared();
+  let a: bytes = getShared();
+  let b: bytes = getShared();
+  if (!(a === b)) {
+    throw { code: "TEST_FAIL", message: "imported closure lost the captured bytes identity across calls" };
+  }
+  a[1] = 99;
+  if (getShared()[1] !== 99) {
+    throw { code: "TEST_FAIL", message: "mutation invisible through the imported closure" };
+  }
+  let echoed: bytes = Lib.echo(a);
+  if (!(echoed === a)) {
+    throw { code: "TEST_FAIL", message: "imported echo lost reference identity" };
+  }
+  let f: (x: bytes) => bytes = Lib.makeTransform();
+  let c: bytes = bytes(2);
+  let ret: bytes = f(c);
+  if (!(ret === c)) {
+    throw { code: "TEST_FAIL", message: "imported transform lost reference identity" };
+  }
+  if (c[0] !== 1) {
+    throw { code: "TEST_FAIL", message: "imported transform content mismatch" };
+  }
+  let holder: table = { f: f };
+  let g: (x: bytes) => bytes = holder.f;
+  let d: bytes = bytes(1);
+  let ret2: bytes = g(d);
+  if (!(ret2 === d) || d[0] !== 1) {
+    throw { code: "TEST_FAIL", message: "imported function value failed after the dynamic descriptor-checked round trip" };
+  }
+  return "module-identity-ok";
+}
+
+export function main(): null {
+  return null;
+}

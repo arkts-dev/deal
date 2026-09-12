@@ -232,9 +232,14 @@ public class SidecarCorpusValidationTest {
      * bytes-boundary fixtures with their three-backend runtime-ok
      * sidecars: 266 -> 268. ISSUE-0507 then adds the ten
      * runtime-ok FFI fixtures under backend-runtime/ffi/ with their
-     * divergent C6 sidecars: 268 -> 278. */
+     * divergent C6 sidecars: 268 -> 278. ISSUE-0551 (the JVM
+     * host/module/JSON bytes leaf) then adds four runtime-ok
+     * fixtures with their three-backend sidecars in the same change:
+     * host-bytes-roundtrip, host-bytes-nullable-roundtrip,
+     * host-bytes-no-call-on-failure, and bytes-module-identity:
+     * 278 -> 282. */
 
-    private static final int RUNTIME_OK_COUNT = 278;
+    private static final int RUNTIME_OK_COUNT = 282;
 
     /**
      * The exact runtime-error population (ISSUE-0350 completeness, plus
@@ -299,8 +304,15 @@ public class SidecarCorpusValidationTest {
      * sidecars: 94 -> 98. ISSUE-0507
      * adds the five runtime-error FFI fixtures under
      * backend-runtime/ffi/ with their divergent C6 sidecars: 98 -> 103.
+     * ISSUE-0551 (the JVM host/module/JSON bytes leaf) then adds
+     * three runtime-error fixtures with their field-exact
+     * canonical-framing sidecars in the same change:
+     * host-bytes-param-mismatch-e8010 (E8010 parameter boundary),
+     * host-bytes-return-mismatch-e8010 (E8010 return boundary), and
+     * stdlib/json json-stringify-nested-bytes-error (E8001 nested
+     * JSON bytes rejection): 103 -> 106.
  */
-    private static final int RUNTIME_ERROR_COUNT = 103;
+    private static final int RUNTIME_ERROR_COUNT = 106;
 
 
 

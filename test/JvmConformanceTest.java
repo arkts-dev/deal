@@ -139,7 +139,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  *   <li>frontend-classified files: 100% pass (zero failed);</li>
  *   <li>backend-runtime: zero applicable failures AND 100% of the
  *       on-disk backend-runtime denominator (the per-run
- *       {@code runtimeDenominator()} count — 381: the closed 354
+ *       {@code runtimeDenominator()} count — 388: the closed 354
  *       plus the six ISSUE-0548 sync bytes-function fixtures
  *       (bytes-sync-fn-shapes, bytes-fn-adapters,
  *       bytes-fn-adapter-e8010, bytes-identity-equality,
@@ -152,7 +152,13 @@ import java.util.concurrent.atomic.AtomicInteger;
  *       bytes-dynamic-async-function-mismatch-e8010 — plus the
  *       fifteen runtime-classified FFI fixtures ISSUE-0507 landed,
  *       every one passing as the sanctioned compile-reject E6006
- *       FFI_UNSUPPORTED_BACKEND divergence) passing through
+ *       FFI_UNSUPPORTED_BACKEND divergence — plus the seven
+ *       ISSUE-0551 host/module/JSON bytes fixtures:
+ *       host-bytes-roundtrip, host-bytes-nullable-roundtrip,
+ *       host-bytes-no-call-on-failure,
+ *       host-bytes-param-mismatch-e8010,
+ *       host-bytes-return-mismatch-e8010, bytes-module-identity, and
+ *       stdlib/json/json-stringify-nested-bytes-error) passing through
  *       the frontend → CompilationOrchestrator → JVM codegen → javac →
  *       JVM pipeline — zero skipped, zero stale known-fail markers;</li>
  *   <li>the classified runtime total equals the on-disk denominator
@@ -388,6 +394,16 @@ public class JvmConformanceTest {
                 + "  public static Object valueCount() {\n"
                 + "    return Long.valueOf(n);\n"
                 + "  }\n"
+                + "}\n"),
+        Map.entry("bytes_roundtrip",
+            "public final class HostBytes_roundtrip {\n"
+                + "  private static int calls;\n"
+                + "  public static Object echoBytes($DealRt.Bytes b) { calls += 1; return b; }\n"
+                + "  public static Object nullableBytes($DealRt.Bytes b) { calls += 1; return b; }\n"
+                + "  public static Object makeBytes(int n) { calls += 1; return new $DealRt.Bytes(new byte[n]); }\n"
+                + "  public static int readByte($DealRt.Bytes b) { calls += 1; return b.data[0] & 0xFF; }\n"
+                + "  public static int callCount() { return calls; }\n"
+                + "  public static Object badBytesReturn() { calls += 1; return \"not-bytes\"; }\n"
                 + "}\n")
     );
 

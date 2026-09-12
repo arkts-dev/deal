@@ -1889,6 +1889,43 @@ public class JvmLane implements Lane {
                 + "lane cannot serialize the canonical error snapshot.",
             "JVM-GAP-BYTES");
 
+        // ---- JVM-GAP-BYTES: the host/module/JSON bytes leaf
+        // (ISSUE-0551) ----
+        // The declared bytes host boundary and the nested JSON bytes
+        // rejection landed with ISSUE-0551: the shared $DealRt.Bytes
+        // carrier rides the host parameter/return checks (E8010 on a
+        // wrong kind, no host method runs after a failed parameter
+        // check) and the emitted __jsonAppend bytes branch raises the
+        // pinned E8001 at any nesting depth. JvmConformanceTest passes
+        // every new fixture through the real pipeline, so no entry
+        // lands in that registry. The three runtime-error fixtures
+        // below stay tracked here for the differential gate's
+        // canonical snapshot requirement: the captured JVM
+        // DEALRuntimeError carries no column field (ISSUE-0276 owns
+        // the backend convergence), so the lane cannot serialize the
+        // canonical snapshot and never fabricates one.
+        skip("backend-runtime/host-abi/host-bytes-param-mismatch-e8010.deal",
+            "the fixture raises E8010 at the declared bytes host "
+                + "parameter boundary on the JVM lane, but the JVM "
+                + "DEALRuntimeError snapshot carries no column field "
+                + "(ISSUE-0276 owns the backend convergence), so the "
+                + "lane cannot serialize the canonical error snapshot.",
+            "JVM-GAP-BYTES");
+        skip("backend-runtime/host-abi/host-bytes-return-mismatch-e8010.deal",
+            "the fixture raises E8010 at the declared bytes host "
+                + "return boundary on the JVM lane, but the JVM "
+                + "DEALRuntimeError snapshot carries no column field "
+                + "(ISSUE-0276 owns the backend convergence), so the "
+                + "lane cannot serialize the canonical error snapshot.",
+            "JVM-GAP-BYTES");
+        skip("backend-runtime/stdlib/json/json-stringify-nested-bytes-error.deal",
+            "the fixture raises E8001 at the nested JSON bytes "
+                + "rejection on the JVM lane, but the JVM "
+                + "DEALRuntimeError snapshot carries no column field "
+                + "(ISSUE-0276 owns the backend convergence), so the "
+                + "lane cannot serialize the canonical error snapshot.",
+            "JVM-GAP-BYTES");
+
         // ---- JVM-GAP-ERROR-LITERAL-DEFAULTS: RETIRED with the
         // completion gate closure (ISSUE-0307) ----
         // rtc-015-error-default-code pins the Error literal without a

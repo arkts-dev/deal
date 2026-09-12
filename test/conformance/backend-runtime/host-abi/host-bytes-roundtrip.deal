@@ -1,0 +1,39 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: A declared host bytes parameter/return round-trips through the shared carrier: reference identity, content, and length are preserved across the boundary; a host-created buffer is fresh and zero-filled; mutation through the host-returned reference is visible on the original.
+// @expected: runtime-ok
+// @features: modules, host-abi, bytes
+
+import * as host from "host/bytes_roundtrip"
+
+export function test_host_bytes_roundtrip(): string {
+  let b: bytes = bytes(3);
+  b[0] = 1;
+  b[1] = 2;
+  b[2] = 200;
+  let back: bytes = host.echoBytes(b);
+  if (!(back === b)) {
+    throw { code: "TEST_FAIL", message: "host bytes roundtrip lost reference identity" };
+  }
+  if (back.length !== 3) {
+    throw { code: "TEST_FAIL", message: "host bytes roundtrip length mismatch" };
+  }
+  if (back[0] !== 1 || back[1] !== 2 || back[2] !== 200) {
+    throw { code: "TEST_FAIL", message: "host bytes roundtrip content mismatch" };
+  }
+  let fresh: bytes = host.makeBytes(2);
+  if (fresh.length !== 2) {
+    throw { code: "TEST_FAIL", message: "host-created buffer length mismatch" };
+  }
+  if (host.readByte(fresh) !== 0) {
+    throw { code: "TEST_FAIL", message: "host-created buffer is not zero-filled" };
+  }
+  host.echoBytes(b)[0] = 9;
+  if (b[0] !== 9) {
+    throw { code: "TEST_FAIL", message: "mutation through the host-returned reference is invisible" };
+  }
+  return "host-bytes-ok";
+}
+
+export function main(): null {
+  return null;
+}

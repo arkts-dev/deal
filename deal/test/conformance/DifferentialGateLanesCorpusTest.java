@@ -111,9 +111,14 @@ public class DifferentialGateLanesCorpusTest {
      * boundary rows) then lands the six dynamic bytes-boundary
      * fixtures (total 606 -> 612, runtime cases 360 -> 366);
      * ISSUE-0507 then lands the nineteen FFI files — total 612 -> 631,
-     * runtime cases 366 -> 381, frontend-compiled 191 -> 192). */
-    private static final int TOTAL_FIXTURES = 631;
-    private static final int RUNTIME_CASES = 381;
+     * runtime cases 366 -> 381, frontend-compiled 191 -> 192;
+     * ISSUE-0551 (the JVM host/module/JSON bytes leaf) then lands its
+     * seven backend-runtime fixtures — five host-bytes fixtures, the
+     * bytes module-identity fixture, and the nested JSON bytes
+     * fixture — plus one companion (bytes_module_lib.deal): total
+     * 631 -> 639, runtime cases 381 -> 388). */
+    private static final int TOTAL_FIXTURES = 639;
+    private static final int RUNTIME_CASES = 388;
     private static final int FRONTEND_COMPILED = 192;
     private static final int COMPILE_PINS = 4;
     /** Pre-flip accounting pins (G8; the last on-disk known-fail
@@ -140,9 +145,15 @@ public class DifferentialGateLanesCorpusTest {
      * no column field. The ISSUE-0550 dynamic boundary rows then
      * absorbed the four runtime-error dynamic bytes-boundary fixtures
      * (JVM-GAP-BYTES, the same ISSUE-0276 no-column reason), so the
-     * landed registry count is 24.) */
+     * landed registry count is 24; ISSUE-0551 (the JVM
+     * host/module/JSON bytes leaf) absorbs its three runtime-error
+     * fixtures the same way (the host E8010 parameter/return boundary
+     * fixtures and the nested JSON bytes fixture all raise their
+     * pinned codes on the JVM lane, but the captured JVM
+     * DEALRuntimeError carries no column field), so the landed
+     * registry count is 27.) */
     private static final int KNOWN_FAILURES_TRACKED = 0;
-    private static final int SKIP_REGISTRY_ENTRIES = 24;
+    private static final int SKIP_REGISTRY_ENTRIES = 27;
 
     /** The per-backend pass/fail counters of the full run. The
      * ISSUE-0548 sync function-shape closure adds six runtime
@@ -159,11 +170,22 @@ public class DifferentialGateLanesCorpusTest {
      * bytes-boundary fixtures into the jvm registry and added the two
      * runtime-ok passes, so the canonical pairs plus the ISSUE-0548
      * six-runtime deltas and the ISSUE-0507 +15 passes are the merged
-     * pins below. */
+     * pins below. ISSUE-0551 (the JVM host/module/JSON bytes leaf)
+     * then adds its four runtime-ok passes on every lane; the three
+     * runtime-error fixtures fail on the luajit lane (PROCESS_FAILURE:
+     * the host/stdjson-raised errors carry no span for the pinned
+     * idealized call-site location) and the js leg of the nested JSON
+     * fixture fails its transcript (the std/json bytes arm carries no
+     * expected/actual pair) — the two host E8010 fixtures pass on js
+     * (the js host boundary pins the exact call-site span through the
+     * source-map sidecar), and the jvm legs raise their pinned codes
+     * but the captured JVM DEALRuntimeError carries no column
+     * (ISSUE-0276), so they are tracked in the registry set above
+     * instead. */
     private static final Map<String, int[]> PER_BACKEND = Map.of(
-        "luajit", new int[] {349, 32},
-        "jvm", new int[] {283, 98},
-        "js", new int[] {349, 32});
+        "luajit", new int[] {353, 35},
+        "jvm", new int[] {287, 101},
+        "js", new int[] {355, 33});
 
     /** The designated converged subset (task criterion (a)): every lane
      * of every fixture here passes byte-exact. */
@@ -190,12 +212,15 @@ public class DifferentialGateLanesCorpusTest {
         "backend-runtime/class-runtime-errors/dynamic-bad-imported-class-param-e8001.deal",
         "backend-runtime/class-runtime-errors/dynamic-bad-nullable-class-e8001.deal",
         "backend-runtime/host-abi/host-async-shape-value.deal",
+        "backend-runtime/host-abi/host-bytes-param-mismatch-e8010.deal",
+        "backend-runtime/host-abi/host-bytes-return-mismatch-e8010.deal",
         "backend-runtime/runtime-errors/json-stringify-function-e8001.deal",
         "backend-runtime/source-location-precision/class-param-error-source.deal",
         "backend-runtime/source-location/bytes-index-bounds-source.deal",
         "backend-runtime/source-location/bytes-write-range-source.deal",
         "backend-runtime/source-location/json-error-source.deal",
         "backend-runtime/stdlib/json/json-stringify-bytes-error.deal",
+        "backend-runtime/stdlib/json/json-stringify-nested-bytes-error.deal",
         "backend-runtime/type-system/dynamic-array-element-e8003.deal",
         "backend-runtime/bytes/bytes-negative-length-error.deal",
         "backend-runtime/bytes/bytes-negative-read-error.deal",
@@ -345,7 +370,20 @@ public class DifferentialGateLanesCorpusTest {
         "backend-runtime/type-system/dynamic-return-e8001.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/type-system/dynamic-to-int-param-e8001.deal | js | TRANSCRIPT_MISMATCH",
         "backend-runtime/type-system/dynamic-to-int-param-e8001.deal | jvm | PROCESS_FAILURE",
-        "backend-runtime/type-system/dynamic-wrong-to-nullable-e8001.deal | jvm | PROCESS_FAILURE");
+        "backend-runtime/type-system/dynamic-wrong-to-nullable-e8001.deal | jvm | PROCESS_FAILURE",
+        // ISSUE-0551 (the JVM host/module/JSON bytes leaf): the three
+        // new runtime-error fixtures fail on the luajit lane (the
+        // host/stdjson-raised errors carry no span for the pinned
+        // idealized call-site location) and the js leg of the nested
+        // JSON fixture fails its transcript (the std/json bytes arm
+        // carries no expected/actual pair) — the jvm legs raise their
+        // pinned codes but the captured JVM DEALRuntimeError carries
+        // no column (ISSUE-0276), so they are tracked in the registry
+        // set above instead.
+        "backend-runtime/host-abi/host-bytes-param-mismatch-e8010.deal | luajit | PROCESS_FAILURE",
+        "backend-runtime/host-abi/host-bytes-return-mismatch-e8010.deal | luajit | PROCESS_FAILURE",
+        "backend-runtime/stdlib/json/json-stringify-nested-bytes-error.deal | js | TRANSCRIPT_MISMATCH",
+        "backend-runtime/stdlib/json/json-stringify-nested-bytes-error.deal | luajit | PROCESS_FAILURE");
 
     /** Representative pinned first-difference details (the gate's
      * bounded-context reports), asserted verbatim. */

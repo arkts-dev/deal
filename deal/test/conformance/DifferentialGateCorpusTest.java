@@ -135,16 +135,27 @@ public class DifferentialGateCorpusTest {
      * 268 -> 278, runtime-error 98 -> 103, compile-error 131 -> 132,
      * companions 51 -> 54; the frontend population (210), compile-ok
      * (64), the known-fail population (0), and the compile pins (4)
-     * are unchanged. */
-    private static final int TOTAL_FIXTURES = 631;
+     * are unchanged. ISSUE-0551 (the JVM host/module/JSON bytes leaf)
+     * then adds its seven backend-runtime fixtures — five host-bytes
+     * fixtures (host-bytes-roundtrip,
+     * host-bytes-nullable-roundtrip, host-bytes-no-call-on-failure,
+     * host-bytes-param-mismatch-e8010,
+     * host-bytes-return-mismatch-e8010), the bytes module-identity
+     * fixture, and the nested JSON bytes fixture — plus one companion
+     * (bytes_module_lib.deal): total 631 -> 639, backend-runtime
+     * 421 -> 429, runtime-ok 278 -> 282, runtime-error 103 -> 106,
+     * companions 54 -> 55; the frontend populations, compile-ok (64),
+     * compile-error (132), the known-fail population (0), and the
+     * compile pins (4) are unchanged. */
+    private static final int TOTAL_FIXTURES = 639;
     private static final int FRONTEND_FIXTURES = 210;
-    private static final int BACKEND_RUNTIME_FIXTURES = 421;
+    private static final int BACKEND_RUNTIME_FIXTURES = 429;
     private static final int COMPILE_OK = 64;
     private static final int COMPILE_ERROR = 132;
-    private static final int RUNTIME_OK = 278;
-    private static final int RUNTIME_ERROR = 103;
-    private static final int RUNTIME_ERROR_SIDECARS = 103;
-    private static final int COMPANIONS = 54;
+    private static final int RUNTIME_OK = 282;
+    private static final int RUNTIME_ERROR = 106;
+    private static final int RUNTIME_ERROR_SIDECARS = 106;
+    private static final int COMPANIONS = 55;
     private static final int KNOWN_FAIL = 0;
     private static final int COMPILE_PINS = 4;
 

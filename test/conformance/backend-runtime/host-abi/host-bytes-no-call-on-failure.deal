@@ -1,0 +1,40 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: A failed bytes parameter check invokes no host method: the caught E8010 leaves the host call counter unchanged, while a subsequent good call is counted exactly once.
+// @expected: runtime-ok
+// @features: modules, host-abi, bytes, runtime-errors
+
+import * as host from "host/bytes_roundtrip"
+
+export function test_host_bytes_no_call_on_failure(): string {
+  let before: int = host.callCount();
+  let holder: table = { item: "not bytes" };
+  let failed: boolean = false;
+  try {
+    let x: bytes = host.echoBytes(holder.item);
+  } catch (e) {
+    if (e.code !== "E8010") {
+      throw { code: "TEST_FAIL", message: "expected E8010, got " + e.code };
+    }
+    failed = true;
+  }
+  if (!failed) {
+    throw { code: "TEST_FAIL", message: "no E8010 raised by the failing bytes parameter" };
+  }
+  let after: int = host.callCount();
+  if (after !== before) {
+    throw { code: "TEST_FAIL", message: "host invoked after a failed parameter check" };
+  }
+  let b: bytes = bytes(1);
+  let echo: bytes = host.echoBytes(b);
+  if (!(echo === b)) {
+    throw { code: "TEST_FAIL", message: "good echo lost reference identity" };
+  }
+  if (host.callCount() !== before + 1) {
+    throw { code: "TEST_FAIL", message: "good host call not counted exactly once" };
+  }
+  return "no-call-ok";
+}
+
+export function main(): null {
+  return null;
+}

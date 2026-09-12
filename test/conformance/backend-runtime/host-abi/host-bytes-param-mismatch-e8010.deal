@@ -1,0 +1,15 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: A wrong-kind value crossing a declared bytes host parameter raises E8010 at the call boundary — never a masking read-site E8001.
+// @expected: runtime-error E8010
+// @features: modules, host-abi, bytes, runtime-errors
+
+import * as host from "host/bytes_roundtrip"
+
+export function test_host_bytes_param_mismatch(): bytes {
+  let holder: table = { item: 5 };
+  return host.echoBytes(holder.item);
+}
+
+export function main(): null {
+  return null;
+}

@@ -10987,6 +10987,34 @@ public class JvmBackendTest {
             "the std/json stringify raises the encode_value-parity bytes "
                 + "message: " + stdJsonBytes.output());
 
+        // ISSUE-0551: a table-held typed bytes[] array reaches its
+        // elements through the emitted __BytesArray/__BytesOrNullArray
+        // serialization branches, so a bytes element raises the pinned
+        // encode_value-parity bytes message — never the carrier's own
+        // class name leaking into the error (LuaJIT walks the array and
+        // rejects the element).
+        ExecResult stdJsonBytesArray = compileAndRunJvm("""
+            import * as json from "std/json"
+            export function test(): string {
+              let b: bytes = bytes(1);
+              let arr: bytes[] = [b];
+              let t: table = { inner: {} };
+              t.inner.arr = arr;
+              return json.stringify(t);
+            }
+            """, "std_json_stringify_bytes_array_msg");
+        check(stdJsonBytesArray.output().contains("DEAL_ERROR_CODE: E8001"),
+            "the std/json bytes-array stringify raises E8001: "
+                + stdJsonBytesArray.output());
+        check(stdJsonBytesArray.output().contains(
+                "unsupported type for JSON encoding: bytes"),
+            "the std/json stringify of a table-held bytes[] rejects the "
+                + "element with the pinned bytes message: "
+                + stdJsonBytesArray.output());
+        check(!stdJsonBytesArray.output().contains("__BytesArray"),
+            "no carrier class name leaks into the nested bytes rejection "
+                + "message: " + stdJsonBytesArray.output());
+
         // ---- Dynamic scalar table-read boundary (ISSUE-0160 D5) ----
         // Table writes store the raw wrapper reference; a bytes-typed
         // read routes through the canonical $check realization — the
@@ -14497,6 +14525,178 @@ public class JvmBackendTest {
                 "expected string, got string with unpaired surrogate code units"),
             "the completion boundary rejection carries the seam's message: "
                 + out7);
+
+        // ISSUE-0551: declared bytes host parameters/returns ride the
+        // shared $DealRt.Bytes carrier. The emitted wrapper keys the
+        // load-time class literal, the call-time parameter check, and the
+        // return check on the canonical "bytes" descriptor; a wrong-kind
+        // argument raises E8010 before the host method runs (the call
+        // counter stays unchanged), and a wrong-kind host return raises
+        // E8010 with the pinned host-function message.
+        writeFile("deal.json", """
+            {
+              "languageVersion": "1.2",
+              "moduleRoots": ["src"],
+              "output": "build/jvm_bytes",
+              "backend": "jvm",
+              "externals": {
+                "host/byteshost": { "declaration": "bindings/byteshost.d.deal" }
+              }
+            }
+            """);
+        writeFile("bindings/byteshost.d.deal", """
+            export function echoBytes(b: bytes): bytes;
+            export function nullableBytes(b: bytes | null): bytes | null;
+            export function calls(): int;
+            """);
+        writeFile("src/entry_bytes.deal", """
+            import * as host from "host/byteshost"
+            export function main(): null { return null; }
+            export function run(): string {
+              let b: bytes = bytes(2);
+              b[0] = 7;
+              let echo: bytes = host.echoBytes(b);
+              if (!(echo === b)) { throw { code: "TEST_FAIL", message: "echo identity" }; }
+              if (host.nullableBytes(null) !== null) { throw { code: "TEST_FAIL", message: "null roundtrip" }; }
+              let before: int = host.calls();
+              let holder: table = { item: "bad" };
+              let failed: boolean = false;
+              try {
+                let x: bytes = host.echoBytes(holder.item);
+              } catch (e) {
+                if (e.code !== "E8010") { throw { code: "TEST_FAIL", message: "wrong code " + e.code }; }
+                failed = true;
+              }
+              if (!failed) { throw { code: "TEST_FAIL", message: "no E8010" }; }
+              if (host.calls() !== before) { throw { code: "TEST_FAIL", message: "host ran after failed param check" }; }
+              return "bytes-host-ok";
+            }
+            """);
+        writeFile("HostByteshost.java", """
+            public final class HostByteshost {
+                private static int calls;
+                public static Object echoBytes($DealRt.Bytes b) { calls += 1; return b; }
+                public static Object nullableBytes($DealRt.Bytes b) { calls += 1; return b; }
+                public static long calls() { return calls; }
+            }
+            """);
+        Path entryBytes = tmpDir.get().resolve("src/entry_bytes.deal").toAbsolutePath();
+        Path outputDirBytes = tmpDir.get().resolve("build/jvm_bytes");
+        CompilationOrchestrator orchestratorBytes = new CompilationOrchestrator(
+            entryBytes, outputDirBytes, false, false, false, false,
+            Backend.JVM,
+            Map.of("host/byteshost",
+                tmpDir.get().resolve("bindings/byteshost.d.deal").toString()),
+            List.of(tmpDir.get().resolve("src").toAbsolutePath()),
+            Path.of(".").toAbsolutePath().normalize(), null,
+            CompilerProfileProvider.resolve(ReleaseState.PRE_ACTIVATION,
+                CapabilityRegistry.releaseRegistry()));
+        check(orchestratorBytes.compile(), "bytes host project compiles: "
+            + orchestratorBytes.diagnostics());
+        Path entryBytesArtifact = outputDirBytes.resolve("Entry_bytes.java");
+        check(Files.exists(entryBytesArtifact), "bytes host entry artifact written");
+        if (Files.exists(entryBytesArtifact)) {
+            String javaBytes = Files.readString(entryBytesArtifact);
+            check(javaBytes.contains("$DealRt.Bytes.class"),
+                "the bytes parameter resolves its load-time class literal "
+                    + "as the shared $DealRt.Bytes carrier");
+            check(javaBytes.contains(
+                    "static $DealRt.Bytes __host$host$echoBytes(java.lang.Object __a0)"),
+                "the bytes wrapper returns the shared carrier");
+            check(javaBytes.contains("__a0 = __hostParamCheck(1, \"bytes\", __a0);"),
+                "the bytes parameter check keys on the canonical \"bytes\" "
+                    + "descriptor at the call");
+            check(javaBytes.contains(
+                    "__hostCheck(\"bytes\", __r, \"host/byteshost.echoBytes\", false)"),
+                "the bytes return check keys on the canonical \"bytes\" "
+                    + "descriptor");
+        }
+        Files.copy(tmpDir.get().resolve("HostByteshost.java"),
+            outputDirBytes.resolve("HostByteshost.java"));
+        Files.writeString(outputDirBytes.resolve("JvmConformanceRunner.java"),
+            BackendConformanceTest.buildJvmRunner(
+                parseProgram("""
+                    export function main(): null { return null; }
+                    export function run(): string { return "x"; }
+                    """), "Entry_bytes"));
+        ProcessBuilder javacBytes = new ProcessBuilder("javac",
+            "-encoding", "UTF-8", "Entry_bytes.java",
+            "HostByteshost.java", "JvmConformanceRunner.java");
+        javacBytes.directory(outputDirBytes.toFile());
+        javacBytes.redirectErrorStream(true);
+        Process pBytes = javacBytes.start();
+        String javacOutBytes = new String(pBytes.getInputStream().readAllBytes()).trim();
+        check(pBytes.waitFor() == 0, "bytes host artifacts compile with javac: "
+            + javacOutBytes);
+        ProcessBuilder javaRunBytes = new ProcessBuilder("java", "-cp",
+            outputDirBytes.toString(), "JvmConformanceRunner");
+        javaRunBytes.redirectErrorStream(true);
+        Process pBytesRun = javaRunBytes.start();
+        String outBytes = new String(pBytesRun.getInputStream().readAllBytes()).trim();
+        int exitBytes = pBytesRun.waitFor();
+        check(exitBytes == 0, "bytes host roundtrip + no-call-on-failure run: "
+            + outBytes);
+
+        // Wrong-kind bytes host return: E8010 with the pinned
+        // host-function message naming the declared descriptor.
+        writeFile("HostByteshostBad.java", """
+            public final class HostByteshost {
+                private static int calls;
+                public static Object echoBytes($DealRt.Bytes b) { return "junk"; }
+                public static Object nullableBytes($DealRt.Bytes b) { return b; }
+                public static int calls() { return calls; }
+            }
+            """);
+        writeFile("src/entry_bytes_bad.deal", """
+            import * as host from "host/byteshost"
+            export function main(): null { return null; }
+            export function run(): bytes {
+              let b: bytes = bytes(1);
+              return host.echoBytes(b);
+            }
+            """);
+        Path entryBytesBad = tmpDir.get().resolve("src/entry_bytes_bad.deal").toAbsolutePath();
+        Path outputDirBytesBad = tmpDir.get().resolve("build/jvm_bytes_bad");
+        CompilationOrchestrator orchestratorBytesBad = new CompilationOrchestrator(
+            entryBytesBad, outputDirBytesBad, false, false, false, false,
+            Backend.JVM,
+            Map.of("host/byteshost",
+                tmpDir.get().resolve("bindings/byteshost.d.deal").toString()),
+            List.of(tmpDir.get().resolve("src").toAbsolutePath()),
+            Path.of(".").toAbsolutePath().normalize(), null,
+            CompilerProfileProvider.resolve(ReleaseState.PRE_ACTIVATION,
+                CapabilityRegistry.releaseRegistry()));
+        check(orchestratorBytesBad.compile(), "bytes bad-return project compiles: "
+            + orchestratorBytesBad.diagnostics());
+        Files.copy(tmpDir.get().resolve("HostByteshostBad.java"),
+            outputDirBytesBad.resolve("HostByteshost.java"));
+        Files.writeString(outputDirBytesBad.resolve("JvmConformanceRunner.java"),
+            BackendConformanceTest.buildJvmRunner(
+                parseProgram("""
+                    export function main(): null { return null; }
+                    export function run(): bytes { return bytes(0); }
+                    """), "Entry_bytes_bad"));
+        ProcessBuilder javacBytesBad = new ProcessBuilder("javac",
+            "-encoding", "UTF-8", "Entry_bytes_bad.java",
+            "HostByteshost.java", "JvmConformanceRunner.java");
+        javacBytesBad.directory(outputDirBytesBad.toFile());
+        javacBytesBad.redirectErrorStream(true);
+        Process pBytesBad = javacBytesBad.start();
+        String javacOutBytesBad = new String(pBytesBad.getInputStream().readAllBytes()).trim();
+        check(pBytesBad.waitFor() == 0, "bytes bad-return artifacts compile with javac: "
+            + javacOutBytesBad);
+        ProcessBuilder javaRunBytesBad = new ProcessBuilder("java", "-cp",
+            outputDirBytesBad.toString(), "JvmConformanceRunner");
+        javaRunBytesBad.redirectErrorStream(true);
+        Process pBytesBadRun = javaRunBytesBad.start();
+        String outBytesBad = new String(pBytesBadRun.getInputStream().readAllBytes()).trim();
+        int exitBytesBad = pBytesBadRun.waitFor();
+        check(exitBytesBad == 1 && outBytesBad.contains("DEAL_ERROR_CODE: E8010"),
+            "wrong-kind bytes host return reports E8010: " + outBytesBad);
+        check(outBytesBad.contains(
+                "host function 'host/byteshost.echoBytes' return value 1 type mismatch: expected bytes, got String"),
+            "the bytes return rejection carries the pinned host-function message: "
+                + outBytesBad);
     }
 
     /**
