@@ -242,6 +242,7 @@ public class JsLaneStatePinTest {
             "the closed JS gate exits 0 (the ISSUE-0331 completion gate "
                 + "closure: all 381 applicable fixtures pass with 366 "
                 + "node subprocess runs, zero "
+                + "skips), got " + run.exitCode());
 
         String out = run.output();
         checkZeroFailureLines(out);

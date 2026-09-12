@@ -77,10 +77,10 @@ import java.util.List;
  * gate as E7002, so the summary moved again to denominator 381,
  * passed 381, failed 0, skipped 0, known-fail 0, pass rate 100.0%.
  * The LuaJIT lane (consequence, pinned): exit code 0 with
- * {@code Total: 576, Passed: 576} (630 discovered - 54 companions)
+ * {@code Total: 577, Passed: 577} (631 discovered - 54 companions)
  * with the backend-runtime phase at 388/388, and the
- * profile-authority accounting reads 629 v1.2-credit results
- * (630 - 1 legacy).
+ * profile-authority accounting reads 630 v1.2-credit results
+ * (631 - 1 legacy).
  *
  * <p>The test runs from the repository root (the {@code run_tests.sh}
  * contract, like {@code ConformanceTest}); {@code run_tests.sh}
@@ -200,11 +200,11 @@ public class JvmLaneStatePinTest {
     // (FFI candidate fixture conformance) then adds the nineteen FFI
     // files — the sixteen fixtures (ten runtime-ok, five runtime-error,
     // one compile-error E7002) plus their three companion support
-    // declarations — so the summary reads 576 recorded results
-    // (630 discovered - 54 companions, zero tracked known-fail) and the
+    // declarations — so the summary reads 577 recorded results
+    // (631 discovered - 54 companions, zero tracked known-fail) and the
     // backend-runtime phase reads 388/388.
     private static final String LUA_SUMMARY =
-        "Total: 576, Passed: 576, Failed: 0, Skipped: 0, "
+        "Total: 577, Passed: 577, Failed: 0, Skipped: 0, "
             + "KnownFailures (tracked): 0, StagedFailures (tracked): 0";
 
     private static final String LUA_PHASE =
@@ -219,7 +219,7 @@ public class JvmLaneStatePinTest {
     private static final String LUA_PROFILE_AUTHORITY =
         "Profile-authority accounting: 1 legacy-authority result(s) "
             + "(LEGACY_REGRESSION + LEGACY_SAFE_INT \u2014 zero "
-            + "v1.2/promotion credit; 1 passed, 0 failed), 629 v1.2-credit "
+            + "v1.2/promotion credit; 1 passed, 0 failed), 630 v1.2-credit "
             + "result(s) (COMMON_SHADOW + DEAL_V1_2_INT32)";
 
 

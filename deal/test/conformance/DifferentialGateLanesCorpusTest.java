@@ -110,9 +110,9 @@ public class DifferentialGateLanesCorpusTest {
      * 606, runtime cases 354 -> 360); ISSUE-0550 (the JVM dynamic
      * boundary rows) then lands the six dynamic bytes-boundary
      * fixtures (total 606 -> 612, runtime cases 360 -> 366);
-     * ISSUE-0507 then lands the nineteen FFI files — total 612 -> 630,
+     * ISSUE-0507 then lands the nineteen FFI files — total 612 -> 631,
      * runtime cases 366 -> 381, frontend-compiled 191 -> 192). */
-    private static final int TOTAL_FIXTURES = 630;
+    private static final int TOTAL_FIXTURES = 631;
     private static final int RUNTIME_CASES = 381;
     private static final int FRONTEND_COMPILED = 192;
     private static final int COMPILE_PINS = 4;

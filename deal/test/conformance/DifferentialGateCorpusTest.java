@@ -131,14 +131,14 @@ public class DifferentialGateCorpusTest {
      * {@code backend-runtime/ffi/} — the sixteen fixtures (ten
      * runtime-ok, five runtime-error, one compile-error E7002) plus
      * their three companion support declarations — in the same change:
-     * total 612 -> 630, backend-runtime 402 -> 420, runtime-ok
+     * total 612 -> 631, backend-runtime 402 -> 421, runtime-ok
      * 268 -> 278, runtime-error 98 -> 103, compile-error 131 -> 132,
      * companions 51 -> 54; the frontend population (210), compile-ok
      * (64), the known-fail population (0), and the compile pins (4)
      * are unchanged. */
-    private static final int TOTAL_FIXTURES = 630;
+    private static final int TOTAL_FIXTURES = 631;
     private static final int FRONTEND_FIXTURES = 210;
-    private static final int BACKEND_RUNTIME_FIXTURES = 420;
+    private static final int BACKEND_RUNTIME_FIXTURES = 421;
     private static final int COMPILE_OK = 64;
     private static final int COMPILE_ERROR = 132;
     private static final int RUNTIME_OK = 278;

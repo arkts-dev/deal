@@ -535,7 +535,7 @@ public final class HistoricalRegressionCatalog {
                 new ExactTextAnchor("e6000-rejection-mapping",
                     "deal/codegen/jvm/JvmBackend.java:17278-17282",
                     "DiagnosticCode.E6000")),
-            "2e59af9ca7698ff4453f3bf8c9cf2b8c2e6d0775e51ef7c79c0630530bcbaa33"),
+            "c7d5477d5dfcf4445003bcfe323c490e71499f152cfb2c97ef6bf36add941c00"),
 
         // EVALUATION_ORDER — WRITE_ORDER (array-write evaluation order)
         fixtureRow(SemanticCapability.EVALUATION_ORDER, Family.WRITE_ORDER,
