@@ -85,9 +85,14 @@ import javax.tools.ToolProvider;
  * elements, the both-reads comparison evaluation position (the left
  * read's E8002 raises before any right-operand hoisted side effect,
  * pinned with {@code expectedNotOutput} negative stdout assertions),
- * cross-backend parity against LuaJIT, and frontend E3007/E3017
- * compile-error gates rejected before any backend), and the ISSUE-0096
- * multi-module fixtures live in
+ * cross-backend parity against LuaJIT, the bytes-array past-end nil
+ * parity pins of the recursive bytes closure (ISSUE-0160 E8 D1 —
+ * {@code (bytes | null)[]} past-end reads and {@code bytes[]} past-end
+ * reads at a {@code bytes | null} target yield the DEAL null on both
+ * backends, discarded past-end reads drop the nil, and the negative
+ * index still raises E8002), and frontend E3007/E3017 compile-error
+ * gates rejected before any backend), and the ISSUE-0096 multi-module
+ * fixtures live in
  * {@code test/conformance/fixtures/jvm-modules-slice.json}
  * (namespace imports/exports and imported direct calls across compiled
  * project modules — see the multi-module section below), and the

@@ -53,9 +53,19 @@ public class ProjectIntegrationGatesTest {
     private static final Pattern JVM_MODULE_ID =
         Pattern.compile("M[0-9a-f]{16}\\.java");
 
-    /** Double-quoted string literals in emitted artifacts. */
+    /**
+     * Double-quoted string literals in emitted artifacts. The repeated
+     * alternation is deterministic (at every position exactly one branch
+     * can match: {@code [^"\\]} for plain characters, {@code \\.} for
+     * backslashes), so the possessive quantifier preserves the matched
+     * language and captures byte-exactly while removing the per-character
+     * backtracking recursion — the un-possessive form overflowed the
+     * default thread stack on grown entry artifacts (the ISSUE-0161
+     * reserved async-export host surface adds production text to every
+     * entry module).
+     */
     private static final Pattern STRING_LITERAL =
-        Pattern.compile("\"((?:[^\"\\\\]|\\\\.)*)\"");
+        Pattern.compile("\"((?:[^\"\\\\]|\\\\.)*+)\"");
 
     private static void check(boolean condition, String message) {
         if (condition) {

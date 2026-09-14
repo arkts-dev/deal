@@ -718,6 +718,36 @@ public final class JvmBackend {
         }
     }
 
+    /**
+     * The reserved argv marker of the async-export host mode (ISSUE-0161,
+     * parent D9): the production {@code JvmAsyncExportInvoker} spawns the
+     * entry artifact's generated {@code $AsyncExportHost} launcher with
+     * this exact first argument, and the emitted entry point dispatches
+     * on it. The {@code $} prefix is unreachable from {@link #javaName}
+     * (user {@code $} escapes to {@code $d}), so no source-level surface
+     * can ever collide with or reach the host mode.
+     */
+    public static final String ASYNC_EXPORT_HOST_ARG = "$asyncExportHost";
+
+    /**
+     * The binary-name suffix of the reserved generated host-export
+     * launcher class (ISSUE-0161, parent D9): the entry module emits the
+     * nested {@code $AsyncExportHost} launcher whose {@code main} wraps
+     * the entry's first access so module-initialization and {@code main()}
+     * errors classify into the async-export envelope protocol.
+     */
+    public static final String ASYNC_EXPORT_HOST_CLASS_SUFFIX =
+        "$AsyncExportHost";
+
+    /**
+     * The stdout marker prefix of the shared async-export envelope
+     * protocol (ISSUE-0161): byte-identical to
+     * {@code LuaJitAsyncExportInvoker.RESULT_PREFIX}, so one host runner
+     * can consume both backends' envelopes.
+     */
+    public static final String ASYNC_EXPORT_RESULT_PREFIX =
+        "DEAL_ASYNC_EXPORT_RESULT:";
+
     // =========================================================================
     // State
     // =========================================================================
@@ -2873,12 +2903,572 @@ public final class JvmBackend {
         }
         emitLine();
         emitLine("// Entry-module invocation (spec-v1.2 §No user-defined globals): the");
-        emitLine("// backend invokes main() from the selected entry module.");
+        emitLine("// backend invokes main() from the selected entry module. The reserved");
+        emitLine("// async-export host mode (ISSUE-0161, parent D9) dispatches on the");
+        emitLine("// generated argv marker: initialization already ran exactly once at");
+        emitLine("// class load, the DEAL main() export runs exactly once here, and then");
+        emitLine("// the reserved host entry selects, invokes, and checks exactly one");
+        emitLine("// async export before printing the envelope line.");
         emitLine("public static void main(java.lang.String[] args) {");
         indent++;
+        emitLine("if (args.length > 0 && \"" + ASYNC_EXPORT_HOST_ARG
+            + "\".equals(args[0])) {");
+        indent++;
+        emitLine(javaName(mainDecl.name()) + "();");
+        emitLine("java.lang.String line = args.length >= 3");
+        indent++;
+        emitLine("? $asyncExportHost(args[1], args[2])");
+        emitLine(": $infrastructureEnvelope(\"invalid async-export host argv: expected [marker, exportName, returnDescriptor]\");");
+        indent--;
+        emitLine("java.lang.System.out.println(line);");
+        emitLine("java.lang.System.out.flush();");
+        emitLine("return;");
+        indent--;
+        emitLine("}");
         emitLine(javaName(mainDecl.name()) + "();");
         indent--;
         emitLine("}");
+        emitAsyncExportHostSurface(program, className);
+    }
+
+    /**
+     * Emits the reserved generated async-export host surface of an entry
+     * module (ISSUE-0161, parent D9; "JVM uses a reserved generated
+     * host-export entry over blocking async lowering"): the export
+     * registry, the selection helper, the orchestration entry, the
+     * closed envelope protocol emitters, and the nested
+     * {@code $AsyncExportHost} launcher the production
+     * {@code JvmAsyncExportInvoker} spawns.
+     *
+     * <p>Contract: module initialization (the static block) runs exactly
+     * once at class load; the DEAL {@code main()} export runs exactly
+     * once from the entry dispatch before the export; exactly one export
+     * is selected and invoked once; the completion is checked through the
+     * emitted {@code $check} seam (the canonical {@code RuntimeTypeMatcher}
+     * realization) against the byte-exact return descriptor; the checked
+     * value is encoded over the JSON-encodable surface. A missing, sync,
+     * parameterized, duplicated, non-function, or descriptor-mismatched
+     * export produces the runtime half's pinned host-failure reason —
+     * never a DEAL code. DEAL errors raised by initialization,
+     * {@code main()}, the operation, or the completion matcher propagate
+     * as {@code deal-error} envelopes with code and message unchanged;
+     * value-encoding failures are {@code representation-failure} and every
+     * other failure is {@code infrastructure-failure}. All {@code $}
+     * names are unreachable from {@link #javaName}, so the reserved entry
+     * is never source-visible and no user declaration can collide.</p>
+     */
+    private void emitAsyncExportHostSurface(ProgramNode program,
+            String className) {
+        // The per-export registry rows in source order and the invocation
+        // bodies aligned by registry index (null for class exports, whose
+        // selection is rejected before the invocation switch runs).
+        java.util.List<String> rows = new java.util.ArrayList<>();
+        java.util.List<String[]> calls = new java.util.ArrayList<>();
+        for (StatementNode stmt : program.statements()) {
+            if (!(stmt instanceof ExportDeclaration ed)) continue;
+            if (ed.declaration() instanceof FunctionDeclaration fd) {
+                java.util.List<Type> params = new java.util.ArrayList<>();
+                for (Parameter p : fd.params()) {
+                    params.add(resolveTypeNode(p.type()));
+                }
+                Type rt = resolveTypeNode(fd.returnType());
+                Type.Func ft = new Type.Func(params, rt, fd.isAsync());
+                String fail = fd.isAsync()
+                    ? (params.isEmpty() ? "mismatch" : "param")
+                    : "sync";
+                rows.add("{" + quoteJavaString(fd.name()) + ", "
+                    + quoteJavaString(typeDescriptor(ft)) + ", \"f\", \""
+                    + fail + "\"},");
+                // Parameterized exports never reach the invocation
+                // switch: selection rejects their signature before it, so
+                // no call body is emitted (a zero-argument call would not
+                // compile against the parameterized method).
+                calls.add(params.isEmpty()
+                    ? (rt instanceof Type.Null
+                        ? new String[]{ javaName(fd.name()) + "();",
+                            "completion = null;" }
+                        : new String[]{ "completion = "
+                            + javaName(fd.name()) + "();" })
+                    : null);
+            } else if (ed.declaration() instanceof ClassDeclaration cd) {
+                rows.add("{" + quoteJavaString(cd.name()) + ", "
+                    + quoteJavaString(classIdentity(cd.name()))
+                    + ", \"c\", \"mismatch\"},");
+                calls.add(null);
+            }
+        }
+
+        emitLine();
+        emitLine("// ---- Reserved async-export host surface (ISSUE-0161, parent D9) ----");
+        emitLine("// The production JvmAsyncExportInvoker spawns the generated");
+        emitLine("// $AsyncExportHost launcher below with the reserved argv marker.");
+        emitLine("// Initialization already ran exactly once at class load; the entry");
+        emitLine("// dispatch ran main() exactly once; this entry then selects exactly");
+        emitLine("// one export, invokes it once, checks the completion through the");
+        emitLine("// $check seam (the canonical matcher realization) against the");
+        emitLine("// byte-exact return descriptor, and encodes the checked value over");
+        emitLine("// the JSON-encodable surface. Every $ name is unreachable from");
+        emitLine("// javaName, so the reserved entry is never source-visible.");
+        emitLine("private static final java.lang.String[][] $exports = new java.lang.String[][] {");
+        indent++;
+        if (rows.isEmpty()) {
+            emitLine("};");
+        } else {
+            for (String row : rows) {
+                emitLine(row);
+            }
+            emitLine("};");
+        }
+        indent--;
+
+        emitLines(SELECT_HELPER_TEXT);
+
+        emitLine("public static java.lang.String $asyncExportHost(java.lang.String exportName, java.lang.String returnDescriptor) {");
+        indent++;
+        emitLine("try {");
+        indent++;
+        emitLine("java.lang.Object[] sel = $asyncExportSelect($exports, exportName, returnDescriptor);");
+        emitLine("if (sel[0] != null) {");
+        indent++;
+        emitLine("return $hostFailureEnvelope((java.lang.String) sel[0]);");
+        indent--;
+        emitLine("}");
+        emitLine("java.lang.Object completion;");
+        emitLine("switch (((java.lang.Integer) sel[1]).intValue()) {");
+        indent++;
+        for (int i = 0; i < calls.size(); i++) {
+            String[] body = calls.get(i);
+            if (body == null) continue;
+            emitLine("case " + i + ":");
+            indent++;
+            for (String line : body) {
+                emitLine(line);
+            }
+            emitLine("break;");
+            indent--;
+        }
+        emitLine("default:");
+        indent++;
+        emitLine("return $hostFailureEnvelope(\"export '\" + exportName + \"' is not a function wrapper\");");
+        indent--;
+        indent--;
+        emitLine("}");
+        emitLine("java.lang.Object checked = $check(returnDescriptor, completion);");
+        emitLine("java.lang.String valueJson;");
+        emitLine("try {");
+        indent++;
+        emitLine("valueJson = $jsonValue(checked);");
+        indent--;
+        emitLine("} catch (DealError encode) {");
+        indent++;
+        emitLine("return $representationEnvelope(encode.getMessage());");
+        indent--;
+        emitLine("}");
+        emitLine("return $valueEnvelope(returnDescriptor, valueJson);");
+        indent--;
+        emitLine("} catch (DealError e) {");
+        indent++;
+        emitLine("return $dealErrorEnvelope(e.code, e.getMessage());");
+        indent--;
+        emitLine("} catch (java.lang.Throwable t) {");
+        indent++;
+        emitLine("java.lang.Object[] cls = $classifyThrowable(t);");
+        emitLine("if (\"deal-error\".equals(cls[0])) {");
+        indent++;
+        emitLine("return $dealErrorEnvelope((java.lang.String) cls[1], (java.lang.String) cls[2]);");
+        indent--;
+        emitLine("}");
+        emitLine("return $infrastructureEnvelope((java.lang.String) cls[3]);");
+        indent--;
+        emitLine("}");
+        indent--;
+        emitLine("}");
+
+        emitLines(ENVELOPE_HELPERS_TEXT.replace("__RESULT_PREFIX__",
+            quoteJavaString(ASYNC_EXPORT_RESULT_PREFIX)));
+        emitLines(CLASSIFY_HELPER_TEXT);
+        emitJsonValueHelpers();
+
+        // The nested launcher class: the invoker's process entry
+        // ({@code <Entry>$AsyncExportHost}). It wraps the FIRST access to
+        // the entry class, so a module-initialization error (the JVM
+        // launcher would otherwise report an envelope-less
+        // ExceptionInInitializerError before any generated code runs) and
+        // a main() error classify into the envelope protocol through the
+        // launcher's self-contained helpers (referencing entry statics in
+        // the catch path would re-trigger a failed initializer).
+        emitLine();
+        emitLine("// The reserved host launcher (the production invoker's process");
+        emitLine("// entry): wraps the first entry access so initialization and main()");
+        emitLine("// errors classify into the envelope protocol.");
+        emitLine("public static final class $AsyncExportHost {");
+        indent++;
+        emitLine("public static void main(java.lang.String[] args) {");
+        indent++;
+        emitLine("try {");
+        indent++;
+        emitLine(className + ".main(args);");
+        indent--;
+        emitLine("} catch (java.lang.Throwable t) {");
+        indent++;
+        emitLine("java.lang.Object[] cls = $classify(t);");
+        emitLine("java.lang.String line;");
+        emitLine("if (\"deal-error\".equals(cls[0])) {");
+        indent++;
+        emitLine("line = " + quoteJavaString(ASYNC_EXPORT_RESULT_PREFIX)
+            + " + $obj(new java.lang.String[][]{ {\"status\",\"deal-error\"}, {\"code\",(java.lang.String) cls[1]}, {\"message\",(java.lang.String) cls[2]} });");
+        indent--;
+        emitLine("} else {");
+        indent++;
+        emitLine("line = " + quoteJavaString(ASYNC_EXPORT_RESULT_PREFIX)
+            + " + $obj(new java.lang.String[][]{ {\"status\",\"infrastructure-failure\"}, {\"reason\",(java.lang.String) cls[3]} });");
+        indent--;
+        emitLine("}");
+        emitLine("java.lang.System.out.println(line);");
+        emitLine("java.lang.System.out.flush();");
+        indent--;
+        emitLine("}");
+        indent--;
+        emitLine("}");
+        emitLines(LAUNCHER_HELPERS_TEXT);
+        indent--;
+        emitLine("}");
+    }
+
+    /** Emits one fixed helper body per non-indented line. */
+    private void emitLines(String text) {
+        for (String line : text.split("\n", -1)) {
+            emitLine(line);
+        }
+    }
+
+    /** The emitted generic selection helper of the async-export host
+     * surface: registry-driven exact-name/duplicate/kind/signature
+     * selection with the runtime half's pinned failure reasons. */
+    private static final String SELECT_HELPER_TEXT = """
+        static java.lang.Object[] $asyncExportSelect(java.lang.String[][] exports, java.lang.String exportName, java.lang.String returnDescriptor) {
+            if (exportName == null) {
+                return new java.lang.Object[]{ "exportName must be a string, got nil" };
+            }
+            if (returnDescriptor == null) {
+                return new java.lang.Object[]{ "return descriptor is not a canonical descriptor: nil" };
+            }
+            java.lang.String expected = "async()->" + returnDescriptor;
+            int found = -1;
+            int occurrences = 0;
+            for (int i = 0; i < exports.length; i++) {
+                if (exports[i][0].equals(exportName)) { occurrences++; found = i; }
+            }
+            if (occurrences == 0) {
+                return new java.lang.Object[]{ "missing export '" + exportName + "'" };
+            }
+            if (occurrences > 1) {
+                return new java.lang.Object[]{ "duplicate export '" + exportName + "': the same wrapper appears under multiple export keys" };
+            }
+            java.lang.String sig = exports[found][1];
+            if (!"f".equals(exports[found][2])) {
+                return new java.lang.Object[]{ "export '" + exportName + "' is not a function wrapper" };
+            }
+            if (!sig.equals(expected)) {
+                java.lang.String fail = exports[found][3];
+                if ("sync".equals(fail)) {
+                    return new java.lang.Object[]{ "export '" + exportName + "' is sync: expected '" + expected + "', got '" + sig + "'" };
+                }
+                if ("param".equals(fail)) {
+                    return new java.lang.Object[]{ "export '" + exportName + "' is parameterized: expected '" + expected + "', got '" + sig + "'" };
+                }
+                return new java.lang.Object[]{ "export '" + exportName + "' signature mismatch: expected '" + expected + "', got '" + sig + "'" };
+            }
+            return new java.lang.Object[]{ null, java.lang.Integer.valueOf(found) };
+        }
+        """;
+
+    /** The emitted closed-envelope emitters of the async-export host
+     * surface (the shared envelope protocol realized by the Lua driver).
+     * The {@code __RESULT_PREFIX__} placeholder is replaced with the
+     * quoted shared marker at emission time. */
+    private static final String ENVELOPE_HELPERS_TEXT = """
+        static java.lang.String $envelopeQuote(java.lang.String s) {
+            java.lang.StringBuilder sb = new java.lang.StringBuilder("\\"");
+            for (int i = 0; i < s.length(); i++) {
+                char c = s.charAt(i);
+                switch (c) {
+                    case '"': sb.append("\\\\\\""); break;
+                    case '\\\\': sb.append("\\\\\\\\"); break;
+                    case '\\b': sb.append("\\\\b"); break;
+                    case '\\f': sb.append("\\\\f"); break;
+                    case '\\n': sb.append("\\\\n"); break;
+                    case '\\r': sb.append("\\\\r"); break;
+                    case '\\t': sb.append("\\\\t"); break;
+                    default:
+                        if (c < 0x20) sb.append(java.lang.String.format(java.util.Locale.ROOT, "\\\\u%04x", (int) c));
+                        else sb.append(c);
+                }
+            }
+            return sb.append('"').toString();
+        }
+        static java.lang.String $envelopeObject(java.lang.String[][] fields) {
+            java.lang.StringBuilder sb = new java.lang.StringBuilder("{");
+            for (int i = 0; i < fields.length; i++) {
+                if (i > 0) sb.append(',');
+                sb.append($envelopeQuote(fields[i][0])).append(':').append($envelopeQuote(fields[i][1]));
+            }
+            return sb.append('}').toString();
+        }
+        static java.lang.String $valueEnvelope(java.lang.String descriptor, java.lang.String valueJson) {
+            return __RESULT_PREFIX__ + $envelopeObject(new java.lang.String[][]{ {"status","value"}, {"descriptor",descriptor}, {"value",valueJson} });
+        }
+        static java.lang.String $dealErrorEnvelope(java.lang.String code, java.lang.String message) {
+            return __RESULT_PREFIX__ + $envelopeObject(new java.lang.String[][]{ {"status","deal-error"}, {"code",code}, {"message",message} });
+        }
+        static java.lang.String $hostFailureEnvelope(java.lang.String reason) {
+            return __RESULT_PREFIX__ + $envelopeObject(new java.lang.String[][]{ {"status","host-failure"}, {"reason",reason} });
+        }
+        static java.lang.String $representationEnvelope(java.lang.String reason) {
+            return __RESULT_PREFIX__ + $envelopeObject(new java.lang.String[][]{ {"status","representation-failure"}, {"reason",reason} });
+        }
+        static java.lang.String $infrastructureEnvelope(java.lang.String reason) {
+            return __RESULT_PREFIX__ + $envelopeObject(new java.lang.String[][]{ {"status","infrastructure-failure"}, {"reason",reason} });
+        }
+        """;
+
+    /** The emitted throwable classifier of the async-export host surface:
+     * DEAL errors (any module's nested DealError, unwrapped from a
+     * failed initializer) classify as deal-error with code and message
+     * unchanged; everything else is infrastructure. */
+    private static final String CLASSIFY_HELPER_TEXT = """
+        static java.lang.Object[] $classifyThrowable(java.lang.Throwable t) {
+            java.lang.Throwable u = t;
+            while (u instanceof java.lang.ExceptionInInitializerError && u.getCause() != null) {
+                u = u.getCause();
+            }
+            if ("DealError".equals(u.getClass().getSimpleName())) {
+                try {
+                    java.lang.reflect.Field f = u.getClass().getDeclaredField("code");
+                    f.setAccessible(true);
+                    java.lang.String msg = u.getMessage();
+                    if (msg == null) msg = java.lang.String.valueOf(u);
+                    return new java.lang.Object[]{ "deal-error", java.lang.String.valueOf(f.get(u)), msg };
+                } catch (java.lang.ReflectiveOperationException ignored) {
+                    // a foreign DealError without an accessible code field is infrastructure
+                }
+            }
+            return new java.lang.Object[]{ null, null, null, java.lang.String.valueOf(u) };
+        }
+        """;
+
+    /** The emitted self-contained helpers of the nested host launcher
+     * (usable even when the entry initializer failed). */
+    private static final String LAUNCHER_HELPERS_TEXT = """
+        static java.lang.String $quote(java.lang.String s) {
+            java.lang.StringBuilder sb = new java.lang.StringBuilder("\\"");
+            for (int i = 0; i < s.length(); i++) {
+                char c = s.charAt(i);
+                switch (c) {
+                    case '"': sb.append("\\\\\\""); break;
+                    case '\\\\': sb.append("\\\\\\\\"); break;
+                    case '\\b': sb.append("\\\\b"); break;
+                    case '\\f': sb.append("\\\\f"); break;
+                    case '\\n': sb.append("\\\\n"); break;
+                    case '\\r': sb.append("\\\\r"); break;
+                    case '\\t': sb.append("\\\\t"); break;
+                    default:
+                        if (c < 0x20) sb.append(java.lang.String.format(java.util.Locale.ROOT, "\\\\u%04x", (int) c));
+                        else sb.append(c);
+                }
+            }
+            return sb.append('"').toString();
+        }
+        static java.lang.String $obj(java.lang.String[][] fields) {
+            java.lang.StringBuilder sb = new java.lang.StringBuilder("{");
+            for (int i = 0; i < fields.length; i++) {
+                if (i > 0) sb.append(',');
+                sb.append($quote(fields[i][0])).append(':').append($quote(fields[i][1]));
+            }
+            return sb.append('}').toString();
+        }
+        static java.lang.Object[] $classify(java.lang.Throwable t) {
+            java.lang.Throwable u = t;
+            while (u instanceof java.lang.ExceptionInInitializerError && u.getCause() != null) {
+                u = u.getCause();
+            }
+            if ("DealError".equals(u.getClass().getSimpleName())) {
+                try {
+                    java.lang.reflect.Field f = u.getClass().getDeclaredField("code");
+                    f.setAccessible(true);
+                    java.lang.String msg = u.getMessage();
+                    if (msg == null) msg = java.lang.String.valueOf(u);
+                    return new java.lang.Object[]{ "deal-error", java.lang.String.valueOf(f.get(u)), msg };
+                } catch (java.lang.ReflectiveOperationException ignored) {
+                    // a foreign DealError without an accessible code field is infrastructure
+                }
+            }
+            return new java.lang.Object[]{ null, null, null, java.lang.String.valueOf(u) };
+        }
+        """;
+
+    /** Emits the value encoder of the async-export host surface: the
+     * checked completion renders as JSON text over the JSON-encodable
+     * surface (null, booleans, ints, numbers, strings, lists, maps,
+     * tables, and the emitted primitive-array wrappers). NaN/Infinity and
+     * every non-encodable value raise the DealError the orchestration
+     * entry reclassifies as representation-failure — never a value and
+     * never a propagated operation error. */
+    private void emitJsonValueHelpers() {
+        emitLines("""
+            static java.lang.String $jsonValue(java.lang.Object v) {
+                java.lang.StringBuilder sb = new java.lang.StringBuilder();
+                $jsonAppend(sb, v, java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>()));
+                return sb.toString();
+            }
+            static void $jsonAppend(java.lang.StringBuilder sb, java.lang.Object v, java.util.Set<java.lang.Object> stack) {
+                if (v == null) { sb.append("null"); return; }
+                if (v instanceof java.lang.Boolean b) { sb.append(b.booleanValue() ? "true" : "false"); return; }
+                if (v instanceof java.lang.String s) { sb.append($envelopeQuote(s)); return; }
+            """);
+        emitLine(int32Mode
+            ? "if (v instanceof java.lang.Integer i) { sb.append(i.toString()); return; }"
+            : "if (v instanceof java.lang.Long l) { sb.append(l.toString()); return; }");
+        emitLines("""
+                if (v instanceof java.lang.Number n) {
+                    double d = n.doubleValue();
+                    if (java.lang.Double.isNaN(d)) throw new DealError("E8001", "cannot encode NaN as JSON");
+                    if (java.lang.Double.isInfinite(d)) throw new DealError("E8001", "cannot encode Infinity as JSON");
+                    sb.append(java.lang.Double.toString(d));
+                    return;
+                }
+                if (v instanceof java.util.List<?> list) {
+                    if (!stack.add(v)) throw new DealError("E8001", "value is not JSON-shaped");
+                    sb.append('[');
+                    boolean first = true;
+                    for (java.lang.Object e : list) { if (!first) sb.append(','); first = false; $jsonAppend(sb, e, stack); }
+                    sb.append(']');
+                    stack.remove(v);
+                    return;
+                }
+                if (v instanceof java.util.Map<?, ?> map) {
+                    if (!stack.add(v)) throw new DealError("E8001", "value is not JSON-shaped");
+                    sb.append('{');
+                    boolean first = true;
+                    for (java.util.Map.Entry<?, ?> e : map.entrySet()) { if (!first) sb.append(','); first = false; sb.append($envelopeQuote(java.lang.String.valueOf(e.getKey()))); sb.append(':'); $jsonAppend(sb, e.getValue(), stack); }
+                    sb.append('}');
+                    stack.remove(v);
+                    return;
+                }
+                if (v instanceof $DealRt.Table t) {
+                    if (!stack.add(v)) throw new DealError("E8001", "value is not JSON-shaped");
+                    java.util.ArrayList<java.lang.Object> arr = t.$array();
+                    if (arr != null) {
+                        sb.append('[');
+                        boolean first = true;
+                        for (java.lang.Object e : arr) { if (!first) sb.append(','); first = false; $jsonAppend(sb, e, stack); }
+                        sb.append(']');
+                    } else {
+                        sb.append('{');
+                        boolean first = true;
+                        for (java.util.Map.Entry<java.lang.String, java.lang.Object> e : t.$entries().entrySet()) { if (!first) sb.append(','); first = false; sb.append($envelopeQuote(e.getKey())); sb.append(':'); $jsonAppend(sb, e.getValue(), stack); }
+                        sb.append('}');
+                    }
+                    stack.remove(v);
+                    return;
+                }
+            """);
+        emitLine("if (v instanceof $DealRt.__IntArray a) {");
+        indent++;
+        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
+        emitLine("sb.append('[');");
+        emitLine("boolean first = true;");
+        emitLine(int32Mode
+            ? "for (int e : a.data) { if (!first) sb.append(','); first = false; sb.append(java.lang.Integer.toString(e)); }"
+            : "for (long e : a.data) { if (!first) sb.append(','); first = false; sb.append(java.lang.Long.toString(e)); }");
+        emitLine("sb.append(']');");
+        emitLine("stack.remove(v);");
+        emitLine("return;");
+        indent--;
+        emitLine("}");
+        emitLine("if (v instanceof $DealRt.__NumberArray a) {");
+        indent++;
+        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
+        emitLine("sb.append('[');");
+        emitLine("boolean first = true;");
+        emitLine("for (double e : a.data) { if (!first) sb.append(','); first = false; if (java.lang.Double.isNaN(e)) throw new DealError(\"E8001\", \"cannot encode NaN as JSON\"); if (java.lang.Double.isInfinite(e)) throw new DealError(\"E8001\", \"cannot encode Infinity as JSON\"); sb.append(java.lang.Double.toString(e)); }");
+        emitLine("sb.append(']');");
+        emitLine("stack.remove(v);");
+        emitLine("return;");
+        indent--;
+        emitLine("}");
+        emitLine("if (v instanceof $DealRt.__StringArray a) {");
+        indent++;
+        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
+        emitLine("sb.append('[');");
+        emitLine("boolean first = true;");
+        emitLine("for (java.lang.String e : a.data) { if (!first) sb.append(','); first = false; sb.append($envelopeQuote(e)); }");
+        emitLine("sb.append(']');");
+        emitLine("stack.remove(v);");
+        emitLine("return;");
+        indent--;
+        emitLine("}");
+        emitLine("if (v instanceof $DealRt.__BooleanArray a) {");
+        indent++;
+        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
+        emitLine("sb.append('[');");
+        emitLine("boolean first = true;");
+        emitLine("for (boolean e : a.data) { if (!first) sb.append(','); first = false; sb.append(e ? \"true\" : \"false\"); }");
+        emitLine("sb.append(']');");
+        emitLine("stack.remove(v);");
+        emitLine("return;");
+        indent--;
+        emitLine("}");
+        emitLine("if (v instanceof $DealRt.__IntOrNullArray a) {");
+        indent++;
+        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
+        emitLine("sb.append('[');");
+        emitLine("boolean first = true;");
+        emitLine(int32Mode
+            ? "for (java.lang.Integer e : a.data) { if (!first) sb.append(','); first = false; if (e == null) { sb.append(\"null\"); } else { sb.append(e.toString()); } }"
+            : "for (java.lang.Long e : a.data) { if (!first) sb.append(','); first = false; if (e == null) { sb.append(\"null\"); } else { sb.append(e.toString()); } }");
+        emitLine("sb.append(']');");
+        emitLine("stack.remove(v);");
+        emitLine("return;");
+        indent--;
+        emitLine("}");
+        emitLine("if (v instanceof $DealRt.__NumberOrNullArray a) {");
+        indent++;
+        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
+        emitLine("sb.append('[');");
+        emitLine("boolean first = true;");
+        emitLine("for (java.lang.Double e : a.data) { if (!first) sb.append(','); first = false; if (e == null) { sb.append(\"null\"); } else { if (java.lang.Double.isNaN(e)) throw new DealError(\"E8001\", \"cannot encode NaN as JSON\"); if (java.lang.Double.isInfinite(e)) throw new DealError(\"E8001\", \"cannot encode Infinity as JSON\"); sb.append(java.lang.Double.toString(e)); } }");
+        emitLine("sb.append(']');");
+        emitLine("stack.remove(v);");
+        emitLine("return;");
+        indent--;
+        emitLine("}");
+        emitLine("if (v instanceof $DealRt.__StringOrNullArray a) {");
+        indent++;
+        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
+        emitLine("sb.append('[');");
+        emitLine("boolean first = true;");
+        emitLine("for (java.lang.String e : a.data) { if (!first) sb.append(','); first = false; if (e == null) { sb.append(\"null\"); } else { sb.append($envelopeQuote(e)); } }");
+        emitLine("sb.append(']');");
+        emitLine("stack.remove(v);");
+        emitLine("return;");
+        indent--;
+        emitLine("}");
+        emitLine("if (v instanceof $DealRt.__BooleanOrNullArray a) {");
+        indent++;
+        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
+        emitLine("sb.append('[');");
+        emitLine("boolean first = true;");
+        emitLine("for (java.lang.Boolean e : a.data) { if (!first) sb.append(','); first = false; if (e == null) { sb.append(\"null\"); } else { sb.append(e.booleanValue() ? \"true\" : \"false\"); } }");
+        emitLine("sb.append(']');");
+        emitLine("stack.remove(v);");
+        emitLine("return;");
+        indent--;
+        emitLine("}");
+        emitLines("""
+                throw new DealError("E8001", "value is not JSON-shaped");
+            }
+            """);
     }
 
     /** Class-body members at module level (vs. load-time statements). */
@@ -5661,6 +6251,11 @@ public final class JvmBackend {
         emitLine("descriptor = descriptor.substring(1);");
         indent--;
         emitLine("}");
+        emitLine("// null row (the canonical matcher table): the DEAL null (Java null");
+        emitLine("// here) passes; the seam previously lacked the row because every");
+        emitLine("// statically provable null crossing bypasses $check — the async-export");
+        emitLine("// host entry (ISSUE-0161) is the first dynamic null check site.");
+        emitLine("if (descriptor.equals(\"null\")) { if (v == null) return null; throw new DealError(\"E8001\", \"expected null, got \" + $describe(v)); }");
         emitLine("if (descriptor.equals(\"table\")) { if (v instanceof $DealRt.Table t) return t; throw new DealError(\"E8001\", \"expected table, got \" + $describe(v)); }");
         emitLine("if (descriptor.equals(\"boolean\")) { if (v instanceof java.lang.Boolean b) return b; throw new DealError(\"E8001\", \"expected boolean, got \" + $describe(v)); }");
         emitLine("if (descriptor.equals(\"string\")) { if (v instanceof java.lang.String s) { if (__hasUnpairedSurrogate(s)) throw new DealError(\"E8001\", \"expected string, got string with unpaired surrogate code units\"); return s; } throw new DealError(\"E8001\", \"expected string, got \" + $describe(v)); }");

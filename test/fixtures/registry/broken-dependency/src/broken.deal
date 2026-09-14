@@ -1,0 +1,8 @@
+// D12 record support module: the broken dependency. The oracle awaits
+// this imported handler, whose TEST_FAIL must propagate through the
+// production async-export invocation as the exact DEAL error — a broken
+// dependency can never read as a satisfied record outcome, and no
+// infrastructure or host-selection failure may masquerade as it.
+export async function explode(): string {
+  throw { code: "TEST_FAIL", message: "broken dependency" };
+}

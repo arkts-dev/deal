@@ -153,6 +153,11 @@ TEST_SOURCES=(
   # consumption test — D12-shaped async-export record projects
   # through the production orchestrator + production invoker.
   'test/RegistryAsyncExportBoundaryTest.java'
+  'test/JvmAsyncExportInvokerTest.java'
+  # ISSUE-0161 registration: the JVM lane of the REGISTRY delegated
+  # boundary — D12-shaped async-export record projects through the
+  # production orchestrator + production JvmAsyncExportInvoker.
+  'test/JvmRegistryAsyncExportBoundaryTest.java'
   'test/CrossModuleTypingTest.java'
   'test/ProtectedPathOpsTest.java'
   'test/CanonicalIdentityTest.java'
@@ -404,6 +409,8 @@ TEST_MAINS=(
   'fg|=== Running Source Module Resolver Tests (ISSUE-0267 T6) ===|java -ea -cp build deal.module.SourceModuleResolverTest'
   'fg|=== Running LuaJIT Async Export Invoker Tests (ISSUE-0417 component, ISSUE-0418 verification matrix) ===|java -ea -cp build:/usr/share/java/junit4.jar:/usr/share/java/hamcrest-core.jar org.junit.runner.JUnitCore deal.test.LuaJitAsyncExportInvokerTest'
 'fg|=== Running Registry Async-Export Boundary Tests (ISSUE-0346 REGISTRY) ===|java -ea -cp build:/usr/share/java/junit4.jar:/usr/share/java/hamcrest-core.jar org.junit.runner.JUnitCore deal.test.RegistryAsyncExportBoundaryTest'
+  'fg|=== Running JVM Async Export Invoker Tests (ISSUE-0161 JVM host ABI) ===|java -ea -cp build:/usr/share/java/junit4.jar:/usr/share/java/hamcrest-core.jar org.junit.runner.JUnitCore deal.test.JvmAsyncExportInvokerTest'
+  'fg|=== Running JVM Registry Async-Export Boundary Tests (ISSUE-0161 JVM lane of the REGISTRY boundary) ===|java -ea -cp build:/usr/share/java/junit4.jar:/usr/share/java/hamcrest-core.jar org.junit.runner.JUnitCore deal.test.JvmRegistryAsyncExportBoundaryTest'
   'fg|=== Running Stdlib .d.deal Parse Tests ===|java -ea -cp build deal.test.StdlibDeclParseTest'
   'fg|=== Running Source Map Tests ===|java -ea -cp build deal.test.SourceMapTest'
   'fg|=== Running Runtime Source Location Tests ===|java -ea -cp build deal.test.RuntimeSourceLocationTest'
