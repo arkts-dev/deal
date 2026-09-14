@@ -536,3 +536,93 @@ rebased tree.
   zero skips.
 - `git status` clean and `git diff --check` clean; the committed diff
   contains only the intended backend/test/fixture/record changes.
+
+## Update: rebase onto the engine-imported canonical revision bffda3e6e (ISSUE-0507 / ISSUE-0548 / ISSUE-0550 / ISSUE-0551 / ISSUE-0552)
+
+The engine imported canonical revision `bffda3e6e` (the canonical line
+moved past the MR's approved base 229efbcd: `53f84a47e` ISSUE-0550 —
+JVM bytes dynamic boundary rows and descriptor promotion; the
+ISSUE-0507 FFI corpus lane — sixteen candidate fixtures through the
+production FFI path plus the CorpusFfi/CorpusDiscovery/SidecarExpectations
+registration and the Lua array-delete re-pin; ISSUE-0548 — the sync
+bytes-function shape closure and the callee-first member-call dispatch
+through bytes-fn class fields with the differential-gate/lane re-pins;
+`c19616893` ISSUE-0551 — JVM bytes host/module boundaries and nested
+JSON rejection; `bffda3e6e` ISSUE-0552 — JVM bytes integrated
+verification and the final lane state). All 18 MR-0387 commits were
+replayed onto bffda3e6e. The reconciliation is structural, not
+semantic:
+
+1. `test/HistoricalRegressionCatalog.java` — the only conflict, in the
+   `jvm-array-index-delete-e6000` code-contract row, at the fd7913577
+   record commit (and again at the 229efbcd record commit): the
+   canonical line had moved the anchors to
+   (`JvmBackend.java:10901`, `17408-17412`) with digest
+   `a3604a5b...`, while the MR's record commits carried the
+   fd7913577/229efbcd anchors (`11260`/`17521-17525` and
+   `11448`/`17791-17795`). ISSUE-0548/0550/0551/0552 and this MR's
+   async-export host surface both insert text before the anchors, so
+   neither side's locators survive verbatim in the rebased tree. The
+   conflict was resolved with the tree-verified post-rebase anchors
+   (`JvmBackend.java:11496`, `18002-18006`) and the re-derived
+   baseline digest
+   `df22e3dc6e62f926debee0f6104e62479dafe0ba9e8d59406d493ce2d9f94d87`
+   (recomputed by the real catalog validation run over the rebased
+   tree — the pinned locator strings participate in the digest, so
+   the relocation re-derives it over the unchanged span bytes).
+   HistoricalRegressionCatalogTest 152/0.
+2. `deal/codegen/jvm/JvmBackend.java` — auto-merged without conflict:
+   the canonical ISSUE-0548/0550/0551/0552 bytes machinery (the D5
+   construction phase-3 deferral seam, the callee-first bytes-fn
+   class-field dispatch, the `?bytes` dynamic boundary rows, the
+   bytes-array JSON carriers, the host/module boundary rows) and this
+   MR's async-export host surface are disjoint emission surfaces; the
+   async-export surface lands on top of the canonical structure
+   unchanged (the canonical ISSUE-0547 `__BytesArray`/
+   `__BytesOrNullArray` carriers and the past-end nil parity stay
+   exclusively canonical).
+3. `test/JvmBackendTest.java` — merged additively: this MR's
+   `testBytesArrayPastEndReadsYieldTheDealNull` and its registration
+   join the canonical ISSUE-0548/0550/0551/0552 additions; the pinned
+   emitted helper text holds verbatim against the canonical helpers.
+4. `deal/test/conformance/DifferentialGateLanesCorpusTest.java` /
+   `JvmLane.java` / `JvmLaneTest.java` / `test/JvmConformanceTest.java`
+   / `test/JvmLaneStatePinTest.java` — no MR delta remains: the
+   canonical pins already carried the post-closure lane state, so the
+   MR's pre-flip re-pin commits resolve against the canonical pins.
+5. `test/BackendConformanceTest.java` / `test/ProjectIntegrationGatesTest.java` /
+   `test/conformance/fixtures/jvm-arrays-slice.json` /
+   `test/conformance/fixtures/jvm-v1.2-known-fail.json` /
+   `tools/gate-manifest.sh` — the MR's additions (the bytes-array
+   parity fixture rows, the javadoc re-pins, the possessive-quantifier
+   regex, the promoted `jvm-bytes-buffer-ops` description, the
+   async-export test registrations) merge cleanly over the canonical
+   ISSUE-0507/0550/0551/0552 changes.
+
+No acceptance criterion changed; criteria 1-4 stay met on both
+backends. Every re-pin is tree-derived from the real gate run on the
+rebased tree.
+
+### Verification on the final rebased commit (bffda3e6e base)
+
+- Engine gate `flock /tmp/igelhaus-deal-tests.lock ./run_tests.sh
+  --jobs 1`: exit 0 on the committed tree (the only pre-fix gate
+  failure was the placeholder catalog digest, reported by the real
+  catalog run with the recomputed digest
+  `df22e3dc...`; after the re-pin the gate passes).
+- Async-export suites: LuaJitAsyncExportInvokerTest OK (49),
+  RegistryAsyncExportBoundaryTest OK (5), JvmAsyncExportInvokerTest
+  OK (38, incl. `productionCompiledAsyncBytesOracleCompletesNull`
+  asserting Result.Value("null","null") with the no-await E3014 /
+  incorrect-output TEST_FAIL / no-call TEST_FAIL controls over real
+  bytes on the JVM lane), JvmRegistryAsyncExportBoundaryTest OK (6).
+- HistoricalRegressionCatalogTest 152/0 with the re-derived digest
+  `df22e3dc...` and the relocated anchors (`JvmBackend.java:11496`,
+  `18002-18006`); JvmLaneStatePinTest 30/0 (real LuaJIT and JVM lane
+  subprocess runs).
+- Bytes parity pins green on both backends:
+  `jvm-bytes-arr-past-end-null-parity` and
+  `jvm-bytes-arr-negative-read-e8002` (real luajit + emitted JVM
+  artifact).
+- `git status` clean and `git diff --check` clean; the committed diff
+  contains only the intended backend/test/fixture/record changes.

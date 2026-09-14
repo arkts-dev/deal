@@ -541,7 +541,7 @@ public final class HistoricalRegressionCatalog {
             // ISSUE-0552 anchors (10901 / 17408-17412) relocated to the
             // post-rebase spans; the baseline digest is re-derived by
             // the real catalog run over the relocated spans.
-            "a3604a5bb49ff52256c814044921e6838a195649b33f847d49d96ef7e31d9877"),
+            "df22e3dc6e62f926debee0f6104e62479dafe0ba9e8d59406d493ce2d9f94d87"),
 
         // EVALUATION_ORDER — WRITE_ORDER (array-write evaluation order)
         fixtureRow(SemanticCapability.EVALUATION_ORDER, Family.WRITE_ORDER,
