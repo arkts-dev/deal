@@ -168,22 +168,6 @@ TEST_MAINS+=(
 # runs the backend-neutral discovery/classification/sidecar/pin half.
 # The lane subprocesses run outside the JaCoCo agent (no recording
 # surface), so the production coverage totals are unchanged.
-# ISSUE-0360 (JSON slice absorption — pin-before-delete): the two
-# dev-time evidence helpers join the COMPILE list only (no run phase),
-# exactly as in run_tests.sh. JsonAbsorptionGateLog runs the full
-# three-lane differential gate over the real corpus and prints the
-# per-fixture per-backend VERDICT log committed at
-# test/conformance/json-absorption/gate-pass-log.txt;
-# JsonAbsorptionNegativeControls runs the oracle-negative control
-# battery (Verification 4) over the absorbed destinations on scratch
-# copies.
-# =========================================================================
-TEST_SOURCES+=(
-  'deal/test/conformance/JsonAbsorptionGateLog.java'
-  'deal/test/conformance/JsonAbsorptionNegativeControls.java'
-)
-
-# =========================================================================
 TEST_SOURCES+=(
   'deal/test/conformance/CorpusFrontendResolver.java'
   'deal/test/conformance/JvmLane.java'

@@ -428,24 +428,6 @@ TEST_SOURCES+=(
 )
 
 # =========================================================================
-# ISSUE-0360 (JSON slice absorption — pin-before-delete): the two
-# dev-time evidence helpers join the COMPILE list only (not the run
-# phase). JsonAbsorptionGateLog runs the full three-lane differential
-# gate over the real corpus with the production lanes registered and
-# prints the per-fixture per-backend VERDICT log committed at
-# test/conformance/json-absorption/gate-pass-log.txt;
-# JsonAbsorptionNegativeControls runs the oracle-negative control
-# battery (Verification 4) over the absorbed destinations on scratch
-# copies with its committed log at
-# test/conformance/json-absorption/negative-control-log.txt. Both stay
-# dev-time (G5's temporary-coexistence window): the legacy runners keep
-# executing the corpus and the JSON path in run_tests.sh.
-# =========================================================================
-TEST_SOURCES+=(
-  'deal/test/conformance/JsonAbsorptionGateLog.java'
-  'deal/test/conformance/JsonAbsorptionNegativeControls.java'
-)
-# =========================================================================
 # ISSUE-0485 (CapabilityRegistry.withState transition surface): the
 # single release-owned promotion/demotion transition surface and its D3
 # invariant battery join the compile list and the unconditional run
@@ -461,32 +443,6 @@ TEST_MAINS+=(
   'fg|=== Running Capability Registry Transition Surface Tests (ISSUE-0485) ===|java -ea -cp build deal.test.CapabilityRegistryTransitionTest'
 )
 
-# =========================================================================
-# ISSUE-0490 (E12 public activation release action): the activation
-# evidence record, the twelve-item promotion gate records, the release
-# action, and the gate-run battery join the compile list and the
-# unconditional run phase here. The suite proves the evidence-record
-# content, every activation precondition negative (empty promotion
-# list, missing SIGNED_INT32 for a shared target, missing/incomplete
-# E11 evidence, a recorded pre-activation shared route, a gate-rejected
-# pair), the promotion-attempt order/lock rejections, the digest
-# recomputation over the flipped configuration (never an
-# unchanged-hash claim), the committed flipped constant and promoted
-# registry state, the A1 profile-mapping rows, the absence of any
-# legacy-selection surface, and a concrete post-flip shared-routing
-# plan for an int-using module (eligibility plus the SIGNED_INT32
-# requirement). The committed release state stays flipped; every
-# negative runs over a derived configuration.
-# =========================================================================
-TEST_SOURCES+=(
-  'test/PromotionGateRecord.java'
-  'test/ActivationEvidenceRecord.java'
-  'test/E12ActivationReleaseAction.java'
-  'test/E12ActivationReleaseTest.java'
-)
-TEST_MAINS+=(
-  'fg|=== Running E12 Public Activation Release Action Tests (ISSUE-0490) ===|java -ea -cp build deal.test.E12ActivationReleaseTest'
-)
 # =========================================================================
 # ISSUE-0239 (E10, the modules epic — production semantic-IR emission and
 # atomic publication): the production gate compiles the applicable

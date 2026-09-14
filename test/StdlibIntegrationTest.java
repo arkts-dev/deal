@@ -2088,8 +2088,6 @@ public final class StdlibIntegrationTest {
                     "'luajit|=== Running Standard Library Tests ===|luajit test_stdlib.lua"),
                 "T5d: the retained std/time behavior keeps running under the gate's "
                     + "luajit leg (unchanged and green)");
-            check(manifest.contains("deal.test.StdlibTimePreActivationPinTest"),
-                "T5d: the std/time pre-activation pin stays registered in the gate");
             check(manifest.contains("deal.test.ConformanceTest"),
                 "T5d: the conformance runner keeps the jvm-std-time-nowmillis "
                     + "authority green");

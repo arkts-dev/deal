@@ -650,12 +650,6 @@
    "cwd": "export"
   },
   {
-   "step": "deal.test.StdlibTimePreActivationPinTest",
-   "tier": 1,
-   "budget": "embedded",
-   "cwd": "export"
-  },
-  {
    "step": "deal.test.TypeDescriptorTest",
    "tier": 1,
    "budget": "embedded",

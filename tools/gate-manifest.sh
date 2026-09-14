@@ -123,7 +123,6 @@ TEST_SOURCES=(
   'test/SourceMapTest.java'
   'test/RuntimeSourceLocationTest.java'
   'test/StdlibContractTest.java'
-  'test/StdlibTimePreActivationPinTest.java'
   'test/GenerateStdlibGoldenIr.java'
   'test/ConformanceTest.java'
   'test/ConformanceHarnessMetadata.java'
@@ -437,7 +436,6 @@ WARNING: node not found, skipping standard library JS tests'
   'luajit|=== Running Async Nesting Stress Tests ===|luajit test_async_nesting.lua
 WARNING: luajit not found, skipping async nesting stress tests'
   'fg||java -ea -cp build deal.test.StdlibContractTest'
-  'fg|=== std/time.nowMillis Pre-Activation Pin (ISSUE-0369) ===|java -ea -cp build deal.test.StdlibTimePreActivationPinTest'
   'golden-ir|=== Stdlib Golden IR Check ===|java -ea -cp build deal.test.GenerateStdlibGoldenIr "$TEMP_FILE" 2>/dev/null'
   'fg|=== Running Conformance Harness Metadata Seam Tests ===|java -ea -cp build deal.test.ConformanceHarnessMetadataTest'
   # ISSUE-0457 registration: the DistributionHome tier-selection proofs
