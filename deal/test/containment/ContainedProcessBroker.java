@@ -375,6 +375,43 @@ public final class ContainedProcessBroker implements AutoCloseable {
         Objects.requireNonNull(limits, "limits");
         requireSessionState("INVOKE");
         String tag = buildClientTag(fixtureId, phase);
+        InvocationPrologue prologue = consumeInvocationPrologue(tag, argv, cwd);
+        /* Retain the STUB_READY nonce for the live window: it is the
+         * outer-generated invocation nonce (the only nonce the outer
+         * accepts for a CANCEL of this record, outer-coordinator-and-
+         * broker D4/D7) and reaches the coordinator exclusively through
+         * this relay, so without retention no conforming caller could
+         * ever obtain it. Cleared at the terminal record.
+         *
+         * <p>Wire-order pin: the ACK write precedes the nonce
+         * retention, so the retained nonce becomes observable only
+         * after this record's ACK is on the wire. A caller that
+         * observes a live id through {@link #invocationNonce(long)} /
+         * {@link #awaitLiveInvocation(long)} and then issues
+         * {@link #cancelLive(String)} therefore always emits the
+         * CANCEL after the ACK — the outer applies the ACK (the
+         * release authorization) before the CANCEL and the accepted
+         * cancel completes the record as CLEAN cancelled
+         * deterministically (a CANCEL racing ahead of the ACK would
+         * instead leave the record CANCELLING so the late ACK was
+         * answered REJECT ... AUTH_FAILED). */
+        send("ACK", String.valueOf(prologue.invocationId), prologue.stubNonce);
+        invocationNonces.put(prologue.invocationId, prologue.stubNonce);
+        return consumePostRelease(prologue.invocationId, tag, null, null);
+    }
+
+    /**
+     * The INVOKE → INVOKED → STUB_READY prologue, consumed with the
+     * same strict validation for {@link #run} and the
+     * scripted-invocation seam: emits the validated INVOKE, expects
+     * INVOKED (or a pre-fork REJECT), then STUB_READY (or a REJECT),
+     * and returns the outer-assigned invocationId plus the
+     * {@code STUB_READY} nonce. No ACK is written here — the caller
+     * decides (the production {@code run()} writes it immediately;
+     * the scripted seam lets the live suite script it).
+     */
+    private InvocationPrologue consumeInvocationPrologue(String tag, List<String> argv,
+                                                         String cwd) {
         sendInvoke(tag, argv, cwd);
 
         Record record = readRecord();
@@ -411,29 +448,27 @@ public final class ContainedProcessBroker implements AutoCloseable {
             throw new BrokerProtocolException("STUB_READY invocationId " + stubInvocationId
                     + " != INVOKED invocationId " + invocationId);
         }
-        String stubNonce = record.fields[4];
-        /* Retain the STUB_READY nonce for the live window: it is the
-         * outer-generated invocation nonce (the only nonce the outer
-         * accepts for a CANCEL of this record, outer-coordinator-and-
-         * broker D4/D7) and reaches the coordinator exclusively through
-         * this relay, so without retention no conforming caller could
-         * ever obtain it. Cleared at the terminal record.
-         *
-         * <p>Wire-order pin: the ACK write precedes the nonce
-         * retention, so the retained nonce becomes observable only
-         * after this record's ACK is on the wire. A caller that
-         * observes a live id through {@link #invocationNonce(long)} /
-         * {@link #awaitLiveInvocation(long)} and then issues
-         * {@link #cancelLive(String)} therefore always emits the
-         * CANCEL after the ACK — the outer applies the ACK (the
-         * release authorization) before the CANCEL and the accepted
-         * cancel completes the record as CLEAN cancelled
-         * deterministically (a CANCEL racing ahead of the ACK would
-         * instead leave the record CANCELLING so the late ACK was
-         * answered REJECT ... AUTH_FAILED). */
-        send("ACK", String.valueOf(invocationId), stubNonce);
-        invocationNonces.put(invocationId, stubNonce);
+        return new InvocationPrologue(invocationId, record.fields[4]);
+    }
 
+    /**
+     * The post-ACK (or post-accepted-CANCEL) consumption loop, shared
+     * by {@link #run} and the scripted-invocation seam: STARTED|
+     * EXEC_FAILED, OUT/OUT_END, REPORT, CLEAN|FAILED with the strict
+     * per-record validation and the stream accounting cross-check.
+     * When {@code cancelAfterStdoutContains} is non-null (the
+     * scripted-cancel observation's trap-race gate), the exact-nonce
+     * CANCEL is emitted exactly once as soon as the accumulated stdout
+     * contains the marker — the marker is echoed by the target only
+     * after it installed its TERM trap, so the subsequent cancel TERM
+     * deterministically reaches a trapping target that exits
+     * {@code CLD_EXITED} and the record completes CLEAN cancelled
+     * (never the pre-trap signal-death race that classifies
+     * {@code FAILED CALLER_LOST}).
+     */
+    private ProcessResult consumePostRelease(long invocationId, String tag,
+                                             String cancelAfterStdoutContains,
+                                             String cancelNonce) {
         /* Post-ACK phase: STARTED|EXEC_FAILED, OUT/OUT_END, REPORT,
          * CLEAN|FAILED. REJECT may answer the ACK (record-level
          * AUTH_FAILED) or a concurrently issued CANCEL
@@ -446,6 +481,7 @@ public final class ContainedProcessBroker implements AutoCloseable {
         accumulated[0] = new ByteArrayOutputStream();
         accumulated[1] = new ByteArrayOutputStream();
         boolean[] locallyTruncated = new boolean[2];
+        Record record;
         Report report = null;
         while (true) {
             record = readRecord();
@@ -487,6 +523,17 @@ public final class ContainedProcessBroker implements AutoCloseable {
                     }
                     appendCapped(accumulated[stream], locallyTruncated, stream,
                             hexDecode(record.fields[2], "OUT chunk"));
+                    if (cancelAfterStdoutContains != null && cancelNonce != null
+                            && stream == 0
+                            && decodeLenientUtf8(accumulated[0].toByteArray())
+                                    .contains(cancelAfterStdoutContains)) {
+                        /* The trap-installed proof: the marker bytes
+                         * arrived, so the cancel TERM will hit the
+                         * trap and the target exits clean. Emit the
+                         * exact-nonce CANCEL exactly once. */
+                        send("CANCEL", String.valueOf(invocationId), cancelNonce);
+                        cancelAfterStdoutContains = null;
+                    }
                     break;
                 }
                 case "OUT_END": {
@@ -775,6 +822,173 @@ public final class ContainedProcessBroker implements AutoCloseable {
     /** {@link #cancelLive(String)} for a numeric invocation id. */
     public void cancelLive(long invocationId) {
         cancelLive(String.valueOf(invocationId));
+    }
+
+    /* === Scripted-invocation continuation seam (D3) ===================== */
+
+    /**
+     * Scripted-invocation continuation seam
+     * (dealpg4-java-broker-session-tests D3, package-private — the
+     * live suite {@code BrokerSessionTestSuite} is the only caller):
+     * the live suite's ACK/CANCEL rejection observations need one
+     * invocation whose prologue (INVOKE → INVOKED → STUB_READY) was
+     * consumed without {@link #run}'s auto-ACK. The record is then
+     * TARGET_PUBLISHED at the outer — the exact live pre-release
+     * window in which the outer answers record-level
+     * {@code REJECT … AUTH_FAILED} / {@code CANCEL_AUTH_FAILED} with
+     * the broker open and the record untouched (outer-coordinator-and-
+     * broker D5/D6). The seam drives the prologue with the same strict
+     * validation as {@link #run}, emits scripted records through the
+     * validated framing (a malformed scripted record is refused before
+     * any write), consumes the REJECT answer with strict per-type
+     * validation, and continues the normal post-ACK consumption to the
+     * terminal record after the correct ACK (or an accepted CANCEL).
+     */
+    static final class ScriptedInvocation {
+        /** The invocationId the outer assigned (INVOKED). */
+        final long invocationId;
+        /** The clientTag sent with INVOKE. */
+        final String clientTag;
+        /** The invocation nonce relayed by STUB_READY — the exact nonce
+         * the outer accepts for this record's ACK and CANCEL. */
+        final String stubNonce;
+
+        ScriptedInvocation(long invocationId, String clientTag, String stubNonce) {
+            this.invocationId = invocationId;
+            this.clientTag = clientTag;
+            this.stubNonce = stubNonce;
+        }
+    }
+
+    /**
+     * Scripted-invocation prologue (the D3 seam): emits INVOKE and
+     * consumes INVOKED → STUB_READY exactly like {@link #run} — but
+     * without writing the ACK. The record stays TARGET_PUBLISHED at
+     * the outer (RELEASED is entered only when an ACK write completes
+     * into the nested control channel), so the caller can emit scripted
+     * records and observe the outer's record-level REJECT answers with
+     * the broker open and the record untouched.
+     *
+     * @throws BrokerProtocolException on a framing/state defect or a
+     *         channel close before STUB_READY (identical to run()).
+     * @throws BrokerRejectionException on a pre-fork REJECT
+     *         (BUDGET_EXHAUSTED / MALFORMED_INVOKE / REGISTRY_FULL).
+     */
+    ScriptedInvocation beginScriptedInvocation(String fixtureId, String phase,
+                                               List<String> argv, String cwd) {
+        Objects.requireNonNull(fixtureId, "fixtureId");
+        Objects.requireNonNull(phase, "phase");
+        Objects.requireNonNull(argv, "argv");
+        Objects.requireNonNull(cwd, "cwd");
+        requireSessionState("INVOKE");
+        String tag = buildClientTag(fixtureId, phase);
+        InvocationPrologue prologue = consumeInvocationPrologue(tag, argv, cwd);
+        return new ScriptedInvocation(prologue.invocationId, tag, prologue.stubNonce);
+    }
+
+    /**
+     * Emits one scripted ACK through the validated framing (the D3
+     * seam): the record is validated before the write, so a malformed
+     * scripted record is never emitted. The nonce may be wrong — the
+     * suite's wrong-nonce ACK observation relies on exactly that; the
+     * correct ACK (the invocation's own {@code STUB_READY} nonce)
+     * releases the same record normally.
+     *
+     * @throws BrokerProtocolException on a malformed nonce (refused
+     *         before any write — a malformed scripted record is never
+     *         emitted).
+     */
+    void emitScriptedAck(ScriptedInvocation invocation, String nonce) {
+        Objects.requireNonNull(invocation, "invocation");
+        Objects.requireNonNull(nonce, "nonce");
+        requireNonce(nonce, "scripted ACK nonce");
+        send("ACK", String.valueOf(invocation.invocationId), nonce);
+    }
+
+    /**
+     * Consumes the outer's record-level REJECT answering a scripted
+     * record (the D3 seam), with strict validation: the next broker
+     * record must be REJECT, its invocationId must name the scripted
+     * invocation, and its clientTag must be that invocation's tag (or
+     * the catalog "-"). Returned — not thrown — so the suite can
+     * assert the token and then complete the same record: the broker
+     * stays open and the record is untouched by the rejected record
+     * (canonical REJECT rule).
+     *
+     * @throws BrokerProtocolException on a non-REJECT next record, a
+     *         field mismatch, or a channel close before the answer.
+     */
+    BrokerRejectionException readScriptedRejection(ScriptedInvocation invocation) {
+        Objects.requireNonNull(invocation, "invocation");
+        Record record = readRecord();
+        if (record == null) {
+            throw new BrokerProtocolException("broker closed while waiting for the REJECT "
+                    + "answering the scripted record of invocation "
+                    + invocation.invocationId);
+        }
+        if (!record.type.equals("REJECT")) {
+            throw new BrokerProtocolException("expected REJECT answering the scripted "
+                    + "record of invocation " + invocation.invocationId
+                    + ", got " + record.type);
+        }
+        long id = parseDecimalLong(record.fields[0], "REJECT invocationId");
+        if (id != invocation.invocationId) {
+            throw new BrokerProtocolException("REJECT invocationId " + id
+                    + " != scripted invocationId " + invocation.invocationId);
+        }
+        String tag = record.fields[1];
+        if (!tag.equals(invocation.clientTag) && !tag.equals("-")) {
+            throw new BrokerProtocolException(
+                    "REJECT clientTag '" + tag + "' names a different invocation");
+        }
+        return new BrokerRejectionException(record.fields[2], id, tag,
+                "broker rejected invocation " + id + " (" + tag + ") with "
+                        + record.fields[2]);
+    }
+
+    /**
+     * Completes a scripted invocation to its terminal record (the D3
+     * seam): after the suite emitted the correct ACK — or an accepted
+     * CANCEL — consumes STARTED|EXEC_FAILED, OUT/OUT_END, REPORT,
+     * CLEAN|FAILED with the same strict per-record validation as
+     * {@link #run} and returns the mapped {@link ProcessResult}.
+     */
+    ProcessResult finishScriptedInvocation(ScriptedInvocation invocation) {
+        Objects.requireNonNull(invocation, "invocation");
+        return consumePostRelease(invocation.invocationId, invocation.clientTag,
+                null, null);
+    }
+
+    /**
+     * Completes a scripted invocation with the trap-race-gated CANCEL
+     * (the D3 seam's CANCEL arm): consumes the post-ACK stream exactly
+     * like {@link #finishScriptedInvocation(ScriptedInvocation)}, and
+     * emits the exact-nonce CANCEL of this invocation exactly once as
+     * soon as the accumulated stdout contains {@code
+     * cancelAfterStdoutContains} — a marker the suite's target echoes
+     * only after installing its TERM trap, so the cancel TERM
+     * deterministically reaches a trapping target and the record
+     * completes CLEAN cancelled (an earlier CANCEL would race the
+     * trap installation and classify {@code FAILED CALLER_LOST}).
+     */
+    ProcessResult finishScriptedInvocation(ScriptedInvocation invocation,
+                                           String cancelAfterStdoutContains) {
+        Objects.requireNonNull(invocation, "invocation");
+        Objects.requireNonNull(cancelAfterStdoutContains, "cancelAfterStdoutContains");
+        return consumePostRelease(invocation.invocationId, invocation.clientTag,
+                cancelAfterStdoutContains, invocation.stubNonce);
+    }
+
+    /** The INVOKE → INVOKED → STUB_READY prologue result shared by
+     * {@link #run} and the scripted-invocation seam. */
+    private static final class InvocationPrologue {
+        final long invocationId;
+        final String stubNonce;
+
+        InvocationPrologue(long invocationId, String stubNonce) {
+            this.invocationId = invocationId;
+            this.stubNonce = stubNonce;
+        }
     }
 
     /* === INVOKE emission ============================================== */
