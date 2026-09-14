@@ -205,8 +205,8 @@ TEST_MAINS+=(
 
 # =========================================================================
 # ISSUE-0474 + ISSUE-0475 (Coverage Manifest Validator and Corpus
-# Check): the reusable C7 validation component, its synthetic 26/0 unit
-# matrix, and the real-manifest 82/0 mechanical check join the compile
+# Check): the reusable C7 validation component, its synthetic 24/0 unit
+# matrix, and the real-manifest 97/0 mechanical check join the compile
 # list and the unconditional run phase here, at the gate-script level
 # (the authoring-time gate authority). The change boundary is
 # deal/test/conformance/ plus run_tests.sh, so the single compile/

@@ -67,6 +67,33 @@
         "frontend/modules/ffi-manifest-missing-native-library-rejected.deal"
       ]
     },
+    "conformance-ffi-abi-mapping": {
+      "title": "C FFI: ABI mapping (value roundtrips through the production load_ffi boundary)",
+      "kind": "runtime",
+      "fixtures": [
+        "backend-runtime/ffi/012-ffi-double-roundtrip.deal",
+        "backend-runtime/ffi/013-ffi-boolean-roundtrip.deal",
+        "backend-runtime/ffi/014-ffi-string-utf8-parameter.deal",
+        "backend-runtime/ffi/016-ffi-bytes-pointer-length.deal",
+        "backend-runtime/ffi/019-ffi-struct-copy-isolation.deal",
+        "backend-runtime/ffi/020-ffi-pointer-token.deal",
+        "backend-runtime/ffi/048-ffi-int32-minimum-roundtrip.deal",
+        "backend-runtime/ffi/049-ffi-void-null-return.deal",
+        "backend-runtime/ffi/050-ffi-borrowed-string-copy.deal"
+      ]
+    },
+    "conformance-ffi-runtime-errors": {
+      "title": "C FFI: runtime errors and unsupported-backend rejection (E6006)",
+      "kind": "runtime",
+      "fixtures": [
+        "backend-runtime/ffi/022-ffi-null-string.deal",
+        "backend-runtime/ffi/023-ffi-invalid-utf8.deal",
+        "backend-runtime/ffi/024-ffi-null-pointer.deal",
+        "backend-runtime/ffi/025-ffi-missing-symbol.deal",
+        "backend-runtime/ffi/026-ffi-library-load-failure.deal",
+        "backend-runtime/ffi/027-ffi-unsupported-backends.deal"
+      ]
+    },
     "conformance-runtime-sentinels": {
       "title": "Runtime: null sentinel, missing optional fields, class defaults, array indexing, bytes indexing and byte-value checks, function wrappers",
       "kind": "runtime",
@@ -263,9 +290,5 @@
     "Tables",
     "Type system",
     "Variables"
-  ],
-  "deferred": {
-    "conformance-ffi-abi-mapping": "Deferred to the zero-skip flip (T14): the C FFI ABI-mapping runtime row lands in one change together with its divergent E6006 sidecar fixture, after the backend epics register E6006 in deal/diagnostics/DiagnosticCode.java; no coverage entry exists until that change.",
-    "conformance-ffi-runtime-errors": "Deferred to the zero-skip flip (T14): the C FFI runtime-errors and unsupported-backend rejection row lands in one change together with its divergent E6006 sidecar fixture, after the backend epics register E6006 in deal/diagnostics/DiagnosticCode.java; no coverage entry exists until that change."
-  }
+  ]
 }

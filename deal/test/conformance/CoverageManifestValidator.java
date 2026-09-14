@@ -63,8 +63,8 @@ import java.util.stream.Stream;
  * <p>Rules enforced, each failure naming the requirement:</p>
  * <ul>
  *   <li><b>Schema (D1):</b> closed root fields
- *       {@code version, requirements, observables, specSections,
- *       deferred}; closed entry fields {@code title, kind, fixtures};
+ *       {@code version, requirements, observables, specSections};
+ *       closed entry fields {@code title, kind, fixtures};
  *       {@code version} exactly 1; every entry carries a non-empty
  *       {@code title}, a {@code kind} from the closed vocabulary
  *       {@code runtime | compile | benchmark}, and a non-empty array of
@@ -75,9 +75,11 @@ import java.util.stream.Stream;
  *       inventory inside the validator: an uncovered bullet or
  *       observable, a row carrying the wrong kind, or an unknown
  *       requirement/observable id is a gate failure.</li>
- *   <li><b>Deferral (D3):</b> the {@code deferred} map must name exactly
- *       the closed {@link #KNOWN_DEFERRED} set with non-empty reasons,
- *       and a deferred row must not carry a coverage entry.</li>
+ *   <li><b>Deferral bookkeeping (D3):</b> removed in the same change
+ *       that adds the two C FFI runtime rows (the D3 one-change rule,
+ *       ISSUE-0573): the terminal state carries no {@code deferred}
+ *       root field, and a manifest carrying one fails as an unknown
+ *       root field.</li>
  *   <li><b>{@code specSections} (D5):</b> every {@code @spec}
  *       first-component (the part before the {@code " — "} separator)
  *       used by any discovered corpus fixture must be listed; an
@@ -114,16 +116,16 @@ import java.util.stream.Stream;
  * </ul>
  *
  * <p>The validator is deterministic and side-effect-free over its
- * inputs: it parses the manifest text it is given, reads fixture and
- * sidecar files under the corpus root, runs the embedded backend-neutral
- * frontend over benchmark artifacts (whose name resolution reads the
- * spec stdlib surface), performs no other I/O, and mutates nothing. It
- * is a reusable test-side component: today's consumers are its unit
- * matrix and the authoring-time suites, and the differential gate's
- * Coverage Manifest Validator component consumes the same API at T14.
- * The manifest is a gate artifact, not runtime metadata: production
- * compiler/runtime/stdlib code never depends on the manifest or this
- * validator.</p>
+ * inputs: it parses the manifest text it is given, reads fixture,
+ * sidecar, and corpus FFI wiring files under the corpus root, runs the
+ * embedded backend-neutral frontend over benchmark artifacts (whose
+ * name resolution reads the spec stdlib surface), performs no other
+ * I/O, and mutates nothing. It is a reusable test-side component:
+ * today's consumers are its unit matrix and the authoring-time suites,
+ * and the differential gate's Coverage Manifest Validator component
+ * consumes the same API at T14. The manifest is a gate artifact, not
+ * runtime metadata: production compiler/runtime/stdlib code never
+ * depends on the manifest or this validator.</p>
  */
 public final class CoverageManifestValidator {
 
@@ -180,10 +182,13 @@ public final class CoverageManifestValidator {
         "conformance-ffi-declaration-rules";
 
     /**
-     * The closed requirement inventory (D2): the 18 §Conformance tests
+     * The closed requirement inventory (D2): the 20 §Conformance tests
      * rows (spec-v1.2.md:2939-2955) with their C7 kinds, as authored in
-     * the manifest. The two deferred C FFI runtime rows are absent here
-     * until T14 adds them together with their divergent fixture.
+     * the manifest. The two C FFI runtime rows
+     * ({@code conformance-ffi-abi-mapping},
+     * {@code conformance-ffi-runtime-errors}) landed with ISSUE-0573 in
+     * the same change that removed the D3 deferral bookkeeping (the
+     * one-change rule).
      */
     public static final Map<String, Kind> REQUIRED_BULLETS = Map.ofEntries(
         Map.entry("conformance-lexer", Kind.COMPILE),
@@ -193,6 +198,8 @@ public final class CoverageManifestValidator {
         Map.entry("conformance-host-abi-declarations", Kind.COMPILE),
         Map.entry("conformance-ffi-declaration-rules", Kind.COMPILE),
         Map.entry("conformance-ffi-invalid-manifest-policy", Kind.COMPILE),
+        Map.entry("conformance-ffi-abi-mapping", Kind.RUNTIME),
+        Map.entry("conformance-ffi-runtime-errors", Kind.RUNTIME),
         Map.entry("conformance-runtime-sentinels", Kind.RUNTIME),
         Map.entry("conformance-runtime-int32", Kind.RUNTIME),
         Map.entry("conformance-abi", Kind.RUNTIME),
@@ -229,34 +236,9 @@ public final class CoverageManifestValidator {
             Map.entry("observable-jsonable-serialization", Kind.RUNTIME)
         );
 
-    /**
-     * The closed deferral bookkeeping (D3): exactly the two C FFI
-     * runtime rows deferred to the zero-skip flip (T14), each with a
-     * non-empty reason. T14 adds the rows together with their divergent
-     * E6006 sidecar fixture and removes the bookkeeping in the same
-     * change; the manifest carries no entry referencing a nonexistent
-     * fixture in any state.
-     */
-    public static final Map<String, String> KNOWN_DEFERRED = Map.of(
-        "conformance-ffi-abi-mapping",
-        "Deferred to the zero-skip flip (T14): the C FFI ABI-mapping "
-            + "runtime row lands in one change together with its "
-            + "divergent E6006 sidecar fixture, after the backend epics "
-            + "register E6006 in deal/diagnostics/DiagnosticCode.java; "
-            + "no coverage entry exists until that change.",
-        "conformance-ffi-runtime-errors",
-        "Deferred to the zero-skip flip (T14): the C FFI runtime-errors "
-            + "and unsupported-backend rejection row lands in one change "
-            + "together with its divergent E6006 sidecar fixture, after "
-            + "the backend epics register E6006 in "
-            + "deal/diagnostics/DiagnosticCode.java; no coverage entry "
-            + "exists until that change."
-    );
-
     /** The closed manifest root field set (schema v1). */
     private static final Set<String> ROOT_FIELDS = Set.of(
-        "version", "requirements", "observables", "specSections",
-        "deferred");
+        "version", "requirements", "observables", "specSections");
 
     /** The closed manifest entry field set (schema v1). */
     private static final Set<String> ENTRY_FIELDS =
@@ -358,16 +340,14 @@ public final class CoverageManifestValidator {
     /**
      * The parsed manifest: schema-clean entries only (an entry that
      * failed schema validation is absent so the per-entry rules never
-     * run on a structurally broken entry), the valid {@code specSections}
-     * list (empty when absent or structurally invalid), and the
-     * {@code deferred} map of string reasons (absent/invalid entries
-     * are missing from it).
+     * run on a structurally broken entry), and the valid
+     * {@code specSections} list (empty when absent or structurally
+     * invalid).
      */
     private record ParsedManifest(
         Map<String, ManifestEntry> requirements,
         Map<String, ManifestEntry> observables,
-        List<String> specSections,
-        Map<String, String> deferred
+        List<String> specSections
     ) {}
 
     private static ParsedManifest parseAndSchemaValidate(String manifestJson,
@@ -375,7 +355,6 @@ public final class CoverageManifestValidator {
         Map<String, ManifestEntry> requirements = new TreeMap<>();
         Map<String, ManifestEntry> observables = new TreeMap<>();
         List<String> specSections = new ArrayList<>();
-        Map<String, String> deferred = new TreeMap<>();
 
         CanonicalJson.Value root;
         try {
@@ -384,13 +363,13 @@ public final class CoverageManifestValidator {
             failures.add(failure(MANIFEST_DOC, "", "<manifest>",
                 "malformed manifest JSON: " + e.getMessage()));
             return new ParsedManifest(requirements, observables,
-                specSections, deferred);
+                specSections);
         }
         if (!(root instanceof CanonicalJson.Obj obj)) {
             failures.add(failure(MANIFEST_DOC, "", "<manifest>",
                 "the manifest root must be a JSON object"));
             return new ParsedManifest(requirements, observables,
-                specSections, deferred);
+                specSections);
         }
         Map<String, CanonicalJson.Value> rootFields = new LinkedHashMap<>();
         for (CanonicalJson.Entry entry : obj.entries()) {
@@ -398,7 +377,7 @@ public final class CoverageManifestValidator {
                 failures.add(failure(MANIFEST_DOC, "", entry.key(),
                     "unknown field in the manifest root (closed root "
                         + "fields: version, requirements, observables, "
-                        + "specSections, deferred)"));
+                        + "specSections)"));
             }
             rootFields.putIfAbsent(entry.key(), entry.value());
         }
@@ -420,9 +399,7 @@ public final class CoverageManifestValidator {
             observables, failures);
         parseSpecSections(rootFields.get("specSections"), specSections,
             failures);
-        parseDeferred(rootFields.get("deferred"), deferred, failures);
-        return new ParsedManifest(requirements, observables, specSections,
-            deferred);
+        return new ParsedManifest(requirements, observables, specSections);
     }
 
     /** One entry section (requirements or observables): closed entry shape. */
@@ -578,31 +555,8 @@ public final class CoverageManifestValidator {
         specSections.addAll(names);
     }
 
-    /** The deferred map: row id → string reason. */
-    private static void parseDeferred(CanonicalJson.Value value,
-            Map<String, String> deferred, List<CoverageFailure> failures) {
-        if (value == null) {
-            failures.add(failure(MANIFEST_DOC, "", "deferred",
-                "missing mandatory deferred object"));
-            return;
-        }
-        if (!(value instanceof CanonicalJson.Obj deferredObj)) {
-            failures.add(failure(MANIFEST_DOC, "", "deferred",
-                "deferred must be a JSON object"));
-            return;
-        }
-        for (CanonicalJson.Entry entry : deferredObj.entries()) {
-            if (!(entry.value() instanceof CanonicalJson.Str reason)) {
-                failures.add(failure(entry.key(), "", "deferred",
-                    "the deferral reason must be a string"));
-                continue;
-            }
-            deferred.put(entry.key(), reason.value());
-        }
-    }
-
     // =========================================================================
-    // Inventory completeness and deferral bookkeeping (D2/D3)
+    // Inventory completeness (D2)
     // =========================================================================
 
     private static void validateInventory(ParsedManifest parsed,
@@ -642,23 +596,15 @@ public final class CoverageManifestValidator {
                         + entry.kind().manifestName()));
             }
         }
-        // Unknown ids, TreeSet-ordered; a deferred id carrying a coverage
-        // entry is the deferral coverage conflict, not a plain unknown id.
+        // Unknown ids, TreeSet-ordered.
         for (String id : new TreeSet<>(parsed.requirements().keySet())) {
             if (REQUIRED_BULLETS.containsKey(id)) {
                 continue;
             }
-            if (KNOWN_DEFERRED.containsKey(id)) {
-                failures.add(failure(id, "", "deferred",
-                    "the deferred row \"" + id + "\" must not carry a "
-                        + "coverage entry (T14 adds the row and removes "
-                        + "the bookkeeping in one change)"));
-            } else {
-                failures.add(failure(id, "", "inventory",
-                    "unknown requirement id \"" + id + "\" — the "
-                        + "requirement inventory is closed inside the "
-                        + "validator"));
-            }
+            failures.add(failure(id, "", "inventory",
+                "unknown requirement id \"" + id + "\" — the "
+                    + "requirement inventory is closed inside the "
+                    + "validator"));
         }
         for (String id : new TreeSet<>(parsed.observables().keySet())) {
             if (!REQUIRED_OBSERVABLES.containsKey(id)) {
@@ -666,28 +612,6 @@ public final class CoverageManifestValidator {
                     "unknown observable id \"" + id + "\" — the "
                         + "observable inventory is closed inside the "
                         + "validator"));
-            }
-        }
-        // Deferral bookkeeping: exactly the closed set, non-empty reasons.
-        for (String id : new TreeSet<>(KNOWN_DEFERRED.keySet())) {
-            if (!parsed.deferred().containsKey(id)) {
-                failures.add(failure(id, "", "deferred",
-                    "missing deferred row \"" + id + "\" — the deferral "
-                        + "bookkeeping must name exactly the closed T14 "
-                        + "set"));
-                continue;
-            }
-            if (parsed.deferred().get(id).trim().isEmpty()) {
-                failures.add(failure(id, "", "deferred",
-                    "the deferred row \"" + id + "\" must carry a "
-                        + "non-empty reason"));
-            }
-        }
-        for (String id : new TreeSet<>(parsed.deferred().keySet())) {
-            if (!KNOWN_DEFERRED.containsKey(id)) {
-                failures.add(failure(id, "", "deferred",
-                    "unknown deferred row \"" + id + "\" — the deferral "
-                        + "bookkeeping is closed to the two T14 rows"));
             }
         }
     }
@@ -1015,6 +939,10 @@ public final class CoverageManifestValidator {
      * corpus-relative path and header-stripped source. Relative imports
      * ({@code ./}, {@code ../}) resolve against the importing module's
      * corpus directory with the {@code .deal}/{@code .d.deal} fallback;
+     * corpus C FFI externals imports ({@code candidate/*}) resolve
+     * through the corpus-owned FFI wiring into their support
+     * declarations — the modules carrying the {@code @extern-c}
+     * directive the divergent sidecar's C6 trigger check requires;
      * stdlib and host imports resolve outside the corpus and contribute
      * no module (the sidecar {@code sourceFile} rule never names them).
      */
@@ -1052,6 +980,30 @@ public final class CoverageManifestValidator {
                 continue;
             }
             CorpusFixture dependency = corpusByPath.get(resolved);
+            if (dependency != null) {
+                collectCompilationModules(dependency.corpusPath(),
+                    dependency.source(), corpusByPath, corpusRoot, set,
+                    inProgress);
+            }
+        }
+        // Corpus C FFI externals (ISSUE-0507): a candidate/* import
+        // resolves through the corpus-owned FFI wiring into its support
+        // declaration — the module carrying the @extern-c directive the
+        // divergent sidecar's C6 trigger check requires in the
+        // compilation set.
+        for (String importPath : CorpusDiscovery.ffiImportPaths(source)) {
+            CorpusFfi.Wiring wiring = CorpusFfi.wiringFor(corpusRoot,
+                importPath);
+            if (wiring == null) {
+                continue;
+            }
+            Path absoluteRoot = corpusRoot.toAbsolutePath().normalize();
+            String declarationPath = slash(
+                absoluteRoot.relativize(
+                    absoluteRoot.resolve(CorpusFfi.FFI_DIR)
+                        .resolve(wiring.declarationCorpusPath())
+                        .toAbsolutePath().normalize()));
+            CorpusFixture dependency = corpusByPath.get(declarationPath);
             if (dependency != null) {
                 collectCompilationModules(dependency.corpusPath(),
                     dependency.source(), corpusByPath, corpusRoot, set,

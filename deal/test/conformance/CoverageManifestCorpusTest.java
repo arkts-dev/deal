@@ -18,7 +18,7 @@ import java.util.stream.Stream;
 /**
  * ISSUE-0475 real-manifest mechanical check: the authored corpus
  * coverage manifest {@code test/conformance/v1.2-coverage.json} (schema
- * v1) covers every non-deferred §Conformance tests bullet and every
+ * v1) covers every §Conformance tests bullet and every
  * §Backend conformance contract observable per its C7 kind against the
  * on-disk corpus, verified through the reusable
  * {@link CoverageManifestValidator} plus independent on-disk reads
@@ -28,7 +28,7 @@ import java.util.stream.Stream;
  * gate's Coverage Manifest Validator component of
  * {@code v12-zero-skip-conformance-gate}).
  *
- * <p>The 82 checks:</p>
+ * <p>The 97 checks:</p>
  * <ol>
  *   <li>15 document-level checks: the manifest exists; it parses as
  *       canonical JSON with an object root; {@code version} is 1;
@@ -36,8 +36,8 @@ import java.util.stream.Stream;
  *       failure list (the per-kind rules over every entry — path
  *       existence, kind/classification cross-check, sidecar schema
  *       validation, Diagnostics compile sidecars, FFI pin families,
- *       benchmark compilation, {@code @spec} completeness, deferral
- *       bookkeeping); the requirements key set equals
+ *       benchmark compilation, {@code @spec} completeness); the
+ *       requirements key set equals
  *       {@link CoverageManifestValidator#REQUIRED_BULLETS} and the
  *       observables key set equals
  *       {@link CoverageManifestValidator#REQUIRED_OBSERVABLES}; every
@@ -46,10 +46,14 @@ import java.util.stream.Stream;
  *       exists and is named by the benchmark-kind entry; the
  *       Diagnostics entries name fixtures carrying Compile Expectation
  *       Sidecars ({@code mode: "compile-error"}); {@code specSections}
- *       is complete in both directions; the deferral bookkeeping is
- *       exact (the two T14 rows with non-empty reasons and no coverage
- *       entry naming a deferred row).</li>
- *   <li>67 fixture-reference checks: every fixture path named by the
+ *       is complete in both directions; the manifest carries no
+ *       {@code deferred} root field (the D3 deferral bookkeeping is
+ *       removed in the same change that adds the two C FFI runtime
+ *       rows, ISSUE-0573); the two C FFI runtime rows name only
+ *       on-disk {@code backend-runtime/ffi/} fixtures whose sidecars
+ *       pin the divergent C6 form (a runtime expectation on luajit,
+ *       {@code compile-reject} {@code E6006} on jvm and js).</li>
+ *   <li>82 fixture-reference checks: every fixture path named by the
  *       requirements and observables maps resolves to an existing file
  *       with the classification its kind requires — an independent
  *       expected-tag read on the on-disk fixture (runtime-ok or
@@ -71,7 +75,7 @@ import java.util.stream.Stream;
  * check (gate-fatal). Every check is independent of check order; the
  * same inputs always produce the identical verdict. It prints the
  * per-kind entry counts, the section count, and the deferred count for
- * the release record. Result on the authored tree: 82/0 and exit 0.</p>
+ * the release record. Result on the authored tree: 97/0 and exit 0.</p>
  */
 public class CoverageManifestCorpusTest {
 
@@ -99,6 +103,9 @@ public class CoverageManifestCorpusTest {
     /** The C FFI invalid-manifest-policy row of the closed inventory. */
     private static final String FFI_INVALID_MANIFEST_POLICY_REQUIREMENT =
         "conformance-ffi-invalid-manifest-policy";
+    /** The two C FFI runtime rows of the closed inventory (ISSUE-0573). */
+    private static final List<String> FFI_RUNTIME_ROWS = List.of(
+        "conformance-ffi-abi-mapping", "conformance-ffi-runtime-errors");
     /** The observable Diagnostics row (the second Diagnostics entry). */
     private static final String DIAGNOSTICS_OBSERVABLE =
         "observable-compile-time-diagnostics";
@@ -154,7 +161,7 @@ public class CoverageManifestCorpusTest {
         // C7 per-kind rules over every entry against the real corpus and
         // repo roots (path existence, classification cross-check, sidecar
         // schema validation, FFI pin families, benchmark compilation,
-        // @spec completeness, deferral bookkeeping).
+        // @spec completeness).
         List<CoverageManifestValidator.CoverageFailure> validatorFailures =
             CoverageManifestValidator.validate(manifestJson, CORPUS_ROOT,
                 REPO_ROOT);
@@ -245,52 +252,25 @@ public class CoverageManifestCorpusTest {
             : "specSections must carry no dead entry — \"" + deadSection
                 + "\" is listed but used by no discovered corpus fixture");
 
-        // 14-15. The deferral bookkeeping is exact (D3): the two T14
-        // rows with non-empty reasons, and no coverage entry naming a
-        // deferred row.
-        Map<String, String> deferred = stringMapOf(root, "deferred");
-        Set<String> knownDeferred =
-            CoverageManifestValidator.KNOWN_DEFERRED.keySet();
-        if (!deferred.keySet().equals(knownDeferred)) {
-            check(false, "the deferral bookkeeping must name exactly the "
-                + "closed T14 set " + knownDeferred + ", got "
-                + deferred.keySet());
-        } else {
-            String emptyReason = null;
-            for (Map.Entry<String, String> d : deferred.entrySet()) {
-                if (d.getValue().trim().isEmpty()) {
-                    emptyReason = d.getKey();
-                    break;
-                }
-            }
-            check(emptyReason == null, emptyReason == null
-                ? "the deferral bookkeeping names exactly the two T14 rows "
-                    + "with non-empty reasons"
-                : "the deferred row \"" + emptyReason
-                    + "\" must carry a non-empty reason");
-        }
-        String deferredConflict = null;
-        for (String id : requirements.keySet()) {
-            if (knownDeferred.contains(id)) {
-                deferredConflict = id;
-                break;
-            }
-        }
-        if (deferredConflict == null) {
-            for (String id : observables.keySet()) {
-                if (knownDeferred.contains(id)) {
-                    deferredConflict = id;
-                    break;
-                }
-            }
-        }
-        check(deferredConflict == null, deferredConflict == null
-            ? "no coverage entry names a deferred row"
-            : "the deferred row \"" + deferredConflict + "\" must not "
-                + "carry a coverage entry (T14 adds the row and removes "
-                + "the bookkeeping in one change)");
+        // 14. The terminal state carries no deferral bookkeeping: the
+        // `deferred` root field is removed in the same change that adds
+        // the two C FFI runtime rows (the D3 one-change rule, ISSUE-0573).
+        check(fieldOf(root, "deferred") == null,
+            "the manifest must carry no deferred root field — the D3 "
+                + "deferral bookkeeping is removed in the same change "
+                + "that adds the two C FFI runtime rows (ISSUE-0573)");
 
-        // 16-82. One check per fixture reference (67): the file exists
+        // 15. The two C FFI runtime rows name only on-disk
+        // backend-runtime/ffi/ fixtures whose sidecars pin the divergent
+        // C6 form (a runtime expectation on luajit, compile-reject E6006
+        // on jvm and js).
+        String ffiRowsProblem = ffiRuntimeRowsProblem(requirements);
+        check(ffiRowsProblem == null, ffiRowsProblem == null
+            ? "the two C FFI runtime rows name only on-disk "
+                + "backend-runtime/ffi/ divergent-sidecar fixtures"
+            : ffiRowsProblem);
+
+        // 16-97. One check per fixture reference (82): the file exists
         // and its exact on-disk @expected tag classifies as its kind
         // requires, with the row pins of D6 (FFI E7001|E7002 pins, the
         // tracked E2010 pin) and the runtime sidecar presence.
@@ -309,7 +289,7 @@ public class CoverageManifestCorpusTest {
 
         // The release record: per-kind entry counts, section count, and
         // deferred count.
-        printSummary(requirements, observables, listedSections, deferred);
+        printSummary(requirements, observables, listedSections);
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
@@ -405,22 +385,6 @@ public class CoverageManifestCorpusTest {
         return out;
     }
 
-    /** A JSON string map field (empty when absent or malformed). */
-    private static Map<String, String> stringMapOf(CanonicalJson.Obj root,
-            String key) {
-        CanonicalJson.Value value = fieldOf(root, key);
-        Map<String, String> out = new TreeMap<>();
-        if (!(value instanceof CanonicalJson.Obj obj)) {
-            return out;
-        }
-        for (CanonicalJson.Entry entry : obj.entries()) {
-            if (entry.value() instanceof CanonicalJson.Str s) {
-                out.put(entry.key(), s.value());
-            }
-        }
-        return out;
-    }
-
     /** The first entry id carrying an empty fixtures array, or null. */
     private static String firstEmptyEntry(
             Map<String, ManifestEntry> section) {
@@ -430,6 +394,124 @@ public class CoverageManifestCorpusTest {
             }
         }
         return null;
+    }
+
+    /**
+     * The C FFI runtime-row shape problem, or null: both rows are
+     * runtime-kind, every named fixture lives under
+     * {@code backend-runtime/ffi/}, and its sidecar pins the divergent
+     * C6 form — a runtime expectation on luajit and
+     * {@code compile-reject} with {@code diagnostic.code} E6006 on jvm
+     * and js (the ISSUE-0507 population the ISSUE-0573 rows name).
+     */
+    private static String ffiRuntimeRowsProblem(
+            Map<String, ManifestEntry> requirements) {
+        for (String row : FFI_RUNTIME_ROWS) {
+            ManifestEntry entry = requirements.get(row);
+            if (entry == null) {
+                return "the C FFI runtime row \"" + row + "\" is "
+                    + "missing from the requirements map";
+            }
+            if (entry.kind() != CoverageManifestValidator.Kind.RUNTIME) {
+                return "the C FFI runtime row \"" + row + "\" must be "
+                    + "kind runtime (C7), got "
+                    + entry.kind().manifestName();
+            }
+            for (String fixturePath : entry.fixtures()) {
+                if (!fixturePath.startsWith("backend-runtime/ffi/")) {
+                    return row + ": " + fixturePath + ": the C FFI "
+                        + "runtime row must name only "
+                        + "backend-runtime/ffi/ fixtures, got a fixture "
+                        + "outside the FFI directory";
+                }
+                String sidecarProblem = divergentSidecarProblem(
+                    fixturePath);
+                if (sidecarProblem != null) {
+                    return row + ": " + fixturePath + ": "
+                        + sidecarProblem;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The divergent C6 sidecar shape problem of one FFI fixture, or
+     * null: the sidecar must carry the per-backend form — a runtime
+     * expectation ({@code mode} {@code runtime-ok} or
+     * {@code runtime-error}) on luajit and {@code compile-reject} with
+     * {@code diagnostic.code} exactly E6006 on jvm and js.
+     */
+    private static String divergentSidecarProblem(String fixturePath) {
+        Path sidecar = sidecarFor(fixturePath);
+        CanonicalJson.Obj root = null;
+        try {
+            CanonicalJson.Value parsed =
+                CanonicalJson.parse(Files.readString(sidecar));
+            if (parsed instanceof CanonicalJson.Obj obj) {
+                root = obj;
+            }
+        } catch (IOException | RuntimeException e) {
+            root = null;
+        }
+        if (root == null) {
+            return "the C FFI runtime fixture is missing a readable "
+                + "divergent sidecar " + sidecar.getFileName();
+        }
+        CanonicalJson.Value backendsValue = fieldOf(root, "backends");
+        if (!(backendsValue instanceof CanonicalJson.Obj backends)) {
+            return "the C FFI runtime sidecar must carry the divergent "
+                + "per-backend form (a backends object)";
+        }
+        for (String backend : List.of("luajit", "jvm", "js")) {
+            CanonicalJson.Value entryValue = fieldOf(backends, backend);
+            if (!(entryValue instanceof CanonicalJson.Obj entry)) {
+                return "the C FFI runtime sidecar must name " + backend;
+            }
+            if (backend.equals("luajit")) {
+                CanonicalJson.Value modeValue = fieldOf(entry, "mode");
+                String mode = modeValue instanceof CanonicalJson.Str s
+                    ? s.value() : null;
+                if (!"runtime-ok".equals(mode)
+                        && !"runtime-error".equals(mode)) {
+                    return "the C FFI runtime sidecar luajit arm must "
+                        + "pin a runtime expectation (runtime-ok or "
+                        + "runtime-error), got " + describeNullable(mode);
+                }
+            } else {
+                CanonicalJson.Value modeValue = fieldOf(entry, "mode");
+                String mode = modeValue instanceof CanonicalJson.Str s
+                    ? s.value() : null;
+                if (!"compile-reject".equals(mode)) {
+                    return "the C FFI runtime sidecar " + backend
+                        + " arm must pin compile-reject, got "
+                        + describeNullable(mode);
+                }
+                String code = null;
+                CanonicalJson.Value diagnosticValue =
+                    fieldOf(entry, "diagnostic");
+                if (diagnosticValue instanceof CanonicalJson.Obj diag) {
+                    CanonicalJson.Value codeValue =
+                        fieldOf(diag, "code");
+                    code = codeValue instanceof CanonicalJson.Str s
+                        ? s.value() : null;
+                }
+                if (!SidecarSchemaValidator.FFI_UNSUPPORTED_BACKEND_CODE
+                        .equals(code)) {
+                    return "the C FFI runtime sidecar " + backend
+                        + " arm must pin diagnostic.code "
+                        + SidecarSchemaValidator
+                            .FFI_UNSUPPORTED_BACKEND_CODE
+                        + ", got " + describeNullable(code);
+                }
+            }
+        }
+        return null;
+    }
+
+    /** A nullable JSON field value for failure messages. */
+    private static String describeNullable(String value) {
+        return value == null ? "<absent>" : "\"" + value + "\"";
     }
 
     // =========================================================================
@@ -731,8 +813,7 @@ public class CoverageManifestCorpusTest {
 
     /** The per-kind entry counts, section count, and deferred count. */
     private static void printSummary(Map<String, ManifestEntry> requirements,
-            Map<String, ManifestEntry> observables, List<String> sections,
-            Map<String, String> deferred) {
+            Map<String, ManifestEntry> observables, List<String> sections) {
         int[] reqCounts = kindCounts(requirements);
         int[] obsCounts = kindCounts(observables);
         int totalCompile = reqCounts[0] + obsCounts[0];
@@ -750,7 +831,8 @@ public class CoverageManifestCorpusTest {
             + totalCompile + ", runtime " + totalRuntime + ", benchmark "
             + totalBenchmark + ")");
         System.out.println("  specSections: " + sections.size());
-        System.out.println("  deferred: " + deferred.size());
+        System.out.println("  deferred: 0 (the deferral bookkeeping is "
+            + "removed — ISSUE-0573)");
     }
 
     /** Kind counts {@code [compile, runtime, benchmark]} of one section. */
