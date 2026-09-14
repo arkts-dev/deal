@@ -334,6 +334,7 @@ TEST_MAINS=(
   'bg|=== Launching Lua ABI Unit Tests (background; JUnit4 + Hamcrest) ===|java -ea -cp build:/usr/share/java/junit4.jar:/usr/share/java/hamcrest-core.jar org.junit.runner.JUnitCore deal.test.LuaAbiTest deal.test.LuaAbiBackendTest deal.test.CrossModuleTypingTest'
   'bg|=== Launching Conformance Tests (background) ===|java -ea -cp build deal.test.ConformanceTest test/conformance/'
   'bg|=== Launching JVM Conformance Tests (background; ISSUE-0102 origin — ISSUE-0168 capability accounting) ===|java -ea -cp build deal.test.JvmConformanceTest test/conformance/'
+  'bg|=== Launching JS Conformance Tests (background) ===|java -ea -cp build deal.test.JsConformanceTest test/conformance/'
   'fg|=== Running ContainedProcessBroker Framing Tests ===|java -ea -cp build deal.test.containment.ContainedProcessBrokerFramingTest'
   'fg|=== Running ContainedProcessBroker State Tests ===|java -ea -cp build deal.test.containment.ContainedProcessBrokerStateTest'
   'fg|=== Running Diagnostic Range Tests ===|java -ea -cp build deal.test.DiagnosticRangeTest'

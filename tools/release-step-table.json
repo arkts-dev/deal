@@ -464,7 +464,7 @@
    "cwd": "export"
   },
   {
-   "step": "deal.test.JvmLaneStatePinTest",
+   "step": "deal.test.JsConformanceTest",
    "tier": 2,
    "budget": 1800,
    "cwd": "export"

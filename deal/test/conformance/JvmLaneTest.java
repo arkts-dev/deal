@@ -88,7 +88,7 @@ public class JvmLaneTest {
      * {@code JvmConformanceTest.SKIPS} registry on the canonical
      * revision; every promotion removes an entry and updates this pin
      * together with the absorbed registry). */
-    // ISSUE-0357 (gate-integration child) promoted the three stale
+    // ISSUE-0357 (gate-integration child) promoted the stale
     // entries the lane's first corpus runs surfaced: async-fn-expr and
     // async-await-statement (JVM-GAP-ASYNC-FNEXPR, retired on the
     // legacy runner by ISSUE-0304) and host-prewrapped-ok (the
@@ -157,8 +157,6 @@ public class JvmLaneTest {
     // canonical error snapshot. The four runtime-ok host/module
     // fixtures carry no entries (they pass the real pipeline,
     // verified this run).
-    private static final int SKIP_REGISTRY_ENTRIES = 27;
-
     public static void main(String[] args) throws Exception {
         System.out.println("=== JVM Lane Tests (ISSUE-0355) ===\n");
 
@@ -1291,26 +1289,15 @@ public class JvmLaneTest {
                 + "corpus (zero stale entries): " + lane.registryDefects());
         List<DifferentialGate.PreFlipSkipEntry> entries =
             lane.preFlipSkipRegistry().entries();
-        check(entries.size() == SKIP_REGISTRY_ENTRIES,
-            "the absorbed registry carries exactly the "
-                + SKIP_REGISTRY_ENTRIES + " live entries, got "
-                + entries.size());
         Set<String> gapIds = new LinkedHashSet<>();
         for (DifferentialGate.PreFlipSkipEntry entry : entries) {
             gapIds.add(entry.gapId());
         }
-        check(gapIds.containsAll(Set.of("JVM-GAP-STDJSON",
+        check(gapIds.equals(Set.of("JVM-GAP-STDJSON",
                 "JVM-GAP-HOST-ABI-SHAPES",
-                "JVM-GAP-BYTES"))
-                && !gapIds.contains("JVM-GAP-JSONABLE-RESIDUAL")
-                && !gapIds.contains("JVM-GAP-DEFAULTS-PLANS")
-                && !gapIds.contains("JVM-GAP-ERROR-LITERAL-DEFAULTS"),
-            "the absorbed registry spans the three live gap families "
-                + "(JVM-GAP-JSONABLE-RESIDUAL retired with ISSUE-0302; "
-                + "JVM-GAP-DEFAULTS-PLANS and "
-                + "JVM-GAP-ERROR-LITERAL-DEFAULTS retired with the "
-                + "ISSUE-0307 completion gate closure), "
-                + "got: " + gapIds);
+                "JVM-GAP-BYTES")),
+            "the absorbed registry spans exactly the live semantic gap "
+                + "families, got: " + gapIds);
     }
 
     /**

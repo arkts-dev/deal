@@ -28,9 +28,9 @@ import java.util.stream.Stream;
  * gate's Coverage Manifest Validator component of
  * {@code v12-zero-skip-conformance-gate}).
  *
- * <p>The 97 checks:</p>
+ * <p>The checks include:</p>
  * <ol>
- *   <li>15 document-level checks: the manifest exists; it parses as
+ *   <li>document-level checks: the manifest exists; it parses as
  *       canonical JSON with an object root; {@code version} is 1;
  *       {@link CoverageManifestValidator#validate} returns an empty
  *       failure list (the per-kind rules over every entry — path
@@ -53,7 +53,7 @@ import java.util.stream.Stream;
  *       on-disk {@code backend-runtime/ffi/} fixtures whose sidecars
  *       pin the divergent C6 form (a runtime expectation on luajit,
  *       {@code compile-reject} {@code E6006} on jvm and js).</li>
- *   <li>82 fixture-reference checks: every fixture path named by the
+ *   <li>fixture-reference checks: every fixture path named by the
  *       requirements and observables maps resolves to an existing file
  *       with the classification its kind requires — an independent
  *       expected-tag read on the on-disk fixture (runtime-ok or
@@ -75,7 +75,7 @@ import java.util.stream.Stream;
  * check (gate-fatal). Every check is independent of check order; the
  * same inputs always produce the identical verdict. It prints the
  * per-kind entry counts, the section count, and the deferred count for
- * the release record. Result on the authored tree: 97/0 and exit 0.</p>
+ * the release record.</p>
  */
 public class CoverageManifestCorpusTest {
 
@@ -129,14 +129,14 @@ public class CoverageManifestCorpusTest {
         System.out.println("=== Coverage Manifest Corpus Test "
             + "(ISSUE-0475) ===\n");
 
-        // 1. The manifest exists.
+        // The manifest exists.
         boolean manifestExists = Files.isRegularFile(MANIFEST_PATH);
         check(manifestExists, "the corpus coverage manifest must exist at "
             + MANIFEST_PATH);
         String manifestJson = manifestExists
             ? Files.readString(MANIFEST_PATH) : "";
 
-        // 2. The manifest parses as canonical JSON with an object root.
+        // The manifest parses as canonical JSON with an object root.
         CanonicalJson.Obj root = null;
         try {
             CanonicalJson.Value parsed = CanonicalJson.parse(manifestJson);
@@ -150,14 +150,14 @@ public class CoverageManifestCorpusTest {
                 + e.getMessage());
         }
 
-        // 3. The manifest schema version is exactly 1.
+        // The manifest schema version is exactly 1.
         check(root != null
                 && versionOf(root) == CoverageManifestValidator.MANIFEST_SCHEMA_VERSION,
             "the manifest version must be exactly "
                 + CoverageManifestValidator.MANIFEST_SCHEMA_VERSION
                 + " (schema v1)");
 
-        // 4. The reusable validator returns an empty failure list — the
+        // The reusable validator returns an empty failure list — the
         // C7 per-kind rules over every entry against the real corpus and
         // repo roots (path existence, classification cross-check, sidecar
         // schema validation, FFI pin families, benchmark compilation,
@@ -178,13 +178,13 @@ public class CoverageManifestCorpusTest {
         Map<String, ManifestEntry> observables =
             parseSection(sectionOf(root, "observables"));
 
-        // 5-6. The key sets equal the closed inventories exactly.
+        // The key sets equal the closed inventories exactly.
         checkKeySet("requirements", requirements,
             CoverageManifestValidator.REQUIRED_BULLETS.keySet());
         checkKeySet("observables", observables,
             CoverageManifestValidator.REQUIRED_OBSERVABLES.keySet());
 
-        // 7-8. Every entry carries at least one fixture.
+        // Every entry carries at least one fixture.
         String emptyRequirement = firstEmptyEntry(requirements);
         check(emptyRequirement == null, emptyRequirement == null
             ? "every requirement entry carries at least one fixture"
@@ -196,7 +196,7 @@ public class CoverageManifestCorpusTest {
             : "observable entry \"" + emptyObservable
                 + "\" carries no fixtures");
 
-        // 9-10. The benchmark artifact exists and the benchmark-kind
+        // The benchmark artifact exists and the benchmark-kind
         // entry names it (the validator proves it compiles under the
         // embedded v1.2 frontend with no error diagnostics).
         check(Files.isRegularFile(REPO_ROOT.resolve(BENCHMARK_ARTIFACT)),
@@ -209,7 +209,7 @@ public class CoverageManifestCorpusTest {
                 + "proves it compiles under the v1.2 frontend)"
             : benchmarkProblem);
 
-        // 11. The Diagnostics entries name fixtures carrying Compile
+        // The Diagnostics entries name fixtures carrying Compile
         // Expectation Sidecars (mode "compile-error").
         String diagnosticsProblem =
             diagnosticsSidecarProblem(requirements, observables);
@@ -218,7 +218,7 @@ public class CoverageManifestCorpusTest {
                 + "Expectation Sidecars (mode \"compile-error\")"
             : diagnosticsProblem);
 
-        // 12-13. specSections is complete in both directions (D5): every
+        // specSections is complete in both directions (D5): every
         // used @spec first-component is listed, and every listed section
         // is used by at least one fixture (no dead entries).
         List<String> listedSections = stringArrayOf(root, "specSections");
@@ -252,7 +252,7 @@ public class CoverageManifestCorpusTest {
             : "specSections must carry no dead entry — \"" + deadSection
                 + "\" is listed but used by no discovered corpus fixture");
 
-        // 14. The terminal state carries no deferral bookkeeping: the
+        // The terminal state carries no deferral bookkeeping: the
         // `deferred` root field is removed in the same change that adds
         // the two C FFI runtime rows (the D3 one-change rule, ISSUE-0573).
         check(fieldOf(root, "deferred") == null,
@@ -260,7 +260,7 @@ public class CoverageManifestCorpusTest {
                 + "deferral bookkeeping is removed in the same change "
                 + "that adds the two C FFI runtime rows (ISSUE-0573)");
 
-        // 15. The two C FFI runtime rows name only on-disk
+        // The two C FFI runtime rows name only on-disk
         // backend-runtime/ffi/ fixtures whose sidecars pin the divergent
         // C6 form (a runtime expectation on luajit, compile-reject E6006
         // on jvm and js).
@@ -270,7 +270,7 @@ public class CoverageManifestCorpusTest {
                 + "backend-runtime/ffi/ divergent-sidecar fixtures"
             : ffiRowsProblem);
 
-        // 16-97. One check per fixture reference (82): the file exists
+        // One check per fixture reference: the file exists
         // and its exact on-disk @expected tag classifies as its kind
         // requires, with the row pins of D6 (FFI E7001|E7002 pins, the
         // tracked E2010 pin) and the runtime sidecar presence.
@@ -287,8 +287,7 @@ public class CoverageManifestCorpusTest {
             }
         }
 
-        // The release record: per-kind entry counts, section count, and
-        // deferred count.
+        // The release record: per-kind entry counts and section count.
         printSummary(requirements, observables, listedSections);
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
@@ -634,7 +633,7 @@ public class CoverageManifestCorpusTest {
     }
 
     // =========================================================================
-    // Per-fixture checks (67 independent expected-tag reads)
+    // Per-fixture checks
     // =========================================================================
 
     /** One fixture-reference check naming the requirement on failure. */
@@ -811,7 +810,7 @@ public class CoverageManifestCorpusTest {
     // Release record and result accounting
     // =========================================================================
 
-    /** The per-kind entry counts, section count, and deferred count. */
+    /** The per-kind entry counts and section count. */
     private static void printSummary(Map<String, ManifestEntry> requirements,
             Map<String, ManifestEntry> observables, List<String> sections) {
         int[] reqCounts = kindCounts(requirements);
@@ -831,8 +830,6 @@ public class CoverageManifestCorpusTest {
             + totalCompile + ", runtime " + totalRuntime + ", benchmark "
             + totalBenchmark + ")");
         System.out.println("  specSections: " + sections.size());
-        System.out.println("  deferred: 0 (the deferral bookkeeping is "
-            + "removed — ISSUE-0573)");
     }
 
     /** Kind counts {@code [compile, runtime, benchmark]} of one section. */

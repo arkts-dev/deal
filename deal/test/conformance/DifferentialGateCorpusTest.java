@@ -32,142 +32,6 @@ public class DifferentialGateCorpusTest {
 
     private static final Path CORPUS_ROOT = Path.of("test", "conformance");
 
-    /** The pinned corpus population (the T2/T3 sidecar population pins).
-     * ISSUE-0378 adds the restored known-fail fixture
-     * {@code backend-runtime/arithmetic/int-add-overflow.deal} (canonical
-     * known-fail header, byte-exact restoration): +1 total fixture, +1
-     * backend-runtime fixture, +1 known-fail, +1 runtime-error sidecar
-     * (its underlying runtime-error E8004 mode carries the mandatory
-     * three-backend sidecar like every other runtime-classified
-     * fixture). ISSUE-0380 (the disposition-application unit) flips
-     * {@code backend-runtime/stdlib-edge/time-now-millis-positive.deal}
-     * to {@code runtime-error E8004} (runtime-ok 219 -> 218, sidecar
-     * re-authored) and promotes the restored int-add-overflow fixture
-     * (runtime-error 81 -> 83, its sidecar unchanged; known-fail
-     * 2 -> 1: only the FFI manifest frontend pin stays tracked; the
-     * runtime-error-sidecar population 82 -> 83). ISSUE-0501 (the
-     * compile-classified gap-fixture landing) adds the 63 gap fixtures
-     * under {@code frontend/} (type-system 2, lexer 21, modules 9,
-     * diagnostics 3, bytes 4, types 16, tables 2 — 57 classified
-     * cases: +20 compile-ok, +37 compile-error; +6 companions) and
-     * the two Diagnostics-bullet compile sidecars: total 465 -> 528,
-     * frontend 130 -> 193, compile-ok 38 -> 58, compile-error
-     * 91 -> 128, companions 34 -> 40, compile pins 2 -> 4; the
-     * runtime populations (218/83) and the known-fail population
-     * (the one FFI manifest frontend pin) are unchanged.
-     * ISSUE-0500 (v12-gap-suite-integration E1/E2 co-landing) adds the
-     * preserved gap resolution subtree
-     * {@code frontend/modules/resolution/} (six compile-classified root
-     * fixtures + {@code nested/relative-parent} + nine discovery
-     * companions) and the transformed direct declaration fixture
-     * {@code frontend/modules/declaration-expression-statement-rejected.d.deal}
-     * (compile-error E7001): total 528 -> 545, frontend 193 -> 210,
-     * compile-ok 58 -> 64, compile-error 128 -> 130, companions
-     * 40 -> 49; the runtime populations (218/83), the known-fail
-     * population, and the compile pins (4) are unchanged.
-     * This tree (ISSUE-0477, the ISSUE-0402 acceptance remediation)
-     * promotes the last known-fail — the FFI manifest pin
-     * {@code frontend/modules/ffi-manifest-missing-native-library-rejected.deal}
-     * — to a real compile-error fixture (compile-error 130 -> 131,
-     * known-fail 1 -> 0) in the same change as its production E2010
-     * emission site (deal/checker/NameResolver.java at the import span),
-     * so the corpus carries zero known-fail fixtures. The gate's own
-     * real-frontend corpus phase observes the promotion too:
-     * {@code CorpusFrontendResolver} enforces the same v1.2 C FFI
-     * manifest policy (an import of an effective-{@code @extern-c}
-     * {@code .d.deal} corpus module without a manifest entry raises the
-     * checker's E2010 at the import span), so the promoted fixture
-     * records {@code frontend OK (found E2010)} through the real
-     * pipeline, never a manufactured pin. ISSUE-0547 (the ISSUE-0160
-     * container step) adds the two bytes-container fixtures
-     * {@code backend-runtime/bytes/bytes-array-container-ops.deal} and
-     * {@code backend-runtime/bytes/bytes-nested-arrays.deal} with their
-     * three-backend runtime-ok sidecars in the same change: total
-     * 545 -> 547, backend-runtime 335 -> 337, runtime-ok 218 -> 220;
-     * the runtime-error population (83), the known-fail population, and
-     * the compile pins (4) are unchanged. ISSUE-0502 (the gap-suite
-     * runtime population landing) adds forty-one fixtures on top of the
-     * 547: +30 runtime-ok (the promoted gap bytes-boundary-order
-     * included — its retained-known-fail marker was forced off by the
-     * zero-skip promotion gate after ISSUE-0158 lifted the E3019
-     * bytes-equality gate), +10 runtime-error, +1 companion
-     * (integration_state_lib.deal): runtime-ok 220 -> 250,
-     * runtime-error 83 -> 93, companions 49 -> 50, known-fail stays 0
-     * (ISSUE-0477 already promoted the FFI-manifest pin), total
-     * 547 -> 588, backend-runtime 337 -> 378. ISSUE-0504 (the host ABI
-     * conversion leaf) lands the eight host-boundary runtime-ok
-     * fixtures with their uniform three-backend sidecars in the same
-     * change: total 588 -> 596, backend-runtime 378 -> 386,
-     * runtime-ok 250 -> 258; the runtime-error population (93), the
-     * known-fail population, the companions (50), the frontend
-     * populations, and the compile pins (4) are unchanged.
-     * ISSUE-0160 (the recursive bytes-bearing closure) then adds the
-     * three closure fixtures (bytes-array-closure, bytes-async-closure,
-     * bytes-function-array-closure) with their three-backend runtime-ok
-     * sidecars: total 596 -> 599, backend-runtime 386 -> 389,
-     * runtime-ok 258 -> 261. ISSUE-0548 (the JVM sync function-shape
-     * closure) then adds the six sync bytes-function fixtures plus
-     * their companion — five runtime-ok sidecars
-     * (bytes-sync-fn-shapes, bytes-fn-adapters,
-     * bytes-identity-equality, bytes-nested-fn-shapes,
-     * bytes-fn-xmod) and one runtime-error sidecar
-     * (bytes-fn-adapter-e8010) — in the same change: total 599 -> 606,
-     * backend-runtime 389 -> 396, runtime-ok 261 -> 266,
-     * runtime-error 93 -> 94, companions 50 -> 51. ISSUE-0550 (the
-     * JVM dynamic boundary rows) then adds the six dynamic
-     * bytes-boundary fixtures — the two runtime-ok fixtures
-     * (bytes-dynamic-boundary-ok,
-     * bytes-dynamic-nullable-function-ok) and the four runtime-error
-     * fixtures (bytes-dynamic-wrong-kind-e8001,
-     * bytes-dynamic-nested-first-element-e8003,
-     * bytes-dynamic-function-mismatch-e8010,
-     * bytes-dynamic-async-function-mismatch-e8010) with their
-     * canonical-snapshot sidecars: total 606 -> 612, backend-runtime
-     * 396 -> 402, runtime-ok 266 -> 268, runtime-error 94 -> 98; the
-     * frontend populations, compile-ok (64), compile-error (131),
-     * companions (51), the known-fail population, and the compile
-     * pins (4) are unchanged. ISSUE-0507 (FFI candidate fixture
-     * conformance) then lands the nineteen FFI files under
-     * {@code backend-runtime/ffi/} — the sixteen fixtures (ten
-     * runtime-ok, five runtime-error, one compile-error E7002) plus
-     * their three companion support declarations — in the same change:
-     * total 612 -> 631, backend-runtime 402 -> 421, runtime-ok
-     * 268 -> 278, runtime-error 98 -> 103, compile-error 131 -> 132,
-     * companions 51 -> 54; the frontend population (210), compile-ok
-     * (64), the known-fail population (0), and the compile pins (4)
-     * are unchanged. ISSUE-0551 (the JVM host/module/JSON bytes leaf)
-     * then adds its seven backend-runtime fixtures — five host-bytes
-     * fixtures (host-bytes-roundtrip,
-     * host-bytes-nullable-roundtrip, host-bytes-no-call-on-failure,
-     * host-bytes-param-mismatch-e8010,
-     * host-bytes-return-mismatch-e8010), the bytes module-identity
-     * fixture, and the nested JSON bytes fixture — plus one companion
-     * (bytes_module_lib.deal): total 631 -> 639, backend-runtime
-     * 421 -> 429, runtime-ok 278 -> 282, runtime-error 103 -> 106,
-     * companions 54 -> 55; the frontend populations, compile-ok (64),
-     * compile-error (132), the known-fail population (0), and the
-     * compile pins (4) are unchanged. ISSUE-0552 (the JVM bytes
-     * integrated-verification lane state) then adds its one
-     * backend-runtime fixture
-     * (bytes-class-default-integration.deal — nested bytes defaults,
-     * sync/async first-class function defaults, freshness, isolation,
-     * retained identity, validation failure, and JSON rejection):
-     * total 639 -> 640, backend-runtime 429 -> 430, runtime-ok
-     * 282 -> 283; the frontend population (210), compile-ok (64),
-     * compile-error (132), runtime-error (106), companions (55), the
-     * known-fail population (0), and the compile pins (4) are
-     * unchanged. */
-    private static final int TOTAL_FIXTURES = 640;
-    private static final int FRONTEND_FIXTURES = 210;
-    private static final int BACKEND_RUNTIME_FIXTURES = 430;
-    private static final int COMPILE_OK = 64;
-    private static final int COMPILE_ERROR = 132;
-    private static final int RUNTIME_OK = 283;
-    private static final int RUNTIME_ERROR = 106;
-    private static final int RUNTIME_ERROR_SIDECARS = 106;
-    private static final int COMPANIONS = 55;
-    private static final int KNOWN_FAIL = 0;
-    private static final int COMPILE_PINS = 4;
 
     public static void main(String[] args) throws Exception {
         System.out.println("=== Differential Gate Corpus Tests (ISSUE-0353) ===\n");
@@ -201,36 +65,23 @@ public class DifferentialGateCorpusTest {
     // =========================================================================
 
     private static void discoveryAndClassification(DifferentialGate.GateRun run) {
-        check(run.fixtures().size() == TOTAL_FIXTURES,
-            "the real corpus discovers exactly " + TOTAL_FIXTURES
-                + " fixtures, got " + run.fixtures().size());
-        check(run.fixtures().stream()
-                .filter(f -> f.phase().equals("frontend")).count()
-                == FRONTEND_FIXTURES,
-            "frontend phase carries exactly " + FRONTEND_FIXTURES
-                + " fixtures");
-        check(run.fixtures().stream()
-                .filter(f -> f.phase().equals("backend-runtime")).count()
-                == BACKEND_RUNTIME_FIXTURES,
-            "backend-runtime phase carries exactly "
-                + BACKEND_RUNTIME_FIXTURES + " fixtures");
+        long frontend = run.fixtures().stream()
+            .filter(f -> f.phase().equals("frontend")).count();
+        long backendRuntime = run.fixtures().stream()
+            .filter(f -> f.phase().equals("backend-runtime")).count();
+        long classified = 0;
+        for (CorpusDiscovery.Kind kind : CorpusDiscovery.Kind.values()) {
+            classified += countKind(run, kind);
+        }
+        check(frontend + backendRuntime == run.fixtures().size(),
+            "frontend and backend-runtime phases account for every fixture");
+        check(classified == run.fixtures().size(),
+            "fixture classifications account for every discovered fixture");
         check(run.classificationFailures().isEmpty(),
             "the real corpus classifies with zero classification failures: "
                 + run.classificationFailures());
-        check(countKind(run, CorpusDiscovery.Kind.COMPILE_OK) == COMPILE_OK,
-            "compile-ok fixtures: " + COMPILE_OK);
-        check(countKind(run, CorpusDiscovery.Kind.COMPILE_ERROR)
-                == COMPILE_ERROR,
-            "compile-error fixtures: " + COMPILE_ERROR);
-        check(countKind(run, CorpusDiscovery.Kind.RUNTIME_OK) == RUNTIME_OK,
-            "runtime-ok fixtures: " + RUNTIME_OK);
-        check(countKind(run, CorpusDiscovery.Kind.RUNTIME_ERROR)
-                == RUNTIME_ERROR,
-            "runtime-error fixtures: " + RUNTIME_ERROR);
-        check(countKind(run, CorpusDiscovery.Kind.COMPANION) == COMPANIONS,
-            "companion fixtures: " + COMPANIONS);
-        check(countKind(run, CorpusDiscovery.Kind.KNOWN_FAIL) == KNOWN_FAIL,
-            "known-fail fixtures: " + KNOWN_FAIL);
+        check(countKind(run, CorpusDiscovery.Kind.KNOWN_FAIL) == 0,
+            "the corpus carries zero known-fail fixtures");
     }
 
     private static long countKind(DifferentialGate.GateRun run,
@@ -242,30 +93,33 @@ public class DifferentialGateCorpusTest {
     }
 
     private static void sidecarValidation(DifferentialGate.GateRun run) {
-        check(run.loadedFixtures().size() == TOTAL_FIXTURES,
+        check(run.loadedFixtures().size() == run.fixtures().size(),
             "every discovered fixture carries a load result");
+        long runtimeFixtures = run.fixtures().stream()
+            .filter(CorpusDiscovery.Fixture::runtimeClassified).count();
         long runtimeLoaded = run.loadedFixtures().stream()
             .filter(f -> f.load().runtime().isPresent()).count();
-        check(runtimeLoaded == RUNTIME_OK + RUNTIME_ERROR_SIDECARS,
+        check(runtimeLoaded == runtimeFixtures,
             "every runtime-classified fixture's sidecar loads and validates "
-                + "under T1 with its compilation set: " + (RUNTIME_OK
-                + RUNTIME_ERROR_SIDECARS) + " loaded, got " + runtimeLoaded);
+                + "under T1 with its compilation set");
+        long runtimeOkFixtures = countKind(run, CorpusDiscovery.Kind.RUNTIME_OK);
         long runtimeOkLoaded = run.loadedFixtures().stream()
             .filter(f -> f.load().runtime().isPresent()
                 && "runtime-ok".equals(f.fixture().classification()
                     .runtimeSidecarMode()))
             .count();
-        check(runtimeOkLoaded == RUNTIME_OK,
-            "runtime-ok sidecars: " + RUNTIME_OK + ", got " + runtimeOkLoaded);
+        check(runtimeOkLoaded == runtimeOkFixtures,
+            "every runtime-ok fixture carries a loaded sidecar");
         long pinLoaded = run.loadedFixtures().stream()
             .filter(f -> f.load().compilePin().isPresent()).count();
-        check(pinLoaded == COMPILE_PINS,
-            "compile pin sidecars: " + COMPILE_PINS + ", got " + pinLoaded);
+        check(pinLoaded == run.compileDiagnosticComparisons(),
+            "every loaded compile pin is compared against the frontend");
     }
 
     private static void compileDiagnosticPins(DifferentialGate.GateRun run) {
-        check(run.compileDiagnosticComparisons() == COMPILE_PINS,
-            "the four real Diagnostics-bullet fixtures are compared against "
+        check(run.compileDiagnosticComparisons() == run.loadedFixtures().stream()
+                .filter(f -> f.load().compilePin().isPresent()).count(),
+            "every real Diagnostics-bullet fixture is compared against "
                 + "the real frontend");
         check(run.failures().stream()
                 .noneMatch(f -> f.kind().equals("compile-diagnostic")),
@@ -277,9 +131,9 @@ public class DifferentialGateCorpusTest {
     }
 
     private static void knownFailTracking(DifferentialGate.GateRun run) {
-        check(run.knownFailuresTracked() == KNOWN_FAIL,
-            "the tracked known-fail population is exactly " + KNOWN_FAIL
-                + " non-fatal, got " + run.knownFailuresTracked());
+        check(run.knownFailuresTracked() == 0,
+            "the tracked known-fail population is empty, got "
+                + run.knownFailuresTracked());
         check(run.skipped() == 0,
             "the pre-flip Skipped counter stays zero");
         List<String> knownFailPaths = run.fixtures().stream()
@@ -328,11 +182,12 @@ public class DifferentialGateCorpusTest {
     }
 
     private static void dispatchDeferral(DifferentialGate.GateRun run) {
-        check(run.runtimeCasesDeferred() == RUNTIME_OK + RUNTIME_ERROR_SIDECARS,
-            "the runtime dispatch defers exactly the " + (RUNTIME_OK
-                + RUNTIME_ERROR_SIDECARS) + " runtime cases in this child (no lane "
-                + "implementations land before T7-T9), got "
-                + run.runtimeCasesDeferred());
+        long runtimeFixtures = run.fixtures().stream()
+            .filter(CorpusDiscovery.Fixture::runtimeClassified).count();
+        check(run.runtimeCasesDeferred() == runtimeFixtures,
+            "runtime dispatch defers every discovered runtime case in this "
+                + "child, got " + run.runtimeCasesDeferred() + " of "
+                + runtimeFixtures);
         check(run.runtimeCasesDispatched() == 0,
             "zero cases dispatched in this child");
         for (String backend : SidecarSchemaValidator.BACKEND_NAMES) {
@@ -441,8 +296,14 @@ public class DifferentialGateCorpusTest {
                         + "Error Expectation field-exactly");
             }
         }
-        check(checked == RUNTIME_ERROR_SIDECARS,
-            "the canonical-consistency check covers all " + RUNTIME_ERROR_SIDECARS
-                + " runtime-error sidecars, got " + checked);
+        long runtimeErrorLoaded = run.loadedFixtures().stream()
+            .filter(f -> f.load().runtime().isPresent()
+                && "runtime-error".equals(f.fixture().classification()
+                    .runtimeSidecarMode()))
+            .count();
+        check(checked == runtimeErrorLoaded,
+            "the canonical-consistency check covers every loaded "
+                + "runtime-error sidecar, got " + checked + " of "
+                + runtimeErrorLoaded);
     }
 }

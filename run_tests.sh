@@ -103,9 +103,8 @@ TEST_MAINS+=(
 # class-free out-of-root artifact sets carrying no public descriptor, and
 # the private-identity exclusion / legacy-emission grep pins over every
 # identity-bearing artifact set. The conformance host-fixture projections
-# merged by T5 stay verified by the gate's conformance suites
-# (ConformanceTest / the lane pin tests) — this child verifies, never
-# re-migrates. Joined here at the gate-script level, like the
+# merged by T5 stay verified by the direct conformance runners — this
+# child verifies, never re-migrates. Joined here at the gate-script level, like the
 # ISSUE-0474/0475 suites, so the single compile/test-list authority file
 # (tools/gate-manifest.sh) stays untouched.
 # =========================================================================
@@ -205,9 +204,9 @@ TEST_MAINS+=(
 
 # =========================================================================
 # ISSUE-0474 + ISSUE-0475 (Coverage Manifest Validator and Corpus
-# Check): the reusable C7 validation component, its synthetic 24/0 unit
-# matrix, and the real-manifest 97/0 mechanical check join the compile
-# list and the unconditional run phase here, at the gate-script level
+# Check): the reusable C7 validation component and real-manifest
+# mechanical check join the compile list and the unconditional run phase
+# here, at the gate-script level
 # (the authoring-time gate authority). The change boundary is
 # deal/test/conformance/ plus run_tests.sh, so the single compile/
 # test-list authority file (tools/gate-manifest.sh) stays untouched.
@@ -311,7 +310,7 @@ TEST_MAINS+=(
 # ten host-boundary/rtc-015/phase-order entries). The retained
 # JvmConformanceTest gate is CLOSED (ISSUE-0307): its skip registry is
 # retired — zero skips, 100% of the 354-test on-disk denominator — and
-# the real gate runs unchanged on every run inside the pin test
+# the real gate runs directly on every run
 # (G5's temporary-coexistence window).
 # =========================================================================
 TEST_SOURCES+=(
@@ -320,36 +319,6 @@ TEST_SOURCES+=(
 )
 TEST_MAINS+=(
   'fg|=== Running JVM Lane Tests (ISSUE-0355) ===|java -ea -cp build deal.test.conformance.JvmLaneTest'
-)
-
-# =========================================================================
-# ISSUE-0536 (ISSUE-0372 acceptance remediation) with the ISSUE-0331
-# closure: the JS corpus gate launches on every gate run inside the JS
-# lane state pin test. The pin test launches the real JsConformanceTest
-# as a subprocess and asserts the captured state field-exactly: the
-# lane-wide activated invocation (COMMON_SHADOW + DEAL_V1_2_INT32 — the
-# invocation the LuaJIT lane's A5 seam resolves for uncatalogued
-# fixtures) is pinned field-exactly, the emitted entry module calls
-# $rt.setInt32Mode(true), deal/runtime.js checkInt gates at the
-# signed-32 boundary, and the flipped shared fixture
-# backend-runtime/stdlib-edge/time-now-millis-positive.deal passes as
-# runtime-error E8004 on the JS gate — the gate validity condition
-# expectation(fixture) == landed std/time.js behavior
-# (js-v12-completion-architecture D5). The JS completion gate closure
-# (ISSUE-0331) retired the last three owner-delegated lane divergences
-# (the E8003 array-element walk over json-array-marked Map tables and
-# the E8007 defaults-map seam in deal/runtime.js, with the cfg host
-# triplet carrying the Lua-mirroring $rt.MISSING marks), so the pin
-# test now asserts the closed state: exit 0, all 303 node-executed
-# backend-runtime fixtures passing with zero skips and a 100.0% pass
-# rate, zero ] FAIL ( / GATE FAILURE lines, and the Gates PASSED
-# summary. The unselected direct-caller default mode of the retained
-# JS runtime stays the legacy range, so test_stdlib_js.js keeps
-# running unselected and stays green unchanged.
-# =========================================================================
-TEST_SOURCES+=( 'test/JsLaneStatePinTest.java' )
-TEST_MAINS+=(
-  'bg|=== Launching JS Lane State Pin Tests (ISSUE-0536 with the ISSUE-0331 closure: the real JS corpus gate runs inside the pin test under its activated invocation and the closed-state output — 303/303, zero skips, exit 0 — is pinned field-exactly) ===|java -ea -cp build deal.test.JsLaneStatePinTest'
 )
 
 # =========================================================================
@@ -462,35 +431,6 @@ TEST_SOURCES+=( 'test/SemanticProductionGateTest.java' )
 TEST_MAINS+=(
   'fg|=== Running Semantic Production Gate Tests (ISSUE-0239) ===|java -ea -cp build deal.test.SemanticProductionGateTest'
 )
-
-# =========================================================================
-# ISSUE-0378 D5 (JvmLaneStatePinTest substitution): the pin test owns
-# both raw lane runs. It launches the real LuaJIT lane and the real JVM
-# lane as subprocesses and asserts their captured closed-state outputs
-# field-exactly — the JVM gate closed by ISSUE-0307 (354/354, zero
-# skips, no registry, the 100% Gates PASSED banner) and the LuaJIT lane
-# at 549/549 — so the gate stays green while both real lanes still run -
-# inside the pin test - on every gate run. The two raw lane launches
-# are substituted by the single pin-test launch; the fail-closed
-# background wait and every other suite stay.
-# =========================================================================
-TEST_SOURCES+=( 'test/JvmLaneStatePinTest.java' )
-
-REBUILT_MAINS=()
-for record in "${TEST_MAINS[@]}"; do
-  case "$record" in
-    'bg|=== Launching Conformance Tests (background) ===|java -ea -cp build deal.test.ConformanceTest test/conformance/')
-      # Removed: the LuaJIT lane runs inside the pin test instead.
-      ;;
-    'bg|=== Launching JVM Conformance Tests (background; ISSUE-0102 origin — ISSUE-0168 capability accounting) ===|java -ea -cp build deal.test.JvmConformanceTest test/conformance/')
-      REBUILT_MAINS+=( 'bg|=== Launching JVM Lane State Pin Tests (ISSUE-0378: both real lanes run inside the pin test with field-exact closed-state assertions) ===|java -ea -cp build deal.test.JvmLaneStatePinTest' )
-      ;;
-    *)
-      REBUILT_MAINS+=( "$record" )
-      ;;
-  esac
-done
-TEST_MAINS=( "${REBUILT_MAINS[@]}" )
 
 # =========================================================================
 # ISSUE-0157 (strict v1.2 feature catalog and backend matrix): the three
@@ -808,8 +748,8 @@ echo "  Containment spawn scan pass (no process-spawn surface and no launcher-sp
 # =========================================================================
 # Run all tests.
 #
-# The five heavy suites (backend conformance, JVM backend, the JUnit
-# ABI/typing suite, and the two conformance runners) are independent:
+# The heavy suites (backend conformance, JVM backend, the JUnit ABI/typing
+# suite, and the three direct conformance runners) are independent:
 # each confines its generated artifacts and subprocess work to its own
 # PID-unique temp directories and reads the shared fixture/stdlib trees
 # read-only. They run concurrently in the background while the remaining

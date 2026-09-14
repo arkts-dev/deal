@@ -182,8 +182,8 @@ public final class CoverageManifestValidator {
         "conformance-ffi-declaration-rules";
 
     /**
-     * The closed requirement inventory (D2): the 20 §Conformance tests
-     * rows (spec-v1.2.md:2939-2955) with their C7 kinds, as authored in
+     * The closed requirement inventory (D2): the §Conformance tests
+     * rows with their C7 kinds, as authored in
      * the manifest. The two C FFI runtime rows
      * ({@code conformance-ffi-abi-mapping},
      * {@code conformance-ffi-runtime-errors}) landed with ISSUE-0573 in
@@ -214,9 +214,9 @@ public final class CoverageManifestValidator {
     );
 
     /**
-     * The closed observable inventory (D2): the 11 §Backend conformance
-     * contract observables (spec-v1.2.md:2103-2120) with their C7 kinds
-     * — compile-time diagnostics is {@code compile}; the other ten are
+     * The closed observable inventory (D2): the §Backend conformance
+     * contract observables with their C7 kinds — compile-time diagnostics
+     * is {@code compile}; the others are
      * {@code runtime}.
      */
     public static final Map<String, Kind> REQUIRED_OBSERVABLES =

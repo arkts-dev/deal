@@ -113,9 +113,8 @@ TEST_MAINS+=(
 # CompilationOrchestrator -> JvmBackend codegen -> javac -> real java
 # subprocess) and reuses the shared canonical ErrorSnapshot serializer
 # verbatim. Pre-flip, the lane keeps the absorbed skip registry as
-# tracked non-fatal paths (G8); JvmConformanceTest keeps running
-# unchanged in run_tests.sh until the flip retires it (G5's
-# temporary-coexistence window).
+# tracked non-fatal paths (G8); the direct JvmConformanceTest runner
+# remains registered in the shared gate manifest.
 # =========================================================================
 TEST_SOURCES+=(
   'deal/test/conformance/JvmLane.java'

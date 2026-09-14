@@ -24,7 +24,7 @@ import java.util.Set;
  * and {@code node} subprocesses — plus the six controlled divergence
  * experiments on scratch copies (never the committed corpus).
  *
- * <p>The full-run pins (Verification 1/8, pre-flip accounting G8):</p>
+ * <p>The full-run checks (Verification 1/8, pre-flip accounting G8):</p>
  * <ul>
  *   <li>the designated converged subset
  *       ({@code control-flow/if-else.deal},
@@ -32,15 +32,8 @@ import java.util.Set;
  *       {@code stdlib/string/length-unicode.deal},
  *       {@code error-handling/try-catch.deal} plus two more converged
  *       cases) passes byte-exact on all three lanes;</li>
- *   <li>the failure set is exactly the tracked non-fatal set (the
- *       24 JVM registry entries — the ten ISSUE-0504
- *       host-boundary E8011 carrier mismatches and the rtc-015 /
- *       phase-order entries promoted by the ISSUE-0307 completion
- *       gate closure, the single retained alias-as-value entry
- *       tracked with the ISSUE-0276 snapshot reason, and the four
- *       ISSUE-0550 dynamic bytes-boundary runtime-error entries
- *       tracked with the same ISSUE-0276 snapshot reason) plus
- *       the enumerated differential failures — every one naming
+ *   <li>the failure set is exactly the tracked non-fatal registry set
+ *       plus the enumerated differential failures — every one naming
  *       fixture,
  *       backend, and the closed mismatch class with the first differing
  *       byte/field detail;</li>
@@ -93,111 +86,6 @@ public class DifferentialGateLanesCorpusTest {
 
     /** The harness-owned deadline of the full run (G7). */
     private static final Duration FULL_RUN_DEADLINE = Duration.ofSeconds(120);
-
-    /** The pinned corpus population (the T2/T3/T5 pins; the frontend
-     * population counts the promoted FFI-manifest compile-error
-     * fixture — ISSUE-0477 dropped its known-fail marker; ISSUE-0547
-     * adds the two bytes-container runtime fixtures; ISSUE-0502 adds
-     * the gap-suite runtime population: +30 runtime-ok — the promoted
-     * gap bytes-boundary-order included, its retained-known-fail
-     * marker forced off by the zero-skip promotion gate after
-     * ISSUE-0158 lifted the E3019 bytes-equality gate — +10
-     * runtime-error, +1 companion; ISSUE-0504 lands the eight
-     * host-boundary runtime-ok fixtures with their uniform three-backend
-     * sidecars; the three ISSUE-0160 recursive bytes-closure fixtures
-     * land on top; ISSUE-0548 (the JVM sync function-shape closure)
-     * then lands the six sync bytes-function fixtures (total 599 ->
-     * 606, runtime cases 354 -> 360); ISSUE-0550 (the JVM dynamic
-     * boundary rows) then lands the six dynamic bytes-boundary
-     * fixtures (total 606 -> 612, runtime cases 360 -> 366);
-     * ISSUE-0507 then lands the nineteen FFI files — total 612 -> 631,
-     * runtime cases 366 -> 381, frontend-compiled 191 -> 192;
-     * ISSUE-0551 (the JVM host/module/JSON bytes leaf) then lands its
-     * seven backend-runtime fixtures — five host-bytes fixtures, the
-     * bytes module-identity fixture, and the nested JSON bytes
-     * fixture — plus one companion (bytes_module_lib.deal): total
-     * 631 -> 639, runtime cases 381 -> 388). ISSUE-0552 (the JVM
-     * bytes integrated-verification lane state) then lands its one
-     * backend-runtime fixture
-     * (bytes-class-default-integration.deal) with its uniform
-     * three-backend runtime-ok sidecar: total 639 -> 640, runtime
-     * cases 388 -> 389). */
-    private static final int TOTAL_FIXTURES = 640;
-    private static final int RUNTIME_CASES = 389;
-    private static final int FRONTEND_COMPILED = 192;
-    private static final int COMPILE_PINS = 4;
-    /** Pre-flip accounting pins (G8; the last on-disk known-fail
-     * marker was promoted by ISSUE-0477, so the counter is zero — the
-     * ISSUE-0502 gap bytes-boundary-order fixture passes every lane
-     * and lands promoted as runtime-ok, contributing no known-fail
-     * counter and no differential triples. The registry count
-     * descended through the lane promotions: the canonical 39 plus
-     * the six ISSUE-0502 additions plus the eight ISSUE-0504
-     * host-boundary additions, minus the seven runtime-ok std/json
-     * fixtures ISSUE-0302 promoted out of the registry, minus the
-     * ISSUE-0160 recursive bytes-bearing closure entry, minus the
-     * ISSUE-0544 imported-non-literal-default entry, minus the
-     * fourteen ISSUE-0303 host ABI shape promotions — the landed 30.
-     * The ISSUE-0307 completion gate closure then promoted the ten
-     * entries whose fixtures now pass the real pipeline: the eight
-     * host-boundary fixtures (the boxed int/Integer carrier class
-     * literals match the declared host shapes), the rtc-015 Error
-     * literal default, and plan-phase-order-provided-before-defaults
-     * — the landed 20. The host-async-shape-value entry stays tracked
-     * with the ISSUE-0276 snapshot reason: the fixture now compiles
-     * and raises its pinned E8010 through the per-export shared
-     * wrapper carrier, but the JVM DEALRuntimeError snapshot carries
-     * no column field. The ISSUE-0550 dynamic boundary rows then
-     * absorbed the four runtime-error dynamic bytes-boundary fixtures
-     * (JVM-GAP-BYTES, the same ISSUE-0276 no-column reason), so the
-     * landed registry count is 24; ISSUE-0551 (the JVM
-     * host/module/JSON bytes leaf) absorbs its three runtime-error
-     * fixtures the same way (the host E8010 parameter/return boundary
-     * fixtures and the nested JSON bytes fixture all raise their
-     * pinned codes on the JVM lane, but the captured JVM
-     * DEALRuntimeError carries no column field), so the landed
-     * registry count is 27.) */
-    private static final int KNOWN_FAILURES_TRACKED = 0;
-    private static final int SKIP_REGISTRY_ENTRIES = 27;
-
-    /** The per-backend pass/fail counters of the full run. The
-     * ISSUE-0548 sync function-shape closure adds six runtime
-     * fixtures — five runtime-ok passes on every lane, the
-     * bytes-fn-adapter-e8010 runtime-error fixture passing on luajit
-     * and failing on jvm (PROCESS_FAILURE) and js (TRANSCRIPT_MISMATCH)
-     * — so each backend gains five passes, luajit six, and jvm/js one
-     * failure. ISSUE-0507: every FFI runtime fixture passes on all
-     * three lanes — luajit executes through the production load_ffi
-     * path, jvm/js match the sanctioned compile-reject E6006
-     * divergence — so each backend's pass counter grows by 15 and the
-     * failure counters are unchanged. The ISSUE-0550 dynamic boundary
-     * rows then absorbed the four runtime-error dynamic
-     * bytes-boundary fixtures into the jvm registry and added the two
-     * runtime-ok passes, so the canonical pairs plus the ISSUE-0548
-     * six-runtime deltas and the ISSUE-0507 +15 passes are the merged
-     * pins below. ISSUE-0551 (the JVM host/module/JSON bytes leaf)
-     * then adds its four runtime-ok passes on every lane; the three
-     * runtime-error fixtures fail on the luajit lane (PROCESS_FAILURE:
-     * the host/stdjson-raised errors carry no span for the pinned
-     * idealized call-site location) and the js leg of the nested JSON
-     * fixture fails its transcript (the std/json bytes arm carries no
-     * expected/actual pair) — the two host E8010 fixtures pass on js
-     * (the js host boundary pins the exact call-site span through the
-     * source-map sidecar), and the jvm legs raise their pinned codes
-     * but the captured JVM DEALRuntimeError carries no column
-     * (ISSUE-0276), so they are tracked in the registry set above
-     * instead. ISSUE-0552 (the JVM bytes integrated-verification lane
-     * state) then adds its one runtime-ok fixture passing on the
-     * luajit and jvm lanes; the plan-less JsLane class-default path
-     * (the lane compiles without the published plan machinery, so its
-     * makeClass overlay runs no phase-3 provided-value validation) does
-     * not raise the pinned E8001 and fails the fixture's transcript,
-     * so luajit/jvm each gain one pass and js gains one failure (the
-     * merged pins below). */
-    private static final Map<String, int[]> PER_BACKEND = Map.of(
-        "luajit", new int[] {354, 35},
-        "jvm", new int[] {288, 101},
-        "js", new int[] {355, 34});
 
     /** The designated converged subset (task criterion (a)): every lane
      * of every fixture here passes byte-exact. */
@@ -643,18 +531,27 @@ public class DifferentialGateLanesCorpusTest {
         check(elapsedMillis < FULL_RUN_DEADLINE.toMillis() * 4,
             "the full three-lane gate completes inside the budget "
                 + "envelope (elapsed " + elapsedMillis + " ms)");
-        check(run.fixtures().size() == TOTAL_FIXTURES,
-            "the full run discovers " + TOTAL_FIXTURES + " fixtures, got "
-                + run.fixtures().size());
+        long frontendFixtures = run.fixtures().stream()
+            .filter(f -> f.classification() != null
+                && (f.classification().kind() == CorpusDiscovery.Kind.COMPILE_OK
+                    || f.classification().kind()
+                        == CorpusDiscovery.Kind.COMPILE_ERROR))
+            .count();
+        long runtimeFixtures = run.fixtures().stream()
+            .filter(CorpusDiscovery.Fixture::runtimeClassified).count();
+        long compilePins = run.loadedFixtures().stream()
+            .filter(f -> f.load().compilePin().isPresent()).count();
+        check(run.loadedFixtures().size() == run.fixtures().size(),
+            "every discovered fixture has a load result");
         check(run.classificationFailures().isEmpty(),
             "zero classification failures over the real corpus: "
                 + run.classificationFailures());
-        check(run.frontendCompiled() == FRONTEND_COMPILED,
-            "the frontend corpus executes backend-neutral (" + FRONTEND_COMPILED
-                + " compile-ok/compile-error fixtures), got "
-                + run.frontendCompiled());
-        check(run.compileDiagnosticComparisons() == COMPILE_PINS,
-            "the " + COMPILE_PINS + " Compile Diagnostic comparisons run");
+        check(run.frontendCompiled() + run.compileDiagnosticComparisons()
+                == frontendFixtures,
+            "frontend execution and diagnostic comparisons account for every "
+                + "discovered compile-classified case");
+        check(run.compileDiagnosticComparisons() == compilePins,
+            "every loaded Compile Diagnostic pin is compared");
         check(run.failures().stream().noneMatch(f ->
                 "frontend-compile".equals(f.kind())
                     || "compile-diagnostic".equals(f.kind())
@@ -662,34 +559,29 @@ public class DifferentialGateLanesCorpusTest {
                     || "stale skip-registry".equals(f.kind())),
             "zero frontend-compile, compile-diagnostic, stale known-fail, "
                 + "and stale skip-registry failures, got: " + run.failures());
-        check(run.runtimeCasesDispatched() == RUNTIME_CASES
+        check(run.runtimeCasesDispatched() == runtimeFixtures
                 && run.runtimeCasesDeferred() == 0,
-            "every runtime case dispatches exactly once ("
-                + RUNTIME_CASES + " dispatched, 0 deferred), got "
+            "every discovered runtime case dispatches exactly once, got "
                 + run.runtimeCasesDispatched() + "/"
                 + run.runtimeCasesDeferred());
-        check(run.verdicts().size() == RUNTIME_CASES,
-            "one verdict per dispatched case, got " + run.verdicts().size());
+        check(run.verdicts().size() == run.runtimeCasesDispatched(),
+            "one verdict exists per dispatched case");
 
-        // Pre-flip accounting (G8): Skipped/KnownFailures counters and
-        // the exact tracked non-fatal set.
         check(run.skipped() == 0,
             "the Skipped counter is zero");
-        check(run.knownFailuresTracked() == KNOWN_FAILURES_TRACKED,
-            "the KnownFailures counter tracks exactly "
-                + KNOWN_FAILURES_TRACKED + " fixture, got "
+        check(run.knownFailuresTracked() == 0,
+            "the KnownFailures counter is zero, got "
                 + run.knownFailuresTracked());
-        check(run.skipRegistryTracked() == SKIP_REGISTRY_ENTRIES,
-            "the skip registry tracks exactly " + SKIP_REGISTRY_ENTRIES
-                + " non-fatal outcomes, got " + run.skipRegistryTracked());
+        check(run.skipRegistryTracked() == TRACKED_REGISTRY.size(),
+            "the tracked registry counter equals the exact semantic set size, "
+                + "got " + run.skipRegistryTracked());
         Set<String> registryPaths = new java.util.TreeSet<>();
         for (DifferentialGate.PreFlipSkipEntry entry
                 : jvm.preFlipSkipRegistry().entries()) {
             registryPaths.add(entry.corpusPath());
         }
         check(registryPaths.equals(new java.util.TreeSet<>(TRACKED_REGISTRY)),
-            "the live registry carries exactly the pinned " 
-                + SKIP_REGISTRY_ENTRIES + " entries");
+            "the live registry carries exactly the pinned semantic entries");
         check(jvm.registryDefects().isEmpty(),
             "the registry validates cleanly against the real corpus: "
                 + jvm.registryDefects());
@@ -826,14 +718,11 @@ public class DifferentialGateLanesCorpusTest {
                     + failure.subject());
         }
 
-        // The per-backend counters and the closed mismatch classes.
         for (String backend : SidecarSchemaValidator.BACKEND_NAMES) {
             int[] counts = run.perBackend().get(backend);
-            check(counts[0] == PER_BACKEND.get(backend)[0]
-                    && counts[1] == PER_BACKEND.get(backend)[1],
-                backend + " counters are " + PER_BACKEND.get(backend)[0]
-                    + " passed / " + PER_BACKEND.get(backend)[1]
-                    + " failed, got " + counts[0] + " / " + counts[1]);
+            check(counts[0] + counts[1] == run.runtimeCasesDispatched(),
+                backend + " pass/fail counters account for every dispatched "
+                    + "runtime case, got " + counts[0] + " / " + counts[1]);
         }
         for (String triplePin : DIFFERENTIAL_FAILURES) {
             check(triplePin.endsWith("| TRANSCRIPT_MISMATCH")

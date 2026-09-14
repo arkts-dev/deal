@@ -95,11 +95,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * .testRecursiveBytesClosureLane}), while the reachable class-field
  * re-read surface ({@code box.cb = picker(); box.cb(...)}) passes the
  * real pipeline in bytes-nested-fn-shapes.deal. The
- * anti-hollow evidence owner is {@code test/JvmLaneStatePinTest.java}:
- * it runs this lane and the real LuaJIT lane as subprocesses and
- * asserts the captured closed-state output field-exactly on every gate
- * run ({@code run_tests.sh} substitutes it for the raw lane
- * launches).</p>
+ * lane runs directly from {@code run_tests.sh} on every gate run.</p>
  *
  * <h2>Classification policy (deterministic, documented)</h2>
  *
@@ -197,12 +193,6 @@ public class JvmConformanceTest {
         CompilerProfileProvider.resolve(ReleaseState.V1_2_ACTIVE,
             CapabilityRegistry.releaseRegistry());
 
-    /** The lane-wide activated invocation, exposed for the ISSUE-0378
-     * pin test ({@code JvmLaneStatePinTest}) to assert field-exactly. */
-    static CompilerInvocation laneInvocation() {
-        return LANE_INVOCATION;
-    }
-
     // =========================================================================
     // Applicability policy (ISSUE-0307 gate closure): no skip registry
     // =========================================================================
@@ -211,8 +201,7 @@ public class JvmConformanceTest {
     // no registry and no fallback skip branch, so a SKIPPED outcome is
     // impossible by construction: every runtime-classified on-disk
     // fixture is APPLICABLE and must pass the real pipeline. The gate
-    // report asserts the zero skip count, and the evidence owner
-    // (JvmLaneStatePinTest) pins this registry-less source.
+    // report asserts the zero skip count.
 
     // =========================================================================
     // Host modules for the JVM-applicable host-ABI corpus tests

@@ -196,12 +196,6 @@ public class JsConformanceTest {
             SemanticProfile.DEAL_V1_2_INT32, ReleaseState.PRE_ACTIVATION,
             ReleaseConfiguration.releaseCapabilityRegistry());
 
-    /** The lane-wide activated invocation, exposed for pin tests to
-     * assert field-exactly. */
-    static CompilerInvocation laneInvocation() {
-        return LANE_INVOCATION;
-    }
-
     // =========================================================================
     // Host harness: one CommonJS implementation per host fixture
     // =========================================================================
