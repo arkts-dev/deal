@@ -78,8 +78,12 @@ public final class ReleaseConfiguration {
      * capability order ({@code LUAJIT} before {@code JVM} within the
      * capability): the bytes guard (planner rule 2b) keeps bytes-bearing
      * modules on the retained route in every purpose, so the promotion
-     * never flips them SHARED. The list is the registry half of E12's
-     * one atomic release change plus its later promotion units.
+     * never flips them SHARED. The step-2 cutover promotion (ISSUE-0577)
+     * extends the list further with {@code DESCRIPTORS} for both targets,
+     * still in the pinned capability order (the existing {@code BOUNDARY}
+     * emission was proven green three-way on the descriptor-boundary
+     * corpus before the promotion landed). The list is the registry half
+     * of E12's one atomic release change plus its later promotion units.
      */
     private static final List<ReleasePromotion> ACTIVATION_PROMOTIONS = List.of(
         new ReleasePromotion(SemanticCapability.FOUNDATION_VALUES, Target.LUAJIT),
@@ -87,7 +91,9 @@ public final class ReleaseConfiguration {
         new ReleasePromotion(SemanticCapability.SIGNED_INT32, Target.LUAJIT),
         new ReleasePromotion(SemanticCapability.SIGNED_INT32, Target.JVM),
         new ReleasePromotion(SemanticCapability.CONTAINERS_AND_STRINGS, Target.LUAJIT),
-        new ReleasePromotion(SemanticCapability.CONTAINERS_AND_STRINGS, Target.JVM));
+        new ReleasePromotion(SemanticCapability.CONTAINERS_AND_STRINGS, Target.JVM),
+        new ReleasePromotion(SemanticCapability.DESCRIPTORS, Target.LUAJIT),
+        new ReleasePromotion(SemanticCapability.DESCRIPTORS, Target.JVM));
 
     /**
      * The release registry after E12's activation release action: the
@@ -137,12 +143,13 @@ public final class ReleaseConfiguration {
 
     /**
      * The release capability registry (foundation F7) after E12's
-     * activation plus the step-1 cutover promotion: {@link
+     * activation plus the step-1 and step-2 cutover promotions: {@link
      * CapabilityRegistry#releaseRegistry()} composed with the E12
      * promotion list through {@code withState} —
-     * {@code FOUNDATION_VALUES}, {@code SIGNED_INT32}, and
-     * {@code CONTAINERS_AND_STRINGS} promoted for {@code LUAJIT} and
-     * {@code JVM}, every other entry {@code SHADOW}.
+     * {@code FOUNDATION_VALUES}, {@code SIGNED_INT32},
+     * {@code CONTAINERS_AND_STRINGS}, and {@code DESCRIPTORS} promoted
+     * for {@code LUAJIT} and {@code JVM}, every other entry
+     * {@code SHADOW}.
      * {@code deal/Main.java}, {@code CompilationOrchestrator}, and the
      * internal harnesses consume exactly this instance for invocation
      * resolution and route planning.

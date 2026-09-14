@@ -807,7 +807,18 @@ public class SemanticProductionGateTest {
             "the pre-step-1 registry keeps CONTAINERS_AND_STRINGS SHADOW for "
                 + "both targets");
 
-        CapabilityRegistry step1 = ReleaseConfiguration.releaseCapabilityRegistry();
+        // The step-1 release registry: the committed E12 pairs plus the
+        // step-1 cutover promotion (CONTAINERS_AND_STRINGS for both
+        // targets) composed from the all-SHADOW release default through
+        // the single withState transition surface — the exact prior
+        // release state the step-2 promotion (ISSUE-0577) extends. The
+        // step-2 live registry is derived in the step-2 digest test, so
+        // this historical pin stays truthful at every later cutover step.
+        CapabilityRegistry step1 = preStep1
+            .withState(deal.semantic.ir.SemanticCapability.CONTAINERS_AND_STRINGS,
+                deal.semantic.Target.LUAJIT, CapabilityRegistry.State.PROMOTED)
+            .withState(deal.semantic.ir.SemanticCapability.CONTAINERS_AND_STRINGS,
+                deal.semantic.Target.JVM, CapabilityRegistry.State.PROMOTED);
         String step1Hash = step1.capabilityRegistryHash();
 
         // The promotion is a real registry transition: the digest over the
@@ -877,6 +888,349 @@ public class SemanticProductionGateTest {
                 + "and CONTAINERS_AND_STRINGS for both targets; every other "
                 + "capability stays SHADOW");
 
+        // Anti-hollow: re-deriving the step-1 promotion list prefix (the
+        // first six release promotions) through the withState surface
+        // reproduces the step-1 release digest — the step-1 registry is
+        // exactly the composed prefix, never a hand-written digest
+        // constant.
+        CapabilityRegistry recomposed = CapabilityRegistry.releaseRegistry();
+        List<ReleaseConfiguration.ReleasePromotion> promotions =
+            ReleaseConfiguration.activationPromotions();
+        for (int i = 0; i < 6 && i < promotions.size(); i++) {
+            ReleaseConfiguration.ReleasePromotion promotion = promotions.get(i);
+            recomposed = recomposed.withState(promotion.capability(),
+                promotion.target(), CapabilityRegistry.State.PROMOTED);
+        }
+        check(recomposed.capabilityRegistryHash().equals(step1Hash),
+            "re-deriving the step-1 promotion list prefix through withState "
+                + "reproduces the step-1 release registry digest");
+        check(!recomposed.capabilityRegistryHash().equals(preStep1Hash),
+            "the recomposed step-1 digest still differs from the pre-step-1 "
+                + "digest (the prior release digest is left behind)");
+    }
+
+    private static final String DESCRIPTOR_BOUNDARY_SOURCE =
+        "export function main(): null {\n"
+            + "  let t: table = { a: 1, n: null }\n"
+            + "  let x: int | null = t.a\n"
+            + "  let w: int | null = t.n\n"
+            + "  let y: int | null = t.b\n"
+            + "  return null;\n"
+            + "}\n";
+
+    private static final String DESCRIPTOR_BOUNDARY_FAIL_SOURCE =
+        "export function main(): null {\n"
+            + "  let t: table = { a: \"s\" }\n"
+            + "  let x: int | null = t.a\n"
+            + "  return null;\n"
+            + "}\n";
+
+    private static void testStep2CutoverPromotion() throws Exception {
+        System.out.println("-- Step-2 cutover: DESCRIPTORS promoted; descriptor-boundary "
+            + "modules route SHARED and the BOUNDARY emission runs on both targets --");
+
+        // The release registry carries the step-2 promotion in the pinned
+        // capability order (DESCRIPTORS after CONTAINERS_AND_STRINGS,
+        // LUAJIT before JVM) with a recomputed digest.
+        CapabilityRegistry registry = ReleaseConfiguration.releaseCapabilityRegistry();
+        check(registry.state(deal.semantic.ir.SemanticCapability.DESCRIPTORS,
+                deal.semantic.Target.LUAJIT) == CapabilityRegistry.State.PROMOTED
+                && registry.state(
+                    deal.semantic.ir.SemanticCapability.DESCRIPTORS,
+                    deal.semantic.Target.JVM) == CapabilityRegistry.State.PROMOTED,
+            "the release registry promotes DESCRIPTORS for LUAJIT and JVM");
+        List<ReleaseConfiguration.ReleasePromotion> promotions =
+            ReleaseConfiguration.activationPromotions();
+        check(promotions.size() == 8,
+            "the release promotion list carries exactly the E12, step-1, and "
+                + "step-2 pairs (8 entries); got " + promotions.size());
+        check(promotions.indexOf(new ReleaseConfiguration.ReleasePromotion(
+                deal.semantic.ir.SemanticCapability.DESCRIPTORS,
+                deal.semantic.Target.LUAJIT))
+                > promotions.indexOf(new ReleaseConfiguration.ReleasePromotion(
+                    deal.semantic.ir.SemanticCapability.CONTAINERS_AND_STRINGS,
+                    deal.semantic.Target.JVM))
+                && promotions.indexOf(new ReleaseConfiguration.ReleasePromotion(
+                    deal.semantic.ir.SemanticCapability.DESCRIPTORS,
+                    deal.semantic.Target.LUAJIT))
+                    < promotions.indexOf(new ReleaseConfiguration.ReleasePromotion(
+                        deal.semantic.ir.SemanticCapability.DESCRIPTORS,
+                        deal.semantic.Target.JVM)),
+            "the step-2 promotion sits in the pinned capability order with LUAJIT "
+                + "before JVM");
+
+        // LuaJIT, passing descriptor boundaries: the production
+        // PUBLIC_BUILD + V1_2_ACTIVE compile of a descriptor-exercising
+        // module (present value validated, present null, missing key —
+        // the descriptor-kind rule's optional-read cell) routes SHARED,
+        // emits exactly one semantic artifact, and the BOUNDARY runtime
+        // validation is realized in the shared artifact (__bcheck) and
+        // executes under the real toolchain.
+        Path luaProject = Files.createTempDirectory("deal-e10-desc-lua-");
+        try {
+            write(luaProject, "deal.json", DEAL_JSON_LUA);
+            write(luaProject, "src/main.deal", DESCRIPTOR_BOUNDARY_SOURCE);
+            CompilationOrchestrator orchestrator =
+                compileProject(luaProject, "src/main.deal", "out");
+            check(orchestrator.semanticEmissionCount() == 1
+                    && orchestrator.retainedEmissionCount() == 0,
+                "the descriptor-boundary LuaJIT module emits one semantic/zero "
+                    + "retained artifact: semantic="
+                    + orchestrator.semanticEmissionCount() + " retained="
+                    + orchestrator.retainedEmissionCount());
+            RoutePlanResult plan = orchestrator.routePlan();
+            check(plan != null && !plan.hasErrors() && plan.plan() != null
+                    && plan.plan().entries().values().stream()
+                        .allMatch(route -> route == ModuleRoute.SHARED),
+                "the post-promotion plan routes the descriptor-boundary module "
+                    + "SHARED");
+            Path out = luaProject.resolve("out");
+            check(Files.readString(out.resolve("main.lua"))
+                    .contains("__bcheck"),
+                "the shared LuaJIT artifact realizes the BOUNDARY runtime "
+                    + "validation (__bcheck) — never a stripped descriptor");
+            ProcessOutcome run = runProcess(out, List.of("luajit", "main.lua"));
+            check(run.exitCode() == 0 && run.output().isEmpty(),
+                "the shared LuaJIT descriptor-boundary artifact runs clean (the "
+                    + "BOUNDARY emission validates present/present-null/missing): "
+                    + "exit=" + run.exitCode() + " output="
+                    + run.output().replace("\n", "\\n"));
+        } finally {
+            deleteRecursively(luaProject);
+        }
+
+        // LuaJIT, failing descriptor boundary: a wrong-kind present value
+        // fails the BOUNDARY validation inside the emitted artifact — the
+        // runtime E8001 terminal proves the descriptor boundary executes
+        // (anti-hollow: a skipped boundary would exit 0).
+        Path luaFailProject = Files.createTempDirectory("deal-e10-desc-lua-fail-");
+        try {
+            write(luaFailProject, "deal.json", DEAL_JSON_LUA);
+            write(luaFailProject, "src/main.deal", DESCRIPTOR_BOUNDARY_FAIL_SOURCE);
+            CompilationOrchestrator orchestrator =
+                compileProject(luaFailProject, "src/main.deal", "out");
+            check(orchestrator.semanticEmissionCount() == 1
+                    && orchestrator.retainedEmissionCount() == 0,
+                "the wrong-kind descriptor module emits one semantic/zero "
+                    + "retained artifact: semantic="
+                    + orchestrator.semanticEmissionCount() + " retained="
+                    + orchestrator.retainedEmissionCount());
+            ProcessOutcome run = runProcess(luaFailProject.resolve("out"),
+                List.of("luajit", "main.lua"));
+            check(run.exitCode() == 1
+                    && run.output().contains("DEAL_ERROR_CODE: E8001"),
+                "the shared LuaJIT artifact validates the wrong-kind value at "
+                    + "the boundary and publishes DEAL_ERROR_CODE: E8001: exit="
+                    + run.exitCode() + " output="
+                    + run.output().replace("\n", "\\n"));
+        } finally {
+            deleteRecursively(luaFailProject);
+        }
+
+        // JVM, passing descriptor boundaries: the same production compile
+        // routes SHARED; the artifact compiles under javac --release 25
+        // -proc:none and runs under java.
+        Path jvmProject = Files.createTempDirectory("deal-e10-desc-jvm-");
+        try {
+            write(jvmProject, "deal.json", DEAL_JSON_JVM);
+            write(jvmProject, "src/main.deal", DESCRIPTOR_BOUNDARY_SOURCE);
+            CompilationOrchestrator orchestrator =
+                compileProject(jvmProject, "src/main.deal", "out");
+            check(orchestrator.semanticEmissionCount() == 1
+                    && orchestrator.retainedEmissionCount() == 0,
+                "the descriptor-boundary JVM module emits one semantic/zero "
+                    + "retained artifact: semantic="
+                    + orchestrator.semanticEmissionCount() + " retained="
+                    + orchestrator.retainedEmissionCount());
+            Path out = jvmProject.resolve("out");
+            String buildCp = Path.of("build").toAbsolutePath().normalize().toString();
+            ProcessOutcome javac = runProcess(jvmProject, List.of(
+                "javac", "--release", "25", "-proc:none", "-cp", buildCp,
+                "-d", out.toString(), out.resolve("Main.java").toString()));
+            check(javac.exitCode() == 0,
+                "the shared JVM descriptor-boundary artifact compiles: "
+                    + javac.output().replace("\n", "\\n"));
+            if (javac.exitCode() == 0) {
+                ProcessOutcome run = runProcess(out, List.of(
+                    "java", "-cp", buildCp + File.pathSeparator + out, "Main"));
+                check(run.exitCode() == 0 && run.output().isEmpty(),
+                    "the shared JVM descriptor-boundary artifact runs clean (the "
+                        + "BOUNDARY emission validates present/present-null/missing): "
+                        + "exit=" + run.exitCode() + " output="
+                        + run.output().replace("\n", "\\n"));
+            }
+        } finally {
+            deleteRecursively(jvmProject);
+        }
+
+        // JVM, failing descriptor boundary: the emitted artifact validates
+        // the wrong-kind value at the boundary and publishes E8001.
+        Path jvmFailProject = Files.createTempDirectory("deal-e10-desc-jvm-fail-");
+        try {
+            write(jvmFailProject, "deal.json", DEAL_JSON_JVM);
+            write(jvmFailProject, "src/main.deal", DESCRIPTOR_BOUNDARY_FAIL_SOURCE);
+            CompilationOrchestrator orchestrator =
+                compileProject(jvmFailProject, "src/main.deal", "out");
+            check(orchestrator.semanticEmissionCount() == 1
+                    && orchestrator.retainedEmissionCount() == 0,
+                "the wrong-kind descriptor JVM module emits one semantic/zero "
+                    + "retained artifact: semantic="
+                    + orchestrator.semanticEmissionCount() + " retained="
+                    + orchestrator.retainedEmissionCount());
+            Path out = jvmFailProject.resolve("out");
+            String buildCp = Path.of("build").toAbsolutePath().normalize().toString();
+            ProcessOutcome javac = runProcess(jvmFailProject, List.of(
+                "javac", "--release", "25", "-proc:none", "-cp", buildCp,
+                "-d", out.toString(), out.resolve("Main.java").toString()));
+            if (javac.exitCode() == 0) {
+                ProcessOutcome run = runProcess(out, List.of(
+                    "java", "-cp", buildCp + File.pathSeparator + out, "Main"));
+                check(run.exitCode() == 1
+                        && run.output().contains("DEAL_ERROR_CODE: E8001"),
+                    "the shared JVM artifact validates the wrong-kind value at "
+                        + "the boundary and publishes DEAL_ERROR_CODE: E8001: "
+                        + "exit=" + run.exitCode() + " output="
+                        + run.output().replace("\n", "\\n"));
+            } else {
+                fail("the wrong-kind descriptor JVM artifact compiles: "
+                    + javac.output().replace("\n", "\\n"));
+            }
+        } finally {
+            deleteRecursively(jvmFailProject);
+        }
+
+        // The bytes guard holds through the step-2 promotion: a
+        // bytes-bearing module stays on the retained route (rule 2b beats
+        // rule 4) with the bytes exception recorded — the T1/T3 state the
+        // CONTAINERS_AND_STRINGS promotion established is untouched by the
+        // DESCRIPTORS promotion.
+        Path bytesProject = Files.createTempDirectory("deal-e10-desc-bytes-");
+        try {
+            write(bytesProject, "deal.json", DEAL_JSON_LUA);
+            write(bytesProject, "src/main.deal", BYTES_SOURCE);
+            CompilationOrchestrator orchestrator =
+                compileProject(bytesProject, "src/main.deal", "out");
+            check(orchestrator.semanticEmissionCount() == 0
+                    && orchestrator.retainedEmissionCount() == 1,
+                "the bytes-bearing module still emits zero semantic/one retained "
+                    + "artifact after the DESCRIPTORS promotion: semantic="
+                    + orchestrator.semanticEmissionCount() + " retained="
+                    + orchestrator.retainedEmissionCount());
+            RoutePlanResult plan = orchestrator.routePlan();
+            check(plan != null && !plan.hasErrors() && plan.plan() != null
+                    && plan.plan().entries().values().stream()
+                        .allMatch(route -> route == ModuleRoute.LEGACY)
+                    && plan.plan().bytesExceptions().size() == 1,
+                "the bytes-bearing plan stays all-LEGACY with the bytes "
+                    + "exception recorded (rule 2b beats rule 4): "
+                    + (plan == null ? "null" : plan.plan()));
+        } finally {
+            deleteRecursively(bytesProject);
+        }
+    }
+
+    private static void testStep2RegistryDigestRecomputation() {
+        System.out.println("-- Step-2 registry digest: recomputed over its own entries; "
+            + "differs from the post-step-1 release digest --");
+
+        // The post-step-1 release registry: the committed E12 pairs plus
+        // the step-1 cutover promotion (CONTAINERS_AND_STRINGS for both
+        // targets) composed from the all-SHADOW release default through
+        // the single withState transition surface — the exact prior
+        // release state the step-2 promotion extends.
+        CapabilityRegistry postStep1 = CapabilityRegistry.releaseRegistry()
+            .withState(deal.semantic.ir.SemanticCapability.FOUNDATION_VALUES,
+                deal.semantic.Target.LUAJIT, CapabilityRegistry.State.PROMOTED)
+            .withState(deal.semantic.ir.SemanticCapability.FOUNDATION_VALUES,
+                deal.semantic.Target.JVM, CapabilityRegistry.State.PROMOTED)
+            .withState(deal.semantic.ir.SemanticCapability.SIGNED_INT32,
+                deal.semantic.Target.LUAJIT, CapabilityRegistry.State.PROMOTED)
+            .withState(deal.semantic.ir.SemanticCapability.SIGNED_INT32,
+                deal.semantic.Target.JVM, CapabilityRegistry.State.PROMOTED)
+            .withState(deal.semantic.ir.SemanticCapability.CONTAINERS_AND_STRINGS,
+                deal.semantic.Target.LUAJIT, CapabilityRegistry.State.PROMOTED)
+            .withState(deal.semantic.ir.SemanticCapability.CONTAINERS_AND_STRINGS,
+                deal.semantic.Target.JVM, CapabilityRegistry.State.PROMOTED);
+        String postStep1Hash = postStep1.capabilityRegistryHash();
+        check(postStep1.state(
+                deal.semantic.ir.SemanticCapability.DESCRIPTORS,
+                deal.semantic.Target.LUAJIT) == CapabilityRegistry.State.SHADOW
+                && postStep1.state(
+                    deal.semantic.ir.SemanticCapability.DESCRIPTORS,
+                    deal.semantic.Target.JVM) == CapabilityRegistry.State.SHADOW,
+            "the post-step-1 registry keeps DESCRIPTORS SHADOW for both targets");
+
+        CapabilityRegistry step2 = ReleaseConfiguration.releaseCapabilityRegistry();
+        String step2Hash = step2.capabilityRegistryHash();
+
+        // The promotion is a real registry transition: the digest over the
+        // promoted entries recomputes and differs from the prior release
+        // digest.
+        check(!step2Hash.equals(postStep1Hash),
+            "the step-2 release digest differs from the post-step-1 release "
+                + "digest: " + postStep1Hash + " -> " + step2Hash);
+
+        // The step-2 digest is the canonical recomputation over the
+        // registry's own entries — never a hand-rolled constant.
+        check(step2Hash.equals(deal.semantic.ir.CanonicalJson.sha256Hex(
+                deal.semantic.ir.CanonicalJson.serializeBytes(step2.canonicalJson()))),
+            "the step-2 digest equals the canonical SHA-256 recomputation over "
+                + "the registry's own canonical JSON");
+
+        // The transition changes exactly the two step-2 entries: the
+        // registries differ in exactly two entries, both DESCRIPTORS
+        // carrying PROMOTED; every other entry is byte-identical.
+        List<CapabilityRegistry.Entry> preEntries = postStep1.entries();
+        List<CapabilityRegistry.Entry> stepEntries = step2.entries();
+        check(preEntries.size() == stepEntries.size()
+                && stepEntries.size() == CapabilityRegistry.ENTRY_COUNT,
+            "both registries keep the closed " + CapabilityRegistry.ENTRY_COUNT
+                + "-entry cross product");
+        int differing = 0;
+        for (int i = 0; i < preEntries.size() && i < stepEntries.size(); i++) {
+            CapabilityRegistry.Entry pre = preEntries.get(i);
+            CapabilityRegistry.Entry step = stepEntries.get(i);
+            if (pre.capability() != step.capability()
+                    || pre.target() != step.target()
+                    || pre.state() != step.state()) {
+                differing++;
+            }
+        }
+        check(differing == 2
+                && step2.state(
+                    deal.semantic.ir.SemanticCapability.DESCRIPTORS,
+                    deal.semantic.Target.LUAJIT) == CapabilityRegistry.State.PROMOTED
+                && step2.state(
+                    deal.semantic.ir.SemanticCapability.DESCRIPTORS,
+                    deal.semantic.Target.JVM) == CapabilityRegistry.State.PROMOTED,
+            "the step-2 registry differs from the post-step-1 registry in exactly "
+                + "the two DESCRIPTORS x LUAJIT/JVM entries, both carrying "
+                + "PROMOTED (differing=" + differing + ")");
+
+        // The E12, step-1, and step-2 pairs stay PROMOTED and every other
+        // capability stays SHADOW: the step-2 promotion flips nothing else.
+        boolean promotedExactly = true;
+        boolean shadowExactly = true;
+        for (CapabilityRegistry.Entry entry : step2.entries()) {
+            boolean promotedCapability = entry.capability()
+                    == deal.semantic.ir.SemanticCapability.FOUNDATION_VALUES
+                || entry.capability()
+                    == deal.semantic.ir.SemanticCapability.SIGNED_INT32
+                || entry.capability()
+                    == deal.semantic.ir.SemanticCapability.CONTAINERS_AND_STRINGS
+                || entry.capability()
+                    == deal.semantic.ir.SemanticCapability.DESCRIPTORS;
+            if (promotedCapability) {
+                promotedExactly &= entry.state() == CapabilityRegistry.State.PROMOTED;
+            } else {
+                shadowExactly &= entry.state() == CapabilityRegistry.State.SHADOW;
+            }
+        }
+        check(promotedExactly && shadowExactly,
+            "the step-2 registry promotes exactly FOUNDATION_VALUES, SIGNED_INT32, "
+                + "CONTAINERS_AND_STRINGS, and DESCRIPTORS for both targets; "
+                + "every other capability stays SHADOW");
+
         // Anti-hollow: re-deriving the release promotion list through the
         // withState surface reproduces the committed release digest — the
         // release registry is exactly the composed list, never a
@@ -887,11 +1241,11 @@ public class SemanticProductionGateTest {
             recomposed = recomposed.withState(promotion.capability(),
                 promotion.target(), CapabilityRegistry.State.PROMOTED);
         }
-        check(recomposed.capabilityRegistryHash().equals(step1Hash),
+        check(recomposed.capabilityRegistryHash().equals(step2Hash),
             "re-deriving the release promotion list through withState reproduces "
                 + "the committed release registry digest");
-        check(!recomposed.capabilityRegistryHash().equals(preStep1Hash),
-            "the recomposed step-1 digest still differs from the pre-step-1 "
+        check(!recomposed.capabilityRegistryHash().equals(postStep1Hash),
+            "the recomposed step-2 digest still differs from the post-step-1 "
                 + "digest (the prior release digest is left behind)");
     }
 
@@ -1010,6 +1364,8 @@ public class SemanticProductionGateTest {
         testBytesBearingRetainedRoute();
         testStep1CutoverPromotion();
         testStep1RegistryDigestRecomputation();
+        testStep2CutoverPromotion();
+        testStep2RegistryDigestRecomputation();
         testFailurePreservesPriorArtifacts();
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
