@@ -54,7 +54,7 @@ import java.util.function.Function;
  * <p>Walks the typed AST (the compiler's IR — see {@code deal-compiler-architecture-v1})
  * and emits a self-contained Java class whose static methods implement the
  * module's functions. The Java source is a real JVM artifact: the
- * conformance adapter ({@code test/BackendConformanceTest.java}) compiles
+ * conformance adapter (the generated-artifact backend tests) compiles
  * it with {@code javac} and executes it with {@code java} in subprocesses;
  * {@code CompilationOrchestrator} phase 4 (backend {@link
  * deal.codegen.Backend#JVM}) writes the {@code .java} source (it does not

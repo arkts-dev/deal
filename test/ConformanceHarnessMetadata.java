@@ -83,24 +83,6 @@ public final class ConformanceHarnessMetadata {
         }
     }
 
-    public static SemanticProfile profileFromJsonCase(
-            java.util.Map<String, Object> test, String locator) {
-        Object raw = test.get("profile");
-        if (raw == null) {
-            return SemanticProfile.DEAL_V1_2_INT32;
-        }
-        if (!(raw instanceof String value)) {
-            throw new IllegalArgumentException(locator
-                + ": profile must be a string");
-        }
-        return switch (value) {
-            case "legacy-safe-int" -> SemanticProfile.LEGACY_SAFE_INT;
-            case "deal-v1.2-int32" -> SemanticProfile.DEAL_V1_2_INT32;
-            default -> throw new IllegalArgumentException(locator
-                + ": unknown profile '" + value + "'");
-        };
-    }
-
     public static CompilerInvocation invocation(SemanticProfile profile) {
         if (profile == SemanticProfile.LEGACY_SAFE_INT) {
             return CompilerProfileProvider.resolveLegacyRegression(profile,

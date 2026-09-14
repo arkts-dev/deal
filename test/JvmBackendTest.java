@@ -311,10 +311,8 @@ import java.util.concurrent.atomic.AtomicInteger;
  *       longer reach a backend.</li>
  * </ul>
  *
- * <p>The end-to-end JVM conformance fixtures live in
- * {@code test/conformance/fixtures/jvm-skeleton.json} and run under
- * {@link BackendConformanceTest}; this class covers the seams and edge
- * behavior at unit level.
+ * <p>This class covers JVM backend seams, edge behavior, and generated
+ * artifact execution directly.
  */
 public class JvmBackendTest {
 
@@ -363,13 +361,13 @@ public class JvmBackendTest {
         // wall-clock budget. The methods are independent — each writes
         // into its own per-thread temp dir and its own per-test output
         // buffer — so they run on a worker pool with the same
-        // deterministic-outcome machinery BackendConformanceTest uses
+        // deterministic-outcome machinery legacy JSON conformance harness uses
         // (atomic counters, per-test buffered output flushed as one
         // contiguous block, completion-order blocks). The CLI-warning
         // captures route through the per-thread ERR_CAPTURE override
         // instead of a global System.setErr swap, so no test needs a
         // serialized main-thread tail. The pool is sized at 2x the core
-        // count for the same reason BackendConformanceTest oversubscribes:
+        // count for the same reason legacy JSON conformance harness oversubscribes:
         // per-test work is dominated by javac/java subprocess latency, so
         // the extra workers overlap spawns under concurrent host load.
         PrintStream realOut = System.out;
@@ -402,6 +400,7 @@ public class JvmBackendTest {
             new TestCase("testArrayReadComparisonBothReadsOrder", () -> testArrayReadComparisonBothReadsOrder()),
             new TestCase("testArrayReadComparisonPlainLeftOperandOrder", () -> testArrayReadComparisonPlainLeftOperandOrder()),
             new TestCase("testArrayBoundaryLessReadPositions", () -> testArrayBoundaryLessReadPositions()),
+            new TestCase("testArrayDeleteRejected", () -> testArrayDeleteRejected()),
             new TestCase("testBytesArrayPastEndReadsYieldTheDealNull", () -> testBytesArrayPastEndReadsYieldTheDealNull()),
             new TestCase("testArrayUnsupportedElementTypesRejected", () -> testArrayUnsupportedElementTypesRejected()),
             new TestCase("testArrayUseBeforeDeclarationGuards", () -> testArrayUseBeforeDeclarationGuards()),
@@ -491,7 +490,6 @@ public class JvmBackendTest {
             new TestCase("testOrchestratorJvmSourceMapWarning", () -> testOrchestratorJvmSourceMapWarning()),
             new TestCase("testStrictBackendField", () -> testStrictBackendField()),
             new TestCase("testCliBackendFlag", () -> testCliBackendFlag()),
-            new TestCase("testFixtureConfigValidation", () -> testFixtureConfigValidation()),
             new TestCase("testIrDumpExactMigration", () -> testIrDumpExactMigration()));
 
         int workers = Math.max(1, Math.min(
@@ -550,7 +548,7 @@ public class JvmBackendTest {
     /**
      * Runs one test method on a worker thread with its own output
      * buffer, flushed as one contiguous block under the console lock
-     * when the method finishes — the BackendConformanceTest worker
+     * when the method finishes — the legacy JSON conformance harness worker
      * pattern at per-test granularity (ISSUE-0274).
      */
     private static void runTestCaseWorker(TestCase test) {
@@ -684,7 +682,7 @@ public class JvmBackendTest {
     @SuppressWarnings("deprecation")
     private static Frontend compileFrontend(String source, String filename) {
         return compileFrontend(source, filename,
-            new BackendConformanceTest.StubModuleResolver());
+            StubModuleResolver.acceptingUnknownModules());
     }
 
     /** Frontend compile with an explicit module resolver (ISSUE-0096 module
@@ -759,7 +757,7 @@ public class JvmBackendTest {
 
     /**
      * Compiles the generated artifact with the javac frontend in-process
-     * ({@code BackendConformanceTest.compileWithJavac} — the identical
+     * ({@code StubModuleResolver.compileWithJavac} — the identical
      * javac passes the binary runs; ISSUE-0109 gate-time work, the
      * several hundred spawn sites here each paid a full JVM boot) and
      * executes it with {@code java} in a subprocess — artifact execution
@@ -776,7 +774,7 @@ public class JvmBackendTest {
         // and the backend's locality predicate (ISSUE-0095) recognizes a
         // local Type.Class by its module path matching the backend-held
         // module path or source path — the same alignment the
-        // BackendConformanceTest adapter uses.
+        // legacy JSON conformance harness adapter uses.
         JvmBackend.JvmCodegenResult res = JvmBackend.generate(
             f.program(), f.checkResult(), "jvmtest-" + name + ".deal", "Main");
         if (res.hasErrors()) {
@@ -786,10 +784,10 @@ public class JvmBackendTest {
         Path dir = Files.createTempDirectory("jvmtest_run_");
         Files.writeString(dir.resolve("Main.java"), res.source());
         Files.writeString(dir.resolve("JvmConformanceRunner.java"),
-            BackendConformanceTest.buildJvmRunner(f.program(), "Main"));
+            StubModuleResolver.buildJvmRunner(f.program(), "Main"));
 
         StringBuilder javacErr = new StringBuilder();
-        boolean javacOk = BackendConformanceTest.compileWithJavac(dir,
+        boolean javacOk = StubModuleResolver.compileWithJavac(dir,
             List.of("Main.java", "JvmConformanceRunner.java"), javacErr);
         if (!javacOk) {
             throw new RuntimeException("javac failed: " + javacErr);
@@ -814,7 +812,7 @@ public class JvmBackendTest {
      * Compiles every {@code .java} artifact in {@code dir} together with a
      * generated runner (auto-invoking the entry program's zero-arity
      * exports) with the javac frontend in-process
-     * ({@code BackendConformanceTest.compileWithJavac}; ISSUE-0109
+     * ({@code StubModuleResolver.compileWithJavac}; ISSUE-0109
      * gate-time work) and executes with {@code java} in a subprocess —
      * artifact execution stays the same contract the conformance adapter
      * enforces for multi-module fixtures.
@@ -822,7 +820,7 @@ public class JvmBackendTest {
     private static ExecResult runJvmArtifacts(Path dir, ProgramNode entryProgram,
                                               String entryClass) throws Exception {
         Files.writeString(dir.resolve("JvmConformanceRunner.java"),
-            BackendConformanceTest.buildJvmRunner(entryProgram, entryClass));
+            StubModuleResolver.buildJvmRunner(entryProgram, entryClass));
 
         List<String> javaFiles = new ArrayList<>();
         try (var stream = Files.list(dir)) {
@@ -831,7 +829,7 @@ public class JvmBackendTest {
                   .forEach(p -> javaFiles.add(p.getFileName().toString()));
         }
         StringBuilder javacErr = new StringBuilder();
-        boolean javacOk = BackendConformanceTest.compileWithJavac(dir,
+        boolean javacOk = StubModuleResolver.compileWithJavac(dir,
             javaFiles, javacErr);
         if (!javacOk) {
             throw new RuntimeException("javac failed: " + javacErr);
@@ -1157,7 +1155,7 @@ public class JvmBackendTest {
         }
 
         // Cross-module function-value flow on the shared $DealRt
-        // carriers (jvm-function-values-slice.json: the four former
+        // carriers (jvm-function-values-slice: the four former
         // E6000 rejection pins are runtime pins now — ISSUE-0301). The
         // emission-shape pins here assert the promoted forms: the
         // callback argument crosses as the shared wrapper field, the
@@ -1217,7 +1215,7 @@ public class JvmBackendTest {
                     + ")");
         }
 
-        // @jsonable optional table field (jvm-jsonable-slice.json:
+        // @jsonable optional table field (jvm-jsonable-slice:
         // jvm-jsonable-optional-table-rejected).
         Frontend jsonableF = compileFrontend("""
             // @jsonable
@@ -1926,6 +1924,27 @@ public class JvmBackendTest {
             + "spec rule 3: " + order.output());
     }
 
+    private static void testArrayDeleteRejected() {
+        System.out.println("-- Array delete rejected with E6000 --");
+        Frontend frontend = compileFrontend("""
+            export function main(): null {
+              let xs: int[] = [1, 2, 3];
+              delete xs[1];
+            }
+            """, "jvmtest-array-delete.deal");
+        check(frontend.errors().isEmpty(),
+            "array-delete frontend clean: " + frontend.errors());
+        if (frontend.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult result = JvmBackend.generate(
+                frontend.program(), frontend.checkResult(),
+                "jvmtest-array-delete.deal", "main");
+            check(result.hasErrors() && result.diagnostics().stream()
+                    .anyMatch(diagnostic -> "E6000".equals(diagnostic.code())),
+                "the JVM backend rejects array-index delete with E6000: "
+                    + result.diagnostics());
+        }
+    }
+
     /** Array evaluation order with hoisted null-typed side effects: the
      * index operand's hoisted print runs before its inline call, which is
      * materialized into a temporary ahead of the RHS's hoisted print —
@@ -2515,7 +2534,7 @@ public class JvmBackendTest {
      * negative index still raises E8002 on every helper (LuaJIT raises
      * that unconditionally at the read). The LuaJIT lane pins the same
      * shapes cross-backend in
-     * {@code test/conformance/fixtures/jvm-arrays-slice.json}
+     * {@code retired JSON slice jvm-arrays-slice}
      * ({@code jvm-bytes-arr-past-end-null-parity},
      * {@code jvm-bytes-arr-negative-read-e8002}). */
     private static void testBytesArrayPastEndReadsYieldTheDealNull()
@@ -3113,7 +3132,7 @@ public class JvmBackendTest {
         Path dir = Files.createTempDirectory("jvmtest_entry_");
         Files.writeString(dir.resolve("Main.java"), res.source());
         StringBuilder javacErr = new StringBuilder();
-        boolean javacOk = BackendConformanceTest.compileWithJavac(dir,
+        boolean javacOk = StubModuleResolver.compileWithJavac(dir,
             List.of("Main.java"), javacErr);
         check(javacOk, "entry artifact compiles: " + javacErr);
         if (javacOk) {
@@ -3297,7 +3316,7 @@ public class JvmBackendTest {
         check(!parse.hasErrors(), "synthetic-E6000 probe parses clean: "
             + parse.diagnostics());
         NameResolver nr = new NameResolver("jvmtest-jsonable-synth.deal",
-            new BackendConformanceTest.StubModuleResolver());
+            new StubModuleResolver());
         SymbolTable symTable = nr.resolve(parse.program());
         CheckResult result = TypeChecker.check("jvmtest-jsonable-synth.deal",
             symTable, nr, parse.program());
@@ -5016,7 +5035,7 @@ public class JvmBackendTest {
      * those shapes no longer reach a backend. The in-function shapes run
      * cross-backend with LuaJIT parity, and the removed module-level
      * shapes are E1049-gated in
-     * {@code test/conformance/fixtures/jvm-function-values-slice.json}.
+     * {@code retired JSON slice jvm-function-values-slice}.
      */
     /**
      * Regression guard (MR-0339 review round 1, major finding): the
@@ -5056,7 +5075,7 @@ public class JvmBackendTest {
             "overload-chain probe parses clean: " + parse.diagnostics());
         if (parse.hasErrors()) return;
         NameResolver nr = new NameResolver("Main",
-            new BackendConformanceTest.StubModuleResolver());
+            new StubModuleResolver());
         SymbolTable symTable = nr.resolve(parse.program());
         CheckResult result = TypeChecker.check("Main", symTable, nr,
             parse.program());
@@ -6321,7 +6340,7 @@ public class JvmBackendTest {
                 }
                 """);
             StringBuilder javacErr = new StringBuilder();
-            boolean javacOk = BackendConformanceTest.compileWithJavac(dir,
+            boolean javacOk = StubModuleResolver.compileWithJavac(dir,
                 List.of("Main.java", "Runner.java"), javacErr);
             check(javacOk, "function-array probe artifacts compile: "
                 + javacErr);
@@ -6979,10 +6998,8 @@ public class JvmBackendTest {
      * E8010 check the same-module path emits (an arity-extension
      * argument raises "function signature mismatch: expected
      * (int,string)->int, got (int)->int" at the imported call). The
-     * same four shapes are pinned by the multi-module conformance
-     * fixtures in {@code test/conformance/fixtures/
-     * jvm-function-values-slice.json} through
-     * {@code BackendConformanceTest.runMultiModuleTestCase}.
+     * The same four shapes are pinned directly by this focused
+     * multi-module backend test.
      */
     private static void testCrossModuleFunctionValues() throws Exception {
         System.out.println("-- Orchestrator: cross-module function values on the shared carriers --");
@@ -8700,7 +8717,7 @@ public class JvmBackendTest {
         if (res == null || !res.int32Mode()) return new ExecResult("", 1);
         Frontend f = compileFrontend(source, "i32_" + name + ".deal");
         Files.writeString(outputRoot.resolve("JvmConformanceRunner.java"),
-            BackendConformanceTest.buildJvmRunner(f.program(),
+            StubModuleResolver.buildJvmRunner(f.program(),
                 res.className()));
         List<String> javaFiles = new ArrayList<>();
         try (var stream = Files.list(outputRoot)) {
@@ -8709,7 +8726,7 @@ public class JvmBackendTest {
                   .forEach(p -> javaFiles.add(p.getFileName().toString()));
         }
         StringBuilder javacErr = new StringBuilder();
-        boolean javacOk = BackendConformanceTest.compileWithJavac(outputRoot,
+        boolean javacOk = StubModuleResolver.compileWithJavac(outputRoot,
             javaFiles, javacErr);
         if (!javacOk) {
             throw new RuntimeException("javac failed for " + name + ": "
@@ -8757,7 +8774,7 @@ public class JvmBackendTest {
         if (res == null || res.int32Mode()) return new ExecResult("", 1);
         Frontend f = compileFrontend(source, "legacy_" + name + ".deal");
         Files.writeString(outputRoot.resolve("JvmConformanceRunner.java"),
-            BackendConformanceTest.buildJvmRunner(f.program(),
+            StubModuleResolver.buildJvmRunner(f.program(),
                 res.className()));
         List<String> javaFiles = new ArrayList<>();
         try (var stream = Files.list(outputRoot)) {
@@ -8766,7 +8783,7 @@ public class JvmBackendTest {
                   .forEach(p -> javaFiles.add(p.getFileName().toString()));
         }
         StringBuilder javacErr = new StringBuilder();
-        boolean javacOk = BackendConformanceTest.compileWithJavac(outputRoot,
+        boolean javacOk = StubModuleResolver.compileWithJavac(outputRoot,
             javaFiles, javacErr);
         if (!javacOk) {
             throw new RuntimeException("javac failed for " + name + ": "
@@ -8850,7 +8867,7 @@ public class JvmBackendTest {
         Files.copy(tmpDir.get().resolve("HostLog.java"),
             outputRoot.resolve("HostLog.java"));
         Files.writeString(outputRoot.resolve("JvmConformanceRunner.java"),
-            BackendConformanceTest.buildJvmRunner(parseProgram("""
+            StubModuleResolver.buildJvmRunner(parseProgram("""
                 export function main(): null { return null; }
                 export function test(): int { return 0; }
                 """), res.className()));
@@ -8861,7 +8878,7 @@ public class JvmBackendTest {
                   .forEach(p -> javaFiles.add(p.getFileName().toString()));
         }
         StringBuilder javacErr = new StringBuilder();
-        boolean javacOk = BackendConformanceTest.compileWithJavac(outputRoot,
+        boolean javacOk = StubModuleResolver.compileWithJavac(outputRoot,
             javaFiles, javacErr);
         if (!javacOk) {
             throw new RuntimeException("javac failed for " + name + ": "
@@ -10384,7 +10401,7 @@ public class JvmBackendTest {
         if (res == null || !res.int32Mode()) return new ExecResult("", 1);
         Frontend f = compileFrontend(source, "inv_" + name + ".deal");
         Files.writeString(outputRoot.resolve("JvmConformanceRunner.java"),
-            BackendConformanceTest.buildJvmRunner(f.program(),
+            StubModuleResolver.buildJvmRunner(f.program(),
                 res.className()));
         List<String> javaFiles = new ArrayList<>();
         try (var stream = Files.list(outputRoot)) {
@@ -10393,7 +10410,7 @@ public class JvmBackendTest {
                   .forEach(p -> javaFiles.add(p.getFileName().toString()));
         }
         StringBuilder javacErr = new StringBuilder();
-        boolean javacOk = BackendConformanceTest.compileWithJavac(outputRoot,
+        boolean javacOk = StubModuleResolver.compileWithJavac(outputRoot,
             javaFiles, javacErr);
         if (!javacOk) {
             throw new RuntimeException("javac failed for " + name + ": "
@@ -11347,7 +11364,7 @@ public class JvmBackendTest {
         // ---- Live module-field rebinding (the criterion's
         // module-binding surface; the LuaJIT side is pinned by
         // jvm-bytes-lua-ref-reassigned-adapter in
-        // jvm-bytes-slice.json) ----
+        // jvm-bytes-slice) ----
         // An arity adapter over a module-level function re-reads the
         // chunk local live on LuaJIT (id = stamp retargets the
         // (bytes,int)->bytes adapter), so the JVM backend must never
@@ -12022,8 +12039,8 @@ public class JvmBackendTest {
      * array/class fields, and module-level calls of the generated
      * helpers stay E6000. Every runtime case compiles the emitted
      * artifact with javac and executes it with java; the same surface
-     * runs through the BackendConformanceTest adapter in
-     * {@code test/conformance/fixtures/jvm-jsonable-slice.json}.
+     * runs through the legacy JSON conformance harness adapter in
+     * {@code retired JSON slice jvm-jsonable-slice}.
      */
     private static void testJsonableSlice() throws Exception {
         System.out.println("-- @jsonable slice: generated helpers, descriptors, validation, boundaries --");
@@ -13489,9 +13506,9 @@ public class JvmBackendTest {
             dir = Files.createTempDirectory("jvmtest_seam_");
             Files.writeString(dir.resolve("Main.java"), java);
             Files.writeString(dir.resolve("JvmConformanceRunner.java"),
-                BackendConformanceTest.buildJvmRunner(f.program(), "Main"));
+                StubModuleResolver.buildJvmRunner(f.program(), "Main"));
             StringBuilder err = new StringBuilder();
-            boolean ok = BackendConformanceTest.compileWithJavac(dir,
+            boolean ok = StubModuleResolver.compileWithJavac(dir,
                 List.of("Main.java", "JvmConformanceRunner.java"), err);
             check(ok, "the seam artifact compiles with javac: " + err);
         } catch (IOException e) {
@@ -13582,7 +13599,7 @@ public class JvmBackendTest {
             Files.writeString(dir.resolve("CheckSeamProbeRunner.java"),
                 runner.toString());
             StringBuilder err = new StringBuilder();
-            boolean ok = BackendConformanceTest.compileWithJavac(dir,
+            boolean ok = StubModuleResolver.compileWithJavac(dir,
                 List.of("Main.java", "CheckSeamProbeRunner.java"), err);
             check(ok, "the seam-canonical artifact compiles with javac: "
                 + err);
@@ -13825,7 +13842,7 @@ public class JvmBackendTest {
             // so the only load-time work is the imported module's own
             // initialization).
             Files.writeString(outputDir.resolve("JvmConformanceRunner.java"),
-                BackendConformanceTest.buildJvmRunner(
+                StubModuleResolver.buildJvmRunner(
                     parseProgram("""
                         export function run(): int { return 1; }
                         """), "Entry"));
@@ -14215,7 +14232,7 @@ public class JvmBackendTest {
                 "the imported module emits the std/string split helper call");
 
             Files.writeString(outputDir.resolve("JvmConformanceRunner.java"),
-                BackendConformanceTest.buildJvmRunner(
+                StubModuleResolver.buildJvmRunner(
                     parseProgram("""
                         export function run(): int { return 3; }
                         """), "Entry"));
@@ -14414,7 +14431,7 @@ public class JvmBackendTest {
         // the exported add run end to end.
         Files.copy(tmpDir.get().resolve("HostLog.java"), outputDir.resolve("HostLog.java"));
         Files.writeString(outputDir.resolve("JvmConformanceRunner.java"),
-            BackendConformanceTest.buildJvmRunner(
+            StubModuleResolver.buildJvmRunner(
                 parseProgram("""
                     export function main(): null { return null; }
                     export function run(): int { return 1; }
@@ -14454,7 +14471,7 @@ public class JvmBackendTest {
         Files.copy(tmpDir.get().resolve("HostLogMissing.java"),
             outputDir2.resolve("HostLog.java"));
         Files.writeString(outputDir2.resolve("JvmConformanceRunner.java"),
-            BackendConformanceTest.buildJvmRunner(
+            StubModuleResolver.buildJvmRunner(
                 parseProgram("""
                     export function main(): null { return null; }
                     export function run(): int { return 1; }
@@ -14499,7 +14516,7 @@ public class JvmBackendTest {
         Files.copy(tmpDir.get().resolve("HostLogBad.java"),
             outputDir3.resolve("HostLog.java"));
         Files.writeString(outputDir3.resolve("JvmConformanceRunner.java"),
-            BackendConformanceTest.buildJvmRunner(
+            StubModuleResolver.buildJvmRunner(
                 parseProgram("""
                     export function main(): null { return null; }
                     export function run(): string { return "x"; }
@@ -14542,7 +14559,7 @@ public class JvmBackendTest {
         Files.copy(tmpDir.get().resolve("HostLogBadSurrogate.java"),
             outputDirSur.resolve("HostLog.java"));
         Files.writeString(outputDirSur.resolve("JvmConformanceRunner.java"),
-            BackendConformanceTest.buildJvmRunner(
+            StubModuleResolver.buildJvmRunner(
                 parseProgram("""
                     export function run(): string { return "x"; }
                     """), "Entry_bad"));
@@ -14581,7 +14598,7 @@ public class JvmBackendTest {
         Files.copy(tmpDir.get().resolve("HostLog.java"),
             outputDir4.resolve("HostLog.java"));
         Files.writeString(outputDir4.resolve("JvmConformanceRunner.java"),
-            BackendConformanceTest.buildJvmRunner(
+            StubModuleResolver.buildJvmRunner(
                 parseProgram("""
                     export function main(): null { return null; }
                     export async function run(): string { return "x"; }
@@ -14619,7 +14636,7 @@ public class JvmBackendTest {
         Files.copy(tmpDir.get().resolve("HostLogAsyncShape.java"),
             outputDir5.resolve("HostLog.java"));
         Files.writeString(outputDir5.resolve("JvmConformanceRunner.java"),
-            BackendConformanceTest.buildJvmRunner(
+            StubModuleResolver.buildJvmRunner(
                 parseProgram("""
                     export function main(): null { return null; }
                     export async function run(): string { return "x"; }
@@ -14656,7 +14673,7 @@ public class JvmBackendTest {
         Files.copy(tmpDir.get().resolve("HostLogAsyncCompletion.java"),
             outputDir6.resolve("HostLog.java"));
         Files.writeString(outputDir6.resolve("JvmConformanceRunner.java"),
-            BackendConformanceTest.buildJvmRunner(
+            StubModuleResolver.buildJvmRunner(
                 parseProgram("""
                     export function main(): null { return null; }
                     export async function run(): string { return "x"; }
@@ -14697,7 +14714,7 @@ public class JvmBackendTest {
         Files.copy(tmpDir.get().resolve("HostLogAsyncSurrogate.java"),
             outputDir7.resolve("HostLog.java"));
         Files.writeString(outputDir7.resolve("JvmConformanceRunner.java"),
-            BackendConformanceTest.buildJvmRunner(
+            StubModuleResolver.buildJvmRunner(
                 parseProgram("""
                     export async function run(): string { return "x"; }
                     """), "Entry_async"));
@@ -14811,7 +14828,7 @@ public class JvmBackendTest {
         Files.copy(tmpDir.get().resolve("HostByteshost.java"),
             outputDirBytes.resolve("HostByteshost.java"));
         Files.writeString(outputDirBytes.resolve("JvmConformanceRunner.java"),
-            BackendConformanceTest.buildJvmRunner(
+            StubModuleResolver.buildJvmRunner(
                 parseProgram("""
                     export function main(): null { return null; }
                     export function run(): string { return "x"; }
@@ -14868,7 +14885,7 @@ public class JvmBackendTest {
         Files.copy(tmpDir.get().resolve("HostByteshostBad.java"),
             outputDirBytesBad.resolve("HostByteshost.java"));
         Files.writeString(outputDirBytesBad.resolve("JvmConformanceRunner.java"),
-            BackendConformanceTest.buildJvmRunner(
+            StubModuleResolver.buildJvmRunner(
                 parseProgram("""
                     export function main(): null { return null; }
                     export function run(): bytes { return bytes(0); }
@@ -15579,68 +15596,11 @@ public class JvmBackendTest {
     }
 
     /**
-     * Fixture-schema validation (conformance-test-architecture D6): a
-     * fixture combining expectedCompileError with runtime or IR assertions
-     * would silently drop those assertions (the compile-error gate returns
-     * before runtime/IR dispatch), so the harness must fail the fixture
-     * with a clear message instead of passing without running its checks.
-     */
-    private static void testFixtureConfigValidation() {
-        System.out.println("-- Fixture config validation --");
-
-        Map<String, Object> base = new LinkedHashMap<>();
-        base.put("expectedCompileError", "E3001");
-
-        Map<String, Object> withOutput = new LinkedHashMap<>(base);
-        withOutput.put("expectedOutput", "x");
-        check(BackendConformanceTest.fixtureConfigViolation(withOutput) != null,
-            "expectedCompileError + expectedOutput is a violation");
-
-        Map<String, Object> withError = new LinkedHashMap<>(base);
-        withError.put("expectedError", "E8001");
-        check(BackendConformanceTest.fixtureConfigViolation(withError) != null,
-            "expectedCompileError + expectedError is a violation");
-
-        Map<String, Object> withExit = new LinkedHashMap<>(base);
-        withExit.put("expectedExitCode", 1);
-        check(BackendConformanceTest.fixtureConfigViolation(withExit) != null,
-            "expectedCompileError + expectedExitCode is a violation");
-
-        Map<String, Object> withIr = new LinkedHashMap<>(base);
-        withIr.put("irContains", List.of("function test"));
-        check(BackendConformanceTest.fixtureConfigViolation(withIr) != null,
-            "expectedCompileError + irContains is a violation");
-
-        Map<String, Object> withIrNot = new LinkedHashMap<>(base);
-        withIrNot.put("irNotContains", List.of("function test"));
-        check(BackendConformanceTest.fixtureConfigViolation(withIrNot) != null,
-            "expectedCompileError + irNotContains is a violation");
-
-        // The valid configuration (all other fields null/empty) is clean.
-        Map<String, Object> valid = new LinkedHashMap<>(base);
-        valid.put("expectedOutput", null);
-        valid.put("expectedError", null);
-        valid.put("expectedExitCode", null);
-        valid.put("irContains", List.of());
-        valid.put("irNotContains", List.of());
-        check(BackendConformanceTest.fixtureConfigViolation(valid) == null,
-            "compile-error fixture with null/empty assertions is valid");
-
-        // Runtime fixtures without expectedCompileError are valid whatever
-        // they assert.
-        Map<String, Object> runtime = new LinkedHashMap<>();
-        runtime.put("expectedOutput", "x");
-        runtime.put("expectedExitCode", 0);
-        check(BackendConformanceTest.fixtureConfigViolation(runtime) == null,
-            "runtime fixture without expectedCompileError is valid");
-    }
-
-    /**
      * ISSUE-0358 IR-pin migration: exact IR-dump assertions for the
      * twelve multi-module JSON-slice cases whose
      * {@code irContains}/{@code irNotContains} pins ran against the
      * concatenated orchestrator {@code --dump-ir} output
-     * (BackendConformanceTest.collectIrDumps framing: one
+     * (legacy JSON conformance harness.collectIrDumps framing: one
      * {@code === IR: <file> ===} header per module dump, sorted by
      * file name). Every expected block is the exact dump text with
      * the per-test temp project root normalized to {@code <PROJECT>};
@@ -15649,7 +15609,7 @@ public class JvmBackendTest {
     private static void testIrDumpExactMigration() throws Exception {
         System.out.println("-- IR-dump exact migration (ISSUE-0358) --");
 
-        { // jvm-async-slice.json :: jvm-async-multi-module
+        { // jvm-async-slice :: jvm-async-multi-module
             String proj = "irpin00";
             writeFile(proj + "/lib.deal", "export async function plus(a: int, b: int): int { return a + b; }\nexport async function tag(s: string): string { return \"[\" + s + \"]\"; }");
             writeFile(proj + "/main.deal", "import * as lib from \"./lib\"\nexport function main(): null { return null; }\nexport async function test(): int {\n  let s: string = await lib.tag(\"x\");\n  if (s === \"[x]\") { return await lib.plus(2, 3); }\n  return 0;\n}");
@@ -15661,7 +15621,7 @@ public class JvmBackendTest {
                 irPinEntry, irPinOut, false, true, false, Backend.JVM,
                 irPinExternals, List.of(irPinRoot), null);
             boolean irPinOk = irPinOrch.compile();
-            check(irPinOk, "jvm-async-slice.json :: jvm-async-multi-module: orchestrator --dump-ir compile succeeds: "
+            check(irPinOk, "jvm-async-slice :: jvm-async-multi-module: orchestrator --dump-ir compile succeeds: "
                 + irPinOrch.diagnostics());
             StringBuilder irPinActual = new StringBuilder();
             List<Path> irPinDumps = new ArrayList<>();
@@ -15751,7 +15711,7 @@ module @<PROJECT>/main.deal:1:1-7:2
           literal 0 : int @<PROJECT>/main.deal:6:10-6:10
 """;
             if (!(irPinExpected + "\n").equals(irPinNormalized)) {
-                check(false, "jvm-async-slice.json :: jvm-async-multi-module: exact IR dump mismatch");
+                check(false, "jvm-async-slice :: jvm-async-multi-module: exact IR dump mismatch");
                 System.err.println("---- expected IR dump ----");
                 System.err.println(irPinExpected);
                 System.err.println("---- actual IR dump ----");
@@ -15759,7 +15719,7 @@ module @<PROJECT>/main.deal:1:1-7:2
             }
         }
 
-        { // jvm-host-abi-slice.json :: jvm-host-export-presence
+        { // jvm-host-abi-slice :: jvm-host-export-presence
             String proj = "irpin01";
             writeFile(proj + "/" + "bindings/log.d.deal", "export function info(level: int, s: string): null;\nexport function add(a: int, b: int): int;");
             writeFile(proj + "/entry.deal", "import * as log from \"host/log\"\nexport function main(): null {\n  log.info(1, \"hello\");\n  return null;\n}\nexport function run(): int { return log.add(2, 3); }");
@@ -15776,7 +15736,7 @@ module @<PROJECT>/main.deal:1:1-7:2
                 irPinEntry, irPinOut, false, true, false, Backend.JVM,
                 irPinExternals, List.of(irPinRoot), null);
             boolean irPinOk = irPinOrch.compile();
-            check(irPinOk, "jvm-host-abi-slice.json :: jvm-host-export-presence: orchestrator --dump-ir compile succeeds: "
+            check(irPinOk, "jvm-host-abi-slice :: jvm-host-export-presence: orchestrator --dump-ir compile succeeds: "
                 + irPinOrch.diagnostics());
             StringBuilder irPinActual = new StringBuilder();
             List<Path> irPinDumps = new ArrayList<>();
@@ -15830,7 +15790,7 @@ module @<PROJECT>/entry.deal:1:1-6:53
             literal 3 : int @<PROJECT>/entry.deal:6:48-6:48
 """;
             if (!(irPinExpected + "\n").equals(irPinNormalized)) {
-                check(false, "jvm-host-abi-slice.json :: jvm-host-export-presence: exact IR dump mismatch");
+                check(false, "jvm-host-abi-slice :: jvm-host-export-presence: exact IR dump mismatch");
                 System.err.println("---- expected IR dump ----");
                 System.err.println(irPinExpected);
                 System.err.println("---- actual IR dump ----");
@@ -15838,7 +15798,7 @@ module @<PROJECT>/entry.deal:1:1-6:53
             }
         }
 
-        { // jvm-integration-join.json :: jvm-join-xmod-class-descriptor
+        { // jvm-integration-join :: jvm-join-xmod-class-descriptor
             String proj = "irpin02";
             writeFile(proj + "/lib.deal", "export class Point { x: int = 0; }\nexport function make(x: int): Point { return { x: x }; }\n");
             writeFile(proj + "/main.deal", "import * as lib from \"./lib\"\nfunction use(p: lib.Point): int { return p.x; }\nexport function run(): int {\n  let got: int = use(lib.make(7));\n  return got;\n}\nexport function main(): null { return null; }\n");
@@ -15850,7 +15810,7 @@ module @<PROJECT>/entry.deal:1:1-6:53
                 irPinEntry, irPinOut, false, true, false, Backend.JVM,
                 irPinExternals, List.of(irPinRoot), null);
             boolean irPinOk = irPinOrch.compile();
-            check(irPinOk, "jvm-integration-join.json :: jvm-join-xmod-class-descriptor: orchestrator --dump-ir compile succeeds: "
+            check(irPinOk, "jvm-integration-join :: jvm-join-xmod-class-descriptor: orchestrator --dump-ir compile succeeds: "
                 + irPinOrch.diagnostics());
             StringBuilder irPinActual = new StringBuilder();
             List<Path> irPinDumps = new ArrayList<>();
@@ -15925,7 +15885,7 @@ module @<PROJECT>/main.deal:1:1-8:1
           literal null : null @<PROJECT>/main.deal:7:39-7:42
 """;
             if (!(irPinExpected + "\n").equals(irPinNormalized)) {
-                check(false, "jvm-integration-join.json :: jvm-join-xmod-class-descriptor: exact IR dump mismatch");
+                check(false, "jvm-integration-join :: jvm-join-xmod-class-descriptor: exact IR dump mismatch");
                 System.err.println("---- expected IR dump ----");
                 System.err.println(irPinExpected);
                 System.err.println("---- actual IR dump ----");
@@ -15933,7 +15893,7 @@ module @<PROJECT>/main.deal:1:1-8:1
             }
         }
 
-        { // jvm-integration-join.json :: jvm-join-xmod-table-read-desc
+        { // jvm-integration-join :: jvm-join-xmod-table-read-desc
             String proj = "irpin03";
             writeFile(proj + "/lib.deal", "export class Item { tag: string = \"\"; }\nexport function make(tag: string): Item { return { tag: tag }; }\n");
             writeFile(proj + "/main.deal", "import * as lib from \"./lib\"\nexport function run(): string {\n  let holder: table = { item: lib.make(\"x\") };\n  let i: lib.Item = holder.item;\n  return i.tag;\n}\nexport function main(): null { return null; }\n");
@@ -15945,7 +15905,7 @@ module @<PROJECT>/main.deal:1:1-8:1
                 irPinEntry, irPinOut, false, true, false, Backend.JVM,
                 irPinExternals, List.of(irPinRoot), null);
             boolean irPinOk = irPinOrch.compile();
-            check(irPinOk, "jvm-integration-join.json :: jvm-join-xmod-table-read-desc: orchestrator --dump-ir compile succeeds: "
+            check(irPinOk, "jvm-integration-join :: jvm-join-xmod-table-read-desc: orchestrator --dump-ir compile succeeds: "
                 + irPinOrch.diagnostics());
             StringBuilder irPinActual = new StringBuilder();
             List<Path> irPinDumps = new ArrayList<>();
@@ -16017,7 +15977,7 @@ module @<PROJECT>/main.deal:1:1-8:1
           literal null : null @<PROJECT>/main.deal:7:39-7:42
 """;
             if (!(irPinExpected + "\n").equals(irPinNormalized)) {
-                check(false, "jvm-integration-join.json :: jvm-join-xmod-table-read-desc: exact IR dump mismatch");
+                check(false, "jvm-integration-join :: jvm-join-xmod-table-read-desc: exact IR dump mismatch");
                 System.err.println("---- expected IR dump ----");
                 System.err.println(irPinExpected);
                 System.err.println("---- actual IR dump ----");
@@ -16025,7 +15985,7 @@ module @<PROJECT>/main.deal:1:1-8:1
             }
         }
 
-        { // jvm-integration-join.json :: jvm-join-xmod-mismatch-desc
+        { // jvm-integration-join :: jvm-join-xmod-mismatch-desc
             String proj = "irpin04";
             writeFile(proj + "/modela.deal", "export class Item { tag: string = \"\"; }\nexport function make(tag: string): Item { return { tag: tag }; }\n");
             writeFile(proj + "/modelb.deal", "export class Item { tag: string = \"\"; }\n");
@@ -16038,7 +15998,7 @@ module @<PROJECT>/main.deal:1:1-8:1
                 irPinEntry, irPinOut, false, true, false, Backend.JVM,
                 irPinExternals, List.of(irPinRoot), null);
             boolean irPinOk = irPinOrch.compile();
-            check(irPinOk, "jvm-integration-join.json :: jvm-join-xmod-mismatch-desc: orchestrator --dump-ir compile succeeds: "
+            check(irPinOk, "jvm-integration-join :: jvm-join-xmod-mismatch-desc: orchestrator --dump-ir compile succeeds: "
                 + irPinOrch.diagnostics());
             StringBuilder irPinActual = new StringBuilder();
             List<Path> irPinDumps = new ArrayList<>();
@@ -16121,7 +16081,7 @@ module @<PROJECT>/modelb.deal:1:1-2:1
         literal "" : string @<PROJECT>/modelb.deal:1:35-1:36
 """;
             if (!(irPinExpected + "\n").equals(irPinNormalized)) {
-                check(false, "jvm-integration-join.json :: jvm-join-xmod-mismatch-desc: exact IR dump mismatch");
+                check(false, "jvm-integration-join :: jvm-join-xmod-mismatch-desc: exact IR dump mismatch");
                 System.err.println("---- expected IR dump ----");
                 System.err.println(irPinExpected);
                 System.err.println("---- actual IR dump ----");
@@ -16129,7 +16089,7 @@ module @<PROJECT>/modelb.deal:1:1-2:1
             }
         }
 
-        { // jvm-modules-slice.json :: jvm-mod-imported-direct-call
+        { // jvm-modules-slice :: jvm-mod-imported-direct-call
             String proj = "irpin05";
             writeFile(proj + "/lib.deal", "export function add(a: int, b: int): int { return a + b; }");
             writeFile(proj + "/main.deal", "import * as lib from \"./lib\"\nexport function main(): null { return null; }\n\nexport function run(): int { return lib.add(2, 3); }");
@@ -16141,7 +16101,7 @@ module @<PROJECT>/modelb.deal:1:1-2:1
                 irPinEntry, irPinOut, false, true, false, Backend.JVM,
                 irPinExternals, List.of(irPinRoot), null);
             boolean irPinOk = irPinOrch.compile();
-            check(irPinOk, "jvm-modules-slice.json :: jvm-mod-imported-direct-call: orchestrator --dump-ir compile succeeds: "
+            check(irPinOk, "jvm-modules-slice :: jvm-mod-imported-direct-call: orchestrator --dump-ir compile succeeds: "
                 + irPinOrch.diagnostics());
             StringBuilder irPinActual = new StringBuilder();
             List<Path> irPinDumps = new ArrayList<>();
@@ -16200,7 +16160,7 @@ module @<PROJECT>/main.deal:1:1-4:53
             literal 3 : int @<PROJECT>/main.deal:4:48-4:48
 """;
             if (!(irPinExpected + "\n").equals(irPinNormalized)) {
-                check(false, "jvm-modules-slice.json :: jvm-mod-imported-direct-call: exact IR dump mismatch");
+                check(false, "jvm-modules-slice :: jvm-mod-imported-direct-call: exact IR dump mismatch");
                 System.err.println("---- expected IR dump ----");
                 System.err.println(irPinExpected);
                 System.err.println("---- actual IR dump ----");
@@ -16208,7 +16168,7 @@ module @<PROJECT>/main.deal:1:1-4:53
             }
         }
 
-        { // jvm-xmod-classes-slice.json :: jvm-xmod-class-export-import
+        { // jvm-xmod-classes-slice :: jvm-xmod-class-export-import
             String proj = "irpin06";
             writeFile(proj + "/lib.deal", "export class Point {\n  x: int = 0;\n  y: int = 0;\n}\nexport function make(x: int, y: int): Point { return { x: x, y: y }; }");
             writeFile(proj + "/main.deal", "import * as lib from \"./lib\"\nexport function main(): null { return null; }\n\nexport function run(): int {\n  let p: lib.Point = lib.make(3, 4);\n  return p.x * 10 + p.y;\n}");
@@ -16220,7 +16180,7 @@ module @<PROJECT>/main.deal:1:1-4:53
                 irPinEntry, irPinOut, false, true, false, Backend.JVM,
                 irPinExternals, List.of(irPinRoot), null);
             boolean irPinOk = irPinOrch.compile();
-            check(irPinOk, "jvm-xmod-classes-slice.json :: jvm-xmod-class-export-import: orchestrator --dump-ir compile succeeds: "
+            check(irPinOk, "jvm-xmod-classes-slice :: jvm-xmod-class-export-import: orchestrator --dump-ir compile succeeds: "
                 + irPinOrch.diagnostics());
             StringBuilder irPinActual = new StringBuilder();
             List<Path> irPinDumps = new ArrayList<>();
@@ -16298,7 +16258,7 @@ module @<PROJECT>/main.deal:1:1-7:2
               ident p : @irpin06/Point @<PROJECT>/main.deal:6:21-6:21
 """;
             if (!(irPinExpected + "\n").equals(irPinNormalized)) {
-                check(false, "jvm-xmod-classes-slice.json :: jvm-xmod-class-export-import: exact IR dump mismatch");
+                check(false, "jvm-xmod-classes-slice :: jvm-xmod-class-export-import: exact IR dump mismatch");
                 System.err.println("---- expected IR dump ----");
                 System.err.println(irPinExpected);
                 System.err.println("---- actual IR dump ----");
@@ -16306,7 +16266,7 @@ module @<PROJECT>/main.deal:1:1-7:2
             }
         }
 
-        { // jvm-xmod-classes-slice.json :: jvm-xmod-class-construction-defaults
+        { // jvm-xmod-classes-slice :: jvm-xmod-class-construction-defaults
             String proj = "irpin07";
             writeFile(proj + "/lib.deal", "export class Point {\n  x: int = 10;\n  y: int = 20;\n}\nexport function sum(p: Point): int { return p.x + p.y; }");
             writeFile(proj + "/main.deal", "import * as lib from \"./lib\"\nexport function main(): null { return null; }\n\nexport function run(): int {\n  let a: lib.Point = {};\n  let b: lib.Point = { y: 5, x: 2 };\n  return a.x + a.y * 10 + lib.sum(b);\n}");
@@ -16318,7 +16278,7 @@ module @<PROJECT>/main.deal:1:1-7:2
                 irPinEntry, irPinOut, false, true, false, Backend.JVM,
                 irPinExternals, List.of(irPinRoot), null);
             boolean irPinOk = irPinOrch.compile();
-            check(irPinOk, "jvm-xmod-classes-slice.json :: jvm-xmod-class-construction-defaults: orchestrator --dump-ir compile succeeds: "
+            check(irPinOk, "jvm-xmod-classes-slice :: jvm-xmod-class-construction-defaults: orchestrator --dump-ir compile succeeds: "
                 + irPinOrch.diagnostics());
             StringBuilder irPinActual = new StringBuilder();
             List<Path> irPinDumps = new ArrayList<>();
@@ -16403,7 +16363,7 @@ module @<PROJECT>/main.deal:1:1-8:2
               ident b : @irpin07/Point @<PROJECT>/main.deal:7:35-7:35
 """;
             if (!(irPinExpected + "\n").equals(irPinNormalized)) {
-                check(false, "jvm-xmod-classes-slice.json :: jvm-xmod-class-construction-defaults: exact IR dump mismatch");
+                check(false, "jvm-xmod-classes-slice :: jvm-xmod-class-construction-defaults: exact IR dump mismatch");
                 System.err.println("---- expected IR dump ----");
                 System.err.println(irPinExpected);
                 System.err.println("---- actual IR dump ----");
@@ -16411,7 +16371,7 @@ module @<PROJECT>/main.deal:1:1-8:2
             }
         }
 
-        { // jvm-xmod-classes-slice.json :: jvm-xmod-class-param-pass
+        { // jvm-xmod-classes-slice :: jvm-xmod-class-param-pass
             String proj = "irpin08";
             writeFile(proj + "/lib.deal", "export class Pair {\n  left: int = 0;\n  right: int = 0;\n}\nexport function sum(p: Pair): int { return p.left + p.right; }");
             writeFile(proj + "/main.deal", "import * as lib from \"./lib\"\nexport function main(): null { return null; }\n\nexport function run(): int {\n  let p: lib.Pair = { left: 5, right: 7 };\n  return lib.sum(p);\n}");
@@ -16423,7 +16383,7 @@ module @<PROJECT>/main.deal:1:1-8:2
                 irPinEntry, irPinOut, false, true, false, Backend.JVM,
                 irPinExternals, List.of(irPinRoot), null);
             boolean irPinOk = irPinOrch.compile();
-            check(irPinOk, "jvm-xmod-classes-slice.json :: jvm-xmod-class-param-pass: orchestrator --dump-ir compile succeeds: "
+            check(irPinOk, "jvm-xmod-classes-slice :: jvm-xmod-class-param-pass: orchestrator --dump-ir compile succeeds: "
                 + irPinOrch.diagnostics());
             StringBuilder irPinActual = new StringBuilder();
             List<Path> irPinDumps = new ArrayList<>();
@@ -16496,7 +16456,7 @@ module @<PROJECT>/main.deal:1:1-7:2
             ident p : @irpin08/Pair @<PROJECT>/main.deal:6:18-6:18
 """;
             if (!(irPinExpected + "\n").equals(irPinNormalized)) {
-                check(false, "jvm-xmod-classes-slice.json :: jvm-xmod-class-param-pass: exact IR dump mismatch");
+                check(false, "jvm-xmod-classes-slice :: jvm-xmod-class-param-pass: exact IR dump mismatch");
                 System.err.println("---- expected IR dump ----");
                 System.err.println(irPinExpected);
                 System.err.println("---- actual IR dump ----");
@@ -16504,7 +16464,7 @@ module @<PROJECT>/main.deal:1:1-7:2
             }
         }
 
-        { // jvm-xmod-classes-slice.json :: jvm-xmod-class-return-mutate-roundtrip
+        { // jvm-xmod-classes-slice :: jvm-xmod-class-return-mutate-roundtrip
             String proj = "irpin09";
             writeFile(proj + "/lib.deal", "export class Box {\n  value: int = 0;\n}\nexport function makeBox(): Box { return { value: 7 }; }\nexport function readBox(b: Box): int { return b.value; }");
             writeFile(proj + "/main.deal", "import * as lib from \"./lib\"\nexport function main(): null { return null; }\n\nexport function run(): int {\n  let b: lib.Box = lib.makeBox();\n  b.value = b.value + 5;\n  return lib.readBox(b);\n}");
@@ -16516,7 +16476,7 @@ module @<PROJECT>/main.deal:1:1-7:2
                 irPinEntry, irPinOut, false, true, false, Backend.JVM,
                 irPinExternals, List.of(irPinRoot), null);
             boolean irPinOk = irPinOrch.compile();
-            check(irPinOk, "jvm-xmod-classes-slice.json :: jvm-xmod-class-return-mutate-roundtrip: orchestrator --dump-ir compile succeeds: "
+            check(irPinOk, "jvm-xmod-classes-slice :: jvm-xmod-class-return-mutate-roundtrip: orchestrator --dump-ir compile succeeds: "
                 + irPinOrch.diagnostics());
             StringBuilder irPinActual = new StringBuilder();
             List<Path> irPinDumps = new ArrayList<>();
@@ -16602,7 +16562,7 @@ module @<PROJECT>/main.deal:1:1-8:2
             ident b : @irpin09/Box @<PROJECT>/main.deal:7:22-7:22
 """;
             if (!(irPinExpected + "\n").equals(irPinNormalized)) {
-                check(false, "jvm-xmod-classes-slice.json :: jvm-xmod-class-return-mutate-roundtrip: exact IR dump mismatch");
+                check(false, "jvm-xmod-classes-slice :: jvm-xmod-class-return-mutate-roundtrip: exact IR dump mismatch");
                 System.err.println("---- expected IR dump ----");
                 System.err.println(irPinExpected);
                 System.err.println("---- actual IR dump ----");
@@ -16610,7 +16570,7 @@ module @<PROJECT>/main.deal:1:1-8:2
             }
         }
 
-        { // jvm-xmod-classes-slice.json :: jvm-xmod-same-name-isolation
+        { // jvm-xmod-classes-slice :: jvm-xmod-same-name-isolation
             String proj = "irpin10";
             writeFile(proj + "/modela.deal", "export class Item {\n  tag: string = \"\";\n}\nexport function tag(i: Item): string { return \"a:\" + i.tag; }");
             writeFile(proj + "/modelb.deal", "export class Item {\n  tag: string = \"\";\n}\nexport function tag(i: Item): string { return \"b:\" + i.tag; }");
@@ -16623,7 +16583,7 @@ module @<PROJECT>/main.deal:1:1-8:2
                 irPinEntry, irPinOut, false, true, false, Backend.JVM,
                 irPinExternals, List.of(irPinRoot), null);
             boolean irPinOk = irPinOrch.compile();
-            check(irPinOk, "jvm-xmod-classes-slice.json :: jvm-xmod-same-name-isolation: orchestrator --dump-ir compile succeeds: "
+            check(irPinOk, "jvm-xmod-classes-slice :: jvm-xmod-same-name-isolation: orchestrator --dump-ir compile succeeds: "
                 + irPinOrch.diagnostics());
             StringBuilder irPinActual = new StringBuilder();
             List<Path> irPinDumps = new ArrayList<>();
@@ -16740,7 +16700,7 @@ module @<PROJECT>/modelb.deal:1:1-4:62
               ident i : @irpin10/Item @<PROJECT>/modelb.deal:4:54-4:54
 """;
             if (!(irPinExpected + "\n").equals(irPinNormalized)) {
-                check(false, "jvm-xmod-classes-slice.json :: jvm-xmod-same-name-isolation: exact IR dump mismatch");
+                check(false, "jvm-xmod-classes-slice :: jvm-xmod-same-name-isolation: exact IR dump mismatch");
                 System.err.println("---- expected IR dump ----");
                 System.err.println(irPinExpected);
                 System.err.println("---- actual IR dump ----");
@@ -16748,7 +16708,7 @@ module @<PROJECT>/modelb.deal:1:1-4:62
             }
         }
 
-        { // jvm-xmod-classes-slice.json :: jvm-xmod-class-param-return-local-fn
+        { // jvm-xmod-classes-slice :: jvm-xmod-class-param-return-local-fn
             String proj = "irpin11";
             writeFile(proj + "/lib.deal", "export class Point {\n  x: int = 0;\n  y: int = 0;\n}\nexport function sum(p: Point): int { return p.x + p.y; }");
             writeFile(proj + "/main.deal", "import * as lib from \"./lib\"\nexport function main(): null { return null; }\n\nfunction shift(p: lib.Point): lib.Point {\n  p.x = p.x + 1;\n  return p;\n}\nexport function run(): int {\n  let p: lib.Point = { x: 3, y: 4 };\n  let q: lib.Point = shift(p);\n  return lib.sum(q) + q.y;\n}");
@@ -16760,7 +16720,7 @@ module @<PROJECT>/modelb.deal:1:1-4:62
                 irPinEntry, irPinOut, false, true, false, Backend.JVM,
                 irPinExternals, List.of(irPinRoot), null);
             boolean irPinOk = irPinOrch.compile();
-            check(irPinOk, "jvm-xmod-classes-slice.json :: jvm-xmod-class-param-return-local-fn: orchestrator --dump-ir compile succeeds: "
+            check(irPinOk, "jvm-xmod-classes-slice :: jvm-xmod-class-param-return-local-fn: orchestrator --dump-ir compile succeeds: "
                 + irPinOrch.diagnostics());
             StringBuilder irPinActual = new StringBuilder();
             List<Path> irPinDumps = new ArrayList<>();
@@ -16857,7 +16817,7 @@ module @<PROJECT>/main.deal:1:1-12:2
               ident q : @irpin11/Point @<PROJECT>/main.deal:11:23-11:23
 """;
             if (!(irPinExpected + "\n").equals(irPinNormalized)) {
-                check(false, "jvm-xmod-classes-slice.json :: jvm-xmod-class-param-return-local-fn: exact IR dump mismatch");
+                check(false, "jvm-xmod-classes-slice :: jvm-xmod-class-param-return-local-fn: exact IR dump mismatch");
                 System.err.println("---- expected IR dump ----");
                 System.err.println(irPinExpected);
                 System.err.println("---- actual IR dump ----");

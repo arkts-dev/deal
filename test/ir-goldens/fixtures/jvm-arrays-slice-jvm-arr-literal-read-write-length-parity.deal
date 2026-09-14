@@ -1,5 +1,5 @@
 // IR golden fixture: jvm-arrays-slice-jvm-arr-literal-read-write-length-parity
-// Migrated IR-containment pins from test/conformance/fixtures/jvm-arrays-slice.json case 'jvm-arr-literal-read-write-length-parity' (ISSUE-0358).
+// Migrated IR-containment pin for legacy case 'jvm-arr-literal-read-write-length-parity' (ISSUE-0358).
 
 import * as console from "std/console"
 export function test(): null {

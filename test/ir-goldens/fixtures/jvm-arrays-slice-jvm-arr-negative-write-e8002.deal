@@ -1,5 +1,5 @@
 // IR golden fixture: jvm-arrays-slice-jvm-arr-negative-write-e8002
-// Migrated IR-containment pins from test/conformance/fixtures/jvm-arrays-slice.json case 'jvm-arr-negative-write-e8002' (ISSUE-0358).
+// Migrated IR-containment pin for legacy case 'jvm-arr-negative-write-e8002' (ISSUE-0358).
 
 export function test(): int {
   let xs: int[] = [1, 2, 3];

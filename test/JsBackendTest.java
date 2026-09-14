@@ -69,7 +69,7 @@ import java.util.stream.Stream;
  * pattern); the bounded node semantic cases execute the real
  * frontend → {@link JsBackend} → node chain through the deployed
  * {@code deal/runtime.js} and {@code std/*.js} artifacts with the
- * conformance runner ({@link BackendConformanceTest#buildJsRunner}),
+ * generated-artifact runner ({@link StubModuleResolver#buildJsRunner}),
  * which auto-invokes zero-arity exports in declaration order, prints
  * non-null results, awaits thenables, and maps uncaught errors to the
  * shared {@code DEAL_ERROR_CODE: <code>} stderr + exit-1 contract.
@@ -233,7 +233,7 @@ public class JsBackendTest {
      */
     private static Frontend compileFrontend(String source, String filename) {
         return compileFrontend(source, filename, "Main",
-            new BackendConformanceTest.StubModuleResolver());
+            new StubModuleResolver());
     }
 
     /** Frontend compile with an explicit module resolver (module probes). */
@@ -264,7 +264,7 @@ public class JsBackendTest {
     private static Frontend compileFrontendUnshaped(String source,
                                                     String filename) {
         return compileFrontend(source, filename, "Main",
-            new BackendConformanceTest.StubModuleResolver(), false);
+            new StubModuleResolver(), false);
     }
 
     @SuppressWarnings("deprecation")
@@ -408,13 +408,13 @@ public class JsBackendTest {
     /**
      * Deploys one generated artifact plus the runtime/stdlib support set
      * into a fresh temp dir (the conformance adapter's deployment shape:
-     * {@link BackendConformanceTest#deployJsSupport}).
+     * {@link StubModuleResolver#deployJsSupport}).
      */
     private static Path deployArtifacts(JsBackend.JsCodegenResult res,
                                         String artifactName) throws IOException {
         Path dir = Files.createTempDirectory("jstest_run_");
         Files.writeString(dir.resolve(artifactName), res.source());
-        BackendConformanceTest.deployJsSupport(dir);
+        StubModuleResolver.deployJsSupport(dir);
         return dir;
     }
 
@@ -474,7 +474,7 @@ public class JsBackendTest {
         }
         Path dir = deployArtifacts(res, "Main.js");
         Files.writeString(dir.resolve("JsConformanceRunner.js"),
-            BackendConformanceTest.buildJsRunner(f.program()));
+            StubModuleResolver.buildJsRunner(f.program()));
         NodeResult result = runNodeScript(dir, "JsConformanceRunner.js");
         deleteDir(dir);
         return result;
@@ -497,7 +497,7 @@ public class JsBackendTest {
     private static NodeResult runRuntimeProbe(String name, String script)
             throws Exception {
         Path dir = Files.createTempDirectory("jstest_probe_");
-        BackendConformanceTest.deployJsSupport(dir);
+        StubModuleResolver.deployJsSupport(dir);
         Files.writeString(dir.resolve("probe.js"), script);
         NodeResult result = runNodeScript(dir, "probe.js");
         deleteDir(dir);
@@ -1987,7 +1987,7 @@ public class JsBackendTest {
                         + "  return x + 1;\n"
                         + "} };\n");
                     Files.writeString(dir.resolve("JsConformanceRunner.js"),
-                        BackendConformanceTest.buildJsRunner(
+                        StubModuleResolver.buildJsRunner(
                             compileFrontend("""
                             import * as h from "./hostmod"
                             export function test(): int {

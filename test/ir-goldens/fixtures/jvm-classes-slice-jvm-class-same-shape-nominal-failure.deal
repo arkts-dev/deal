@@ -1,5 +1,5 @@
 // IR golden fixture: jvm-classes-slice-jvm-class-same-shape-nominal-failure
-// Migrated IR-containment pins from test/conformance/fixtures/jvm-classes-slice.json case 'jvm-class-same-shape-nominal-failure' (ISSUE-0358).
+// Migrated IR-containment pin for legacy case 'jvm-class-same-shape-nominal-failure' (ISSUE-0358).
 
 class A { x: int = 0; }
 class B { x: int = 0; }

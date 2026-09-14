@@ -28,10 +28,8 @@ import java.util.Objects;
  * The shared JVM emitter of the decomposition-tail integration
  * verification (ISSUE-0410): emits a real Java artifact from the
  * validated {@link LoweredModuleUnit} + {@link StructuredBodyTable} over
- * the EVALUATION_ORDER op set, realizing the pinned shared-emitter
- * obligations (the {@link deal.semantic.SharedEmitterRealizationContract}
- * rows; binary-comparison-selectors B-D6; control-flow-structures C-D9;
- * assignment-delete-address-chains A-D8):
+ * the EVALUATION_ORDER op set (binary-comparison-selectors B-D6;
+ * control-flow-structures C-D9; assignment-delete-address-chains A-D8):
  *
  * <ul>
  *   <li><b>Chains:</b> every chain child's result is materialized into a

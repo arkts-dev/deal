@@ -54,7 +54,6 @@ TEST_SOURCES=(
   'test/CheckedProjectBuilderTest.java'
   'test/LoweringSupportTest.java'
   'test/MigrationPlannerTest.java'
-  'test/StagingPublicationTest.java'
   'test/FoundationIntegrationTest.java'
   'test/InvocationProfileRegistryTest.java'
   'test/DiagnosticRangeTest.java'
@@ -69,9 +68,9 @@ TEST_SOURCES=(
   'test/AddressChainLoweringTest.java'
   'test/ControlFlowLoweringTest.java'
   'test/EvaluationOrderIntegrationTest.java'
+  'test/SemanticDifferentialHarness.java'
   'test/RuntimeIntegrationMatrixTest.java'
   'test/UnicodeScalarsTest.java'
-  'test/BoundaryRealizationReportTest.java'
   'test/FailureContractRegistryTest.java'
   'test/CanonicalJsonTest.java'
   'test/SemanticIrValidatorTest.java'
@@ -109,7 +108,6 @@ TEST_SOURCES=(
   'test/DescriptorEmissionByteIdentityTest.java'
   'test/CanonicalRuntimeTypeDescriptorTest.java'
   'test/RuntimeTypeMatcherTest.java'
-  'test/BackendConformanceTest.java'
   'test/JvmBackendTest.java'
   'test/JsBackendTest.java'
   'test/JsE2eTest.java'
@@ -178,7 +176,7 @@ TEST_SOURCES=(
   # battery (D4/D5, Verification 1 and 3; the combined T2/T1 drive).
   'test/SharedStdlibSemanticsTest.java'
   # ISSUE-0496 registration: the stdlib failure-projection wiring and
-  # boundary realization reporting battery (D6, Verification 2 and 4).
+  # active boundary-realization payload battery (D6, Verification 2 and 4).
   'test/StdlibFailureProjectionTest.java'
   # ISSUE-0497 registration: the STDLIB_SEMANTICS claiming arms (the
   # ContainerClaimingSeam STDLIB_CALL → STDLIB_SEMANTICS home row and
@@ -191,8 +189,8 @@ TEST_SOURCES=(
   # JVM backend's emitted stdlib helpers) compared against
   # SharedStdlibSemantics plus the projection wiring on the full
   # declared input domain, with the known divergent verdicts detected
-  # by the comparison, the trim candidates, the wiring admission rule,
-  # and the promotion-evidence registry
+  # by the comparison, the trim candidates, test-local derived outcomes,
+  # and promotion evidence
   # (stdlib-operations-and-time-lock D7, Verification 6; sequencing
   # item 6).
   'test/StdlibEquivalenceBatteryTest.java'
@@ -344,13 +342,6 @@ TEST_SOURCES=(
   'deal/test/conformance/DifferentialGateLanesCorpusTest.java'
   'test/CapabilityRegistryTransitionTest.java'
   'test/SemanticProductionGateTest.java'
-  'deal/test/conformance/V12FeatureMetadata.java'
-  'deal/test/conformance/FeatureBackendMatrix.java'
-  'deal/test/conformance/V12FeatureCatalog.java'
-  'deal/test/conformance/V12FeatureMetadataTest.java'
-  'deal/test/conformance/FeatureBackendMatrixTest.java'
-  'deal/test/conformance/V12FeatureCatalogTest.java'
-  'deal/test/conformance/V12FeatureCatalogCorpusTest.java'
   'deal/test/feature/FeatureId.java'
   'deal/test/feature/V12FeatureMetadata.java'
   'deal/test/feature/FeatureBackendMatrix.java'
@@ -365,7 +356,6 @@ TEST_SOURCES=(
 # golden-ir. For guarded luajit/node records the command field carries
 # today's command lines followed by today's verbatim WARNING skip line.
 TEST_MAINS=(
-  'bg|=== Launching Backend Conformance Tests (background) ===|java -ea -cp build deal.test.BackendConformanceTest'
   'bg|=== Launching JVM Backend Tests (background) ===|java -ea -cp build deal.test.JvmBackendTest'
   'bg|=== Launching Lua ABI Unit Tests (background; JUnit4 + Hamcrest) ===|java -ea -cp build:/usr/share/java/junit4.jar:/usr/share/java/hamcrest-core.jar org.junit.runner.JUnitCore deal.test.LuaAbiTest deal.test.LuaAbiBackendTest deal.test.CrossModuleTypingTest'
   'bg|=== Launching Conformance Tests (background) ===|java -ea -cp build deal.test.ConformanceTest test/conformance/'
@@ -379,7 +369,6 @@ TEST_MAINS=(
   'fg|=== Running Checked Project Builder Tests (ISSUE-0288) ===|java -ea -cp build deal.test.CheckedProjectBuilderTest'
   'fg|=== Running Lowering Support / Requirement Manifest Tests (ISSUE-0289) ===|java -ea -cp build deal.test.LoweringSupportTest'
   'fg|=== Running Migration Planner / Route Plan Tests (ISSUE-0290) ===|java -ea -cp build deal.semantic.MigrationPlannerTest'
-  'fg|=== Running Staging / ABI Validation / Atomic Publication Tests (ISSUE-0291) ===|java -ea -cp build deal.semantic.StagingPublicationTest'
   'fg|=== Running Foundation Integration Tests (ISSUE-0292) ===|java -ea -cp build deal.test.FoundationIntegrationTest'
   'fg|=== Running Invocation / Profile / Capability Registry Tests (ISSUE-0284) ===|java -ea -cp build deal.test.InvocationProfileRegistryTest'
   'fg|=== Running Semantic IR Schema Tests (ISSUE-0282) ===|java -ea -cp build deal.test.SemanticIrSchemaTest'
@@ -393,7 +382,6 @@ TEST_MAINS=(
   'fg|=== Running Evaluation Order Integration Tests (ISSUE-0410, decomposition tail) ===|java -ea -cp build deal.test.EvaluationOrderIntegrationTest'
   'fg|=== Running the Runtime Integration Matrix (ISSUE-0410: semantic oracle + shared LuaJIT + shared JVM) ===|java -ea -cp build deal.test.RuntimeIntegrationMatrixTest'
   'fg|=== Running Unicode Scalars Tests (ISSUE-0382, ISSUE-0232 D5) ===|java -ea -cp build deal.test.UnicodeScalarsTest'
-  'fg|=== Running Boundary Realization Report Tests (ISSUE-0365 D4) ===|java -ea -cp build deal.test.BoundaryRealizationReportTest'
   'fg|=== Running Failure Contract Registry Tests (ISSUE-0285) ===|java -ea -cp build deal.test.FailureContractRegistryTest'
   'fg|=== Running Canonical JSON / Snapshot Digest Tests (ISSUE-0283) ===|java -ea -cp build deal.test.CanonicalJsonTest'
   'fg|=== Running Semantic IR Validator Tests (ISSUE-0286) ===|java -ea -cp build deal.test.SemanticIrValidatorTest'
@@ -595,10 +583,6 @@ WARNING: luajit not found, skipping async nesting stress tests'
   'fg|=== Running Differential Gate Lanes Corpus Tests (ISSUE-0357) ===|java -ea -cp build deal.test.conformance.DifferentialGateLanesCorpusTest'
   'fg|=== Running Capability Registry Transition Surface Tests (ISSUE-0485) ===|java -ea -cp build deal.test.CapabilityRegistryTransitionTest'
   'fg|=== Running Semantic Production Gate Tests (ISSUE-0239) ===|java -ea -cp build deal.test.SemanticProductionGateTest'
-  'fg|=== Running V12 Feature Metadata Tests (ISSUE-0157) ===|java -ea -cp build deal.test.conformance.V12FeatureMetadataTest'
-  'fg|=== Running Feature Backend Matrix Tests (ISSUE-0157) ===|java -ea -cp build deal.test.conformance.FeatureBackendMatrixTest'
-  'fg|=== Running V12 Feature Catalog Tests (ISSUE-0157) ===|java -ea -cp build deal.test.conformance.V12FeatureCatalogTest'
-  'fg|=== Running V12 Feature Catalog Corpus Tests (ISSUE-0157) ===|java -ea -cp build deal.test.conformance.V12FeatureCatalogCorpusTest'
   'fg|=== Running V12 Feature Catalog/Matrix Tests (ISSUE-0165) ===|java -ea -cp build deal.test.feature.V12FeatureGateTest'
   'fg|=== Running the Production V12 Feature/Native Gate (ISSUE-0165) ===|java -ea -cp build deal.test.feature.V12FeatureGate'
   'fg|=== Running Class Construction Integration Tail Tests (ISSUE-0517) ===|java -ea -cp build deal.test.ClassConstructionIntegrationTailTest'

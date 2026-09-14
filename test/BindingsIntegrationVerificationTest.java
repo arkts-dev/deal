@@ -171,13 +171,9 @@ import java.util.Set;
  * precedes any invocation of the returned value); the negative control
  * executes the same cell with an exact-signature
  * {@code (int,int)->int} value and passes. The executed check is the
- * executor's comparator, never a static
- * {@link FailureContractRegistry} lookup or the retained fixture
- * alone; the drive fails (never skips) when the realization component
- * is absent or misbehaves. The retained fixture
- * {@code test/conformance/fixtures/jvm-function-values-slice.json}
- * case {@code jvm-fv-sig-check-return-error} stays green as the
- * retained-side authority.</p>
+     * executor's comparator, never a static
+     * {@link FailureContractRegistry} lookup; the drive fails (never skips)
+     * when the realization component is absent or misbehaves.</p>
  *
  * <p><b>No adapter invocation.</b> The corpus and the drive invoke no
  * adapter: no {@code CALL}/{@code CALLBACK_INVOKE}/{@code ASYNC_START}
@@ -2180,36 +2176,6 @@ public class BindingsIntegrationVerificationTest {
     }
 
     // =========================================================================
-    // 13. The retained fixture stays the retained-side authority
-    // =========================================================================
-
-    static void testRetainedFixtureAuthorityPresent() {
-        System.out.println("-- the retained fixture stays green as the retained-side "
-            + "authority --");
-
-        Path fixture = Path.of("test", "conformance", "fixtures",
-            "jvm-function-values-slice.json");
-        boolean present = Files.isRegularFile(fixture);
-        check(present,
-            "the retained fixture test/conformance/fixtures/jvm-function-values-slice.json "
-                + "exists (the retained-side authority)");
-        if (!present) {
-            return;
-        }
-        try {
-            String text = Files.readString(fixture, StandardCharsets.UTF_8);
-            check(text.contains("jvm-fv-sig-check-return-error"),
-                "the retained fixture still carries the jvm-fv-sig-check-return-error "
-                    + "case (the boundary-arity pin stays active)");
-            check(!text.contains("\"name\": \"jvm-fv-sig-check-return-error\",\n"
-                    + "      \"expectation\": \"removed"),
-                "the retained fixture case is not retired or weakened");
-        } catch (java.io.IOException io) {
-            fail("reading the retained fixture failed: " + io.getMessage());
-        }
-    }
-
-    // =========================================================================
     // Runner
     // =========================================================================
 
@@ -2230,7 +2196,6 @@ public class BindingsIntegrationVerificationTest {
         testCellKindIff();
         testNoAdapterInvocation();
         testExecutedReturnBoundaryE8010Drive();
-        testRetainedFixtureAuthorityPresent();
 
         System.out.println("\nBindings integration verification: " + passed + " passed, "
             + failed + " failed");

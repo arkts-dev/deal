@@ -2,7 +2,6 @@ package deal.test;
 
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticCode;
-import deal.semantic.BoundaryRealizationReport;
 import deal.semantic.DescriptorService;
 import deal.semantic.ir.ActualKind;
 import deal.semantic.ir.AnchorId;
@@ -54,9 +53,9 @@ import java.util.Set;
 
 /**
  * The epic's decomposition tail (ISSUE-0367): the end-to-end chain
- * descriptor → boundary → realization report → exact projection through
+ * descriptor → boundary payload → exact projection through
  * synthetic lowered units, with in-memory failure injection proving the
- * chain fails when any constituent (service, validator, executor, report)
+ * chain fails when any constituent (service, validator, executor)
  * is broken. No mocked substitute at any seam: descriptors are produced by
  * {@link DescriptorService#describe(Type)} from checked {@code Type}s
  * (int, number, array, class, nullable, sync and async {@code Func}); the
@@ -66,8 +65,8 @@ import java.util.Set;
  * executed cell-by-cell through {@link BoundaryExecutor} (the
  * {@code RuntimeValidation} cells through {@code check}, the proved cell
  * through the realization dispatch whose terminal is always {@code Pass});
- * and the {@link BoundaryRealizationReport} is completed through the
- * {@code BoundaryRealizationReport.complete} predicate. Every projection
+ * and each active boundary realization is read directly from its payload.
+ * Every projection
  * is asserted against the exact pinned message, never a substring match.
  *
  * <p>Tests:
@@ -94,9 +93,7 @@ import java.util.Set;
  *       {@code array index out of bounds} for index &gt; length, the
  *       E8003 first-failing-element arm with the leaf cause, and the
  *       proved cell that always Passes without check logic.</li>
- *   <li>Failure injection (in-memory unit variants): a report missing one
- *       boundary entry → E6005 naming the module and the offending op; a
- *       {@code RepresentationProof} on a non-admissible cell → E6005;
+ *   <li>Failure injection (in-memory unit variants):
  *       {@code describe(Type.Bytes)} (the bytes member since ISSUE-0158) and
  *       {@code describe(Type.Error)} →
  *       {@code DescriptorService.Defect} → E6005
@@ -137,8 +134,6 @@ public class BoundaryIntegrationTest {
         try {
             testEndToEndHappyChain();
             testProvedCellPair();
-            testFailureInjectionReportMissingEntry();
-            testFailureInjectionProofNotAdmissible();
             testFailureInjectionDescriptorDefect();
             testFailureInjectionValidatorOutOfTableTriple();
             testExecutorOutOfSubsetPolicyFailsClosed();
@@ -245,18 +240,6 @@ public class BoundaryIntegrationTest {
             Map.of(), ops);
     }
 
-    /** The report the emitter fills from the op payloads (complete by construction). */
-    private static BoundaryRealizationReport reportOf(LoweredModuleUnit unit) {
-        Map<OpId, BoundaryRealization> map = new LinkedHashMap<>();
-        for (SemanticOp op : unit.ops()) {
-            if (op.kind() == SemanticOpKind.BOUNDARY) {
-                KindPayload.BoundaryPayload payload = (KindPayload.BoundaryPayload) op.payload();
-                map.put(op.opId(), payload.realization());
-            }
-        }
-        return new BoundaryRealizationReport(map);
-    }
-
     // =========================================================================
     // Executor-arm model and assertion helpers
     // =========================================================================
@@ -347,7 +330,7 @@ public class BoundaryIntegrationTest {
     }
 
     // =========================================================================
-    // The synthetic happy fixture: descriptor → boundary → executor → report
+    // The synthetic happy fixture: descriptor → boundary payload → executor
     // =========================================================================
 
     /**
@@ -563,7 +546,6 @@ public class BoundaryIntegrationTest {
     // =========================================================================
 
     private static final String STEP_VALIDATION = "validation";
-    private static final String STEP_REPORT = "report-completion";
     private static final String STEP_COMPLETE = "complete";
 
     /** The outcome of one chain run: the first failing step and its diagnostic. */
@@ -571,17 +553,16 @@ public class BoundaryIntegrationTest {
     }
 
     /**
-     * Runs the complete chain over one synthetic unit:
+     * Runs the validated execution chain over one synthetic unit:
      * <ol>
      *   <li>validation — {@code SemanticIrValidator.validate(unit, facts)}
      *       must be empty; a rejected unit never reaches the executor;</li>
      *   <li>execution — every {@code BOUNDARY} op executed cell-by-cell
-     *       through {@code BoundaryExecutor.execute} (the
+     *       through {@code BoundaryExecutor.execute} using the realization
+     *       carried by its active Semantic IR payload (the
      *       {@code RuntimeValidation} cells run {@code check}; the proved
      *       cell's terminal is always {@code Pass}) against the pinned
-     *       projections;</li>
-     *   <li>report completion — {@code BoundaryRealizationReport.complete}
-     *       must be empty for the payload-derived report.</li>
+     *       projections.</li>
      * </ol>
      */
     private static ChainRun runChain(LoweredModuleUnit unit, Map<OpId, List<ExecArm>> arms) {
@@ -608,11 +589,6 @@ public class BoundaryIntegrationTest {
             }
         }
         check(executed > 0, "the chain executed at least one boundary arm");
-        Optional<CompilerDiagnostic> completion =
-            BoundaryRealizationReport.complete(unit, reportOf(unit));
-        if (completion.isPresent()) {
-            return new ChainRun(false, STEP_REPORT, completion.get());
-        }
         return new ChainRun(true, STEP_COMPLETE, null);
     }
 
@@ -678,7 +654,7 @@ public class BoundaryIntegrationTest {
 
     static void testEndToEndHappyChain() {
         System.out.println("-- Happy chain: DescriptorService → SemanticIrValidator → "
-            + "BoundaryExecutor → BoundaryRealizationReport --");
+            + "BoundaryExecutor --");
 
         // T1 combined: every chain descriptor is produced by the single
         // Type→descriptor producer with the schema-owned canonical text.
@@ -723,31 +699,26 @@ public class BoundaryIntegrationTest {
                 + "completes end to end; step='" + run.step() + "'"
                 + (run.diagnostic() != null ? " diagnostic=" + run.diagnostic().message() : ""));
 
-        // The report is complete exactly when its key set equals the unit's
-        // BOUNDARY op-id set and each entry equals the op payload's
-        // realization (asserted empty by the chain); pin the one proof entry.
-        BoundaryRealizationReport report = reportOf(unit);
-        check(report.realizations().size() == 13,
-            "the report records exactly one realization per boundary; got "
-                + report.realizations().size());
+        // Inspect the active Semantic IR payloads directly and pin the one
+        // representation-proof boundary.
         int proofEntries = 0;
-        for (Map.Entry<OpId, BoundaryRealization> entry : report.realizations().entrySet()) {
-            SemanticOp op = unit.ops().stream()
-                .filter(o -> o.opId().equals(entry.getKey())).findFirst().orElse(null);
-            check(op != null && op.kind() == SemanticOpKind.BOUNDARY,
-                "every report key is a BOUNDARY op of the unit: " + entry.getKey());
-            if (entry.getValue() instanceof BoundaryRealization.RepresentationProof) {
+        for (SemanticOp op : boundaries) {
+            KindPayload.BoundaryPayload payload = (KindPayload.BoundaryPayload) op.payload();
+            if (payload.realization() instanceof BoundaryRealization.RepresentationProof proof) {
                 proofEntries++;
-                KindPayload.BoundaryPayload payload = (KindPayload.BoundaryPayload) op.payload();
-                check(payload.kind() == BoundaryKind.DEAL_TO_HOST
+                check(!proof.proofKind().isEmpty()
+                        && payload.kind() == BoundaryKind.DEAL_TO_HOST
                         && op.failurePolicy() == FailurePolicyId.HOST_PARAMETER,
-                    "the RepresentationProof entry sits on the only admissible cell "
-                        + "(DEAL_TO_HOST + HOST_PARAMETER); got (" + payload.kind() + ", "
-                        + op.failurePolicy() + ")");
+                    "the non-empty RepresentationProof sits on DEAL_TO_HOST + HOST_PARAMETER; "
+                        + "got (" + payload.kind() + ", " + op.failurePolicy() + ")");
+            } else if (payload.realization()
+                    instanceof BoundaryRealization.RuntimeValidation validation) {
+                check(!validation.checkId().isEmpty(),
+                    "the RuntimeValidation payload carries a non-empty check id: " + op.opId());
             }
         }
         check(proofEntries == 1,
-            "exactly one RepresentationProof entry in the happy report; got " + proofEntries);
+            "exactly one RepresentationProof payload in the happy unit; got " + proofEntries);
 
         // The chain is deterministic: a repeated run over a fresh unit
         // completes identically.
@@ -843,80 +814,7 @@ public class BoundaryIntegrationTest {
     }
 
     // =========================================================================
-    // 3. Failure injection: report missing one boundary entry
-    // =========================================================================
-
-    static void testFailureInjectionReportMissingEntry() {
-        System.out.println("-- Fault: the report misses one boundary entry (T3) --");
-
-        HappyFixture fixture = happyFixture(false);
-        LoweredModuleUnit unit = fixture.unit();
-
-        // The intact chain is green for this exact unit.
-        ChainRun intact = runChain(unit, fixture.arms());
-        check(intact.ok() && STEP_COMPLETE.equals(intact.step()),
-            "the intact chain over this unit completes; step='" + intact.step() + "'");
-
-        // In-memory variant: drop the first boundary's report entry.
-        SemanticOp firstBoundary = unit.ops().stream()
-            .filter(op -> op.kind() == SemanticOpKind.BOUNDARY).findFirst().orElseThrow();
-        Map<OpId, BoundaryRealization> dropped = new LinkedHashMap<>(
-            reportOf(unit).realizations());
-        dropped.remove(firstBoundary.opId());
-        Optional<CompilerDiagnostic> diagnostic = BoundaryRealizationReport.complete(unit,
-            new BoundaryRealizationReport(dropped));
-        assertE6005(diagnostic.orElse(null),
-            BoundaryRealizationReport.BOUNDARY_REALIZATION_MISSING,
-            "OpId(mod.a#" + firstBoundary.opId().id() + ")",
-            "VARIABLE_DECLARATION",
-            "no recorded realization");
-    }
-
-    // =========================================================================
-    // 4. Failure injection: RepresentationProof on a non-admissible cell
-    // =========================================================================
-
-    static void testFailureInjectionProofNotAdmissible() {
-        System.out.println("-- Fault: RepresentationProof on a non-admissible cell (T3) --");
-
-        // In-memory variant: the VARIABLE_DECLARATION payload itself carries
-        // the proof (so the report matches the payload and the eligibility
-        // rule — never the mismatch rule — fires).
-        HappyFixture fixture = happyFixture(true);
-        LoweredModuleUnit unit = fixture.unit();
-
-        // The validator accepts the unit: proof eligibility is a
-        // report-completion check, never a validator rule.
-        Optional<CompilerDiagnostic> validation = SemanticIrValidator.validate(unit, FACTS);
-        check(validation.isEmpty(),
-            "the bad-proof variant unit passes validation (eligibility is the completion "
-                + "predicate's rule)"
-                + (validation.isPresent() ? ": " + validation.get().message() : ""));
-        if (validation.isPresent()) {
-            return;
-        }
-
-        SemanticOp varBoundary = unit.ops().stream()
-            .filter(op -> op.kind() == SemanticOpKind.BOUNDARY
-                && ((KindPayload.BoundaryPayload) op.payload()).kind()
-                    == BoundaryKind.VARIABLE_DECLARATION)
-            .findFirst().orElseThrow();
-        check(varBoundary.payload() instanceof KindPayload.BoundaryPayload p
-                && p.realization() instanceof BoundaryRealization.RepresentationProof,
-            "the variant's VARIABLE_DECLARATION payload carries the RepresentationProof");
-
-        Optional<CompilerDiagnostic> diagnostic = BoundaryRealizationReport.complete(unit,
-            reportOf(unit));
-        assertE6005(diagnostic.orElse(null),
-            BoundaryRealizationReport.BOUNDARY_REALIZATION_PROOF_NOT_ADMISSIBLE,
-            "OpId(mod.a#" + varBoundary.opId().id() + ")",
-            "VARIABLE_DECLARATION",
-            "TYPE_DESCRIPTOR",
-            "does not admit RepresentationProof");
-    }
-
-    // =========================================================================
-    // 5. Failure injection: Type.Bytes / Type.Error fail closed (T1)
+    // 3. Failure injection: Type.Bytes / Type.Error fail closed (T1)
     // =========================================================================
 
     static void testFailureInjectionDescriptorDefect() {

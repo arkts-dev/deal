@@ -6,19 +6,16 @@ import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticCode;
 import deal.module.CompilationOrchestrator;
 import deal.project.StrictManifestParser;
+import deal.publication.PublicationStager;
 import deal.semantic.ArtifactOwner;
-import deal.semantic.BoundaryRealizationReport;
 import deal.semantic.CapabilityRegistry;
 import deal.semantic.CheckedProjectBuildResult;
 import deal.semantic.CheckedProjectInput;
 import deal.semantic.CompilerInvocation;
 import deal.semantic.CompilerProfileProvider;
 import deal.semantic.MigrationPlanner;
-import deal.semantic.ModuleEmissionResult;
 import deal.semantic.ModuleRoute;
 import deal.semantic.ModuleRoutePlan;
-import deal.semantic.OperationContractManifest;
-import deal.semantic.ProjectArtifactStager;
 import deal.semantic.ReleaseConfiguration;
 import deal.semantic.RequirementManifestResult;
 import deal.semantic.RoutePlanResult;
@@ -104,8 +101,8 @@ import java.util.stream.Stream;
  * profile selection (T4) → the orchestrator's checked project + interface
  * index (T8) → requirement manifests (T9) → route plan (T10) → a
  * synthetic validated unit (T2 records + T3 digests, validated through
- * T6) → staged/validated atomic publication (T11 with synthetically
- * completed ABI records) — and fails when any constituent is broken.
+ * T6) → active ABI validation and transactional publication (T11 with
+ * synthetically completed ABI records) — and fails when any constituent is broken.
  *
  * <p>Tests:
  * <ol>
@@ -120,10 +117,10 @@ import java.util.stream.Stream;
  *   <li>Fault-injection matrix: each variant faults exactly one
  *       constituent and asserts the combined flow fails on that
  *       constituent with the named defect — wrong profile resolution
- *       (E6005 {@code STAGE_LEGACY_PROFILE_REJECTED} at the lowering
+ *       (E6005 {@code LOWER_LEGACY_PROFILE_REJECTED} at the lowering
  *       boundary), corrupted checked project/index (planner E6005
  *       {@code ROUTE_INTERNAL_ERROR_SENTINEL}), wrong manifest claim
- *       (stager E6005 {@code STAGE_UNIT_ROUTE_MISMATCH}), wrong route
+ *       (ABI validator E6005 {@code ABI_OWNER_ROUTE_MISMATCH}), wrong route
  *       plan (validator E6005 {@code ABI_EDGE_MISSING}), an invalid
  *       synthetic unit (validator E6005 {@code R-PROFILE}), and an
  *       incomplete ABI record (validator E6005
@@ -307,8 +304,8 @@ public class FoundationIntegrationTest {
     }
 
     private static void checkNoSiblings(Path root, String what) throws IOException {
-        List<Path> stage = siblingTrees(root, ProjectArtifactStager.STAGE_TREE_MARKER);
-        List<Path> retired = siblingTrees(root, ProjectArtifactStager.RETIRED_TREE_MARKER);
+        List<Path> stage = siblingTrees(root, PublicationStager.STAGE_TREE_MARKER);
+        List<Path> retired = siblingTrees(root, PublicationStager.RETIRED_TREE_MARKER);
         check(stage.isEmpty() && retired.isEmpty(),
             what + ": no staging/retired siblings remain (stage=" + stage
                 + ", retired=" + retired + ")");
@@ -506,8 +503,8 @@ public class FoundationIntegrationTest {
      *       the real index digest and the invocation's lowering-context
      *       facts, validated against the comparison facts.</li>
      *   <li><b>T11</b> — synthetically completed ABI records plus the
-     *       retained carrier and the shared emission result, staged,
-     *       validated, and atomically published.</li>
+     *       active staged-artifact view, ABI-validated and atomically
+     *       published through {@code PublicationStager}.</li>
      * </ol>
      *
      * @param tmp   the scratch directory (source, build, and publication
@@ -602,38 +599,48 @@ public class FoundationIntegrationTest {
                 harnessPlan, unit, null, null);
         }
 
-        // T11: the synthetically completed ABI records.
+        // T11: validate the completed ABI records against the active staged
+        // artifact set, then publish those bytes through PublicationStager.
         List<TargetModuleAbi> abiEdges = new ArrayList<>();
         for (TargetModuleAbi planTime : harnessPlan.abiEdges()) {
             abiEdges.add(fault == Fault.ABI ? planTime : completeAbiA(planTime));
         }
-        ModuleEmissionResult retainedA = new ModuleEmissionResult(
-            List.of(new StagedArtifact("a/artifact.lua", bytes("a-artifact"))), List.of(),
-            null, BoundaryRealizationReport.empty(), null);
-        ModuleEmissionResult resultMain = new ModuleEmissionResult(
-            List.of(new StagedArtifact("main/artifact.lua", bytes("main-artifact"))),
-            List.of(), emittedMainManifest(), BoundaryRealizationReport.empty(),
-            new OperationContractManifest(unit));
+        abiEdges.add(emittedMainManifest());
+        List<StagedArtifact> stagedArtifacts = List.of(
+            new StagedArtifact("a/artifact.lua", bytes("a-artifact")),
+            new StagedArtifact("main/artifact.lua", bytes("main-artifact")));
 
-        // Fault PROFILE: the lowering request carries the wrongly resolved
-        // LEGACY_SAFE_INT invocation (a valid T4 resolution, wrong for the
-        // lowering flow) — rejected at the pipeline boundary.
-        CompilerInvocation loweringInvocation = invocation;
         if (fault == Fault.PROFILE) {
-            loweringInvocation = CompilerProfileProvider.resolve(
+            CompilerInvocation legacyInvocation = CompilerProfileProvider.resolve(
                 ReleaseState.PRE_ACTIVATION, CapabilityRegistry.releaseRegistry());
+            deal.semantic.SemanticLowerer.LoweringResult rejected =
+                deal.semantic.SemanticLowerer.lowerModule(checked.input().modules().get(0),
+                    legacyInvocation.semanticProfile(), Map.of(), index.interfaceIndexDigest(),
+                    legacyInvocation.capabilityRegistryHash(),
+                    deal.semantic.ir.SemanticIdAllocator.over(
+                        checked.input().modules().stream().map(m -> m.moduleId()).toList()));
+            return PipelineRun.failure("lowering", rejected.diagnostics(), invocation, checked,
+                manifests, index,
+                orchestrator.routePlan() == null ? null : orchestrator.routePlan().plan(),
+                harnessPlan, unit, null, tmp.resolve("live"));
         }
 
         String planTextBefore = harnessPlan.canonicalText();
         Path root = tmp.resolve("live");
-        ProjectArtifactStager.PublicationOutcome outcome =
-            ProjectArtifactStager.stageValidatePublish(root, loweringInvocation, harnessPlan,
-                List.of(retainedA, resultMain), abiEdges, index);
-        if (!outcome.published()) {
-            return PipelineRun.failure("staging-publication", outcome.diagnostics(),
-                invocation, checked, manifests, index,
+        Optional<CompilerDiagnostic> abiFailure = deal.semantic.TargetAbiValidator.validate(
+            new deal.semantic.StagedArtifactSet(stagedArtifacts), harnessPlan, abiEdges, index,
+            invocation.semanticProfile());
+        if (abiFailure.isPresent()) {
+            return PipelineRun.failure("abi-validation", List.of(abiFailure.get()), invocation,
+                checked, manifests, index,
                 orchestrator.routePlan() == null ? null : orchestrator.routePlan().plan(),
                 harnessPlan, unit, planTextBefore, root);
+        }
+        try (PublicationStager publication = PublicationStager.forRoot(root)) {
+            for (StagedArtifact artifact : stagedArtifacts) {
+                publication.stage(artifact.name(), artifact.bytes());
+            }
+            publication.publish();
         }
         return PipelineRun.success(invocation, checked, manifests, index,
             orchestrator.routePlan() == null ? null : orchestrator.routePlan().plan(),
@@ -765,19 +772,20 @@ public class FoundationIntegrationTest {
         Path tmp = Files.createTempDirectory("deal-foundation-fault-profile");
         try {
             PipelineRun run = runIntegratedPipeline(tmp, Fault.PROFILE);
-            check(!run.ok() && "staging-publication".equals(run.failureStep()),
+            check(!run.ok() && "lowering".equals(run.failureStep()),
                 "a wrongly resolved profile fails the combined flow at the lowering "
                     + "boundary; step='" + run.failureStep() + "'");
             check(!run.diagnostics().isEmpty()
-                    && "STAGE_LEGACY_PROFILE_REJECTED".equals(ruleOf(run.diagnostics().get(0))),
+                    && deal.semantic.SemanticLowerer.LOWER_LEGACY_PROFILE_REJECTED.equals(
+                        ruleOf(run.diagnostics().get(0))),
                 "the named defect 'wrong profile resolution' is detected "
-                    + "(STAGE_LEGACY_PROFILE_REJECTED); got "
+                    + "(LOWER_LEGACY_PROFILE_REJECTED); got "
                     + run.diagnostics().stream().map(CompilerDiagnostic::message).toList());
             if (!run.diagnostics().isEmpty()) {
                 assertE6005Rule(run.diagnostics().get(0),
-                    ProjectArtifactStager.STAGE_LEGACY_PROFILE_REJECTED, "",
+                    deal.semantic.SemanticLowerer.LOWER_LEGACY_PROFILE_REJECTED, MOD_A.toString(),
                     SemanticCapability.FOUNDATION_VALUES, SemanticProfile.LEGACY_SAFE_INT,
-                    "ProjectArtifactStager");
+                    "SemanticLowerer");
             }
             check(!Files.exists(run.publicationRoot()),
                 "the rejected lowering request publishes nothing (no live set)");
@@ -810,14 +818,13 @@ public class FoundationIntegrationTest {
         Path tmp = Files.createTempDirectory("deal-foundation-fault-manifest");
         try {
             PipelineRun run = runIntegratedPipeline(tmp, Fault.MANIFEST);
-            check(!run.ok() && "staging-publication".equals(run.failureStep()),
-                "a wrong manifest claim fails the combined flow at staging (the "
-                    + "conflict-claiming module reroutes LEGACY and never stages); step='"
-                    + run.failureStep() + "'");
+            check(!run.ok() && "abi-validation".equals(run.failureStep()),
+                "a wrong manifest claim fails the combined flow at active ABI validation "
+                    + "after rerouting the module LEGACY; step='" + run.failureStep() + "'");
             check(!run.diagnostics().isEmpty()
-                    && "STAGE_UNIT_ROUTE_MISMATCH".equals(ruleOf(run.diagnostics().get(0))),
+                    && "ABI_OWNER_ROUTE_MISMATCH".equals(ruleOf(run.diagnostics().get(0))),
                 "the named defect 'wrong manifest claim' is detected "
-                    + "(STAGE_UNIT_ROUTE_MISMATCH); got "
+                    + "(ABI_OWNER_ROUTE_MISMATCH); got "
                     + run.diagnostics().stream().map(CompilerDiagnostic::message).toList());
         } finally {
             deleteRecursively(tmp);
@@ -829,7 +836,7 @@ public class FoundationIntegrationTest {
         Path tmp = Files.createTempDirectory("deal-foundation-fault-plan");
         try {
             PipelineRun run = runIntegratedPipeline(tmp, Fault.PLAN);
-            check(!run.ok() && "staging-publication".equals(run.failureStep()),
+            check(!run.ok() && "abi-validation".equals(run.failureStep()),
                 "a wrong route plan fails the combined flow at staging (the legacy "
                     + "dependency's ABI edge is missing); step='" + run.failureStep() + "'");
             check(!run.diagnostics().isEmpty()
@@ -871,7 +878,7 @@ public class FoundationIntegrationTest {
         Path tmp = Files.createTempDirectory("deal-foundation-fault-abi");
         try {
             PipelineRun run = runIntegratedPipeline(tmp, Fault.ABI);
-            check(!run.ok() && "staging-publication".equals(run.failureStep()),
+            check(!run.ok() && "abi-validation".equals(run.failureStep()),
                 "an incomplete ABI record fails the combined flow at stage-time "
                     + "validation; step='" + run.failureStep() + "'");
             check(!run.diagnostics().isEmpty()
@@ -923,45 +930,31 @@ public class FoundationIntegrationTest {
                 "T4 resolves the public PRE_ACTIVATION invocation with "
                     + "LEGACY_SAFE_INT (inspectable for routing/regression)");
 
-            // A minimal synthetic lowering request: one SHARED shadow plan
-            // and one synthetic unit — all consistent, only the profile is
-            // legacy.
-            Map<ModuleId, ExternalModuleInterface> modules = new LinkedHashMap<>();
-            modules.put(MOD_MAIN, new ExternalModuleInterface(MOD_MAIN,
-                ExternalModuleKind.IMPLEMENTATION, List.of(), List.of(), List.of(),
-                InitializationMode.ONCE_AFTER_DEPENDENCIES));
-            ProjectInterfaceIndex index =
-                new ProjectInterfaceIndex(ProjectInterfaceIndex.FORMAT_VERSION, modules);
-            String hash = MigrationPlanner.deriveInvocationHash(legacyInvocation,
-                index.interfaceIndexDigest(), Target.LUAJIT);
-            ModuleRoutePlan plan = new ModuleRoutePlan(Target.LUAJIT,
-                Map.of(MOD_MAIN, ModuleRoute.SHARED), Set.of(MOD_MAIN), List.of(), hash,
-                MigrationPlanner.planIdFor(hash));
-            LoweredModuleUnit unit = validUnit(MOD_MAIN, index,
-                CompilerProfileProvider.resolveCommonShadow(
-                    SemanticProfile.DEAL_V1_2_INT32, ReleaseState.V1_2_ACTIVE,
-                    CapabilityRegistry.releaseRegistry()));
-            ModuleEmissionResult result = new ModuleEmissionResult(
-                List.of(new StagedArtifact("main/artifact.lua", bytes("main-artifact"))),
-                List.of(), emittedMainManifest(), BoundaryRealizationReport.empty(),
-                new OperationContractManifest(unit));
+            Path src = writeProjectFixture(tmp);
+            CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+                src.resolve("main.deal").toAbsolutePath(), tmp.resolve("build"), false,
+                null, List.of(src.toAbsolutePath()), Path.of("std").toAbsolutePath());
+            check(orchestrator.compile(),
+                "the legacy-profile lowering fixture builds checked inputs");
+            CheckedProjectBuildResult checked = orchestrator.checkedProject();
+            var subject = checked.input().modules().stream()
+                .filter(module -> module.moduleId().equals(MOD_MAIN)).findFirst().orElseThrow();
+            deal.semantic.SemanticLowerer.LoweringResult outcome =
+                deal.semantic.SemanticLowerer.lowerModule(subject,
+                    legacyInvocation.semanticProfile(), Map.of(),
+                    checked.index().interfaceIndexDigest(),
+                    legacyInvocation.capabilityRegistryHash(),
+                    deal.semantic.ir.SemanticIdAllocator.over(
+                        checked.input().modules().stream().map(m -> m.moduleId()).toList()));
 
-            Path root = tmp.resolve("live");
-            ProjectArtifactStager.PublicationOutcome outcome =
-                ProjectArtifactStager.stageValidatePublish(root, legacyInvocation, plan,
-                    List.of(result), List.of(), index);
-
-            check(!outcome.published(),
-                "a lowering request carrying LEGACY_SAFE_INT is rejected (never lowered)");
+            check(outcome.hasErrors() && outcome.unit() == null,
+                "a lowering request carrying LEGACY_SAFE_INT is rejected before IR exists");
             check(outcome.diagnostics().size() == 1,
                 "the rejection is exactly one E6005; got " + outcome.diagnostics());
             assertE6005Rule(outcome.diagnostics().get(0),
-                ProjectArtifactStager.STAGE_LEGACY_PROFILE_REJECTED, "",
-                SemanticCapability.FOUNDATION_VALUES, SemanticProfile.LEGACY_SAFE_INT,
-                "ProjectArtifactStager");
-            check(!Files.exists(root),
-                "the rejected lowering request creates no live set and no staging tree");
-            checkNoSiblings(root, "legacy-profile rejection");
+                deal.semantic.SemanticLowerer.LOWER_LEGACY_PROFILE_REJECTED,
+                MOD_MAIN.toString(), SemanticCapability.FOUNDATION_VALUES,
+                SemanticProfile.LEGACY_SAFE_INT, "SemanticLowerer");
         } finally {
             deleteRecursively(tmp);
         }
@@ -2818,7 +2811,7 @@ public class FoundationIntegrationTest {
                 return false;
             }
             StringBuilder err = new StringBuilder();
-            return BackendConformanceTest.compileWithJavac(outDir, javaFiles, err);
+            return StubModuleResolver.compileWithJavac(outDir, javaFiles, err);
         }
 
         // =====================================================================

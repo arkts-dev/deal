@@ -1,5 +1,5 @@
 // IR golden fixture: jvm-integration-join-jvm-join-fn-signature-arrays-classes-nullable
-// Migrated IR-containment pins from test/conformance/fixtures/jvm-integration-join.json case 'jvm-join-fn-signature-arrays-classes-nullable' (ISSUE-0358).
+// Migrated IR-containment pin for legacy case 'jvm-join-fn-signature-arrays-classes-nullable' (ISSUE-0358).
 
 class Pair { x: int = 0; }
 function sig(a: int[], p: Pair | null, xs: string[] | null): int | null {

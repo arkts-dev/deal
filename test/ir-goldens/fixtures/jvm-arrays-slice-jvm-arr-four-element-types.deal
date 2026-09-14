@@ -1,5 +1,5 @@
 // IR golden fixture: jvm-arrays-slice-jvm-arr-four-element-types
-// Migrated IR-containment pins from test/conformance/fixtures/jvm-arrays-slice.json case 'jvm-arr-four-element-types' (ISSUE-0358).
+// Migrated IR-containment pin for legacy case 'jvm-arr-four-element-types' (ISSUE-0358).
 
 export function test(): string {
   let ns: number[] = [1.5, 2.5];

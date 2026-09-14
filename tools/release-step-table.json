@@ -158,12 +158,6 @@
    "cwd": "export"
   },
   {
-   "step": "deal.semantic.StagingPublicationTest",
-   "tier": 1,
-   "budget": "embedded",
-   "cwd": "export"
-  },
-  {
    "step": "deal.test.AdapterCreationRuleTest",
    "tier": 1,
    "budget": "embedded",
@@ -191,12 +185,6 @@
    "step": "deal.test.AstAndTypesTest",
    "tier": 1,
    "budget": "embedded",
-   "cwd": "export"
-  },
-  {
-   "step": "deal.test.BackendConformanceTest",
-   "tier": 2,
-   "budget": 1800,
    "cwd": "export"
   },
   {
@@ -231,12 +219,6 @@
   },
   {
    "step": "deal.test.BoundaryIntegrationTest",
-   "tier": 1,
-   "budget": "embedded",
-   "cwd": "export"
-  },
-  {
-   "step": "deal.test.BoundaryRealizationReportTest",
    "tier": 1,
    "budget": "embedded",
    "cwd": "export"
@@ -927,30 +909,6 @@
   },
   {
    "step": "deal.test.SemanticProductionGateTest",
-   "tier": 1,
-   "budget": "embedded",
-   "cwd": "export"
-  },
-  {
-   "step": "deal.test.conformance.V12FeatureMetadataTest",
-   "tier": 1,
-   "budget": "embedded",
-   "cwd": "export"
-  },
-  {
-   "step": "deal.test.conformance.FeatureBackendMatrixTest",
-   "tier": 1,
-   "budget": "embedded",
-   "cwd": "export"
-  },
-  {
-   "step": "deal.test.conformance.V12FeatureCatalogTest",
-   "tier": 1,
-   "budget": "embedded",
-   "cwd": "export"
-  },
-  {
-   "step": "deal.test.conformance.V12FeatureCatalogCorpusTest",
    "tier": 1,
    "budget": "embedded",
    "cwd": "export"

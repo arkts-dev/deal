@@ -1563,9 +1563,8 @@ public class ConformanceTest {
         printPhaseGate("backend-runtime",
             "LuaJIT backend-runtime conformance (v1.2)");
         System.out.println("  JVM backend-runtime conformance (v1.2): enforced by "
-            + "BackendConformanceTest (test/conformance/fixtures/*.json, "
-            + "backends=[\"jvm\"]) and JvmBackendTest in run_tests.sh — both "
-            + "must pass with zero unclassified skips");
+            + "JvmConformanceTest and JvmBackendTest with real generated-artifact "
+            + "execution and zero unclassified skips");
         if (knownFailsByIssue.isEmpty()) {
             System.out.println("  Tracked v1.2 follow-up issues: none — full "
                 + "v1.2 conformance");

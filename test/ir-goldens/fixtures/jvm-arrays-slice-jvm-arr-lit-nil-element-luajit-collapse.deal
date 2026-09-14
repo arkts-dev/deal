@@ -1,5 +1,5 @@
 // IR golden fixture: jvm-arrays-slice-jvm-arr-lit-nil-element-luajit-collapse
-// Migrated IR-containment pins from test/conformance/fixtures/jvm-arrays-slice.json case 'jvm-arr-lit-nil-element-luajit-collapse' (ISSUE-0358).
+// Migrated IR-containment pin for legacy case 'jvm-arr-lit-nil-element-luajit-collapse' (ISSUE-0358).
 
 import * as console from "std/console"
 function f(xs: boolean[]): null {

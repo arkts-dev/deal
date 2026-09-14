@@ -1,4 +1,4 @@
-package deal.codegen;
+package deal.test;
 
 import deal.codegen.jvm.JvmSemanticEmitter;
 import deal.codegen.lua.LuaSemanticEmitter;

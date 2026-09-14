@@ -1687,30 +1687,6 @@ public class StdlibClaimingTimeLockTest {
                 "std/time.lua is unchanged (byte-identical to the pinned retained "
                     + "content)");
 
-            // The jvm-std-time-nowmillis legacy authority stays pinned:
-            // the fixture, its assertion, and its JVM-only lane.
-            String jvmSlice = Files.readString(
-                Path.of("test/conformance/fixtures/jvm-stdlib-slice.json"));
-            int caseAt = jvmSlice.indexOf("\"name\": \"jvm-std-time-nowmillis\"");
-            check(caseAt >= 0,
-                "the jvm-stdlib-slice.json fixture carries jvm-std-time-nowmillis");
-            if (caseAt >= 0) {
-                String caseBlock = jvmSlice.substring(caseAt,
-                    Math.min(jvmSlice.length(), caseAt + 900));
-                check(caseBlock.contains("t > 1700000000000 && granularity === 0"),
-                    "the fixture's positive millisecond pin stays unchanged");
-                check(caseBlock.contains("\"expectedOutput\": \"1\"")
-                        && caseBlock.contains("\"expectedExitCode\": 0"),
-                    "the fixture's expected output/exit stay unchanged");
-                check(caseBlock.contains("\"backends\": [\n        \"jvm\"\n      ]"),
-                    "the fixture stays on the retained JVM lane only");
-            }
-
-            int caseStart = caseAt < 0 ? -1 : jvmSlice.lastIndexOf('{', caseAt);
-            check(caseStart >= 0 && jvmSlice.substring(caseStart,
-                    Math.min(jvmSlice.length(), caseAt + 900)).contains(
-                        "\"profile\": \"legacy-safe-int\""),
-                "the fixture retains its legacy-safe-int profile");
 
             // The staged-failure registry stays non-fatal: empty
             // post-disposition, documented, with the machinery retained.
@@ -1723,22 +1699,6 @@ public class StdlibClaimingTimeLockTest {
                 "the staged-failure registry is empty (the time fixture runs under "
                     + "its landed expectation, never a staged failure)");
 
-            // Retained lanes keep their pinned as-value behavior: the
-            // js-console-member-as-value fixture stays luajit/js-only.
-            String jsSkeleton = Files.readString(
-                Path.of("test/conformance/fixtures/js-skeleton.json"));
-            int valueReadAt = jsSkeleton.indexOf("\"js-console-member-as-value\"");
-            check(valueReadAt >= 0,
-                "the js-skeleton.json fixture carries js-console-member-as-value");
-            if (valueReadAt >= 0) {
-                String caseBlock = jsSkeleton.substring(valueReadAt,
-                    Math.min(jsSkeleton.length(), valueReadAt + 1200));
-                check(caseBlock.contains("\"luajit\",\n        \"js\""),
-                    "the retained as-value fixture stays pinned to the luajit and "
-                        + "js lanes (never jvm, never a common case)");
-                check(caseBlock.contains("\"expectedOutput\": \"console-as-value\""),
-                    "the retained as-value fixture's expected output stays unchanged");
-            }
 
             // The live retained behavior probe: the gate's own luajit
             // leg replicates the retained std/time surface — E8004 under

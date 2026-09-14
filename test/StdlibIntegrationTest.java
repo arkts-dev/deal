@@ -25,10 +25,6 @@ import deal.semantic.SharedStdlibSemantics.ConsoleSink;
 import deal.semantic.SharedStdlibSemantics.Outcome;
 import deal.semantic.SharedStdlibSemantics.Value;
 import deal.semantic.StdlibFunctionCatalog;
-import deal.semantic.StdlibHelperEquivalence;
-import deal.semantic.StdlibHelperEquivalence.Lane;
-import deal.semantic.StdlibHelperEquivalence.VerdictKind;
-import deal.semantic.StdlibHelperEquivalence.VerdictRecord;
 import deal.semantic.Target;
 import deal.semantic.ir.ActualKind;
 import deal.semantic.ir.BoundaryContext;
@@ -87,8 +83,7 @@ import java.util.stream.Stream;
  * {@link SharedStdlibSemantics} execution of every id with the named
  * edge cases, T4 the exact resolved projections, T5 the
  * {@code STDLIB_SEMANTICS} claiming seam plus the time-lock and D3
- * negatives, and T6 the target-helper equivalence battery verdicts —
- * and fails the run with the first failing constituent named when any
+ * negatives — and fails the run with the first failing constituent named when any
  * of them is broken ({@code stdlib-operations-and-time-lock} Contracts
  * §Integration verification task, Verification 7-8).
  *
@@ -101,11 +96,9 @@ import java.util.stream.Stream;
  * constituent may silently pass.</p>
  *
  * <p><b>Determinism.</b> The task is single-threaded and deterministic:
- * every phase reads pinned fixtures and the landed production seams;
- * T6 runs the ISSUE-0498 equivalence battery in-process (its verdict
- * registry {@link StdlibHelperEquivalence} is per-JVM, so the task
- * drives the battery itself and then consumes its verdicts — complete
- * coverage, the wiring admission rule, and the promotion evidence).</p>
+ * every phase reads pinned fixtures and the landed production seams.
+ * Cross-runtime helper equivalence remains owned by the dedicated battery;
+ * this integration test does not duplicate its registry or execution.</p>
  */
 public final class StdlibIntegrationTest {
 
@@ -1020,14 +1013,6 @@ public final class StdlibIntegrationTest {
             return t5;
         }
 
-        // ---- T6: the equivalence-battery verdicts ----
-        if (fault == Fault.NONE) {
-            System.out.println("-- T6: the target-helper equivalence battery verdicts --");
-            PipelineReport t6 = phaseT6();
-            if (!t6.ok()) {
-                return t6;
-            }
-        }
         return new PipelineReport(true, null);
     }
 
@@ -2029,10 +2014,9 @@ public final class StdlibIntegrationTest {
         }
     }
 
-    /** The retained-time pins: std/time.lua and jvm-std-time-nowmillis stay unchanged and green. */
+    /** The retained-time implementation stays unchanged and green. */
     private static void testRetainedTimePins() {
-        System.out.println("-- T5d: retained-time pins — unchanged std/time.lua and "
-            + "jvm-std-time-nowmillis --");
+        System.out.println("-- T5d: retained-time implementation --");
         try {
             String timeLua = Files.readString(Path.of("std/time.lua"));
             String pinnedTimeLua = """
@@ -2054,28 +2038,6 @@ public final class StdlibIntegrationTest {
                 "T5d: std/time.lua is unchanged (byte-identical to the pinned "
                     + "retained content — no time algorithm lands here)");
 
-            String jvmSlice = Files.readString(
-                Path.of("test/conformance/fixtures/jvm-stdlib-slice.json"));
-            int caseAt = jvmSlice.indexOf("\"name\": \"jvm-std-time-nowmillis\"");
-            check(caseAt >= 0,
-                "T5d: the jvm-stdlib-slice.json fixture carries jvm-std-time-nowmillis");
-            if (caseAt >= 0) {
-                String caseBlock = jvmSlice.substring(caseAt,
-                    Math.min(jvmSlice.length(), caseAt + 900));
-                check(caseBlock.contains("t > 1700000000000 && granularity === 0"),
-                    "T5d: the fixture's positive millisecond pin stays unchanged");
-                check(caseBlock.contains("\"expectedOutput\": \"1\"")
-                        && caseBlock.contains("\"expectedExitCode\": 0"),
-                    "T5d: the fixture's expected output/exit stay unchanged");
-                check(caseBlock.contains("\"backends\": [\n        \"jvm\"\n      ]"),
-                    "T5d: the fixture stays on the retained JVM lane only");
-            }
-
-            int caseStart = caseAt < 0 ? -1 : jvmSlice.lastIndexOf('{', caseAt);
-            check(caseStart >= 0 && jvmSlice.substring(caseStart,
-                    Math.min(jvmSlice.length(), caseAt + 900)).contains(
-                        "\"profile\": \"legacy-safe-int\""),
-                "T5d: the fixture retains its legacy-safe-int profile");
 
             String conformance = Files.readString(Path.of("test/ConformanceTest.java"));
             check(conformance.contains("registry is empty post-unit"),
@@ -2086,9 +2048,8 @@ public final class StdlibIntegrationTest {
                     "'luajit|=== Running Standard Library Tests ===|luajit test_stdlib.lua"),
                 "T5d: the retained std/time behavior keeps running under the gate's "
                     + "luajit leg (unchanged and green)");
-            check(manifest.contains("deal.test.ConformanceTest"),
-                "T5d: the conformance runner keeps the jvm-std-time-nowmillis "
-                    + "authority green");
+            check(manifest.contains("deal.test.JvmBackendTest"),
+                "T5d: the focused JVM backend tests keep the retained time route green");
             check(manifest.contains("deal.test.StdlibIntegrationTest")
                     && manifest.indexOf("deal.test.StdlibIntegrationTest")
                         > manifest.indexOf("deal.test.StdlibEquivalenceBatteryTest"),
@@ -2097,83 +2058,6 @@ public final class StdlibIntegrationTest {
         } catch (Exception e) {
             fail("T5d: the retained-time pins threw: " + e);
         }
-    }
-
-    // =========================================================================
-    // T6: the equivalence-battery verdicts
-    // =========================================================================
-
-    private static PipelineReport phaseT6() {
-        try {
-            StdlibEquivalenceBatteryTest.main(new String[0]);
-        } catch (Exception e) {
-            return defect("T6 equivalence battery — the battery threw: " + e);
-        }
-        if (!StdlibHelperEquivalence.completeCoverage()) {
-            return defect("T6 equivalence battery — the battery did not record a "
-                + "verdict for every closed candidate (complete coverage is "
-                + "STDLIB_SEMANTICS promotion evidence)");
-        }
-        List<VerdictRecord> evidence = StdlibHelperEquivalence.batteryEvidence();
-        check(evidence.size() == 58,
-            "T6: the battery evidence carries exactly the 58 closed candidate "
-                + "records; got " + evidence.size());
-        int divergent = 0;
-        for (VerdictRecord record : evidence) {
-            if (record.kind() == VerdictKind.DIVERGENT) {
-                divergent++;
-            }
-            check(record.casesRun() > 0,
-                "T6: every recorded verdict ran at least one battery case ("
-                    + record.candidate() + ")");
-        }
-        check(divergent >= 8,
-            "T6: the battery honestly records the known divergent candidates; got "
-                + divergent + " divergent records");
-
-        // The wiring admission rule over the real verdicts: the known
-        // retained divergences are never wirable, the trim candidates are.
-        check(!StdlibHelperEquivalence.isWirable(Lane.RETAINED_LUA,
-                StdlibFunctionId.TABLE_KEYS),
-            "T6: the divergent Lua table.keys helper is not wirable");
-        check(!StdlibHelperEquivalence.isWirable(Lane.RETAINED_JS,
-                StdlibFunctionId.TABLE_KEYS),
-            "T6: the divergent JS table.keys helper is not wirable");
-        check(!StdlibHelperEquivalence.isWirable(Lane.RETAINED_LUA,
-                StdlibFunctionId.JSON_STRINGIFY),
-            "T6: the divergent Lua json.stringify helper is not wirable");
-        check(!StdlibHelperEquivalence.isWirable(Lane.RETAINED_LUA,
-                StdlibFunctionId.JSON_PARSE),
-            "T6: the divergent Lua json.parse helper is not wirable");
-        check(!StdlibHelperEquivalence.isWirable(Lane.RETAINED_JS,
-                StdlibFunctionId.JSON_PARSE),
-            "T6: the divergent JS json.parse helper is not wirable");
-        check(!StdlibHelperEquivalence.isWirable(Lane.RETAINED_JS,
-                StdlibFunctionId.JSON_STRINGIFY),
-            "T6: the divergent JS json.stringify helper is not wirable");
-        check(!StdlibHelperEquivalence.isWirable(Lane.RETAINED_JS,
-                StdlibFunctionId.MATH_ABS_INT),
-            "T6: the divergent JS absInt helper is not wirable");
-        check(!StdlibHelperEquivalence.isWirable(Lane.JVM_EMITTED,
-                StdlibFunctionId.MATH_ABS_INT),
-            "T6: the divergent JVM absInt helper is not wirable");
-        check(!StdlibHelperEquivalence.isWirable(Lane.JVM_EMITTED,
-                StdlibFunctionId.JSON_PARSE)
-                && !StdlibHelperEquivalence.isWirable(Lane.JVM_EMITTED,
-                    StdlibFunctionId.JSON_STRINGIFY),
-            "T6: the JVM std/json position is never wirable (outside the "
-                + "equivalence battery's closed candidate set)");
-        for (Lane lane : Lane.values()) {
-            check(StdlibHelperEquivalence.isWirable(lane, StdlibFunctionId.STRING_TRIM),
-                "T6: the " + lane + " trim helper (the closed set U+0009–U+000D and "
-                    + "U+0020; U+00A0 not) is a verified-equivalent battery candidate");
-        }
-        boolean anyTime = StdlibHelperEquivalence.closedCandidates().stream()
-            .anyMatch(candidate -> candidate.modulePath().contains("time"));
-        check(!anyTime,
-            "T6: no std/time candidate exists — the locked TIME_NOW_MILLIS selector "
-                + "has no catalog row and no candidate");
-        return new PipelineReport(true, null);
     }
 
     // =========================================================================
@@ -2205,7 +2089,7 @@ public final class StdlibIntegrationTest {
             + "decomposition tail) ===");
 
         PipelineReport clean = runPipeline(Fault.NONE);
-        check(clean.ok(), "the clean pipeline drives T1–T6 end-to-end through the "
+        check(clean.ok(), "the clean pipeline drives T1–T5 end-to-end through the "
             + "production seams; first failure: " + clean.firstFailure());
 
         // The all-constituents contract: each injected break flips the

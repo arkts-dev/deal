@@ -31,10 +31,8 @@ import java.util.Objects;
  * The shared LuaJIT emitter of the decomposition-tail integration
  * verification (ISSUE-0410): emits a real LuaJIT artifact from the
  * validated {@link LoweredModuleUnit} + {@link StructuredBodyTable} over
- * the EVALUATION_ORDER op set, realizing the pinned shared-emitter
- * obligations (assignment-delete-address-chains A-D8, binary-comparison-
- * selectors B-D6, control-flow-structures C-D9, and the
- * {@link deal.semantic.SharedEmitterRealizationContract} rows):
+ * the EVALUATION_ORDER op set (assignment-delete-address-chains A-D8,
+ * binary-comparison-selectors B-D6, and control-flow-structures C-D9):
  *
  * <ul>
  *   <li><b>Chains:</b> every chain child's result is materialized into a

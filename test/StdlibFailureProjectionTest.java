@@ -3,7 +3,6 @@ package deal.test;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticCode;
 import deal.module.CompilationOrchestrator;
-import deal.semantic.BoundaryRealizationReport;
 import deal.semantic.CapabilityRegistry;
 import deal.semantic.CheckedModuleInput;
 import deal.semantic.CheckedProjectBuildResult;
@@ -66,6 +65,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * The ISSUE-0496 stdlib failure-projection and boundary-realization
@@ -104,11 +104,9 @@ import java.util.Optional;
  *       after the parameter boundaries passed; an invalid scalar
  *       encoding fails the {@code STDLIB_PARAMETER} boundary first and
  *       the algorithm never runs.</li>
- *   <li>Boundary realization: for validated stdlib boundary ops the
- *       {@link BoundaryRealizationReport} carries exactly one
- *       {@code RuntimeValidation(checkId)} per boundary and completes;
- *       a proof on a stdlib cell and a missing stdlib entry are
- *       completion defects.</li>
+ *   <li>Boundary realization: every validated stdlib boundary op carries
+ *       one non-empty {@code RuntimeValidation(checkId)} directly in its
+ *       active Semantic IR payload.</li>
  *   <li>Validator negative: a stdlib boundary op whose policy is
  *       outside the descriptor-kind rule is invalid IR.</li>
  * </ol>
@@ -891,11 +889,11 @@ public class StdlibFailureProjectionTest {
     }
 
     // =========================================================================
-    // 4. Boundary realization reporting for stdlib boundaries
+    // 4. Boundary realizations carried by active stdlib Semantic IR
     // =========================================================================
 
-    static void testBoundaryRealizationReporting() {
-        System.out.println("-- Boundary realization: exactly one RuntimeValidation per "
+    static void testBoundaryRealizationPayloads() {
+        System.out.println("-- Boundary realization payloads: one RuntimeValidation per "
             + "stdlib boundary --");
 
         Scenario scenario = lowerScenario("""
@@ -907,94 +905,49 @@ public class StdlibFailureProjectionTest {
               let t: table = json.parse("{\\"a\\": 1}")
               return null
             }
-            """, "the realization-report scenario");
+            """, "the realization-payload scenario");
         if (scenario == null) {
             return;
         }
         LoweredModuleUnit unit = scenario.unit();
+        Optional<CompilerDiagnostic> validation = SemanticIrValidator.validate(unit,
+            factsOf(scenario.checked()));
+        check(validation.isEmpty(),
+            "the active stdlib Semantic IR validates before payload inspection"
+                + validation.map(d -> ": " + d.message()).orElse(""));
 
-        // The report realizes every boundary op of the unit with its
-        // payload realization; stdlib boundaries must each carry exactly
-        // one RuntimeValidation(checkId).
-        Map<OpId, BoundaryRealization> realizations = new LinkedHashMap<>();
         int stdlibBoundaries = 0;
+        Set<OpId> boundaryIds = new java.util.LinkedHashSet<>();
         for (SemanticOp op : unit.ops()) {
             if (op.kind() != SemanticOpKind.BOUNDARY) {
                 continue;
             }
             KindPayload.BoundaryPayload payload =
                 (KindPayload.BoundaryPayload) op.payload();
-            realizations.put(op.opId(), payload.realization());
+            check(boundaryIds.add(op.opId()),
+                "each boundary realization is carried by one unique IR op " + op.opId());
             if (payload.kind() == BoundaryKind.STDLIB_PARAMETER
                     || payload.kind() == BoundaryKind.STDLIB_RETURN) {
                 stdlibBoundaries++;
                 check(payload.realization()
-                            instanceof BoundaryRealization.RuntimeValidation validation
-                        && validation.checkId().equals(
+                            instanceof BoundaryRealization.RuntimeValidation runtime
+                        && runtime.checkId().equals(
                             SemanticLowerer.CANONICAL_RUNTIME_VALIDATION_ID),
                     "stdlib boundary " + payload.kind()
-                        + " carries exactly one RuntimeValidation with "
-                        + SemanticLowerer.CANONICAL_RUNTIME_VALIDATION_ID);
-                check(realizations.keySet().stream()
-                            .filter(op.opId()::equals).count() == 1,
-                    "the report carries exactly one entry for stdlib boundary "
-                        + op.opId());
+                        + " carries RuntimeValidation("
+                        + SemanticLowerer.CANONICAL_RUNTIME_VALIDATION_ID + ")");
                 FailurePolicyId expectedPolicy =
                     payload.descriptor() instanceof RuntimeDescriptor.Func
                         ? FailurePolicyId.FUNCTION_SIGNATURE
                         : FailurePolicyId.TYPE_DESCRIPTOR;
                 check(op.failurePolicy() == expectedPolicy,
                     "stdlib boundary " + payload.kind()
-                        + " equals the closed stdlibCell triple, descriptor-kind "
-                        + "rule");
+                        + " equals the closed descriptor-kind policy row");
             }
         }
         check(stdlibBoundaries == 4,
             "the scenario unit carries 4 stdlib boundaries, one parameter + one "
                 + "return per call; got " + stdlibBoundaries);
-
-        BoundaryRealizationReport report = new BoundaryRealizationReport(realizations);
-        check(BoundaryRealizationReport.complete(unit, report).isEmpty(),
-            "the complete report, one entry per boundary each equal to the "
-                + "payload realization, passes the completion predicate");
-
-        // Negative: a RepresentationProof on a stdlib cell is not
-        // admissible (an unauditable omission): the boundary op's payload
-        // realization is hand-modified to the proof (digest recomputed),
-        // so the report entry equals the payload and the closed
-        // proof-eligibility check is the first defect.
-        SemanticOp parseCall = stdlibOpBy(unit, StdlibFunctionId.JSON_PARSE);
-        List<SemanticOp> parseReturns =
-            stdlibBoundariesOf(unit, parseCall, BoundaryKind.STDLIB_RETURN);
-        if (parseReturns.size() == 1) {
-            BoundaryRealization.RepresentationProof proof =
-                new BoundaryRealization.RepresentationProof("static");
-            SemanticOp proofedReturn = withRealization(parseReturns.get(0), proof);
-            LoweredModuleUnit proofedUnit = replaceOp(unit, proofedReturn);
-            Map<OpId, BoundaryRealization> proofed = new LinkedHashMap<>(realizations);
-            proofed.put(proofedReturn.opId(), proof);
-            Optional<CompilerDiagnostic> proofDefect =
-                BoundaryRealizationReport.complete(proofedUnit,
-                    new BoundaryRealizationReport(proofed));
-            check(proofDefect.isPresent() && proofDefect.get().message().contains(
-                    BoundaryRealizationReport.BOUNDARY_REALIZATION_PROOF_NOT_ADMISSIBLE),
-                "a RepresentationProof on a stdlib boundary is a completion defect: "
-                    + proofDefect.map(CompilerDiagnostic::message).orElse("none"));
-        }
-
-        // Negative: a missing stdlib entry is a completion defect.
-        if (parseReturns.size() == 1) {
-            Map<OpId, BoundaryRealization> missing = new LinkedHashMap<>(realizations);
-            missing.remove(parseReturns.get(0).opId());
-            Optional<CompilerDiagnostic> missingDefect =
-                BoundaryRealizationReport.complete(unit,
-                    new BoundaryRealizationReport(missing));
-            check(missingDefect.isPresent() && missingDefect.get().message().contains(
-                    BoundaryRealizationReport.BOUNDARY_REALIZATION_MISSING),
-                "a missing stdlib boundary realization is a completion defect: "
-                    + missingDefect.map(CompilerDiagnostic::message).orElse("none"));
-        }
-
         deleteRecursively(scenario.tmp());
     }
 
@@ -1029,40 +982,6 @@ public class StdlibFailureProjectionTest {
         return new SemanticIrValidator.ComparisonFacts(
             checked.index().interfaceIndexDigest(), SemanticProfile.DEAL_V1_2_INT32,
             CapabilityRegistry.releaseRegistry().capabilityRegistryHash());
-    }
-
-    /** Rebuilds one boundary op with a replaced realization (digest recomputed). */
-    private static SemanticOp withRealization(SemanticOp op,
-                                              BoundaryRealization realization) {
-        KindPayload.BoundaryPayload payload = (KindPayload.BoundaryPayload) op.payload();
-        KindPayload.BoundaryPayload modified = new KindPayload.BoundaryPayload(
-            payload.kind(), payload.descriptor(), payload.input(), realization);
-        OperationContractSnapshot placeholder = new OperationContractSnapshot(
-            OperationContractSnapshot.VERSION, op.kind(), op.resultType(),
-            op.operandTypes(), null, modified, op.failurePolicy(),
-            op.contract().referencedSemanticIds(), "placeholder");
-        String digest = ContractSnapshotCanonicalizer.digest(placeholder);
-        OperationContractSnapshot contract = new OperationContractSnapshot(
-            OperationContractSnapshot.VERSION, op.kind(), op.resultType(),
-            op.operandTypes(), null, modified, op.failurePolicy(),
-            op.contract().referencedSemanticIds(), digest);
-        return new SemanticOp(op.opId(), op.kind(), op.origin(), op.result(),
-            op.resultType(), op.operands(), op.operandTypes(), modified,
-            op.failurePolicy(), contract);
-    }
-
-    /** Rebuilds the unit with one op replaced (same record fields otherwise). */
-    private static LoweredModuleUnit replaceOp(LoweredModuleUnit unit,
-                                               SemanticOp replacement) {
-        List<SemanticOp> ops = new ArrayList<>();
-        for (SemanticOp op : unit.ops()) {
-            ops.add(op.opId().equals(replacement.opId()) ? replacement : op);
-        }
-        return new LoweredModuleUnit(unit.formatVersion(), unit.semanticProfile(),
-            unit.moduleId(), unit.interfaceHash(), unit.loweringContextHash(),
-            unit.requiredCapabilities(), unit.constructCoverage(), unit.classLayouts(),
-            unit.functions(), unit.moduleInit(), unit.exportPlan(),
-            unit.functionBindings(), ops);
     }
 
     static void testValidatorStdlibCellNegative() {
@@ -1219,7 +1138,7 @@ public class StdlibFailureProjectionTest {
         testRegistryRows();
         testPrimitiveProjections();
         testOracleWiringPrecedence();
-        testBoundaryRealizationReporting();
+        testBoundaryRealizationPayloads();
         testValidatorStdlibCellNegative();
         testCombinedT3();
         System.out.println();

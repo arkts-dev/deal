@@ -1,5 +1,5 @@
 // IR golden fixture: jvm-skeleton-jvm-string-scalar-order
-// Migrated IR-containment pins from test/conformance/fixtures/jvm-skeleton.json case 'jvm-string-scalar-order' (ISSUE-0358).
+// Migrated IR-containment pin for legacy case 'jvm-string-scalar-order' (ISSUE-0358).
 
 import * as console from "std/console"
 export function test(): null {

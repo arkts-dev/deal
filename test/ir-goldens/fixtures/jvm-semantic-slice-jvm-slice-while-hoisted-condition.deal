@@ -1,5 +1,5 @@
 // IR golden fixture: jvm-semantic-slice-jvm-slice-while-hoisted-condition
-// Migrated IR-containment pins from test/conformance/fixtures/jvm-semantic-slice.json case 'jvm-slice-while-hoisted-condition' (ISSUE-0358).
+// Migrated IR-containment pin for legacy case 'jvm-slice-while-hoisted-condition' (ISSUE-0358).
 
 import * as console from "std/console"
 function tick(): null { console.log("tick"); }

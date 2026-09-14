@@ -1,5 +1,5 @@
 // IR golden fixture: jvm-integration-join-jvm-join-stdlib-nullable-boundary
-// Migrated IR-containment pins from test/conformance/fixtures/jvm-integration-join.json case 'jvm-join-stdlib-nullable-boundary' (ISSUE-0358).
+// Migrated IR-containment pin for legacy case 'jvm-join-stdlib-nullable-boundary' (ISSUE-0358).
 
 import * as str from "std/string"
 export function test(): int {

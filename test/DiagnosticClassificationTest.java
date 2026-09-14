@@ -347,10 +347,10 @@ public class DiagnosticClassificationTest {
         coverage.put("E8006", "test_runtime.lua (negative exponent)");
         coverage.put("E8007", "test_runtime.lua (extra class field)");
         coverage.put("E8010", "test_runtime.lua (function sig mismatch) / "
-            + "BackendConformanceTest jvm-host-abi-slice "
+            + "JVM backend integration test jvm-host-abi-slice "
             + "(host return boundary) / JvmBackendTest (host ABI)");
         coverage.put("E8011", "test_runtime.lua (host module load validation) / "
-            + "BackendConformanceTest jvm-host-abi-slice "
+            + "JVM backend integration test jvm-host-abi-slice "
             + "(missing host export) / JvmBackendTest (host ABI)");
         coverage.put("E8012", "test_runtime.lua (bytes_new negative length; "
             + "bytes_get/bytes_set index bounds) / JsBackendTest (bytes E8012 "

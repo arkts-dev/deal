@@ -1,5 +1,5 @@
 // IR golden fixture: jvm-integration-join-jvm-join-nullable-of-nullable-elements
-// Migrated IR-containment pins from test/conformance/fixtures/jvm-integration-join.json case 'jvm-join-nullable-of-nullable-elements' (ISSUE-0358).
+// Migrated IR-containment pin for legacy case 'jvm-join-nullable-of-nullable-elements' (ISSUE-0358).
 
 function count(xs: (int | null)[] | null): int {
   if (xs !== null) {

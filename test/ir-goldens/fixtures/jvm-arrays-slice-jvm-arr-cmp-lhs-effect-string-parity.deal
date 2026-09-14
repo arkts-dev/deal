@@ -1,5 +1,5 @@
 // IR golden fixture: jvm-arrays-slice-jvm-arr-cmp-lhs-effect-string-parity
-// Migrated IR-containment pins from test/conformance/fixtures/jvm-arrays-slice.json case 'jvm-arr-cmp-lhs-effect-string-parity' (ISSUE-0358).
+// Migrated IR-containment pin for legacy case 'jvm-arr-cmp-lhs-effect-string-parity' (ISSUE-0358).
 
 import * as console from "std/console"
 function markS(label: string, v: string): string { console.log(label); return v; }

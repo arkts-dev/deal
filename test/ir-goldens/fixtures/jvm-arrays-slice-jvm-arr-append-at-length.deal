@@ -1,5 +1,5 @@
 // IR golden fixture: jvm-arrays-slice-jvm-arr-append-at-length
-// Migrated IR-containment pins from test/conformance/fixtures/jvm-arrays-slice.json case 'jvm-arr-append-at-length' (ISSUE-0358).
+// Migrated IR-containment pin for legacy case 'jvm-arr-append-at-length' (ISSUE-0358).
 
 export function test(): int {
   let xs: int[] = [];

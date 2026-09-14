@@ -588,7 +588,7 @@ public class SemanticProductionGateTest {
             // testAdapterShapeReroutesLegacy — so this residual shape is
             // the public E6005 the atomicity contract is pinned against;
             // the stager-level discard paths stay pinned in
-            // StagingPublicationTest/PublicationStagerTest.
+            // PublicationStagerTest.
             write(project, "src/main.deal",
                 "function one2(): int {\n  return 1\n}\n\n"
                     + "export function main(): null {\n"

@@ -29,11 +29,6 @@ import deal.semantic.SharedStdlibSemantics.ConsoleSink;
 import deal.semantic.SharedStdlibSemantics.Outcome;
 import deal.semantic.SharedStdlibSemantics.Value;
 import deal.semantic.StdlibFunctionCatalog;
-import deal.semantic.StdlibHelperEquivalence;
-import deal.semantic.StdlibHelperEquivalence.Candidate;
-import deal.semantic.StdlibHelperEquivalence.Lane;
-import deal.semantic.StdlibHelperEquivalence.VerdictKind;
-import deal.semantic.StdlibHelperEquivalence.VerdictRecord;
 import deal.semantic.ir.ActualKind;
 import deal.semantic.ir.AnchorId;
 import deal.semantic.ir.BoundaryContext;
@@ -91,10 +86,10 @@ import java.util.stream.Stream;
  * stdlib member calls) — against the named common operation
  * ({@link SharedStdlibSemantics} plus the projection wiring) on the full
  * declared input domain in result values, console effect bytes, and
- * failure projections, and records the verdict (equivalent or the exact
- * divergence) into {@link StdlibHelperEquivalence}. A helper that is not
- * verified-equivalent is never wirable into a SHARED emitter; the battery
- * result is {@code STDLIB_SEMANTICS} promotion evidence.
+ * failure projections, and derives test-local verdicts (equivalent or the
+ * exact divergence) from those executions. The battery result is
+ * {@code STDLIB_SEMANTICS} promotion evidence without mutable production
+ * state.
  *
  * <p><b>The reference run (combined T3/T4).</b> Every case runs through
  * the {@link Reference} pipeline: the declared parameter descriptors at
@@ -125,6 +120,60 @@ import java.util.stream.Stream;
  * comparison below or the battery fails.</p>
  */
 public final class StdlibEquivalenceBatteryTest {
+
+    enum Lane {
+        RETAINED_LUA,
+        RETAINED_JS,
+        JVM_EMITTED
+    }
+
+    record Candidate(Lane lane, String modulePath, String exportName,
+                     StdlibFunctionId function) {
+    }
+
+    enum VerdictKind {
+        VERIFIED_EQUIVALENT,
+        DIVERGENT
+    }
+
+    record VerdictRecord(Candidate candidate, VerdictKind kind, String detail,
+                         int casesRun, List<String> divergenceSeeds) {
+        VerdictRecord {
+            divergenceSeeds = List.copyOf(divergenceSeeds);
+        }
+    }
+
+    private static final List<Candidate> CANDIDATES = candidates();
+    private static final Map<Candidate, VerdictRecord> verdicts = new LinkedHashMap<>();
+
+    private static List<Candidate> candidates() {
+        List<Candidate> candidates = new ArrayList<>();
+        for (StdlibFunctionCatalog.Entry entry : StdlibFunctionCatalog.entries()) {
+            candidates.add(new Candidate(Lane.RETAINED_LUA, entry.modulePath(),
+                entry.exportName(), entry.function()));
+            candidates.add(new Candidate(Lane.RETAINED_JS, entry.modulePath(),
+                entry.exportName(), entry.function()));
+            if (!"std.json".equals(entry.modulePath())) {
+                candidates.add(new Candidate(Lane.JVM_EMITTED, entry.modulePath(),
+                    entry.exportName(), entry.function()));
+            }
+        }
+        return List.copyOf(candidates);
+    }
+
+    private static VerdictRecord verdict(Lane lane, StdlibFunctionId function) {
+        for (Map.Entry<Candidate, VerdictRecord> entry : verdicts.entrySet()) {
+            if (entry.getKey().lane() == lane && entry.getKey().function() == function) {
+                return entry.getValue();
+            }
+        }
+        return null;
+    }
+
+    private static boolean isWirable(Lane lane, StdlibFunctionId function) {
+        VerdictRecord record = verdict(lane, function);
+        return record != null && record.kind() == VerdictKind.VERIFIED_EQUIVALENT;
+    }
 
     private StdlibEquivalenceBatteryTest() {
         // Static test main only.
@@ -1977,7 +2026,7 @@ public final class StdlibEquivalenceBatteryTest {
     }
 
     private static Frontend compileFrontend(String source, String filename) {
-        return compileFrontend(source, filename, new BackendConformanceTest.StubModuleResolver());
+        return compileFrontend(source, filename, new StubModuleResolver());
     }
 
     private static String dealStringOf(String text) {
@@ -2338,9 +2387,9 @@ public final class StdlibEquivalenceBatteryTest {
             Files.createDirectories(outDir);
             Files.writeString(outDir.resolve("Main.java"), res.source());
             Files.writeString(outDir.resolve("JvmConformanceRunner.java"),
-                BackendConformanceTest.buildJvmRunner(frontend.program(), res.className()));
+                StubModuleResolver.buildJvmRunner(frontend.program(), res.className()));
             StringBuilder javacErr = new StringBuilder();
-            boolean javacOk = BackendConformanceTest.compileWithJavac(outDir,
+            boolean javacOk = StubModuleResolver.compileWithJavac(outDir,
                 List.of("Main.java", "JvmConformanceRunner.java"), javacErr);
             check(javacOk, "the JVM battery artifact compiles with javac: " + javacErr);
             if (!javacOk) {
@@ -2420,7 +2469,7 @@ public final class StdlibEquivalenceBatteryTest {
      */
     static void recordLaneVerdicts(Lane lane, List<Case> laneCases,
                                    Map<String, List<String>> divergences) {
-        for (Candidate candidate : StdlibHelperEquivalence.closedCandidates()) {
+        for (Candidate candidate : CANDIDATES) {
             if (candidate.lane() != lane) {
                 continue;
             }
@@ -2447,7 +2496,8 @@ public final class StdlibEquivalenceBatteryTest {
                     + "console effect bytes, and failure projections — all matched the "
                     + "common operation"
                 : casesRun + " case(s) run; " + seeds.size() + " diverged: " + seeds;
-            StdlibHelperEquivalence.record(candidate, kind, detail, casesRun, seeds);
+            verdicts.put(candidate,
+                new VerdictRecord(candidate, kind, detail, casesRun, seeds));
         }
     }
 
@@ -2458,10 +2508,13 @@ public final class StdlibEquivalenceBatteryTest {
     private static void testClosedCandidateSetAndWiringRule() {
         System.out.println("-- The closed candidate set and the wiring admission rule --");
 
-        List<Candidate> candidates = StdlibHelperEquivalence.closedCandidates();
-        check(candidates.size() == 58,
-            "the closed candidate set has 58 candidates (20 Lua + 20 JS + 18 JVM); got "
-                + candidates.size());
+        List<Candidate> candidates = CANDIDATES;
+        int expectedCandidates = StdlibFunctionCatalog.entries().size() * 3
+            - (int) StdlibFunctionCatalog.entries().stream()
+                .filter(entry -> "std.json".equals(entry.modulePath())).count();
+        check(candidates.size() == expectedCandidates,
+            "the derived candidate set covers both retained lanes and every supported JVM "
+                + "catalog row; got " + candidates.size());
         EnumSet<StdlibFunctionId> allIds = EnumSet.allOf(StdlibFunctionId.class);
         for (Lane lane : Lane.values()) {
             EnumSet<StdlibFunctionId> laneIds = EnumSet.noneOf(StdlibFunctionId.class);
@@ -2481,25 +2534,17 @@ public final class StdlibEquivalenceBatteryTest {
             c.modulePath().contains("time"));
         check(!anyTime, "no std/time candidate exists (the locked TIME_NOW_MILLIS selector "
             + "has no catalog row and no candidate)");
-        check(StdlibHelperEquivalence.exclusions().size() == 2,
-            "the closed exclusions name the two JVM std/json rows");
-        for (StdlibHelperEquivalence.Exclusion exclusion : StdlibHelperEquivalence.exclusions()) {
-            check(exclusion.candidate().lane() == Lane.JVM_EMITTED
-                    && "std.json".equals(exclusion.candidate().modulePath()),
-                "the JVM std/json position is not an equivalence battery candidate: "
-                    + exclusion.reason());
-        }
-        check(!StdlibHelperEquivalence.isWirable(Lane.JVM_EMITTED,
-                StdlibFunctionId.JSON_PARSE),
+        check(candidates.stream().noneMatch(candidate -> candidate.lane() == Lane.JVM_EMITTED
+                && "std.json".equals(candidate.modulePath())),
+            "the JVM std/json rows stay outside the equivalence candidate set");
+        check(!isWirable(Lane.JVM_EMITTED, StdlibFunctionId.JSON_PARSE),
             "the JVM std/json parse position is never wirable (not a candidate)");
-        check(!StdlibHelperEquivalence.isWirable(Lane.JVM_EMITTED,
-                StdlibFunctionId.JSON_STRINGIFY),
+        check(!isWirable(Lane.JVM_EMITTED, StdlibFunctionId.JSON_STRINGIFY),
             "the JVM std/json stringify position is never wirable (not a candidate)");
-        check(!StdlibHelperEquivalence.isWirable(Lane.RETAINED_LUA,
-                StdlibFunctionId.STRING_LENGTH),
+        check(!isWirable(Lane.RETAINED_LUA, StdlibFunctionId.STRING_LENGTH),
             "a not-yet-batteried candidate is never wirable");
-        check(!StdlibHelperEquivalence.completeCoverage(),
-            "coverage is incomplete before the battery records its verdicts");
+        check(verdicts.isEmpty(),
+            "no derived outcomes exist before the battery runs");
     }
 
     /** The reference parameter boundary rejects invalid scalar encodings first (D4, Verification 1). */
@@ -2578,15 +2623,6 @@ public final class StdlibEquivalenceBatteryTest {
         check(trailingSeedDetected,
             "the broken stub diverges on the trailing-whitespace edge of the closed trim set: "
                 + divergences);
-        try {
-            StdlibHelperEquivalence.record(new Candidate(Lane.JVM_EMITTED, "std.json",
-                    "parse", StdlibFunctionId.JSON_PARSE), VerdictKind.DIVERGENT, "stub", 1,
-                List.of("stub"));
-            check(false, "recording a candidate outside the closed set must fail closed");
-        } catch (IllegalArgumentException expected) {
-            check(true, "recording a candidate outside the closed set fails closed ("
-                + expected.getMessage() + ")");
-        }
     }
 
     /**
@@ -2702,28 +2738,28 @@ public final class StdlibEquivalenceBatteryTest {
                 + "sqrt(-4)");
 
         // The wiring rule: divergent helpers are never wirable.
-        check(!StdlibHelperEquivalence.isWirable(Lane.RETAINED_LUA,
+        check(!isWirable(Lane.RETAINED_LUA,
                 StdlibFunctionId.TABLE_KEYS),
             "the divergent Lua table.keys helper is not wirable");
-        check(!StdlibHelperEquivalence.isWirable(Lane.RETAINED_JS,
+        check(!isWirable(Lane.RETAINED_JS,
                 StdlibFunctionId.TABLE_KEYS),
             "the divergent JS table.keys helper is not wirable");
-        check(!StdlibHelperEquivalence.isWirable(Lane.RETAINED_LUA,
+        check(!isWirable(Lane.RETAINED_LUA,
                 StdlibFunctionId.JSON_STRINGIFY),
             "the divergent Lua json.stringify helper is not wirable");
-        check(!StdlibHelperEquivalence.isWirable(Lane.RETAINED_LUA,
+        check(!isWirable(Lane.RETAINED_LUA,
                 StdlibFunctionId.JSON_PARSE),
             "the divergent Lua json.parse helper is not wirable");
-        check(!StdlibHelperEquivalence.isWirable(Lane.RETAINED_JS,
+        check(!isWirable(Lane.RETAINED_JS,
                 StdlibFunctionId.JSON_PARSE),
             "the divergent JS json.parse helper is not wirable");
-        check(!StdlibHelperEquivalence.isWirable(Lane.RETAINED_JS,
+        check(!isWirable(Lane.RETAINED_JS,
                 StdlibFunctionId.JSON_STRINGIFY),
             "the divergent JS json.stringify helper is not wirable");
-        check(!StdlibHelperEquivalence.isWirable(Lane.RETAINED_JS,
+        check(!isWirable(Lane.RETAINED_JS,
                 StdlibFunctionId.MATH_ABS_INT),
             "the divergent JS absInt helper is not wirable");
-        check(!StdlibHelperEquivalence.isWirable(Lane.JVM_EMITTED,
+        check(!isWirable(Lane.JVM_EMITTED,
                 StdlibFunctionId.MATH_ABS_INT),
             "the divergent JVM absInt helper is not wirable");
     }
@@ -2734,7 +2770,7 @@ public final class StdlibEquivalenceBatteryTest {
             + "closed trim set --");
 
         for (Lane lane : Lane.values()) {
-            boolean wirable = StdlibHelperEquivalence.isWirable(lane,
+            boolean wirable = isWirable(lane,
                 StdlibFunctionId.STRING_TRIM);
             check(wirable,
                 "the " + lane + " trim helper (the closed set U+0009–U+000D and U+0020; "
@@ -2773,9 +2809,9 @@ public final class StdlibEquivalenceBatteryTest {
                         + "the table carrier");
             }
         }
-        check(!StdlibHelperEquivalence.isWirable(Lane.JVM_EMITTED,
+        check(!isWirable(Lane.JVM_EMITTED,
                 StdlibFunctionId.JSON_PARSE)
-                && !StdlibHelperEquivalence.isWirable(Lane.JVM_EMITTED,
+                && !isWirable(Lane.JVM_EMITTED,
                     StdlibFunctionId.JSON_STRINGIFY),
             "the JVM std/json position stays outside the equivalence battery's "
                 + "closed candidate set (the retained Lua/JS helpers are the "
@@ -2994,7 +3030,7 @@ public final class StdlibEquivalenceBatteryTest {
         requireTool("javac", "-version");
         requireTool("java", "-version");
 
-        StdlibHelperEquivalence.reset();
+        verdicts.clear();
         testClosedCandidateSetAndWiringRule();
 
         Reference reference = new Reference(origin());
@@ -3046,14 +3082,13 @@ public final class StdlibEquivalenceBatteryTest {
         testAlgorithmTamperFlipsVerdict(all, reference);
         testCombinedT5(all);
 
-        check(StdlibHelperEquivalence.completeCoverage(),
-            "the battery recorded a verdict for every closed candidate (complete coverage — "
-                + "STDLIB_SEMANTICS promotion evidence)");
-        check(StdlibHelperEquivalence.batteryEvidence().size() == 58,
-            "the battery evidence carries exactly the 58 closed candidate records; got "
-                + StdlibHelperEquivalence.batteryEvidence().size());
+        check(verdicts.keySet().equals(new LinkedHashSet<>(CANDIDATES)),
+            "the battery derived a verdict for every runtime-derived candidate");
+        check(verdicts.size() == CANDIDATES.size(),
+            "the battery evidence carries one record per derived candidate; got "
+                + verdicts.size());
         int divergent = 0;
-        for (VerdictRecord record : StdlibHelperEquivalence.batteryEvidence()) {
+        for (VerdictRecord record : verdicts.values()) {
             if (record.kind() == VerdictKind.DIVERGENT) {
                 divergent++;
                 System.out.println("  [DIVERGENT] " + record.candidate() + " — "
@@ -3072,9 +3107,9 @@ public final class StdlibEquivalenceBatteryTest {
                 }
             }
         }
-        System.out.println("battery verdict summary: " + StdlibHelperEquivalence
-            .batteryEvidence().size() + " candidates, " + divergent + " divergent, "
-            + (58 - divergent) + " verified-equivalent");
+        System.out.println("battery verdict summary: " + verdicts.size()
+            + " candidates, " + divergent + " divergent, "
+            + (verdicts.size() - divergent) + " verified-equivalent");
         check(divergent >= 8,
             "the battery honestly records the known divergent candidates (never hardcoded "
                 + "silently); got " + divergent + " divergent records");

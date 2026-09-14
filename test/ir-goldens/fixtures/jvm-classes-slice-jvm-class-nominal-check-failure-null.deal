@@ -1,5 +1,5 @@
 // IR golden fixture: jvm-classes-slice-jvm-class-nominal-check-failure-null
-// Migrated IR-containment pins from test/conformance/fixtures/jvm-classes-slice.json case 'jvm-class-nominal-check-failure-null' (ISSUE-0358).
+// Migrated IR-containment pin for legacy case 'jvm-class-nominal-check-failure-null' (ISSUE-0358).
 
 class Box { value: int = 0; }
 export function test(): int {

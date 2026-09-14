@@ -92,7 +92,7 @@ import java.util.stream.Stream;
  *       the known-fail marker, leaving the fixture as a real
  *       runtime-error fixture whose uniform E8004 sidecar stays. The
  *       two-backend slice re-home
- *       ({@code jvm-int32-slice.json#int32-add-overflow}) stays.
+ *       stays covered by the ordinary signed-int32 runtime fixture.
  *       ISSUE-0339 promoted the last previously tracked fixture
  *       ({@code bytes-buffer-ops.deal}, which received its runtime-ok
  *       sidecar in the same change that dropped its known-fail

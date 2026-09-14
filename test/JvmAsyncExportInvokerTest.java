@@ -190,7 +190,7 @@ public class JvmAsyncExportInvokerTest {
                   .forEach(p -> javaFiles.add(p.getFileName().toString()));
         }
         StringBuilder javacErr = new StringBuilder();
-        boolean javacOk = BackendConformanceTest.compileWithJavac(outRoot,
+        boolean javacOk = StubModuleResolver.compileWithJavac(outRoot,
             javaFiles, javacErr);
         assertTrue("javac must compile the emitted artifacts: " + javacErr,
             javacOk);
@@ -217,7 +217,7 @@ public class JvmAsyncExportInvokerTest {
         }
         StringBuilder javacErr = new StringBuilder();
         assertTrue("javac must compile the staged sources: " + javacErr,
-            BackendConformanceTest.compileWithJavac(outRoot, javaFiles,
+            StubModuleResolver.compileWithJavac(outRoot, javaFiles,
                 javacErr));
     }
 
@@ -1005,7 +1005,7 @@ public class JvmAsyncExportInvokerTest {
             }
             """.formatted(launcherBody));
         StringBuilder javacErr = new StringBuilder();
-        boolean javacOk = BackendConformanceTest.compileWithJavac(out,
+        boolean javacOk = StubModuleResolver.compileWithJavac(out,
             List.of("FakeEntry.java"), javacErr);
         assertTrue("the fake launcher must compile: " + javacErr, javacOk);
         return new Compiled(out, "FakeEntry",

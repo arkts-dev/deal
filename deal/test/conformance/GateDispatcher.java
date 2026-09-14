@@ -28,7 +28,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  *   <li>Cases run in parallel workers; the worker count is the caller's
  *       {@code parallelism} (the gate passes
  *       {@code Runtime.getRuntime().availableProcessors()}, the
- *       worker-pool bound of the BackendConformanceTest pattern).</li>
+ *       worker-pool bound of the parallel backend-test pattern).</li>
  *   <li>Lanes of one case execute sequentially in the case's worker, in
  *       {@link LaneCase} order, so per-case verdict construction is
  *       deterministic and no worker ever blocks on a sibling lane

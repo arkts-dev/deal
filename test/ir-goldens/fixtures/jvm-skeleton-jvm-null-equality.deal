@@ -1,5 +1,5 @@
 // IR golden fixture: jvm-skeleton-jvm-null-equality
-// Migrated IR-containment pins from test/conformance/fixtures/jvm-skeleton.json case 'jvm-null-equality' (ISSUE-0358).
+// Migrated IR-containment pin for legacy case 'jvm-null-equality' (ISSUE-0358).
 
 export function test(): int {
   let z: null = null;

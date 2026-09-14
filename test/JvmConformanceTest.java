@@ -58,7 +58,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * zero legacy-authority labeling: the profile-authority accounting is
  * pinned at 0 legacy-authority fixtures, and the per-fixture catalog
  * seam stays where it belongs — the untouched legacy harness
- * {@code deal.test.BackendConformanceTest} (this lane only validates
+ * {@code deal.test.legacy JSON conformance harness} (this lane only validates
  * the catalog at startup; it never routes a fixture through it).
  *
  * <h2>Closed gate state (ISSUE-0307: zero skips, 100% denominator)</h2>
@@ -88,7 +88,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * adapter live-rebinding criterion splits by surface: the module-level
  * binding reassignment stays a LuaJIT-only reference pin
  * ({@code jvm-bytes-lua-ref-reassigned-adapter} in
- * {@code jvm-bytes-slice.json} — the adapter re-reads the chunk local
+ * {@code jvm-bytes-slice} — the adapter re-reads the chunk local
  * live, so {@code id = stamp} retargets it) because the JVM backend
  * retains the reason-bearing E6000 for that reassignment, never a
  * bytes reason (pinned in {@code JvmBackendTest
@@ -187,7 +187,7 @@ public class JvmConformanceTest {
      * the activated backend's sanctioned harness surface until the
      * release-owned public cutover; no per-fixture catalog seam and no
      * legacy-authority routing exist in this lane (the untouched
-     * {@code deal.test.BackendConformanceTest} owns that seam).
+     * {@code deal.test.legacy JSON conformance harness} owns that seam).
      */
     private static final CompilerInvocation LANE_INVOCATION =
         CompilerProfileProvider.resolve(ReleaseState.V1_2_ACTIVE,
@@ -214,7 +214,7 @@ public class JvmConformanceTest {
      * {@code classNameFor} rule every emitted module uses
      * (host/bad_return → HostBad_return); methods take the JVM-mapped
      * parameter types and return Object (or a CompletableFuture for
-     * async exports), exactly like the jvm-host-abi-slice.json hosts.
+     * async exports), exactly like the jvm-host-abi-slice hosts.
      */
     private static final Map<String, String> HOST_JAVA = Map.ofEntries(
         Map.entry("async_bad",
@@ -549,7 +549,7 @@ public class JvmConformanceTest {
     }
 
     /** Probes that both {@code javac} and {@code java} are invocable and
-     * functional — the same gate BackendConformanceTest uses. */
+     * functional — the same gate legacy JSON conformance harness uses. */
     private static boolean probeJvm() {
         try {
             Process javac = new ProcessBuilder("javac", "-version")
@@ -1330,14 +1330,14 @@ public class JvmConformanceTest {
                 invocation.semanticProfile());
             Path runnerFile = outputRoot.resolve("JvmConformanceRunner.java");
             Files.writeString(runnerFile,
-                BackendConformanceTest.buildJvmRunner(entryProgram,
+                StubModuleResolver.buildJvmRunner(entryProgram,
                     entryClass));
 
             // 7. javac over every emitted .java artifact plus the runner
             // and the host classes (in-process javax.tools — the
             // identical parse/enter/analyze/generate passes the javac
             // binary runs, the same documented frontend the canonical
-            // BackendConformanceTest uses for its JVM fixtures).
+            // legacy JSON conformance harness uses for its JVM fixtures).
             List<String> javaFiles = new ArrayList<>();
             try (var stream = Files.list(outputRoot)) {
                 stream.filter(p -> p.toString().endsWith(".java"))
@@ -1345,7 +1345,7 @@ public class JvmConformanceTest {
                       .forEach(p -> javaFiles.add(p.getFileName().toString()));
             }
             StringBuilder javacErr = new StringBuilder();
-            boolean javacOk = BackendConformanceTest.compileWithJavac(
+            boolean javacOk = StubModuleResolver.compileWithJavac(
                 outputRoot, javaFiles, javacErr);
             if (!javacOk) {
                 if (knownFailProbe) {

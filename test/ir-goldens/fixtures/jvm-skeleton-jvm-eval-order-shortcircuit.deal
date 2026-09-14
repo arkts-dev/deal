@@ -1,5 +1,5 @@
 // IR golden fixture: jvm-skeleton-jvm-eval-order-shortcircuit
-// Migrated IR-containment pins from test/conformance/fixtures/jvm-skeleton.json case 'jvm-eval-order-shortcircuit' (ISSUE-0358).
+// Migrated IR-containment pin for legacy case 'jvm-eval-order-shortcircuit' (ISSUE-0358).
 
 import * as console from "std/console"
 function g(): int { console.log("g-ran"); return 7; }

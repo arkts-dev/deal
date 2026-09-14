@@ -1,5 +1,5 @@
 // IR golden fixture: jvm-skeleton-jvm-if-else
-// Migrated IR-containment pins from test/conformance/fixtures/jvm-skeleton.json case 'jvm-if-else' (ISSUE-0358).
+// Migrated IR-containment pin for legacy case 'jvm-if-else' (ISSUE-0358).
 
 function classify(n: int): int {
   if (n < 0) {

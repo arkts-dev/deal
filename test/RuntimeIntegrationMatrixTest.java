@@ -19,7 +19,6 @@ import deal.semantic.CompilerProfileProvider;
 import deal.semantic.LoweringSupport;
 import deal.semantic.ModuleFact;
 import deal.semantic.RequirementManifestResult;
-import deal.codegen.SemanticDifferentialHarness;
 import deal.semantic.SemanticLowerer;
 import deal.semantic.SemanticRuntimeModel;
 import deal.semantic.ir.BinarySelector;

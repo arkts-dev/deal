@@ -62,7 +62,7 @@ import java.util.concurrent.TimeUnit;
 /**
  * The JavaScript lane of the v1.2 differential gate (ISSUE-0356; design
  * {@code v12-zero-skip-conformance-gate} G4/G5): the absorbed
- * {@code BackendConformanceTest} JS adapter path — the real frontend +
+ * {@code retired JSON conformance harness} JS adapter path — the real frontend +
  * {@link JsBackend} codegen, the {@code deal/runtime.js} / {@code std/*.js}
  * / host-triplet deployment, and a real {@code node} subprocess —
  * executed under the Shared Lane Contract.
@@ -150,7 +150,7 @@ import java.util.concurrent.TimeUnit;
  * {@code .deal} corpus are reported as real differential failures by the
  * gate (the gate is the measuring instrument); the flip (T14) is the
  * point where the full three-backend pass becomes the enforced state.
- * The lane changes no existing runner: {@code BackendConformanceTest} and
+ * The lane changes no existing runner: {@code retired JSON conformance harness} and
  * {@code JsE2eTest} keep running in {@code run_tests.sh} until the
  * absorption/retirement children land (G5's temporary-coexistence
  * window). No production file is modified.</p>
@@ -187,7 +187,7 @@ public class JsLane implements Lane {
      * Creates the lane over one conformance root. The repository runtime
      * artifacts ({@code deal/runtime.js}, {@code std/*.js}) resolve from
      * the current working directory — the same surface the absorbed
-     * {@code BackendConformanceTest} adapter uses.
+     * {@code retired JSON conformance harness} adapter uses.
      *
      * @param conformanceRoot the conformance root (any path form; the
      *                        lane normalizes it)
@@ -387,7 +387,7 @@ public class JsLane implements Lane {
     }
 
     // =========================================================================
-    // Compilation (the absorbed BackendConformanceTest JS adapter path)
+    // Compilation (the absorbed retired JSON conformance harness JS adapter path)
     // =========================================================================
 
     /**
@@ -444,7 +444,7 @@ public class JsLane implements Lane {
      * {@code ConformanceModuleResolver} surface — one case profile, a
      * per-case identity index, companions compiled depth-first before
      * their importers, host triplet declarations, and the stdlib export
-     * surface — with the {@code BackendConformanceTest} JS adapter's
+     * surface — with the {@code retired JSON conformance harness} JS adapter's
      * {@link JsBackend} production-seam invocation generalized to
      * per-module codegen.
      */

@@ -209,7 +209,7 @@ public class JvmRegistryAsyncExportBoundaryTest {
                       p.getFileName().toString()));
         }
         StringBuilder javacErr = new StringBuilder();
-        boolean javacOk = BackendConformanceTest.compileWithJavac(
+        boolean javacOk = StubModuleResolver.compileWithJavac(
             outputRoot, javaFiles, javacErr);
         assertTrue("javac must compile the emitted artifacts: " + javacErr,
             javacOk);

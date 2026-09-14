@@ -31,9 +31,6 @@ import deal.semantic.ModuleFact;
 import deal.semantic.ir.ReleaseState;
 import deal.semantic.RequirementManifestResult;
 import deal.semantic.SemanticLowerer;
-import deal.semantic.SharedEmitterRealizationContract;
-import deal.semantic.SharedEmitterRealizationContract.Domain;
-import deal.semantic.SharedEmitterRealizationContract.Obligation;
 import deal.semantic.ir.ActualKind;
 import deal.semantic.ir.AddressChainProtocol;
 import deal.semantic.ir.AnchorId;
@@ -94,10 +91,8 @@ import java.util.Optional;
 
 /**
  * The decomposition-tail integration verification of the
- * {@code EVALUATION_ORDER} epic (ISSUE-0410): the shared-emitter
- * realization obligations pinned as the authoritative emitter contract
- * ({@link SharedEmitterRealizationContract}), and the full three-domain
- * matrix — address chains, comparisons, control flow — run through the
+ * {@code EVALUATION_ORDER} epic (ISSUE-0410): the full three-domain
+ * matrix — address chains, comparisons, control flow — runs through the
  * real production chain (lexer → parser → checker → checked project →
  * requirement manifest → lowerer → closed validator → address-chain
  * protocol → control-flow validator) over side-effecting seed programs,
@@ -112,11 +107,7 @@ import java.util.Optional;
  * short-circuit/loop shapes, the lowered boundary payloads executed
  * through {@code BoundaryExecutor} prove the exact E8001/E8002/E8010
  * projections, and {@code ComparisonExecutor} proves the closed B-D2
- * selector rows — plus the pinned emitter obligations
- * ({@link SharedEmitterRealizationContract}). The pinned emitter
- * obligations name the exact prohibitions the oracle/shared-emitter
- * runtime tail verifies by trace/effect comparison; this suite asserts
- * the contract pins and every negative control, so a duplicated
+ * selector rows. Every negative control remains executable, so a duplicated
  * evaluation, a wrong selector, a missing boundary, or a broken
  * constituent module fails the tail. The runtime comparison segment
  * itself — the identical validated unit executed on the semantic
@@ -126,7 +117,7 @@ import java.util.Optional;
  * ({@code deal.semantic.SemanticOracle},
  * {@code deal.codegen.lua.LuaSemanticEmitter},
  * {@code deal.codegen.jvm.JvmSemanticEmitter},
- * {@code deal.codegen.SemanticDifferentialHarness}); no stub
+ * {@code deal.test.SemanticDifferentialHarness}); no stub
  * substitutes for the three-consumer run.</p>
  */
 public class EvaluationOrderIntegrationTest {
@@ -349,174 +340,7 @@ public class EvaluationOrderIntegrationTest {
     }
 
     // =========================================================================
-    // 1. The obligation contract pin
-    // =========================================================================
-
-    static void testEmitterContractPin() {
-        System.out.println("-- SharedEmitterRealizationContract: closed rows, prohibitions --");
-
-        List<Obligation> closed = SharedEmitterRealizationContract.closed();
-        check(closed.size() == 15,
-            "the contract carries exactly 15 closed obligations; got " + closed.size());
-        List<String> ids = new ArrayList<>();
-        for (Obligation obligation : closed) {
-            ids.add(obligation.id());
-        }
-        check(List.of(
-                SharedEmitterRealizationContract.CHAIN_FRESH_LOCAL_MATERIALIZATION,
-                SharedEmitterRealizationContract.CHAIN_BOUNDARY_SINGLE_PROJECTION,
-                SharedEmitterRealizationContract.CHAIN_NO_REEMISSION,
-                SharedEmitterRealizationContract.CHAIN_NO_RETAINED_DOUBLE_EVALUATION,
-                SharedEmitterRealizationContract.CHAIN_EXACTLY_ONE_COMMIT_LAST,
-                SharedEmitterRealizationContract.COMPARISON_SHARED_LUA_NATIVE,
-                SharedEmitterRealizationContract.COMPARISON_SHARED_JVM_NATIVE,
-                SharedEmitterRealizationContract.COMPARISON_TRACE_SELECTOR_AUTHORITY,
-                SharedEmitterRealizationContract.CONTROL_NO_SPECULATIVE_EXECUTION,
-                SharedEmitterRealizationContract.CONTROL_CONDITION_INSIDE_LOOP,
-                SharedEmitterRealizationContract.CONTROL_FOR_EACH_ITERABLE_ONCE,
-                SharedEmitterRealizationContract.CONTROL_SHORT_CIRCUIT_GUARD,
-                SharedEmitterRealizationContract.CONTROL_CONTINUE_BEFORE_UPDATE,
-                SharedEmitterRealizationContract.CONTROL_BLOCK_CODE_FROM_TABLE,
-                SharedEmitterRealizationContract.CONTROL_CATCH_DEAL_ONLY)
-                .equals(ids),
-            "the closed order is the pinned canonical order; got " + ids);
-        for (String id : ids) {
-            check(SharedEmitterRealizationContract.byId(id) != null,
-                "byId resolves the closed obligation " + id);
-        }
-        check(SharedEmitterRealizationContract.byId("NOT_AN_OBLIGATION") == null,
-            "byId returns null for a non-closed id");
-
-        long chainRows = closed.stream()
-            .filter(o -> o.domain() == Domain.ADDRESS_CHAINS).count();
-        long comparisonRows = closed.stream()
-            .filter(o -> o.domain() == Domain.COMPARISONS).count();
-        long controlRows = closed.stream()
-            .filter(o -> o.domain() == Domain.CONTROL_FLOW).count();
-        check(chainRows == 5 && comparisonRows == 3 && controlRows == 7,
-            "the domains partition the rows 5/3/7; got " + chainRows + "/"
-                + comparisonRows + "/" + controlRows);
-
-        Obligation freshLocals = SharedEmitterRealizationContract.byId(
-            SharedEmitterRealizationContract.CHAIN_FRESH_LOCAL_MATERIALIZATION);
-        check(freshLocals != null
-                && freshLocals.contract().contains("materialized into a fresh local")
-                && freshLocals.contract().contains("receiver → key → RHS → normalize → "
-                    + "boundary → commit"),
-            "the fresh-local obligation pins payload-order materialization");
-        Obligation singleProjection = SharedEmitterRealizationContract.byId(
-            SharedEmitterRealizationContract.CHAIN_BOUNDARY_SINGLE_PROJECTION);
-        check(singleProjection != null
-                && singleProjection.contract().contains("never a target-side re-check")
-                && singleProjection.prohibitions().contains(
-                    "never emit a second bounds test at the commit site"),
-            "the bounds projection obligation names the never-re-check prohibition");
-        Obligation noReemission = SharedEmitterRealizationContract.byId(
-            SharedEmitterRealizationContract.CHAIN_NO_REEMISSION);
-        check(noReemission != null
-                && noReemission.prohibitions().contains(
-                    "never re-emit a receiver/key/RHS expression"),
-            "the no-re-emission obligation pins the exact prohibition");
-        Obligation noRetained = SharedEmitterRealizationContract.byId(
-            SharedEmitterRealizationContract.CHAIN_NO_RETAINED_DOUBLE_EVALUATION);
-        check(noRetained != null
-                && noRetained.prohibitions().stream().anyMatch(p ->
-                    p.contains("deal/codegen/lua/LuaBackend.java:2366-2406")
-                        && p.contains("receiver re-emitted at :2378")
-                        && p.contains("index at :2379")
-                        && p.contains("bounds check before the RHS at :2395-2399")),
-            "the retained-shape prohibition names the exact emitAssignment locator and shape");
-        Obligation commitLast = SharedEmitterRealizationContract.byId(
-            SharedEmitterRealizationContract.CHAIN_EXACTLY_ONE_COMMIT_LAST);
-        check(commitLast != null
-                && commitLast.contract().contains("exactly one commit op")
-                && commitLast.contract().contains("always last")
-                && commitLast.contract().contains("never re-evaluates"),
-            "the commit obligation pins exactly-one/last/never-re-evaluating");
-        Obligation luaNative = SharedEmitterRealizationContract.byId(
-            SharedEmitterRealizationContract.COMPARISON_SHARED_LUA_NATIVE);
-        check(luaNative != null
-                && luaNative.contract().contains("UTF-8 byte order equals code point order")
-                && luaNative.contract().contains("native relationals realize "
-                    + "scalar-lexicographic order"),
-            "the shared-Lua comparison obligation pins native realization");
-        Obligation jvmNative = SharedEmitterRealizationContract.byId(
-            SharedEmitterRealizationContract.COMPARISON_SHARED_JVM_NATIVE);
-        check(jvmNative != null
-                && jvmNative.prohibitions().contains("never Double.compare for number EQ")
-                && jvmNative.prohibitions().contains(
-                    "never Double.compare for number orderings")
-                && jvmNative.prohibitions().contains("never String.compareTo for string order")
-                && jvmNative.prohibitions().contains("never equals() for reference identity"),
-            "the shared-JVM comparison obligation pins all four never-constructs");
-        Obligation selectorAuthority = SharedEmitterRealizationContract.byId(
-            SharedEmitterRealizationContract.COMPARISON_TRACE_SELECTOR_AUTHORITY);
-        check(selectorAuthority != null
-                && selectorAuthority.contract().contains("regardless of the target "
-                    + "construct"),
-            "the trace-selector obligation pins the validated selector");
-        Obligation noSpeculation = SharedEmitterRealizationContract.byId(
-            SharedEmitterRealizationContract.CONTROL_NO_SPECULATIVE_EXECUTION);
-        check(noSpeculation != null
-                && noSpeculation.prohibitions().contains(
-                    "never pre-execute a body/update before its condition")
-                && noSpeculation.prohibitions().contains(
-                    "never execute the skipped side of a short circuit"),
-            "the no-speculation obligation pins body/update and short-circuit skips");
-        Obligation conditionInLoop = SharedEmitterRealizationContract.byId(
-            SharedEmitterRealizationContract.CONTROL_CONDITION_INSIDE_LOOP);
-        check(conditionInLoop != null
-                && conditionInLoop.prohibitions().contains(
-                    "never hoist condition ops above the loop")
-                && conditionInLoop.contract().contains("re-evaluated per iteration"),
-            "the condition-inside-loop obligation pins re-evaluation");
-        Obligation iterableOnce = SharedEmitterRealizationContract.byId(
-            SharedEmitterRealizationContract.CONTROL_FOR_EACH_ITERABLE_ONCE);
-        check(iterableOnce != null
-                && iterableOnce.contract().contains("materialized into a local")
-                && iterableOnce.prohibitions().contains(
-                    "never re-evaluate the iterable per iteration"),
-            "the FOR_EACH obligation pins once-only iterable materialization");
-        Obligation shortCircuitGuard = SharedEmitterRealizationContract.byId(
-            SharedEmitterRealizationContract.CONTROL_SHORT_CIRCUIT_GUARD);
-        check(shortCircuitGuard != null
-                && shortCircuitGuard.contract().contains("behind a guard/closure"),
-            "the short-circuit obligation pins the guard/closure form");
-        Obligation continueLanding = SharedEmitterRealizationContract.byId(
-            SharedEmitterRealizationContract.CONTROL_CONTINUE_BEFORE_UPDATE);
-        check(continueLanding != null
-                && continueLanding.contract().contains("continue landing sits before the "
-                    + "update")
-                && continueLanding.prohibitions().contains(
-                    "never land continue after the update"),
-            "the continue obligation pins the before-update landing");
-        Obligation blockTable = SharedEmitterRealizationContract.byId(
-            SharedEmitterRealizationContract.CONTROL_BLOCK_CODE_FROM_TABLE);
-        check(blockTable != null
-                && blockTable.contract().contains("per the StructuredBodyTable membership")
-                && blockTable.prohibitions().contains(
-                    "never infer block membership from the op list"),
-            "the block-code obligation pins table membership");
-        Obligation dealOnly = SharedEmitterRealizationContract.byId(
-            SharedEmitterRealizationContract.CONTROL_CATCH_DEAL_ONLY);
-        check(dealOnly != null
-                && dealOnly.prohibitions().contains(
-                    "never reify an infrastructure failure as E8001"),
-            "the catch obligation pins DEAL-only catching");
-
-        List<Obligation> again = SharedEmitterRealizationContract.closed();
-        check(closed.equals(again),
-            "the closed list is deterministic (two calls compare equal)");
-        for (Obligation obligation : closed) {
-            check(!obligation.prohibitions().isEmpty(),
-                obligation.id() + " carries at least one exact prohibition");
-            check(!obligation.verification().isEmpty(),
-                obligation.id() + " names its trace/effect verification form");
-        }
-    }
-
-    // =========================================================================
-    // 2. The chain matrix — order per target kind through the production seam
+    // 1. The chain matrix — order per target kind through the production seam
     // =========================================================================
 
     static void testChainOrderMatrix() {
@@ -2518,7 +2342,6 @@ public class EvaluationOrderIntegrationTest {
         System.out.println("=== Evaluation Order Integration Test (ISSUE-0410, "
             + "decomposition tail) ===\n");
 
-        testEmitterContractPin();
         testChainOrderMatrix();
         testChainFailureProjections();
         testChainSingleEvaluationAndRetainedShapeDetection();

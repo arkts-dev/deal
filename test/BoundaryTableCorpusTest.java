@@ -2,7 +2,6 @@ package deal.test;
 
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticCode;
-import deal.semantic.BoundaryRealizationReport;
 import deal.semantic.DescriptorService;
 import deal.semantic.ir.ActualKind;
 import deal.semantic.ir.AdaptSourceRef;
@@ -112,11 +111,9 @@ import java.util.Set;
  * for the cross-unit shared-body rows); the raw-name reserved fixtures
  * run through {@link SemanticIrValidator#validateText(String,
  * SemanticIrValidator.ComparisonFacts)} — the pinned invalid-IR
- * injection route. Every positive unit's
- * {@link BoundaryRealizationReport} completes through the
- * {@link BoundaryRealizationReport#complete(LoweredModuleUnit,
- * BoundaryRealizationReport)} predicate with all-{@code RuntimeValidation}
- * cells.</p>
+ * injection route. Every positive unit's {@code BOUNDARY} payload carries
+ * a non-empty {@code RuntimeValidation} realization inspected directly
+ * from the validated Semantic IR.</p>
  */
 public class BoundaryTableCorpusTest {
 
@@ -1341,7 +1338,7 @@ public class BoundaryTableCorpusTest {
     }
 
     // =========================================================================
-    // Positive-corpus runner: validation, report completion, executor tie, sweeps
+    // Positive-corpus runner: validation, payload inspection, executor tie, sweeps
     // =========================================================================
 
     private static Optional<CompilerDiagnostic> validateRow(Row row) {
@@ -1358,17 +1355,6 @@ public class BoundaryTableCorpusTest {
         }
         return SemanticIrValidator.validateText(
             SemanticIrValidator.toProjectText(projectOf(row.units(), row.entry())), FACTS);
-    }
-
-    private static BoundaryRealizationReport reportOf(LoweredModuleUnit unit) {
-        Map<OpId, BoundaryRealization> map = new LinkedHashMap<>();
-        for (SemanticOp op : unit.ops()) {
-            if (op.kind() == SemanticOpKind.BOUNDARY) {
-                KindPayload.BoundaryPayload payload = (KindPayload.BoundaryPayload) op.payload();
-                map.put(op.opId(), payload.realization());
-            }
-        }
-        return new BoundaryRealizationReport(map);
     }
 
     private static void runExecutorTie(Row row) {
@@ -1481,22 +1467,21 @@ public class BoundaryTableCorpusTest {
             runExecutorTie(row);
         }
 
-        // Report completion (T3 combined): every positive unit's report
-        // completes with all-RuntimeValidation cells.
+        // Every validated boundary carries its active realization directly
+        // in the Semantic IR payload.
         for (Row row : rows) {
             for (LoweredModuleUnit unit : row.units()) {
-                Optional<CompilerDiagnostic> completion =
-                    BoundaryRealizationReport.complete(unit, reportOf(unit));
-                check(completion.isEmpty(),
-                    row.name() + " BoundaryRealizationReport completes with all-RuntimeValidation"
-                        + " cells"
-                        + (completion.isPresent() ? ": " + completion.get().message() : ""));
                 for (SemanticOp op : unit.ops()) {
                     if (op.kind() == SemanticOpKind.BOUNDARY) {
-                        check(boundaryPayload(op).realization()
-                                instanceof BoundaryRealization.RuntimeValidation,
+                        BoundaryRealization realization = boundaryPayload(op).realization();
+                        check(realization instanceof BoundaryRealization.RuntimeValidation,
                             row.name() + " boundary " + op.opId()
                                 + " carries a RuntimeValidation realization");
+                        if (realization instanceof BoundaryRealization.RuntimeValidation validation) {
+                            check(!validation.checkId().isEmpty(),
+                                row.name() + " boundary " + op.opId()
+                                    + " carries a non-empty runtime validation id");
+                        }
                     }
                 }
             }

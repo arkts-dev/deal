@@ -24,7 +24,7 @@ import java.util.Set;
  * The gate's backend-neutral frontend compilation (ISSUE-0353;
  * corpus-aware arm added by the gate-integration child ISSUE-0357): the
  * real lexer → parser → module shape gate → name resolution → type
- * checker pipeline, mirroring the {@code BackendConformanceTest}
+ * checker pipeline, mirroring the {@code backend-test}
  * frontend-gate path and the legacy runners' compile-stage surface.
  * Returns every error diagnostic in pipeline order; a bypassed stage
  * yields no diagnostics, so a compile-error pin can never be satisfied

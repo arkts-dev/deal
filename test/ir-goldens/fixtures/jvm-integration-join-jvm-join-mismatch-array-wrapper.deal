@@ -1,5 +1,5 @@
 // IR golden fixture: jvm-integration-join-jvm-join-mismatch-array-wrapper
-// Migrated IR-containment pins from test/conformance/fixtures/jvm-integration-join.json case 'jvm-join-mismatch-array-wrapper' (ISSUE-0358).
+// Migrated IR-containment pin for legacy case 'jvm-join-mismatch-array-wrapper' (ISSUE-0358).
 
 export function test(): int {
   let holder: table = { item: ["s"] };

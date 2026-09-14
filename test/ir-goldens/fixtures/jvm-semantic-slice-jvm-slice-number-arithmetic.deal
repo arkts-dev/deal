@@ -1,5 +1,5 @@
 // IR golden fixture: jvm-semantic-slice-jvm-slice-number-arithmetic
-// Migrated IR-containment pins from test/conformance/fixtures/jvm-semantic-slice.json case 'jvm-slice-number-arithmetic' (ISSUE-0358).
+// Migrated IR-containment pin for legacy case 'jvm-slice-number-arithmetic' (ISSUE-0358).
 
 export function test(): number {
   let x: number = 2.5 * 2.0;

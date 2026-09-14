@@ -1,5 +1,5 @@
 // IR golden fixture: jvm-arrays-slice-jvm-arr-eval-order-write
-// Migrated IR-containment pins from test/conformance/fixtures/jvm-arrays-slice.json case 'jvm-arr-eval-order-write' (ISSUE-0358).
+// Migrated IR-containment pin for legacy case 'jvm-arr-eval-order-write' (ISSUE-0358).
 
 import * as console from "std/console"
 function mark(label: string, value: int): int { console.log(label); return value; }

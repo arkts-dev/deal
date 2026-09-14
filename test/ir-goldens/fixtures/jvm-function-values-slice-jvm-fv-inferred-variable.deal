@@ -1,5 +1,5 @@
 // IR golden fixture: jvm-function-values-slice-jvm-fv-inferred-variable
-// Migrated IR-containment pins from test/conformance/fixtures/jvm-function-values-slice.json case 'jvm-fv-inferred-variable' (ISSUE-0358).
+// Migrated IR-containment pin for legacy case 'jvm-fv-inferred-variable' (ISSUE-0358).
 
 function dbl(x: int): int { return x * 2; }
 export function test(): int {
