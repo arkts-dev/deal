@@ -753,8 +753,13 @@ fi
 # Preflight P5: the outer feature supervisor runs the
 # deal.test.containment.PreflightCoordinator JVM (the only post-readiness
 # JVM this epic owns): authenticated broker HELLO/FEATURE_READY, bounded
-# round-trip nested invocations (luajit -v, /bin/true) through the
-# inherited broker, a clean session end (the coordinator closes the
+# round-trip nested invocations (luajit -v, /bin/true), and the
+# in-process live broker session suite (BrokerSessionTestSuite — the
+# handshake/capability assertion, ordering negatives, the
+# single-connection rule, the scripted wrong-nonce ACK/CANCEL rejections
+# through the continuation seam, content/cap/nonzero-exit record
+# exchange, the nonce-bound CANCEL flow, and the D7 spawn scans) through
+# the inherited broker, a clean session end (the coordinator closes the
 # broker and exits 0; the outer's clean-exit discrimination takes the
 # BYE-less short run — the frame pins DONE -> BYE, and DONE lands only
 # at the 14:40 cutoff), and a clean outer final proof. Any FAILED
@@ -815,6 +820,34 @@ if [ -n "$DEFECT_NOTES" ]; then
   exit 1
 fi
 echo "  Migration gate scans pass (no legacy record, no legacy references, no production defect-note creation)."
+
+# =========================================================================
+# Containment spawn gate (dealpg4-java-broker-session-tests D4/D7): a
+# pinned static source scan over deal/test/containment — the Java
+# containment package may contain no process-spawn surface, so Java
+# containment code can never spawn the launcher or an outer (preflight
+# D7: post-readiness Java processes use only the inherited broker; the
+# P5 coordinator hosts the live suite on that inherited connection
+# instead). The package is spawn-free and the scan pins it; any
+# violation prints the offending lines and fails the gate — no skip,
+# no downgrade.
+# =========================================================================
+echo ""
+echo "=== Containment Spawn Gate: deal/test/containment source scan ==="
+CONTAINMENT_SPAWN_SURFACE="$(grep -nE 'ProcessBuilder|Runtime\.getRuntime|\.exec[[:space:]]*\(' deal/test/containment/*.java || true)"
+if [ -n "$CONTAINMENT_SPAWN_SURFACE" ]; then
+  echo "  ERROR: deal/test/containment contains a process-spawn surface:"
+  echo "$CONTAINMENT_SPAWN_SURFACE"
+  exit 1
+fi
+CONTAINMENT_LAUNCHER_SPAWN="$(grep -nE 'deal-process-launcher' deal/test/containment/*.java \
+  | grep -E 'ProcessBuilder|Runtime|exec\(|start\(|command' || true)"
+if [ -n "$CONTAINMENT_LAUNCHER_SPAWN" ]; then
+  echo "  ERROR: deal/test/containment references the launcher in a process-spawn context:"
+  echo "$CONTAINMENT_LAUNCHER_SPAWN"
+  exit 1
+fi
+echo "  Containment spawn scan pass (no process-spawn surface and no launcher-spawn reference in deal/test/containment)."
 
 # =========================================================================
 # Run all tests.

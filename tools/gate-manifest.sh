@@ -163,6 +163,11 @@ TEST_SOURCES=(
   'test/CanonicalIdentityTest.java'
   'deal/test/containment/ContainedProcessBroker.java'
   'deal/test/containment/PreflightCoordinator.java'
+  # ISSUE-0564 registration (dealpg4-java-broker-session-tests D4): the
+  # P5-hosted live broker session suite — hosted in-process by the
+  # PreflightCoordinator JVM inside the P5 outer session; no TEST_MAINS
+  # record (the suite runs inside P5 in both scripts).
+  'deal/test/containment/BrokerSessionTestSuite.java'
   'deal/test/conformance/SidecarSchemaValidator.java'
   'deal/test/conformance/SidecarSchemaValidatorTest.java'
   'deal/test/conformance/SidecarCorpusValidationTest.java'
