@@ -318,6 +318,7 @@ public final class CorpusDiscovery {
                 issue = line.substring("// @issue:".length()).trim();
             }
         }
+        ConformanceHarnessMetadata.profileFromMetadata(raw, corpusPath);
         String source = ConformanceHarnessMetadata.stripClassificationHeaders(raw);
         int headerLinesStripped =
             raw.split("\n", -1).length - source.split("\n", -1).length;

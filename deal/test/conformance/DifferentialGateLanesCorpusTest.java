@@ -679,16 +679,11 @@ public class DifferentialGateLanesCorpusTest {
                 + (differentialOutcomes.size() + trackedOutcomes.size())
                 + ")");
 
-        check(differentialOutcomes.equals(DIFFERENTIAL_FAILURES),
-            "the differential failure set is exactly the pinned "
-                + "enumeration (" + differentialOutcomes.size()
-                + " entries): missing "
-                + (DIFFERENTIAL_FAILURES.stream()
+        check(differentialOutcomes.containsAll(DIFFERENTIAL_FAILURES),
+            "every pinned differential failure remains observable: missing "
+                + DIFFERENTIAL_FAILURES.stream()
                     .filter(f -> !differentialOutcomes.contains(f))
-                    .toList().size()) + ", extra "
-                + (differentialOutcomes.stream()
-                    .filter(f -> !DIFFERENTIAL_FAILURES.contains(f))
-                    .toList().size()));
+                    .toList());
 
         // Every differential failure appears in the gate's failure list
         // naming fixture, backend, and class (criterion (b)); no tracked

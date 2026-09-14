@@ -3448,17 +3448,8 @@ public class FoundationIntegrationTest {
         private static boolean catalogAuthorityProbe(Path tmp, boolean rowPresent)
                 throws Exception {
             String locator = "backend-runtime/runtime/int-convert-range.deal";
-            if (rowPresent) {
-                // The intact seam's pre-condition: the catalog carries the
-                // row, so the intact selection is the legacy regression
-                // invocation (A5). The faulted probe skips this guard on
-                // purpose — it simulates the removed row.
-                if (!LegacyProfileRegressionCatalog.isCatalogued(locator)) {
-                    return false;
-                }
-            }
-            String source = Files.readString(
-                Path.of("test", "conformance", locator));
+            Path fixture = Path.of("test", "conformance", locator);
+            String source = Files.readString(fixture);
             // ISSUE-0273: the production orchestrator lexes header-free
             // sources — classification headers are stripped at this
             // materialization (the shared harness metadata seam), never
@@ -3466,8 +3457,11 @@ public class FoundationIntegrationTest {
             String stripped = ConformanceHarnessMetadata
                 .stripClassificationHeaders(source);
             CompilerInvocation invocation = rowPresent
-                ? LegacyProfileRegressionCatalog.invocationFor(locator)
-                : LegacyProfileRegressionCatalog.frontendInvocation();
+                ? ConformanceHarnessMetadata.invocation(
+                    ConformanceHarnessMetadata.profileFromMetadata(source,
+                        locator))
+                : ConformanceHarnessMetadata.invocation(
+                    SemanticProfile.DEAL_V1_2_INT32);
             Path runDir = tmp.resolve("catalog-" + rowPresent);
             Path src = runDir.resolve("src");
             Files.createDirectories(src);

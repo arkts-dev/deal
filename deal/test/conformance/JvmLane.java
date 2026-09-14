@@ -17,7 +17,7 @@ import deal.semantic.CompilerInvocation;
 import deal.semantic.ir.CanonicalJson;
 import deal.semantic.ir.SemanticIrTextDecodeException;
 import deal.test.ConformanceHarnessMetadata;
-import deal.test.LegacyProfileRegressionCatalog;
+
 
 import javax.tools.Diagnostic;
 import javax.tools.DiagnosticCollector;
@@ -66,12 +66,8 @@ import java.util.concurrent.TimeUnit;
  *       flat-stem/subdirectory layout and explicit-{@code .deal} alias
  *       copies, {@code bindings/} host declarations, and the injected
  *       exact-v1.2 {@code deal.json}) and routes the real
- *       {@link CompilationOrchestrator} through
- *       {@link LegacyProfileRegressionCatalog#invocationFor} — the
- *       per-case A5 invocation seam, so the catalogued
- *       legacy-regression fixtures compile under
- *       {@code LEGACY_REGRESSION + LEGACY_SAFE_INT} exactly as they do
- *       on the legacy harness. A compile failure of any module is a lane
+ *       {@link CompilationOrchestrator} through the fixture-local
+ *       profile metadata invocation seam. A compile failure of any module is a lane
  *       compile failure (an infrastructure outcome with the diagnostic
  *       codes), never an execution outcome.</li>
  *   <li>Asserts artifact presence before execution (G4.2): the emitted
@@ -763,8 +759,9 @@ public class JvmLane implements Lane {
                 // codegen — driven by the published immutable
                 // ProjectContext and the per-case A5 invocation seam.
                 CompilerInvocation invocation =
-                    LegacyProfileRegressionCatalog.invocationFor(
-                        laneCase.fixturePath());
+                    ConformanceHarnessMetadata.invocation(
+                        ConformanceHarnessMetadata.profileFromFile(
+                            laneCase.fixtureFile(), laneCase.fixturePath()));
                 OrchestratorRun run = runOrchestrator(entryFile,
                     located.context(), invocation);
                 if (!run.success()) {

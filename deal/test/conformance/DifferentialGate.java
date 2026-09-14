@@ -2,7 +2,7 @@ package deal.test.conformance;
 
 import deal.diagnostics.CompilerDiagnostic;
 import deal.semantic.ir.SemanticProfile;
-import deal.test.LegacyProfileRegressionCatalog;
+import deal.test.ConformanceHarnessMetadata;
 
 import java.io.IOException;
 import java.io.PrintStream;
@@ -361,8 +361,8 @@ public final class DifferentialGate {
                 continue; // the Compile Diagnostic comparison owns the pin
             }
             frontendCompiled++;
-            SemanticProfile profile = LegacyProfileRegressionCatalog
-                .profileFor(fixture.corpusPath());
+            SemanticProfile profile = ConformanceHarnessMetadata
+                .profileFromMetadata(fixture.rawSource(), fixture.corpusPath());
             List<CompilerDiagnostic> errors = FrontendCompiler.errorDiagnostics(
                 fixture.source(), fixture.corpusPath(), profile,
                 new CorpusFrontendResolver(fixture.corpusPath(), root,

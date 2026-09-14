@@ -524,6 +524,7 @@
       ]
     },
     {
+      "profile": "legacy-safe-int",
       "name": "jvm-arr-cmp-both-raise-precedence-parity",
       "description": "Cross-backend parity for the both-raise error precedence: `(9007199254740991 + 1) === xs[-1]` — both operands can raise, and the left operand's checked arithmetic must raise first (E8004 int out of safe range), never the right read's E8002, on both backends (the pre-fix JVM raised the read's E8002 first)",
       "source": "import * as console from \"std/console\"\nexport function test(): null {\n  let xs: int[] = [1];\n  if ((9007199254740991 + 1) === xs[-1]) { console.log(\"bad\"); }\n}",
@@ -725,6 +726,32 @@
       "irNotContains": [],
       "backends": [
         "luajit",
+        "jvm"
+      ]
+    },
+    {
+      "name": "jvm-arr-delete-luajit-behavior",
+      "description": "LuaJIT array-index delete preserves the array length, clears the selected slot to nil, and leaves the other indexes unchanged",
+      "source": "import * as console from \"std/console\"\nexport function test(): null {\n  let xs: int[] = [1, 2, 3];\n  delete xs[1];\n  let n: int = 0;\n  for (let x: int of xs) { n = n + 1; }\n  if (xs.length === 1 && xs[0] === 1 && n === 1) {\n    console.log(\"array-delete-ok\");\n  }\n}",
+      "expectedOutput": "array-delete-ok",
+      "expectedError": null,
+      "expectedExitCode": 0,
+      "expectedCompileError": null,
+      "irContains": [],
+      "irNotContains": [],
+      "backends": [
+        "luajit"
+      ]
+    },
+    {
+      "name": "jvm-arr-delete-e6000",
+      "description": "The retained JVM backend rejects array-index delete with E6000 before emitting the entry artifact",
+      "modules": {
+        "main.deal": "export function main(): null {\n  let xs: int[] = [1, 2, 3];\n  delete xs[1];\n}"
+      },
+      "entry": "main.deal",
+      "expectedCompileError": "E6000",
+      "backends": [
         "jvm"
       ]
     }

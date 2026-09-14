@@ -35,7 +35,7 @@ import deal.semantic.ir.CanonicalJson;
 import deal.semantic.ir.SemanticIrTextDecodeException;
 import deal.semantic.ir.SemanticProfile;
 import deal.test.ConformanceHarnessMetadata;
-import deal.test.LegacyProfileRegressionCatalog;
+
 import deal.types.Type;
 import deal.types.Types;
 
@@ -76,9 +76,7 @@ import java.util.concurrent.TimeUnit;
  *       module with the real frontend (lexer → parser → module shape
  *       gate → name resolution → type checker), companions first so the
  *       per-case identity index classifies every module before its
- *       importer. Every module compiles under the case profile resolved
- *       by {@code LegacyProfileRegressionCatalog.profileFor} — the same
- *       A5 per-case profile selection the absorbed Lua lane uses. A
+ *       importer. Every module compiles under the fixture-local case profile. A
  *       compile failure of any module is a lane compile failure (an
  *       infrastructure outcome with the diagnostic codes), never an
  *       execution outcome.</li>
@@ -489,8 +487,8 @@ public class JsLane implements Lane {
 
         JsCompilation(LaneCase laneCase) {
             this.currentCase = laneCase;
-            this.profile = LegacyProfileRegressionCatalog.profileFor(
-                currentCase.fixturePath());
+            this.profile = ConformanceHarnessMetadata.profileFromFile(
+                currentCase.fixtureFile(), currentCase.fixturePath());
             this.hostRegistry = new HostRegistry(profile);
             this.stdlibExports = StdlibModuleResolver.stdlibExports(
                 stdlibDirectory.toString());

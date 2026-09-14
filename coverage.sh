@@ -16,203 +16,15 @@ set -e
 # deal.codegen.lua.LuaAbi at 100% line and 100% branch (LINE_MISSED=0,
 # BRANCH_MISSED=0 in build/coverage.csv) and zero deal.test rows.
 #
-# ISSUE-0165 (E13): the compile list and the run phase now consume the
-# single compile/test-list authority (tools/gate-manifest.sh) plus the
-# same additions run_tests.sh makes — including the dedicated production
-# ISSUE-0111 feature/native gate (deal.test.feature.V12FeatureGate,
-# unconditional, zero skips) — so the coverage denominator and the run
-# evidence cover the whole modern tree under one JaCoCo agent.
+# The compile list and run phase consume the single compile/test-list
+# authority in tools/gate-manifest.sh, so coverage and the development
+# gate execute the same ordered suite under one JaCoCo agent.
 # =========================================================================
 
 # Single compile/test-list authority (gate-manifest-authority M1-M3):
 # coverage.sh mirrors run_tests.sh's compile list at --release 22 and
 # runs the same ordered run phase under the JaCoCo agent.
 source tools/gate-manifest.sh
-
-# =========================================================================
-# Strict full-set snapshot (release-r0-r3-strict-gate-mechanics S5(a)):
-# the strict compile list and the strict run phase are the manifest
-# exactly. The gate-script-level TEST_SOURCES/TEST_MAINS additions below
-# are dev-mode mirror content only -- they do not join the strict
-# compile and do not run in the strict run phase.
-# =========================================================================
-STRICT_TEST_SOURCES=( "${TEST_SOURCES[@]}" )
-STRICT_TEST_MAINS=( "${TEST_MAINS[@]}" )
-
-# The run_tests.sh script-local additions (ISSUE-0474/0475, ISSUE-0353)
-# join the mirror so both gates compile and run the identical set.
-TEST_SOURCES+=(
-  'deal/test/conformance/CoverageManifestValidator.java'
-  'deal/test/conformance/CoverageManifestValidatorTest.java'
-  'deal/test/conformance/CoverageManifestCorpusTest.java'
-)
-TEST_MAINS+=(
-  'fg|=== Running Coverage Manifest Validator Tests (ISSUE-0474) ===|java -ea -cp build deal.test.conformance.CoverageManifestValidatorTest'
-  'fg|=== Running Coverage Manifest Corpus Tests (ISSUE-0475) ===|java -ea -cp build deal.test.conformance.CoverageManifestCorpusTest'
-)
-
-# =========================================================================
-# ISSUE-0488 (historical/legacy catalogs): HistoricalRegressionCatalog
-# (the closed historical pin authority with pinned expectation
-# baselines), LegacyCapabilityCatalog (the release-owned unsupported-
-# legacy-slice authority), and their gate-run verification battery join
-# the compile list and the run phase here — the gate-run conformance
-# files where the LegacyProfileRegressionCatalog precedent lives. The
-# two catalogs are test-harness data only (production code never depends
-# on them); the conformance runners validate them at startup and record
-# the signed-int32 historical executed evidence.
-# =========================================================================
-TEST_SOURCES+=(
-  'test/HistoricalRegressionCatalog.java'
-  'test/LegacyCapabilityCatalog.java'
-  'test/HistoricalRegressionCatalogTest.java'
-)
-TEST_MAINS+=(
-  'fg|=== Running Historical / Legacy-Profile / Legacy-Capability Catalog Tests (ISSUE-0488) ===|java -ea -cp build deal.test.HistoricalRegressionCatalogTest'
-)
-
-# =========================================================================
-# ISSUE-0354 (LuaJIT lane): the Lua lane of the differential gate plus its
-# lane suite join the coverage mirror exactly as in run_tests.sh (the
-# Shared Lane Contract G4 over the absorbed ConformanceTest compile ->
-# LuaBackend -> luajit path; LegacyProfileRegressionCatalog is the A5
-# per-case profile-selection authority extracted from ConformanceTest).
-# =========================================================================
-TEST_SOURCES+=(
-  'deal/test/conformance/LuaLane.java'
-  'deal/test/conformance/LuaLaneTest.java'
-  'test/LegacyProfileRegressionCatalog.java'
-)
-TEST_MAINS+=(
-  'fg|=== Running Lua Lane Tests (ISSUE-0354) ===|java -ea -cp build deal.test.conformance.LuaLaneTest'
-)
-
-# =========================================================================
-# ISSUE-0356 (JS lane): the JavaScript lane of the differential gate plus
-# its lane suite join the compile list and the run phase here. The lane
-# implements the Shared Lane Contract (G4) over the absorbed
-# BackendConformanceTest JS adapter path (real frontend + JsBackend ->
-# deal/runtime.js + std/*.js + host-fixtures/<name>.js deployment -> real
-# node subprocess) and reuses the shared canonical ErrorSnapshot
-# serializer verbatim. BackendConformanceTest/JsE2eTest keep running
-# unchanged until the absorption/retirement children land.
-# =========================================================================
-TEST_SOURCES+=(
-  'deal/test/conformance/JsLane.java'
-  'deal/test/conformance/JsLaneTest.java'
-)
-TEST_MAINS+=(
-  'fg|=== Running JS Lane Tests (ISSUE-0356) ===|java -ea -cp build deal.test.conformance.JsLaneTest'
-)
-
-# =========================================================================
-# ISSUE-0355 (JVM lane): the JVM lane of the differential gate plus its
-# lane suite join the compile list and the run phase here. The lane
-# implements the Shared Lane Contract (G4) over the absorbed
-# JvmConformanceTest whole-project pipeline (ProjectLocator ->
-# CompilationOrchestrator -> JvmBackend codegen -> javac -> real java
-# subprocess) and reuses the shared canonical ErrorSnapshot serializer
-# verbatim. Pre-flip, the lane keeps the absorbed skip registry as
-# tracked non-fatal paths (G8); the direct JvmConformanceTest runner
-# remains registered in the shared gate manifest.
-# =========================================================================
-TEST_SOURCES+=(
-  'deal/test/conformance/JvmLane.java'
-  'deal/test/conformance/JvmLaneTest.java'
-)
-TEST_MAINS+=(
-  'fg|=== Running JVM Lane Tests (ISSUE-0355) ===|java -ea -cp build deal.test.conformance.JvmLaneTest'
-)
-
-# =========================================================================
-# ISSUE-0353 (differential gate core): the gate components and their unit
-# suites join the coverage mirror exactly as in run_tests.sh.
-# =========================================================================
-TEST_SOURCES+=(
-  'deal/test/conformance/MismatchClass.java'
-  'deal/test/conformance/GateMismatch.java'
-  'deal/test/conformance/CorpusDiscovery.java'
-  'deal/test/conformance/SidecarExpectations.java'
-  'deal/test/conformance/ErrorSnapshot.java'
-  'deal/test/conformance/StructuredExpectationComparator.java'
-  'deal/test/conformance/FrontendCompiler.java'
-  'deal/test/conformance/CompileDiagnosticComparator.java'
-  'deal/test/conformance/Lane.java'
-  'deal/test/conformance/LaneCase.java'
-  'deal/test/conformance/LaneExecution.java'
-  'deal/test/conformance/GateDispatcher.java'
-  'deal/test/conformance/SidecarGateLoader.java'
-  'deal/test/conformance/DifferentialGate.java'
-  'deal/test/conformance/StructuredExpectationComparatorTest.java'
-  'deal/test/conformance/CompileDiagnosticComparatorTest.java'
-  'deal/test/conformance/GateDispatcherTest.java'
-  'deal/test/conformance/GateClassificationTest.java'
-  'deal/test/conformance/DifferentialGateCorpusTest.java'
-)
-TEST_MAINS+=(
-  'fg|=== Running Differential Gate Comparator Tests (ISSUE-0353) ===|java -ea -cp build deal.test.conformance.StructuredExpectationComparatorTest'
-  'fg|=== Running Compile Diagnostic Comparator Tests (ISSUE-0353) ===|java -ea -cp build deal.test.conformance.CompileDiagnosticComparatorTest'
-  'fg|=== Running Gate Dispatcher Tests (ISSUE-0353) ===|java -ea -cp build deal.test.conformance.GateDispatcherTest'
-  'fg|=== Running Gate Classification Tests (ISSUE-0353) ===|java -ea -cp build deal.test.conformance.GateClassificationTest'
-  'fg|=== Running Differential Gate Corpus Tests (ISSUE-0353) ===|java -ea -cp build deal.test.conformance.DifferentialGateCorpusTest'
-)
-
-# =========================================================================
-# ISSUE-0362 (release gates — v12-zero-skip-conformance-gate G8): the
-# three-lane differential gate joins the coverage mirror exactly as in
-# run_tests.sh, so both release gates run the complete differential gate
-# unconditionally. The lanes corpus suite executes the real three-lane
-# gate over the real corpus (real luajit / javac+java / node
-# subprocesses through the production lanes); the gate core suite above
-# runs the backend-neutral discovery/classification/sidecar/pin half.
-# The lane subprocesses run outside the JaCoCo agent (no recording
-# surface), so the production coverage totals are unchanged.
-TEST_SOURCES+=(
-  'deal/test/conformance/CorpusFrontendResolver.java'
-  'deal/test/conformance/JvmLane.java'
-  'deal/test/conformance/JsLane.java'
-  'deal/test/conformance/DifferentialGateLanesCorpusTest.java'
-)
-TEST_MAINS+=(
-  'fg|=== Running Differential Gate Lanes Corpus Tests (ISSUE-0357, release-gate mirror ISSUE-0362) ===|java -ea -cp build deal.test.conformance.DifferentialGateLanesCorpusTest'
-)
-# ISSUE-0165 (E13): the dedicated production-path ISSUE-0111 feature /
-# native / cross-backend release gate joins the coverage mirror exactly
-# as in run_tests.sh (the strict sidecar catalog, the architecture-owned
-# backend matrix, the production locator/orchestrator/runtime execution
-# wiring, the pinned-launcher containment, the async-export evidence
-# step, and the contained real-native probe). The TEST_SOURCES additions
-# must precede the DEALPG4_PREFLIGHT_JAVAC_ARGS construction below so the
-# deal/test/feature package is compiled on a clean checkout (the array is
-# expanded at assignment time).
-# =========================================================================
-TEST_SOURCES+=(
-  'deal/test/feature/FeatureId.java'
-  'deal/test/feature/V12FeatureMetadata.java'
-  'deal/test/feature/FeatureBackendMatrix.java'
-  'deal/test/feature/V12FeatureFixtureCatalog.java'
-  'deal/test/feature/V12FeatureGate.java'
-  'deal/test/feature/V12FeatureGateTest.java'
-)
-TEST_MAINS+=(
-  'fg|=== Running V12 Feature Catalog/Matrix Tests (ISSUE-0165) ===|java -ea -cp build deal.test.feature.V12FeatureGateTest'
-  'fg|=== Running the Production V12 Feature/Native Gate (ISSUE-0165) ===|java -ea -cp build deal.test.feature.V12FeatureGate'
-)
-
-# =========================================================================
-# ISSUE-0507 (FFI candidate fixture conformance): the corpus C FFI
-# support component joins the coverage mirror exactly as in
-# run_tests.sh (the corpus-owned externals wiring, the GCC
-# native-library bootstrap, the production FfiDeclarationValidator /
-# FFIGEN boundary surface, and the checker-facing export/class-symbol
-# registry the lanes' module resolvers consume). CorpusFfi is also
-# registered in tools/gate-manifest.sh TEST_SOURCES (consumed by the
-# manifest-listed conformance runners at startup), so the strict
-# full-set compile list — the manifest exactly — is self-consistent.
-# =========================================================================
-TEST_SOURCES+=(
-  'deal/test/conformance/CorpusFfi.java'
-)
 
 JACOCO_DIR="/tmp/opencode/jacoco"
 JUNIT_CP="/usr/share/java/junit4.jar:/usr/share/java/hamcrest-core.jar"
@@ -240,17 +52,6 @@ DEALPG4_PREFLIGHT_JAVAC_ARGS=(
   -cp "$JUNIT_CP" \
   # shellcheck disable=SC2206
   ${PROD_SOURCES[@]} "${TEST_SOURCES[@]}"
-)
-# Strict full-set compile list (S5(a)): the manifest exactly, at
-# --release 22. PROD_SOURCES is expanded unquoted so the manifest's
-# quoted globs expand here exactly as they always have for the dev list;
-# the strict list holds no gate-script-level addition (the additions
-# above join DEALPG4_PREFLIGHT_JAVAC_ARGS for dev mode only).
-STRICT_PREFLIGHT_JAVAC_ARGS=(
-  javac --release 22 -proc:none -d build \
-  -cp "$JUNIT_CP" \
-  # shellcheck disable=SC2206
-  ${PROD_SOURCES[@]} "${STRICT_TEST_SOURCES[@]}"
 )
 DEALPG4_PREFLIGHT_COORD_ARGS=(
   java -ea "$AGENT" -cp "build:$JUNIT_CP" deal.test.containment.PreflightCoordinator
@@ -443,13 +244,11 @@ dealpg4_preflight_run
 # step (45 s native deadline, 1 MiB drained output).
 # =========================================================================
 echo "=== Compiling all DEAL sources and tests (--release 22) ==="
-# Strict mode routes the compile through the step library under the
-# compile-coverage table entry (S2(e)) and compiles the manifest exactly
-# (S5(a)) -- PROD_SOURCES + TEST_SOURCES, no gate-script-level
-# addition; dev mode keeps the preflight P4 launcher-bounded javac over
-# the mirrored list verbatim.
+# Strict mode routes the manifest compile through the step library under
+# the compile-coverage table entry (S2(e)); dev mode keeps the preflight
+# P4 launcher-bounded javac over the same list.
 if [ -n "${DEAL_STRICT:-}" ]; then
-  run_step compile-coverage -- "${STRICT_PREFLIGHT_JAVAC_ARGS[@]}"
+  run_step compile-coverage -- "${DEALPG4_PREFLIGHT_JAVAC_ARGS[@]}"
 else
   dealpg4_preflight_javac "${DEALPG4_PREFLIGHT_JAVAC_ARGS[@]}"
 fi
@@ -508,15 +307,7 @@ cleanup_background() {
 }
 trap cleanup_background EXIT
 
-# Strict mode (S5(a)): the run phase iterates the manifest-exact
-# TEST_MAINS snapshot -- the gate-script-level TEST_MAINS additions
-# above do not run in the strict run phase. Dev mode iterates the full
-# mirrored list verbatim.
-RUN_PHASE_MAINS=( "${TEST_MAINS[@]}" )
-if [ -n "${DEAL_STRICT:-}" ]; then
-  RUN_PHASE_MAINS=( "${STRICT_TEST_MAINS[@]}" )
-fi
-for record in "${RUN_PHASE_MAINS[@]}"; do
+for record in "${TEST_MAINS[@]}"; do
   record_class="${record%%|*}"
   record_rest="${record#*|}"
   record_banner="${record_rest%%|*}"

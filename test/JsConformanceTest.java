@@ -49,10 +49,7 @@ import java.util.regex.Pattern;
  *
  * <p>Every on-disk backend-runtime fixture compiles through the single
  * lane-wide activated invocation {@link #LANE_INVOCATION} — the
- * explicit {@code COMMON_SHADOW + DEAL_V1_2_INT32} invocation the
- * {@link LegacyProfileRegressionCatalog} A5 seam resolves for every
- * uncatalogued fixture (the invocation the LuaJIT lane resolves for
- * the shared stdlib-edge time fixture) — passed through the
+ * explicit {@code COMMON_SHADOW + DEAL_V1_2_INT32} invocation passed through the
  * {@link CompilationOrchestrator} constructor in
  * {@link #runOrchestrator}. Under that invocation the emitted entry
  * module calls {@code $rt.setInt32Mode(true)} immediately after the
@@ -179,10 +176,8 @@ public class JsConformanceTest {
      * backend-runtime fixture compiles through this exact invocation
      * via the {@link CompilationOrchestrator} constructor in
      * {@link #runOrchestrator}. The {@code COMMON_SHADOW +
-     * DEAL_V1_2_INT32} invocation is the invocation the
-     * {@link LegacyProfileRegressionCatalog} A5 seam resolves for
-     * every uncatalogued fixture — the activated profile the LuaJIT
-     * lane resolves for the shared stdlib-edge time fixture — so the
+     * DEAL_V1_2_INT32} invocation is the activated profile used for the
+     * shared stdlib-edge time fixture, so the
      * flipped fixture passes as {@code runtime-error E8004} on this
      * gate and the gate validity condition
      * {@code expectation(fixture) == landed std/time.js behavior}

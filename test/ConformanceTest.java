@@ -104,16 +104,6 @@ public class ConformanceTest {
         System.getenv("DEAL_STRICT") != null;
 
     /**
-     * Profile-authority accounting (A4/A5): every legacy-authority
-     * result is labelled distinctly and keeps its own denominator; a
-     * legacy-profile pass contributes zero v1.2/promotion credit.
-     */
-    private static int legacyAuthorityResults = 0;
-    private static int legacyAuthorityPassed = 0;
-    private static int legacyAuthorityFailed = 0;
-    private static int v12CreditResults = 0;
-
-    /**
      * Host fixture root (host-module-abi D6): declarations
      * ({@code <name>.d.deal}) plus raw Lua implementations
      * ({@code <name>.lua}) for bare {@code host/<name>} imports.
@@ -181,9 +171,7 @@ public class ConformanceTest {
      * retained {@code std/time.nowMillis ()->int} route plus the shared
      * fixture's canonical {@code runtime-error E8004} header), so the
      * former {@code TIME_NOW_MILLIS} staged entry is removed and the
-     * fixture runs under its landed expectation — it passes as
-     * {@code runtime-error E8004} under the legacy-authority catalog row
-     * (zero v1.2 credit). The machinery stays: any future
+     * fixture runs under its landed expectation. The machinery stays: any future
      * design-sanctioned interim state registers here, and a stale entry
      * still fails the gate with the promotion instruction.
      *
@@ -259,87 +247,9 @@ public class ConformanceTest {
             }
         }
 
-        // LegacyProfileRegressionCatalog validation (A4): every row
-        // locator resolves, the closed completeness rule is enforced over
-        // the discovered corpus, and the mechanism self-probes run before
-        // any fixture executes. A violation is a harness defect — the gate
-        // fails naming it, never silently weakening a pin.
-        LegacyProfileRegressionCatalog.validateRows();
-        LegacyProfileRegressionCatalog.validateReplacementRows();
-        LegacyProfileRegressionCatalog.runSelfProbes();
-        for (TestFile test : tests) {
-            LegacyProfileRegressionCatalog.scanDealSource(
-                test.relativePath(), ConformanceHarnessMetadata
-                    .stripClassificationHeaders(
-                        Files.readString(test.path())),
-                test.expected());
-        }
-        List<String> catalogViolations =
-            LegacyProfileRegressionCatalog.drainViolations();
-        if (!catalogViolations.isEmpty()) {
-            System.out.println("CATALOG FAILURE: "
-                + "LegacyProfileRegressionCatalog validation failed:");
-            for (String violation : catalogViolations) {
-                System.out.println("  " + violation);
-            }
-            System.exit(1);
-        }
-
-        // HistoricalRegressionCatalog / LegacyCapabilityCatalog startup
-        // validation (ISSUE-0488 H1/H4): every code-contract pin resolves
-        // in-tree with its pinned baseline unchanged and every
-        // release-owned legacy-capability code-locator row resolves,
-        // before any fixture executes. A violation is a harness defect —
-        // the gate fails naming it, never silently weakening a pin. The
-        // fixture-case rows are validated by the JSON-slice runner
-        // (BackendConformanceTest), which owns the parsed fixture index
-        // (the LegacyProfileRegressionCatalog split precedent).
-        List<String> historicalSourceViolations =
-            HistoricalRegressionCatalog.validateSourceRows(Path.of("."));
-        List<String> capabilitySourceViolations =
-            LegacyCapabilityCatalog.validateCodeRows(Path.of("."));
-        if (!historicalSourceViolations.isEmpty()
-                || !capabilitySourceViolations.isEmpty()) {
-            System.out.println("CATALOG FAILURE: HistoricalRegressionCatalog "
-                + "/ LegacyCapabilityCatalog validation failed:");
-            for (String violation : historicalSourceViolations) {
-                System.out.println("  " + violation);
-            }
-            for (String violation : capabilitySourceViolations) {
-                System.out.println("  " + violation);
-            }
-            System.exit(1);
-        }
-
         // Run each test
         for (TestFile test : tests) {
             runTest(test);
-        }
-
-        // Historical executed evidence (ISSUE-0488 H3 consumption): this
-        // runner executes the .deal additive v1.2 replacements it
-        // discovered; every recorded exact outcome must have passed and
-        // a global failure voids the evidence (the slice rows' evidence
-        // is recorded by the JSON-slice runner).
-        List<String> expectedReplacements = new ArrayList<>();
-        for (String replacement
-                : HistoricalRegressionCatalog.signedInt32ReplacementRows()) {
-            if ((replacement.startsWith("backend-runtime/")
-                    || replacement.startsWith("frontend/"))
-                    && discovered.contains(replacement)) {
-                expectedReplacements.add(replacement);
-            }
-        }
-        List<String> evidenceViolations = HistoricalRegressionCatalog
-            .executedEvidenceViolations(List.of(), expectedReplacements,
-                failed > 0);
-        if (!evidenceViolations.isEmpty()) {
-            System.out.println("HISTORICAL EVIDENCE FAILURE: the "
-                + "signed-int32 historical executed evidence is not green:");
-            for (String violation : evidenceViolations) {
-                System.out.println("  " + violation);
-            }
-            System.exit(1);
         }
 
         // Print summary
@@ -555,6 +465,8 @@ public class ConformanceTest {
             String features = "";
             String issue = "";
 
+            ConformanceHarnessMetadata.profileFromFile(file,
+                root.relativize(file).toString());
             int linesToScan = Math.min(lines.size(), 40);
             for (int i = 0; i < linesToScan; i++) {
                 String line = lines.get(i).trim();
@@ -712,16 +624,8 @@ public class ConformanceTest {
     // =========================================================================
 
     private static void runTest(TestFile test) {
-        boolean legacyAuthority = LegacyProfileRegressionCatalog
-            .isCatalogued(test.relativePath());
-        System.out.print("  [" + test.relativePath() + "]"
-            + (legacyAuthority
-                ? " LEGACY-AUTHORITY (legacy-regression; zero v1.2 credit)"
-                : "")
-            + " ");
+        System.out.print("  [" + test.relativePath() + "] ");
         String expected = test.expected();
-        int passedSnapshot = passed;
-        int failedSnapshot = failed;
 
         try {
             StagedEntry staged = STAGED_FAILURES.get(test.relativePath());
@@ -763,31 +667,6 @@ public class ConformanceTest {
         } catch (Exception e) {
             System.out.println("ERROR: " + e.getMessage());
             record(test, State.FAIL, "exception: " + e.getMessage());
-        }
-        if (legacyAuthority) {
-            legacyAuthorityResults++;
-            if (passed > passedSnapshot) legacyAuthorityPassed++;
-            if (failed > failedSnapshot) legacyAuthorityFailed++;
-        } else {
-            v12CreditResults++;
-        }
-        // Historical executed evidence (ISSUE-0488 H3 consumption): this
-        // single-threaded runner attributes each case's outcome exactly,
-        // so the signed-int32 rows it executes record their exact
-        // pass/fail verdict (skips record nothing — a skipped execution
-        // is no evidence).
-        boolean executedPassed = passed > passedSnapshot
-            && failed == failedSnapshot;
-        boolean executedFailed = failed > failedSnapshot;
-        if (executedPassed || executedFailed) {
-            String locator = test.relativePath();
-            if (HistoricalRegressionCatalog.isSignedInt32LegacyLocator(
-                    locator)
-                    || HistoricalRegressionCatalog
-                        .isSignedInt32ReplacementLocator(locator)) {
-                HistoricalRegressionCatalog.recordExactOutcome(locator,
-                    !executedFailed);
-            }
         }
     }
 
@@ -838,8 +717,7 @@ public class ConformanceTest {
             }
 
             Parser parser = new Parser(lex.tokens(), filename,
-                LegacyProfileRegressionCatalog.frontendInvocation()
-                    .semanticProfile(), lex.directiveEvents());
+                SemanticProfile.DEAL_V1_2_INT32, lex.directiveEvents());
             ParseResult parseResult = parser.parse();
             if (parseResult.hasErrors()) {
                 return parseResult.diagnostics();
@@ -868,8 +746,7 @@ public class ConformanceTest {
             List<CompilerDiagnostic> allDiags = new ArrayList<>();
             ConformanceModuleResolver resolver =
                 new ConformanceModuleResolver(test.path(), null,
-                    LegacyProfileRegressionCatalog.frontendInvocation()
-                        .semanticProfile());
+                    SemanticProfile.DEAL_V1_2_INT32);
             NameResolver nr = new NameResolver(filename, resolver);
             SymbolTable symTable;
             try {
@@ -976,8 +853,8 @@ public class ConformanceTest {
      * is satisfied today.
      */
     private static RunProbe probeMode(TestFile test, String mode) throws Exception {
-        SemanticProfile probeProfile = LegacyProfileRegressionCatalog
-            .profileFor(test.relativePath());
+        SemanticProfile probeProfile = ConformanceHarnessMetadata.profileFromFile(test.path(),
+            test.relativePath());
         if (mode.equals("compile-ok")) {
             List<CompilerDiagnostic> diags = compileAndGetDiagnostics(test, null,
                 probeProfile);
@@ -1026,8 +903,7 @@ public class ConformanceTest {
 
     private static void runCompileOk(TestFile test) throws Exception {
         List<CompilerDiagnostic> diags = compileAndGetDiagnostics(test, null,
-            LegacyProfileRegressionCatalog.frontendInvocation()
-                .semanticProfile());
+            SemanticProfile.DEAL_V1_2_INT32);
         boolean hasErrors = diags.stream().anyMatch(d -> "error".equals(d.severity()));
         if (hasErrors) {
             System.out.println("FAIL (unexpected compile errors)");
@@ -1068,8 +944,8 @@ public class ConformanceTest {
             return new RunProbe(false, true, "LuaJIT not available");
         }
 
-        SemanticProfile caseProfile = LegacyProfileRegressionCatalog
-            .profileFor(test.relativePath());
+        SemanticProfile caseProfile = ConformanceHarnessMetadata.profileFromFile(test.path(),
+            test.relativePath());
         CompanionCatalog catalog = new CompanionCatalog(caseProfile);
         List<CompilerDiagnostic> diags = compileAndGetDiagnostics(test, catalog,
             caseProfile);
@@ -1098,8 +974,7 @@ public class ConformanceTest {
 
     private static void runCompileError(TestFile test, String expectedCode) throws Exception {
         List<CompilerDiagnostic> diags = compileAndGetDiagnostics(test, null,
-            LegacyProfileRegressionCatalog.frontendInvocation()
-                .semanticProfile());
+            SemanticProfile.DEAL_V1_2_INT32);
         boolean found = diags.stream().anyMatch(
             d -> "error".equals(d.severity()) && expectedCode.equals(d.code()));
         if (found) {
@@ -1138,8 +1013,8 @@ public class ConformanceTest {
             return new RunProbe(false, true, "LuaJIT not available");
         }
 
-        SemanticProfile caseProfile = LegacyProfileRegressionCatalog
-            .profileFor(test.relativePath());
+        SemanticProfile caseProfile = ConformanceHarnessMetadata.profileFromFile(test.path(),
+            test.relativePath());
         CompanionCatalog catalog = new CompanionCatalog(caseProfile);
         List<CompilerDiagnostic> diags = compileAndGetDiagnostics(test, catalog,
             caseProfile);
@@ -1671,14 +1546,6 @@ public class ConformanceTest {
             ", StagedFailures (tracked): " + stagedFailures);
         System.out.println("Companions (classified support modules): "
             + companions);
-        System.out.println("Profile-authority accounting: "
-            + legacyAuthorityResults
-            + " legacy-authority result(s) (LEGACY_REGRESSION + "
-            + "LEGACY_SAFE_INT — zero v1.2/promotion credit; "
-            + legacyAuthorityPassed + " passed, "
-            + legacyAuthorityFailed + " failed), "
-            + v12CreditResults
-            + " v1.2-credit result(s) (COMMON_SHADOW + DEAL_V1_2_INT32)");
 
         if (!classificationFailures.isEmpty()) {
             System.out.println();

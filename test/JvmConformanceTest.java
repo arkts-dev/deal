@@ -438,17 +438,6 @@ public class JvmConformanceTest {
     private static final AtomicInteger applicableTotal = new AtomicInteger();
     private static final AtomicInteger applicablePassed = new AtomicInteger();
 
-    /** Profile-authority accounting (A4/A5), pinned at zero by
-     * ISSUE-0378 D1: this lane applies the single activated invocation
-     * to every fixture, so no fixture earns a legacy-authority label
-     * (the untouched {@code deal.test.BackendConformanceTest} owns the
-     * catalog seam and keeps its own accounting). */
-    private static final AtomicInteger legacyAuthorityResults =
-        new AtomicInteger();
-    private static final AtomicInteger legacyAuthorityPassed =
-        new AtomicInteger();
-    private static final AtomicInteger legacyAuthorityFailed =
-        new AtomicInteger();
     private static final AtomicInteger applicableFailed = new AtomicInteger();
     private static final AtomicInteger knownFailTotal = new AtomicInteger();
     private static final AtomicInteger knownFailTracked = new AtomicInteger();
@@ -517,29 +506,9 @@ public class JvmConformanceTest {
         System.out.println();
 
         List<TestFile> discovered = discoverTests();
-        // LegacyProfileRegressionCatalog validation (A4): rows resolve,
-        // the closed completeness scan finds no uncatalogued
-        // legacy-dependent assertion, and the mechanism self-probes pass
-        // before any fixture executes.
-        LegacyProfileRegressionCatalog.validateRows();
-        LegacyProfileRegressionCatalog.validateReplacementRows();
-        LegacyProfileRegressionCatalog.runSelfProbes();
         for (TestFile test : discovered) {
-            LegacyProfileRegressionCatalog.scanDealSource(
-                test.relativePath(), ConformanceHarnessMetadata
-                    .stripClassificationHeaders(
-                        Files.readString(test.path())),
-                test.expected());
-        }
-        List<String> catalogViolations =
-            LegacyProfileRegressionCatalog.drainViolations();
-        if (!catalogViolations.isEmpty()) {
-            System.out.println("CATALOG FAILURE: "
-                + "LegacyProfileRegressionCatalog validation failed:");
-            for (String violation : catalogViolations) {
-                System.out.println("  " + violation);
-            }
-            System.exit(1);
+            ConformanceHarnessMetadata.profileFromFile(test.path(),
+                test.relativePath());
         }
         List<Classified> tests = classifyAll(discovered);
         int frontend = (int) tests.stream()
@@ -759,8 +728,7 @@ public class JvmConformanceTest {
         TestFile test = classified.test();
         frontendTotal.incrementAndGet();
         List<CompilerDiagnostic> diags = frontendDiagnostics(test.path(),
-            LegacyProfileRegressionCatalog.frontendInvocation()
-                .semanticProfile());
+            SemanticProfile.DEAL_V1_2_INT32);
         boolean hasErrors = diags.stream()
             .anyMatch(d -> "error".equals(d.severity()));
         String expected = test.expected();
@@ -1923,12 +1891,6 @@ public class JvmConformanceTest {
             + "construction), known-fail %d "
             + "(tracked) — pass rate %.1f%%%n",
             denominator, ap, af, kf, pct);
-        System.out.println("Profile-authority accounting: "
-            + legacyAuthorityResults.get()
-            + " legacy-authority fixture(s) (LEGACY_REGRESSION + "
-            + "LEGACY_SAFE_INT — zero v1.2/promotion credit; "
-            + legacyAuthorityPassed.get() + " passed, "
-            + legacyAuthorityFailed.get() + " failed)");
         System.out.println();
 
         System.out.println("Known-fail groups (tracked follow-up issues):");

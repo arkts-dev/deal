@@ -2071,13 +2071,11 @@ public final class StdlibIntegrationTest {
                     "T5d: the fixture stays on the retained JVM lane only");
             }
 
-            String legacyCatalog = Files.readString(
-                Path.of("test/LegacyProfileRegressionCatalog.java"));
-            check(legacyCatalog.contains(
-                    "row(\"jvm-stdlib-slice.json#jvm-std-time-nowmillis\", null)"),
-                "T5d: the legacy catalog row keeps the null replacement — the "
-                    + "nowMillis disposition stays with the locked delegated "
-                    + "boundary");
+            int caseStart = caseAt < 0 ? -1 : jvmSlice.lastIndexOf('{', caseAt);
+            check(caseStart >= 0 && jvmSlice.substring(caseStart,
+                    Math.min(jvmSlice.length(), caseAt + 900)).contains(
+                        "\"profile\": \"legacy-safe-int\""),
+                "T5d: the fixture retains its legacy-safe-int profile");
 
             String conformance = Files.readString(Path.of("test/ConformanceTest.java"));
             check(conformance.contains("registry is empty post-unit"),

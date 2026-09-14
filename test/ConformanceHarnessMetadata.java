@@ -1,15 +1,25 @@
 package deal.test;
 
+import deal.semantic.CompilerInvocation;
+import deal.semantic.CompilerProfileProvider;
+import deal.semantic.ReleaseConfiguration;
+import deal.semantic.ir.ReleaseState;
+import deal.semantic.ir.SemanticProfile;
+
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 
 /**
  * Harness-only classification-header stripping seam (ISSUE-0272,
  * design fixed-name-directive-events D8 items 1–2).
  *
- * <p>The conformance corpus classifies fixtures through five
+ * <p>The conformance corpus classifies fixtures through
  * directive-shaped header comment lines ({@code // @spec:},
  * {@code // @description:}, {@code // @expected:}, {@code // @features:},
- * {@code // @issue:}), which the harnesses read from the raw fixture
+ * {@code // @issue:}, {@code // @profile:}), which the harnesses read from the raw fixture
  * bytes in {@code parseMetadata} ({@code test/ConformanceTest.java},
  * {@code test/JvmConformanceTest.java}). Classification keeps reading the
  * raw bytes, but every harness site that hands corpus {@code .deal}
@@ -28,15 +38,83 @@ import java.util.List;
 public final class ConformanceHarnessMetadata {
 
     /**
-     * The five classification header prefixes in catalog order — the
+     * The classification header prefixes in metadata order — the
      * exact trimmed-prefix strings both harnesses match in
      * {@code parseMetadata}.
      */
     private static final List<String> HEADER_PREFIXES = List.of(
         "// @spec:", "// @description:", "// @expected:",
-        "// @features:", "// @issue:");
+        "// @features:", "// @issue:", "// @profile:");
 
     private ConformanceHarnessMetadata() { }
+
+    public static SemanticProfile profileFromMetadata(String rawSource,
+            String locator) {
+        SemanticProfile profile = SemanticProfile.DEAL_V1_2_INT32;
+        boolean found = false;
+        String[] lines = rawSource.split("\\R", -1);
+        for (int i = 0; i < Math.min(lines.length, 40); i++) {
+            String line = lines[i].trim();
+            if (!line.startsWith("// @profile:")) {
+                continue;
+            }
+            if (found) {
+                throw new IllegalArgumentException(locator
+                    + ": duplicate @profile metadata");
+            }
+            found = true;
+            String value = line.substring("// @profile:".length()).trim();
+            profile = switch (value) {
+                case "legacy-safe-int" -> SemanticProfile.LEGACY_SAFE_INT;
+                case "deal-v1.2-int32" -> SemanticProfile.DEAL_V1_2_INT32;
+                default -> throw new IllegalArgumentException(locator
+                    + ": unknown @profile '" + value + "'");
+            };
+        }
+        return profile;
+    }
+
+    public static SemanticProfile profileFromFile(Path file, String locator) {
+        try {
+            return profileFromMetadata(Files.readString(file), locator);
+        } catch (IOException e) {
+            throw new UncheckedIOException("cannot read profile metadata from "
+                + file, e);
+        }
+    }
+
+    public static SemanticProfile profileFromJsonCase(
+            java.util.Map<String, Object> test, String locator) {
+        Object raw = test.get("profile");
+        if (raw == null) {
+            return SemanticProfile.DEAL_V1_2_INT32;
+        }
+        if (!(raw instanceof String value)) {
+            throw new IllegalArgumentException(locator
+                + ": profile must be a string");
+        }
+        return switch (value) {
+            case "legacy-safe-int" -> SemanticProfile.LEGACY_SAFE_INT;
+            case "deal-v1.2-int32" -> SemanticProfile.DEAL_V1_2_INT32;
+            default -> throw new IllegalArgumentException(locator
+                + ": unknown profile '" + value + "'");
+        };
+    }
+
+    public static CompilerInvocation invocation(SemanticProfile profile) {
+        if (profile == SemanticProfile.LEGACY_SAFE_INT) {
+            return CompilerProfileProvider.resolveLegacyRegression(profile,
+                ReleaseState.PRE_ACTIVATION,
+                ReleaseConfiguration.releaseCapabilityRegistry());
+        }
+        if (profile == SemanticProfile.DEAL_V1_2_INT32) {
+            return CompilerProfileProvider.resolveCommonShadow(profile,
+                ReleaseState.PRE_ACTIVATION,
+                ReleaseConfiguration.releaseCapabilityRegistry());
+        }
+        throw new IllegalArgumentException("unsupported semantic profile "
+            + profile);
+    }
 
     /**
      * True when {@code line}'s trimmed form starts with one of the five

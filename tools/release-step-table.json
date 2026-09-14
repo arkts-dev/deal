@@ -416,12 +416,6 @@
    "cwd": "export"
   },
   {
-   "step": "deal.test.HistoricalRegressionCatalogTest",
-   "tier": 1,
-   "budget": "embedded",
-   "cwd": "export"
-  },
-  {
    "step": "deal.test.InvocationProfileRegistryTest",
    "tier": 1,
    "budget": "embedded",
@@ -771,6 +765,210 @@
   },
   {
    "step": "junit-deal.test.RegistryAsyncExportBoundaryTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.DynamicResolutionIrTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.DescriptorEmissionByteIdentityTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "junit-deal.test.JvmAsyncExportInvokerTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "junit-deal.test.JvmRegistryAsyncExportBoundaryTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.ClassDeclarationLoweringTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.ClassOpsExecutorTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.ClassNewLoweringTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.CallMachineIntegrationTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.FieldOpsExecutorTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.FieldOpsLoweringTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.SharedFactoryExecutorTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.SharedFactoryLoweringTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.module.DefaultPlanCarriersTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.JsonClassExecutorTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.JsonClassLoweringTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.ClassConstructionValidatorTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.ClassClaimingSeamTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.ClassIntegrationVerificationTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.DefaultSemanticPlannerTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.module.DefaultIrRecorderTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.E2IdentityIntegrationGatesTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.DefaultSemanticSerializerTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.ModuleDependencyGraphTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.RuntimeDefaultLoweringTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.RuntimeConstructionPhasesTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.GateClosureStrictGateTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.SemanticProductionGateTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.conformance.V12FeatureMetadataTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.conformance.FeatureBackendMatrixTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.conformance.V12FeatureCatalogTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.conformance.V12FeatureCatalogCorpusTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.feature.V12FeatureGateTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.feature.V12FeatureGate",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
+   "step": "deal.test.ClassConstructionIntegrationTailTest",
    "tier": 1,
    "budget": "embedded",
    "cwd": "export"

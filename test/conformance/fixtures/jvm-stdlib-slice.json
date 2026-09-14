@@ -23,6 +23,7 @@
 
 
     {
+      "profile": "legacy-safe-int",
       "name": "jvm-std-math-int",
       "description": "std/math.absInt/minInt/maxInt compute on negative and positive operands, including absInt of the extreme negative safe int -9007199254740991 (every intermediate sum stays inside the safe range: small = 23, diff = g - 9007199254740968 = 23, total 46)",
       "source": "import * as math from \"std/math\"\nexport function test(): int {\n  let a: int = math.absInt(-7);\n  let b: int = math.absInt(7);\n  let c: int = math.minInt(3, 9);\n  let d: int = math.maxInt(3, 9);\n  let e: int = math.minInt(-5, 2);\n  let f: int = math.maxInt(-5, 2);\n  let g: int = math.absInt(-9007199254740991);\n  let small: int = a + b + c + d + e + f;\n  let diff: int = g - 9007199254740968;\n  return small + diff;\n}",
@@ -52,6 +53,7 @@
       ]
     },
     {
+      "profile": "legacy-safe-int",
       "name": "jvm-std-time-nowmillis",
       "description": "std/time.nowMillis() returns a positive, recent, second-truncated epoch milliseconds value (LuaJIT's os.time() * 1000 granularity — the % 1000 === 0 pin)",
       "source": "import * as time from \"std/time\"\nexport function test(): int {\n  let t: int = time.nowMillis();\n  let granularity: int = t % 1000;\n  if (t > 1700000000000 && granularity === 0) {\n    return 1;\n  }\n  return 0;\n}",

@@ -42,6 +42,7 @@
       "expectedExitCode": 1
     },
     {
+      "profile": "legacy-safe-int",
       "name": "js-int-safe-range-e8004",
       "description": "js-int-safe-range-e8004",
       "source": "export function test(): int { return 9007199254740991 + 1; }",
@@ -290,6 +291,7 @@
     },
 
     {
+      "profile": "legacy-safe-int",
       "name": "js-stdlib-time-structural",
       "description": "js-stdlib-time-structural",
       "source": "import * as time from \"std/time\"\nexport function test(): int {\n  let t: int = time.nowMillis();\n  let again: int = time.nowMillis();\n  if (again >= t) { return 1; }\n  return 0;\n}",
@@ -398,6 +400,7 @@
       "expectedOutput": "1"
     },
     {
+      "profile": "legacy-safe-int",
       "name": "js-bytes-length-above-int32-e8012",
       "description": "js-bytes-length-above-int32-e8012",
       "source": "export function test(): int {\n  let b: bytes = bytes(2147483648);\n  return 0;\n}",

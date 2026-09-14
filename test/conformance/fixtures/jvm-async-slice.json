@@ -7,6 +7,7 @@
 
 
     {
+      "profile": "legacy-safe-int",
       "name": "jvm-async-completion-int-boundary",
       "description": "The await-site int completion check runs the emitted checkInt boundary: the maximal safe-range int (2^53-1) passes through the await and back out",
       "source": "async function big(): int { return 9007199254740991; }\nexport async function test(): int { return await big(); }",

@@ -1706,14 +1706,11 @@ public class StdlibClaimingTimeLockTest {
                     "the fixture stays on the retained JVM lane only");
             }
 
-            // The legacy-authority catalog keeps the disposition with the
-            // locked delegated boundary: no v1.2 replacement.
-            String legacyCatalog = Files.readString(
-                Path.of("test/LegacyProfileRegressionCatalog.java"));
-            check(legacyCatalog.contains(
-                    "row(\"jvm-stdlib-slice.json#jvm-std-time-nowmillis\", null)"),
-                "the legacy catalog row keeps the null replacement — the nowMillis "
-                    + "disposition stays with the locked delegated boundary");
+            int caseStart = caseAt < 0 ? -1 : jvmSlice.lastIndexOf('{', caseAt);
+            check(caseStart >= 0 && jvmSlice.substring(caseStart,
+                    Math.min(jvmSlice.length(), caseAt + 900)).contains(
+                        "\"profile\": \"legacy-safe-int\""),
+                "the fixture retains its legacy-safe-int profile");
 
             // The staged-failure registry stays non-fatal: empty
             // post-disposition, documented, with the machinery retained.

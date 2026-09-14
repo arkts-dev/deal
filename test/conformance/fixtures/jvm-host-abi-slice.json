@@ -126,6 +126,7 @@
       ]
     },
     {
+      "profile": "legacy-safe-int",
       "name": "jvm-host-int-out-of-range-return",
       "description": "A host function returning an out-of-DEAL-safe-range int raises E8004 at the call boundary (checkInt mirrors LuaJIT's int boundary)",
       "modules": {

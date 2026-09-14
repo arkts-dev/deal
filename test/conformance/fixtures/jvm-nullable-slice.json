@@ -370,6 +370,7 @@
       ]
     },
     {
+      "profile": "legacy-safe-int",
       "name": "jvm-nullable-boundary-int-range-failure",
       "description": "check_int parity for the int | null table-read boundary: an integral number beyond the int safe range (2^53 = 9007199254740992.0) raises E8004 'int out of safe range' (runtime.lua's check_int routes out-of-range values through the emitted checkInt bound), exit 1",
       "source": "export function test(): int {\n  let t: table = { v: 9007199254740992.0 };\n  let n: int | null = t.v;\n  if (n === null) { return 1; }\n  return 0;\n}\n",
