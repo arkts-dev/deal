@@ -66,6 +66,25 @@ public final class JvmRuntime {
         }
     }
 
+    /**
+     * HAS_FIELD presence over one checked receiver key (the
+     * CONTAINERS_AND_STRINGS extras): present — present null included —
+     * → true, absent → false. The table-presence half realizes through
+     * the explicit key set; a class instance's presence flags are the
+     * CLASSES family's realization (no class carrier exists in the
+     * shared runtime yet — a receiver outside the realized carriers is a
+     * fail-closed producer defect, never a silent presence value).
+     */
+    public static boolean hasField(Object receiver, String key) {
+        if (receiver instanceof Table table) {
+            return table.keys.contains(key);
+        }
+        throw new IllegalStateException("HAS_FIELD receiver " + receiver
+            + " is not a supported presence carrier in this domain (the "
+            + "table-presence half admits keyed tables only; class-instance presence "
+            + "flags are the CLASSES family's realization)");
+    }
+
     /** A dense array with the shared slot-space length. */
     public static final class Array {
         public final List<Object> elements = new ArrayList<>();
@@ -259,6 +278,42 @@ public final class JvmRuntime {
         return id;
     }
 
+    /**
+     * The raw read atom of the OPTIONAL_READ envelope: the value's
+     * actual runtime kind — missing → "missing", null → "null", else
+     * the actual kind's atom (a wrong-kind present value atomizes as its
+     * own kind, exactly the oracle's publish). Heap values carry the
+     * shared allocation-id namespace.
+     */
+    public static String rawAtom(Object v, String kind) {
+        if (v == MISSING) {
+            return "missing";
+        }
+        if (v == null) {
+            return "null";
+        }
+        if (v instanceof Boolean) {
+            return "bool:" + v;
+        }
+        if (v instanceof Long) {
+            return "int:" + v;
+        }
+        if (v instanceof Double) {
+            return atom(v, "number");
+        }
+        if (v instanceof String) {
+            return "str:" + esc((String) v);
+        }
+        if (v instanceof ErrorValue error) {
+            return "err:" + error.code + ":" + esc(error.message);
+        }
+        if (v instanceof Table || v instanceof Array || v instanceof FunctionValue
+                || v instanceof Intrinsic) {
+            return "ref:" + allocId(v);
+        }
+        return atom(v, kind);
+    }
+
     /** The nested error text form. */
     public static String errtext(Throwable e) {
         if (e instanceof DealError deal) {
@@ -336,48 +391,45 @@ public final class JvmRuntime {
         return new DealError(code, msg, origin, expected, actual, framesText(), null);
     }
 
+    /**
+     * The actual runtime kind of one value for failure projections: the
+     * value's own kind — missing → "missing", null → "null", else the
+     * runtime type's canonical kind text (a wrong-kind value projects as
+     * its own kind, never the declared static kind; the declared kind is
+     * the fallback for carriers outside the closed value kinds).
+     */
     public static String actualOf(String staticKind, Object v) {
         if (v == MISSING) {
             return "missing";
         }
-        switch (staticKind) {
-            case "null" -> {
-                return "null";
-            }
-            case "bool" -> {
-                return "boolean";
-            }
-            case "int" -> {
-                return "int";
-            }
-            case "number" -> {
-                return "number";
-            }
-            case "string" -> {
-                return "string";
-            }
-            case "table" -> {
-                return "table";
-            }
-            case "array" -> {
-                return "array";
-            }
-            case "function" -> {
-                return "function";
-            }
-            case "err" -> {
-                return "class:@builtin/Error";
-            }
-            default -> {
-                if (staticKind.startsWith("nullable:")) {
-                    if (v == null) {
-                        return "null";
-                    }
-                    return actualOf(staticKind.substring("nullable:".length()), v);
-                }
-                return "missing";
-            }
+        if (v == null) {
+            return "null";
         }
+        if (v instanceof Boolean) {
+            return "boolean";
+        }
+        if (v instanceof Long) {
+            return "int";
+        }
+        if (v instanceof Double) {
+            return "number";
+        }
+        if (v instanceof String) {
+            return "string";
+        }
+        if (v instanceof Table) {
+            return "table";
+        }
+        if (v instanceof Array) {
+            return "array";
+        }
+        if (v instanceof FunctionValue || v instanceof Intrinsic) {
+            return "function";
+        }
+        if (v instanceof ErrorValue) {
+            return "class:@builtin/Error";
+        }
+        return staticKind;
     }
 
     /**

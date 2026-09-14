@@ -363,7 +363,7 @@ public final class LuaSemanticEmitter {
             // Hoisted shared temps (goto can never jump into a local's
             // scope; every check/return temp is a top-level assignment).
             out.append("local __chk, __rvT, __rvcT, __okT, __resT, __terrT, "
-                + "__cerrT, __wrappedT, __itT, __itnT, __elemT\n");
+                + "__cerrT, __wrappedT, __itT, __itnT, __elemT, __okB, __chkB\n");
 
             // Function factories first (capture cells are factory
             // arguments); the local names are pre-declared so bodies can
@@ -498,6 +498,8 @@ public final class LuaSemanticEmitter {
                 case INDEX_READ -> emitIndexRead(op);
                 case INDEX_WRITE -> emitIndexWrite(op);
                 case INDEX_DELETE -> emitIndexDelete(op);
+                case OPTIONAL_READ -> emitOptionalRead(op);
+                case HAS_FIELD -> emitHasField(op);
                 case BOUNDARY -> emitFreeBoundary(op);
                 case BINDING_ALLOC -> emitBindingAlloc(op);
                 case BINDING_INIT -> emitBindingInit(op);
@@ -861,7 +863,130 @@ public final class LuaSemanticEmitter {
                     .append(", ").append(target).append(")\n");
                 out.append(target).append(" = __chk\n");
                 emitBoundarySuccess(boundary, target, boundaryPayload.descriptor());
+                emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
+                return;
             }
+            // The OPTIONAL_READ envelope shape: the raw read publishes the
+            // internal missing or the present value (present null included)
+            // and its SUCCESS atom renders the actual value kind —
+            // missing → "missing", null → "null", else the actual-kind
+            // atom, exactly the oracle's publish (a wrong-kind present
+            // value atomizes as its own kind, never the declared kind).
+            SemanticOp optional = optionalReadOf((ValueId) op.result());
+            RuntimeDescriptor inner = optional == null
+                ? null
+                : ((KindPayload.OptionalReadPayload) optional.payload()).descriptor();
+            out.append("__ev(").append(luaString(opKey(op.opId())))
+                .append(", \"SUCCESS\", ").append(luaString(op.kind().name()))
+                .append(", ").append(luaString(op.contract().canonicalDigest()))
+                .append(", ").append(luaString(parentKey(op.origin().parentOpId())))
+                .append(", {}, __rawAtom(")
+                .append(luaString(inner == null ? "ref" : "nullable:" + staticKind(inner)))
+                .append(", ").append(target).append("), nil)\n");
+        }
+
+        /**
+         * The OPTIONAL_READ op consuming this result value, or null — the
+         * envelope shape of a missing-capable table member read.
+         */
+        private SemanticOp optionalReadOf(ValueId value) {
+            for (SemanticOp candidate : opsById.values()) {
+                if (candidate.kind() == SemanticOpKind.OPTIONAL_READ
+                        && value.equals(((KindPayload.OptionalReadPayload) candidate.payload())
+                            .value())) {
+                    return candidate;
+                }
+            }
+            return null;
+        }
+
+        /**
+         * OPTIONAL_READ: the internal missing pre-maps to language null
+         * before the present branch is validated (the closed table's
+         * optional-read rule); the CONTEXTUAL_TABLE_READ boundary child
+         * validates the pre-mapped result.
+         */
+        private void emitOptionalRead(SemanticOp op) {
+            KindPayload.OptionalReadPayload payload =
+                (KindPayload.OptionalReadPayload) op.payload();
+            if (payload.value() == null) {
+                emitStart(op);
+            } else {
+                // Custom START: the raw operand atom renders the actual
+                // value kind (a wrong-kind present value atomizes as its
+                // own kind, exactly the oracle's publish).
+                out.append("__ev(").append(luaString(opKey(op.opId())))
+                    .append(", \"START\", ").append(luaString(op.kind().name()))
+                    .append(", ").append(luaString(op.contract().canonicalDigest()))
+                    .append(", ").append(luaString(parentKey(op.origin().parentOpId())))
+                    .append(", {__rawAtom(")
+                    .append(luaString("nullable:" + staticKind(payload.descriptor())))
+                    .append(", ").append(slot(payload.value()))
+                    .append(")}, nil, nil)\n");
+            }
+            String target = slot((ValueId) op.result());
+            if (payload.value() == null) {
+                out.append(target).append(" = nil\n");
+            } else {
+                String source = slot(payload.value());
+                out.append("if ").append(source).append(" == __MISSING then\n");
+                out.append("  ").append(target).append(" = nil\n");
+                out.append("else\n");
+                out.append("  ").append(target).append(" = ").append(source).append("\n");
+                out.append("end\n");
+            }
+            SemanticOp boundary = boundaryChildOf(op);
+            if (boundary != null) {
+                KindPayload.BoundaryPayload boundaryPayload =
+                    (KindPayload.BoundaryPayload) boundary.payload();
+                // Custom boundary START: the input atom renders the
+                // actual value kind (identical for a passing value,
+                // actual-kind for a wrong-kind present value).
+                out.append("__ev(").append(luaString(opKey(boundary.opId())))
+                    .append(", \"START\", \"BOUNDARY\", ")
+                    .append(luaString(boundary.contract().canonicalDigest())).append(", ")
+                    .append(luaString(parentKey(boundary.origin().parentOpId())))
+                    .append(", {__rawAtom(")
+                    .append(luaString(staticKind(boundaryPayload.descriptor())))
+                    .append(", ").append(target).append(")}, nil, nil)\n");
+                // The present branch is validated per the closed table's
+                // optional-read rule; the boundary failure publishes the
+                // boundary FAILURE and the op FAILURE events with the
+                // boundary origin (a wrong present kind fails the
+                // differential verdict even with coincidental output).
+                out.append("__okB, __chkB = pcall(__bcheck, ")
+                    .append(luaString(descriptorText(boundaryPayload.descriptor())))
+                    .append(", ")
+                    .append(luaString(staticKind(boundaryPayload.descriptor())))
+                    .append(", ").append(target).append(")\n");
+                out.append("if not __okB then\n");
+                out.append("  __chkB.o = ").append(luaString(originOf(boundary)))
+                    .append("\n");
+                emitFailureEvent(boundary.opId(), "BOUNDARY", boundary,
+                    "__errtext(__chkB)");
+                emitFailureEvent(op.opId(), op.kind().name(), op,
+                    "__errtext(__chkB)");
+                out.append("  error(__chkB, 0)\n");
+                out.append("end\n");
+                out.append(target).append(" = __chkB\n");
+                emitBoundarySuccess(boundary, target, boundaryPayload.descriptor());
+            }
+            emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
+        }
+
+        /**
+         * HAS_FIELD: the presence boolean over one checked receiver key —
+         * the member-read helper's present/absent split (present null
+         * included is present). The class-instance presence map is the
+         * CLASSES family's realization.
+         */
+        private void emitHasField(SemanticOp op) {
+            KindPayload.HasFieldPayload payload =
+                (KindPayload.HasFieldPayload) op.payload();
+            emitStart(op);
+            String target = slot((ValueId) op.result());
+            out.append(target).append(" = (__member(").append(slot(payload.receiver()))
+                .append(", ").append(luaString(payload.key())).append(") ~= __MISSING)\n");
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
         }
 
@@ -1963,20 +2088,47 @@ local function __ev(op, phase, kind, digest, parent, inputs, output, errtext)
 end
 local function __actualOf(staticKind, v)
   if v == __MISSING then return "missing" end
-  if staticKind == "null" then return "null" end
-  if staticKind == "bool" then return "boolean" end
-  if staticKind == "int" then return "int" end
-  if staticKind == "number" then return "number" end
-  if staticKind == "string" then return "string" end
-  if staticKind == "table" then return "table" end
-  if staticKind == "array" then return "array" end
-  if staticKind == "function" then return "function" end
-  if staticKind == "err" then return "class:@builtin/Error" end
-  if string.sub(staticKind, 1, 9) == "nullable:" then
-    if v == nil then return "null" end
-    return __actualOf(string.sub(staticKind, 10), v)
+  if v == nil then return "null" end
+  local t = type(v)
+  if t == "boolean" then return "boolean" end
+  if t == "number" then
+    local inner = staticKind
+    if string.sub(staticKind, 1, 9) == "nullable:" then inner = string.sub(staticKind, 10) end
+    if inner == "int" then return "int" end
+    return "number"
   end
-  return "missing"
+  if t == "string" then return "string" end
+  if t == "table" then
+    if staticKind == "err" then return "class:@builtin/Error" end
+    if staticKind == "table" then return "table" end
+    if staticKind == "array" then return "array" end
+    return "table"
+  end
+  if t == "function" then return "function" end
+  return staticKind
+end
+-- The raw read atom of the OPTIONAL_READ envelope: the value's actual
+-- runtime kind — missing → "missing", null → "null", else the actual
+-- kind's atom (a wrong-kind present value atomizes as its own kind,
+-- exactly the oracle's publish). Numbers render through the declared
+-- inner kind (Lua numbers carry no int/number distinction).
+local function __rawAtom(kind, v)
+  if v == __MISSING then return "missing" end
+  if v == nil then return "null" end
+  if type(v) == "boolean" then return "bool:"..tostring(v) end
+  if type(v) == "number" then
+    local inner = kind
+    if string.sub(kind, 1, 9) == "nullable:" then inner = string.sub(kind, 10) end
+    if inner == "int" then return "int:"..tostring(v) end
+    return __atom("number", v)
+  end
+  if type(v) == "string" then return "str:"..__esc(v) end
+  if type(v) == "table" then
+    if v.__d then return "err:"..v.code..":"..__esc(v.m or "") end
+    return "ref:"..__allocId(v)
+  end
+  if type(v) == "function" then return "ref:"..__allocId(v) end
+  return __atom(kind, v)
 end
 local function __failExpr(code, msg, o, e, a)
   return {__d = true, code = code, m = msg, o = o, e = e, a = a, f = __framesText(),

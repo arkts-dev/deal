@@ -1046,6 +1046,8 @@ public final class SemanticOracle {
                      FIELD_WRITE, FIELD_DELETE -> executeCommit(op);
                 case INDEX_NORMALIZE -> executeNormalize(op);
                 case INDEX_READ -> executeIndexRead(op);
+                case OPTIONAL_READ -> executeOptionalRead(op);
+                case HAS_FIELD -> executeHasField(op);
                 case BOUNDARY -> executeBoundary(op);
                 case BINDING_ALLOC -> executeBindingAlloc(op);
                 case BINDING_INIT -> executeBindingInit(op);
@@ -1326,6 +1328,56 @@ public final class SemanticOracle {
                 ((KindPayload.BoundaryPayload) boundary.payload()).descriptor();
             Value checked = runBoundaryChild(boundary, read, BoundaryContext.none());
             return contextualReadDecision(op, checked, descriptor);
+        }
+
+        /**
+         * OPTIONAL_READ (the CONTAINERS_AND_STRINGS extras): the raw read
+         * value pre-maps the internal missing to language null before the
+         * present branch is validated (the closed table's optional-read
+         * rule) — the op's CONTEXTUAL_TABLE_READ boundary child then runs
+         * over the pre-mapped value (present null passes the nullable
+         * descriptor; a present wrong-kind value projects the pinned
+         * E8001). A payload with no value slot (present=false) is the
+         * statically absent slot: language null, no validation.
+         */
+        private String executeOptionalRead(SemanticOp op) {
+            KindPayload.OptionalReadPayload payload =
+                (KindPayload.OptionalReadPayload) op.payload();
+            Value input = payload.value() == null
+                ? Value.MissingValue.INSTANCE : valueOf(payload.value());
+            Value preMapped = input instanceof Value.MissingValue
+                ? Value.NullValue.INSTANCE : input;
+            SemanticOp boundary = singleChild(op);
+            if (boundary == null) {
+                return publish(op, preMapped);
+            }
+            RuntimeDescriptor descriptor =
+                ((KindPayload.BoundaryPayload) boundary.payload()).descriptor();
+            Value checked = runBoundaryChild(boundary, preMapped, BoundaryContext.none());
+            return contextualReadDecision(op, checked, descriptor);
+        }
+
+        /**
+         * HAS_FIELD: the presence boolean of one checked receiver key —
+         * present (present null included) → true, absent → false. The
+         * table-presence half realizes through the value model's keyed
+         * entries; the class-instance half (the presence map of a
+         * generated instance) is the CLASSES family's production and has
+         * no oracle representation in this domain yet.
+         */
+        private String executeHasField(SemanticOp op) {
+            KindPayload.HasFieldPayload payload =
+                (KindPayload.HasFieldPayload) op.payload();
+            Value receiver = valueOf(payload.receiver());
+            if (receiver instanceof Value.TableValue table) {
+                return publish(op,
+                    new Value.BoolValue(table.entries().containsKey(payload.key())));
+            }
+            throw new IllegalStateException("HAS_FIELD " + op.opId() + " receiver "
+                + payload.receiver() + " resolves to " + atomOf(receiver) + ": the table"
+                + "-presence half of the CONTAINERS_AND_STRINGS extras admits keyed table"
+                + " receivers only (class-instance presence maps are the CLASSES "
+                + "family's production — another step's realization)");
         }
 
         /** The single child op parented to {@code op}, or null. */

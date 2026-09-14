@@ -131,11 +131,14 @@ public class InvocationProfileRegistryTest {
     private static final String PINNED_RELEASE_STATE_HASH_ACTIVE =
         "dc4c3fe0ae1356816a9454644af201fbf8289c03de1603a2c1e671f99441aa36";
 
-    /** Stored golden: releaseStateHash for the committed E12 configuration —
+    /** Stored golden: releaseStateHash for the committed E12 configuration
+     * plus the step-1 cutover promotion (ISSUE-0575) —
      * V1_2_ACTIVE over the promoted release registry hash (the
-     * releaseCapabilityRegistry digest, never the all-SHADOW default). */
+     * releaseCapabilityRegistry digest, never the all-SHADOW default;
+     * FOUNDATION_VALUES, SIGNED_INT32, and CONTAINERS_AND_STRINGS
+     * promoted for both targets). */
     private static final String PINNED_ACTIVATED_RELEASE_STATE_HASH =
-        "461b6ae01dedbb6f15767bf79c2ff26f6efbbcafdc2ce64dc84c8bb835b393d6";
+        "417598bd6fd020b8087bd07f32fa90d6d5855fdbce7b7cdd6b51d875ccf4acef";
 
     private static final List<String> CAPABILITY_ORDER = List.of(
         "FOUNDATION_VALUES", "SIGNED_INT32", "CONTAINERS_AND_STRINGS", "DESCRIPTORS",

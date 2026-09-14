@@ -358,6 +358,10 @@ public final class ContainerClaimingSeam {
             case CONST, STRING_CONCAT -> List.of(SemanticCapability.FOUNDATION_VALUES);
             case ARRAY_NEW, TABLE_NEW, ARRAY_LENGTH, MEMBER_READ, FOR_EACH ->
                 List.of(SemanticCapability.CONTAINERS_AND_STRINGS);
+            // The CONTAINERS_AND_STRINGS extras (the step-1 cutover): the
+            // OPTIONAL_READ envelope op homes to CONTAINERS_AND_STRINGS
+            // exactly like the other container read/creation families.
+            case OPTIONAL_READ -> List.of(SemanticCapability.CONTAINERS_AND_STRINGS);
             case BOUNDARY -> switch (((KindPayload.BoundaryPayload) op.payload()).kind()) {
                 case ARRAY_LITERAL_ELEMENT, CONTEXTUAL_TABLE_READ,
                      UNTYPED_CLASS_INPUT, OPTIONAL_FIELD_READ, CLASS_FIELD_ASSIGNMENT,

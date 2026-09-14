@@ -117,6 +117,13 @@ public final class ChainOperandCompletion {
                     addBoundaryChildren(unit, op, owned);
                 case KindPayload.MemberReadPayload ignored ->
                     addBoundaryChildren(unit, op, owned);
+                // The OPTIONAL_READ envelope (step 1 of the shared-emission
+                // cutover): the read's CONTEXTUAL_TABLE_READ boundary child
+                // is parented to the OPTIONAL_READ op, whose arm executes it
+                // exactly once — the block walk skips it like every other
+                // parented boundary child.
+                case KindPayload.OptionalReadPayload ignored ->
+                    addBoundaryChildren(unit, op, owned);
                 case KindPayload.EntryInvokePayload ignored ->
                     addEntryCallChildren(unit, op, owned);
                 default -> {

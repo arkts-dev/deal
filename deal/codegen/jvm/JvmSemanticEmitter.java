@@ -442,6 +442,8 @@ public final class JvmSemanticEmitter {
                 case INDEX_READ -> emitIndexRead(op, indent);
                 case INDEX_WRITE -> emitIndexWrite(op, indent);
                 case INDEX_DELETE -> emitIndexDelete(op, indent);
+                case OPTIONAL_READ -> emitOptionalRead(op, indent);
+                case HAS_FIELD -> emitHasField(op, indent);
                 case BOUNDARY -> emitFreeBoundary(op, indent);
                 case BINDING_ALLOC -> emitBindingAlloc(op, indent);
                 case BINDING_INIT -> emitBindingInit(op, indent);
@@ -869,7 +871,148 @@ public final class JvmSemanticEmitter {
                 out.append(indent(indent)).append(target).append(" = __mr_")
                     .append(boundary.opId().id()).append(";\n");
                 emitBoundarySuccess(boundary, target, boundaryPayload.descriptor(), indent);
+                emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType(), indent);
+                return;
             }
+            // The OPTIONAL_READ envelope shape: the raw read publishes the
+            // internal missing or the present value (present null included)
+            // and its SUCCESS atom renders the actual value kind —
+            // missing → "missing", null → "null", else the actual-kind
+            // atom, exactly the oracle's publish (a wrong-kind present
+            // value atomizes as its own kind, never the declared kind).
+            SemanticOp optional = optionalReadOf((ValueId) op.result());
+            RuntimeDescriptor inner = optional == null
+                ? null
+                : ((KindPayload.OptionalReadPayload) optional.payload()).descriptor();
+            out.append(indent(indent)).append("JvmRuntime.ev(MODULE, ")
+                .append(javaString(opKey(op.opId()))).append(", \"SUCCESS\", ")
+                .append(javaString(op.kind().name())).append(", ")
+                .append(javaString(op.contract().canonicalDigest())).append(", ")
+                .append(javaString(parentKey(op.origin().parentOpId())))
+                .append(", List.of(), JvmRuntime.rawAtom(").append(target)
+                .append(", ")
+                .append(javaString(inner == null ? "ref" : "nullable:" + staticKind(inner)))
+                .append("), null);\n");
+        }
+
+        /**
+         * The OPTIONAL_READ op consuming this result value, or null — the
+         * envelope shape of a missing-capable table member read.
+         */
+        private SemanticOp optionalReadOf(ValueId value) {
+            for (SemanticOp candidate : opsById.values()) {
+                if (candidate.kind() == SemanticOpKind.OPTIONAL_READ
+                        && value.equals(((KindPayload.OptionalReadPayload) candidate.payload())
+                            .value())) {
+                    return candidate;
+                }
+            }
+            return null;
+        }
+
+        /**
+         * OPTIONAL_READ: the internal missing pre-maps to language null
+         * before the present branch is validated (the closed table's
+         * optional-read rule); the CONTEXTUAL_TABLE_READ boundary child
+         * validates the pre-mapped result.
+         */
+        private void emitOptionalRead(SemanticOp op, int indent) {
+            KindPayload.OptionalReadPayload payload =
+                (KindPayload.OptionalReadPayload) op.payload();
+            if (payload.value() == null) {
+                emitStart(op, indent);
+            } else {
+                // Custom START: the raw operand atom renders the actual
+                // value kind (a wrong-kind present value atomizes as its
+                // own kind, exactly the oracle's publish).
+                out.append(indent(indent)).append("JvmRuntime.ev(MODULE, ")
+                    .append(javaString(opKey(op.opId()))).append(", \"START\", ")
+                    .append(javaString(op.kind().name())).append(", ")
+                    .append(javaString(op.contract().canonicalDigest())).append(", ")
+                    .append(javaString(parentKey(op.origin().parentOpId())))
+                    .append(", List.of(JvmRuntime.rawAtom(")
+                    .append(slot(payload.value())).append(", ")
+                    .append(javaString("nullable:" + staticKind(payload.descriptor())))
+                    .append(")), null, null);\n");
+            }
+            String target = slot((ValueId) op.result());
+            if (payload.value() == null) {
+                out.append(indent(indent)).append(target).append(" = null;\n");
+            } else {
+                String source = slot(payload.value());
+                out.append(indent(indent)).append(target).append(" = ")
+                    .append(source).append(" == JvmRuntime.MISSING ? null : ")
+                    .append(source).append(";\n");
+            }
+            SemanticOp boundary = boundaryChildOf(op);
+            if (boundary != null) {
+                KindPayload.BoundaryPayload boundaryPayload =
+                    (KindPayload.BoundaryPayload) boundary.payload();
+                // Custom boundary START: the input atom renders the
+                // actual value kind (identical for a passing value,
+                // actual-kind for a wrong-kind present value).
+                out.append(indent(indent)).append("JvmRuntime.ev(MODULE, ")
+                    .append(javaString(opKey(boundary.opId())))
+                    .append(", \"START\", \"BOUNDARY\", ")
+                    .append(javaString(boundary.contract().canonicalDigest())).append(", ")
+                    .append(javaString(parentKey(boundary.origin().parentOpId())))
+                    .append(", List.of(JvmRuntime.rawAtom(").append(target)
+                    .append(", ")
+                    .append(javaString(staticKind(boundaryPayload.descriptor())))
+                    .append(")), null, null);\n");
+                // The present branch is validated per the closed table's
+                // optional-read rule; the boundary failure publishes the
+                // boundary FAILURE and the op FAILURE events with the
+                // boundary origin (a wrong present kind fails the
+                // differential verdict even with coincidental output).
+                String checkedName = "__orb_" + boundary.opId().id();
+                String errorName = "__obe_" + boundary.opId().id();
+                String rebuiltName = "__obe2_" + boundary.opId().id();
+                out.append(indent(indent)).append("try {\n");
+                out.append(indent(indent + 1)).append("Object ").append(checkedName)
+                    .append(" = JvmRuntime.bcheck(")
+                    .append(javaString(descriptorText(boundaryPayload.descriptor())))
+                    .append(", ")
+                    .append(javaString(staticKind(boundaryPayload.descriptor())))
+                    .append(", ").append(target).append(");\n");
+                out.append(indent(indent + 1)).append(target).append(" = ")
+                    .append(checkedName).append(";\n");
+                out.append(indent(indent)).append("} catch (JvmRuntime.DealError ")
+                    .append(errorName).append(") {\n");
+                out.append(indent(indent + 1)).append("JvmRuntime.DealError ")
+                    .append(rebuiltName).append(" = new JvmRuntime.DealError(")
+                    .append(errorName).append(".code, ").append(errorName)
+                    .append(".msg, ").append(javaString(originOf(boundary)))
+                    .append(", ").append(errorName).append(".expected, ")
+                    .append(errorName).append(".actual, ").append(errorName)
+                    .append(".frames, ").append(errorName).append(".cause);\n");
+                emitFailureEvent(boundary.opId(), "BOUNDARY", boundary,
+                    "JvmRuntime.errtext(" + rebuiltName + ")", indent + 1);
+                emitFailureEvent(op.opId(), op.kind().name(), op,
+                    "JvmRuntime.errtext(" + rebuiltName + ")", indent + 1);
+                out.append(indent(indent + 1)).append("throw ").append(rebuiltName)
+                    .append(";\n");
+                out.append(indent(indent)).append("}\n");
+                emitBoundarySuccess(boundary, target, boundaryPayload.descriptor(), indent);
+            }
+            emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType(), indent);
+        }
+
+        /**
+         * HAS_FIELD: the presence boolean over one checked receiver key —
+         * present (present null included) → true, absent → false. The
+         * runtime helper realizes the table-presence half; the
+         * class-instance presence flags are the CLASSES family's
+         * realization.
+         */
+        private void emitHasField(SemanticOp op, int indent) {
+            KindPayload.HasFieldPayload payload =
+                (KindPayload.HasFieldPayload) op.payload();
+            emitStart(op, indent);
+            String target = slot((ValueId) op.result());
+            out.append(indent(indent)).append(target).append(" = JvmRuntime.hasField(")
+                .append(slot(payload.receiver())).append(", ")
+                .append(javaString(payload.key())).append(");\n");
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType(), indent);
         }
 

@@ -11269,7 +11269,22 @@ public final class SemanticLowerer {
                 FailurePolicyId.INT32_RESULT, slot);
         }
 
-        /** {@code MEMBER_READ} — the missing-aware read plus its contextual child. */
+        /**
+         * {@code MEMBER_READ} — the missing-aware read plus its contextual
+         * child. A non-nullable read keeps the direct shape: one
+         * {@code MEMBER_READ} publishing the read result plus one
+         * {@code CONTEXTUAL_TABLE_READ} boundary child (missing →
+         * nullable-null / E8001 via the contextual decision). A
+         * missing-capable read (a nullable contextual type) lowers the
+         * {@code OPTIONAL_READ} envelope: the {@code MEMBER_READ} op
+         * publishes its result typed {@code INTERNAL_MISSING}, exactly one
+         * {@code OPTIONAL_READ} op carries the raw value, the presence
+         * marker, and the inner descriptor (missing → language null before
+         * a present value is validated), and the
+         * {@code CONTEXTUAL_TABLE_READ} boundary child validates the
+         * optional read's result (present null passes the nullable
+         * descriptor; a present wrong-kind value projects the pinned E8001).
+         */
         private ValueId lowerMemberRead(MemberAccessExpr access) {
             return lowerMemberRead(access, null);
         }
@@ -11279,19 +11294,62 @@ public final class SemanticLowerer {
             RuntimeDescriptor resultType =
                 ContainerPayloadDescriptors.resultDescriptorOf(contextualType);
             ValueId receiver = lowerExpression(access.object());
-            ValueId result = slot != null ? slot : ids.nextValueId(module, nextOrdinal++, 0);
             AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
             OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
             SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(access.span()),
                 SourceOriginKind.USER, anchor, currentParent());
-            emit(buildOp(opId, SemanticOpKind.MEMBER_READ,
-                new KindPayload.MemberReadPayload(receiver, access.field()),
-                result, resultType, FailurePolicyId.NO_DEAL_FAILURE, origin));
             FailurePolicyId childPolicy = resultType instanceof RuntimeDescriptor.Func
                 ? FailurePolicyId.FUNCTION_SIGNATURE : FailurePolicyId.TYPE_DESCRIPTOR;
+            if (contextualType instanceof Type.Nullable nullable) {
+                // The OPTIONAL_READ envelope (the CONTAINERS_AND_STRINGS
+                // extras, parent E3): a missing-capable read — a table
+                // member read whose checked contextual type is nullable —
+                // lowers to the raw INTERNAL_MISSING read plus exactly one
+                // OPTIONAL_READ op carrying the present value (or internal
+                // missing) and the inner descriptor, with the present
+                // branch validated by the CONTEXTUAL_TABLE_READ boundary
+                // child per the closed table's optional-read rule (missing
+                // → language null before a present value is validated).
+                RuntimeDescriptor inner =
+                    ContainerPayloadDescriptors.resultDescriptorOf(nullable.inner());
+                ValueId readResult = ids.nextValueId(module, nextOrdinal++, 0);
+                emit(buildOp(opId, SemanticOpKind.MEMBER_READ,
+                    new KindPayload.MemberReadPayload(receiver, access.field()),
+                    readResult, InternalResultType.INTERNAL_MISSING,
+                    FailurePolicyId.NO_DEAL_FAILURE, origin));
+                ValueId result = slot != null ? slot
+                    : ids.nextValueId(module, nextOrdinal++, 0);
+                AnchorId optionalAnchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+                OpId optionalOpId = ids.nextOpId(module, nextOrdinal++, 0);
+                SourceOrigin optionalOrigin = new SourceOrigin(sourceId,
+                    toSourceSpan(access.span()), SourceOriginKind.USER, optionalAnchor,
+                    currentParent());
+                SemanticOp optionalRead = buildOp(optionalOpId,
+                    SemanticOpKind.OPTIONAL_READ,
+                    new KindPayload.OptionalReadPayload(readResult, true, inner),
+                    result, resultType, List.of(readResult), List.of(resultType),
+                    FailurePolicyId.NO_DEAL_FAILURE, optionalOrigin);
+                emit(optionalRead);
+                emitNullOp(SemanticOpKind.BOUNDARY,
+                    new KindPayload.BoundaryPayload(BoundaryKind.CONTEXTUAL_TABLE_READ,
+                        resultType, result,
+                        new BoundaryRealization.RuntimeValidation(
+                            CANONICAL_RUNTIME_VALIDATION_ID)),
+                    access.span(), childPolicy, SourceOriginKind.SYNTHETIC, optionalOpId);
+                if (creationRuleAnalysis && resultType instanceof RuntimeDescriptor.Func) {
+                    recordBoundaryClassification(BoundaryKind.CONTEXTUAL_TABLE_READ,
+                        contextualType, contextualType);
+                }
+                return result;
+            }
+            ValueId readResult = slot != null ? slot
+                : ids.nextValueId(module, nextOrdinal++, 0);
+            emit(buildOp(opId, SemanticOpKind.MEMBER_READ,
+                new KindPayload.MemberReadPayload(receiver, access.field()),
+                readResult, resultType, FailurePolicyId.NO_DEAL_FAILURE, origin));
             emitNullOp(SemanticOpKind.BOUNDARY,
                 new KindPayload.BoundaryPayload(BoundaryKind.CONTEXTUAL_TABLE_READ,
-                    resultType, result,
+                    resultType, readResult,
                     new BoundaryRealization.RuntimeValidation(
                         CANONICAL_RUNTIME_VALIDATION_ID)),
                 access.span(), childPolicy, SourceOriginKind.SYNTHETIC, opId);
@@ -11306,7 +11364,7 @@ public final class SemanticLowerer {
                 recordBoundaryClassification(BoundaryKind.CONTEXTUAL_TABLE_READ,
                     contextualType, contextualType);
             }
-            return result;
+            return readResult;
         }
 
         /** {@code STRING_CONCAT}/{@code BINARY} — the binary dispatch (I3 arithmetic). */

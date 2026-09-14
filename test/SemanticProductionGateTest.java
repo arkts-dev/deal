@@ -675,6 +675,110 @@ public class SemanticProductionGateTest {
         }
     }
 
+    private static final String OPTIONAL_READ_SOURCE =
+        "export function test_optional_read(): null {\n"
+            + "  let t: table = { a: 1 }\n"
+            + "  let x: int | null = t.a\n"
+            + "  let y: int | null = t.b\n"
+            + "  return null;\n"
+            + "}\n"
+            + "export function main(): null { return null }\n";
+
+    private static void testStep1CutoverPromotion() throws Exception {
+        System.out.println("-- Step-1 cutover: CONTAINERS_AND_STRINGS promoted; a "
+            + "container/optional-read module routes SHARED and runs on both targets --");
+
+        // The release registry carries the step-1 promotion in the pinned
+        // capability order (CONTAINERS_AND_STRINGS after SIGNED_INT32,
+        // LUAJIT before JVM) with a recomputed digest.
+        CapabilityRegistry registry = ReleaseConfiguration.releaseCapabilityRegistry();
+        check(registry.state(deal.semantic.ir.SemanticCapability.CONTAINERS_AND_STRINGS,
+                deal.semantic.Target.LUAJIT) == CapabilityRegistry.State.PROMOTED
+                && registry.state(
+                    deal.semantic.ir.SemanticCapability.CONTAINERS_AND_STRINGS,
+                    deal.semantic.Target.JVM) == CapabilityRegistry.State.PROMOTED,
+            "the release registry promotes CONTAINERS_AND_STRINGS for LUAJIT and JVM");
+        List<ReleaseConfiguration.ReleasePromotion> promotions =
+            ReleaseConfiguration.activationPromotions();
+        check(promotions.indexOf(new ReleaseConfiguration.ReleasePromotion(
+                deal.semantic.ir.SemanticCapability.CONTAINERS_AND_STRINGS,
+                deal.semantic.Target.LUAJIT))
+                > promotions.indexOf(new ReleaseConfiguration.ReleasePromotion(
+                    deal.semantic.ir.SemanticCapability.SIGNED_INT32,
+                    deal.semantic.Target.JVM))
+                && promotions.indexOf(new ReleaseConfiguration.ReleasePromotion(
+                    deal.semantic.ir.SemanticCapability.CONTAINERS_AND_STRINGS,
+                    deal.semantic.Target.LUAJIT))
+                    < promotions.indexOf(new ReleaseConfiguration.ReleasePromotion(
+                        deal.semantic.ir.SemanticCapability.CONTAINERS_AND_STRINGS,
+                        deal.semantic.Target.JVM)),
+            "the step-1 promotion sits in the pinned capability order with LUAJIT "
+                + "before JVM");
+
+        // LuaJIT: the production PUBLIC_BUILD + V1_2_ACTIVE compile of a
+        // container/optional-read module (no stdlib call, no user call,
+        // no bytes) routes SHARED, emits exactly one semantic artifact,
+        // and the OPTIONAL_READ envelope executes under the real toolchain.
+        Path luaProject = Files.createTempDirectory("deal-e10-optional-lua-");
+        try {
+            write(luaProject, "deal.json", DEAL_JSON_LUA);
+            write(luaProject, "src/main.deal", OPTIONAL_READ_SOURCE);
+            CompilationOrchestrator orchestrator =
+                compileProject(luaProject, "src/main.deal", "out");
+            check(orchestrator.semanticEmissionCount() == 1
+                    && orchestrator.retainedEmissionCount() == 0,
+                "the optional-read LuaJIT module emits one semantic/zero retained "
+                    + "artifact: semantic=" + orchestrator.semanticEmissionCount()
+                    + " retained=" + orchestrator.retainedEmissionCount());
+            RoutePlanResult plan = orchestrator.routePlan();
+            check(plan != null && !plan.hasErrors() && plan.plan() != null
+                    && plan.plan().entries().values().stream()
+                        .allMatch(route -> route == ModuleRoute.SHARED),
+                "the post-promotion plan routes the optional-read module SHARED");
+            ProcessOutcome run = runProcess(luaProject.resolve("out"),
+                List.of("luajit", "main.lua"));
+            check(run.exitCode() == 0 && run.output().isEmpty(),
+                "the shared LuaJIT optional-read artifact runs clean (the "
+                    + "OPTIONAL_READ envelope executes): exit=" + run.exitCode()
+                    + " output=" + run.output().replace("\n", "\\n"));
+        } finally {
+            deleteRecursively(luaProject);
+        }
+
+        // JVM: the same production compile routes SHARED; the artifact
+        // compiles under javac --release 25 -proc:none and runs under java.
+        Path jvmProject = Files.createTempDirectory("deal-e10-optional-jvm-");
+        try {
+            write(jvmProject, "deal.json", DEAL_JSON_JVM);
+            write(jvmProject, "src/main.deal", OPTIONAL_READ_SOURCE);
+            CompilationOrchestrator orchestrator =
+                compileProject(jvmProject, "src/main.deal", "out");
+            check(orchestrator.semanticEmissionCount() == 1
+                    && orchestrator.retainedEmissionCount() == 0,
+                "the optional-read JVM module emits one semantic/zero retained "
+                    + "artifact: semantic=" + orchestrator.semanticEmissionCount()
+                    + " retained=" + orchestrator.retainedEmissionCount());
+            Path out = jvmProject.resolve("out");
+            String buildCp = Path.of("build").toAbsolutePath().normalize().toString();
+            ProcessOutcome javac = runProcess(jvmProject, List.of(
+                "javac", "--release", "25", "-proc:none", "-cp", buildCp,
+                "-d", out.toString(), out.resolve("Main.java").toString()));
+            check(javac.exitCode() == 0,
+                "the shared JVM optional-read artifact compiles: "
+                    + javac.output().replace("\n", "\\n"));
+            if (javac.exitCode() == 0) {
+                ProcessOutcome run = runProcess(out, List.of(
+                    "java", "-cp", buildCp + File.pathSeparator + out, "Main"));
+                check(run.exitCode() == 0 && run.output().isEmpty(),
+                    "the shared JVM optional-read artifact runs clean (the "
+                        + "OPTIONAL_READ envelope executes): exit=" + run.exitCode()
+                        + " output=" + run.output().replace("\n", "\\n"));
+            }
+        } finally {
+            deleteRecursively(jvmProject);
+        }
+    }
+
     private static void testFailurePreservesPriorArtifacts() throws Exception {
         System.out.println("-- Atomic publication: a failing compile preserves the prior set --");
 
@@ -788,6 +892,7 @@ public class SemanticProductionGateTest {
         testRouteSelectionWithoutFallback();
         testAdapterShapeReroutesLegacy();
         testBytesBearingRetainedRoute();
+        testStep1CutoverPromotion();
         testFailurePreservesPriorArtifacts();
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {

@@ -65,21 +65,29 @@ public final class ReleaseConfiguration {
     }
 
     /**
-     * The release-owned E12 promotion list (R3): non-empty, in the
+     * The release-owned promotion list (R3): non-empty, in the
      * parent's capability order, carrying the post-flip minimum content
      * — {@code SIGNED_INT32} promoted for both shared targets
      * ({@code LUAJIT} and {@code JVM}) — plus {@code FOUNDATION_VALUES}
      * for both targets (every module manifest claims
      * {@code FOUNDATION_VALUES}, foundation F3, so the post-flip
      * shared-routing eligibility check of an int-using module requires
-     * both capabilities PROMOTED for the target). The list is the
-     * registry half of E12's one atomic release change.
+     * both capabilities PROMOTED for the target). The step-1 cutover
+     * promotion (ISSUE-0575) extends the E12 list with
+     * {@code CONTAINERS_AND_STRINGS} for both targets, in the pinned
+     * capability order ({@code LUAJIT} before {@code JVM} within the
+     * capability): the bytes guard (planner rule 2b) keeps bytes-bearing
+     * modules on the retained route in every purpose, so the promotion
+     * never flips them SHARED. The list is the registry half of E12's
+     * one atomic release change plus its later promotion units.
      */
     private static final List<ReleasePromotion> ACTIVATION_PROMOTIONS = List.of(
         new ReleasePromotion(SemanticCapability.FOUNDATION_VALUES, Target.LUAJIT),
         new ReleasePromotion(SemanticCapability.FOUNDATION_VALUES, Target.JVM),
         new ReleasePromotion(SemanticCapability.SIGNED_INT32, Target.LUAJIT),
-        new ReleasePromotion(SemanticCapability.SIGNED_INT32, Target.JVM));
+        new ReleasePromotion(SemanticCapability.SIGNED_INT32, Target.JVM),
+        new ReleasePromotion(SemanticCapability.CONTAINERS_AND_STRINGS, Target.LUAJIT),
+        new ReleasePromotion(SemanticCapability.CONTAINERS_AND_STRINGS, Target.JVM));
 
     /**
      * The release registry after E12's activation release action: the
@@ -129,10 +137,12 @@ public final class ReleaseConfiguration {
 
     /**
      * The release capability registry (foundation F7) after E12's
-     * activation: {@link CapabilityRegistry#releaseRegistry()} composed
-     * with the E12 promotion list through {@code withState} —
-     * {@code FOUNDATION_VALUES} and {@code SIGNED_INT32} promoted for
-     * {@code LUAJIT} and {@code JVM}, every other entry {@code SHADOW}.
+     * activation plus the step-1 cutover promotion: {@link
+     * CapabilityRegistry#releaseRegistry()} composed with the E12
+     * promotion list through {@code withState} —
+     * {@code FOUNDATION_VALUES}, {@code SIGNED_INT32}, and
+     * {@code CONTAINERS_AND_STRINGS} promoted for {@code LUAJIT} and
+     * {@code JVM}, every other entry {@code SHADOW}.
      * {@code deal/Main.java}, {@code CompilationOrchestrator}, and the
      * internal harnesses consume exactly this instance for invocation
      * resolution and route planning.

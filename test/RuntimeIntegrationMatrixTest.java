@@ -21,19 +21,37 @@ import deal.semantic.ModuleFact;
 import deal.semantic.RequirementManifestResult;
 import deal.semantic.SemanticLowerer;
 import deal.semantic.SemanticRuntimeModel;
+import deal.semantic.ir.AnchorId;
 import deal.semantic.ir.BinarySelector;
+import deal.semantic.ir.BlockId;
+import deal.semantic.ir.ClosedSelector;
 import deal.semantic.ir.ConstructKind;
+import deal.semantic.ir.ContractSnapshotCanonicalizer;
+import deal.semantic.ir.ExportPlan;
+import deal.semantic.ir.FailurePolicyId;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredModuleUnit;
+import deal.semantic.ir.LoweringContextHash;
 import deal.semantic.ir.ModuleId;
+import deal.semantic.ir.ModuleInitPlan;
 import deal.semantic.ir.OpId;
+import deal.semantic.ir.OpResultType;
+import deal.semantic.ir.OperationContractSnapshot;
 import deal.semantic.ir.ReleaseState;
 import deal.semantic.ir.ResolvedImport;
+import deal.semantic.ir.RuntimeDescriptor;
+import deal.semantic.ir.ScalarValue;
 import deal.semantic.ir.SemanticIdAllocator;
+import deal.semantic.ir.SemanticIrValidator;
 import deal.semantic.ir.SemanticOp;
 import deal.semantic.ir.SemanticOpKind;
 import deal.semantic.ir.SemanticProfile;
+import deal.semantic.ir.SemanticValue;
+import deal.semantic.ir.SourceOrigin;
+import deal.semantic.ir.SourceOriginKind;
+import deal.semantic.ir.SourceSpan;
 import deal.semantic.ir.StructuredBodyTable;
+import deal.semantic.ir.ValueId;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -823,7 +841,147 @@ public class RuntimeIntegrationMatrixTest {
     }
 
     // =========================================================================
-    // 5. Pinned IR facts
+    // 5. The CONTAINERS_AND_STRINGS extras matrix (the step-1 cutover):
+    //    OPTIONAL_READ pre-map seeds and HAS_FIELD presence units
+    // =========================================================================
+
+    static void testContainerExtrasMatrix() {
+        System.out.println("-- Container extras matrix: OPTIONAL_READ present/missing/"
+            + "present-null/wrong-kind, HAS_FIELD presence --");
+
+        // (a) Present: the missing-capable read of a present key lowers
+        // to MEMBER_READ(INTERNAL_MISSING) + OPTIONAL_READ + the
+        // CONTEXTUAL_TABLE_READ boundary child, and the present value
+        // passes the optional-read validation unchanged.
+        {
+            String source = CONSOLE
+                + "function main(): null {\n"
+                + "  let t: table = { a: 1 };\n"
+                + "  let x: int | null = t.a;\n"
+                + "  if (x === null) { console.log(\"bad\") } "
+                + "else { console.log(\"present\") }\n"
+                + "}\n";
+            runMatrix(source, "OPTIONAL_READ present key (value passes)",
+                List.of("present"), SUCCESS);
+        }
+
+        // (b) Missing: an absent key pre-maps to language null before
+        // the boundary validates — never the E8001 missing projection.
+        {
+            String source = CONSOLE
+                + "function main(): null {\n"
+                + "  let t: table = { a: 1 };\n"
+                + "  let y: int | null = t.b;\n"
+                + "  if (y === null) { console.log(\"nil\") } "
+                + "else { console.log(\"bad\") }\n"
+                + "}\n";
+            runMatrix(source, "OPTIONAL_READ missing key (missing → null before "
+                + "validation)", List.of("nil"), SUCCESS);
+        }
+
+        // (c) Present null stays present null: a stored null passes the
+        // nullable descriptor and never conflates with the internal
+        // missing against the inner descriptor.
+        {
+            String source = CONSOLE
+                + "function main(): null {\n"
+                + "  let t: table = { n: null };\n"
+                + "  let w: int | null = t.n;\n"
+                + "  if (w === null) { console.log(\"nil\") } "
+                + "else { console.log(\"bad\") }\n"
+                + "}\n";
+            runMatrix(source, "OPTIONAL_READ present null (null never conflated "
+                + "with missing)", List.of("nil"), SUCCESS);
+        }
+
+        // (d) A present wrong-kind value fails the optional-read present
+        // branch: the CONTEXTUAL_TABLE_READ child projects the pinned
+        // E8001 at the boundary origin (the differential verdict pins
+        // the event-for-event failure shape on all three consumers).
+        {
+            String source = CONSOLE
+                + "function main(): null {\n"
+                + "  let t: table = { a: \"s\" };\n"
+                + "  let x: int | null = t.a;\n"
+                + "  console.log(\"after\");\n"
+                + "}\n";
+            runMatrix(source, "OPTIONAL_READ present wrong kind (E8001 at the "
+                + "boundary origin)", List.of(), E8001);
+        }
+    }
+
+    static void testHasFieldPresenceMatrix() {
+        System.out.println("-- HAS_FIELD presence matrix: present int / present null / "
+            + "absent keys through the three consumers --");
+
+        ValueId one = nextValue();
+        ValueId nul = nextValue();
+        ValueId table = nextValue();
+        ValueId hasA = nextValue();
+        ValueId hasN = nextValue();
+        ValueId hasM = nextValue();
+        List<SemanticOp> ops = List.of(
+            syntheticOp(SemanticOpKind.CONST,
+                new KindPayload.ConstPayload(new ScalarValue.Int(1)),
+                one, RuntimeDescriptor.Int.INSTANCE),
+            syntheticOp(SemanticOpKind.CONST,
+                new KindPayload.ConstPayload(ScalarValue.Null.INSTANCE),
+                nul, RuntimeDescriptor.Null.INSTANCE),
+            syntheticOp(SemanticOpKind.TABLE_NEW,
+                new KindPayload.TableNewPayload(List.of(
+                    new KindPayload.TableEntry("a", one),
+                    new KindPayload.TableEntry("n", nul))),
+                table, RuntimeDescriptor.Table.INSTANCE),
+            syntheticOp(SemanticOpKind.HAS_FIELD,
+                new KindPayload.HasFieldPayload(table, "a"),
+                hasA, RuntimeDescriptor.Boolean.INSTANCE),
+            syntheticOp(SemanticOpKind.HAS_FIELD,
+                new KindPayload.HasFieldPayload(table, "n"),
+                hasN, RuntimeDescriptor.Boolean.INSTANCE),
+            syntheticOp(SemanticOpKind.HAS_FIELD,
+                new KindPayload.HasFieldPayload(table, "m"),
+                hasM, RuntimeDescriptor.Boolean.INSTANCE));
+        LoweredModuleUnit unit = syntheticUnit(ops);
+        StructuredBodyTable bodyTable = syntheticTable(ops);
+        var validation = SemanticIrValidator.validate(unit,
+            new SemanticIrValidator.ComparisonFacts(INTERFACE_HASH,
+                SemanticProfile.DEAL_V1_2_INT32, REGISTRY_HASH));
+        check(validation.isEmpty(),
+            "the HAS_FIELD presence unit is valid IR: " + validation);
+        SemanticDifferentialHarness.Verdict verdict = SemanticDifferentialHarness.run(
+            unit, bodyTable, new SemanticDifferentialHarness.Expectation(List.of(),
+                SUCCESS, "HAS_FIELD presence (present int, present null, absent)"),
+            WORKSPACE);
+        check(verdict.pass(),
+            "the HAS_FIELD presence unit passes the three-consumer matrix:\n"
+                + verdict.report());
+
+        // The present=false OPTIONAL_READ payload shape (a statically
+        // absent slot): language null, no boundary child — the second
+        // closed payload arm.
+        ValueId absent = nextValue();
+        LoweredModuleUnit absentUnit = syntheticUnit(List.of(
+            syntheticOp(SemanticOpKind.OPTIONAL_READ,
+                new KindPayload.OptionalReadPayload(null, false,
+                    RuntimeDescriptor.Int.INSTANCE),
+                absent, nullableInt())));
+        StructuredBodyTable absentTable = syntheticTable(absentUnit.ops());
+        var absentValidation = SemanticIrValidator.validate(absentUnit,
+            new SemanticIrValidator.ComparisonFacts(INTERFACE_HASH,
+                SemanticProfile.DEAL_V1_2_INT32, REGISTRY_HASH));
+        check(absentValidation.isEmpty(),
+            "the present=false OPTIONAL_READ unit is valid IR: " + absentValidation);
+        SemanticDifferentialHarness.Verdict absentVerdict = SemanticDifferentialHarness.run(
+            absentUnit, absentTable, new SemanticDifferentialHarness.Expectation(List.of(),
+                SUCCESS, "OPTIONAL_READ present=false (statically absent slot → null)"),
+            WORKSPACE);
+        check(absentVerdict.pass(),
+            "the present=false OPTIONAL_READ unit passes the three-consumer "
+                + "matrix:\n" + absentVerdict.report());
+    }
+
+    // =========================================================================
+    // 6. Pinned IR facts
     // =========================================================================
 
     static void testPinnedIrFacts() {
@@ -913,6 +1071,61 @@ public class RuntimeIntegrationMatrixTest {
     }
 
     // =========================================================================
+    // Synthetic unit helpers (the hand-built extras corpus units)
+    // =========================================================================
+
+    private static int nextSyntheticValue = 1;
+
+    private static ValueId nextValue() {
+        return new ValueId(nextSyntheticValue++);
+    }
+
+    private static RuntimeDescriptor nullableInt() {
+        return new RuntimeDescriptor.Nullable(RuntimeDescriptor.Int.INSTANCE);
+    }
+
+    /** One synthetic validated-shape op with a wired contract digest. */
+    private static SemanticOp syntheticOp(SemanticOpKind kind, KindPayload payload,
+                                          SemanticValue result, OpResultType resultType) {
+        AnchorId anchor = new AnchorId(0);
+        SourceOrigin origin = new SourceOrigin("test.deal",
+            SourceSpan.synthetic("test.deal"), SourceOriginKind.SYNTHETIC, anchor, null);
+        ClosedSelector selector = payload instanceof KindPayload.SelectorCarrying carrying
+            ? carrying.selector() : null;
+        OperationContractSnapshot placeholder = new OperationContractSnapshot(
+            OperationContractSnapshot.VERSION, kind, resultType, List.of(), selector,
+            payload, FailurePolicyId.NO_DEAL_FAILURE, List.of(), "placeholder");
+        String digest = ContractSnapshotCanonicalizer.digest(placeholder);
+        OperationContractSnapshot contract = new OperationContractSnapshot(
+            OperationContractSnapshot.VERSION, kind, resultType, List.of(), selector,
+            payload, FailurePolicyId.NO_DEAL_FAILURE, List.of(), digest);
+        return new SemanticOp(new OpId(MODULE, nextSyntheticValue++), kind, origin, result,
+            resultType, List.of(), List.of(), payload, FailurePolicyId.NO_DEAL_FAILURE,
+            contract);
+    }
+
+    /** One synthetic unit over the extras corpus ops. */
+    private static LoweredModuleUnit syntheticUnit(List<SemanticOp> ops) {
+        return new LoweredModuleUnit(LoweredModuleUnit.FORMAT_VERSION,
+            SemanticProfile.DEAL_V1_2_INT32, MODULE, INTERFACE_HASH,
+            LoweringContextHash.of(SemanticProfile.DEAL_V1_2_INT32, REGISTRY_HASH),
+            java.util.Set.of(), Map.of(), Map.of(), Map.of(),
+            new ModuleInitPlan(List.of(), new BlockId(0)), ExportPlan.empty(), Map.of(),
+            ops);
+    }
+
+    /** The single-block membership table of one synthetic unit. */
+    private static StructuredBodyTable syntheticTable(List<SemanticOp> ops) {
+        List<OpId> opIds = new ArrayList<>();
+        Map<OpId, BlockId> opBlocks = new java.util.LinkedHashMap<>();
+        for (SemanticOp op : ops) {
+            opIds.add(op.opId());
+            opBlocks.put(op.opId(), new BlockId(0));
+        }
+        return new StructuredBodyTable(Map.of(new BlockId(0), opIds), opBlocks);
+    }
+
+    // =========================================================================
     // Entry
     // =========================================================================
 
@@ -924,6 +1137,8 @@ public class RuntimeIntegrationMatrixTest {
         testChainFailureMatrix();
         testComparisonMatrix();
         testControlMatrix();
+        testContainerExtrasMatrix();
+        testHasFieldPresenceMatrix();
         testPinnedIrFacts();
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
