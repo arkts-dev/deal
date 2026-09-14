@@ -1167,7 +1167,7 @@ public class LoweringSupportTest {
         // implementation-module manifest (F3).
         try {
             new SemanticRequirementManifest(new ModuleId("m"),
-                EnumSet.of(SemanticCapability.STDLIB_TIME_CONFLICT), Map.of());
+                EnumSet.of(SemanticCapability.STDLIB_TIME_CONFLICT), Map.of(), false);
             fail("a manifest without FOUNDATION_VALUES must be rejected");
         } catch (IllegalArgumentException expected) {
             check(true, "a manifest without FOUNDATION_VALUES is rejected at construction");
@@ -1175,7 +1175,7 @@ public class LoweringSupportTest {
         try {
             new SemanticRequirementManifest(new ModuleId("m"),
                 EnumSet.of(SemanticCapability.FOUNDATION_VALUES),
-                Map.of(ConstructKind.STDLIB_TIME_NOW_MILLIS, List.of()));
+                Map.of(ConstructKind.STDLIB_TIME_NOW_MILLIS, List.of()), false);
             fail("a manifest carrying the excluded row must be rejected");
         } catch (IllegalArgumentException expected) {
             check(true, "the excluded std/time.nowMillis row is rejected at construction");
@@ -1186,7 +1186,7 @@ public class LoweringSupportTest {
             new SemanticRequirementManifest(new ModuleId("m"),
                 EnumSet.of(SemanticCapability.FOUNDATION_VALUES),
                 Map.of(ConstructKind.CALL,
-                    List.of(deal.semantic.ir.SemanticOpKind.BINARY)));
+                    List.of(deal.semantic.ir.SemanticOpKind.BINARY)), false);
             fail("a constructCoverage row diverging from T2's mapped op kinds must be "
                 + "rejected");
         } catch (IllegalArgumentException expected) {
@@ -1195,7 +1195,7 @@ public class LoweringSupportTest {
         }
         try {
             new SemanticRequirementManifest(new ModuleId("m"),
-                EnumSet.noneOf(SemanticCapability.class), Map.of());
+                EnumSet.noneOf(SemanticCapability.class), Map.of(), false);
             fail("an empty-capability manifest must be rejected");
         } catch (IllegalArgumentException expected) {
             check(true, "an empty capability set is rejected at construction");
@@ -1698,6 +1698,105 @@ public class LoweringSupportTest {
     }
 
     // =========================================================================
+    // 12. ISSUE-0574 bytes guard: the bytesBearing marker and its
+    //     canonical JSON key (determinism + the unchanged claim arm)
+    // =========================================================================
+
+    static void testBytesBearingMarkerDeterminism() throws Exception {
+        System.out.println("-- ISSUE-0574 bytes guard: bytesBearing is a fixed "
+            + "per-module boolean with a byte-identical canonical JSON key --");
+
+        Path tmp = Files.createTempDirectory("deal-manifest-bytesmarker");
+        try {
+            String bytesSource = """
+                export function test_bytes_length(): null {
+                  let n: int = 3;
+                  let b: bytes = bytes(n);
+                  if (b.length !== 3) {
+                    throw { code: "TEST_FAIL", message: "bytes: length mismatch" };
+                  }
+                  return null;
+                }
+
+                export function main(): null {
+                  return null;
+                }
+                """;
+            RequirementManifestResult first = compileAndCompute(tmp.resolve("first"),
+                Map.of("main.deal", bytesSource), "main.deal");
+            RequirementManifestResult second = compileAndCompute(tmp.resolve("second"),
+                Map.of("main.deal", bytesSource), "main.deal");
+            if (first == null || second == null) {
+                return;
+            }
+            SemanticRequirementManifest bytesManifest = manifestOf(first, "main");
+            check(bytesManifest != null && bytesManifest.bytesBearing(),
+                "the bytes-bearing module's manifest carries bytesBearing=true "
+                    + "(exactly scan.bytesInContainer || scan.bytesValue)");
+            check(bytesManifest != null && bytesManifest.capabilities().contains(
+                    SemanticCapability.CONTAINERS_AND_STRINGS),
+                "the unchanged claim arm still claims CONTAINERS_AND_STRINGS "
+                    + "(the construct-ownership fact): "
+                    + bytesManifest.capabilities());
+            if (bytesManifest == null) {
+                return;
+            }
+            String textA = bytesManifest.canonicalText();
+            String textB = bytesManifest.canonicalText();
+            String textC = bytesManifest.canonicalText();
+            check(textA.equals(textB) && textA.equals(textC),
+                "repeated canonicalText() over the same bytes manifest is "
+                    + "byte-identical");
+            check(countOccurrences(textA, "\"bytesBearing\"") == 1
+                    && textA.contains("\"bytesBearing\":true"),
+                "the canonical JSON carries exactly one bytesBearing key with "
+                    + "the fixed true value: " + textA);
+            check(manifestOf(second, "main").canonicalText().equals(textA),
+                "two builds of the same bytes project serialize the manifest "
+                    + "byte-identically (a fixed per-module boolean, never a "
+                    + "build-dependent value)");
+
+            // Non-bytes control: the same triggers absent -> the fixed
+            // false value, one key, byte-identical across repeats.
+            RequirementManifestResult plain = compileAndCompute(tmp.resolve("plain"),
+                Map.of("main.deal", """
+                    export function main(): null {
+                      return null
+                    }
+                    """), "main.deal");
+            if (plain == null) {
+                return;
+            }
+            SemanticRequirementManifest plainManifest = manifestOf(plain, "main");
+            check(plainManifest != null && !plainManifest.bytesBearing(),
+                "a non-bytes module's manifest carries bytesBearing=false");
+            if (plainManifest == null) {
+                return;
+            }
+            String plainTextA = plainManifest.canonicalText();
+            check(countOccurrences(plainTextA, "\"bytesBearing\"") == 1
+                    && plainTextA.contains("\"bytesBearing\":false"),
+                "the non-bytes canonical JSON carries exactly one bytesBearing "
+                    + "key with the fixed false value: " + plainTextA);
+            check(plainManifest.canonicalText().equals(plainTextA),
+                "the non-bytes manifest's canonical text is byte-identical "
+                    + "across repeated computation");
+        } finally {
+            deleteRecursively(tmp);
+        }
+    }
+
+    private static int countOccurrences(String text, String needle) {
+        int count = 0;
+        int index = 0;
+        while ((index = text.indexOf(needle, index)) >= 0) {
+            count++;
+            index += needle.length();
+        }
+        return count;
+    }
+
+    // =========================================================================
     // Main
     // =========================================================================
 
@@ -1735,6 +1834,7 @@ public class LoweringSupportTest {
         testE10AdapterCreationArm();
         testE10UncalledDeclarationArm();
         testE10StoredFunctionExpressionArm();
+        testBytesBearingMarkerDeterminism();
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {

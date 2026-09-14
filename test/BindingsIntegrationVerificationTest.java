@@ -1135,8 +1135,8 @@ public class BindingsIntegrationVerificationTest {
         FunctionAllocationIdentity externalIdentity = new FunctionAllocationIdentity(1002L);
         String externalHash = "a".repeat(64);
         ModuleRoutePlan sharedPlan = new ModuleRoutePlan(Target.LUAJIT,
-            Map.of(calleeModule, ModuleRoute.SHARED), Set.of(), List.of(), externalHash,
-            "plan-" + externalHash.substring(0, 16));
+            Map.of(calleeModule, ModuleRoute.SHARED), Set.of(), Set.of(), List.of(),
+            externalHash, "plan-" + externalHash.substring(0, 16));
         FunctionBindingRegistry.FunctionValueMaterialization externalMaterialization =
             registry.registerHostOrExternalImport(externalIdentity,
                 new KindPayload.MemberReadPayload(new ValueId(9002L), "g"),
@@ -1170,7 +1170,7 @@ public class BindingsIntegrationVerificationTest {
                 new FunctionBindingRegistry.FunctionValueImportFacts(null, calleeModule,
                     "g", exportDescriptor),
                 new ModuleRoutePlan(Target.LUAJIT, Map.of(calleeModule, ModuleRoute.LEGACY),
-                    Set.of(), List.of(), "b".repeat(64),
+                    Set.of(), Set.of(), List.of(), "b".repeat(64),
                     "plan-" + "b".repeat(16)));
         check(registry.bindings().get(retainedIdentity)
                 instanceof FunctionExecutionBinding.ExternalFunction externalFunction

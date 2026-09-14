@@ -397,7 +397,7 @@ public class FoundationIntegrationTest {
                 forged.add(new SemanticRequirementManifest(MOD_MAIN,
                     EnumSet.of(SemanticCapability.FOUNDATION_VALUES,
                         SemanticCapability.STDLIB_TIME_CONFLICT),
-                    manifest.constructCoverage()));
+                    manifest.constructCoverage(), manifest.bytesBearing()));
             } else {
                 forged.add(manifest);
             }
@@ -576,8 +576,8 @@ public class FoundationIntegrationTest {
         // legacy dependency's ABI edge is dropped while main stays SHARED.
         if (fault == Fault.PLAN) {
             harnessPlan = new ModuleRoutePlan(harnessPlan.target(), harnessPlan.entries(),
-                harnessPlan.shadowModules(), List.of(), harnessPlan.invocationHash(),
-                harnessPlan.planId());
+                harnessPlan.shadowModules(), harnessPlan.bytesExceptions(), List.of(),
+                harnessPlan.invocationHash(), harnessPlan.planId());
         }
 
         // T2/T3: the synthetic unit built from the real index digest and

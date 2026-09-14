@@ -83,6 +83,14 @@ import java.util.Set;
  *       {@code STDLIB_TIME_CONFLICT} (directly detected or propagated by
  *       {@link LoweringSupport}) → {@code LEGACY} in every purpose,
  *       including {@code COMMON_SHADOW} — never a shadow entry.</li>
+ *   <li>Rule 2b (ISSUE-0574 bytes guard, parent S1b): a module whose
+ *       manifest carries the plan-time {@code bytesBearing} marker →
+ *       {@code LEGACY} in every purpose — {@code PUBLIC_BUILD} pre- and
+ *       post-activation, {@code COMMON_SHADOW} even when
+ *       shadow-requested (never a shadow entry), and
+ *       {@code LEGACY_REGRESSION}. Deterministic, plan-time-only,
+ *       never an error; the plan records the bytes-exception reason in
+ *       its {@code bytesExceptions} route-report set.</li>
  *   <li>{@code PUBLIC_BUILD + PRE_ACTIVATION} → every implementation
  *       module {@code LEGACY}; {@code shadowModules} empty. Production
  *       SHARED routing is unreachable by construction in this release
@@ -235,12 +243,22 @@ public final class MigrationPlanner {
 
             Map<ModuleId, ModuleRoute> entries = new LinkedHashMap<>();
             Set<ModuleId> shadowModules = new LinkedHashSet<>();
+            Set<ModuleId> bytesExceptions = new LinkedHashSet<>();
             Map<ModuleId, TargetModuleAbi> abiByModule = new LinkedHashMap<>();
 
             for (CheckedModuleInput module : input.modules()) {
                 SemanticRequirementManifest manifest =
                     manifestByModule.get(module.moduleId());
                 boolean shadowRequested = shadowRequests.contains(module.moduleId());
+                // Rule 2b's route-accounting record (ISSUE-0574): a
+                // bytes-bearing module is a recorded retained-route
+                // bytes exception in every purpose — the plan's
+                // bytesExceptions set is the route report naming the
+                // reason (never an error, never a shadow entry, never a
+                // within-run fallback).
+                if (manifest.bytesBearing()) {
+                    bytesExceptions.add(module.moduleId());
+                }
                 ModuleRoute route = routeOf(invocation, registry, target, manifest,
                     shadowRequested);
                 if (route == ModuleRoute.SHARED
@@ -270,7 +288,8 @@ public final class MigrationPlanner {
                 deriveInvocationHash(invocation, interfaceIndexDigest, target);
             String planId = planIdFor(invocationHash);
             ModuleRoutePlan plan = new ModuleRoutePlan(target, entries, shadowModules,
-                List.copyOf(abiByModule.values()), invocationHash, planId);
+                bytesExceptions, List.copyOf(abiByModule.values()), invocationHash,
+                planId);
             return new RoutePlanResult(plan, List.of());
         } catch (FactDefect defect) {
             return new RoutePlanResult(null, List.of(defect.diagnostic()));
@@ -283,7 +302,8 @@ public final class MigrationPlanner {
 
     /**
      * The closed routing decision for one implementation module: rule 1
-     * (legacy profile), rule 2 ({@code STDLIB_TIME_CONFLICT}), rule 3
+     * (legacy profile), rule 2 ({@code STDLIB_TIME_CONFLICT}), rule 2b
+     * (the bytes-bearing marker, ISSUE-0574), rule 3
      * ({@code PUBLIC_BUILD + PRE_ACTIVATION}), rule 4
      * ({@code PUBLIC_BUILD + V1_2_ACTIVE} promotion gate), rule 5
      * ({@code COMMON_SHADOW} shadow request).
@@ -297,6 +317,14 @@ public final class MigrationPlanner {
         }
         if (manifest.capabilities().contains(SemanticCapability.STDLIB_TIME_CONFLICT)) {
             return ModuleRoute.LEGACY; // rule 2: never shared in any purpose
+        }
+        if (manifest.bytesBearing()) {
+            // Rule 2b (ISSUE-0574): bytes value semantics are
+            // backend-owned (ISSUE-0158) — a bytes-bearing module stays
+            // on the retained route in every purpose, before the purpose
+            // switch so the CONTAINERS_AND_STRINGS promotion never flips
+            // it SHARED. Deterministic, plan-time-only, never an error.
+            return ModuleRoute.LEGACY;
         }
         switch (invocation.purpose()) {
             case PUBLIC_BUILD -> {

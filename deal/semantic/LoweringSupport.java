@@ -445,8 +445,17 @@ public final class LoweringSupport {
             if (scan.bytesInContainer || scan.bytesValue) {
                 capabilities.add(SemanticCapability.CONTAINERS_AND_STRINGS);
             }
+            // The step-1 bytes guard (ISSUE-0574, parent S1b): the
+            // manifest's plan-time bytesBearing marker is set exactly
+            // from the same triggers as the unchanged claim arm above —
+            // the claim stays the construct-ownership fact, the marker
+            // is the routing fact planner rule 2b consumes to keep
+            // bytes-bearing modules on the retained route in every
+            // purpose. A fixed per-module boolean, never a capability,
+            // registry entry, registry hash, or schema member.
+            boolean bytesBearing = scan.bytesInContainer || scan.bytesValue;
             SemanticRequirementManifest manifest = new SemanticRequirementManifest(
-                module.moduleId(), capabilities, scans.get(module.moduleId()).coverage);
+                module.moduleId(), capabilities, scan.coverage, bytesBearing);
             byId.put(module.moduleId(), manifest);
             manifests.add(manifest);
         }

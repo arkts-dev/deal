@@ -9,6 +9,7 @@ import deal.semantic.CompilerInvocation;
 import deal.semantic.CompilerProfileProvider;
 import deal.semantic.ModuleRoute;
 import deal.semantic.ReleaseConfiguration;
+import deal.semantic.RequirementManifestResult;
 import deal.semantic.RoutePlanResult;
 import deal.semantic.ir.ReleaseState;
 
@@ -216,6 +217,17 @@ public class SemanticProductionGateTest {
     private static final String TABLE_MEMBER_READ_SOURCE =
         "export function main(): null {\n  let t: table = { a: 1 }\n"
             + "  let x: int = t.a\n  return null\n}\n";
+
+    private static final String BYTES_SOURCE =
+        "export function test_bytes_length(): null {\n"
+            + "  let n: int = 3;\n"
+            + "  let b: bytes = bytes(n);\n"
+            + "  if (b.length !== 3) {\n"
+            + "    throw { code: \"TEST_FAIL\", message: \"bytes: length mismatch\" };\n"
+            + "  }\n"
+            + "  return null;\n"
+            + "}\n"
+            + "export function main(): null {\n  return null\n}\n";
 
     private static void testAllSharedLuaJit() throws Exception {
         System.out.println("-- All-shared LuaJIT: semantic IR artifact runs (success + E8004) --");
@@ -560,6 +572,109 @@ public class SemanticProductionGateTest {
         }
     }
 
+    private static void testBytesBearingRetainedRoute() throws Exception {
+        System.out.println("-- Rule 2b (ISSUE-0574): bytes-bearing projects stay on "
+            + "the retained route on both targets --");
+
+        // LuaJIT: the production PUBLIC_BUILD + V1_2_ACTIVE compile keeps
+        // the bytes-bearing module on plan-time LEGACY — zero semantic
+        // artifacts, one retained artifact, the recorded bytes exception,
+        // and the retained artifact running exactly as before (no E6005).
+        Path luaProject = Files.createTempDirectory("deal-e10-bytes-lua-");
+        try {
+            write(luaProject, "deal.json", DEAL_JSON_LUA);
+            write(luaProject, "src/main.deal", BYTES_SOURCE);
+            CompilationOrchestrator orchestrator =
+                compileProject(luaProject, "src/main.deal", "out");
+            check(orchestrator.semanticEmissionCount() == 0
+                    && orchestrator.retainedEmissionCount() == 1,
+                "the bytes-bearing LuaJIT module emits zero semantic/one retained "
+                    + "artifact: semantic=" + orchestrator.semanticEmissionCount()
+                    + " retained=" + orchestrator.retainedEmissionCount());
+            RoutePlanResult plan = orchestrator.routePlan();
+            check(plan != null && !plan.hasErrors() && plan.plan() != null
+                    && plan.plan().entries().values().stream()
+                        .allMatch(route -> route == ModuleRoute.LEGACY),
+                "the bytes-bearing LuaJIT plan is all-LEGACY at plan time "
+                    + "(never E6005, never a within-run fallback)");
+            if (plan != null && !plan.hasErrors() && plan.plan() != null) {
+                check(plan.plan().bytesExceptions().size() == 1
+                        && plan.plan().bytesExceptions().stream()
+                            .anyMatch(id -> id.path().equals("main")),
+                    "the route report records the bytes exception for module "
+                        + "main: " + plan.plan().bytesExceptions());
+                check(plan.plan().canonicalText().contains("\"bytesExceptions\""),
+                    "the plan's canonical route report carries the "
+                        + "bytesExceptions key");
+            }
+            check(orchestrator.diagnostics().isEmpty(),
+                "no E6005 (rule 2b is never an error): "
+                    + orchestrator.diagnostics());
+            RequirementManifestResult manifests =
+                orchestrator.requirementManifests();
+            check(manifests != null && !manifests.hasErrors()
+                    && manifests.manifests().stream().anyMatch(manifest ->
+                        manifest.moduleId().path().equals("main")
+                            && manifest.bytesBearing()),
+                "the production manifest marks the bytes-bearing module "
+                    + "(bytesBearing=true)");
+            ProcessOutcome run = runProcess(luaProject.resolve("out"),
+                List.of("luajit", "main.lua"));
+            check(run.exitCode() == 0,
+                "the retained LuaJIT bytes artifact runs as before: exit="
+                    + run.exitCode() + " output="
+                    + run.output().replace("\n", "\\n"));
+        } finally {
+            deleteRecursively(luaProject);
+        }
+
+        // JVM: the same production compile keeps the bytes-bearing module
+        // on the retained route; the retained artifact compiles under
+        // javac --release 25 -proc:none and runs under java as before.
+        Path jvmProject = Files.createTempDirectory("deal-e10-bytes-jvm-");
+        try {
+            write(jvmProject, "deal.json", DEAL_JSON_JVM);
+            write(jvmProject, "src/main.deal", BYTES_SOURCE);
+            CompilationOrchestrator orchestrator =
+                compileProject(jvmProject, "src/main.deal", "out");
+            check(orchestrator.semanticEmissionCount() == 0
+                    && orchestrator.retainedEmissionCount() == 1,
+                "the bytes-bearing JVM module emits zero semantic/one retained "
+                    + "artifact: semantic=" + orchestrator.semanticEmissionCount()
+                    + " retained=" + orchestrator.retainedEmissionCount());
+            RoutePlanResult plan = orchestrator.routePlan();
+            check(plan != null && !plan.hasErrors() && plan.plan() != null
+                    && plan.plan().entries().values().stream()
+                        .allMatch(route -> route == ModuleRoute.LEGACY)
+                    && plan.plan().bytesExceptions().size() == 1
+                    && plan.plan().bytesExceptions().stream()
+                        .anyMatch(id -> id.path().equals("main")),
+                "the bytes-bearing JVM plan is all-LEGACY and records the bytes "
+                    + "exception: " + (plan == null ? "null" : plan.plan()));
+            check(orchestrator.diagnostics().isEmpty(),
+                "no E6005 on the JVM retained route: "
+                    + orchestrator.diagnostics());
+            Path out = jvmProject.resolve("out");
+            String buildCp = Path.of("build").toAbsolutePath().normalize().toString();
+            ProcessOutcome javac = runProcess(jvmProject, List.of(
+                "javac", "--release", "25", "-proc:none", "-cp", buildCp,
+                "-d", out.toString(), out.resolve("Main.java").toString()));
+            check(javac.exitCode() == 0,
+                "the retained JVM bytes artifact compiles: "
+                    + javac.output().replace("\n", "\\n"));
+            if (javac.exitCode() == 0) {
+                ProcessOutcome run = runProcess(out, List.of(
+                    "java", "-cp", buildCp + File.pathSeparator + out, "Main"));
+                check(run.exitCode() == 0 && run.output().isEmpty(),
+                    "the retained JVM bytes artifact runs as before: exit="
+                        + run.exitCode() + " output="
+                        + run.output().replace("\n", "\\n"));
+            }
+        } finally {
+            deleteRecursively(jvmProject);
+        }
+    }
+
     private static void testFailurePreservesPriorArtifacts() throws Exception {
         System.out.println("-- Atomic publication: a failing compile preserves the prior set --");
 
@@ -672,6 +787,7 @@ public class SemanticProductionGateTest {
         testSharedTableMemberReadRuns();
         testRouteSelectionWithoutFallback();
         testAdapterShapeReroutesLegacy();
+        testBytesBearingRetainedRoute();
         testFailurePreservesPriorArtifacts();
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {

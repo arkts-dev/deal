@@ -65,6 +65,15 @@ import java.util.stream.Stream;
  *       {@code STDLIB_TIME_CONFLICT} manifest (direct or propagated)
  *       → LEGACY in every purpose, never in shadowModules, zero
  *       diagnostics.</li>
+ *   <li>Rule 2b (ISSUE-0574 bytes guard): a manifest carrying the
+ *       {@code bytesBearing} marker → LEGACY in every purpose —
+ *       {@code PUBLIC_BUILD} pre- and post-activation (beating rule 4
+ *       even with the claiming capability PROMOTED),
+ *       {@code COMMON_SHADOW} with a shadow request (never a shadow
+ *       entry), and {@code LEGACY_REGRESSION} — with the bytes
+ *       exception recorded in the plan's {@code bytesExceptions}
+ *       route report, zero diagnostics, and a non-bytes module with
+ *       identical claims routing by the unchanged rules 4/5.</li>
  *   <li>Closed split: every fact-defect class raises E6005 through T5
  *       with the prescribed payload (absent export entry, ill-formed
  *       entry, missing constructionEntry, initialization not
@@ -184,10 +193,17 @@ public class MigrationPlannerTest {
 
     private static SemanticRequirementManifest manifestOf(ModuleId id,
                                                           SemanticCapability... extra) {
+        return manifestOf(id, false, extra);
+    }
+
+    /** A non-bytes or bytes-bearing manifest over the closed capability set. */
+    private static SemanticRequirementManifest manifestOf(ModuleId id,
+                                                          boolean bytesBearing,
+                                                          SemanticCapability... extra) {
         EnumSet<SemanticCapability> capabilities =
             EnumSet.of(SemanticCapability.FOUNDATION_VALUES);
         capabilities.addAll(List.of(extra));
-        return new SemanticRequirementManifest(id, capabilities, Map.of());
+        return new SemanticRequirementManifest(id, capabilities, Map.of(), bytesBearing);
     }
 
     private static ResolvedImport implImport(String alias, ModuleId target) {
@@ -474,6 +490,140 @@ public class MigrationPlannerTest {
                     == ModuleRoute.LEGACY,
             "a propagated conflict claim routes LEGACY under PUBLIC_BUILD+V1_2_ACTIVE "
                 + "with zero diagnostics (rule 2 beats rule 4)");
+    }
+
+    static void testBytesBearingNeverShared() {
+        System.out.println("-- Rule 2b (ISSUE-0574): bytes-bearing modules route LEGACY "
+            + "in every purpose and record the bytes-exception reason --");
+
+        // The bytes population shape: lib is bytes-bearing (marker true,
+        // claiming CONTAINERS_AND_STRINGS exactly like the LoweringSupport
+        // arm), main carries identical claims but no bytes (marker false).
+        Project base = new Project(publicPreActivation(),
+            List.of(exportOf("f", "() => int")), List.of());
+
+        // (a) PUBLIC_BUILD + PRE_ACTIVATION: rule 2b records the bytes
+        // exception; the non-bytes sibling routes LEGACY via rule 3 and
+        // is not recorded.
+        {
+            List<SemanticRequirementManifest> bytesManifests = List.of(
+                manifestOf(base.libId, true, SemanticCapability.CONTAINERS_AND_STRINGS),
+                manifestOf(base.mainId, false, SemanticCapability.CONTAINERS_AND_STRINGS));
+            RoutePlanResult result = MigrationPlanner.planRoutes(base.invocation,
+                CapabilityRegistry.releaseRegistry(), base.input, base.index,
+                bytesManifests, Target.LUAJIT, Set.of());
+            assertAllLegacy(result, List.of(base.libId, base.mainId),
+                "PUBLIC_BUILD+PRE_ACTIVATION bytes project");
+            if (result != null && !result.hasErrors()) {
+                check(result.plan().bytesExceptions().equals(Set.of(base.libId)),
+                    "the plan records exactly the bytes-bearing module as the "
+                        + "bytes exception (route accounting): "
+                        + result.plan().bytesExceptions());
+            }
+        }
+
+        // (b) PUBLIC_BUILD + V1_2_ACTIVE with CONTAINERS_AND_STRINGS and
+        // FOUNDATION_VALUES PROMOTED for the target: rule 2b beats rule 4 —
+        // the bytes-bearing module stays LEGACY (never SHARED, never an
+        // error) while the non-bytes module with identical claims routes
+        // SHARED exactly by the unchanged rule 4/allPromoted gate.
+        {
+            CapabilityRegistry promoted = CapabilityRegistry.releaseRegistry()
+                .withState(SemanticCapability.FOUNDATION_VALUES, Target.LUAJIT,
+                    CapabilityRegistry.State.PROMOTED)
+                .withState(SemanticCapability.CONTAINERS_AND_STRINGS, Target.LUAJIT,
+                    CapabilityRegistry.State.PROMOTED);
+            CompilerInvocation active = CompilerProfileProvider.resolve(
+                ReleaseState.V1_2_ACTIVE, promoted);
+            Project activeProject = new Project(active,
+                List.of(exportOf("f", "() => int")), List.of());
+            List<SemanticRequirementManifest> bytesManifests = List.of(
+                manifestOf(activeProject.libId, true,
+                    SemanticCapability.CONTAINERS_AND_STRINGS),
+                manifestOf(activeProject.mainId, false,
+                    SemanticCapability.CONTAINERS_AND_STRINGS));
+            RoutePlanResult result = MigrationPlanner.planRoutes(active, promoted,
+                activeProject.input, activeProject.index, bytesManifests,
+                Target.LUAJIT, Set.of());
+            check(result != null && !result.hasErrors() && result.plan() != null
+                    && result.diagnostics().isEmpty(),
+                "the post-activation bytes project plans with zero diagnostics "
+                    + "(rule 2b is never an error): "
+                    + (result == null ? "null" : result.diagnostics()));
+            if (result == null || result.hasErrors()) {
+                return;
+            }
+            check(result.plan().entries().get(activeProject.libId) == ModuleRoute.LEGACY,
+                "the bytes-bearing module routes LEGACY under V1_2_ACTIVE even "
+                    + "with CONTAINERS_AND_STRINGS PROMOTED (rule 2b beats rule 4, "
+                    + "the promotion never flips it)");
+            check(result.plan().entries().get(activeProject.mainId) == ModuleRoute.SHARED,
+                "the non-bytes module with identical claims routes SHARED by the "
+                    + "unchanged rule 4 (allPromoted): "
+                    + result.plan().entries().get(activeProject.mainId));
+            check(result.plan().bytesExceptions().equals(Set.of(activeProject.libId)),
+                "the route report records exactly the bytes exception: "
+                    + result.plan().bytesExceptions());
+            check(result.plan().shadowModules().isEmpty(),
+                "no shadow entries exist under PUBLIC_BUILD");
+            check(result.plan().canonicalText().contains("\"bytesExceptions\""),
+                "the plan's canonical route report carries the bytesExceptions key");
+        }
+
+        // (c) COMMON_SHADOW with a shadow request for both modules: the
+        // bytes-bearing module stays LEGACY — never a shadow entry — and
+        // the non-bytes module keeps its shadow SHARED entry (rule 5
+        // unchanged).
+        {
+            Project shadow = new Project(commonShadow(),
+                List.of(exportOf("f", "() => int")), List.of());
+            List<SemanticRequirementManifest> bytesManifests = List.of(
+                manifestOf(shadow.libId, true, SemanticCapability.CONTAINERS_AND_STRINGS),
+                manifestOf(shadow.mainId, false, SemanticCapability.CONTAINERS_AND_STRINGS));
+            RoutePlanResult result = MigrationPlanner.planRoutes(shadow.invocation,
+                CapabilityRegistry.releaseRegistry(), shadow.input, shadow.index,
+                bytesManifests, Target.LUAJIT,
+                Set.of(shadow.libId, shadow.mainId));
+            check(result != null && !result.hasErrors() && result.plan() != null,
+                "COMMON_SHADOW planning succeeds with zero diagnostics: "
+                    + (result == null ? "null" : result.diagnostics()));
+            if (result == null || result.hasErrors()) {
+                return;
+            }
+            check(result.plan().entries().get(shadow.libId) == ModuleRoute.LEGACY
+                    && !result.plan().shadowModules().contains(shadow.libId),
+                "a shadow request for the bytes-bearing module still routes LEGACY "
+                    + "and never produces a shadow entry (rule 2b beats rule 5)");
+            check(result.plan().entries().get(shadow.mainId) == ModuleRoute.SHARED
+                    && result.plan().shadowModules().equals(Set.of(shadow.mainId)),
+                "the non-bytes module's shadow request keeps its shadow SHARED "
+                    + "entry (rule 5 unchanged)");
+            check(result.plan().bytesExceptions().equals(Set.of(shadow.libId)),
+                "the shadow plan records exactly the bytes exception: "
+                    + result.plan().bytesExceptions());
+        }
+
+        // (d) LEGACY_REGRESSION: all LEGACY (rule 1), the bytes exception
+        // still recorded in the route report.
+        {
+            Project regression = new Project(legacyRegression(),
+                List.of(exportOf("f", "() => int")), List.of());
+            List<SemanticRequirementManifest> bytesManifests = List.of(
+                manifestOf(regression.libId, true,
+                    SemanticCapability.CONTAINERS_AND_STRINGS),
+                manifestOf(regression.mainId, false,
+                    SemanticCapability.CONTAINERS_AND_STRINGS));
+            RoutePlanResult result = MigrationPlanner.planRoutes(regression.invocation,
+                CapabilityRegistry.releaseRegistry(), regression.input,
+                regression.index, bytesManifests, Target.JVM, Set.of());
+            assertAllLegacy(result, List.of(regression.libId, regression.mainId),
+                "LEGACY_REGRESSION bytes project");
+            if (result != null && !result.hasErrors()) {
+                check(result.plan().bytesExceptions().equals(Set.of(regression.libId)),
+                    "the regression plan records exactly the bytes exception: "
+                        + result.plan().bytesExceptions());
+            }
+        }
     }
 
     // =========================================================================
@@ -938,7 +1088,7 @@ public class MigrationPlannerTest {
         System.out.println("-- Record guards: ModuleRoutePlan / TargetModuleAbi / results --");
 
         try {
-            new ModuleRoutePlan(Target.LUAJIT, Map.of(), Set.of(), List.of(),
+            new ModuleRoutePlan(Target.LUAJIT, Map.of(), Set.of(), Set.of(), List.of(),
                 "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
                 "plan-other");
             fail("a planId not derived from the invocationHash must be rejected");
@@ -946,7 +1096,7 @@ public class MigrationPlannerTest {
             check(true, "a mismatched planId is rejected at construction");
         }
         try {
-            new ModuleRoutePlan(Target.LUAJIT, Map.of(), Set.of(), List.of(),
+            new ModuleRoutePlan(Target.LUAJIT, Map.of(), Set.of(), Set.of(), List.of(),
                 "not-hex", "plan-not-hex");
             fail("a non-hex invocationHash must be rejected");
         } catch (IllegalArgumentException expected) {
@@ -955,7 +1105,7 @@ public class MigrationPlannerTest {
         ModuleId mainId = new ModuleId("main");
         try {
             new ModuleRoutePlan(Target.LUAJIT, Map.of(mainId, ModuleRoute.LEGACY),
-                Set.of(mainId), List.of(),
+                Set.of(mainId), Set.of(), List.of(),
                 "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
                 "plan-0123456789abcd");
             fail("a shadow module routed LEGACY must be rejected");
@@ -963,12 +1113,31 @@ public class MigrationPlannerTest {
             check(true, "shadowModules ⊆ SHARED entries is enforced at construction");
         }
         try {
-            new ModuleRoutePlan(Target.LUAJIT, Map.of(), Set.of(mainId), List.of(),
+            new ModuleRoutePlan(Target.LUAJIT, Map.of(), Set.of(mainId), Set.of(),
+                List.of(),
                 "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
                 "plan-0123456789abcd");
             fail("a shadow module without an entry must be rejected");
         } catch (IllegalArgumentException expected) {
             check(true, "a shadow module without an entry is rejected at construction");
+        }
+        try {
+            new ModuleRoutePlan(Target.LUAJIT, Map.of(mainId, ModuleRoute.SHARED),
+                Set.of(), Set.of(mainId), List.of(),
+                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                "plan-0123456789abcd");
+            fail("a bytes exception routed SHARED must be rejected");
+        } catch (IllegalArgumentException expected) {
+            check(true, "bytesExceptions ⊆ LEGACY entries is enforced at construction");
+        }
+        try {
+            new ModuleRoutePlan(Target.LUAJIT, Map.of(), Set.of(), Set.of(mainId),
+                List.of(),
+                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                "plan-0123456789abcd");
+            fail("a bytes exception without an entry must be rejected");
+        } catch (IllegalArgumentException expected) {
+            check(true, "a bytes exception without an entry is rejected at construction");
         }
 
         try {
@@ -1262,6 +1431,7 @@ public class MigrationPlannerTest {
         testCommonShadowRequestedModules();
         testCommonShadowUnrequestedStaysLegacy();
         testTimeConflictNeverShared();
+        testBytesBearingNeverShared();
         testE6005IndexContradictions();
         testE6005AbsentExportEntry();
         testE6005IllFormedExportEntry();

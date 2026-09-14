@@ -259,11 +259,11 @@ public class FunctionBindingRegistryTest {
         return matches.size() == 1 ? matches.get(0) : null;
     }
 
-    /** A fixed ModuleRoutePlan with the given entries (empty shadow set, no ABI edges). */
+    /** A fixed ModuleRoutePlan with the given entries (empty shadow set, no bytes exceptions, no ABI edges). */
     private static ModuleRoutePlan plan(Map<ModuleId, ModuleRoute> entries) {
         String hash = "0".repeat(64);
-        return new ModuleRoutePlan(Target.LUAJIT, entries, Set.of(), List.of(), hash,
-            "plan-" + hash.substring(0, 16));
+        return new ModuleRoutePlan(Target.LUAJIT, entries, Set.of(), Set.of(), List.of(),
+            hash, "plan-" + hash.substring(0, 16));
     }
 
     // =========================================================================

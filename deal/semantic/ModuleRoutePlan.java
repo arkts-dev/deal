@@ -22,6 +22,7 @@ import java.util.Set;
  *   target: LUAJIT|JVM,
  *   entries: Map<ModuleId, LEGACY|SHARED>,   // implementation modules only, dependency order
  *   shadowModules: Set<ModuleId>,            // COMMON_SHADOW shadow SHARED entries
+ *   bytesExceptions: Set<ModuleId>,          // rule 2b (ISSUE-0574): bytes-bearing LEGACY entries
  *   abiEdges: [TargetModuleAbi],             // one plan-time record per legacy dependency of a shared module
  *   invocationHash, planId
  * }
@@ -31,10 +32,14 @@ import java.util.Set;
  * declaration modules appear in the interface index, never as route
  * entries. {@code shadowModules} is the subset of {@code SHARED} entries
  * recorded as shadow SHARED entries under {@code COMMON_SHADOW}; shadow
- * entries never drive production publication. {@code abiEdges} carries
- * one plan-time {@link TargetModuleAbi} per legacy dependency of a
- * shared module in dependency order (first reference order), with the
- * planner-owned fields only (foundation F5).</p>
+ * entries never drive production publication. {@code bytesExceptions}
+ * is the rule-2b route-report record (ISSUE-0574): the subset of
+ * {@code LEGACY} entries whose manifest carries the bytes-bearing
+ * marker — the plan's recorded bytes-exception reason, in dependency
+ * order, never an error and never a shadow entry. {@code abiEdges}
+ * carries one plan-time {@link TargetModuleAbi} per legacy dependency
+ * of a shared module in dependency order (first reference order), with
+ * the planner-owned fields only (foundation F5).</p>
  *
  * <p><b>Hashes.</b> {@code invocationHash} is the pinned
  * {@code SHA-256(canonical JSON {purpose, semanticProfile, releaseState,
@@ -45,21 +50,25 @@ import java.util.Set;
  * exists only in on-disk tree names — never in this plan record, any
  * record, or any hash (F4/F6). The record is immutable, and the compact
  * constructor enforces the {@code planId} derivation, the hex shape of
- * {@code invocationHash}, and the {@code shadowModules} ⊆ SHARED-entries
- * invariant.</p>
+ * {@code invocationHash}, the {@code shadowModules} ⊆ SHARED-entries
+ * invariant, and the {@code bytesExceptions} ⊆ LEGACY-entries invariant
+ * (a bytes-bearing module is never shared — rule 2b).</p>
  *
- * @param target         the plan target; non-null
- * @param entries        every implementation module routed, in dependency
- *                       order; non-null
- * @param shadowModules  the shadow SHARED entries; non-null
- * @param abiEdges       the plan-time ABI records in dependency order; non-null
- * @param invocationHash the pinned invocation hash; non-null
- * @param planId         the derived {@code plan-} prefixed id; non-null
+ * @param target          the plan target; non-null
+ * @param entries         every implementation module routed, in dependency
+ *                        order; non-null
+ * @param shadowModules   the shadow SHARED entries; non-null
+ * @param bytesExceptions the rule-2b bytes-exception LEGACY entries;
+ *                        non-null
+ * @param abiEdges        the plan-time ABI records in dependency order; non-null
+ * @param invocationHash  the pinned invocation hash; non-null
+ * @param planId          the derived {@code plan-} prefixed id; non-null
  */
 public record ModuleRoutePlan(
     Target target,
     Map<ModuleId, ModuleRoute> entries,
     Set<ModuleId> shadowModules,
+    Set<ModuleId> bytesExceptions,
     List<TargetModuleAbi> abiEdges,
     String invocationHash,
     String planId
@@ -71,6 +80,9 @@ public record ModuleRoutePlan(
         entries = Collections.unmodifiableMap(new LinkedHashMap<>(entries));
         Objects.requireNonNull(shadowModules, "shadowModules must not be null");
         shadowModules = Collections.unmodifiableSet(new LinkedHashSet<>(shadowModules));
+        Objects.requireNonNull(bytesExceptions, "bytesExceptions must not be null");
+        bytesExceptions =
+            Collections.unmodifiableSet(new LinkedHashSet<>(bytesExceptions));
         abiEdges = List.copyOf(abiEdges);
         Objects.requireNonNull(invocationHash, "invocationHash must not be null");
         if (!invocationHash.matches("[0-9a-f]{64}")) {
@@ -97,6 +109,20 @@ public record ModuleRoutePlan(
                         + "module '" + shadow + "' is routed " + entries.get(shadow));
             }
         }
+        for (ModuleId bytesException : bytesExceptions) {
+            if (!entries.containsKey(bytesException)) {
+                throw new IllegalArgumentException(
+                    "bytesExceptions covers route entries only; module '"
+                        + bytesException + "' has no entry");
+            }
+            if (entries.get(bytesException) != ModuleRoute.LEGACY) {
+                throw new IllegalArgumentException(
+                    "a bytes exception is a LEGACY entry (rule 2b keeps a "
+                        + "bytes-bearing module on the retained route in every "
+                        + "purpose); module '" + bytesException + "' is routed "
+                        + entries.get(bytesException));
+            }
+        }
     }
 
     /**
@@ -119,12 +145,18 @@ public record ModuleRoutePlan(
         for (ModuleId shadow : shadowModules) {
             shadowValues.add(ContractSnapshotCanonicalizer.semanticIdJson(shadow));
         }
+        List<CanonicalJson.Value> bytesExceptionValues = new ArrayList<>();
+        for (ModuleId bytesException : bytesExceptions) {
+            bytesExceptionValues.add(
+                ContractSnapshotCanonicalizer.semanticIdJson(bytesException));
+        }
         List<CanonicalJson.Value> abiValues = new ArrayList<>();
         for (TargetModuleAbi abi : abiEdges) {
             abiValues.add(abi.toCanonicalJson());
         }
         return CanonicalJson.obj(
             CanonicalJson.e("abiEdges", CanonicalJson.arr(abiValues)),
+            CanonicalJson.e("bytesExceptions", CanonicalJson.arr(bytesExceptionValues)),
             CanonicalJson.e("entries", CanonicalJson.arr(entryValues)),
             CanonicalJson.e("invocationHash", CanonicalJson.str(invocationHash)),
             CanonicalJson.e("planId", CanonicalJson.str(planId)),
