@@ -779,6 +779,122 @@ public class SemanticProductionGateTest {
         }
     }
 
+    private static void testStep1RegistryDigestRecomputation() {
+        System.out.println("-- Step-1 registry digest: recomputed over its own entries; "
+            + "differs from the pre-step-1 (E12) release digest --");
+
+        // The pre-step-1 release registry: the committed E12 promotion list
+        // (FOUNDATION_VALUES and SIGNED_INT32 for both targets) composed
+        // from the all-SHADOW release default through the single withState
+        // transition surface — the exact prior release state the step-1
+        // promotion extends.
+        CapabilityRegistry preStep1 = CapabilityRegistry.releaseRegistry()
+            .withState(deal.semantic.ir.SemanticCapability.FOUNDATION_VALUES,
+                deal.semantic.Target.LUAJIT, CapabilityRegistry.State.PROMOTED)
+            .withState(deal.semantic.ir.SemanticCapability.FOUNDATION_VALUES,
+                deal.semantic.Target.JVM, CapabilityRegistry.State.PROMOTED)
+            .withState(deal.semantic.ir.SemanticCapability.SIGNED_INT32,
+                deal.semantic.Target.LUAJIT, CapabilityRegistry.State.PROMOTED)
+            .withState(deal.semantic.ir.SemanticCapability.SIGNED_INT32,
+                deal.semantic.Target.JVM, CapabilityRegistry.State.PROMOTED);
+        String preStep1Hash = preStep1.capabilityRegistryHash();
+        check(preStep1.state(
+                deal.semantic.ir.SemanticCapability.CONTAINERS_AND_STRINGS,
+                deal.semantic.Target.LUAJIT) == CapabilityRegistry.State.SHADOW
+                && preStep1.state(
+                    deal.semantic.ir.SemanticCapability.CONTAINERS_AND_STRINGS,
+                    deal.semantic.Target.JVM) == CapabilityRegistry.State.SHADOW,
+            "the pre-step-1 registry keeps CONTAINERS_AND_STRINGS SHADOW for "
+                + "both targets");
+
+        CapabilityRegistry step1 = ReleaseConfiguration.releaseCapabilityRegistry();
+        String step1Hash = step1.capabilityRegistryHash();
+
+        // The promotion is a real registry transition: the digest over the
+        // promoted entries recomputes and differs from the prior release
+        // digest.
+        check(!step1Hash.equals(preStep1Hash),
+            "the step-1 release digest differs from the pre-step-1 (E12) "
+                + "release digest: " + preStep1Hash + " -> " + step1Hash);
+
+        // The step-1 digest is the canonical recomputation over the
+        // registry's own entries — never a hand-rolled constant.
+        check(step1Hash.equals(deal.semantic.ir.CanonicalJson.sha256Hex(
+                deal.semantic.ir.CanonicalJson.serializeBytes(step1.canonicalJson()))),
+            "the step-1 digest equals the canonical SHA-256 recomputation over "
+                + "the registry's own canonical JSON");
+
+        // The transition changes exactly the two step-1 entries: the
+        // registries differ in exactly two entries, both
+        // CONTAINERS_AND_STRINGS carrying PROMOTED; every other entry is
+        // byte-identical.
+        List<CapabilityRegistry.Entry> preEntries = preStep1.entries();
+        List<CapabilityRegistry.Entry> stepEntries = step1.entries();
+        check(preEntries.size() == stepEntries.size()
+                && stepEntries.size() == CapabilityRegistry.ENTRY_COUNT,
+            "both registries keep the closed " + CapabilityRegistry.ENTRY_COUNT
+                + "-entry cross product");
+        int differing = 0;
+        for (int i = 0; i < preEntries.size() && i < stepEntries.size(); i++) {
+            CapabilityRegistry.Entry pre = preEntries.get(i);
+            CapabilityRegistry.Entry step = stepEntries.get(i);
+            if (pre.capability() != step.capability()
+                    || pre.target() != step.target()
+                    || pre.state() != step.state()) {
+                differing++;
+            }
+        }
+        check(differing == 2
+                && step1.state(
+                    deal.semantic.ir.SemanticCapability.CONTAINERS_AND_STRINGS,
+                    deal.semantic.Target.LUAJIT) == CapabilityRegistry.State.PROMOTED
+                && step1.state(
+                    deal.semantic.ir.SemanticCapability.CONTAINERS_AND_STRINGS,
+                    deal.semantic.Target.JVM) == CapabilityRegistry.State.PROMOTED,
+            "the step-1 registry differs from the pre-step-1 registry in exactly "
+                + "the two CONTAINERS_AND_STRINGS x LUAJIT/JVM entries, both "
+                + "carrying PROMOTED (differing=" + differing + ")");
+
+        // The E12 pairs stay PROMOTED and every other capability stays
+        // SHADOW: the step-1 promotion flips nothing else.
+        boolean promotedExactly = true;
+        boolean shadowExactly = true;
+        for (CapabilityRegistry.Entry entry : step1.entries()) {
+            boolean step1Capability = entry.capability()
+                    == deal.semantic.ir.SemanticCapability.CONTAINERS_AND_STRINGS
+                || entry.capability()
+                    == deal.semantic.ir.SemanticCapability.FOUNDATION_VALUES
+                || entry.capability()
+                    == deal.semantic.ir.SemanticCapability.SIGNED_INT32;
+            if (step1Capability) {
+                promotedExactly &= entry.state() == CapabilityRegistry.State.PROMOTED;
+            } else {
+                shadowExactly &= entry.state() == CapabilityRegistry.State.SHADOW;
+            }
+        }
+        check(promotedExactly && shadowExactly,
+            "the step-1 registry promotes exactly FOUNDATION_VALUES, SIGNED_INT32, "
+                + "and CONTAINERS_AND_STRINGS for both targets; every other "
+                + "capability stays SHADOW");
+
+        // Anti-hollow: re-deriving the release promotion list through the
+        // withState surface reproduces the committed release digest — the
+        // release registry is exactly the composed list, never a
+        // hand-written digest constant.
+        CapabilityRegistry recomposed = CapabilityRegistry.releaseRegistry();
+        for (ReleaseConfiguration.ReleasePromotion promotion
+                : ReleaseConfiguration.activationPromotions()) {
+            recomposed = recomposed.withState(promotion.capability(),
+                promotion.target(), CapabilityRegistry.State.PROMOTED);
+        }
+        check(recomposed.capabilityRegistryHash().equals(step1Hash),
+            "re-deriving the release promotion list through withState reproduces "
+                + "the committed release registry digest");
+        check(!recomposed.capabilityRegistryHash().equals(preStep1Hash),
+            "the recomposed step-1 digest still differs from the pre-step-1 "
+                + "digest (the prior release digest is left behind)");
+    }
+
     private static void testFailurePreservesPriorArtifacts() throws Exception {
         System.out.println("-- Atomic publication: a failing compile preserves the prior set --");
 
@@ -893,6 +1009,7 @@ public class SemanticProductionGateTest {
         testAdapterShapeReroutesLegacy();
         testBytesBearingRetainedRoute();
         testStep1CutoverPromotion();
+        testStep1RegistryDigestRecomputation();
         testFailurePreservesPriorArtifacts();
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
