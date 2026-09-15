@@ -1,11 +1,14 @@
 package deal.codegen.lua;
 
 import deal.semantic.ir.AdaptSourceRef;
+import deal.semantic.ir.AsyncTokenId;
+import deal.semantic.ir.AsyncTokenOwner;
 import deal.semantic.ir.BindingCellKind;
 import deal.semantic.ir.BindingId;
 import deal.semantic.ir.BlockId;
 import deal.semantic.ir.BoundaryKind;
 import deal.semantic.ir.ChainOperandCompletion;
+import deal.semantic.ir.ExternalAsyncLink;
 import deal.semantic.ir.FailurePolicyId;
 import deal.semantic.ir.FunctionAllocationIdentity;
 import deal.semantic.ir.FunctionExecutionBinding;
@@ -16,6 +19,7 @@ import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredFunction;
 import deal.semantic.ir.LoweredModuleUnit;
 import deal.semantic.ir.OpId;
+import deal.semantic.ir.ParameterBoundaryMode;
 import deal.semantic.ir.RuntimeDescriptor;
 import deal.semantic.ir.ScalarValue;
 import deal.semantic.ir.SemanticOp;
@@ -173,6 +177,19 @@ public final class LuaSemanticEmitter {
             ownedChildren.addAll(structuralOwned);
             ChainOperandCompletion.registerChainOperandOwners(unit, structuralOwned,
                 ownedChildren);
+            // The nested source ASYNC_START of an adapter-over-async task
+            // executes under its outer op's arm, never at its flat
+            // block-list position (the oracle's UnitState rule).
+            for (SemanticOp op : unit.ops()) {
+                if (op.kind() == SemanticOpKind.ASYNC_START) {
+                    for (SemanticOp candidate : unit.ops()) {
+                        if (candidate.kind() == SemanticOpKind.ASYNC_START
+                                && op.opId().equals(candidate.origin().parentOpId())) {
+                            ownedChildren.add(candidate.opId());
+                        }
+                    }
+                }
+            }
             if (!entryModule) {
                 // A non-entry module never runs its ENTRY_INVOKE delegation
                 // (the retained emitter invokes main() only from the entry
@@ -349,9 +366,17 @@ public final class LuaSemanticEmitter {
         String emit() {
             out.append("-- deal.semantic-ir/1 shared LuaJIT artifact (ISSUE-0410 "
                 + "decomposition tail)\n");
-            // Upvalue pre-declarations the prelude functions reference.
-            out.append("local __frames, __seq, __module, __allocIds, __allocNext = {}, "
-                + "0, nil, {}, 1\n");
+            // The shared run state (frames, sequence, allocation ids, the
+            // async task registry and FIFO queue) is chunk-global: a
+            // multi-module drive runs several artifacts in one process,
+            // and the execution state is one — exactly the oracle's one
+            // execution per run. __module stays chunk-local (every chunk
+            // names its own module in its events).
+            out.append("__frames = __frames or {}\n");
+            out.append("__seq = __seq or 0\n");
+            out.append("local __module\n");
+            out.append("__allocIds = __allocIds or {}\n");
+            out.append("__allocNext = __allocNext or 1\n");
             out.append(PRELUDE);
             if (!trace) {
                 // Production: the event helpers are no-ops.
@@ -373,6 +398,23 @@ public final class LuaSemanticEmitter {
             out.append("__callbacks = {}\n");
             out.append("__callbacks.__hostAtom = __hostAtom\n");
             out.append("__callbacks.__errtext = __errtext\n");
+            // The async host seam defaults: the scenario host adapter
+            // overrides both entries before any drive; an async host
+            // operation without the override is a producer defect, never
+            // a silent projection.
+            out.append("__callbacks.__hostStartAsync = function(label, ...)\n");
+            out.append("  error(\"an async host start has no deterministic host seam "
+                + "(the scenario host drives it)\", 0)\n");
+            out.append("end\n");
+            out.append("__callbacks.__hostCompleteAsync = function(label)\n");
+            out.append("  error(\"an async host completion has no deterministic host "
+                + "seam (the scenario host drives it)\", 0)\n");
+            out.append("end\n");
+            // The host-driven async-entry dispatch table (async
+            // EXTERNAL_ENTRY records): one entry per recorded async
+            // export keyed by module#export; shared across chunks in a
+            // multi-module drive (never wiped by a later chunk).
+            out.append("__asyncEntries = __asyncEntries or {}\n");
             out.append("\n__module = ").append(luaString(unit.moduleId().path()))
                 .append("\n");
             // One env table carries every slot and cell (LuaJIT's upvalue
@@ -416,16 +458,23 @@ public final class LuaSemanticEmitter {
 
             // The module-init block (ends with the entry delegation) inside a
             // pcall wrapper so uncaught DEAL failures publish R|failure.
-            // The conformance artifact skips the module-init walk under the
-            // callback-only drive flag (the scenario host executes exactly
-            // the callback dispatch entries — the semantic oracle's
-            // invokeCallback surface never runs the module-init block).
-            if (trace) {
-                out.append("if os.getenv(\"DEAL_CALLBACK_ONLY\") ~= \"1\" then\n");
-            }
-            out.append("local __mainOk, __mainErr = pcall(function()\n");
+            // The walk is exposed as the deferred-main entry (the scenario
+            // host drives it explicitly under the defer flag — module
+            // initialization before an async-entry invocation, or the entry
+            // module's walk in a multi-module drive); the conformance
+            // artifact skips the walk under the callback-only drive flag
+            // (the semantic oracle's invokeCallback surface never runs the
+            // module-init block).
+            out.append("__dealMain = function()\n");
+            out.append("  local __mainOk, __mainErr = pcall(function()\n");
             emitBlockOps(unit.moduleInit().initBlock());
-            out.append("end)\n");
+            out.append("  end)\n");
+            out.append("  if __mainOk then return true, nil end\n");
+            out.append("  return false, __mainErr\n");
+            out.append("end\n");
+            out.append("if os.getenv(\"DEAL_DEFER_MAIN\") ~= \"1\" and "
+                + "os.getenv(\"DEAL_CALLBACK_ONLY\") ~= \"1\" then\n");
+            out.append("local __mainOk, __mainErr = __dealMain()\n");
             if (trace) {
                 out.append("if __mainOk then\n");
                 out.append("  io.stderr:write(\"R|success|null\\n\")\n");
@@ -433,7 +482,6 @@ public final class LuaSemanticEmitter {
                 out.append("  io.stderr:write(\"R|failure|\"..__errtext(__mainErr)..\"\\n\")\n");
                 out.append("end\n");
                 out.append("io.stderr:flush()\n");
-                out.append("end\n");
             } else {
                 // Production terminal: a DEAL failure publishes the
                 // retained DEAL_ERROR_CODE line on stdout and exits 1; a
@@ -447,6 +495,7 @@ public final class LuaSemanticEmitter {
                 out.append("  os.exit(1)\n");
                 out.append("end\n");
             }
+            out.append("end\n");
 
             // The host-driven callback dispatch entries (CALLBACK_INVOKE):
             // one per-unit entry per recorded invocation, defined after the
@@ -455,6 +504,21 @@ public final class LuaSemanticEmitter {
             for (SemanticOp op : unit.ops()) {
                 if (op.kind() == SemanticOpKind.CALLBACK_INVOKE) {
                     emitCallbackInvoke(op);
+                }
+            }
+
+            // The host-driven async-entry dispatch entries (async
+            // EXTERNAL_ENTRY): one per-unit entry per recorded async
+            // export, keyed by module#export — the scenario host adapter's
+            // invocation surface (the E6 dispatch-entry pattern). The
+            // entry creates the callee's canonical task; the drive flag
+            // makes the top-level scenario invocation drain it and return
+            // the completion, while a cross-module caller passes the drive
+            // flag false (its AWAIT drains).
+            for (SemanticOp op : unit.ops()) {
+                if (op.kind() == SemanticOpKind.EXTERNAL_ENTRY
+                        && ((KindPayload.ExternalEntryPayload) op.payload()).async()) {
+                    emitAsyncEntry(op);
                 }
             }
             if (!trace) {
@@ -603,6 +667,8 @@ public final class LuaSemanticEmitter {
                 case RECURSIVE_GROUP_INIT -> emitRecursiveGroupInit(op);
                 case FUNCTION_ADAPT -> emitFunctionAdapt(op);
                 case CALLBACK_INVOKE -> emitCallbackInvoke(op);
+                case ASYNC_START -> emitAsyncStart(op);
+                case AWAIT -> emitAwait(op);
                 case ASSIGN -> emitAssign(op);
                 case DELETE -> emitDelete(op);
                 case CALL -> emitCall(op);
@@ -2382,6 +2448,351 @@ public final class LuaSemanticEmitter {
             out.append("end\n");
         }
 
+        // -- async (E4, D13) ----------------------------------------------------------
+
+        /** The canonical referent token identity (alias chains resolve transitively). */
+        private long canonicalReferent(AsyncTokenId token) {
+            AsyncTokenId current = token;
+            while (current instanceof AsyncTokenId.Alias alias) {
+                current = alias.referent();
+            }
+            return current.tokenId();
+        }
+
+        /** The canonical referent's closed owner (statically resolved). */
+        private AsyncTokenOwner canonicalOwnerOf(AsyncTokenId token) {
+            AsyncTokenId current = token;
+            while (current instanceof AsyncTokenId.Alias alias) {
+                current = alias.referent();
+            }
+            return ((AsyncTokenId.Canonical) current).owner();
+        }
+
+        /** The canonical token atom of an ASYNC_START/EXTERNAL_ENTRY SUCCESS. */
+        private String tokenAtom(AsyncTokenId token) {
+            return switch (token) {
+                case AsyncTokenId.Canonical canonical -> "tok:" + canonical.tokenId()
+                    + ":" + canonical.owner().name();
+                case AsyncTokenId.Alias alias -> "alias:" + alias.tokenId() + "->"
+                    + canonicalReferent(alias.referent());
+            };
+        }
+
+        /** SUCCESS with a raw output atom expression (token atoms). */
+        private void emitTokenSuccess(SemanticOp op, String atomExpr) {
+            out.append("__ev(").append(luaString(opKey(op.opId())))
+                .append(", \"SUCCESS\", ").append(luaString(op.kind().name()))
+                .append(", ").append(luaString(op.contract().canonicalDigest()))
+                .append(", ").append(luaString(parentKey(op.origin().parentOpId())))
+                .append(", {}, ").append(atomExpr).append(", nil)\n");
+        }
+
+        /** A boundary START event with a raw input atom expression. */
+        private void emitBoundaryStartAtom(SemanticOp boundary, String atomExpr) {
+            out.append("__ev(").append(luaString(opKey(boundary.opId())))
+                .append(", \"START\", \"BOUNDARY\", ")
+                .append(luaString(boundary.contract().canonicalDigest())).append(", ")
+                .append(luaString(parentKey(boundary.origin().parentOpId())))
+                .append(", {").append(atomExpr).append("}, nil, nil)\n");
+        }
+
+        /** The nested source ASYNC_START parented to an adapter-over-async op. */
+        private SemanticOp nestedAsyncStartOf(SemanticOp outer) {
+            for (SemanticOp candidate : opsById.values()) {
+                if (candidate.kind() == SemanticOpKind.ASYNC_START
+                        && outer.opId().equals(candidate.origin().parentOpId())) {
+                    return candidate;
+                }
+            }
+            throw new IllegalStateException("the adapter-over-async task has no nested "
+                + "source ASYNC_START (producer defect)");
+        }
+
+        /**
+         * ASYNC_START (E4, D13 task creation): the parameter boundaries
+         * (the complete xN set under RUN — zero under
+         * ELIDED_BY_ADAPTER), then exactly one task record per call. A
+         * DEAL body task is a coroutine wrapping the body-task closure
+         * (the canonical {@code AsyncTokenId} is the task record); an
+         * adapter-over-async task resolves the D15 source, checks the
+         * source signature, and executes the nested source op; a host
+         * operation starts through the artifact's host-seam dispatch
+         * entry (bad handle → the op's own E8010
+         * {@code ASYNC_OPERATION_HANDLE}); an external operation starts
+         * through the callee artifact's async-entry dispatch entry. The
+         * op's terminal publishes the canonical/alias token atom.
+         */
+        private void emitAsyncStart(SemanticOp op) {
+            KindPayload.AsyncStartPayload payload =
+                (KindPayload.AsyncStartPayload) op.payload();
+            AsyncTokenId token = (AsyncTokenId) op.result();
+            emitStart(op);
+            // The argument carrier: the boundary-checked values (RUN) or
+            // the raw operand values (ELIDED_BY_ADAPTER) — a fresh table
+            // per execution, captured by the task record.
+            if (payload.parameterBoundaryMode() == ParameterBoundaryMode.RUN) {
+                out.append("S.__sa").append(op.opId().id()).append(" = {}\n");
+                for (OpId boundaryId : payload.parameterBoundaryOpIds()) {
+                    SemanticOp boundary = opsById.get(boundaryId);
+                    KindPayload.BoundaryPayload boundaryPayload =
+                        (KindPayload.BoundaryPayload) boundary.payload();
+                    emitBoundaryStart(boundary, slot(boundaryPayload.input()),
+                        boundaryPayload.descriptor());
+                    out.append("__chk = __bcheck(")
+                        .append(luaString(descriptorText(boundaryPayload.descriptor())))
+                        .append(", ")
+                        .append(luaString(staticKind(boundaryPayload.descriptor())))
+                        .append(", ").append(slot(boundaryPayload.input()))
+                        .append(")\n");
+                    emitBoundarySuccess(boundary, "__chk", boundaryPayload.descriptor());
+                    out.append("S.__sa").append(op.opId().id())
+                        .append("[#S.__sa").append(op.opId().id())
+                        .append(" + 1] = __chk\n");
+                }
+            } else {
+                out.append("S.__sa").append(op.opId().id()).append(" = {");
+                for (int i = 0; i < op.operands().size(); i++) {
+                    if (i > 0) {
+                        out.append(", ");
+                    }
+                    out.append(slot(op.operands().get(i)));
+                }
+                out.append("}\n");
+            }
+            FunctionExecutionBinding binding = switch (payload.callee()) {
+                case KindPayload.CallCallee.Static staticCallee -> staticCallee.binding();
+                default -> throw new IllegalStateException("ASYNC_START " + op.opId()
+                    + " resolves a callee outside the statically-resolved slice: "
+                    + payload.callee());
+            };
+            switch (binding) {
+                case FunctionExecutionBinding.LoweredBody body -> {
+                    LoweredFunction function = unit.functions().get(body.functionId());
+                    List<BindingId> captures = function == null
+                        ? List.of() : function.captures();
+                    StringBuilder caps = new StringBuilder();
+                    for (BindingId captureId : captures) {
+                        if (caps.length() > 0) {
+                            caps.append(", ");
+                        }
+                        caps.append(cell(captureId, 0));
+                    }
+                    out.append("__asyncStartTask(").append(token.tokenId())
+                        .append(", \"DEAL_BODY_TASK\", coroutine.create(function()\n");
+                    out.append("  table.insert(__frames, 1, ")
+                        .append(luaString(String.valueOf(body.functionId().id())))
+                        .append(")\n");
+                    out.append("  local __okA, __resA = pcall(")
+                        .append(fnFactory(body.functionId())).append("(").append(caps)
+                        .append("), unpack(S.__sa").append(op.opId().id())
+                        .append(", 1, #S.__sa").append(op.opId().id()).append("))\n");
+                    out.append("  table.remove(__frames, 1)\n");
+                    out.append("  if not __okA then error(__resA, 0) end\n");
+                    out.append("  return __resA\n");
+                    out.append("end), S.__sa").append(op.opId().id()).append(")\n");
+                }
+                case FunctionExecutionBinding.AdapterBinding adapter -> {
+                    // The outer adapter-over-async task (zero return
+                    // boundaries of its own): the D15 source resolution
+                    // and source-signature check, then the nested source
+                    // op's full emission (its task queues under the FIFO
+                    // drain — the outer task completes after it).
+                    SemanticOp nested = nestedAsyncStartOf(op);
+                    out.append("__asyncStartTask(").append(token.tokenId())
+                        .append(", \"DEAL_BODY_TASK\", coroutine.create(function()\n");
+                    out.append("  local __srcA = __adaptSource(")
+                        .append(slot((ValueId) opsById.get(adapter.adaptOpId()).result()))
+                        .append(")\n");
+                    out.append("  __fncheck(__srcA, ")
+                        .append(luaString(adapter.sourceSignature().canonicalSpecText()))
+                        .append(", ").append(luaString(originOf(op))).append(")\n");
+                    emitAsyncStart(nested);
+                    out.append("  return nil\n");
+                    out.append("end), S.__sa").append(op.opId().id()).append(")\n");
+                }
+                case FunctionExecutionBinding.HostFunction host ->
+                    emitAsyncHostStart(op, token, host.hostModuleId().path(),
+                        host.exportName());
+                case FunctionExecutionBinding.HostFunctionValue hostValue ->
+                    emitAsyncHostStart(op, token, hostValue.hostModuleId().path(),
+                        "@value");
+                case FunctionExecutionBinding.ExternalFunction external ->
+                    emitAsyncExternalStart(op, token, payload.externalAsyncLink());
+            }
+            emitTokenSuccess(op, luaString(tokenAtom(token)));
+        }
+
+        /** The ASYNC_START(HOST) terminal: the seam start + the bad-handle check. */
+        private void emitAsyncHostStart(SemanticOp op, AsyncTokenId token,
+                                        String module, String export) {
+            KindPayload.AsyncStartPayload payload =
+                (KindPayload.AsyncStartPayload) op.payload();
+            String label = payload.hostOperationLabel();
+            if (trace) {
+                out.append("io.stderr:write(\"F|ASYNC_START_OP|\"..__esc(")
+                    .append(luaString(label)).append(")..\"\\n\")\n");
+                out.append("io.stderr:flush()\n");
+            }
+            out.append("local __handleH = __callbacks.__hostStartAsync(")
+                .append(luaString(label)).append(", ")
+                .append(luaString(module)).append(", ")
+                .append(luaString(export)).append(", unpack(S.__sa")
+                .append(op.opId().id()).append(", 1, #S.__sa")
+                .append(op.opId().id()).append("))\n");
+            out.append("if __handleH == nil then\n");
+            out.append("  local __eH = __failExpr(\"E8010\", "
+                + "\"async operation mismatch: expected async-operation, got nothing\", ")
+                .append(luaString(originOf(op)))
+                .append(", \"async-operation\", \"nothing\")\n");
+            emitFailureEvent(op.opId(), op.kind().name(), op, "__errtext(__eH)");
+            out.append("  error(__eH, 0)\n");
+            out.append("end\n");
+            out.append("__asyncStartHost(").append(token.tokenId()).append(", ")
+                .append(luaString(label)).append(")\n");
+        }
+
+        /** The ASYNC_START(EXTERNAL) terminal: the callee artifact's async-entry dispatch. */
+        private void emitAsyncExternalStart(SemanticOp op, AsyncTokenId token,
+                                            ExternalAsyncLink link) {
+            if (link == null) {
+                throw new IllegalStateException("ASYNC_START(EXTERNAL) without "
+                    + "its ExternalAsyncLink (producer defect)");
+            }
+            out.append("__asyncEntries[")
+                .append(luaString(link.calleeModuleId().path() + "#"
+                    + link.exportName())).append("](")
+                .append(luaString(opKey(op.opId()))).append(", false, unpack(S.__sa")
+                .append(op.opId().id()).append(", 1, #S.__sa")
+                .append(op.opId().id()).append("))\n");
+        }
+
+        /**
+         * AWAIT — the completion position (D13 step 6): the deterministic
+         * FIFO drain first, then the canonical referent's completion. A
+         * pending host operation completes through the host seam (the
+         * ordered ASYNC_COMPLETE_* effects); a failed operation publishes
+         * the identical error — never a re-check or a synthesized copy —
+         * and a completed value crosses the single {@code ASYNC_COMPLETION}
+         * boundary at the await site.
+         */
+        private void emitAwait(SemanticOp op) {
+            KindPayload.AwaitPayload payload = (KindPayload.AwaitPayload) op.payload();
+            long canonicalId = canonicalReferent(payload.token());
+            SemanticOp boundary = opsById.get(payload.completionBoundaryOpId());
+            KindPayload.BoundaryPayload boundaryPayload =
+                (KindPayload.BoundaryPayload) boundary.payload();
+            emitStart(op);
+            out.append("__asyncDrain()\n");
+            out.append("local __tA = __tasks[").append(canonicalId).append("]\n");
+            out.append("if __tA == nil then\n");
+            out.append("  error(\"AWAIT consumes an unbound token ")
+                .append(payload.token()).append(" (producer defect)\", 0)\n");
+            out.append("end\n");
+            out.append("if __tA.status == 2 then\n");
+            out.append("  local __oA = __callbacks.__hostCompleteAsync(__tA.label)\n");
+            out.append("  if __oA.ok then\n");
+            if (trace) {
+                out.append("    io.stderr:write(\"F|ASYNC_COMPLETE_RETURN|\""
+                    + "..__esc(__tA.label..\"=\"..__hostAtom(__oA.v))..\"\\n\")\n");
+                out.append("    io.stderr:flush()\n");
+            }
+            out.append("    __tA.value = __oA.v\n");
+            out.append("  else\n");
+            if (trace) {
+                out.append("    io.stderr:write(\"F|ASYNC_COMPLETE_THROW|\""
+                    + "..__esc(__tA.label..\"!\"..__oA.code)..\"\\n\")\n");
+                out.append("    io.stderr:flush()\n");
+            }
+            out.append("    __tA.err = {__d = true, code = __oA.code, m = __oA.m, o = ")
+                .append(luaString(originOf(op)))
+                .append(", e = nil, a = nil, f = __framesText(), cause = nil}\n");
+            out.append("  end\n");
+            out.append("  __tA.status = 1\n");
+            out.append("end\n");
+            out.append("if __tA.err ~= nil then\n");
+            emitFailureEvent(op.opId(), op.kind().name(), op, "__errtext(__tA.err)");
+            out.append("  error(__tA.err, 0)\n");
+            out.append("end\n");
+            // The single ASYNC_COMPLETION boundary at the await site: a
+            // host-scripted completion atomizes by its runtime carrier; a
+            // DEAL body value atomizes by the declared descriptor.
+            if (canonicalOwnerOf(payload.token()) == AsyncTokenOwner.HOST_OPERATION) {
+                emitBoundaryStartAtom(boundary, "__hostAtom(__tA.value)");
+            } else {
+                emitBoundaryStart(boundary, "__tA.value", boundaryPayload.descriptor());
+            }
+            out.append("__chk = __bcheck(")
+                .append(luaString(descriptorText(boundaryPayload.descriptor())))
+                .append(", ")
+                .append(luaString(staticKind(boundaryPayload.descriptor())))
+                .append(", __tA.value)\n");
+            emitBoundarySuccess(boundary, "__chk", boundaryPayload.descriptor());
+            out.append(slot((ValueId) op.result())).append(" = __chk\n");
+            emitResultSuccess(op, slot((ValueId) op.result()),
+                (RuntimeDescriptor) op.resultType());
+        }
+
+        /**
+         * The async EXTERNAL_ENTRY dispatch entry (the E6 dispatch-entry
+         * pattern): the scenario host adapter invokes it top-level with
+         * scripted arguments (drive flag on — the entry drains and
+         * returns the completion), and a cross-module caller invokes it
+         * with the drive flag off (its AWAIT drains). The entry emits the
+         * callee record's START/SUCCESS under the passed parent key and
+         * creates exactly one canonical task wrapping the entry function's
+         * body-task closure.
+         */
+        private void emitAsyncEntry(SemanticOp op) {
+            KindPayload.ExternalEntryPayload payload =
+                (KindPayload.ExternalEntryPayload) op.payload();
+            LoweredFunction function = unit.functions().get(payload.function());
+            List<BindingId> captures = function == null
+                ? List.of() : function.captures();
+            StringBuilder caps = new StringBuilder();
+            for (BindingId captureId : captures) {
+                if (caps.length() > 0) {
+                    caps.append(", ");
+                }
+                caps.append(cell(captureId, 0));
+            }
+            out.append("__asyncEntries[")
+                .append(luaString(unit.moduleId().path() + "#" + payload.exportName()))
+                .append("] = function(__parentKey, __drive, ...)\n");
+            out.append("  local __eargs = {...}\n");
+            if (trace) {
+                out.append("  __ev(").append(luaString(opKey(op.opId())))
+                    .append(", \"START\", ").append(luaString(op.kind().name()))
+                    .append(", ").append(luaString(op.contract().canonicalDigest()))
+                    .append(", __parentKey, {}, nil, nil)\n");
+            }
+            out.append("  __asyncStartTask(").append(op.opId().id())
+                .append(", \"DEAL_BODY_TASK\", coroutine.create(function()\n");
+            out.append("    table.insert(__frames, 1, ")
+                .append(luaString(String.valueOf(payload.function().id())))
+                .append(")\n");
+            out.append("    local __okA, __resA = pcall(")
+                .append(fnFactory(payload.function())).append("(").append(caps)
+                .append("), unpack(__eargs, 1, #__eargs))\n");
+            out.append("    table.remove(__frames, 1)\n");
+            out.append("    if not __okA then error(__resA, 0) end\n");
+            out.append("    return __resA\n");
+            out.append("  end), __eargs)\n");
+            if (trace) {
+                out.append("  __ev(").append(luaString(opKey(op.opId())))
+                    .append(", \"SUCCESS\", ").append(luaString(op.kind().name()))
+                    .append(", ").append(luaString(op.contract().canonicalDigest()))
+                    .append(", __parentKey, {}, \"tok:").append(op.opId().id())
+                    .append(":DEAL_BODY_TASK\", nil)\n");
+            }
+            out.append("  if __drive then\n");
+            out.append("    __asyncDrain()\n");
+            out.append("    local __tE = __tasks[").append(op.opId().id()).append("]\n");
+            out.append("    if __tE.err ~= nil then error(__tE.err, 0) end\n");
+            out.append("    return __tE.value\n");
+            out.append("  end\n");
+            out.append("end\n");
+        }
+
         /**
          * ENTRY_INVOKE — delegates exactly one CALL(DIRECT) to main
          * (its owned child) and exits after the terminal.
@@ -2920,6 +3331,13 @@ local function __fncheck(v, expected, origin)
   return error(__failExpr("E8010", "function signature mismatch: expected "..expected
     ..", got "..carried, origin, expected, carried), 0)
 end
+-- The adapter's source resolution per the closed capture mode
+-- (D15 creation half): 0 VALUE, 1 SHARED_CELL, 2 REEVALUATE_THUNK.
+local function __adaptSource(w)
+  if w.__mode == 0 then return w.__value
+  elseif w.__mode == 1 then return w.__cell[1]
+  else return w.__thunk() end
+end
 -- The D15 adapter invocation protocol: resolve the source per the
 -- closed capture mode (0 VALUE, 1 SHARED_CELL, 2 REEVALUATE_THUNK),
 -- the source-signature check, then the source invocation with the
@@ -2928,10 +3346,7 @@ end
 -- identical completion error propagates unchanged.
 local function __adaptInvoke(w, origin, ...)
   local __cargs = {...}
-  local src
-  if w.__mode == 0 then src = w.__value
-  elseif w.__mode == 1 then src = w.__cell[1]
-  else src = w.__thunk() end
+  local src = __adaptSource(w)
   __fncheck(src, w.__csrc, origin)
   local __fid = nil
   if type(src) == "table" then __fid = src.__fid end
@@ -2945,6 +3360,56 @@ local function __adaptInvoke(w, origin, ...)
   if __pushed then table.remove(__frames, 1) end
   if not __okA then error(__vA, 0) end
   return __vA
+end
+-- ==== the D13 async machine (ASYNC_START/AWAIT) ====
+-- The canonical-token task registry and the deterministic FIFO queue —
+-- chunk-global (one execution state across a multi-module drive).
+__tasks = __tasks or {}
+__ready = __ready or {}
+-- One DEAL body task record: the coroutine wrapping the body-task
+-- closure (the canonical AsyncTokenId is the task record).
+local function __asyncStartTask(tokenId, owner, co, args)
+  __tasks[tokenId] = {token = tokenId, owner = owner, co = co, args = args,
+                      status = 0, value = nil, err = nil, label = nil}
+  table.insert(__ready, tokenId)
+  return tokenId
+end
+-- One async host operation record: its completion arrives through the
+-- host seam at the awaiting site (never through the body drain).
+local function __asyncStartHost(tokenId, label)
+  __tasks[tokenId] = {token = tokenId, owner = "HOST_OPERATION", co = nil,
+                      args = nil, status = 2, value = nil, err = nil,
+                      label = label}
+  table.insert(__ready, tokenId)
+  return tokenId
+end
+-- The deterministic FIFO drain (the oracle's drainReadyTasks): every
+-- pending body task resumes to completion in submission order (a task
+-- body's nested starts re-evaluate the queue length — the while form
+-- drains them too). A DEAL failure completes the task record; an
+-- infrastructure failure is never reified. Host operations complete
+-- only at their own AWAIT through the seam.
+local function __asyncDrain()
+  local i = 1
+  while i <= #__ready do
+    local id = __ready[i]
+    local t = __tasks[id]
+    if t ~= nil and t.status == 0 then
+      t.status = 1
+      local ok, v = coroutine.resume(t.co, unpack(t.args, 1, #t.args))
+      if not ok then
+        if type(v) == "table" and v.__d then
+          t.err = v
+        else
+          error(v, 0)
+        end
+      else
+        t.value = v
+      end
+    end
+    i = i + 1
+  end
+  __ready = {}
 end
 """;
 }

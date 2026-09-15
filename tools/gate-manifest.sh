@@ -78,6 +78,16 @@ TEST_SOURCES=(
   # fail-closed negatives, the emitOp arm pins, and the production-mode
   # realization on both targets (sequencing step 6 first half).
   'test/CallAdapterCallbackIntegrationTest.java'
+  # ISSUE-0583 registration: the CALLS family's ASYNC_START/AWAIT
+  # differential corpus — the DEAL body task (LuaJIT coroutine / JVM
+  # serial-executor future), the adapter-over-async shape with its
+  # ELIDED_BY_ADAPTER nested source, the scripted async host
+  # shape/completion (value, bad handle, thrown), cross-module async
+  # (alias-token completion through the callee entry), the FIFO
+  # two-task drain pinned by ordered side effects, the validator and
+  # fail-closed negatives, the emitOp arm pins, and the production-mode
+  # realization on both targets (sequencing step 6 second half).
+  'test/AsyncStartAwaitIntegrationTest.java'
   'test/UnicodeScalarsTest.java'
   'test/FailureContractRegistryTest.java'
   'test/CanonicalJsonTest.java'
@@ -392,6 +402,9 @@ TEST_MAINS=(
   # ISSUE-0582 registration: the CALLS family's FUNCTION_ADAPT/
   # CALLBACK_INVOKE differential corpus (sequencing step 6 first half).
   'fg|=== Running the Call Adapter / Callback Integration Matrix (ISSUE-0582: semantic oracle + shared LuaJIT + shared JVM) ===|java -ea -cp build deal.test.CallAdapterCallbackIntegrationTest'
+  # ISSUE-0583 registration: the CALLS family's ASYNC_START/AWAIT
+  # differential corpus (sequencing step 6 second half).
+  'fg|=== Running the Async Start / Await Integration Matrix (ISSUE-0583: semantic oracle + shared LuaJIT + shared JVM) ===|java -ea -cp build deal.test.AsyncStartAwaitIntegrationTest'
   'fg|=== Running Unicode Scalars Tests (ISSUE-0382, ISSUE-0232 D5) ===|java -ea -cp build deal.test.UnicodeScalarsTest'
   'fg|=== Running Failure Contract Registry Tests (ISSUE-0285) ===|java -ea -cp build deal.test.FailureContractRegistryTest'
   'fg|=== Running Canonical JSON / Snapshot Digest Tests (ISSUE-0283) ===|java -ea -cp build deal.test.CanonicalJsonTest'

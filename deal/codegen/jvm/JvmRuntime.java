@@ -5,11 +5,19 @@ import deal.semantic.ir.ActualKind;
 
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 /**
  * The shared JVM runtime helper of the decomposition-tail integration
@@ -608,14 +616,7 @@ public final class JvmRuntime {
      * completion error propagates unchanged.
      */
     public static Object invokeAdapter(AdapterValue adapter, String origin, Object[] args) {
-        Object source;
-        if (adapter.mode == 0) {
-            source = adapter.value;
-        } else if (adapter.mode == 1) {
-            source = adapter.cell[0];
-        } else {
-            source = adapter.thunk.invoke(new Object[0]);
-        }
+        Object source = adapterSource(adapter);
         fnCheck(source, adapter.sourceSpec, origin);
         Object[] leading = new Object[adapter.arity];
         System.arraycopy(args, 0, leading, 0, adapter.arity);
@@ -659,6 +660,255 @@ public final class JvmRuntime {
             return "str:" + esc(string);
         }
         return "ref:" + allocId(v);
+    }
+
+    // =========================================================================
+    // The D13 async machine (ASYNC_START / AWAIT)
+    // =========================================================================
+
+    /**
+     * One async task record per canonical token identity: the token's
+     * {@link CompletableFuture}, the body supplier for DEAL body tasks
+     * (null for host operations), and the host operation label for host
+     * operations (null for body tasks).
+     */
+    public static final class AsyncTask {
+        public final long tokenId;
+        public final String owner;
+        public final CompletableFuture<Object> future;
+        public final java.util.function.Supplier<Object> body;
+        public final String hostLabel;
+
+        AsyncTask(long tokenId, String owner, CompletableFuture<Object> future,
+                  java.util.function.Supplier<Object> body, String hostLabel) {
+            this.tokenId = tokenId;
+            this.owner = owner;
+            this.future = future;
+            this.body = body;
+            this.hostLabel = hostLabel;
+        }
+    }
+
+    /** The run-local pending task queue (deterministic FIFO). */
+    static final ArrayDeque<AsyncTask> PENDING = new ArrayDeque<>();
+
+    /** The canonical-token task registry (one task per token identity). */
+    static final Map<Long, AsyncTask> TASKS = new HashMap<>();
+
+    /**
+     * The run-local single-thread serial executor (E4): every DEAL body
+     * task's future completes on this thread — never the JDK common pool
+     * (FIFO determinism is pinned).
+     */
+    private static final ExecutorService SERIAL_EXECUTOR =
+        Executors.newSingleThreadExecutor(runnable -> {
+            Thread thread = new Thread(() -> {
+                serialThread = Thread.currentThread();
+                runnable.run();
+            }, "deal-shared-async-serial");
+            thread.setDaemon(true);
+            return thread;
+        });
+
+    /** The serial executor's thread (set when it first runs). */
+    private static volatile Thread serialThread;
+
+    /**
+     * The deterministic host seam of the async machine (E6/E7): the
+     * scenario host adapter scripts every async host terminal — an async
+     * host start (the bound operation label, or {@code null} for a bad
+     * handle) and an async host completion (the returned value or the
+     * thrown host error). Without a seam an async host operation is a
+     * producer defect, never a silent projection.
+     */
+    public interface HostAsync {
+
+        /** One async host completion terminal. */
+        record HostCompletion(Object value, String thrownCode, String thrownMessage) {
+
+            public HostCompletion {
+                if ((value == null) == (thrownCode == null)) {
+                    throw new IllegalArgumentException("exactly one of value/thrownCode "
+                        + "must be present in an async host completion");
+                }
+            }
+        }
+
+        /**
+         * One async host start: returns the operation label the returned
+         * handle binds to, or {@code null} for a bad handle (the
+         * {@code ASYNC_OPERATION_HANDLE} terminal check fails).
+         *
+         * @param module the owning host module; non-null
+         * @param export the host export name; non-null
+         * @param label  the deterministic operation label; non-null
+         * @param args   the boundary-checked argument values; non-null
+         * @return the bound label, or {@code null} for a bad handle
+         */
+        String startAsync(String module, String export, String label, Object[] args);
+
+        /**
+         * One async host completion of the operation label.
+         *
+         * @param label the operation label; non-null
+         * @return the completion terminal
+         */
+        HostCompletion completeAsync(String label);
+    }
+
+    /** The scenario host adapter's scripted seam (null outside host drives). */
+    public static volatile HostAsync HOST_ASYNC;
+
+    /** Registers one DEAL body task: its future completes on the serial executor at drain. */
+    public static void startBodyTask(long tokenId, String owner,
+                                     java.util.function.Supplier<Object> body) {
+        AsyncTask task = new AsyncTask(tokenId, owner, new CompletableFuture<>(), body, null);
+        TASKS.put(tokenId, task);
+        PENDING.add(task);
+    }
+
+    /** Registers one async host operation: its future completes through the host seam. */
+    public static void startHostTask(long tokenId, String label) {
+        AsyncTask task = new AsyncTask(tokenId, "HOST_OPERATION",
+            new CompletableFuture<>(), null, label);
+        TASKS.put(tokenId, task);
+        PENDING.add(task);
+    }
+
+    /**
+     * The deterministic FIFO drain (the oracle's {@code drainReadyTasks}):
+     * every pending DEAL body task completes on the run-local single
+     * thread serial executor in submission order. A body that runs an
+     * inner {@code AWAIT} already executes on the serial thread — its
+     * inner drain runs the nested bodies inline on that same serial
+     * thread (still FIFO, never a self-join deadlock, never the common
+     * pool). Host operations complete only at their own {@code AWAIT}
+     * through the seam.
+     */
+    public static void drainTasks() {
+        while (!PENDING.isEmpty()) {
+            AsyncTask task = PENDING.poll();
+            if (task.future.isDone() || task.body == null) {
+                continue;
+            }
+            if (Thread.currentThread() == serialThread) {
+                // A nested drain inside a task body: the serial thread
+                // runs the nested body inline (serial FIFO preserved).
+                completeTask(task);
+                continue;
+            }
+            // The body runs on the serial executor with the drainer's
+            // active frames (the failure snapshots inside the body carry
+            // the awaiting context's frames exactly like the oracle).
+            List<String> frames = new ArrayList<>(FRAMES.get());
+            Future<?> job = SERIAL_EXECUTOR.submit(() -> {
+                List<String> saved = FRAMES.get();
+                FRAMES.set(new ArrayList<>(frames));
+                try {
+                    completeTask(task);
+                } finally {
+                    FRAMES.set(saved);
+                }
+            });
+            try {
+                job.get();
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("the serial executor drain was interrupted",
+                    interrupted);
+            } catch (ExecutionException failed) {
+                throw new IllegalStateException("the serial executor drain failed",
+                    failed.getCause());
+            }
+        }
+    }
+
+    /** Completes one body task's future with its value or its identical error. */
+    private static void completeTask(AsyncTask task) {
+        try {
+            task.future.complete(task.body.get());
+        } catch (Throwable thrown) {
+            task.future.completeExceptionally(thrown);
+        }
+    }
+
+    /**
+     * AWAIT — the completion position (D13 step 6): the deterministic
+     * FIFO drain first, then the token's completion. A pending host
+     * operation completes through the seam (the ordered
+     * {@code ASYNC_COMPLETE_RETURN}/{@code ASYNC_COMPLETE_THROW}
+     * effects); a failed operation rethrows the identical error — never a
+     * re-check or a synthesized copy — and a completed value is returned
+     * for the single {@code ASYNC_COMPLETION} boundary at the await site.
+     *
+     * @param tokenId     the canonical token identity; non-negative
+     * @param awaitOrigin the {@code AWAIT} op's origin text (the origin
+     *                    of a host-thrown completion error)
+     * @return the completion value
+     */
+    public static Object awaitTask(long tokenId, String awaitOrigin) {
+        drainTasks();
+        AsyncTask task = TASKS.get(tokenId);
+        if (task == null) {
+            throw new IllegalStateException("AWAIT consumes an unbound token " + tokenId
+                + " (producer defect)");
+        }
+        if (task.hostLabel != null && !task.future.isDone()) {
+            if (HOST_ASYNC == null) {
+                throw new IllegalStateException("an async host completion has no "
+                    + "deterministic host seam (the scenario host drives it)");
+            }
+            HostAsync.HostCompletion completion = HOST_ASYNC.completeAsync(task.hostLabel);
+            if (completion.thrownCode() == null) {
+                effect("ASYNC_COMPLETE_RETURN", task.hostLabel + "="
+                    + hostAtom(completion.value()));
+                task.future.complete(completion.value());
+            } else {
+                effect("ASYNC_COMPLETE_THROW", task.hostLabel + "!"
+                    + completion.thrownCode());
+                task.future.completeExceptionally(new DealError(completion.thrownCode(),
+                    completion.thrownMessage(), awaitOrigin, null, null, framesText(),
+                    null));
+            }
+        }
+        try {
+            return task.future.join();
+        } catch (CompletionException completion) {
+            Throwable cause = completion.getCause();
+            if (cause instanceof DealError dealError) {
+                throw dealError; // the identical error — never re-checked or copied
+            }
+            if (cause instanceof RuntimeException runtime) {
+                throw runtime;
+            }
+            throw new IllegalStateException("the async task " + tokenId + " failed with "
+                + cause, cause);
+        }
+    }
+
+    /** One ordered effect record of the closed effect protocol (F| lines). */
+    public static void effect(String kind, String text) {
+        if (!traceEnabled) {
+            return;
+        }
+        PrintStream err = new PrintStream(System.err, true, StandardCharsets.UTF_8);
+        err.println("F|" + kind + "|" + esc(text));
+    }
+
+    /**
+     * The adapter's source resolution per the closed capture mode (the
+     * async adapter task's D15 protocol half): VALUE retains, SHARED_CELL
+     * re-reads the generation cell, REEVALUATE_THUNK re-executes the
+     * thunk.
+     */
+    public static Object adapterSource(AdapterValue adapter) {
+        if (adapter.mode == 0) {
+            return adapter.value;
+        }
+        if (adapter.mode == 1) {
+            return adapter.cell[0];
+        }
+        return adapter.thunk.invoke(new Object[0]);
     }
 
     // =========================================================================
