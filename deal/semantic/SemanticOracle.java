@@ -1054,6 +1054,7 @@ public final class SemanticOracle {
                 case BINDING_LOAD -> executeBindingLoad(op);
                 case BINDING_STORE -> executeBindingStore(op);
                 case CLOSURE_NEW -> executeClosureNew(op);
+                case RECURSIVE_GROUP_INIT -> executeRecursiveGroupInit(op);
                 case ASSIGN -> executeAssign(op);
                 case DELETE -> executeDelete(op);
                 case CALL -> executeCall(op);
@@ -1696,6 +1697,92 @@ public final class SemanticOracle {
                 bindingsByValue.put(closure, binding);
             }
             return publish(op, closure);
+        }
+
+        /**
+         * RECURSIVE_GROUP_INIT (E8, atomic publication): phase 1
+         * allocates every member's identity — a fresh {@link Value.FuncValue}
+         * capturing the member cells — before any publication, keyed to
+         * the member's pre-assigned allocation identity (the registry's
+         * one {@code LoweredBody} per member); phase 2 publishes the
+         * member closures to the member binding cells in declaration
+         * order in one ordered sequence. No member observes a partially
+         * initialized group: no member body runs at group execution, all
+         * captures resolve before the first publication, and every
+         * execution publishes fresh identities.
+         */
+        private String executeRecursiveGroupInit(SemanticOp op) {
+            KindPayload.RecursiveGroupInitPayload payload =
+                (KindPayload.RecursiveGroupInitPayload) op.payload();
+            UnitState state = stateOf(op.opId());
+            if (payload.bindings().size() != payload.functions().size()) {
+                throw new IllegalStateException("RECURSIVE_GROUP_INIT " + op.opId()
+                    + " carries " + payload.bindings().size() + " bindings but "
+                    + payload.functions().size() + " member functions "
+                    + "(producer defect; the payload pins one entry per member)");
+            }
+            // Phase 0: every member cell exists before any capture
+            // resolves (a sibling capture references a member cell).
+            List<Cell> memberCells = new ArrayList<>();
+            for (BindingId binding : payload.bindings()) {
+                memberCells.add(cellOf(binding, 0, true));
+            }
+            // Phase 1: allocate every member identity first (fresh per
+            // execution) — no publication yet.
+            List<Value.FuncValue> members = new ArrayList<>();
+            for (int i = 0; i < payload.functions().size(); i++) {
+                FunctionId functionId = payload.functions().get(i);
+                LoweredFunction function = state.unit.functions().get(functionId);
+                if (function == null) {
+                    throw new IllegalStateException("group member " + functionId
+                        + " has no LoweredFunction record (producer defect)");
+                }
+                Map<BindingId, Cell> captures = new HashMap<>();
+                for (BindingId binding : function.captures()) {
+                    Cell current = currentCellOf(binding);
+                    if (current == null) {
+                        throw new IllegalStateException("group member capture of "
+                            + "unknown binding " + binding);
+                    }
+                    captures.put(binding, current);
+                }
+                Value.FuncValue closure = new Value.FuncValue(functionId,
+                    function.descriptor(), captures);
+                ValueId identity = memberIdentityOf(state, functionId);
+                FunctionExecutionBinding binding = bindingOf(identity);
+                if (binding != null) {
+                    bindingsByValue.put(closure, binding);
+                }
+                members.add(closure);
+            }
+            // Phase 2: publish in one ordered sequence.
+            for (int i = 0; i < payload.bindings().size(); i++) {
+                Cell cell = memberCells.get(i);
+                cell.value = members.get(i);
+                cell.initialized = true;
+            }
+            return null;
+        }
+
+        /**
+         * The pre-assigned allocation identity of one group member: the
+         * {@link FunctionAllocationIdentity} key whose registered
+         * {@code LoweredBody} names the member's function id (B4/B5 —
+         * the one registration per member the publication phase writes
+         * into the member binding cell).
+         */
+        private ValueId memberIdentityOf(UnitState state, FunctionId functionId) {
+            for (Map.Entry<FunctionAllocationIdentity, FunctionExecutionBinding> entry
+                    : state.unit.functionBindings().entrySet()) {
+                if (entry.getValue() instanceof FunctionExecutionBinding.LoweredBody body
+                        && body.functionId().equals(functionId)) {
+                    return new ValueId(entry.getKey().id());
+                }
+            }
+            throw new IllegalStateException("group member " + functionId
+                + " has no registered LoweredBody binding (producer defect; "
+                + "every RECURSIVE_GROUP_INIT member registers exactly one "
+                + "binding keyed by its pre-assigned allocation identity)");
         }
 
         /** ASSIGN: children in payload order; the committed value result is pre-published. */

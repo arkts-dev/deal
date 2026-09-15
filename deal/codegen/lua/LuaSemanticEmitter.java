@@ -150,6 +150,18 @@ public final class LuaSemanticEmitter {
                         (KindPayload.BindingAllocPayload) op.payload();
                     cellKinds.putIfAbsent(payload.binding(), payload.cellKind());
                 }
+                if (op.kind() == SemanticOpKind.RECURSIVE_GROUP_INIT) {
+                    // B2: every group member cell is SHARED_CELL by
+                    // construction (the closed payload records no
+                    // cell-kind field and members carry no separate
+                    // ALLOC) — the publication and the member-body
+                    // loads both resolve through this fact.
+                    KindPayload.RecursiveGroupInitPayload payload =
+                        (KindPayload.RecursiveGroupInitPayload) op.payload();
+                    for (BindingId binding : payload.bindings()) {
+                        cellKinds.put(binding, BindingCellKind.SHARED_CELL);
+                    }
+                }
             }
             // Payload-owned children are emitted exactly once by their owner
             // arms; the block walk skips them (a double emission would
@@ -506,6 +518,7 @@ public final class LuaSemanticEmitter {
                 case BINDING_LOAD -> emitBindingLoad(op);
                 case BINDING_STORE -> emitBindingStore(op);
                 case CLOSURE_NEW -> emitClosureNew(op);
+                case RECURSIVE_GROUP_INIT -> emitRecursiveGroupInit(op);
                 case ASSIGN -> emitAssign(op);
                 case DELETE -> emitDelete(op);
                 case CALL -> emitCall(op);
@@ -1208,6 +1221,59 @@ public final class LuaSemanticEmitter {
                 .append("(").append(args).append("), __sig = ")
                 .append(luaString(descriptorText(payload.signature()))).append("}\n");
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
+        }
+
+        /**
+         * RECURSIVE_GROUP_INIT (E8, atomic publication): phase 1
+         * allocates every member's SHARED_CELL (a fresh table per
+         * execution); phase 2 allocates every member identity into a
+         * temporary — the per-member factory invocation over the member's
+         * capture cells (the {@code CLOSURE_NEW} wrapper shape carrying
+         * the exact signature); phase 3 publishes the member wrappers to
+         * the member cells in declaration order in one ordered sequence.
+         * The publication writes into the already-allocated cell tables
+         * (never a replacement — a sibling's capture holds the cell
+         * table by identity), and no member observes a partially
+         * initialized group: no member body runs at group execution and
+         * every identity is allocated before the first publication.
+         */
+        private void emitRecursiveGroupInit(SemanticOp op) {
+            KindPayload.RecursiveGroupInitPayload payload =
+                (KindPayload.RecursiveGroupInitPayload) op.payload();
+            emitStart(op);
+            for (BindingId binding : payload.bindings()) {
+                out.append(cell(binding, 0)).append(" = {}\n");
+            }
+            for (int i = 0; i < payload.functions().size(); i++) {
+                FunctionId functionId = payload.functions().get(i);
+                LoweredFunction function = unit.functions().get(functionId);
+                if (function == null) {
+                    throw new IllegalStateException("group member " + functionId
+                        + " has no LoweredFunction record (producer defect)");
+                }
+                StringBuilder args = new StringBuilder();
+                for (BindingId captureId : function.captures()) {
+                    if (args.length() > 0) {
+                        args.append(", ");
+                    }
+                    args.append(cell(captureId, 0));
+                }
+                out.append(groupTemp(op, i)).append(" = {__fn = ")
+                    .append(fnFactory(functionId)).append("(").append(args)
+                    .append("), __sig = ")
+                    .append(luaString(descriptorText(function.descriptor())))
+                    .append("}\n");
+            }
+            for (int i = 0; i < payload.bindings().size(); i++) {
+                out.append(cell(payload.bindings().get(i), 0)).append("[1] = ")
+                    .append(groupTemp(op, i)).append("\n");
+            }
+            emitPlainSuccess(op);
+        }
+
+        /** One member identity temporary of the group op (S-table held). */
+        private String groupTemp(SemanticOp op, int member) {
+            return "S.__gv" + op.opId().id() + "_" + member;
         }
 
         private void emitAssign(SemanticOp op) {

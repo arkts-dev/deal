@@ -53,6 +53,7 @@ import deal.semantic.ir.SourceSpan;
 import deal.semantic.ir.StructuredBodyTable;
 import deal.semantic.ir.ValueId;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -981,6 +982,466 @@ public class RuntimeIntegrationMatrixTest {
     }
 
     // =========================================================================
+    // 5b. The BINDINGS family matrix (the step-5 emission):
+    //     RECURSIVE_GROUP_INIT through the group-core lowering path
+    //     (RecursiveGroupLoweringTest's real reachable IR) on all three
+    //     consumers — atomic publication, fresh identities, one factory
+    //     invocation per member per execution, and the nested-scope
+    //     emission shape
+    // =========================================================================
+
+    /**
+     * The group-core lowering path (ISSUE-0446's production surface):
+     * the identical validated unit the
+     * {@code RecursiveGroupLoweringTest} path produces — the
+     * {@code RECURSIVE_GROUP_INIT} op appears in the validated unit,
+     * never invented by the seeds (anti-hollow: the harness compares
+     * the three consumers' traces over this real IR, not source
+     * presence).
+     */
+    private static SemanticLowerer.GroupCoreResult lowerGroupCore(CheckedSlice slice,
+                                                                  String what) {
+        if (slice == null) {
+            return null;
+        }
+        CheckedModuleInput input = new CheckedModuleInput(MODULE, SOURCE_ID,
+            Path.of("test.deal"), slice.program(), slice.checks(),
+            importsOf(slice.program()), List.of(), CheckedModuleKind.IMPLEMENTATION);
+        SemanticLowerer.GroupCoreResult result = SemanticLowerer.lowerModuleGroupCore(
+            input, SemanticProfile.DEAL_V1_2_INT32, Map.of(), INTERFACE_HASH,
+            REGISTRY_HASH, SemanticIdAllocator.over(List.of(MODULE)));
+        check(result != null && result.lowering() != null && !result.lowering().hasErrors()
+                && result.lowering().unit() != null,
+            what + ": the group-core path lowers a validated unit: "
+                + (result == null || result.lowering() == null ? "null"
+                    : result.lowering().diagnostics()));
+        if (result == null || result.lowering() == null
+                || result.lowering().hasErrors() || result.lowering().unit() == null) {
+            return null;
+        }
+        return result;
+    }
+
+    /** Runs the group-core seed through the three-consumer matrix. */
+    private static SemanticDifferentialHarness.Verdict runGroupMatrix(
+            String source, String what) {
+        CheckedSlice slice = checkSlice(source, what);
+        SemanticLowerer.GroupCoreResult result = lowerGroupCore(slice, what);
+        if (result == null) {
+            return null;
+        }
+        SemanticDifferentialHarness.Verdict verdict = SemanticDifferentialHarness.run(
+            result.lowering().unit(), result.lowering().table(),
+            new SemanticDifferentialHarness.Expectation(List.of(), SUCCESS, what),
+            WORKSPACE);
+        check(verdict.pass(), what + ": the three-consumer matrix verdict passes:\n"
+            + verdict.report());
+        if (!verdict.pass()) {
+            return verdict;
+        }
+        for (SemanticRuntimeModel.ConsumerRun run : verdict.runs()) {
+            check(!run.trace().isEmpty(), what + ": " + run.consumer()
+                + " produced real events");
+        }
+        return verdict;
+    }
+
+    /**
+     * The atomic-publication pin: for every group op, each consumer's
+     * SUCCESS event directly follows the op's START (the publication
+     * sequence emits zero interleaved events), and every executed
+     * member-load event follows the group op's SUCCESS — a partial
+     * publisher interleaving a member observation mid-publication (the
+     * partial-publication defect) breaks this adjacency, and the
+     * three-way trace comparison then names the first mismatch class.
+     */
+    private static void pinAtomicPublication(LoweredModuleUnit unit,
+            SemanticDifferentialHarness.Verdict verdict, String what) {
+        List<SemanticOp> groups = ofKind(unit, SemanticOpKind.RECURSIVE_GROUP_INIT);
+        check(!groups.isEmpty(), what + ": the unit carries at least one "
+            + "RECURSIVE_GROUP_INIT op (real reachable IR)");
+        for (SemanticOp group : groups) {
+            for (SemanticRuntimeModel.ConsumerRun run : verdict.runs()) {
+                List<SemanticRuntimeModel.TraceEvent> events = run.trace();
+                int start = -1;
+                int success = -1;
+                for (int i = 0; i < events.size(); i++) {
+                    SemanticRuntimeModel.TraceEvent event = events.get(i);
+                    if (!event.op().equals(group.opId())) {
+                        continue;
+                    }
+                    if (event.phase() == SemanticRuntimeModel.Phase.START) {
+                        start = i;
+                    } else if (event.phase() == SemanticRuntimeModel.Phase.SUCCESS) {
+                        success = i;
+                    }
+                }
+                check(start >= 0, what + ": " + run.consumer() + " starts the group "
+                    + group.opId());
+                check(success == start + 1, what + ": " + run.consumer()
+                    + " publishes the group " + group.opId() + " atomically "
+                    + "(SUCCESS directly follows START at index " + start
+                    + "/" + success + " — no interleaved member observation)");
+                for (int i = 0; i < events.size(); i++) {
+                    SemanticRuntimeModel.TraceEvent event = events.get(i);
+                    if (event.kind() == SemanticOpKind.BINDING_LOAD
+                            && isMemberLoadOf(unit, group, event.op())
+                            && i < success) {
+                        fail(what + ": " + run.consumer() + " executes member load "
+                            + event.op() + " before the group " + group.opId()
+                            + " completes (partial publication)");
+                    }
+                }
+            }
+        }
+    }
+
+    /** True iff the event's op is a generation-0 load of one group member binding. */
+    private static boolean isMemberLoadOf(LoweredModuleUnit unit, SemanticOp group,
+                                          OpId eventOp) {
+        SemanticOp op = opById(unit, eventOp);
+        if (op == null || op.kind() != SemanticOpKind.BINDING_LOAD) {
+            return false;
+        }
+        KindPayload.RecursiveGroupInitPayload payload =
+            (KindPayload.RecursiveGroupInitPayload) group.payload();
+        KindPayload.BindingLoadPayload load = (KindPayload.BindingLoadPayload) op.payload();
+        return load.generation() == 0 && payload.bindings().contains(load.binding());
+    }
+
+    static void testRecursiveGroupMatrix() {
+        System.out.println("-- Recursive group matrix: atomic publication, fresh "
+            + "identities, one factory invocation per member per execution, "
+            + "nested-scope emission --");
+
+        // (a) The canonical mutual pair: sibling loads inside the member
+        // bodies, module-level loads after the group op — the
+        // publication-completeness seed (a member reading a group
+        // binding must observe the published sibling, never a partial
+        // group; the atomic-publication pin asserts the group's events
+        // carry zero interleaved observations).
+        {
+            String source = """
+                function f(): null {
+                  let gRef: () => null = g;
+                  let selfRef: () => null = f;
+                }
+                function g(): null {
+                  let fRef: () => null = f;
+                }
+                let fTop: () => null = f;
+                let gTop: () => null = g;
+                """;
+            CheckedSlice slice = checkSlice(source, "group (a) mutual pair");
+            SemanticLowerer.GroupCoreResult result =
+                lowerGroupCore(slice, "group (a) mutual pair");
+            if (result == null) {
+                return;
+            }
+            check(ofKind(result.lowering().unit(),
+                    SemanticOpKind.RECURSIVE_GROUP_INIT).size() == 1,
+                "group (a): exactly one RECURSIVE_GROUP_INIT op in the validated "
+                    + "unit");
+            SemanticDifferentialHarness.Verdict verdict = SemanticDifferentialHarness.run(
+                result.lowering().unit(), result.lowering().table(),
+                new SemanticDifferentialHarness.Expectation(List.of(), SUCCESS,
+                    "group (a) mutual pair — atomic publication and member "
+                        + "loads after publication"),
+                WORKSPACE);
+            check(verdict.pass(),
+                "group (a): the three-consumer matrix verdict passes:\n"
+                    + verdict.report());
+            if (verdict.pass()) {
+                pinAtomicPublication(result.lowering().unit(), verdict,
+                    "group (a)");
+            }
+        }
+
+        // (b) The fresh-identity and single-factory pins: two groups plus
+        // two loads of the same member — the two loads publish the
+        // identical ref atom (exactly one factory invocation per member
+        // per execution; a re-evaluating factory would publish a second
+        // distinct identity and the three-way trace comparison would
+        // name the first mismatch class), while a different group's
+        // member publishes a distinct ref (fresh identities per group).
+        {
+            String source = """
+                function f(): null {
+                  let gRef: () => null = g;
+                }
+                function g(): null {
+                  let fRef: () => null = f;
+                }
+                function h(): null {
+                  let iRef: () => null = i;
+                }
+                function i(): null {
+                  let hRef: () => null = h;
+                }
+                let a: () => null = f;
+                let b: () => null = f;
+                let c: () => null = h;
+                """;
+            CheckedSlice slice = checkSlice(source,
+                "group (b) fresh identities / single factory");
+            SemanticLowerer.GroupCoreResult result =
+                lowerGroupCore(slice, "group (b) fresh identities / single factory");
+            if (result == null) {
+                return;
+            }
+            check(ofKind(result.lowering().unit(),
+                    SemanticOpKind.RECURSIVE_GROUP_INIT).size() == 2,
+                "group (b): exactly two RECURSIVE_GROUP_INIT ops in the validated "
+                    + "unit");
+            SemanticDifferentialHarness.Verdict verdict = SemanticDifferentialHarness.run(
+                result.lowering().unit(), result.lowering().table(),
+                new SemanticDifferentialHarness.Expectation(List.of(), SUCCESS,
+                    "group (b) fresh identities / single factory per member"),
+                WORKSPACE);
+            check(verdict.pass(),
+                "group (b): the three-consumer matrix verdict passes:\n"
+                    + verdict.report());
+            if (verdict.pass()) {
+                pinAtomicPublication(result.lowering().unit(), verdict,
+                    "group (b)");
+                for (SemanticRuntimeModel.ConsumerRun run : verdict.runs()) {
+                    List<String> functionLoadAtoms = new ArrayList<>();
+                    for (SemanticRuntimeModel.TraceEvent event : run.trace()) {
+                        if (event.kind() == SemanticOpKind.BINDING_LOAD
+                                && event.phase() == SemanticRuntimeModel.Phase.SUCCESS
+                                && event.output() != null
+                                && event.output().startsWith("ref:")) {
+                            functionLoadAtoms.add(event.output());
+                        }
+                    }
+                    check(functionLoadAtoms.size() == 3
+                            && functionLoadAtoms.get(0).equals(functionLoadAtoms.get(1))
+                            && !functionLoadAtoms.get(1).equals(functionLoadAtoms.get(2)),
+                        "group (b): " + run.consumer() + " publishes one identity "
+                            + "per member per execution (the two f-loads agree at "
+                            + functionLoadAtoms.get(0) + "; the h-load is a fresh "
+                            + "distinct identity) — a re-evaluated factory breaks "
+                            + "the load-atom equality: " + functionLoadAtoms);
+                }
+            }
+        }
+
+        // (c) A non-member capture: the member factory receives the
+        // capturing cell among its arguments (the enclosing body's
+        // parameter cell and the sibling SHARED_CELLs) — the emission
+        // shape compiles and runs on both real toolchains. (A
+        // module-level let read inside a member body is a module-member
+        // construct of the E9/E10 window, outside the group-core walk;
+        // the parameter capture pins the non-member capture-cell arm
+        // instead.)
+        {
+            String source = """
+                function outer(x: int): null {
+                  function f(): null {
+                    let xRef: int = x;
+                    let gRef: () => null = g;
+                  }
+                  function g(): null {
+                    let fRef: () => null = f;
+                  }
+                  let gTop: () => null = g;
+                }
+                """;
+            runGroupMatrix(source, "group (c) non-member capture cells "
+                + "(enclosing parameter cell)");
+        }
+
+        // (d) A closure group side by side: a self-recursive closure
+        // (size-1 SCC → CLOSURE_NEW) next to the mutual group — both
+        // producing allocations execute in one unit.
+        {
+            String source = """
+                function f(): null {
+                  let gRef: () => null = g;
+                  let selfRef: () => null = f;
+                }
+                function g(): null {
+                  let fRef: () => null = f;
+                }
+                function self(): null {
+                  let me: () => null = self;
+                }
+                let fTop: () => null = f;
+                let selfTop: () => null = self;
+                """;
+            runGroupMatrix(source, "group (d) closure + group producing "
+                + "allocations in one unit");
+        }
+
+        // (e) The nested-scope group: the op sits at the first member's
+        // declaration position inside the enclosing function's body —
+        // the emitters realize the arm inside the factory body, and the
+        // artifacts still compile and run under the real toolchains
+        // (the group never executes because the enclosing body never
+        // runs in the group-core window — an emission-shape seed).
+        {
+            String source = """
+                function outer(): null {
+                  let before: int = 1;
+                  function f(): null {
+                    let gRef: () => null = g;
+                  }
+                  function g(): null {
+                    let fRef: () => null = f;
+                  }
+                  let after: int = 2;
+                }
+                """;
+            CheckedSlice slice = checkSlice(source, "group (e) nested-scope group");
+            SemanticLowerer.GroupCoreResult result =
+                lowerGroupCore(slice, "group (e) nested-scope group");
+            if (result == null) {
+                return;
+            }
+            List<SemanticOp> groups = ofKind(result.lowering().unit(),
+                SemanticOpKind.RECURSIVE_GROUP_INIT);
+            check(groups.size() == 1, "group (e): exactly one RECURSIVE_GROUP_INIT "
+                + "op; got " + groups.size());
+            if (groups.size() == 1) {
+                SemanticOp group = groups.get(0);
+                boolean inEnclosingBody = false;
+                for (SemanticOp op : result.lowering().unit().ops()) {
+                    if (op.kind() == SemanticOpKind.CLOSURE_NEW
+                            && ((KindPayload.ClosureNewPayload) op.payload())
+                                .binding().blockId()
+                                .equals(result.lowering().table().opBlocks()
+                                    .get(group.opId()))) {
+                        inEnclosingBody = true;
+                    }
+                }
+                check(inEnclosingBody, "group (e): the group op is a member of the "
+                    + "enclosing function's body block (nested-scope placement)");
+            }
+            SemanticDifferentialHarness.Verdict verdict = SemanticDifferentialHarness.run(
+                result.lowering().unit(), result.lowering().table(),
+                new SemanticDifferentialHarness.Expectation(List.of(), SUCCESS,
+                    "group (e) nested-scope group emission inside the factory body"),
+                WORKSPACE);
+            check(verdict.pass(),
+                "group (e): the three-consumer matrix verdict passes (the "
+                    + "nested-group arm compiles and runs in both real artifacts):\n"
+                    + verdict.report());
+        }
+    }
+
+    /**
+     * The emitOp totality pin for the family: exactly one
+     * {@code RECURSIVE_GROUP_INIT} realization arm per emitter switch
+     * and the retained fail-closed default throw in both switches (the
+     * E6005-converted backstop — a removed default arm is itself a gate
+     * failure). The behavioral half is the group matrix above: a
+     * validated unit carrying the op emits on both targets.
+     */
+    static void testRecursiveGroupArmPins() {
+        System.out.println("-- RECURSIVE_GROUP_INIT emitOp pins: one arm per emitter, "
+            + "the default throw retained in both switches --");
+        for (String path : List.of("deal/codegen/lua/LuaSemanticEmitter.java",
+                "deal/codegen/jvm/JvmSemanticEmitter.java")) {
+            String text;
+            try {
+                text = Files.readString(Path.of(path));
+            } catch (java.io.IOException exception) {
+                fail(path + " cannot be read for the emitOp arm pin: "
+                    + exception.getMessage());
+                continue;
+            }
+            int arms = 0;
+            int index = 0;
+            while ((index = text.indexOf("case RECURSIVE_GROUP_INIT ->", index)) >= 0) {
+                arms++;
+                index++;
+            }
+            check(arms == 1, path + " carries exactly one RECURSIVE_GROUP_INIT "
+                + "realization arm in its emitOp switch; got " + arms);
+            check(text.contains("default -> throw new IllegalStateException"),
+                path + " retains the fail-closed default throw (the E6005-converted "
+                    + "backstop)");
+        }
+
+        // Production-mode realization (no trace-only arm): the same
+        // group unit emitted through the production surfaces runs under
+        // the real toolchains with the retained production terminal
+        // (silent success, exit 0 — the publication code is emitted
+        // identically in both modes).
+        {
+            String source = """
+                function f(): null {
+                  let gRef: () => null = g;
+                  let selfRef: () => null = f;
+                }
+                function g(): null {
+                  let fRef: () => null = f;
+                }
+                let fTop: () => null = f;
+                let gTop: () => null = g;
+                """;
+            CheckedSlice slice = checkSlice(source,
+                "production-mode group emission");
+            SemanticLowerer.GroupCoreResult result =
+                lowerGroupCore(slice, "production-mode group emission");
+            if (result == null) {
+                return;
+            }
+            try {
+                String lua = deal.codegen.lua.LuaSemanticEmitter
+                    .emitProductionModule(result.lowering().unit(),
+                        result.lowering().table(), true);
+                Path script = WORKSPACE.resolve("group-prod.lua");
+                Files.writeString(script, lua);
+                Process luaRun = new ProcessBuilder("luajit",
+                    script.toAbsolutePath().toString())
+                    .redirectErrorStream(true).start();
+                String luaOutput = new String(luaRun.getInputStream().readAllBytes());
+                int luaExit = luaRun.waitFor();
+                check(luaExit == 0 && luaOutput.isEmpty(),
+                    "the production shared-LuaJIT group artifact runs with the "
+                        + "retained silent production terminal (exit " + luaExit
+                        + ", output " + luaOutput.trim() + ")");
+
+                deal.codegen.jvm.JvmSemanticEmitter.EmissionResult emission =
+                    deal.codegen.jvm.JvmSemanticEmitter.emitProductionModule(
+                        result.lowering().unit(), result.lowering().table(), true,
+                        "GroupProdMain");
+                Path sourceFile = WORKSPACE.resolve("GroupProdMain.java");
+                Files.writeString(sourceFile, emission.source());
+                Path classes = WORKSPACE.resolve("group-prod-classes");
+                Files.createDirectories(classes);
+                String classpath = System.getProperty("java.class.path", "");
+                Process compile = new ProcessBuilder("javac", "--release", "25",
+                    "-proc:none", "-cp", classpath, "-d", classes.toString(),
+                    sourceFile.toAbsolutePath().toString())
+                    .redirectErrorStream(true).start();
+                String compileOutput = new String(
+                    compile.getInputStream().readAllBytes());
+                int compileExit = compile.waitFor();
+                check(compileExit == 0, "the production shared-JVM group artifact "
+                    + "compiles (exit " + compileExit + ": " + compileOutput.trim()
+                    + ")");
+                if (compileExit == 0) {
+                    Process javaRun = new ProcessBuilder("java", "-cp",
+                        classpath + java.io.File.pathSeparator + classes,
+                        "GroupProdMain").redirectErrorStream(true).start();
+                    String javaOutput = new String(
+                        javaRun.getInputStream().readAllBytes());
+                    int javaExit = javaRun.waitFor();
+                    check(javaExit == 0 && javaOutput.isEmpty(),
+                        "the production shared-JVM group artifact runs with the "
+                            + "retained silent production terminal (exit " + javaExit
+                            + ", output " + javaOutput.trim() + ")");
+                }
+            } catch (java.io.IOException | InterruptedException exception) {
+                fail("production-mode group emission: infrastructure failure: "
+                    + exception.getMessage());
+            }
+        }
+    }
+
+    // =========================================================================
     // 6. Pinned IR facts
     // =========================================================================
 
@@ -1139,6 +1600,8 @@ public class RuntimeIntegrationMatrixTest {
         testControlMatrix();
         testContainerExtrasMatrix();
         testHasFieldPresenceMatrix();
+        testRecursiveGroupMatrix();
+        testRecursiveGroupArmPins();
         testPinnedIrFacts();
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);

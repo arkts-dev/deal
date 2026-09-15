@@ -155,6 +155,18 @@ public final class JvmSemanticEmitter {
                         (KindPayload.BindingAllocPayload) op.payload();
                     cellKinds.putIfAbsent(payload.binding(), payload.cellKind());
                 }
+                if (op.kind() == SemanticOpKind.RECURSIVE_GROUP_INIT) {
+                    // B2: every group member cell is SHARED_CELL by
+                    // construction (the closed payload records no
+                    // cell-kind field and members carry no separate
+                    // ALLOC) — the publication and the member-body
+                    // loads both resolve through this fact.
+                    KindPayload.RecursiveGroupInitPayload payload =
+                        (KindPayload.RecursiveGroupInitPayload) op.payload();
+                    for (BindingId binding : payload.bindings()) {
+                        cellKinds.put(binding, BindingCellKind.SHARED_CELL);
+                    }
+                }
             }
             structuralOwned = ChainOperandCompletion.structuralOwners(unit);
             ownedChildren.addAll(structuralOwned);
@@ -323,6 +335,11 @@ public final class JvmSemanticEmitter {
                         fields.add(cell(payload.binding(), payload.generation()));
                     case KindPayload.BindingStorePayload payload ->
                         fields.add(cell(payload.binding(), payload.generation()));
+                    case KindPayload.RecursiveGroupInitPayload payload -> {
+                        for (BindingId binding : payload.bindings()) {
+                            fields.add(cell(binding, 0));
+                        }
+                    }
                     case KindPayload.ForEachPayload payload ->
                         fields.add(cell(payload.binding(), payload.generation()));
                     case KindPayload.TryCatchPayload payload ->
@@ -403,6 +420,24 @@ public final class JvmSemanticEmitter {
                 }
                 emitOp(opsById.get(bodyOps.get(i)), 3);
             }
+            // A body whose last emitted op is not a RETURN (the
+            // group-core window's member bodies carry no E7 RETURN
+            // production) must still terminate the lambda: the
+            // unconditional null return is reachable-safe after any
+            // try-catch tail and never follows a directly emitted
+            // `return` (tail RETURN emits one).
+            SemanticOp tail = null;
+            for (int i = bodyOps.size() - 1; i >= 0; i--) {
+                OpId candidate = bodyOps.get(i);
+                if (ownedChildren.contains(candidate)) {
+                    continue;
+                }
+                tail = opsById.get(candidate);
+                break;
+            }
+            if (tail == null || tail.kind() != SemanticOpKind.RETURN) {
+                out.append("      return null;\n");
+            }
             out.append("    }, ")
                 .append(javaString(descriptorText(function.descriptor()))).append(");\n");
             out.append("  }\n");
@@ -450,6 +485,7 @@ public final class JvmSemanticEmitter {
                 case BINDING_LOAD -> emitBindingLoad(op, indent);
                 case BINDING_STORE -> emitBindingStore(op, indent);
                 case CLOSURE_NEW -> emitClosureNew(op, indent);
+                case RECURSIVE_GROUP_INIT -> emitRecursiveGroupInit(op, indent);
                 case ASSIGN -> emitAssign(op, indent);
                 case DELETE -> emitDelete(op, indent);
                 case CALL -> emitCall(op, indent);
@@ -1279,6 +1315,60 @@ public final class JvmSemanticEmitter {
                 .append(fnFactory(payload.function())).append("(").append(args)
                 .append(");\n");
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType(), indent);
+        }
+
+        /**
+         * RECURSIVE_GROUP_INIT (E8, atomic publication): phase 1
+         * allocates every member's SHARED_CELL (a fresh one-element
+         * array per execution); phase 2 allocates every member identity
+         * into a local — the per-member factory invocation over the
+         * member's capture cells; phase 3 assigns the member function
+         * objects to the group fields in declaration order in one
+         * ordered sequence. The publication writes into the
+         * already-allocated cell arrays (never a replacement — a
+         * sibling's capture holds the cell array by identity), and no
+         * member observes a partially initialized group: no member body
+         * runs at group execution and every identity is allocated before
+         * the first publication.
+         */
+        private void emitRecursiveGroupInit(SemanticOp op, int indent) {
+            KindPayload.RecursiveGroupInitPayload payload =
+                (KindPayload.RecursiveGroupInitPayload) op.payload();
+            emitStart(op, indent);
+            for (BindingId binding : payload.bindings()) {
+                out.append(indent(indent)).append(cell(binding, 0))
+                    .append(" = new Object[1];\n");
+            }
+            for (int i = 0; i < payload.functions().size(); i++) {
+                FunctionId functionId = payload.functions().get(i);
+                LoweredFunction function = unit.functions().get(functionId);
+                if (function == null) {
+                    throw new IllegalStateException("group member " + functionId
+                        + " has no LoweredFunction record (producer defect)");
+                }
+                StringBuilder args = new StringBuilder();
+                for (BindingId captureId : function.captures()) {
+                    if (args.length() > 0) {
+                        args.append(", ");
+                    }
+                    args.append(cell(captureId, 0));
+                }
+                out.append(indent(indent)).append("JvmRuntime.FunctionValue ")
+                    .append(groupTemp(op, i)).append(" = ")
+                    .append(fnFactory(functionId)).append("(").append(args)
+                    .append(");\n");
+            }
+            for (int i = 0; i < payload.bindings().size(); i++) {
+                out.append(indent(indent)).append("((Object[]) ")
+                    .append(cell(payload.bindings().get(i), 0)).append(")[0] = ")
+                    .append(groupTemp(op, i)).append(";\n");
+            }
+            emitPlainSuccess(op, indent);
+        }
+
+        /** One member identity local of the group op (per-op unique). */
+        private String groupTemp(SemanticOp op, int member) {
+            return "__gv" + op.opId().id() + "_" + member;
         }
 
         private void emitAssign(SemanticOp op, int indent) {
