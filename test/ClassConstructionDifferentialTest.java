@@ -60,11 +60,12 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * The ISSUE-0586 class-construction differential corpus (sequencing step
- * 8, first slice — E5 core): the {@code CLASS_DEFAULT}/
- * {@code CLASS_NEW}/{@code CLASS_FACTORY} arms of the semantic oracle
- * and both shared emitters, verified green three-way over the
- * production lowerer's class arms (the
+ * The CLASSES differential corpus (sequencing step 8, E5): the
+ * {@code CLASS_DEFAULT}/{@code CLASS_NEW}/{@code CLASS_FACTORY} arms
+ * (ISSUE-0586, first slice) and the {@code FIELD_READ}/
+ * {@code FIELD_WRITE}/{@code FIELD_DELETE} arms (ISSUE-0587, second
+ * slice) of the semantic oracle and both shared emitters, verified green
+ * three-way over the production lowerer's class arms (the
  * {@code ClassConstructionIntegrationTailTest} pipeline pattern — real
  * reachable IR, never source presence).
  *
@@ -90,6 +91,33 @@ import java.util.Set;
  * exactly one arm each for {@code CLASS_DEFAULT}/{@code CLASS_NEW}/
  * {@code CLASS_FACTORY}, and the default throw remains present as the
  * fail-closed backstop.</p>
+ *
+ * <p><b>ISSUE-0587 (sequencing step 8, second slice).</b> The same file
+ * extends the corpus to the class field operations of E5's family map
+ * row 7: the {@code FIELD_READ}/{@code FIELD_WRITE}/{@code FIELD_DELETE}
+ * arms of the semantic oracle and both shared emitters.</p>
+ *
+ * <p><b>Field positives.</b> (a) the read matrix — a present required
+ * field, a present optional field, a missing optional field pre-mapped
+ * to language null through the {@code OPTIONAL_FIELD_READ} boundary,
+ * and a present-null field (present null and missing both read as
+ * language null and stay distinguishable through {@code has()}); (b)
+ * the commit chains — one {@code FIELD_WRITE}/{@code FIELD_DELETE}
+ * commit per chain, always last, consuming the resolved receiver/stored
+ * value, with the following reads observing the committed state and a
+ * delete of an already-missing field a no-op SUCCESS; (c) the
+ * cross-module read — the caller reads an imported class's fields
+ * through the owner-resolved layout at project level; (d) the
+ * required-field registry error — a defective instance whose required
+ * field is absent fails the non-nullable boundary with E8001 on all
+ * three consumers; (e) production-mode realization of the field arms.</p>
+ *
+ * <p><b>Field negatives.</b> A re-evaluated commit target, a duplicated
+ * commit child, a commit moved off the last chain position, a wrong
+ * optional-read boundary kind, and a reparented boundary child each
+ * produce a failing verdict naming the first mismatch class (the
+ * address-chain protocol's rule, the pinned field-op shape, or the
+ * executor's wiring check).</p>
  */
 public class ClassConstructionDifferentialTest {
 
@@ -1339,18 +1367,621 @@ public class ClassConstructionDifferentialTest {
     }
 
     // =========================================================================
-    // 8. The emitter totality gate (one arm per kind; the default stays)
+    // 8. The class field matrix (ISSUE-0587): presence-aware reads and the
+    //    field commit chains
+    // =========================================================================
+
+    /** Every op parented to {@code owner} (in unit list order). */
+    private static List<SemanticOp> childrenOf(LoweredModuleUnit unit, SemanticOp owner) {
+        List<SemanticOp> children = new ArrayList<>();
+        for (SemanticOp op : unit.ops()) {
+            if (owner.opId().equals(op.origin().parentOpId())) {
+                children.add(op);
+            }
+        }
+        return children;
+    }
+
+    /** The SUCCESS outputs of one op kind in the oracle's run (index 0). */
+    private static List<String> successOutputs(SemanticDifferentialHarness.Verdict verdict,
+                                               SemanticOpKind kind) {
+        List<String> outputs = new ArrayList<>();
+        for (SemanticRuntimeModel.TraceEvent event : verdict.runs().get(0).trace()) {
+            if (event.kind() == kind
+                    && event.phase() == SemanticRuntimeModel.Phase.SUCCESS) {
+                outputs.add(event.output());
+            }
+        }
+        return outputs;
+    }
+
+    /** The kind of a boundary payload (or null when the op is not a BOUNDARY). */
+    private static deal.semantic.ir.BoundaryKind boundaryKindOf(SemanticOp op) {
+        if (op.kind() != SemanticOpKind.BOUNDARY) {
+            return null;
+        }
+        return ((KindPayload.BoundaryPayload) op.payload()).kind();
+    }
+
+    private static final String FIELD_PERSON_SOURCE = """
+        export class Person {
+          name: string = "anon";
+          age: int = 0;
+          note?: string | null;
+          nick?: string;
+        }
+        """;
+
+    /**
+     * Presence-aware reads: a present required field, a present optional
+     * field, a missing optional field (pre-mapped to language null before
+     * the {@code OPTIONAL_FIELD_READ} boundary), and a present-null field —
+     * present null and missing both read as language null but stay
+     * distinguishable through {@code has()}.
+     */
+    static void testFieldReadMatrix() {
+        System.out.println("-- Field read matrix: present required/optional, missing "
+            + "optional, and present null stay distinguishable --");
+        String source = FIELD_PERSON_SOURCE + """
+            let p: Person = {name: "bob", age: 3, note: null}
+            let empty: Person = {name: "kim"}
+            let readName: string = p.name
+            let readAge: int = p.age
+            let readNote: string | null = p.note
+            let readMissing: string | null = empty.note
+            let readNick: string | null = empty.nick
+            let hasNote: boolean = has(p.note)
+            let hasMissingNote: boolean = has(empty.note)
+            """;
+        LoweredSlice lowered = lowerModule(source, "field read matrix");
+        if (lowered == null) {
+            return;
+        }
+        List<SemanticOp> reads = ofKind(lowered.unit(), SemanticOpKind.FIELD_READ);
+        check(reads.size() == 5, "the seed lowers five FIELD_READ ops, got "
+            + reads.size());
+        for (SemanticOp read : reads) {
+            KindPayload.FieldReadPayload payload =
+                (KindPayload.FieldReadPayload) read.payload();
+            List<SemanticOp> children = childrenOf(lowered.unit(), read);
+            check(children.size() == 2
+                    && boundaryKindOf(children.get(0))
+                        == deal.semantic.ir.BoundaryKind.UNTYPED_CLASS_INPUT
+                    && boundaryKindOf(children.get(1))
+                        == deal.semantic.ir.BoundaryKind.OPTIONAL_FIELD_READ,
+                "the read of '" + payload.field() + "' parents exactly "
+                    + "[UNTYPED_CLASS_INPUT, OPTIONAL_FIELD_READ] (K-D12); got "
+                    + children.size() + " children");
+            check(children.size() == 2
+                    && read.opId().equals(children.get(0).origin().parentOpId())
+                    && read.opId().equals(children.get(1).origin().parentOpId()),
+                "both children record parentOpId = the FIELD_READ op");
+            if (children.size() == 2) {
+                KindPayload.BoundaryPayload receiver =
+                    (KindPayload.BoundaryPayload) children.get(0).payload();
+                check(receiver.input().equals(payload.classValue())
+                        && receiver.descriptor() instanceof RuntimeDescriptor.Class,
+                    "the receiver boundary checks the resolved receiver against "
+                        + "class:<ClassId>");
+                KindPayload.BoundaryPayload field =
+                    (KindPayload.BoundaryPayload) children.get(1).payload();
+                check(field.input().equals(read.result()),
+                    "the OPTIONAL_FIELD_READ input is the read's own result "
+                        + "(the pre-mapped read value)");
+                check(field.descriptor().equals(read.resultType()),
+                    "the OPTIONAL_FIELD_READ descriptor is the read's checked "
+                        + "result descriptor");
+            }
+            // The optional-read wrap: a required field reads its declared
+            // descriptor, an optional non-nullable field the nullable wrap.
+            if ("name".equals(payload.field())) {
+                check(read.resultType().equals(RuntimeDescriptor.String.INSTANCE),
+                    "a required string field reads descriptor string, got "
+                        + read.resultType());
+            }
+            if ("note".equals(payload.field()) || "nick".equals(payload.field())) {
+                check(read.resultType() instanceof RuntimeDescriptor.Nullable,
+                    "an optional field reads the nullable wrap, got "
+                        + read.resultType());
+            }
+        }
+        SemanticDifferentialHarness.Verdict verdict = runMatrix(lowered, "field read matrix");
+        if (verdict == null) {
+            return;
+        }
+        // The reads' observed values: the present required/optional values
+        // and language null for both the missing and the present-null field.
+        List<String> outputs = successOutputs(verdict, SemanticOpKind.FIELD_READ);
+        check(outputs.equals(List.of("str:bob", "int:3", "null", "null", "null")),
+            "the reads publish the present values and null for missing/present "
+                + "null: " + outputs);
+        // Present null is presence, missing is absence (the three-state
+        // discipline is observable through has()).
+        List<String> presence = successOutputs(verdict, SemanticOpKind.HAS_FIELD);
+        check(presence.equals(List.of("bool:true", "bool:false")),
+            "has(p.note) is true for present null and has(empty.note) false for "
+                + "missing: " + presence);
+    }
+
+    /**
+     * The field commit chains: {@code FIELD_WRITE}/{@code FIELD_DELETE} as
+     * the ASSIGN/DELETE chains' single last commit child, consuming the
+     * resolved receiver/stored value (never re-evaluating a source
+     * expression) — the later reads observe the committed state, and a
+     * delete of an already-missing field is a no-op SUCCESS.
+     */
+    static void testFieldCommitChains() {
+        System.out.println("-- Field commit chains: one last commit per chain, the "
+            + "commit observed by the following reads --");
+        String source = FIELD_PERSON_SOURCE + """
+            let p: Person = {name: "bob"}
+            p.name = "eve"
+            p.age = 41
+            delete p.note
+            delete p.note
+            let readName: string = p.name
+            let readAge: int = p.age
+            let hasNote: boolean = has(p.note)
+            let readNote: string | null = p.note
+            """;
+        LoweredSlice lowered = lowerModule(source, "field commit chains");
+        if (lowered == null) {
+            return;
+        }
+        List<SemanticOp> writes = ofKind(lowered.unit(), SemanticOpKind.FIELD_WRITE);
+        List<SemanticOp> deletes = ofKind(lowered.unit(), SemanticOpKind.FIELD_DELETE);
+        check(writes.size() == 2 && deletes.size() == 2,
+            "the seed lowers two FIELD_WRITE and two FIELD_DELETE commits, got "
+                + writes.size() + " / " + deletes.size());
+        for (SemanticOp write : writes) {
+            List<SemanticOp> children = childrenOf(lowered.unit(), write);
+            check(children.size() == 2
+                    && boundaryKindOf(children.get(0))
+                        == deal.semantic.ir.BoundaryKind.UNTYPED_CLASS_INPUT
+                    && boundaryKindOf(children.get(1))
+                        == deal.semantic.ir.BoundaryKind.CLASS_FIELD_ASSIGNMENT,
+                "the write parents [UNTYPED_CLASS_INPUT, CLASS_FIELD_ASSIGNMENT]");
+            check(write.result() == null,
+                "a commit publishes no result value (the committed state lives on "
+                    + "the instance)");
+        }
+        for (SemanticOp delete : deletes) {
+            List<SemanticOp> children = childrenOf(lowered.unit(), delete);
+            check(children.size() == 1
+                    && boundaryKindOf(children.get(0))
+                        == deal.semantic.ir.BoundaryKind.UNTYPED_CLASS_INPUT,
+                "the delete parents exactly [UNTYPED_CLASS_INPUT]");
+        }
+        // Chain nesting: the commit is the chain's single last child and
+        // records the chain op as its parentOpId.
+        for (SemanticOp chain : ofKind(lowered.unit(), SemanticOpKind.ASSIGN)) {
+            KindPayload.AssignPayload payload =
+                (KindPayload.AssignPayload) chain.payload();
+            SemanticOp commit = opById(lowered.unit(),
+                payload.childOps().get(payload.childOps().size() - 1));
+            check(commit != null && commit.kind() == SemanticOpKind.FIELD_WRITE,
+                "the ASSIGN CLASS_FIELD chain ends with its FIELD_WRITE commit");
+            check(commit != null && chain.opId().equals(commit.origin().parentOpId()),
+                "the FIELD_WRITE commit records the enclosing ASSIGN as parentOpId");
+        }
+        for (SemanticOp chain : ofKind(lowered.unit(), SemanticOpKind.DELETE)) {
+            KindPayload.DeletePayload payload =
+                (KindPayload.DeletePayload) chain.payload();
+            SemanticOp commit = opById(lowered.unit(),
+                payload.childOps().get(payload.childOps().size() - 1));
+            check(commit != null && commit.kind() == SemanticOpKind.FIELD_DELETE,
+                "the DELETE CLASS_FIELD chain ends with its FIELD_DELETE commit");
+            check(commit != null && chain.opId().equals(commit.origin().parentOpId()),
+                "the FIELD_DELETE commit records the enclosing DELETE as parentOpId");
+        }
+        SemanticDifferentialHarness.Verdict verdict = runMatrix(lowered,
+            "field commit chains");
+        if (verdict == null) {
+            return;
+        }
+        // The commits are observable in the trace and the following reads
+        // observe the committed state — the commit is a real mutation of the
+        // resolved receiver, never a re-evaluation.
+        check(successOutputs(verdict, SemanticOpKind.FIELD_WRITE)
+                .equals(java.util.Arrays.asList(null, null)),
+            "the writes' SUCCESS carries no result output");
+        List<String> reads = successOutputs(verdict, SemanticOpKind.FIELD_READ);
+        check(reads.equals(List.of("str:eve", "int:41", "null")),
+            "the reads after the commits observe the written values and the "
+                + "deleted/missing null: " + reads);
+        check(successOutputs(verdict, SemanticOpKind.HAS_FIELD).equals(List.of("bool:false")),
+            "the deleted optional field reads absent through has()");
+        check(successOutputs(verdict, SemanticOpKind.FIELD_DELETE)
+                .equals(java.util.Arrays.asList(null, null)),
+            "a delete of an already-missing field is still a SUCCESS no-op");
+    }
+
+    /**
+     * Heap-valued fields: the read publishes the stored identity (the array
+     * read twice is the same allocation; the replaced table is a fresh one)
+     * and the write replaces exactly the resolved slot — the identity
+     * assertions hold across all three consumers' atomic allocation ids.
+     */
+    static void testFieldHeapValueMatrix() {
+        System.out.println("-- Heap-valued fields: stored identities survive the "
+            + "reads, the committed table is fresh --");
+        String source = """
+            export class Bag {
+              tags: int[] = [1, 2];
+              meta: table = {s: "x"};
+            }
+            let b: Bag = {meta: {s: "b"}}
+            let readTags: int[] = b.tags
+            let readMeta: table = b.meta
+            b.meta = {s: "y"}
+            let readMeta2: table = b.meta
+            let readTags2: int[] = b.tags
+            """;
+        LoweredSlice lowered = lowerModule(source, "heap-valued fields");
+        if (lowered == null) {
+            return;
+        }
+        SemanticDifferentialHarness.Verdict verdict = runMatrix(lowered,
+            "heap-valued fields");
+        if (verdict == null) {
+            return;
+        }
+        List<String> reads = successOutputs(verdict, SemanticOpKind.FIELD_READ);
+        check(reads.size() == 4 && reads.get(0).equals(reads.get(3))
+                && !reads.get(1).equals(reads.get(2)),
+            "the untouched array keeps its identity across the commit and the "
+                + "replaced table is a fresh allocation: " + reads);
+    }
+
+    /**
+     * The cross-module field read: the caller reads an imported class's
+     * field through the owner-resolved layout (the receiver boundary is the
+     * runtime identity guard) — the field events carry the caller's module
+     * and the owner's class identity.
+     */
+    static void testCrossModuleFieldRead() {
+        System.out.println("-- Cross-module field read: the caller reads the imported "
+            + "class's fields through the owner layout --");
+        String owner = """
+            export class Address {
+              city: string = "berlin";
+              zip: int = 10115;
+              note?: string | null;
+            }
+            """;
+        String caller = """
+            import * as Owner from "owner"
+
+            let addr: Owner.Address = {zip: 9}
+            let readCity: string = addr.city
+            let readZip: int = addr.zip
+            let readMissing: string | null = addr.note
+            """;
+        XmodPair pair = lowerXmodPair(owner, caller);
+        if (pair == null) {
+            return;
+        }
+        List<SemanticOp> reads = ofKind(pair.caller().unit(), SemanticOpKind.FIELD_READ);
+        check(reads.size() == 3, "the caller lowers three FIELD_READ ops, got "
+            + reads.size());
+        for (SemanticOp read : reads) {
+            KindPayload.FieldReadPayload payload =
+                (KindPayload.FieldReadPayload) read.payload();
+            check("owner".equals(payload.classId().modulePath()),
+                "the read's class identity is the owner's (module-qualified)");
+        }
+        SemanticDifferentialHarness.Verdict verdict = runProjectMatrix(pairClosure(pair),
+            new SemanticDifferentialHarness.TerminalExpectation.SuccessWith("null"),
+            "cross-module field read");
+        if (verdict == null) {
+            return;
+        }
+        List<String> outputs = successOutputs(verdict, SemanticOpKind.FIELD_READ);
+        check(outputs.equals(List.of("str:berlin", "int:9", "null")),
+            "the caller observes the provided/defaulted values and the missing "
+                + "optional null: " + outputs);
+        checkEventModule(verdict, reads.get(0), SemanticRuntimeModel.Phase.SUCCESS,
+            MODULE.path(), "the cross-module read's SUCCESS");
+    }
+
+    // =========================================================================
+    // 9. Field negatives (failing verdicts naming the first mismatch class)
+    // =========================================================================
+
+    /**
+     * Runs one corrupted field-corpus seed and asserts a failing verdict
+     * whose report names the first mismatch class.
+     */
+    private static void checkFieldNegative(LoweredModuleUnit corrupted,
+                                           StructuredBodyTable table, String classFragment,
+                                           String what) {
+        boolean failing;
+        String report = "";
+        try {
+            SemanticDifferentialHarness.Verdict verdict = SemanticDifferentialHarness.run(
+                corrupted, table,
+                new SemanticDifferentialHarness.Expectation(List.of(),
+                    new SemanticDifferentialHarness.TerminalExpectation.SuccessWith("null"),
+                    what),
+                WORKSPACE);
+            failing = !verdict.pass();
+            report = verdict.report();
+        } catch (RuntimeException defect) {
+            failing = true;
+            report = defect.getClass().getSimpleName() + ": " + defect.getMessage();
+        }
+        check(failing, what + " produces a failing verdict");
+        check(report.contains(classFragment),
+            what + " names the first mismatch class ('" + classFragment + "'): "
+                + report);
+    }
+
+    private static LoweredSlice fieldCorpusSlice() {
+        return lowerModule(FIELD_PERSON_SOURCE + """
+            let p: Person = {name: "bob"}
+            p.name = "eve"
+            delete p.note
+            let readName: string = p.name
+            """, "field negative corpus slice");
+    }
+
+    /** A re-evaluated commit target: the payload no longer names the resolved
+     *  receiver slot — only the chain protocol's wiring rule can see it. */
+    static void testNegativeReevaluatedCommitTarget() {
+        System.out.println("-- Negative: a re-evaluated commit target fails closed "
+            + "(the wiring rule, coincidental values) --");
+        LoweredSlice lowered = fieldCorpusSlice();
+        if (lowered == null) {
+            return;
+        }
+        SemanticOp write = ofKind(lowered.unit(), SemanticOpKind.FIELD_WRITE).get(0);
+        KindPayload.FieldWritePayload payload =
+            (KindPayload.FieldWritePayload) write.payload();
+        // Point the commit's resolved receiver at the stored value's producer:
+        // the value is the instance's own field value at run time only through
+        // coincidence, and the wiring rule rejects the shape.
+        KindPayload.FieldWritePayload corrupted = new KindPayload.FieldWritePayload(
+            payload.value(), payload.classId(), payload.field(), payload.value());
+        List<SemanticOp> ops = new ArrayList<>(lowered.unit().ops());
+        ops.set(ops.indexOf(write), rebuildOp(write, corrupted));
+        checkFieldNegative(withOps(lowered.unit(), ops), lowered.table(),
+            "FIELD_WRITE commit's resolved class value reference",
+            "a re-evaluated commit target");
+    }
+
+    /** A second commit in one chain: the single-evaluation rule rejects it. */
+    static void testNegativeDuplicatedCommit() {
+        System.out.println("-- Negative: a duplicated commit child fails closed "
+            + "(the single-evaluation rule) --");
+        LoweredSlice lowered = fieldCorpusSlice();
+        if (lowered == null) {
+            return;
+        }
+        SemanticOp chain = ofKind(lowered.unit(), SemanticOpKind.ASSIGN).get(0);
+        KindPayload.AssignPayload payload = (KindPayload.AssignPayload) chain.payload();
+        List<OpId> children = new ArrayList<>(payload.childOps());
+        children.add(children.get(children.size() - 1));
+        KindPayload.AssignPayload corrupted = new KindPayload.AssignPayload(
+            payload.targetKind(), children);
+        List<SemanticOp> ops = new ArrayList<>(lowered.unit().ops());
+        ops.set(ops.indexOf(chain), rebuildOp(chain, corrupted));
+        checkFieldNegative(withOps(lowered.unit(), ops), lowered.table(),
+            "SINGLE_EVALUATION", "a duplicated commit child");
+    }
+
+    /** A commit that is not the chain's last child: the shape rule rejects it. */
+    static void testNegativeMovedCommit() {
+        System.out.println("-- Negative: a commit moved before the value child fails "
+            + "closed (the shape rule) --");
+        LoweredSlice lowered = fieldCorpusSlice();
+        if (lowered == null) {
+            return;
+        }
+        SemanticOp chain = ofKind(lowered.unit(), SemanticOpKind.ASSIGN).get(0);
+        KindPayload.AssignPayload payload = (KindPayload.AssignPayload) chain.payload();
+        List<OpId> children = new ArrayList<>(payload.childOps());
+        OpId commit = children.remove(children.size() - 1);
+        children.add(1, commit);
+        KindPayload.AssignPayload corrupted = new KindPayload.AssignPayload(
+            payload.targetKind(), children);
+        List<SemanticOp> ops = new ArrayList<>(lowered.unit().ops());
+        ops.set(ops.indexOf(chain), rebuildOp(chain, corrupted));
+        checkFieldNegative(withOps(lowered.unit(), ops), lowered.table(),
+            "ADDRESS_CHAIN_SHAPE", "a commit moved off the last position");
+    }
+
+    /** A wrong optional-read boundary kind: the pinned child is missing. */
+    static void testNegativeWrongOptionalReadBoundary() {
+        System.out.println("-- Negative: a wrong optional-read boundary kind fails "
+            + "closed (the pinned field-op shape) --");
+        LoweredSlice lowered = fieldCorpusSlice();
+        if (lowered == null) {
+            return;
+        }
+        SemanticOp read = ofKind(lowered.unit(), SemanticOpKind.FIELD_READ).get(0);
+        SemanticOp fieldBoundary = null;
+        for (SemanticOp child : childrenOf(lowered.unit(), read)) {
+            if (boundaryKindOf(child) == deal.semantic.ir.BoundaryKind.OPTIONAL_FIELD_READ) {
+                fieldBoundary = child;
+            }
+        }
+        if (fieldBoundary == null) {
+            fail("the read carries its OPTIONAL_FIELD_READ child");
+            return;
+        }
+        KindPayload.BoundaryPayload payload =
+            (KindPayload.BoundaryPayload) fieldBoundary.payload();
+        KindPayload.BoundaryPayload corrupted = new KindPayload.BoundaryPayload(
+            deal.semantic.ir.BoundaryKind.CONTEXTUAL_TABLE_READ, payload.descriptor(),
+            payload.input(), payload.realization());
+        List<SemanticOp> ops = new ArrayList<>(lowered.unit().ops());
+        ops.set(ops.indexOf(fieldBoundary), rebuildOp(fieldBoundary, corrupted));
+        checkFieldNegative(withOps(lowered.unit(), ops), lowered.table(),
+            "OPTIONAL_FIELD_READ", "a wrong optional-read boundary kind");
+    }
+
+    /** A wrong boundary owner: the pinned child is reparented onto another
+     *  field op — the receiving op detects the duplicate pinned kind. */
+    static void testNegativeWrongBoundaryOwner() {
+        System.out.println("-- Negative: a reparented field boundary fails closed "
+            + "(the pinned child moves to another owner) --");
+        LoweredSlice lowered = fieldCorpusSlice();
+        if (lowered == null) {
+            return;
+        }
+        SemanticOp write = ofKind(lowered.unit(), SemanticOpKind.FIELD_WRITE).get(0);
+        SemanticOp read = ofKind(lowered.unit(), SemanticOpKind.FIELD_READ).get(0);
+        SemanticOp receiverBoundary = null;
+        for (SemanticOp child : childrenOf(lowered.unit(), read)) {
+            if (boundaryKindOf(child) == deal.semantic.ir.BoundaryKind.UNTYPED_CLASS_INPUT) {
+                receiverBoundary = child;
+            }
+        }
+        if (receiverBoundary == null) {
+            fail("the read carries its UNTYPED_CLASS_INPUT child");
+            return;
+        }
+        List<SemanticOp> ops = new ArrayList<>(lowered.unit().ops());
+        ops.set(ops.indexOf(receiverBoundary), reparent(receiverBoundary, write.opId()));
+        checkFieldNegative(withOps(lowered.unit(), ops), lowered.table(),
+            "UNTYPED_CLASS_INPUT", "a reparented field boundary child");
+    }
+
+    /** Rebuilds one op with a replaced structural parent (negative seeds). */
+    private static SemanticOp reparent(SemanticOp original, OpId parent) {
+        deal.semantic.ir.SourceOrigin origin = original.origin();
+        deal.semantic.ir.SourceOrigin moved = new deal.semantic.ir.SourceOrigin(
+            origin.sourceId(), origin.span(), origin.kind(), origin.anchorId(), parent);
+        return new SemanticOp(original.opId(), original.kind(), moved, original.result(),
+            original.resultType(), original.operands(), original.operandTypes(),
+            original.payload(), original.failurePolicy(), original.contract());
+    }
+
+    /**
+     * The required-field registry error: a defective instance whose required
+     * field is absent fails the read's non-nullable
+     * {@code OPTIONAL_FIELD_READ} boundary with E8001 at the boundary origin
+     * on all three consumers (the pre-mapped missing → null reaches the
+     * non-nullable check).
+     */
+    static void testRequiredFieldMissingRegistryError() {
+        System.out.println("-- Required-field missing: the non-nullable "
+            + "OPTIONAL_FIELD_READ boundary fails E8001 on all three consumers --");
+        LoweredSlice lowered = lowerModule(FIELD_PERSON_SOURCE + """
+            let p: Person = {name: "bob"}
+            delete p.note
+            let readName: string = p.name
+            """, "required-field registry error");
+        if (lowered == null) {
+            return;
+        }
+        // A required-field delete never reaches the IR through the checker
+        // (E4004), so the defective-instance shape is built from the real
+        // delete arm by retargeting its static field name — the exact shape
+        // the read's non-nullable field boundary defends.
+        SemanticOp delete = ofKind(lowered.unit(), SemanticOpKind.FIELD_DELETE).get(0);
+        KindPayload.FieldDeletePayload payload =
+            (KindPayload.FieldDeletePayload) delete.payload();
+        KindPayload.FieldDeletePayload corrupted = new KindPayload.FieldDeletePayload(
+            payload.classValue(), payload.classId(), "name");
+        List<SemanticOp> ops = new ArrayList<>(lowered.unit().ops());
+        ops.set(ops.indexOf(delete), rebuildOp(delete, corrupted));
+        LoweredSlice defective = new LoweredSlice(withOps(lowered.unit(), ops),
+            lowered.table(), lowered.registry());
+        SemanticOp read = ofKind(defective.unit(), SemanticOpKind.FIELD_READ).get(0);
+        SemanticOp fieldBoundary = null;
+        for (SemanticOp child : childrenOf(defective.unit(), read)) {
+            if (boundaryKindOf(child) == deal.semantic.ir.BoundaryKind.OPTIONAL_FIELD_READ) {
+                fieldBoundary = child;
+            }
+        }
+        if (fieldBoundary == null) {
+            fail("the read carries its OPTIONAL_FIELD_READ child");
+            return;
+        }
+        runFailureMatrix(defective, "E8001", originTextOf(fieldBoundary),
+            "required-field registry error");
+    }
+
+    /**
+     * Production-mode realization: the same field corpus emitted through the
+     * production surfaces (no trace protocol) compiles and runs under the
+     * real toolchains with the retained production terminal — an arm that
+     * exists only in trace mode would abort the production emission here.
+     */
+    static void testFieldProductionModeRealization() {
+        System.out.println("-- Production-mode realization: the field arms emit through "
+            + "the production surfaces and run under the real toolchains --");
+        LoweredSlice lowered = fieldCorpusSlice();
+        if (lowered == null) {
+            return;
+        }
+        try {
+            String lua = deal.codegen.lua.LuaSemanticEmitter.emitProductionModule(
+                lowered.unit(), lowered.table(), true);
+            Path script = WORKSPACE.resolve("field-prod.lua");
+            Files.writeString(script, lua, java.nio.charset.StandardCharsets.UTF_8);
+            Process luaRun = new ProcessBuilder("luajit",
+                script.toAbsolutePath().toString()).redirectErrorStream(true).start();
+            String luaOutput = new String(luaRun.getInputStream().readAllBytes(),
+                java.nio.charset.StandardCharsets.UTF_8);
+            int luaExit = luaRun.waitFor();
+            check(luaExit == 0 && luaOutput.isEmpty(),
+                "the production shared-LuaJIT field artifact runs with the retained "
+                    + "silent production terminal (exit " + luaExit + ", output "
+                    + luaOutput.trim() + ")");
+
+            deal.codegen.jvm.JvmSemanticEmitter.EmissionResult emission =
+                deal.codegen.jvm.JvmSemanticEmitter.emitProductionModule(
+                    lowered.unit(), lowered.table(), true, "FieldProdMain");
+            Path sourceFile = WORKSPACE.resolve("FieldProdMain.java");
+            Files.writeString(sourceFile, emission.source(),
+                java.nio.charset.StandardCharsets.UTF_8);
+            Path classes = WORKSPACE.resolve("field-prod-classes");
+            Files.createDirectories(classes);
+            String classpath = System.getProperty("java.class.path", "");
+            Process compile = new ProcessBuilder("javac", "--release", "25",
+                "-proc:none", "-cp", classpath, "-d", classes.toString(),
+                sourceFile.toAbsolutePath().toString()).redirectErrorStream(true).start();
+            String compileOutput = new String(compile.getInputStream().readAllBytes(),
+                java.nio.charset.StandardCharsets.UTF_8);
+            int compileExit = compile.waitFor();
+            check(compileExit == 0,
+                "the production shared-JVM field artifact compiles (exit " + compileExit
+                    + ": " + compileOutput.trim() + ")");
+            if (compileExit == 0) {
+                Process run = new ProcessBuilder("java", "-cp",
+                    classpath + java.io.File.pathSeparator + classes, "FieldProdMain")
+                    .redirectErrorStream(true).start();
+                String runOutput = new String(run.getInputStream().readAllBytes(),
+                    java.nio.charset.StandardCharsets.UTF_8);
+                int runExit = run.waitFor();
+                check(runExit == 0 && runOutput.isEmpty(),
+                    "the production shared-JVM field artifact runs with the retained "
+                        + "silent production terminal (exit " + runExit + ", output "
+                        + runOutput.trim() + ")");
+            }
+        } catch (java.io.IOException | InterruptedException exception) {
+            fail("production-mode realization infrastructure failure: "
+                + exception.getMessage());
+        }
+    }
+
+    // =========================================================================
+    // 10. The emitter totality gate (one arm per kind; the default stays)
     // =========================================================================
 
     static void testEmitterTotality() {
         System.out.println("-- Emitter totality: one CLASS_DEFAULT/CLASS_NEW/"
-            + "CLASS_FACTORY arm per emitter; the default throw remains --");
+            + "CLASS_FACTORY and FIELD_READ/FIELD_WRITE/FIELD_DELETE arm per "
+            + "emitter; the default throw remains --");
         for (String path : List.of("deal/codegen/lua/LuaSemanticEmitter.java",
                 "deal/codegen/jvm/JvmSemanticEmitter.java")) {
             try {
                 String text = Files.readString(Path.of(path));
                 for (String arm : List.of("case CLASS_NEW ->", "case CLASS_DEFAULT ->",
-                        "case CLASS_FACTORY ->")) {
+                        "case CLASS_FACTORY ->", "case FIELD_READ ->",
+                        "case FIELD_WRITE ->", "case FIELD_DELETE ->")) {
                     int count = 0;
                     int index = text.indexOf(arm);
                     while (index >= 0) {
@@ -1384,6 +2015,17 @@ public class ClassConstructionDifferentialTest {
         testNegativeWrongConstructionOrder();
         testNegativeWrongCrossUnitParent();
         testNegativeDuplicatedBoundary();
+        testFieldReadMatrix();
+        testFieldCommitChains();
+        testFieldHeapValueMatrix();
+        testCrossModuleFieldRead();
+        testNegativeReevaluatedCommitTarget();
+        testNegativeDuplicatedCommit();
+        testNegativeMovedCommit();
+        testNegativeWrongOptionalReadBoundary();
+        testNegativeWrongBoundaryOwner();
+        testRequiredFieldMissingRegistryError();
+        testFieldProductionModeRealization();
         testEmitterTotality();
         System.out.println();
         System.out.println("ClassConstructionDifferentialTest passed=" + passed

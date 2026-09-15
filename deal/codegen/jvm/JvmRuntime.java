@@ -81,7 +81,7 @@ public final class JvmRuntime {
      * {@code value == null && present == true} and is never conflated
      * with a missing field. The emitter generates one carrier class per
      * {@code ClassId}; this interface is the runtime's closed surface
-     * over it (presence lookups, reads, writes).
+     * over it (presence lookups, reads, writes, deletes).
      */
     public interface ClassInstance {
 
@@ -96,6 +96,14 @@ public final class JvmRuntime {
 
         /** Stores one field value and marks the field present. */
         void write(String field, Object value);
+
+        /**
+         * Clears one field: the value slot is emptied and the presence
+         * flag is cleared, so the field is missing again (the
+         * {@code FIELD_DELETE} commit). Deleting an already-missing
+         * field is a no-op.
+         */
+        void delete(String field);
     }
 
     /**

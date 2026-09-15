@@ -554,15 +554,25 @@ public final class SemanticOracle {
          * fields in declaration order as {@link ClassFieldState}
          * {@code Present | Missing} — present null stays present null
          * and is never conflated with a missing field (E5's
-         * presence-preserving storage discipline).
+         * presence-preserving storage discipline). The declaration-order
+         * state list is the instance's live storage: a field commit
+         * ({@code FIELD_WRITE}/{@code FIELD_DELETE}) replaces one state in
+         * place, so every reference to the instance observes the commit
+         * (the target emitters mutate their instance carrier exactly the
+         * same way).
          */
         record ClassValue(ClassId classId, List<ClassFieldState> fields)
             implements Value {
 
             public ClassValue {
                 Objects.requireNonNull(classId, "classId must not be null");
-                fields = List.copyOf(Objects.requireNonNull(fields,
+                fields = new ArrayList<>(Objects.requireNonNull(fields,
                     "fields must not be null"));
+            }
+
+            /** Replaces one declaration-order field state in place (the commit op). */
+            void replaceField(int index, ClassFieldState state) {
+                fields.set(index, state);
             }
         }
     }
@@ -1236,6 +1246,7 @@ public final class SemanticOracle {
                 case INDEX_READ -> executeIndexRead(op);
                 case OPTIONAL_READ -> executeOptionalRead(op);
                 case HAS_FIELD -> executeHasField(op);
+                case FIELD_READ -> executeFieldRead(op);
                 case BOUNDARY -> executeBoundary(op);
                 case BINDING_ALLOC -> executeBindingAlloc(op);
                 case BINDING_INIT -> executeBindingInit(op);
@@ -2089,7 +2100,14 @@ public final class SemanticOracle {
         /**
          * A commit op (MEMBER_WRITE/DELETE, INDEX_WRITE/DELETE,
          * FIELD_WRITE/DELETE): exactly one storage mutation over resolved
-         * references, never re-evaluating a source expression.
+         * references, never re-evaluating a source expression. The class
+         * field commits consume the chain's resolved receiver slot and
+         * delegate their closed semantics (nominal receiver boundary,
+         * field boundary, presence-preserving store) to
+         * {@link ClassOpsExecutor}; the committed state replaces the
+         * receiver's declaration-order field state in place, so every
+         * reference to the instance observes the commit exactly like the
+         * target carriers.
          */
         private String executeCommit(SemanticOp op) {
             switch (op.payload()) {
@@ -2111,10 +2129,225 @@ public final class SemanticOracle {
                     NormalizedSlot slot = ((Value.SlotValue) valueOf(payload.slot())).slot();
                     commitIndexDelete(container, slot);
                 }
+                case KindPayload.FieldWritePayload payload -> {
+                    List<SemanticOp> boundaries = List.of(
+                        boundaryChildOfKind(op, BoundaryKind.UNTYPED_CLASS_INPUT),
+                        boundaryChildOfKind(op, BoundaryKind.CLASS_FIELD_ASSIGNMENT));
+                    Map<ValueId, ClassOpsExecutor.Value> priorValues =
+                        fieldCommitValues(op, payload.classValue(), payload.value());
+                    applyFieldCommit(op, payload.classValue(),
+                        ClassOpsExecutor.executeFieldWrite(op, priorValues,
+                            boundaries.get(0), boundaries.get(1), classLayouts,
+                            sequentialBoundaryRunner(boundaries)));
+                }
+                case KindPayload.FieldDeletePayload payload -> {
+                    List<SemanticOp> boundaries = List.of(
+                        boundaryChildOfKind(op, BoundaryKind.UNTYPED_CLASS_INPUT));
+                    Map<ValueId, ClassOpsExecutor.Value> priorValues =
+                        fieldCommitValues(op, payload.classValue(), null);
+                    applyFieldCommit(op, payload.classValue(),
+                        ClassOpsExecutor.executeFieldDelete(op, priorValues,
+                            boundaries.get(0), classLayouts,
+                            sequentialBoundaryRunner(boundaries)));
+                }
                 default -> throw new IllegalStateException(
                     "commit op payload " + op.payload().getClass().getSimpleName());
             }
             return null;
+        }
+
+        /**
+         * The class field commit's resolved operands: the receiver slot
+         * exactly once (never re-evaluated) and the stored value slot for
+         * a write — the executor's prior-value map. An unresolved slot is
+         * a producer defect, fail closed before any boundary runs.
+         */
+        private Map<ValueId, ClassOpsExecutor.Value> fieldCommitValues(
+                SemanticOp op, ValueId receiverId, ValueId storedId) {
+            Map<ValueId, ClassOpsExecutor.Value> priorValues = new LinkedHashMap<>();
+            priorValues.put(receiverId, executorValueOf(resolvedSlot(op, receiverId)));
+            if (storedId != null) {
+                priorValues.put(storedId, executorValueOf(resolvedSlot(op, storedId)));
+            }
+            return priorValues;
+        }
+
+        /**
+         * The published value of one resolved chain slot: the commit
+         * consumes the slot's already-completed value and never
+         * re-evaluates a source expression; an unpublished slot is a
+         * producer defect (a malformed chain), fail closed.
+         */
+        private Value resolvedSlot(SemanticOp op, ValueId id) {
+            Value value = valueOf(id);
+            if (value == null) {
+                throw new IllegalStateException(op.kind() + " " + op.opId()
+                    + " consumes the unresolved slot " + id + ": the chain's resolved "
+                    + "receiver/operand slots complete before the commit runs "
+                    + "(producer defect)");
+            }
+            return value;
+        }
+
+        /**
+         * Applies one class field commit outcome: SUCCESS replaces the
+         * receiver instance's named declaration-order field state in
+         * place (the fresh updated instance the executor publishes is
+         * applied to the same oracle instance every reference observes),
+         * FAILURE rethrows the boundary's failure at the op origin.
+         */
+        private void applyFieldCommit(SemanticOp op, ValueId receiverId,
+                ClassOpsExecutor.Outcome<ClassOpsExecutor.Value> outcome) {
+            Value receiver = valueOf(receiverId);
+            if (!(receiver instanceof Value.ClassValue classValue)) {
+                throw new IllegalStateException(op.kind() + " " + op.opId()
+                    + " receiver " + receiverId + " resolves to " + atomOf(receiver)
+                    + ": the class field commit consumes a resolved class instance "
+                    + "(producer defect)");
+            }
+            switch (outcome) {
+                case ClassOpsExecutor.Outcome.Success<ClassOpsExecutor.Value> success ->
+                    applyInstanceState(classValue, success.value());
+                case ClassOpsExecutor.Outcome.Failure<ClassOpsExecutor.Value> failure ->
+                    throw DealFailure.of(failure.failure().failure(),
+                        failure.failure().origin(), List.copyOf(frames));
+            }
+        }
+
+        /**
+         * FIELD_READ — the presence-aware class member read (K-D6): the
+         * receiver resolves from the value lookup exactly once (never
+         * re-evaluated) and the op's two pinned boundary children run in
+         * order — the nominal {@code UNTYPED_CLASS_INPUT} receiver
+         * boundary, then the {@code OPTIONAL_FIELD_READ} boundary over
+         * the pre-mapped read (a missing field pre-maps to language null
+         * before the boundary; present null stays distinguishable from
+         * missing through the presence states); SUCCESS publishes the
+         * boundary-checked value. The closed presence/read/wrap
+         * discipline is {@link ClassOpsExecutor#executeFieldRead}, never
+         * forked here.
+         */
+        private String executeFieldRead(SemanticOp op) {
+            KindPayload.FieldReadPayload payload =
+                (KindPayload.FieldReadPayload) op.payload();
+            List<SemanticOp> boundaries = List.of(
+                boundaryChildOfKind(op, BoundaryKind.UNTYPED_CLASS_INPUT),
+                boundaryChildOfKind(op, BoundaryKind.OPTIONAL_FIELD_READ));
+            Map<ValueId, ClassOpsExecutor.Value> priorValues = new LinkedHashMap<>();
+            priorValues.put(payload.classValue(),
+                executorValueOf(resolvedSlot(op, payload.classValue())));
+            ClassOpsExecutor.Outcome<ClassOpsExecutor.Value> outcome =
+                ClassOpsExecutor.executeFieldRead(op, priorValues, boundaries.get(0),
+                    boundaries.get(1), classLayouts, sequentialBoundaryRunner(boundaries));
+            return switch (outcome) {
+                case ClassOpsExecutor.Outcome.Success<ClassOpsExecutor.Value> success ->
+                    publish(op, oracleValueOf(success.value()));
+                case ClassOpsExecutor.Outcome.Failure<ClassOpsExecutor.Value> failure ->
+                    throw DealFailure.of(failure.failure().failure(),
+                        failure.failure().origin(), List.copyOf(frames));
+            };
+        }
+
+        /**
+         * The pinned boundary child of one field op (K-D12): the child
+         * whose recorded {@code parentOpId} is the field op and whose
+         * closed kind matches. A missing or duplicated pinned child is a
+         * producer defect, fail closed before any execution.
+         */
+        private SemanticOp boundaryChildOfKind(SemanticOp op, BoundaryKind kind) {
+            List<SemanticOp> children = stateOf(op.opId()).childrenByParent.get(op.opId());
+            SemanticOp match = null;
+            if (children != null) {
+                for (SemanticOp child : children) {
+                    if (child.kind() == SemanticOpKind.BOUNDARY
+                            && ((KindPayload.BoundaryPayload) child.payload()).kind()
+                                == kind) {
+                        if (match != null) {
+                            throw new IllegalStateException(op.kind() + " " + op.opId()
+                                + " parents two " + kind + " boundary children: the "
+                                + "pinned shape carries exactly one (producer defect)");
+                        }
+                        match = child;
+                    }
+                }
+            }
+            if (match == null) {
+                throw new IllegalStateException(op.kind() + " " + op.opId()
+                    + " has no " + kind + " boundary child: the pinned field-op shape "
+                    + "carries it parented to the op (producer defect)");
+            }
+            return match;
+        }
+
+        /**
+         * The field ops' boundary-check runner: the executor's runner
+         * seam carries the boundary payload; the pinned children run in
+         * their declared order with their own START/terminal events and
+         * the executor-visible checked value flows back.
+         */
+        private ClassOpsExecutor.BoundaryCheckRunner sequentialBoundaryRunner(
+                List<SemanticOp> boundaries) {
+            final int[] index = {0};
+            return (boundaryPayload, input) -> {
+                if (index[0] >= boundaries.size()) {
+                    throw new IllegalStateException("a field-op boundary run exceeds "
+                        + "the pinned child list (producer defect)");
+                }
+                SemanticOp boundary = boundaries.get(index[0]++);
+                try {
+                    Value checked = runBoundaryChild(boundary, oracleValueOf(input),
+                        BoundaryContext.none());
+                    return new ClassOpsExecutor.BoundaryResult.Pass(
+                        executorValueOf(checked));
+                } catch (DealFailure failure) {
+                    return new ClassOpsExecutor.BoundaryResult.Fail(
+                        new BoundaryFailure(boundary.failurePolicy(),
+                            DiagnosticCode.fromCode(failure.code), failure.message,
+                            failure.expected, failure.actual, Map.of(), null));
+                }
+            };
+        }
+
+        /**
+         * Applies one committed instance state to the receiver's live
+         * storage: the declaration-order field states are replaced in
+         * place (every alias of the instance observes the commit) and the
+         * executor-view cache is rebound to the updated instance, so the
+         * next delegation converts the committed state — never a stale
+         * pre-commit view.
+         */
+        private void applyInstanceState(Value.ClassValue receiver,
+                                        ClassOpsExecutor.Value updated) {
+            if (!(updated instanceof ClassOpsExecutor.Value.Class updatedClass)) {
+                throw new IllegalStateException("a field commit produced " + updated
+                    + ": the pinned outcome is the updated instance "
+                    + "(producer defect)");
+            }
+            if (!updatedClass.classId().equals(receiver.classId())
+                    || updatedClass.fields().size() != receiver.fields().size()) {
+                throw new IllegalStateException("a field commit produced "
+                    + updatedClass.classId() + " with "
+                    + updatedClass.fields().size() + " fields for the receiver "
+                    + receiver.classId() + " with " + receiver.fields().size()
+                    + " (producer defect)");
+            }
+            for (int i = 0; i < updatedClass.fields().size(); i++) {
+                ClassOpsExecutor.FieldState state = updatedClass.fields().get(i);
+                Value.ClassFieldState applied = switch (state) {
+                    case ClassOpsExecutor.FieldState.Present present ->
+                        new Value.ClassFieldState.Present(
+                            oracleValueOf(present.value()));
+                    case ClassOpsExecutor.FieldState.Missing ignored ->
+                        Value.ClassFieldState.Missing.INSTANCE;
+                };
+                receiver.replaceField(i, applied);
+            }
+            // The conversion caches stay symmetric: the updated instance
+            // view is the receiver's view (a later delegation converts the
+            // committed state, and a boundary round-trip atomizes the same
+            // instance the receiver references — never a fresh copy).
+            executorViews.put(receiver, updated);
+            oracleOriginals.put(updated, receiver);
         }
 
         /** The array/table commit mutation (slot mechanics of the carrier). */

@@ -53,6 +53,13 @@ import java.util.Objects;
  *
  * <p><b>Verdict gates (all must hold).</b></p>
  * <ol>
+ *   <li>Gate 0 (pre-run): the address-chain protocol over every unit the
+ *       harness consumes — the single-evaluation rule and the closed chain
+ *       shapes (exactly one commit child, always last). A corrupted chain
+ *       (a duplicated commit, a re-wired commit target, a moved child) is
+ *       rejected before any consumer runs with the protocol's first
+ *       failing rule named; a consumer's fail-closed producer-defect
+ *       rejection is likewise a failing verdict, never a crash.</li>
  *   <li>Every consumer produces a report: three real per-consumer
  *       results with at least one event each (no stubbed/partial
  *       run).</li>
@@ -152,8 +159,32 @@ public final class SemanticDifferentialHarness {
         report.append("== Differential matrix run: ").append(expectation.what())
             .append(" ==\n");
 
-        // 1. The semantic oracle (in-process).
-        SemanticRuntimeModel.ConsumerRun oracle = SemanticOracle.execute(unit, table);
+        // Gate 0: the address-chain protocol over the unit the harness
+        // consumes (A-D1/A-D9: the single-evaluation rule and the closed
+        // chain shapes — exactly one commit child, always last). A
+        // corrupted chain (a duplicated commit, a re-wired commit
+        // target, a moved child) is a failing verdict naming the first
+        // rule, never a coincidental pass: the consumers execute a chain
+        // uniformly, so only the protocol can distinguish the corrupted
+        // shape from its output.
+        java.util.Optional<deal.diagnostics.CompilerDiagnostic> chainFailure =
+            deal.semantic.ir.AddressChainProtocol.validate(unit);
+        if (chainFailure.isPresent()) {
+            return rejectedVerdict("the address-chain protocol rejects the unit",
+                chainFailure.get().code() + " " + chainFailure.get().message(), report);
+        }
+
+        // 1. The semantic oracle (in-process). A producer defect the
+        // oracle rejects fail closed is a failing verdict naming the
+        // rejection, never a harness crash.
+        SemanticRuntimeModel.ConsumerRun oracle;
+        try {
+            oracle = SemanticOracle.execute(unit, table);
+        } catch (RuntimeException rejected) {
+            return rejectedVerdict("the semantic oracle rejects the unit",
+                rejected.getClass().getSimpleName() + ": " + rejected.getMessage(),
+                report);
+        }
         runs.add(oracle);
         report.append(oracle.comparisonReport()).append('\n');
 
@@ -217,9 +248,27 @@ public final class SemanticDifferentialHarness {
         report.append("== Differential project matrix run: ").append(expectation.what())
             .append(" ==\n");
 
+        // Gate 0: the address-chain protocol over every closure unit (the
+        // project-level twin of the module gate above).
+        for (LoweredModuleUnit moduleUnit : project.modules().values()) {
+            java.util.Optional<deal.diagnostics.CompilerDiagnostic> chainFailure =
+                deal.semantic.ir.AddressChainProtocol.validate(moduleUnit);
+            if (chainFailure.isPresent()) {
+                return rejectedVerdict("the address-chain protocol rejects module "
+                    + moduleUnit.moduleId().path(), chainFailure.get().code() + " "
+                    + chainFailure.get().message(), report);
+            }
+        }
+
         // 1. The semantic oracle (in-process, complete closure).
-        SemanticRuntimeModel.ConsumerRun oracle =
-            SemanticOracle.executeProjectInits(project, tables, registries, null);
+        SemanticRuntimeModel.ConsumerRun oracle;
+        try {
+            oracle = SemanticOracle.executeProjectInits(project, tables, registries, null);
+        } catch (RuntimeException rejected) {
+            return rejectedVerdict("the semantic oracle rejects the closure",
+                rejected.getClass().getSimpleName() + ": " + rejected.getMessage(),
+                report);
+        }
         runs.add(oracle);
         report.append(oracle.comparisonReport()).append('\n');
 
@@ -246,6 +295,23 @@ public final class SemanticDifferentialHarness {
         }
         return verdictFromProject(project, registries, expectation, runs, failures,
             report);
+    }
+
+    /**
+     * A failing verdict for a unit (or closure) the harness rejects before
+     * any consumer runs: the address-chain protocol's first failing rule
+     * or a consumer's fail-closed producer-defect rejection. No consumer
+     * runs, so the verdict carries no runs — never a silent pass.
+     */
+    private static Verdict rejectedVerdict(String what, String detail,
+                                           StringBuilder report) {
+        List<String> failures = new ArrayList<>();
+        failures.add(what + ": " + detail);
+        report.append("== Verdict: FAIL ==\n");
+        for (String failure : failures) {
+            report.append("FAIL: ").append(failure).append('\n');
+        }
+        return new Verdict(false, report.toString(), List.of(), failures);
     }
 
     /** The shared LuaJIT combined-artifact runner. */

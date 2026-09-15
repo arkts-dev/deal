@@ -855,6 +855,9 @@ public final class LuaSemanticEmitter {
                 case INDEX_DELETE -> emitIndexDelete(op);
                 case OPTIONAL_READ -> emitOptionalRead(op);
                 case HAS_FIELD -> emitHasField(op);
+                case FIELD_READ -> emitFieldRead(op);
+                case FIELD_WRITE -> emitFieldWrite(op);
+                case FIELD_DELETE -> emitFieldDelete(op);
                 case BOUNDARY -> emitFreeBoundary(op);
                 case BINDING_ALLOC -> emitBindingAlloc(op);
                 case BINDING_INIT -> emitBindingInit(op);
@@ -1346,8 +1349,8 @@ public final class LuaSemanticEmitter {
         /**
          * HAS_FIELD: the presence boolean over one checked receiver key —
          * the member-read helper's present/absent split (present null
-         * included is present). The class-instance presence map is the
-         * CLASSES family's realization.
+         * included is present; the class-instance half reads the
+         * presence map of the E5 instances).
          */
         private void emitHasField(SemanticOp op) {
             KindPayload.HasFieldPayload payload =
@@ -1357,6 +1360,154 @@ public final class LuaSemanticEmitter {
             out.append(target).append(" = (__member(").append(slot(payload.receiver()))
                 .append(", ").append(luaString(payload.key())).append(") ~= __MISSING)\n");
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
+        }
+
+        // =====================================================================
+        // The class field ops (CLASSES step 8, E5): FIELD_READ is
+        // presence-aware (missing → the OPTIONAL_FIELD_READ boundary's
+        // pre-mapped language null; present null stays distinguishable
+        // through the instance's presence map); FIELD_WRITE/FIELD_DELETE
+        // are commit ops consuming the ASSIGN/DELETE chain's resolved
+        // receiver and stored value — exactly one mutation, never a
+        // re-evaluated source expression.
+        // =====================================================================
+
+        /**
+         * FIELD_READ (K-D6): the nominal receiver boundary
+         * ({@code UNTYPED_CLASS_INPUT}) runs first — a null receiver or a
+         * foreign class identity fails its canonical E8001 projection —
+         * then the presence-aware read (a missing field pre-maps to
+         * language null; present null is the {@code __NULL} sentinel
+         * converted to nil, never conflated with missing) goes through
+         * the {@code OPTIONAL_FIELD_READ} boundary; SUCCESS publishes the
+         * boundary-checked value.
+         */
+        private void emitFieldRead(SemanticOp op) {
+            KindPayload.FieldReadPayload payload =
+                (KindPayload.FieldReadPayload) op.payload();
+            emitStart(op);
+            String target = slot((ValueId) op.result());
+            SemanticOp receiverBoundary =
+                boundaryChildOfKind(op, BoundaryKind.UNTYPED_CLASS_INPUT);
+            emitFieldBoundaryCheck(op, receiverBoundary, slot(payload.classValue()));
+            out.append("__instT = __chkB\n");
+            // The presence-aware read: missing → nil before the boundary;
+            // present (present null included) → the stored value.
+            out.append("__rvT = nil\n");
+            out.append("if __instT.__p[").append(luaString(payload.field()))
+                .append("] then\n");
+            out.append("  __rvT = __instT.__f[").append(luaString(payload.field()))
+                .append("]\n");
+            out.append("  if __rvT == __NULL then __rvT = nil end\n");
+            out.append("end\n");
+            SemanticOp fieldBoundary =
+                boundaryChildOfKind(op, BoundaryKind.OPTIONAL_FIELD_READ);
+            emitFieldBoundaryCheck(op, fieldBoundary, "__rvT");
+            out.append(target).append(" = __chkB\n");
+            emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
+        }
+
+        /**
+         * FIELD_WRITE (K-D6, the ASSIGN chain's commit child): the
+         * receiver boundary runs over the resolved receiver slot, then the
+         * field boundary ({@code CLASS_FIELD_ASSIGNMENT}) over the
+         * resolved stored value — the store commits only after both pass
+         * (a failed boundary commits nothing), and the published instance
+         * carries the boundary-published value in the named field with
+         * every other presence state unchanged.
+         */
+        private void emitFieldWrite(SemanticOp op) {
+            KindPayload.FieldWritePayload payload =
+                (KindPayload.FieldWritePayload) op.payload();
+            emitStart(op);
+            SemanticOp receiverBoundary =
+                boundaryChildOfKind(op, BoundaryKind.UNTYPED_CLASS_INPUT);
+            emitFieldBoundaryCheck(op, receiverBoundary, slot(payload.classValue()));
+            out.append("__instT = __chkB\n");
+            SemanticOp fieldBoundary =
+                boundaryChildOfKind(op, BoundaryKind.CLASS_FIELD_ASSIGNMENT);
+            emitFieldBoundaryCheck(op, fieldBoundary, slot(payload.value()));
+            out.append("__instT.__f[").append(luaString(payload.field()))
+                .append("] = (__chkB == nil) and __NULL or __chkB\n");
+            out.append("__instT.__p[").append(luaString(payload.field()))
+                .append("] = true\n");
+            emitPlainSuccess(op);
+        }
+
+        /**
+         * FIELD_DELETE (K-D6, the DELETE chain's commit child): the
+         * receiver boundary runs over the resolved receiver slot, then
+         * the named field's presence and value are cleared — deleting an
+         * already-missing field is a no-op SUCCESS, and every other field
+         * state is unchanged.
+         */
+        private void emitFieldDelete(SemanticOp op) {
+            KindPayload.FieldDeletePayload payload =
+                (KindPayload.FieldDeletePayload) op.payload();
+            emitStart(op);
+            SemanticOp receiverBoundary =
+                boundaryChildOfKind(op, BoundaryKind.UNTYPED_CLASS_INPUT);
+            emitFieldBoundaryCheck(op, receiverBoundary, slot(payload.classValue()));
+            out.append("__chkB.__p[").append(luaString(payload.field()))
+                .append("] = nil\n");
+            out.append("__chkB.__f[").append(luaString(payload.field()))
+                .append("] = nil\n");
+            emitPlainSuccess(op);
+        }
+
+        /**
+         * The pinned boundary child of one field op (K-D12): the child
+         * parented to the field op with the closed boundary kind. A
+         * missing child is a producer defect, fail closed before any
+         * emission.
+         */
+        private SemanticOp boundaryChildOfKind(SemanticOp op, BoundaryKind kind) {
+            for (SemanticOp candidate : opsById.values()) {
+                if (candidate.kind() == SemanticOpKind.BOUNDARY
+                        && op.opId().equals(candidate.origin().parentOpId())
+                        && ((KindPayload.BoundaryPayload) candidate.payload()).kind()
+                            == kind) {
+                    return candidate;
+                }
+            }
+            throw new IllegalStateException(op.kind() + " " + op.opId() + " has no "
+                + kind + " boundary child: the pinned field-op shape carries it "
+                + "parented to the op (producer defect)");
+        }
+
+        /**
+         * One field-op boundary child: the START carries the input's
+         * actual runtime atom (the raw atom — a null receiver renders
+         * "null", never a heap index), the check runs, and the terminal
+         * is the boundary SUCCESS with its published value or the two
+         * FAILURE events (boundary then owner) with the boundary's own
+         * origin.
+         */
+        private void emitFieldBoundaryCheck(SemanticOp owner, SemanticOp boundary,
+                                            String inputExpr) {
+            KindPayload.BoundaryPayload payload =
+                (KindPayload.BoundaryPayload) boundary.payload();
+            out.append("__ev(").append(luaString(opKey(boundary.opId())))
+                .append(", \"START\", \"BOUNDARY\", ")
+                .append(luaString(boundary.contract().canonicalDigest())).append(", ")
+                .append(luaString(parentKey(boundary.origin().parentOpId())))
+                .append(", {__rawAtom(")
+                .append(luaString(staticKind(payload.descriptor()))).append(", ")
+                .append(inputExpr).append(")}, nil, nil)\n");
+            out.append("__okB, __chkB = pcall(__bcheck, ")
+                .append(luaString(descriptorText(payload.descriptor()))).append(", ")
+                .append(luaString(staticKind(payload.descriptor()))).append(", ")
+                .append(inputExpr).append(")\n");
+            out.append("if not __okB then\n");
+            out.append("  __chkB.o = ").append(luaString(originOf(boundary)))
+                .append("\n");
+            emitFailureEvent(boundary.opId(), "BOUNDARY", boundary,
+                "__errtext(__chkB)");
+            emitFailureEvent(owner.opId(), owner.kind().name(), owner,
+                "__errtext(__chkB)");
+            out.append("  error(__chkB, 0)\n");
+            out.append("end\n");
+            emitBoundarySuccess(boundary, "__chkB", payload.descriptor());
         }
 
         private void emitMemberWrite(SemanticOp op) {

@@ -706,6 +706,14 @@ public final class JvmSemanticEmitter {
                         .append(" = true; }\n");
                 }
                 out.append("    }\n");
+                out.append("    @Override public void delete(String key) {\n");
+                for (ClassLayout.FieldLayout field : layout.fields()) {
+                    out.append("      if (").append(javaString(field.name()))
+                        .append(".equals(key)) { ").append(fieldSlot(field.name()))
+                        .append(" = null; ").append(fieldFlag(field.name()))
+                        .append(" = false; }\n");
+                }
+                out.append("    }\n");
                 out.append("  }\n");
             }
         }
@@ -884,6 +892,9 @@ public final class JvmSemanticEmitter {
                 case INDEX_DELETE -> emitIndexDelete(op, indent);
                 case OPTIONAL_READ -> emitOptionalRead(op, indent);
                 case HAS_FIELD -> emitHasField(op, indent);
+                case FIELD_READ -> emitFieldRead(op, indent);
+                case FIELD_WRITE -> emitFieldWrite(op, indent);
+                case FIELD_DELETE -> emitFieldDelete(op, indent);
                 case BOUNDARY -> emitFreeBoundary(op, indent);
                 case BINDING_ALLOC -> emitBindingAlloc(op, indent);
                 case BINDING_INIT -> emitBindingInit(op, indent);
@@ -1468,6 +1479,168 @@ public final class JvmSemanticEmitter {
                 .append(slot(payload.receiver())).append(", ")
                 .append(javaString(payload.key())).append(");\n");
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType(), indent);
+        }
+
+        // =====================================================================
+        // The class field ops (CLASSES step 8, E5): FIELD_READ is
+        // presence-aware (missing → the OPTIONAL_FIELD_READ boundary's
+        // pre-mapped language null; present null stays distinguishable
+        // through the carrier's presence flags); FIELD_WRITE/FIELD_DELETE
+        // are commit ops consuming the ASSIGN/DELETE chain's resolved
+        // receiver and stored value — exactly one mutation, never a
+        // re-evaluated source expression.
+        // =====================================================================
+
+        /**
+         * FIELD_READ (K-D6): the nominal receiver boundary
+         * ({@code UNTYPED_CLASS_INPUT}) runs first — a null receiver or a
+         * foreign class identity fails its canonical E8001 projection —
+         * then the presence-aware read (a missing field pre-maps to
+         * language null; present null is the carrier's null value seen
+         * through a true presence flag, never conflated with missing)
+         * goes through the {@code OPTIONAL_FIELD_READ} boundary; SUCCESS
+         * publishes the boundary-checked value.
+         */
+        private void emitFieldRead(SemanticOp op, int indent) {
+            KindPayload.FieldReadPayload payload =
+                (KindPayload.FieldReadPayload) op.payload();
+            emitStart(op, indent);
+            String receiver = "__frr_" + op.opId().id();
+            emitFieldBoundaryCheck(op,
+                boundaryChildOfKind(op, BoundaryKind.UNTYPED_CLASS_INPUT),
+                slot(payload.classValue()), receiver, indent);
+            String read = "__frv_" + op.opId().id();
+            out.append(indent(indent)).append("Object ").append(read)
+                .append(" = ((").append("JvmRuntime.ClassInstance) ")
+                .append(receiver).append(").read(")
+                .append(javaString(payload.field())).append(");\n");
+            out.append(indent(indent)).append(read).append(" = ").append(read)
+                .append(" == JvmRuntime.MISSING ? null : ").append(read)
+                .append(";\n");
+            emitFieldBoundaryCheck(op,
+                boundaryChildOfKind(op, BoundaryKind.OPTIONAL_FIELD_READ),
+                read, slot((ValueId) op.result()), indent);
+            emitResultSuccess(op, slot((ValueId) op.result()),
+                (RuntimeDescriptor) op.resultType(), indent);
+        }
+
+        /**
+         * FIELD_WRITE (K-D6, the ASSIGN chain's commit child): the
+         * receiver boundary runs over the resolved receiver slot, then the
+         * field boundary ({@code CLASS_FIELD_ASSIGNMENT}) over the
+         * resolved stored value — the store commits only after both pass
+         * (a failed boundary commits nothing), and the instance carries
+         * the boundary-published value in the named field with every
+         * other presence state unchanged.
+         */
+        private void emitFieldWrite(SemanticOp op, int indent) {
+            KindPayload.FieldWritePayload payload =
+                (KindPayload.FieldWritePayload) op.payload();
+            emitStart(op, indent);
+            String receiver = "__fwr_" + op.opId().id();
+            emitFieldBoundaryCheck(op,
+                boundaryChildOfKind(op, BoundaryKind.UNTYPED_CLASS_INPUT),
+                slot(payload.classValue()), receiver, indent);
+            String value = "__fwv_" + op.opId().id();
+            emitFieldBoundaryCheck(op,
+                boundaryChildOfKind(op, BoundaryKind.CLASS_FIELD_ASSIGNMENT),
+                slot(payload.value()), value, indent);
+            out.append(indent(indent)).append("((").append("JvmRuntime.ClassInstance) ")
+                .append(receiver).append(").write(")
+                .append(javaString(payload.field())).append(", ").append(value)
+                .append(");\n");
+            emitPlainSuccess(op, indent);
+        }
+
+        /**
+         * FIELD_DELETE (K-D6, the DELETE chain's commit child): the
+         * receiver boundary runs over the resolved receiver slot, then the
+         * named field's presence and value are cleared — deleting an
+         * already-missing field is a no-op SUCCESS, and every other field
+         * state is unchanged.
+         */
+        private void emitFieldDelete(SemanticOp op, int indent) {
+            KindPayload.FieldDeletePayload payload =
+                (KindPayload.FieldDeletePayload) op.payload();
+            emitStart(op, indent);
+            String receiver = "__fdr_" + op.opId().id();
+            emitFieldBoundaryCheck(op,
+                boundaryChildOfKind(op, BoundaryKind.UNTYPED_CLASS_INPUT),
+                slot(payload.classValue()), receiver, indent);
+            out.append(indent(indent)).append("((").append("JvmRuntime.ClassInstance) ")
+                .append(receiver).append(").delete(")
+                .append(javaString(payload.field())).append(");\n");
+            emitPlainSuccess(op, indent);
+        }
+
+        /**
+         * The pinned boundary child of one field op (K-D12): the child
+         * parented to the field op with the closed boundary kind. A
+         * missing child is a producer defect, fail closed before any
+         * emission.
+         */
+        private SemanticOp boundaryChildOfKind(SemanticOp op, BoundaryKind kind) {
+            for (SemanticOp candidate : opsById.values()) {
+                if (candidate.kind() == SemanticOpKind.BOUNDARY
+                        && op.opId().equals(candidate.origin().parentOpId())
+                        && ((KindPayload.BoundaryPayload) candidate.payload()).kind()
+                            == kind) {
+                    return candidate;
+                }
+            }
+            throw new IllegalStateException(op.kind() + " " + op.opId() + " has no "
+                + kind + " boundary child: the pinned field-op shape carries it "
+                + "parented to the op (producer defect)");
+        }
+
+        /**
+         * One field-op boundary child: the START carries the input's
+         * actual runtime atom (the raw atom — a null receiver renders
+         * "null", never an allocation id), the check runs into the given
+         * local, and the terminal is the boundary SUCCESS with its
+         * published value or the two FAILURE events (boundary then owner)
+         * with the boundary's own origin.
+         */
+        private void emitFieldBoundaryCheck(SemanticOp owner, SemanticOp boundary,
+                                            String inputExpr, String checkedName,
+                                            int indent) {
+            KindPayload.BoundaryPayload payload =
+                (KindPayload.BoundaryPayload) boundary.payload();
+            if (trace) {
+                out.append(indent(indent)).append("JvmRuntime.ev(MODULE, ")
+                    .append(javaString(opKey(boundary.opId())))
+                    .append(", \"START\", \"BOUNDARY\", ")
+                    .append(javaString(boundary.contract().canonicalDigest()))
+                    .append(", ")
+                    .append(javaString(parentKey(boundary.origin().parentOpId())))
+                    .append(", List.of(JvmRuntime.rawAtom(").append(inputExpr)
+                    .append(", ")
+                    .append(javaString(staticKind(payload.descriptor())))
+                    .append(")), null, null);\n");
+            }
+            out.append(indent(indent)).append("Object ").append(checkedName)
+                .append(";\n");
+            out.append(indent(indent)).append("try {\n");
+            out.append(indent(indent + 1)).append(checkedName)
+                .append(" = JvmRuntime.bcheck(")
+                .append(javaString(descriptorText(payload.descriptor()))).append(", ")
+                .append(javaString(staticKind(payload.descriptor()))).append(", ")
+                .append(inputExpr).append(");\n");
+            out.append(indent(indent)).append("} catch (JvmRuntime.DealError __fbe) {\n");
+            out.append(indent(indent + 1))
+                .append("JvmRuntime.DealError __fbre = new JvmRuntime.DealError("
+                    + "__fbe.code, __fbe.msg, ")
+                .append(javaString(originOf(boundary)))
+                .append(", __fbe.expected, __fbe.actual, __fbe.frames, null);\n");
+            if (trace) {
+                emitFailureEvent(boundary.opId(), "BOUNDARY", boundary,
+                    "JvmRuntime.errtext(__fbre)", indent + 1);
+                emitFailureEvent(owner.opId(), owner.kind().name(), owner,
+                    "JvmRuntime.errtext(__fbre)", indent + 1);
+            }
+            out.append(indent(indent + 1)).append("throw __fbre;\n");
+            out.append(indent(indent)).append("}\n");
+            emitBoundarySuccess(boundary, checkedName, payload.descriptor(), indent);
         }
 
         private void emitMemberWrite(SemanticOp op, int indent) {

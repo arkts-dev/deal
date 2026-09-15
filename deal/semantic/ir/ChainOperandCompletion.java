@@ -35,8 +35,10 @@ import java.util.Set;
  * children (chain children, boundary children of {@code ARRAY_NEW}/
  * {@code CALL}/{@code STDLIB_CALL}/{@code MEMBER_READ}/{@code INDEX_READ}/
  * {@code RETURN}/{@code ASYNC_START}/{@code CALLBACK_INVOKE}/
- * {@code EXTERNAL_ENTRY}/{@code AWAIT}, and the delegated {@code CALL} of
- * {@code ENTRY_INVOKE}), executed exactly once by their owner arm.</li>
+ * {@code EXTERNAL_ENTRY}/{@code AWAIT}/{@code OPTIONAL_READ}/
+ * {@code FIELD_READ}/{@code FIELD_WRITE}/{@code FIELD_DELETE}, and the
+ * delegated {@code CALL} of {@code ENTRY_INVOKE}), executed exactly once by
+ * their owner arm.</li>
  * <li>{@link #operandProducersOf(SemanticOp, LoweredModuleUnit, Set)} —
  * the transitive operand-producing closure of one chain child, in unit
  * list order, excluding structurally-owned ops (those execute under
@@ -123,6 +125,19 @@ public final class ChainOperandCompletion {
                 // exactly once — the block walk skips it like every other
                 // parented boundary child.
                 case KindPayload.OptionalReadPayload ignored ->
+                    addBoundaryChildren(unit, op, owned);
+                // The class field ops (step 8 of the shared-emission
+                // cutover): the FIELD_READ receiver/optional-read children,
+                // the FIELD_WRITE receiver/assignment children, and the
+                // FIELD_DELETE receiver child are parented to their field op
+                // (K-D12) — the field arm executes each exactly once, so the
+                // block walk skips them like every other parented boundary
+                // child (a double execution would duplicate events).
+                case KindPayload.FieldReadPayload ignored ->
+                    addBoundaryChildren(unit, op, owned);
+                case KindPayload.FieldWritePayload ignored ->
+                    addBoundaryChildren(unit, op, owned);
+                case KindPayload.FieldDeletePayload ignored ->
                     addBoundaryChildren(unit, op, owned);
                 case KindPayload.EntryInvokePayload ignored ->
                     addEntryCallChildren(unit, op, owned);
