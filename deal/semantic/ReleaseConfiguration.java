@@ -93,9 +93,15 @@ public final class ReleaseConfiguration {
      * {@code DISCARD} emission, ISSUE-0410, was proven green three-way
      * on the full evaluation-order corpus — chain materialization,
      * comparison selectors, no speculative execution, and continue
-     * landing — before the promotion landed). The list is the registry
-     * half of E12's one atomic release change plus its later promotion
-     * units.
+     * landing — before the promotion landed). The step-5 cutover
+     * promotion (ISSUE-0581) extends the list with {@code BINDINGS}
+     * for both targets, still in the pinned capability order (the
+     * landed {@code RECURSIVE_GROUP_INIT} emission, ISSUE-0580, was
+     * proven green three-way on the group/closure corpus — atomic
+     * publication, fresh identities, one factory invocation per member
+     * per execution, and the nested-scope emission shape — before the
+     * promotion landed). The list is the registry half of E12's one
+     * atomic release change plus its later promotion units.
      */
     private static final List<ReleasePromotion> ACTIVATION_PROMOTIONS = List.of(
         new ReleasePromotion(SemanticCapability.FOUNDATION_VALUES, Target.LUAJIT),
@@ -109,7 +115,9 @@ public final class ReleaseConfiguration {
         new ReleasePromotion(SemanticCapability.BOUNDARIES, Target.LUAJIT),
         new ReleasePromotion(SemanticCapability.BOUNDARIES, Target.JVM),
         new ReleasePromotion(SemanticCapability.EVALUATION_ORDER, Target.LUAJIT),
-        new ReleasePromotion(SemanticCapability.EVALUATION_ORDER, Target.JVM));
+        new ReleasePromotion(SemanticCapability.EVALUATION_ORDER, Target.JVM),
+        new ReleasePromotion(SemanticCapability.BINDINGS, Target.LUAJIT),
+        new ReleasePromotion(SemanticCapability.BINDINGS, Target.JVM));
 
     /**
      * The release registry after E12's activation release action: the
@@ -159,13 +167,14 @@ public final class ReleaseConfiguration {
 
     /**
      * The release capability registry (foundation F7) after E12's
-     * activation plus the step-1 through step-4 cutover promotions:
+     * activation plus the step-1 through step-5 cutover promotions:
      * {@link CapabilityRegistry#releaseRegistry()} composed with the
      * E12 promotion list through {@code withState} —
      * {@code FOUNDATION_VALUES}, {@code SIGNED_INT32},
      * {@code CONTAINERS_AND_STRINGS}, {@code DESCRIPTORS},
-     * {@code BOUNDARIES}, and {@code EVALUATION_ORDER} promoted for
-     * {@code LUAJIT} and {@code JVM}, every other entry {@code SHADOW}.
+     * {@code BOUNDARIES}, {@code EVALUATION_ORDER}, and
+     * {@code BINDINGS} promoted for {@code LUAJIT} and {@code JVM},
+     * every other entry {@code SHADOW}.
      * {@code deal/Main.java}, {@code CompilationOrchestrator}, and the
      * internal harnesses consume exactly this instance for invocation
      * resolution and route planning.
