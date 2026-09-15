@@ -229,14 +229,69 @@ function __rt.utf8_next(s, i)
   return p + len - 1, string.sub(s, p, p + len - 1)
 end
 
+--- Classify a Lua string's UTF-8 validity (the check_string boundary
+-- reason split, ISSUE-0598): nil when the string is scalar-valid UTF-8,
+-- "surrogate" when the walk reaches a UTF-16 surrogate code point
+-- (an ED A0..BF 3-byte sequence), and "invalid" for every other
+-- malformed encoding. The byte walk mirrors utf8_valid exactly and
+-- stops at the first invalid sequence, so the reported reason is
+-- deterministic.
+function __rt.utf8_status(s)
+  local n = #s
+  local i = 1
+  while i <= n do
+    local b1 = string.byte(s, i)
+    local len
+    if b1 < 0x80 then
+      len = 1
+    elseif b1 >= 0xC2 and b1 <= 0xDF then
+      len = 2
+    elseif b1 >= 0xE0 and b1 <= 0xEF then
+      len = 3
+    elseif b1 >= 0xF0 and b1 <= 0xF4 then
+      len = 4
+    else
+      return "invalid"
+    end
+    if i + len - 1 > n then
+      return "invalid"
+    end
+    if len >= 2 then
+      local b2 = string.byte(s, i + 1)
+      if b2 == nil or b2 < 0x80 or b2 > 0xBF then return "invalid" end
+      if len == 3 then
+        local b3 = string.byte(s, i + 2)
+        if b3 == nil or b3 < 0x80 or b3 > 0xBF then return "invalid" end
+        if b1 == 0xE0 and b2 < 0xA0 then return "invalid" end  -- overlong
+        if b1 == 0xED and b2 > 0x9F then return "surrogate" end  -- U+D800..U+DFFF
+      end
+      if len == 4 then
+        local b3 = string.byte(s, i + 2)
+        local b4 = string.byte(s, i + 3)
+        if b3 == nil or b3 < 0x80 or b3 > 0xBF then return "invalid" end
+        if b4 == nil or b4 < 0x80 or b4 > 0xBF then return "invalid" end
+        if b1 == 0xF0 and b2 < 0x90 then return "invalid" end  -- overlong
+        if b1 == 0xF4 and b2 > 0x8F then return "invalid" end  -- > U+10FFFF
+      end
+    end
+    i = i + len
+  end
+  return nil
+end
+
 function __rt.check_string(v, file, line, column)
   if type(v) ~= "string" then
     error(__rt._err("E8001", "expected string", file, line, column, "string", type(v)))
   end
   -- v1.2 boundary rule: strings accepted from untrusted or backend-native
   -- boundaries must reject invalid encodings (malformed UTF-8 byte
-  -- sequences).
-  if not __rt.utf8_valid(v) then
+  -- sequences). A surrogate code point gets the specific pinned message
+  -- (the host-surrogate-utf8-e8010 sidecar); every other malformed
+  -- encoding keeps the general message.
+  local status = __rt.utf8_status(v)
+  if status == "surrogate" then
+    error(__rt._err("E8001", "expected string, got UTF-16 surrogate code point", file, line, column, "string", "invalid UTF-8 string"))
+  elseif status == "invalid" then
     error(__rt._err("E8001", "expected string, got invalid UTF-8 encoding", file, line, column, "string", "invalid UTF-8 string"))
   end
   return v
@@ -884,86 +939,102 @@ function __rt.from_lua_function(sig, raw_f)
   local is_async = parsed.isAsync == true
 
   return __rt.function_(sig, function(...)
-    local nargs = select("#", ...)
+    local nargs_full = select("#", ...)
     local required_params = #param_descriptors
+
+    -- Converged host-boundary call shape (ISSUE-0598): the emitted call
+    -- site appends the literal span triplet f(v1, ..., vN, file, line,
+    -- column); a call carrying three or more arguments splits the
+    -- trailing triple off before the exact-arity gate (the JS
+    -- hostFunction mirror), so boundary errors report the DEAL call
+    -- site byte-exact.
+    local file, line, column
+    local nargs = nargs_full
+    if nargs_full >= 3 then
+      file = select(nargs_full - 2, ...)
+      line = select(nargs_full - 1, ...)
+      column = select(nargs_full, ...)
+      nargs = nargs_full - 3
+    end
 
     -- v1.2 exact arity: no rest parameters exist.
     if nargs < required_params then
-      error(__rt._err("E8010", "expected at least " .. required_params .. " arguments, got " .. nargs, nil, nil, nil, nil, nil))
+      error(__rt._err("E8010", "expected at least " .. required_params .. " arguments, got " .. nargs, file, line, column, nil, nil))
     end
     if nargs > required_params then
-      error(__rt._err("E8010", "expected " .. required_params .. " arguments, got " .. nargs, nil, nil, nil, nil, nil))
+      error(__rt._err("E8010", "expected " .. required_params .. " arguments, got " .. nargs, file, line, column, nil, nil))
     end
 
-    -- Check required parameters
+    -- The user arguments in one pack (the JS mirror's
+    -- args.slice(0, nargs)); the raw host function never sees the
+    -- trailing span triplet.
+    local user_args = {}
+    for i = 1, nargs do
+      user_args[i] = select(i, ...)
+    end
+
+    -- Check required parameters (the pcall composition: the inner DEAL
+    -- error's message is the byte-exact tail of the re-raised E8010).
     for i = 1, required_params do
-      local arg = select(i, ...)
+      local arg = user_args[i]
       local param_desc = param_descriptors[i]
-      local ok, err = pcall(__rt.check_type, param_desc, arg)
+      local ok, err = pcall(__rt.check_type, param_desc, arg, file, line, column)
       if not ok then
-        error(__rt._err("E8010", "parameter " .. i .. " type mismatch: " .. tostring(err), nil, nil, nil, param_desc, type(arg)))
+        error(__rt._err("E8010", "parameter " .. i .. " type mismatch: " .. tostring(err.message), file, line, column, param_desc, type(arg)))
       end
     end
 
     -- Adapt function-typed arguments before the raw call so hosts receive
     -- plain Lua functions. __NULL and nil arguments on nullable-function
     -- parameters pass through unadapted.
-    local adapted = {}
-    local needs_adapt = false
     for i = 1, required_params do
-      local arg = select(i, ...)
+      local arg = user_args[i]
       if is_function_type(param_descriptors[i]) then
-        needs_adapt = true
         if arg ~= nil and arg ~= __rt.__NULL then
           arg = __rt.as_lua_function(arg)
         end
       end
-      adapted[i] = arg
+      user_args[i] = arg
     end
 
     -- Call the raw function
-    local results
-    if needs_adapt then
-      results = { raw_f(unpack(adapted, 1, nargs)) }
-    else
-      results = { raw_f(...) }
-    end
+    local results = { raw_f(unpack(user_args, 1, nargs)) }
     local nresults = #results
 
     -- Return validation: three-way dispatch (see the doc comment above).
     if is_async then
       -- 1. Async: require an async operation result.
       if nresults < 1 then
-        error(__rt._err("E8010", "host async function must return an async operation, got nothing", nil, nil, nil, "async operation", "nothing"))
+        error(__rt._err("E8010", "host async function must return an async operation, got nothing", file, line, column, "async operation", "nothing"))
       end
       for i = 1, nresults do
         local r = results[i]
         if type(r) ~= "table" or r.__kind ~= "async" then
-          error(__rt._err("E8010", "host async function must return an async operation, got " .. type(r), nil, nil, nil, "async operation", type(r)))
+          error(__rt._err("E8010", "host async function must return an async operation, got " .. type(r), file, line, column, "async operation", type(r)))
         end
       end
     elseif not is_null_ret then
       -- 2. Non-null declared return: require at least one result, then check
       -- every result against the declared descriptor.
       if nresults < 1 then
-        error(__rt._err("E8010", "return value 1 type mismatch: expected " .. ret_descriptor .. ", got nothing", nil, nil, nil, ret_descriptor, "nothing"))
+        error(__rt._err("E8010", "return value 1 type mismatch: expected " .. ret_descriptor .. ", got nothing", file, line, column, ret_descriptor, "nothing"))
       end
       for i = 1, nresults do
-        local ok, err = pcall(__rt.check_type, ret_descriptor, results[i])
+        local ok, err = pcall(__rt.check_type, ret_descriptor, results[i], file, line, column)
         if not ok then
-          error(__rt._err("E8010", "return value " .. i .. " type mismatch: " .. tostring(err), nil, nil, nil, ret_descriptor, type(results[i])))
+          error(__rt._err("E8010", "return value " .. i .. " type mismatch: " .. tostring(err.message), file, line, column, ret_descriptor, type(results[i])))
         end
       end
     else
       -- 3. Sync null return: require at least one result and every result
       -- must be the __rt.__NULL sentinel.
       if nresults < 1 then
-        error(__rt._err("E8010", "return value 1 type mismatch: expected null, got nothing", nil, nil, nil, "null", "nothing"))
+        error(__rt._err("E8010", "return value 1 type mismatch: expected null, got nothing", file, line, column, "null", "nothing"))
       end
       for i = 1, nresults do
-        local ok, err = pcall(__rt.check_null, results[i])
+        local ok, err = pcall(__rt.check_null, results[i], file, line, column)
         if not ok then
-          error(__rt._err("E8010", "return value " .. i .. " type mismatch: " .. tostring(err), nil, nil, nil, "null", type(results[i])))
+          error(__rt._err("E8010", "return value " .. i .. " type mismatch: " .. tostring(err.message), file, line, column, "null", type(results[i])))
         end
       end
     end
@@ -991,24 +1062,24 @@ end
 -- E8010 never fires at load for legal declared maps (every emitted
 -- Type.Func descriptor is a canonical function atom); call-time violations
 -- raise E8010 inside the wrapped functions.
-function __rt.load_host(module_path, declared)
+function __rt.load_host(module_path, declared, file, line, column)
   if type(declared) ~= "table" then
-    error(__rt._err("E8011", "host module declarations must be a table", nil, nil, nil, "table", type(declared)))
+    error(__rt._err("E8011", "host module declarations must be a table", file, line, column, "table", type(declared)))
   end
 
   local ok, raw = pcall(require, module_path)
   if not ok then
-    error(__rt._err("E8011", "failed to load host module '" .. tostring(module_path) .. "': " .. tostring(raw), nil, nil, nil, nil, nil))
+    error(__rt._err("E8011", "failed to load host module '" .. tostring(module_path) .. "': " .. tostring(raw), file, line, column, nil, nil))
   end
   if type(raw) ~= "table" then
-    error(__rt._err("E8011", "host module '" .. tostring(module_path) .. "' did not return a table", nil, nil, nil, "table", type(raw)))
+    error(__rt._err("E8011", "host module '" .. tostring(module_path) .. "' did not return a table", file, line, column, "table", type(raw)))
   end
 
   local exports = {}
   for name, descriptor in pairs(declared) do
     local v = raw[name]
     if v == nil then
-      error(__rt._err("E8011", "missing host export '" .. tostring(name) .. "' in module '" .. tostring(module_path) .. "'", nil, nil, nil, nil, nil))
+      error(__rt._err("E8011", "missing host export '" .. tostring(name) .. "' in module '" .. tostring(module_path) .. "'", file, line, column, nil, nil))
     end
     local parsed = parse_descriptor(descriptor)
     if parsed ~= nil and parsed.kind == "function" then
@@ -1020,30 +1091,30 @@ function __rt.load_host(module_path, declared)
         -- metadata. Validate the identity, then re-wrap .f so raw and
         -- pre-wrapped exports get identical call-time enforcement.
         if v.sig ~= descriptor then
-          error(__rt._err("E8011", "host export '" .. tostring(name) .. "' in module '" .. tostring(module_path) .. "' has signature mismatch: expected " .. descriptor .. ", got " .. tostring(v.sig), nil, nil, nil, descriptor, v.sig))
+          error(__rt._err("E8011", "host export '" .. tostring(name) .. "' in module '" .. tostring(module_path) .. "' has signature mismatch: expected " .. descriptor .. ", got " .. tostring(v.sig), file, line, column, descriptor, v.sig))
         end
         if type(v.f) ~= "function" then
-          error(__rt._err("E8011", "host export '" .. tostring(name) .. "' in module '" .. tostring(module_path) .. "' has non-function .f", nil, nil, nil, "function", type(v.f)))
+          error(__rt._err("E8011", "host export '" .. tostring(name) .. "' in module '" .. tostring(module_path) .. "' has non-function .f", file, line, column, "function", type(v.f)))
         end
         exports[name] = __rt.from_lua_function(descriptor, v.f)
       else
-        error(__rt._err("E8011", "host export '" .. tostring(name) .. "' in module '" .. tostring(module_path) .. "' is not a function", nil, nil, nil, "function", type(v)))
+        error(__rt._err("E8011", "host export '" .. tostring(name) .. "' in module '" .. tostring(module_path) .. "' is not a function", file, line, column, "function", type(v)))
       end
     elseif parsed ~= nil and parsed.kind == "class" then
       -- Class meta: the identity must equal the declared descriptor exactly
       -- (module-qualified nominal identity).
       if type(v) ~= "table" or v.__kind ~= "class" then
-        error(__rt._err("E8011", "host export '" .. tostring(name) .. "' in module '" .. tostring(module_path) .. "' is not a class meta table", nil, nil, nil, "class", type(v)))
+        error(__rt._err("E8011", "host export '" .. tostring(name) .. "' in module '" .. tostring(module_path) .. "' is not a class meta table", file, line, column, "class", type(v)))
       end
       if v.__classname ~= descriptor then
-        error(__rt._err("E8011", "host class export '" .. tostring(name) .. "' in module '" .. tostring(module_path) .. "' has identity mismatch: expected " .. descriptor .. ", got " .. tostring(v.__classname), nil, nil, nil, descriptor, v.__classname))
+        error(__rt._err("E8011", "host class export '" .. tostring(name) .. "' in module '" .. tostring(module_path) .. "' has identity mismatch: expected " .. descriptor .. ", got " .. tostring(v.__classname), file, line, column, descriptor, v.__classname))
       end
       exports[name] = v
       -- <C>_defaults is mandatory (construction depends on it).
       local defaults_key = name .. "_defaults"
       local defaults = raw[defaults_key]
       if type(defaults) ~= "table" then
-        error(__rt._err("E8011", "host class '" .. tostring(name) .. "' in module '" .. tostring(module_path) .. "' is missing its defaults table", nil, nil, nil, "table", type(defaults)))
+        error(__rt._err("E8011", "host class '" .. tostring(name) .. "' in module '" .. tostring(module_path) .. "' is missing its defaults table", file, line, column, "table", type(defaults)))
       end
       exports[defaults_key] = defaults
       -- <C>_fields is optional: copied through when the raw host table
@@ -1052,12 +1123,12 @@ function __rt.load_host(module_path, declared)
       local fields = raw[fields_key]
       if fields ~= nil then
         if type(fields) ~= "table" then
-          error(__rt._err("E8011", "host class '" .. tostring(name) .. "' in module '" .. tostring(module_path) .. "' supplies a non-table _fields value", nil, nil, nil, "table", type(fields)))
+          error(__rt._err("E8011", "host class '" .. tostring(name) .. "' in module '" .. tostring(module_path) .. "' supplies a non-table _fields value", file, line, column, "table", type(fields)))
         end
         exports[fields_key] = fields
       end
     else
-      error(__rt._err("E8011", "host export '" .. tostring(name) .. "' in module '" .. tostring(module_path) .. "' has an unsupported declared descriptor: " .. tostring(descriptor), nil, nil, nil, nil, nil))
+      error(__rt._err("E8011", "host export '" .. tostring(name) .. "' in module '" .. tostring(module_path) .. "' has an unsupported declared descriptor: " .. tostring(descriptor), file, line, column, nil, nil))
     end
   end
 
@@ -2140,28 +2211,30 @@ end
 -- descriptors and emit each present field through _json_to_value.
 -- Raises E8001/E8004 DEAL errors on invalid input. The caller marks the
 -- instance on the path-local seen set before recursing (D4), so this
--- helper reads fields and never mutates value.
-function __rt._json_to_instance(descriptor, value, fields, seen, depth)
+-- helper reads fields and never mutates value. The trailing span
+-- triplet (ISSUE-0598) is the C$toJson call site: every raise carries
+-- it, so encode-side errors report the toJson call byte-exact.
+function __rt._json_to_instance(descriptor, value, fields, seen, depth, file, line, column)
   if depth > __rt._JSON_MAX_DEPTH then
-    error(__rt._err("E8001", "maximum JSON nesting depth (512) exceeded", nil, nil, nil, nil, nil))
+    error(__rt._err("E8001", "maximum JSON nesting depth (512) exceeded", file, line, column, nil, nil))
   end
   -- Recursive rule (D3 step 2): every nested fields array re-runs the
   -- encode descriptor-entry validation before iteration, so validation
   -- depth always equals walker depth and no encode path ever iterates
   -- an unvalidated descriptor.
   if not __rt._json_validate_fields(fields, false) then
-    error(__rt._err("E8001", "malformed field descriptors", nil, nil, nil, nil, nil))
+    error(__rt._err("E8001", "malformed field descriptors", file, line, column, nil, nil))
   end
   local result = {}
   for _, f in ipairs(fields) do
     local v = value[f.name]
     if v == nil then
       if not f.optional then
-        error(__rt._err("E8001", "missing required field '" .. f.name .. "'", nil, nil, nil, nil, nil))
+        error(__rt._err("E8001", "missing required field '" .. f.name .. "'", file, line, column, nil, nil))
       end
       -- Missing optional field: omit the key from the output
     else
-      result[f.name] = __rt._json_to_value(f, v, seen, depth)
+      result[f.name] = __rt._json_to_value(f, v, seen, depth, file, line, column)
     end
   end
   return result
@@ -2169,16 +2242,16 @@ end
 
 --- Encode one field/element value per its descriptor (Contract 4 toJson
 -- columns, D3 step 4). Every raise is a DEAL error (E8001/E8004 built
--- by __rt._err with no source-location arguments, like
--- std/json.stringify); no raw Lua error can escape for caller inputs —
--- every predicate and validator applies its type guard before any
--- iteration or dereference. The descriptor is always caller-validated:
--- fields arrays are validated before _json_to_instance iterates them
--- and the array branch re-validates its element descriptor before
--- element-wise recursion (D3 step 2 recursive rule).
-function __rt._json_to_value(fdesc, v, seen, depth)
+-- by __rt._err carrying the C$toJson call-site span — ISSUE-0598); no
+-- raw Lua error can escape for caller inputs — every predicate and
+-- validator applies its type guard before any iteration or
+-- dereference. The descriptor is always caller-validated: fields
+-- arrays are validated before _json_to_instance iterates them and the
+-- array branch re-validates its element descriptor before element-wise
+-- recursion (D3 step 2 recursive rule).
+function __rt._json_to_value(fdesc, v, seen, depth, file, line, column)
   if depth > __rt._JSON_MAX_DEPTH then
-    error(__rt._err("E8001", "maximum JSON nesting depth (512) exceeded", nil, nil, nil, nil, nil))
+    error(__rt._err("E8001", "maximum JSON nesting depth (512) exceeded", file, line, column, nil, nil))
   end
   local jtype = fdesc.jtype
   if v == __rt.__NULL then
@@ -2188,42 +2261,42 @@ function __rt._json_to_value(fdesc, v, seen, depth)
       return __rt.__NULL
     end
     local what = fdesc.name ~= nil and ("field '" .. fdesc.name .. "'") or "array element"
-    error(__rt._err("E8001", "explicit null on non-nullable " .. what, nil, nil, nil, nil, nil))
+    error(__rt._err("E8001", "explicit null on non-nullable " .. what, file, line, column, nil, nil))
   end
   if jtype == "null" then
-    error(__rt._err("E8001", "expected null", nil, nil, nil, "null", type(v)))
+    error(__rt._err("E8001", "expected null", file, line, column, "null", type(v)))
   elseif jtype == "boolean" then
     if type(v) ~= "boolean" then
-      error(__rt._err("E8001", "expected boolean", nil, nil, nil, "boolean", type(v)))
+      error(__rt._err("E8001", "expected boolean", file, line, column, "boolean", type(v)))
     end
     return v
   elseif jtype == "int" then
     -- check_int: E8001 for non-number/NaN/Infinity/non-integer,
     -- E8004 "int out of range" beyond the signed-int32 range — the int
     -- type contract (see check_int above).
-    return __rt.check_int(v)
+    return __rt.check_int(v, file, line, column)
   elseif jtype == "number" then
     if type(v) ~= "number" then
-      error(__rt._err("E8001", "expected number", nil, nil, nil, "number", type(v)))
+      error(__rt._err("E8001", "expected number", file, line, column, "number", type(v)))
     end
     if v ~= v then  -- NaN check: NaN is the only value not equal to itself
-      error(__rt._err("E8001", "cannot encode NaN as JSON", nil, nil, nil, nil, nil))
+      error(__rt._err("E8001", "cannot encode NaN as JSON", file, line, column, nil, nil))
     end
     if v == math.huge or v == -math.huge then
-      error(__rt._err("E8001", "cannot encode Infinity as JSON", nil, nil, nil, nil, nil))
+      error(__rt._err("E8001", "cannot encode Infinity as JSON", file, line, column, nil, nil))
     end
     return v
   elseif jtype == "string" then
     if type(v) ~= "string" then
-      error(__rt._err("E8001", "expected string", nil, nil, nil, "string", type(v)))
+      error(__rt._err("E8001", "expected string", file, line, column, "string", type(v)))
     end
     return v
   elseif jtype == "table" then
     if type(v) ~= "table" then
-      error(__rt._err("E8001", "expected table", nil, nil, nil, "table", type(v)))
+      error(__rt._err("E8001", "expected table", file, line, column, "table", type(v)))
     end
     if depth + 1 > __rt._JSON_MAX_DEPTH then
-      error(__rt._err("E8001", "maximum JSON nesting depth (512) exceeded", nil, nil, nil, nil, nil))
+      error(__rt._err("E8001", "maximum JSON nesting depth (512) exceeded", file, line, column, nil, nil))
     end
     -- D7: toJson accepts string-keyed objects and dense arrays with
     -- finite primitive leaves, finite and acyclic. _json_table_shape
@@ -2233,49 +2306,49 @@ function __rt._json_to_value(fdesc, v, seen, depth)
     local ok, reason = __rt._json_table_shape(v, seen, depth + 1)
     if not ok then
       if reason == "cycle" then
-        error(__rt._err("E8001", "cyclic value cannot be encoded as JSON", nil, nil, nil, nil, nil))
+        error(__rt._err("E8001", "cyclic value cannot be encoded as JSON", file, line, column, nil, nil))
       elseif reason == "depth" then
-        error(__rt._err("E8001", "maximum JSON nesting depth (512) exceeded", nil, nil, nil, nil, nil))
+        error(__rt._err("E8001", "maximum JSON nesting depth (512) exceeded", file, line, column, nil, nil))
       else
-        error(__rt._err("E8001", "value is not JSON-shaped", nil, nil, nil, nil, nil))
+        error(__rt._err("E8001", "value is not JSON-shaped", file, line, column, nil, nil))
       end
     end
     -- Emit the validated original table by reference (never mutated).
     return v
   elseif jtype == "class" then
     if type(v) ~= "table" or v.__kind ~= "class" then
-      error(__rt._err("E8001", "expected class instance", nil, nil, nil, "class", type(v)))
+      error(__rt._err("E8001", "expected class instance", file, line, column, "class", type(v)))
     end
     if v.__classname ~= fdesc.className then
-      error(__rt._err("E8001", "expected instance of " .. fdesc.className .. ", got " .. tostring(v.__classname or "unknown"), nil, nil, nil, fdesc.className, v.__classname))
+      error(__rt._err("E8001", "expected instance of " .. fdesc.className .. ", got " .. tostring(v.__classname or "unknown"), file, line, column, fdesc.className, v.__classname))
     end
     if seen[v] then
-      error(__rt._err("E8001", "cyclic value cannot be encoded as JSON", nil, nil, nil, nil, nil))
+      error(__rt._err("E8001", "cyclic value cannot be encoded as JSON", file, line, column, nil, nil))
     end
     seen[v] = true
-    local nested = __rt._json_to_instance(fdesc.className, v, fdesc.fields, seen, depth + 1)
+    local nested = __rt._json_to_instance(fdesc.className, v, fdesc.fields, seen, depth + 1, file, line, column)
     seen[v] = nil
     return nested
   elseif jtype == "array" then
     if type(v) ~= "table" then
-      error(__rt._err("E8001", "expected array", nil, nil, nil, "array", type(v)))
+      error(__rt._err("E8001", "expected array", file, line, column, "array", type(v)))
     end
     if not __rt._json_is_array(v) then
-      error(__rt._err("E8001", "expected dense array", nil, nil, nil, "array", nil))
+      error(__rt._err("E8001", "expected dense array", file, line, column, "array", nil))
     end
     -- Recursive rule (D3 step 2): the element descriptor is re-validated
     -- before element-wise encoding — a truncated array-typed element
     -- lacking its own element raises E8001 here, never a raw error.
     if not __rt._json_validate_entry(fdesc.element, false) then
-      error(__rt._err("E8001", "malformed field descriptors", nil, nil, nil, nil, nil))
+      error(__rt._err("E8001", "malformed field descriptors", file, line, column, nil, nil))
     end
     if seen[v] then
-      error(__rt._err("E8001", "cyclic value cannot be encoded as JSON", nil, nil, nil, nil, nil))
+      error(__rt._err("E8001", "cyclic value cannot be encoded as JSON", file, line, column, nil, nil))
     end
     seen[v] = true
     local arr = {}
     for i = 1, #v do
-      arr[i] = __rt._json_to_value(fdesc.element, v[i], seen, depth + 1)
+      arr[i] = __rt._json_to_value(fdesc.element, v[i], seen, depth + 1, file, line, column)
     end
     seen[v] = nil
     return arr
@@ -2283,7 +2356,7 @@ function __rt._json_to_value(fdesc, v, seen, depth)
   -- Unknown jtype: descriptor-entry validation upstream rejects unknown
   -- jtypes before any walker descent; this arm is unreachable through
   -- validated descriptors and stays as a defensive DEAL error.
-  error(__rt._err("E8001", "unknown jtype in field descriptor", nil, nil, nil, nil, nil))
+  error(__rt._err("E8001", "unknown jtype in field descriptor", file, line, column, nil, nil))
 end
 
 --- Serialize a class instance to a JSON-compatible Lua table.
@@ -2299,22 +2372,22 @@ end
 -- @param value      table   tagged class instance table
 -- @param fields     array   array of field descriptor tables
 -- @return table suitable for json.stringify
-function __rt.json_to_json(descriptor, value, fields)
+function __rt.json_to_json(descriptor, value, fields, file, line, column)
   -- 1. Top-level identity check (D3 step 1, defense in depth — the
   -- generated wrapper's check_type fires first): exact-compare like
   -- check_type's class branch.
   if type(value) ~= "table" or value.__kind ~= "class" then
-    error(__rt._err("E8001", "expected class instance", nil, nil, nil, "class", type(value)))
+    error(__rt._err("E8001", "expected class instance", file, line, column, "class", type(value)))
   end
   if value.__classname ~= descriptor then
-    error(__rt._err("E8001", "expected instance of " .. tostring(descriptor) .. ", got " .. tostring(value.__classname or "unknown"), nil, nil, nil, descriptor, value.__classname))
+    error(__rt._err("E8001", "expected instance of " .. tostring(descriptor) .. ", got " .. tostring(value.__classname or "unknown"), file, line, column, descriptor, value.__classname))
   end
   -- 2. Encode descriptor-entry validation (D3 step 2): field entries
   -- require boolean optional/nullable, present element flags must be
   -- boolean (absent means false/false), class entries and class elements
   -- require className/fields only — defaults is decode-only.
   if not __rt._json_validate_fields(fields, false) then
-    error(__rt._err("E8001", "malformed field descriptors", nil, nil, nil, nil, nil))
+    error(__rt._err("E8001", "malformed field descriptors", file, line, column, nil, nil))
   end
   -- 3. Path-local seen push, the recursive walker, then the pop (D3
   -- step 3, D4). A raise inside the walker unwinds the whole call and
@@ -2323,7 +2396,7 @@ function __rt.json_to_json(descriptor, value, fields)
   -- below runs for the success path.
   local seen = {}
   seen[value] = true
-  local result = __rt._json_to_instance(descriptor, value, fields, seen, 0)
+  local result = __rt._json_to_instance(descriptor, value, fields, seen, 0, file, line, column)
   seen[value] = nil
   return result
 end

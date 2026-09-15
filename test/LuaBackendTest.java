@@ -631,7 +631,7 @@ public class LuaBackendTest {
         );
         assertNoErrors(out, "function call");
         assertContains(out.lua, ".f(", ".f() call unwrap");
-        assertContains(out.lua, "add.f(1, 2)", "add.f call");
+        assertContains(out.lua, "add.f(1, 2, \"test.deal\", 2, 14)", "add.f call forwards the call-site span");
     }
 
     // =========================================================================
@@ -984,25 +984,25 @@ public class LuaBackendTest {
             + "}"
         );
         assertNoErrors(out, "bytes write compiles");
-        assertContains(out.lua, "local __b = pick.f(l, 1)",
+        assertContains(out.lua, "local __b = pick.f(l, 1, \"test.deal\", 12, 3)",
             "receiver evaluated into __b exactly once");
         assertContains(out.lua,
-            "local __i = __rt.check_int(record.f(l, 2), \"test.deal\", 12, 3)",
+            "local __i = __rt.check_int(record.f(l, 2, \"test.deal\", 12, 14), \"test.deal\", 12, 3)",
             "index checked into __i exactly once");
-        assertContains(out.lua, "local __v = record.f(l, 3)",
+        assertContains(out.lua, "local __v = record.f(l, 3, \"test.deal\", 12, 30)",
             "RHS evaluated into __v exactly once");
         assertContains(out.lua,
             "__rt.bytes_set(__b, __i, __v, \"test.deal\", 12, 3)",
             "bytes_set carries the write span");
-        check(countOccurrences(out.lua, "pick.f(l, 1)") == 1,
+        check(countOccurrences(out.lua, "pick.f(l, 1, \"test.deal\", 12, 3)") == 1,
             "receiver expression text emitted exactly once");
-        check(countOccurrences(out.lua, "record.f(l, 2)") == 1,
+        check(countOccurrences(out.lua, "record.f(l, 2, \"test.deal\", 12, 14)") == 1,
             "index expression text emitted exactly once");
-        check(countOccurrences(out.lua, "record.f(l, 3)") == 1,
+        check(countOccurrences(out.lua, "record.f(l, 3, \"test.deal\", 12, 30)") == 1,
             "RHS expression text emitted exactly once");
-        int bIdx = out.lua.indexOf("local __b = pick.f(l, 1)");
-        int iIdx = out.lua.indexOf("local __i = __rt.check_int(record.f(l, 2)");
-        int vIdx = out.lua.indexOf("local __v = record.f(l, 3)");
+        int bIdx = out.lua.indexOf("local __b = pick.f(l, 1, \"test.deal\", 12, 3)");
+        int iIdx = out.lua.indexOf("local __i = __rt.check_int(record.f(l, 2, \"test.deal\", 12, 14)");
+        int vIdx = out.lua.indexOf("local __v = record.f(l, 3, \"test.deal\", 12, 30)");
         int sIdx = out.lua.indexOf("__rt.bytes_set(__b, __i, __v");
         check(bIdx >= 0 && iIdx >= 0 && vIdx >= 0 && sIdx >= 0
                 && bIdx < iIdx && iIdx < vIdx && vIdx < sIdx,
@@ -1318,7 +1318,7 @@ public class LuaBackendTest {
         );
         assertNoErrors(out, "try/catch preserve error");
         assertContains(out.lua, "if type(__err) == \"table\" and __err.code ~= nil then", "error table check");
-        assertContains(out.lua, "e = __rt.error_value(__err.code, __err.message)", "preserve original error");
+        assertContains(out.lua, "e = __rt.error_value(__err.code, __err.message, __err.file, __err.line, __err.column)", "preserve original error and its source location");
     }
 
     // =========================================================================
@@ -2221,13 +2221,15 @@ public class LuaBackendTest {
             "function getStr(): string { return \"abc\"; } " +
             "function countIt(): int { let n: int = 0; for (let c: string of getStr()) { n = n + 1; } return n; }");
         assertNoErrors(out, "for-of string single eval");
-        // getStr.f() should appear exactly once (in the hoisted local assignment)
+        // getStr.f should appear exactly once (in the hoisted local assignment)
+        // with its call-site span (ISSUE-0598: function-typed calls forward
+        // the literal span triplet).
         String lua = out.lua;
-        int firstIdx = lua.indexOf("getStr.f()");
-        check(firstIdx >= 0, "getStr.f() appears in generated code");
-        int secondIdx = lua.indexOf("getStr.f()", firstIdx + 1);
-        check(secondIdx < 0, "getStr.f() appears exactly once (single evaluation)");
-        assertContains(lua, "local __iterable = getStr.f()", "iterable hoisted from function call");
+        int firstIdx = lua.indexOf("getStr.f(");
+        check(firstIdx >= 0, "getStr.f appears in generated code");
+        int secondIdx = lua.indexOf("getStr.f(", firstIdx + 1);
+        check(secondIdx < 0, "getStr.f appears exactly once (single evaluation)");
+        assertContains(lua, "local __iterable = getStr.f(\"test.deal\", 1, 109)", "iterable hoisted from function call");
         check(isValidLua(lua), "valid Lua");
     }
 
@@ -2393,7 +2395,7 @@ public class LuaBackendTest {
             "async function g(): int { return 42; }\n" +
             "async function f(): int { return await g(); }");
         assertNoErrors(out, "await expression");
-        assertContains(out.lua, "coroutine.yield(g.f())", "await lowers to coroutine.yield");
+        assertContains(out.lua, "coroutine.yield(g.f(\"test.deal\", 2, 40))", "await lowers to coroutine.yield with the call span");
         assertContains(out.lua, "__rt.async_start(function()", "async_start wrapper in f");
         check(isValidLua(out.lua), "valid Lua");
     }
@@ -2446,7 +2448,7 @@ public class LuaBackendTest {
             "async function f(): int { await g(); return 0; }");
         assertNoErrors(out, "await as expression statement");
         // await g() as a statement should still emit coroutine.yield
-        assertContains(out.lua, "coroutine.yield(g.f())", "await statement emits coroutine.yield");
+        assertContains(out.lua, "coroutine.yield(g.f(\"test.deal\", 2, 33))", "await statement emits coroutine.yield with the call span");
         check(isValidLua(out.lua), "valid Lua");
     }
 
@@ -2459,7 +2461,7 @@ public class LuaBackendTest {
             "async function f(): int { return await g(); }");
         assertNoErrors(out, "await completion check");
         assertContains(out.lua,
-            "__rt.check_int(coroutine.yield(g.f()), \"test.deal\", 2, 34)",
+            "__rt.check_int(coroutine.yield(g.f(\"test.deal\", 2, 40)), \"test.deal\", 2, 34)",
             "await completion wrapped in check_int at the await span");
         check(isValidLua(out.lua), "valid Lua");
 
@@ -2469,7 +2471,7 @@ public class LuaBackendTest {
             "async function f(): int { await g(); return 0; }");
         assertNoErrors(discard, "await statement completion check");
         assertContains(discard.lua,
-            "__rt.check_int(coroutine.yield(g.f()), \"test.deal\", 2, 27)",
+            "__rt.check_int(coroutine.yield(g.f(\"test.deal\", 2, 33)), \"test.deal\", 2, 27)",
             "await statement wrapped in check_int at the await span");
         check(isValidLua(discard.lua), "valid Lua");
 
@@ -2479,7 +2481,7 @@ public class LuaBackendTest {
             "async function f(): null { return await n(); }");
         assertNoErrors(nullOut, "null-typed await completion check");
         assertContains(nullOut.lua,
-            "__rt.check_null(coroutine.yield(n.f())",
+            "__rt.check_null(coroutine.yield(n.f(\"test.deal\", 2, 41)), \"test.deal\", 2, 35)",
             "null completion wrapped in check_null");
         check(isValidLua(nullOut.lua), "valid Lua");
 
@@ -2489,7 +2491,7 @@ public class LuaBackendTest {
             "async function f(): string | null { return await m(); }");
         assertNoErrors(nullableOut, "nullable-typed await completion check");
         assertContains(nullableOut.lua,
-            "__rt.check_nullable(\"string\", coroutine.yield(m.f())",
+            "__rt.check_nullable(\"string\", coroutine.yield(m.f(\"test.deal\", 2, 50)), \"test.deal\", 2, 44)",
             "nullable completion wrapped in check_nullable");
         check(isValidLua(nullableOut.lua), "valid Lua");
 
@@ -2499,7 +2501,7 @@ public class LuaBackendTest {
             "async function f(): int[] { return await a(); }");
         assertNoErrors(arrayOut, "array-typed await completion check");
         assertContains(arrayOut.lua,
-            "__rt.check_array(\"[int]\", coroutine.yield(a.f())",
+            "__rt.check_array(\"[int]\", coroutine.yield(a.f(\"test.deal\", 2, 42)), \"test.deal\", 2, 36)",
             "array completion wrapped in check_array (canonical descriptor)");
         check(isValidLua(arrayOut.lua), "valid Lua");
     }
@@ -2551,8 +2553,8 @@ public class LuaBackendTest {
         assertContains(out.lua, "__deal[\"User$toJson\"] = __rt.function_(",
             "C$toJson wrapper");
         assertContains(out.lua, "\"(@test.deal/User)->string\"", "toJson signature");
-        assertContains(out.lua, "__rt.check_type(\"@test.deal/User\", v)",
-            "toJson internal check uses the qualified identity");
+        assertContains(out.lua, "__rt.check_type(\"@test.deal/User\", v, file, line, column)",
+            "toJson internal check uses the qualified identity and forwards the call span");
         assertContains(out.lua, "__rt.json_to_json(\"@test.deal/User\", v,",
             "json_to_json descriptor is the qualified identity");
         assertContains(out.lua, "__rt.json_to_json(", "json_to_json call");

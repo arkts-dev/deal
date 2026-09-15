@@ -2352,7 +2352,11 @@ public final class LuaBackend implements Visitor<Void> {
                     quotedTypeDescriptor(entry.getValue())) + ",");
             }
             indent--;
-            emitLine("})");
+            // Converged lane contract (ISSUE-0598): the loader receives
+            // the import statement's span, so every E8011 load-time
+            // rejection reports the import site (the pinned corpus
+            // sidecar shape — host-missing-export).
+            emitLine("}, " + spanArgs(node.span()) + ")");
             return null;
         }
 
@@ -2534,7 +2538,13 @@ public final class LuaBackend implements Visitor<Void> {
         emitLine("local " + node.catchVar());
         emitLine("if type(__err) == \"table\" and __err.code ~= nil then");
         indent++;
-        emitLine(node.catchVar() + " = __rt.error_value(__err.code, __err.message)");
+        // Converged lane contract (ISSUE-0598): the reified Error
+        // preserves the original error's source location, so a rethrow
+        // of the caught value carries the original throw span (the
+        // pinned rethrow-preserves-code / rethrow-across-function-
+        // boundary sidecar shape).
+        emitLine(node.catchVar() + " = __rt.error_value(__err.code,"
+            + " __err.message, __err.file, __err.line, __err.column)");
         indent--;
         emitLine("else");
         indent++;
@@ -2897,7 +2907,16 @@ public final class LuaBackend implements Visitor<Void> {
             }
         }
         if (calleeType instanceof Type.Func) {
-            return emitExpression(call.callee()) + ".f(" + args.toString() + ")";
+            // Converged lane contract (ISSUE-0598): every function-typed
+            // call forwards the literal call-site span triplet — the JS
+            // sibling's shape (js-backend-emitter emitCall). Raw Lua
+            // function bodies ignore trailing extras; the checked
+            // wrappers (from_lua_function, the stdlib function_ bodies)
+            // split and forward the span so boundary errors report the
+            // call site byte-exact.
+            return emitExpression(call.callee()) + ".f(" + args.toString()
+                + (args.length() == 0 ? "" : ", ") + spanArgs(call.span())
+                + ")";
         }
         return emitExpression(call.callee()) + "(" + args.toString() + ")";
     }
@@ -4009,14 +4028,15 @@ public final class LuaBackend implements Visitor<Void> {
         emitLine(meta.moduleLevel
             ? LuaAbi.namespaceAssignment(
                 LuaAbi.helperKey(name, LuaAbi.HelperKind.TO_JSON),
-                "__rt.function_(\"" + sig + "\", function(v)")
+                "__rt.function_(\"" + sig + "\", function(v, file, line, column)")
             : "local " + name + "_toJson = __rt.function_(\"" + sig
-                + "\", function(v)");
+                + "\", function(v, file, line, column)");
         indent++;
-        emitLine("__rt.check_type(\"" + identity + "\", v)");
+        emitLine("__rt.check_type(\"" + identity
+            + "\", v, file, line, column)");
         emitLine("local t = __rt.json_to_json(\"" + identity
-            + "\", v, " + fieldsRef + ")");
-        emitLine("return __json_stringify(t)");
+            + "\", v, " + fieldsRef + ", file, line, column)");
+        emitLine("return __json_stringify(t, file, line, column)");
         indent--;
         emitLine("end)");
         emitLine();

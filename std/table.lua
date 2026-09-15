@@ -12,9 +12,11 @@ local tablelib = {}
 -- insertion-order channel is maintained: table writes stay direct stores
 -- with no runtime interception, and the spec pins no order for keys.
 -- The wrapper signature carries the canonical descriptor grammar
--- (luajit-v1.2-stdlib-contracts D1): arrays are "[T]".
-tablelib.keys = __rt.function_("(table)->[string]", function(t)
-  __rt.check_table(t)
+-- (luajit-v1.2-stdlib-contracts D1): arrays are "[T]". The trailing
+-- span triplet carries the call site (ISSUE-0598), so the
+-- dynamic-nontable E8001 reports it byte-exact.
+tablelib.keys = __rt.function_("(table)->[string]", function(t, file, line, column)
+  __rt.check_table(t, file, line, column)
   local result = {}
   for k, _ in pairs(t) do
     if type(k) == "string" then

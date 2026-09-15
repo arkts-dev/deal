@@ -264,7 +264,7 @@ public class LuaAbiBackendTest {
         assertThat(out.lua(), containsString(
             "__rt.json_from_plan(\"@test.deal/User\", __deal[\"User_plan\"], parsed, \"test.deal\", 2, 8)"));
         assertThat(out.lua(), containsString(
-            "__rt.json_to_json(\"@test.deal/User\", v, __deal[\"User_fields\"])"));
+            "__rt.json_to_json(\"@test.deal/User\", v, __deal[\"User_fields\"], file, line, column)"));
         assertThat(out.lua(), containsString("__deal[\"User_meta\"] = __rt.export_class(\"@test.deal/User\")"));
         // The retired underscore-form helper binding is gone; the helper is
         // assigned only into the namespace table. (The user's own
@@ -572,7 +572,9 @@ public class LuaAbiBackendTest {
 
         assertThat(out.lua(), containsString("local C_fields = {"));
         assertThat(out.lua(), containsString("local C_fromJson = __rt.function_(\"(string)->?@test.deal/C\", function(s)"));
-        assertThat(out.lua(), containsString("local C_toJson = __rt.function_(\"(@test.deal/C)->string\", function(v)"));
+        // ISSUE-0598: the toJson wrapper takes the trailing span triplet
+        // so encode-side errors report the C$toJson call site.
+        assertThat(out.lua(), containsString("local C_toJson = __rt.function_(\"(@test.deal/C)->string\", function(v, file, line, column)"));
         assertThat(out.lua(), containsString("exports.C_fields = C_fields"));
         assertThat(out.lua(), containsString("exports[\"C$fromJson\"] = C_fromJson"));
         assertThat(out.lua(), containsString("exports[\"C$toJson\"] = C_toJson"));
@@ -1323,14 +1325,14 @@ public class LuaAbiBackendTest {
         CompileResult out = compile(source);
 
         assertThat(out.lua(), containsString(
-            "evaluator = function() return later.f() end"));
+            "evaluator = function() return later.f(\"test.deal\", 2, 12) end"));
         // The default expression appears exactly once — inside the
         // evaluator closure — never as a load-time chunk statement.
         int calls = 0;
         int idx = 0;
-        while ((idx = out.lua().indexOf("later.f()", idx)) != -1) {
+        while ((idx = out.lua().indexOf("later.f(", idx)) != -1) {
             calls++;
-            idx += "later.f()".length();
+            idx += "later.f(".length();
         }
         assertEquals("exactly one later.f() call site (the evaluator)", 1, calls);
 

@@ -4,7 +4,7 @@
   "expected": {
     "mode": "runtime-error",
     "transcript": {
-      "stdout": "DEAL_ERROR_CODE: E8004\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8004\",\"message\":\"int out of safe range\",\"sourceFile\":\"backend-runtime/arithmetic/int-add-overflow.deal\",\"line\":8,\"column\":10}\n",
+      "stdout": "DEAL_ERROR_CODE: E8004\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8004\",\"message\":\"int out of safe range\",\"sourceFile\":\"backend-runtime/arithmetic/int-add-overflow.deal\",\"line\":7,\"column\":10}\n",
       "stderr": ""
     },
     "exitCode": 1,
@@ -12,7 +12,7 @@
       "code": "E8004",
       "message": "int out of safe range",
       "sourceFile": "backend-runtime/arithmetic/int-add-overflow.deal",
-      "line": 8,
+      "line": 7,
       "column": 10
     }
   }

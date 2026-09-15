@@ -22,8 +22,10 @@ end
 
 --- length(s: string): int
 -- Returns the number of Unicode scalar values in the string (v1.2).
-stringlib.length = __rt.function_("(string)->int", function(s)
-  __rt.check_string(s)
+-- The trailing span triplet carries the call site (ISSUE-0598), so the
+-- dynamic-nonstring E8001 reports it byte-exact.
+stringlib.length = __rt.function_("(string)->int", function(s, file, line, column)
+  __rt.check_string(s, file, line, column)
   local count = 0
   local cursor = 0
   while true do
@@ -32,7 +34,7 @@ stringlib.length = __rt.function_("(string)->int", function(s)
     count = count + 1
     cursor = next_cursor
   end
-  return __rt.check_int(count)
+  return __rt.check_int(count, file, line, column)
 end)
 
 --- substring(s: string, start: int, end: int): string
@@ -40,10 +42,10 @@ end)
 -- with positions measured in Unicode scalar values (v1.2).
 -- start > end, start beyond the string, or end <= 0 produce the empty
 -- string; out-of-range end clamps to the string end.
-stringlib.substring = __rt.function_("(string,int,int)->string", function(s, start, end_)
-  __rt.check_string(s)
-  __rt.check_int(start)
-  __rt.check_int(end_)
+stringlib.substring = __rt.function_("(string,int,int)->string", function(s, start, end_, file, line, column)
+  __rt.check_string(s, file, line, column)
+  __rt.check_int(start, file, line, column)
+  __rt.check_int(end_, file, line, column)
   -- Walk scalar values to translate scalar positions to byte offsets.
   local cursor = 0
   local pos = 0
@@ -61,61 +63,61 @@ stringlib.substring = __rt.function_("(string,int,int)->string", function(s, sta
     pos = pos + 1
   end
   local byte_end = cursor
-  return __rt.check_string(string.sub(s, byte_start, byte_end))
+  return __rt.check_string(string.sub(s, byte_start, byte_end), file, line, column)
 end)
 
 --- contains(s: string, part: string): boolean
 -- Returns true if part is a substring of s (plain-text match, no pattern).
-stringlib.contains = __rt.function_("(string,string)->boolean", function(s, part)
-  __rt.check_string(s)
-  __rt.check_string(part)
+stringlib.contains = __rt.function_("(string,string)->boolean", function(s, part, file, line, column)
+  __rt.check_string(s, file, line, column)
+  __rt.check_string(part, file, line, column)
   -- Use plain-text matching (4th arg to string.find)
   local found = string.find(s, part, 1, true)
-  return __rt.check_boolean(found ~= nil)
+  return __rt.check_boolean(found ~= nil, file, line, column)
 end)
 
 --- startsWith(s: string, part: string): boolean
 -- Returns true if s starts with part.
-stringlib.startsWith = __rt.function_("(string,string)->boolean", function(s, part)
-  __rt.check_string(s)
-  __rt.check_string(part)
+stringlib.startsWith = __rt.function_("(string,string)->boolean", function(s, part, file, line, column)
+  __rt.check_string(s, file, line, column)
+  __rt.check_string(part, file, line, column)
   -- Empty part is a prefix of any string
   if #part == 0 then
-    return __rt.check_boolean(true)
+    return __rt.check_boolean(true, file, line, column)
   end
-  return __rt.check_boolean(#s >= #part and s:sub(1, #part) == part)
+  return __rt.check_boolean(#s >= #part and s:sub(1, #part) == part, file, line, column)
 end)
 
 --- endsWith(s: string, part: string): boolean
 -- Returns true if s ends with part.
-stringlib.endsWith = __rt.function_("(string,string)->boolean", function(s, part)
-  __rt.check_string(s)
-  __rt.check_string(part)
+stringlib.endsWith = __rt.function_("(string,string)->boolean", function(s, part, file, line, column)
+  __rt.check_string(s, file, line, column)
+  __rt.check_string(part, file, line, column)
   -- Empty part is a suffix of any string
   if #part == 0 then
-    return __rt.check_boolean(true)
+    return __rt.check_boolean(true, file, line, column)
   end
   -- s:sub(-0) would return the whole string; guard with the length check
   if #part > #s then
-    return __rt.check_boolean(false)
+    return __rt.check_boolean(false, file, line, column)
   end
-  return __rt.check_boolean(s:sub(-#part) == part)
+  return __rt.check_boolean(s:sub(-#part) == part, file, line, column)
 end)
 
 --- replace(s: string, old: string, to: string): string
 -- Replaces all occurrences of old with to (plain-text, no pattern).
 -- Uses string.gsub with escaped pattern and escaped replacement for
 -- plain-text semantics.
-stringlib.replace = __rt.function_("(string,string,string)->string", function(s, old, to)
-  __rt.check_string(s)
-  __rt.check_string(old)
-  __rt.check_string(to)
+stringlib.replace = __rt.function_("(string,string,string)->string", function(s, old, to, file, line, column)
+  __rt.check_string(s, file, line, column)
+  __rt.check_string(old, file, line, column)
+  __rt.check_string(to, file, line, column)
   if old == "" then
-    return __rt.check_string(s)
+    return __rt.check_string(s, file, line, column)
   end
   local escaped_pattern = escape_pattern(old)
   local escaped_to = escape_replacement(to)
-  return __rt.check_string((s:gsub(escaped_pattern, escaped_to)))
+  return __rt.check_string((s:gsub(escaped_pattern, escaped_to)), file, line, column)
 end)
 
 --- split(s: string, sep: string): [string]
@@ -124,9 +126,9 @@ end)
 -- If sep is not found, returns an array containing s as the single element.
 -- The wrapper signature carries the canonical descriptor grammar
 -- (luajit-v1.2-stdlib-contracts D1): arrays are "[T]".
-stringlib.split = __rt.function_("(string,string)->[string]", function(s, sep)
-  __rt.check_string(s)
-  __rt.check_string(sep)
+stringlib.split = __rt.function_("(string,string)->[string]", function(s, sep, file, line, column)
+  __rt.check_string(s, file, line, column)
+  __rt.check_string(sep, file, line, column)
   local result = {}
 
   -- Empty string: return empty array regardless of separator
@@ -163,16 +165,16 @@ end)
 --- trim(s: string): string
 -- Removes leading and trailing whitespace from s.
 -- Whitespace includes space, tab, newline, carriage return, vertical tab, form feed.
-stringlib.trim = __rt.function_("(string)->string", function(s)
-  __rt.check_string(s)
+stringlib.trim = __rt.function_("(string)->string", function(s, file, line, column)
+  __rt.check_string(s, file, line, column)
   -- Use Lua pattern: ^%s* captures leading whitespace, (.-) lazily captures content, %s*$ captures trailing
   local trimmed = string.match(s, "^%s*(.-)%s*$")
   if trimmed == nil then
     -- string.match returns nil when there is no match; but ^%s*(.-)%s*$ always matches
     -- (even on empty string it matches with empty capture). Fallback for safety.
-    return __rt.check_string("")
+    return __rt.check_string("", file, line, column)
   end
-  return __rt.check_string(trimmed)
+  return __rt.check_string(trimmed, file, line, column)
 end)
 
 return stringlib

@@ -66,6 +66,20 @@ public class LuaLaneTest {
         companionThrowSourceFile();
         hostTripletRuntimeOk();
         asyncExportCompletion();
+        // ISSUE-0598 converged emission shapes (the luajit lane
+        // convergence leaf): the real on-disk sidecars the lane now
+        // matches byte-exact, each with an anti-hollow field-value
+        // assertion or a perturbed-sidecar negative probe.
+        realFixtureInt32ArithmeticTranscript();
+        int32ArithmeticPerturbedMessageProbe();
+        realFixtureHostBoundarySpan();
+        hostBoundaryPerturbedLineProbe();
+        realFixtureHostMissingExportSpan();
+        realFixtureRethrowSpanPreserved();
+        realFixtureStdlibErrorSpan();
+        realFixtureJsonStringifyBytesSpan();
+        jsonStringifyPerturbedActualProbe();
+        realFixtureJsonableCyclicSpan();
         invocationDeclarationOrderProbe();
         asyncScratchCompletionProbe();
         discardedReturnValuesProbe();
@@ -335,6 +349,358 @@ public class LuaLaneTest {
             "a span-pinning sidecar against the span-less captured error "
                 + "is an honest PROCESS_FAILURE (never fabricated), got: "
                 + execution);
+    }
+
+    /**
+     * ISSUE-0598: the converged int32 arithmetic error transcript — the
+     * real int-add-overflow sidecar now matches byte-exact (the v1.2
+     * E8004 template "int out of safe range" at the overflowing
+     * expression's raw-file coordinates, line 7 column 10).
+     */
+    private static void realFixtureInt32ArithmeticTranscript()
+            throws Exception {
+        String corpusPath =
+            "backend-runtime/arithmetic/int-add-overflow.deal";
+        LuaLane lane = new LuaLane(CORPUS_ROOT);
+        LaneCase laneCase = realLaneCase(corpusPath);
+        assertPassed("real int32 arithmetic error transcript "
+            + "(int-add-overflow E8004 at the overflowing expression)",
+            lane, laneCase);
+        LaneExecution execution = lane.execute(laneCase);
+        check(execution instanceof LaneExecution.Executed,
+            "the int32 arithmetic run is a real execution");
+        if (execution instanceof LaneExecution.Executed executed) {
+            Optional<ErrorSnapshot.Framed> framed =
+                ErrorSnapshot.parseFraming(executed.stdout());
+            check(framed.isPresent(), "the int32 snapshot parses");
+            if (framed.isPresent()) {
+                SidecarExpectations.ErrorExpectation fields =
+                    framed.get().fields();
+                check(fields.code().equals("E8004")
+                        && fields.message().equals(
+                            "int out of safe range")
+                        && fields.sourceFile().equals(corpusPath)
+                        && fields.line() == 7 && fields.column() == 10
+                        && fields.expected().isEmpty()
+                        && fields.actual().isEmpty(),
+                    "the int32 snapshot carries the v1.2 template at the "
+                        + "overflowing expression's raw coordinates with "
+                        + "no expected/actual pins, got: " + fields);
+            }
+        }
+    }
+
+    /**
+     * Anti-hollow negative: a sidecar perturbing exactly the int32 error
+     * message fails the byte comparison naming the backend and the first
+     * differing byte — the converged transcript is compared, not just
+     * the error code.
+     */
+    private static void int32ArithmeticPerturbedMessageProbe()
+            throws Exception {
+        String corpusPath =
+            "backend-runtime/arithmetic/int-add-overflow.deal";
+        RealCase real = realCase(corpusPath);
+        SidecarExpectations.ErrorExpectation perturbed = error("E8004",
+            "int out of safe range X", corpusPath, 7, 10);
+        LaneCase laneCase = new LaneCase(corpusPath, "luajit",
+            real.fixture().file(),
+            CorpusDiscovery.compilationSet(real.fixture(),
+                indexOf(CORPUS_ROOT),
+                CORPUS_ROOT.toAbsolutePath().normalize()),
+            runtimeError(perturbed));
+        GateDispatcher.LaneOutcome outcome = dispatch(
+            new LuaLane(CORPUS_ROOT), laneCase);
+        check(!outcome.passed() && outcome.mismatch().isPresent()
+                && outcome.mismatch().get().clazz()
+                    == MismatchClass.TRANSCRIPT_MISMATCH
+                && outcome.mismatch().get().detail().contains(
+                    "stdout differs at byte"),
+            "a perturbed int32 error message fails the byte comparison "
+                + "naming the backend and the first differing byte, got: "
+                + outcome.mismatch());
+    }
+
+    /**
+     * ISSUE-0598: the converged host-boundary E8010 — the real
+     * host-bad-return sidecar now matches byte-exact: the composed
+     * message template, the call-site span (line 9 column 10), and the
+     * expected/actual pair are all produced by the converged
+     * {@code from_lua_function} emission.
+     */
+    private static void realFixtureHostBoundarySpan() throws Exception {
+        String corpusPath = "backend-runtime/host-abi/host-bad-return.deal";
+        LuaLane lane = new LuaLane(CORPUS_ROOT);
+        LaneCase laneCase = realLaneCase(corpusPath);
+        assertPassed("real host-boundary E8010 (host-bad-return: composed "
+            + "message, call-site span, expected/actual)", lane, laneCase);
+        LaneExecution execution = lane.execute(laneCase);
+        check(execution instanceof LaneExecution.Executed,
+            "the host-boundary run is a real execution");
+        if (execution instanceof LaneExecution.Executed executed) {
+            Optional<ErrorSnapshot.Framed> framed =
+                ErrorSnapshot.parseFraming(executed.stdout());
+            check(framed.isPresent(), "the host-boundary snapshot parses");
+            if (framed.isPresent()) {
+                SidecarExpectations.ErrorExpectation fields =
+                    framed.get().fields();
+                check(fields.code().equals("E8010")
+                        && fields.message().equals("return value 1 type "
+                            + "mismatch: expected int")
+                        && fields.sourceFile().equals(corpusPath)
+                        && fields.line() == 9 && fields.column() == 10
+                        && fields.expected().orElse("").equals("int")
+                        && fields.actual().orElse("").equals("string"),
+                    "the host-boundary snapshot carries the converged "
+                        + "message, the call-site span, and the "
+                        + "expected/actual pair, got: " + fields);
+            }
+        }
+    }
+
+    /**
+     * Anti-hollow negative: a sidecar perturbing exactly the host-boundary
+     * call-site line fails the byte comparison naming the backend and the
+     * first differing byte.
+     */
+    private static void hostBoundaryPerturbedLineProbe() throws Exception {
+        String corpusPath = "backend-runtime/host-abi/host-bad-return.deal";
+        RealCase real = realCase(corpusPath);
+        SidecarExpectations.ErrorExpectation perturbed =
+            new SidecarExpectations.ErrorExpectation("E8010",
+                "return value 1 type mismatch: expected int", corpusPath,
+                10, 10, Optional.of("int"), Optional.of("string"),
+                Optional.empty(), Optional.empty());
+        LaneCase laneCase = new LaneCase(corpusPath, "luajit",
+            real.fixture().file(),
+            CorpusDiscovery.compilationSet(real.fixture(),
+                indexOf(CORPUS_ROOT),
+                CORPUS_ROOT.toAbsolutePath().normalize()),
+            runtimeError(perturbed));
+        GateDispatcher.LaneOutcome outcome = dispatch(
+            new LuaLane(CORPUS_ROOT), laneCase);
+        check(!outcome.passed() && outcome.mismatch().isPresent()
+                && outcome.mismatch().get().clazz()
+                    == MismatchClass.TRANSCRIPT_MISMATCH
+                && outcome.mismatch().get().detail().contains(
+                    "stdout differs at byte"),
+            "a perturbed host-boundary call-site line fails the byte "
+                + "comparison naming the backend and the first differing "
+                + "byte, got: " + outcome.mismatch());
+    }
+
+    /**
+     * ISSUE-0598: the converged host load-time E8011 — the real
+     * host-missing-export sidecar now matches byte-exact: the loader
+     * receives the import statement's span, so the rejection reports
+     * the import site (line 6 column 1).
+     */
+    private static void realFixtureHostMissingExportSpan()
+            throws Exception {
+        String corpusPath =
+            "backend-runtime/host-abi/host-missing-export.deal";
+        LuaLane lane = new LuaLane(CORPUS_ROOT);
+        LaneCase laneCase = realLaneCase(corpusPath);
+        assertPassed("real host load-time E8011 (host-missing-export at "
+            + "the import site)", lane, laneCase);
+        LaneExecution execution = lane.execute(laneCase);
+        check(execution instanceof LaneExecution.Executed,
+            "the host-load run is a real execution");
+        if (execution instanceof LaneExecution.Executed executed) {
+            Optional<ErrorSnapshot.Framed> framed =
+                ErrorSnapshot.parseFraming(executed.stdout());
+            check(framed.isPresent(), "the host-load snapshot parses");
+            if (framed.isPresent()) {
+                SidecarExpectations.ErrorExpectation fields =
+                    framed.get().fields();
+                check(fields.code().equals("E8011")
+                        && fields.sourceFile().equals(corpusPath)
+                        && fields.line() == 6 && fields.column() == 1,
+                    "the host-load snapshot reports the import site, "
+                        + "got: " + fields);
+            }
+        }
+    }
+
+    /**
+     * ISSUE-0598: catch reification preserves the original error's
+     * source location, so a rethrow carries the original throw span —
+     * the real rethrow-preserves-code sidecar now matches byte-exact.
+     */
+    private static void realFixtureRethrowSpanPreserved()
+            throws Exception {
+        String corpusPath =
+            "backend-runtime/runtime-errors/rethrow-preserves-code.deal";
+        LuaLane lane = new LuaLane(CORPUS_ROOT);
+        LaneCase laneCase = realLaneCase(corpusPath);
+        assertPassed("real rethrow span preservation "
+            + "(rethrow-preserves-code at the original throw site)",
+            lane, laneCase);
+        LaneExecution execution = lane.execute(laneCase);
+        check(execution instanceof LaneExecution.Executed,
+            "the rethrow run is a real execution");
+        if (execution instanceof LaneExecution.Executed executed) {
+            Optional<ErrorSnapshot.Framed> framed =
+                ErrorSnapshot.parseFraming(executed.stdout());
+            check(framed.isPresent(), "the rethrow snapshot parses");
+            if (framed.isPresent()) {
+                SidecarExpectations.ErrorExpectation fields =
+                    framed.get().fields();
+                check(fields.code().equals("USER_RETHROW")
+                        && fields.message().equals("boom")
+                        && fields.sourceFile().equals(corpusPath)
+                        && fields.line() == 8 && fields.column() == 5,
+                    "the rethrown error preserves the original throw "
+                        + "span, got: " + fields);
+            }
+        }
+    }
+
+    /**
+     * ISSUE-0598: stdlib boundary checks forward the call-site span —
+     * the real stdlib-error-source sidecar (std/string.length dynamic
+     * non-string) now matches byte-exact.
+     */
+    private static void realFixtureStdlibErrorSpan() throws Exception {
+        String corpusPath =
+            "backend-runtime/source-location-precision/stdlib-error-source.deal";
+        LuaLane lane = new LuaLane(CORPUS_ROOT);
+        LaneCase laneCase = realLaneCase(corpusPath);
+        assertPassed("real stdlib boundary span (stdlib-error-source:"
+            + " str.length dynamic non-string at the call site)",
+            lane, laneCase);
+        LaneExecution execution = lane.execute(laneCase);
+        check(execution instanceof LaneExecution.Executed,
+            "the stdlib-boundary run is a real execution");
+        if (execution instanceof LaneExecution.Executed executed) {
+            Optional<ErrorSnapshot.Framed> framed =
+                ErrorSnapshot.parseFraming(executed.stdout());
+            check(framed.isPresent(), "the stdlib-boundary snapshot parses");
+            if (framed.isPresent()) {
+                SidecarExpectations.ErrorExpectation fields =
+                    framed.get().fields();
+                check(fields.code().equals("E8001")
+                        && fields.message().equals("expected string")
+                        && fields.sourceFile().equals(corpusPath)
+                        && fields.line() == 10 && fields.column() == 10
+                        && fields.expected().orElse("").equals("string")
+                        && fields.actual().orElse("").equals("number"),
+                    "the stdlib-boundary snapshot carries the call-site "
+                        + "span and the expected/actual pair, got: "
+                        + fields);
+            }
+        }
+    }
+
+    /**
+     * ISSUE-0598: the std/json encoder threads the stringify call-site
+     * span — the real json-stringify-bytes-error sidecar now matches
+     * byte-exact (unsupported bytes datum with expected/actual).
+     */
+    private static void realFixtureJsonStringifyBytesSpan()
+            throws Exception {
+        String corpusPath =
+            "backend-runtime/stdlib/json/json-stringify-bytes-error.deal";
+        LuaLane lane = new LuaLane(CORPUS_ROOT);
+        LaneCase laneCase = realLaneCase(corpusPath);
+        assertPassed("real json-stringify bytes span "
+            + "(json-stringify-bytes-error at the call site)",
+            lane, laneCase);
+        LaneExecution execution = lane.execute(laneCase);
+        check(execution instanceof LaneExecution.Executed,
+            "the json-stringify run is a real execution");
+        if (execution instanceof LaneExecution.Executed executed) {
+            Optional<ErrorSnapshot.Framed> framed =
+                ErrorSnapshot.parseFraming(executed.stdout());
+            check(framed.isPresent(), "the json-stringify snapshot parses");
+            if (framed.isPresent()) {
+                SidecarExpectations.ErrorExpectation fields =
+                    framed.get().fields();
+                check(fields.code().equals("E8001")
+                        && fields.message().equals(
+                            "unsupported type for JSON encoding: bytes")
+                        && fields.sourceFile().equals(corpusPath)
+                        && fields.line() == 12 && fields.column() == 10
+                        && fields.expected().orElse("").equals(
+                            "string, number, boolean, or table")
+                        && fields.actual().orElse("").equals("bytes"),
+                    "the json-stringify snapshot carries the call-site "
+                        + "span and the expected/actual pair, got: "
+                        + fields);
+            }
+        }
+    }
+
+    /**
+     * Anti-hollow negative: a sidecar perturbing exactly the
+     * json-stringify actual field fails the byte comparison naming the
+     * backend and the first differing byte.
+     */
+    private static void jsonStringifyPerturbedActualProbe()
+            throws Exception {
+        String corpusPath =
+            "backend-runtime/stdlib/json/json-stringify-bytes-error.deal";
+        RealCase real = realCase(corpusPath);
+        SidecarExpectations.ErrorExpectation perturbed =
+            new SidecarExpectations.ErrorExpectation("E8001",
+                "unsupported type for JSON encoding: bytes", corpusPath,
+                12, 10,
+                Optional.of("string, number, boolean, or table"),
+                Optional.of("number"), Optional.empty(), Optional.empty());
+        LaneCase laneCase = new LaneCase(corpusPath, "luajit",
+            real.fixture().file(),
+            CorpusDiscovery.compilationSet(real.fixture(),
+                indexOf(CORPUS_ROOT),
+                CORPUS_ROOT.toAbsolutePath().normalize()),
+            runtimeError(perturbed));
+        GateDispatcher.LaneOutcome outcome = dispatch(
+            new LuaLane(CORPUS_ROOT), laneCase);
+        check(!outcome.passed() && outcome.mismatch().isPresent()
+                && outcome.mismatch().get().clazz()
+                    == MismatchClass.TRANSCRIPT_MISMATCH
+                && outcome.mismatch().get().detail().contains(
+                    "stdout differs at byte"),
+            "a perturbed json-stringify actual field fails the byte "
+                + "comparison naming the backend and the first differing "
+                + "byte, got: " + outcome.mismatch());
+    }
+
+    /**
+     * ISSUE-0598: the generated C$toJson helper threads the call-site
+     * span into the jsonable encode walkers — the real
+     * jsonable-tojson-rejects-cyclic-table sidecar now matches
+     * byte-exact (the cycle error at the Wrapper$toJson call site).
+     */
+    private static void realFixtureJsonableCyclicSpan() throws Exception {
+        String corpusPath =
+            "backend-runtime/jsonable/jsonable-tojson-rejects-cyclic-table.deal";
+        LuaLane lane = new LuaLane(CORPUS_ROOT);
+        LaneCase laneCase = realLaneCase(corpusPath);
+        assertPassed("real jsonable cycle span "
+            + "(jsonable-tojson-rejects-cyclic-table at the toJson call "
+            + "site)", lane, laneCase);
+        LaneExecution execution = lane.execute(laneCase);
+        check(execution instanceof LaneExecution.Executed,
+            "the jsonable-cycle run is a real execution");
+        if (execution instanceof LaneExecution.Executed executed) {
+            Optional<ErrorSnapshot.Framed> framed =
+                ErrorSnapshot.parseFraming(executed.stdout());
+            check(framed.isPresent(), "the jsonable-cycle snapshot parses");
+            if (framed.isPresent()) {
+                SidecarExpectations.ErrorExpectation fields =
+                    framed.get().fields();
+                check(fields.code().equals("E8001")
+                        && fields.message().equals(
+                            "cyclic value cannot be encoded as JSON")
+                        && fields.sourceFile().equals(corpusPath)
+                        && fields.line() == 14 && fields.column() == 10
+                        && fields.expected().isEmpty()
+                        && fields.actual().isEmpty(),
+                    "the jsonable-cycle snapshot carries the toJson call "
+                        + "site with no expected/actual pins, got: "
+                        + fields);
+            }
+        }
     }
 
     private static void companionThrowSourceFile() throws Exception {

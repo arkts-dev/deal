@@ -369,9 +369,11 @@ public class RuntimeDefaultLoweringTest {
                     + " optional = true }"),
                 "the Lua optional entry carries no evaluator");
             check(lua.contains("evaluator = function() return 1 end")
-                    && lua.contains(
-                        "evaluator = function() return localFn.f() end"),
-                "the Lua evaluators are zero-argument closures");
+                    && lua.contains("evaluator = function() return "
+                        + "localFn.f("),
+                "the Lua evaluators are zero-argument closures whose "
+                    + "provider call forwards the call-site span "
+                    + "(ISSUE-0598)");
             String semanticX = plan.orderedFields().get(0)
                 .defaultExpression().semanticDigest();
             check(lua.contains("-- default evaluator (@src/Shape, x, "
