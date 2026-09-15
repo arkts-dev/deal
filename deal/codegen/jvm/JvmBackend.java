@@ -3353,12 +3353,17 @@ public final class JvmBackend {
      * never a propagated operation error. */
     private void emitJsonValueHelpers() {
         emitLines("""
-            static java.lang.String $jsonValue(java.lang.Object v) {
+            // D1: the origin (file/line/column) parameters thread through the
+            // encoder recursion into every raise it performs; the short
+            // overloads pass the explicit absent sentinel (null, -1, -1).
+            static java.lang.String $jsonValue(java.lang.Object v) { return $jsonValue(v, null, -1, -1); }
+            static java.lang.String $jsonValue(java.lang.Object v, java.lang.String oFile, int oLine, int oCol) {
                 java.lang.StringBuilder sb = new java.lang.StringBuilder();
-                $jsonAppend(sb, v, java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>()));
+                $jsonAppend(sb, v, java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>()), oFile, oLine, oCol);
                 return sb.toString();
             }
-            static void $jsonAppend(java.lang.StringBuilder sb, java.lang.Object v, java.util.Set<java.lang.Object> stack) {
+            static void $jsonAppend(java.lang.StringBuilder sb, java.lang.Object v, java.util.Set<java.lang.Object> stack) { $jsonAppend(sb, v, stack, null, -1, -1); }
+            static void $jsonAppend(java.lang.StringBuilder sb, java.lang.Object v, java.util.Set<java.lang.Object> stack, java.lang.String oFile, int oLine, int oCol) {
                 if (v == null) { sb.append("null"); return; }
                 if (v instanceof java.lang.Boolean b) { sb.append(b.booleanValue() ? "true" : "false"); return; }
                 if (v instanceof java.lang.String s) { sb.append($envelopeQuote(s)); return; }
@@ -3369,41 +3374,41 @@ public final class JvmBackend {
         emitLines("""
                 if (v instanceof java.lang.Number n) {
                     double d = n.doubleValue();
-                    if (java.lang.Double.isNaN(d)) throw new DealError("E8001", "cannot encode NaN as JSON");
-                    if (java.lang.Double.isInfinite(d)) throw new DealError("E8001", "cannot encode Infinity as JSON");
+                    if (java.lang.Double.isNaN(d)) throw new DealError("E8001", "cannot encode NaN as JSON", oFile, oLine, oCol);
+                    if (java.lang.Double.isInfinite(d)) throw new DealError("E8001", "cannot encode Infinity as JSON", oFile, oLine, oCol);
                     sb.append(java.lang.Double.toString(d));
                     return;
                 }
                 if (v instanceof java.util.List<?> list) {
-                    if (!stack.add(v)) throw new DealError("E8001", "value is not JSON-shaped");
+                    if (!stack.add(v)) throw new DealError("E8001", "value is not JSON-shaped", oFile, oLine, oCol);
                     sb.append('[');
                     boolean first = true;
-                    for (java.lang.Object e : list) { if (!first) sb.append(','); first = false; $jsonAppend(sb, e, stack); }
+                    for (java.lang.Object e : list) { if (!first) sb.append(','); first = false; $jsonAppend(sb, e, stack, oFile, oLine, oCol); }
                     sb.append(']');
                     stack.remove(v);
                     return;
                 }
                 if (v instanceof java.util.Map<?, ?> map) {
-                    if (!stack.add(v)) throw new DealError("E8001", "value is not JSON-shaped");
+                    if (!stack.add(v)) throw new DealError("E8001", "value is not JSON-shaped", oFile, oLine, oCol);
                     sb.append('{');
                     boolean first = true;
-                    for (java.util.Map.Entry<?, ?> e : map.entrySet()) { if (!first) sb.append(','); first = false; sb.append($envelopeQuote(java.lang.String.valueOf(e.getKey()))); sb.append(':'); $jsonAppend(sb, e.getValue(), stack); }
+                    for (java.util.Map.Entry<?, ?> e : map.entrySet()) { if (!first) sb.append(','); first = false; sb.append($envelopeQuote(java.lang.String.valueOf(e.getKey()))); sb.append(':'); $jsonAppend(sb, e.getValue(), stack, oFile, oLine, oCol); }
                     sb.append('}');
                     stack.remove(v);
                     return;
                 }
                 if (v instanceof $DealRt.Table t) {
-                    if (!stack.add(v)) throw new DealError("E8001", "value is not JSON-shaped");
+                    if (!stack.add(v)) throw new DealError("E8001", "value is not JSON-shaped", oFile, oLine, oCol);
                     java.util.ArrayList<java.lang.Object> arr = t.$array();
                     if (arr != null) {
                         sb.append('[');
                         boolean first = true;
-                        for (java.lang.Object e : arr) { if (!first) sb.append(','); first = false; $jsonAppend(sb, e, stack); }
+                        for (java.lang.Object e : arr) { if (!first) sb.append(','); first = false; $jsonAppend(sb, e, stack, oFile, oLine, oCol); }
                         sb.append(']');
                     } else {
                         sb.append('{');
                         boolean first = true;
-                        for (java.util.Map.Entry<java.lang.String, java.lang.Object> e : t.$entries().entrySet()) { if (!first) sb.append(','); first = false; sb.append($envelopeQuote(e.getKey())); sb.append(':'); $jsonAppend(sb, e.getValue(), stack); }
+                        for (java.util.Map.Entry<java.lang.String, java.lang.Object> e : t.$entries().entrySet()) { if (!first) sb.append(','); first = false; sb.append($envelopeQuote(e.getKey())); sb.append(':'); $jsonAppend(sb, e.getValue(), stack, oFile, oLine, oCol); }
                         sb.append('}');
                     }
                     stack.remove(v);
@@ -3412,7 +3417,7 @@ public final class JvmBackend {
             """);
         emitLine("if (v instanceof $DealRt.__IntArray a) {");
         indent++;
-        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
+        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\", oFile, oLine, oCol);");
         emitLine("sb.append('[');");
         emitLine("boolean first = true;");
         emitLine(int32Mode
@@ -3425,10 +3430,10 @@ public final class JvmBackend {
         emitLine("}");
         emitLine("if (v instanceof $DealRt.__NumberArray a) {");
         indent++;
-        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
+        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\", oFile, oLine, oCol);");
         emitLine("sb.append('[');");
         emitLine("boolean first = true;");
-        emitLine("for (double e : a.data) { if (!first) sb.append(','); first = false; if (java.lang.Double.isNaN(e)) throw new DealError(\"E8001\", \"cannot encode NaN as JSON\"); if (java.lang.Double.isInfinite(e)) throw new DealError(\"E8001\", \"cannot encode Infinity as JSON\"); sb.append(java.lang.Double.toString(e)); }");
+        emitLine("for (double e : a.data) { if (!first) sb.append(','); first = false; if (java.lang.Double.isNaN(e)) throw new DealError(\"E8001\", \"cannot encode NaN as JSON\", oFile, oLine, oCol); if (java.lang.Double.isInfinite(e)) throw new DealError(\"E8001\", \"cannot encode Infinity as JSON\", oFile, oLine, oCol); sb.append(java.lang.Double.toString(e)); }");
         emitLine("sb.append(']');");
         emitLine("stack.remove(v);");
         emitLine("return;");
@@ -3436,7 +3441,7 @@ public final class JvmBackend {
         emitLine("}");
         emitLine("if (v instanceof $DealRt.__StringArray a) {");
         indent++;
-        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
+        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\", oFile, oLine, oCol);");
         emitLine("sb.append('[');");
         emitLine("boolean first = true;");
         emitLine("for (java.lang.String e : a.data) { if (!first) sb.append(','); first = false; sb.append($envelopeQuote(e)); }");
@@ -3447,7 +3452,7 @@ public final class JvmBackend {
         emitLine("}");
         emitLine("if (v instanceof $DealRt.__BooleanArray a) {");
         indent++;
-        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
+        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\", oFile, oLine, oCol);");
         emitLine("sb.append('[');");
         emitLine("boolean first = true;");
         emitLine("for (boolean e : a.data) { if (!first) sb.append(','); first = false; sb.append(e ? \"true\" : \"false\"); }");
@@ -3458,7 +3463,7 @@ public final class JvmBackend {
         emitLine("}");
         emitLine("if (v instanceof $DealRt.__IntOrNullArray a) {");
         indent++;
-        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
+        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\", oFile, oLine, oCol);");
         emitLine("sb.append('[');");
         emitLine("boolean first = true;");
         emitLine(int32Mode
@@ -3471,10 +3476,10 @@ public final class JvmBackend {
         emitLine("}");
         emitLine("if (v instanceof $DealRt.__NumberOrNullArray a) {");
         indent++;
-        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
+        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\", oFile, oLine, oCol);");
         emitLine("sb.append('[');");
         emitLine("boolean first = true;");
-        emitLine("for (java.lang.Double e : a.data) { if (!first) sb.append(','); first = false; if (e == null) { sb.append(\"null\"); } else { if (java.lang.Double.isNaN(e)) throw new DealError(\"E8001\", \"cannot encode NaN as JSON\"); if (java.lang.Double.isInfinite(e)) throw new DealError(\"E8001\", \"cannot encode Infinity as JSON\"); sb.append(java.lang.Double.toString(e)); } }");
+        emitLine("for (java.lang.Double e : a.data) { if (!first) sb.append(','); first = false; if (e == null) { sb.append(\"null\"); } else { if (java.lang.Double.isNaN(e)) throw new DealError(\"E8001\", \"cannot encode NaN as JSON\", oFile, oLine, oCol); if (java.lang.Double.isInfinite(e)) throw new DealError(\"E8001\", \"cannot encode Infinity as JSON\", oFile, oLine, oCol); sb.append(java.lang.Double.toString(e)); } }");
         emitLine("sb.append(']');");
         emitLine("stack.remove(v);");
         emitLine("return;");
@@ -3482,7 +3487,7 @@ public final class JvmBackend {
         emitLine("}");
         emitLine("if (v instanceof $DealRt.__StringOrNullArray a) {");
         indent++;
-        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
+        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\", oFile, oLine, oCol);");
         emitLine("sb.append('[');");
         emitLine("boolean first = true;");
         emitLine("for (java.lang.String e : a.data) { if (!first) sb.append(','); first = false; if (e == null) { sb.append(\"null\"); } else { sb.append($envelopeQuote(e)); } }");
@@ -3493,7 +3498,7 @@ public final class JvmBackend {
         emitLine("}");
         emitLine("if (v instanceof $DealRt.__BooleanOrNullArray a) {");
         indent++;
-        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
+        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\", oFile, oLine, oCol);");
         emitLine("sb.append('[');");
         emitLine("boolean first = true;");
         emitLine("for (java.lang.Boolean e : a.data) { if (!first) sb.append(','); first = false; if (e == null) { sb.append(\"null\"); } else { sb.append(e.booleanValue() ? \"true\" : \"false\"); } }");
@@ -3503,7 +3508,7 @@ public final class JvmBackend {
         indent--;
         emitLine("}");
         emitLines("""
-                throw new DealError("E8001", "value is not JSON-shaped");
+                throw new DealError("E8001", "value is not JSON-shaped", oFile, oLine, oCol);
             }
             """);
     }
@@ -5360,12 +5365,17 @@ public final class JvmBackend {
         emitLine("// (E8004 out of range), a negative length is E8012, and allocation");
         emitLine("// exhaustion is E8001 with no published object — the runtime.lua");
         emitLine("// bytes_new error set (deal-v1.2-int32-and-bytes-architecture D4).");
-        emitLine("static $DealRt.Bytes bytesNew(long length) {");
-        emitLine("    long n = checkInt(length);");
-        emitLine("    if (n < 0L) throw new DealError(\"E8012\", \"bytes length must be non-negative\");");
-        emitLine("    if (n > 2147483647L) throw new DealError(\"E8004\", " + (int32Mode ? "\"int out of safe range\"" : "\"int out of range\"") + ");");
+        // D1: every raising helper gains the origin (file/line/column)
+        // parameters and propagates them unchanged into every raise it
+        // performs; the short overload passes the explicit absent sentinel
+        // (null, -1, -1) — no raise site passes an actual origin yet.
+        emitLine("static $DealRt.Bytes bytesNew(long length) { return bytesNew(length, null, -1, -1); }");
+        emitLine("static $DealRt.Bytes bytesNew(long length, java.lang.String oFile, int oLine, int oCol) {");
+        emitLine("    long n = checkInt(length, oFile, oLine, oCol);");
+        emitLine("    if (n < 0L) throw new DealError(\"E8012\", \"bytes length must be non-negative\", oFile, oLine, oCol);");
+        emitLine("    if (n > 2147483647L) throw new DealError(\"E8004\", " + (int32Mode ? "\"int out of safe range\"" : "\"int out of range\"") + ", oFile, oLine, oCol);");
         emitLine("    try { return new $DealRt.Bytes(new byte[(int) n]); }");
-        emitLine("    catch (java.lang.OutOfMemoryError e) { throw new DealError(\"E8001\", \"bytes allocation failed\"); }");
+        emitLine("    catch (java.lang.OutOfMemoryError e) { throw new DealError(\"E8001\", \"bytes allocation failed\", oFile, oLine, oCol); }");
         emitLine("}");
         emitLine("// The immutable signed-int32 logical allocation length of a bytes buffer.");
         emitLine("// The helpers' int carriers match the backend-wide int mode exactly");
@@ -5378,17 +5388,26 @@ public final class JvmBackend {
         emitLine("// index and E8013 value gates always run BEFORE the narrowing inside the");
         emitLine("// long-parameter legacy arms, so the (int) casts are never silent.");
         emitLine(int32Mode
-            ? "static int bytesLength($DealRt.Bytes b) { if (b == null) throw new DealError(\"E8001\", \"expected bytes, got null\"); return b.data.length; }"
-            : "static long bytesLength($DealRt.Bytes b) { if (b == null) throw new DealError(\"E8001\", \"expected bytes, got null\"); return b.data.length; }");
+            ? "static int bytesLength($DealRt.Bytes b) { return bytesLength(b, null, -1, -1); }"
+            : "static long bytesLength($DealRt.Bytes b) { return bytesLength(b, null, -1, -1); }");
+        emitLine(int32Mode
+            ? "static int bytesLength($DealRt.Bytes b, java.lang.String oFile, int oLine, int oCol) { if (b == null) throw new DealError(\"E8001\", \"expected bytes, got null\", oFile, oLine, oCol); return b.data.length; }"
+            : "static long bytesLength($DealRt.Bytes b, java.lang.String oFile, int oLine, int oCol) { if (b == null) throw new DealError(\"E8001\", \"expected bytes, got null\", oFile, oLine, oCol); return b.data.length; }");
         emitLine("// The unsigned byte (0..255) at index i, 0 <= i < b.length (E8012 otherwise).");
         emitLine(int32Mode
-            ? "static int bytesGet($DealRt.Bytes b, int i) { if (b == null) throw new DealError(\"E8001\", \"expected bytes, got null\"); if (i < 0 || i >= b.data.length) throw new DealError(\"E8012\", \"bytes index out of bounds\"); return b.data[i] & 0xFF; }"
-            : "static long bytesGet($DealRt.Bytes b, long i) { if (b == null) throw new DealError(\"E8001\", \"expected bytes, got null\"); if (i < 0 || i >= b.data.length) throw new DealError(\"E8012\", \"bytes index out of bounds\"); return b.data[(int) i] & 0xFF; }");
+            ? "static int bytesGet($DealRt.Bytes b, int i) { return bytesGet(b, i, null, -1, -1); }"
+            : "static long bytesGet($DealRt.Bytes b, long i) { return bytesGet(b, i, null, -1, -1); }");
+        emitLine(int32Mode
+            ? "static int bytesGet($DealRt.Bytes b, int i, java.lang.String oFile, int oLine, int oCol) { if (b == null) throw new DealError(\"E8001\", \"expected bytes, got null\", oFile, oLine, oCol); if (i < 0 || i >= b.data.length) throw new DealError(\"E8012\", \"bytes index out of bounds\", oFile, oLine, oCol); return b.data[i] & 0xFF; }"
+            : "static long bytesGet($DealRt.Bytes b, long i, java.lang.String oFile, int oLine, int oCol) { if (b == null) throw new DealError(\"E8001\", \"expected bytes, got null\", oFile, oLine, oCol); if (i < 0 || i >= b.data.length) throw new DealError(\"E8012\", \"bytes index out of bounds\", oFile, oLine, oCol); return b.data[(int) i] & 0xFF; }");
         emitLine("// Write byte value v (0..255) at index i and return the written value.");
         emitLine("// A failed write (E8012 index, E8013 value range) changes no storage.");
         emitLine(int32Mode
-            ? "static int bytesSet($DealRt.Bytes b, int i, int v) { if (b == null) throw new DealError(\"E8001\", \"expected bytes, got null\"); if (i < 0 || i >= b.data.length) throw new DealError(\"E8012\", \"bytes index out of bounds\"); if (v < 0 || v > 255) throw new DealError(\"E8013\", \"bytes value out of range\"); b.data[i] = (byte) v; return v; }"
-            : "static long bytesSet($DealRt.Bytes b, long i, long v) { if (b == null) throw new DealError(\"E8001\", \"expected bytes, got null\"); if (i < 0 || i >= b.data.length) throw new DealError(\"E8012\", \"bytes index out of bounds\"); if (v < 0 || v > 255) throw new DealError(\"E8013\", \"bytes value out of range\"); b.data[(int) i] = (byte) v; return v; }");
+            ? "static int bytesSet($DealRt.Bytes b, int i, int v) { return bytesSet(b, i, v, null, -1, -1); }"
+            : "static long bytesSet($DealRt.Bytes b, long i, long v) { return bytesSet(b, i, v, null, -1, -1); }");
+        emitLine(int32Mode
+            ? "static int bytesSet($DealRt.Bytes b, int i, int v, java.lang.String oFile, int oLine, int oCol) { if (b == null) throw new DealError(\"E8001\", \"expected bytes, got null\", oFile, oLine, oCol); if (i < 0 || i >= b.data.length) throw new DealError(\"E8012\", \"bytes index out of bounds\", oFile, oLine, oCol); if (v < 0 || v > 255) throw new DealError(\"E8013\", \"bytes value out of range\", oFile, oLine, oCol); b.data[i] = (byte) v; return v; }"
+            : "static long bytesSet($DealRt.Bytes b, long i, long v, java.lang.String oFile, int oLine, int oCol) { if (b == null) throw new DealError(\"E8001\", \"expected bytes, got null\", oFile, oLine, oCol); if (i < 0 || i >= b.data.length) throw new DealError(\"E8012\", \"bytes index out of bounds\", oFile, oLine, oCol); if (v < 0 || v > 255) throw new DealError(\"E8013\", \"bytes value out of range\", oFile, oLine, oCol); b.data[(int) i] = (byte) v; return v; }");
         emitLine("// string ordering: Unicode scalar-value order. LuaJIT orders bytewise in");
         emitLine("// UTF-8, which is scalar-value order — including supplementary characters");
         emitLine("// (String.compareTo's UTF-16 code-unit order diverges there).");
@@ -5409,25 +5428,30 @@ public final class JvmBackend {
         emitLine("// parameter classes (spec-v1.2 \u00a7Host ABI and interoperability: the host module runtime");
         emitLine("// object must expose every declared export; a missing declared export");
         emitLine("// is a load-time error). Extra host methods are never looked up.");
-        emitLine("static java.lang.reflect.Method __hostMethod(java.lang.Class<?> h, java.lang.String module, java.lang.String name, java.lang.String desc, java.lang.Class<?>[] params) {");
+        emitLine("// D1: the origin (file/line/column) parameters thread through every");
+        emitLine("// raise this helper performs; the short overload passes the explicit");
+        emitLine("// absent sentinel (null, -1, -1).");
+        emitLine("static java.lang.reflect.Method __hostMethod(java.lang.Class<?> h, java.lang.String module, java.lang.String name, java.lang.String desc, java.lang.Class<?>[] params) { return __hostMethod(h, module, name, desc, params, null, -1, -1); }");
+        emitLine("static java.lang.reflect.Method __hostMethod(java.lang.Class<?> h, java.lang.String module, java.lang.String name, java.lang.String desc, java.lang.Class<?>[] params, java.lang.String oFile, int oLine, int oCol) {");
         emitLine("    try { return h.getDeclaredMethod(name, params); }");
         emitLine("    catch (java.lang.NoSuchMethodException e) {");
-        emitLine("        throw new DealError(\"E8011\", \"host export '\" + name + \"' in module '\" + module + \"' missing or has signature mismatch: expected \" + desc);");
+        emitLine("        throw new DealError(\"E8011\", \"host export '\" + name + \"' in module '\" + module + \"' missing or has signature mismatch: expected \" + desc, oFile, oLine, oCol);");
         emitLine("    }");
         emitLine("}");
         emitLine("// Reflective invocation of a checked host export: DEAL errors the host");
         emitLine("// raises propagate as-is; other causes surface as E8010 (the host");
         emitLine("// boundary never leaks a raw foreign exception into DEAL code).");
-        emitLine("static java.lang.Object __hostInvoke(java.lang.reflect.Method m, java.lang.Object[] args) {");
+        emitLine("static java.lang.Object __hostInvoke(java.lang.reflect.Method m, java.lang.Object[] args) { return __hostInvoke(m, args, null, -1, -1); }");
+        emitLine("static java.lang.Object __hostInvoke(java.lang.reflect.Method m, java.lang.Object[] args, java.lang.String oFile, int oLine, int oCol) {");
         emitLine("    try { return m.invoke(null, args); }");
         emitLine("    catch (java.lang.reflect.InvocationTargetException e) {");
         emitLine("        java.lang.Throwable c = e.getCause();");
         emitLine("        if (c instanceof RuntimeException rr) throw rr;");
         emitLine("        if (c instanceof Error er) throw er;");
-        emitLine("        throw new DealError(\"E8010\", \"host function raised: \" + c);");
+        emitLine("        throw new DealError(\"E8010\", \"host function raised: \" + c, oFile, oLine, oCol);");
         emitLine("    }");
         emitLine("    catch (java.lang.IllegalAccessException | java.lang.IllegalArgumentException e) {");
-        emitLine("        throw new DealError(\"E8010\", \"host function invocation failed: \" + e);");
+        emitLine("        throw new DealError(\"E8010\", \"host function invocation failed: \" + e, oFile, oLine, oCol);");
         emitLine("    }");
         emitLine("}");
         emitLine("// Host-boundary return check: validates the dynamic value that crossed");
@@ -5454,22 +5478,23 @@ public final class JvmBackend {
         emitLine("// (carrier/wrong-kind element failures wrap as E8010) and the");
         emitLine("// nominal E8001 propagates for a foreign-identity element — the");
         emitLine("// class-typed identity rule extended to class elements.");
-        emitLine("static java.lang.Object __hostCheck(java.lang.String desc, java.lang.Object v, java.lang.String fn, boolean completion) {");
+        emitLine("static java.lang.Object __hostCheck(java.lang.String desc, java.lang.Object v, java.lang.String fn, boolean completion) { return __hostCheck(desc, v, fn, completion, null, -1, -1); }");
+        emitLine("static java.lang.Object __hostCheck(java.lang.String desc, java.lang.Object v, java.lang.String fn, boolean completion, java.lang.String oFile, int oLine, int oCol) {");
         emitLine("    java.lang.String d = desc;");
         emitLine("    while (d.startsWith(\"?\")) {");
         emitLine("        if (v == null) return null;");
         emitLine("        d = d.substring(1);");
         emitLine("    }");
         emitLine("    if (d.startsWith(\"[\")) {");
-        emitLine("        try { return $hostCheckArray(d, v); }");
+        emitLine("        try { return $hostCheckArray(d, v, oFile, oLine, oCol); }");
         emitLine("        catch (DealError inner) {");
         emitLine("            if (\"E8001\".equals(inner.code) && inner.getMessage().startsWith(\"expected instance of \")) throw inner;");
-        emitLine("            throw new DealError(completion ? \"E8001\" : \"E8010\", (completion ? \"expected \" : \"host function '\" + fn + \"' return value 1 type mismatch: expected \") + desc + \", got \" + inner.getMessage());");
+        emitLine("            throw new DealError(completion ? \"E8001\" : \"E8010\", (completion ? \"expected \" : \"host function '\" + fn + \"' return value 1 type mismatch: expected \") + desc + \", got \" + inner.getMessage(), oFile, oLine, oCol);");
         emitLine("        }");
         emitLine("    }");
         emitLine("    if (d.startsWith(\"(\") || d.startsWith(\"async(\")) {");
         emitLine("        if (v instanceof $DealRt.FnValue f && checkSig(d, f.descriptor())) return f;");
-        emitLine("        throw new DealError(completion ? \"E8001\" : \"E8010\", (completion ? \"expected \" : \"host function '\" + fn + \"' return value 1 type mismatch: expected \") + desc + \", got \" + $describe(v));");
+        emitLine("        throw new DealError(completion ? \"E8001\" : \"E8010\", (completion ? \"expected \" : \"host function '\" + fn + \"' return value 1 type mismatch: expected \") + desc + \", got \" + $describe(v), oFile, oLine, oCol);");
         emitLine("    }");
         emitLine("    switch (d) {");
         emitLine("        case \"int\":");
@@ -5485,10 +5510,10 @@ public final class JvmBackend {
             // reference check_int shape) instead of the Integer-only
             // arm's unreachable range check. Wrong kinds (string, null
             // on non-nullable, …) still fall through to E8010/E8001.
-            emitLine("            if (v instanceof java.lang.Integer i) return checkInt(i);");
-            emitLine("            if (v instanceof java.lang.Long l) return checkInt(l.longValue());");
+            emitLine("            if (v instanceof java.lang.Integer i) return checkInt(i, oFile, oLine, oCol);");
+            emitLine("            if (v instanceof java.lang.Long l) return checkInt(l.longValue(), oFile, oLine, oCol);");
         } else {
-            emitLine("            if (v instanceof java.lang.Long l) return checkInt(l.longValue());");
+            emitLine("            if (v instanceof java.lang.Long l) return checkInt(l.longValue(), oFile, oLine, oCol);");
         }
         emitLine("            break;");
         emitLine("        case \"number\":");
@@ -5498,7 +5523,7 @@ public final class JvmBackend {
         emitLine("            if (v instanceof java.lang.Boolean b) return b;");
         emitLine("            break;");
         emitLine("        case \"string\":");
-        emitLine("            if (v instanceof java.lang.String s) { if (__hasUnpairedSurrogate(s)) throw new DealError(completion ? \"E8001\" : \"E8010\", \"expected string, got string with unpaired surrogate code units\"); return s; }");
+        emitLine("            if (v instanceof java.lang.String s) { if (__hasUnpairedSurrogate(s)) throw new DealError(completion ? \"E8001\" : \"E8010\", \"expected string, got string with unpaired surrogate code units\", oFile, oLine, oCol); return s; }");
         emitLine("            break;");
         emitLine("        case \"bytes\":");
         emitLine("            if (v instanceof $DealRt.Bytes b) return b;");
@@ -5507,9 +5532,9 @@ public final class JvmBackend {
         emitLine("            if (v == null) return null;");
         emitLine("            break;");
         emitLine("    }");
-        emitLine("    if (d.indexOf('@') == 0) return $check(desc, v);");
-        emitLine("    if (completion) throw new DealError(\"E8001\", \"expected \" + desc + \", got \" + $describe(v));");
-        emitLine("    throw new DealError(\"E8010\", \"host function '\" + fn + \"' return value 1 type mismatch: expected \" + desc + \", got \" + $describe(v));");
+        emitLine("    if (d.indexOf('@') == 0) return $check(desc, v, oFile, oLine, oCol);");
+        emitLine("    if (completion) throw new DealError(\"E8001\", \"expected \" + desc + \", got \" + $describe(v), oFile, oLine, oCol);");
+        emitLine("    throw new DealError(\"E8010\", \"host function '\" + fn + \"' return value 1 type mismatch: expected \" + desc + \", got \" + $describe(v), oFile, oLine, oCol);");
         emitLine("}");
         emitLine("// Host-boundary parameter check (ISSUE-0303 D2): every wrapper");
         emitLine("// parameter is validated against the declared parameter descriptor");
@@ -5527,36 +5552,38 @@ public final class JvmBackend {
         emitLine("// checks (carrier/wrong-kind element failures wrap as E8010) and");
         emitLine("// the nominal E8001 propagates for a foreign-identity element —");
         emitLine("// the class-typed identity rule extended to class elements.");
-        emitLine("static java.lang.Object __hostParamCheck(int i, java.lang.String desc, java.lang.Object v) {");
+        emitLine("static java.lang.Object __hostParamCheck(int i, java.lang.String desc, java.lang.Object v) { return __hostParamCheck(i, desc, v, null, -1, -1); }");
+        emitLine("static java.lang.Object __hostParamCheck(int i, java.lang.String desc, java.lang.Object v, java.lang.String oFile, int oLine, int oCol) {");
         emitLine("    java.lang.String d = desc;");
         emitLine("    while (d.startsWith(\"?\")) {");
         emitLine("        if (v == null) return null;");
         emitLine("        d = d.substring(1);");
         emitLine("    }");
-        emitLine("    if (d.indexOf('@') == 0) return $check(desc, v);");
+        emitLine("    if (d.indexOf('@') == 0) return $check(desc, v, oFile, oLine, oCol);");
         emitLine("    try {");
-        emitLine("        if (d.startsWith(\"[\")) return $hostCheckArray(d, v);");
-        emitLine("        return $check(desc, v);");
+        emitLine("        if (d.startsWith(\"[\")) return $hostCheckArray(d, v, oFile, oLine, oCol);");
+        emitLine("        return $check(desc, v, oFile, oLine, oCol);");
         emitLine("    } catch (DealError inner) {");
         emitLine("        if (\"E8001\".equals(inner.code) && inner.getMessage().startsWith(\"expected instance of \")) throw inner;");
-        emitLine("        throw new DealError(\"E8010\", \"parameter \" + i + \" type mismatch: \" + inner.getMessage());");
+        emitLine("        throw new DealError(\"E8010\", \"parameter \" + i + \" type mismatch: \" + inner.getMessage(), oFile, oLine, oCol);");
         emitLine("    }");
         emitLine("}");
         emitLine("// Load-time capture of a declared host class's <C>_defaults map");
         emitLine("// (ISSUE-0303 D4): the synthesized record construction depends on");
         emitLine("// the host's mandatory defaults field; a missing or non-map field");
         emitLine("// raises the load-time E8011.");
-        emitLine("static java.util.Map<java.lang.String, java.lang.Object> __hostDefaults(java.lang.Class<?> h, java.lang.String module, java.lang.String name) {");
+        emitLine("static java.util.Map<java.lang.String, java.lang.Object> __hostDefaults(java.lang.Class<?> h, java.lang.String module, java.lang.String name) { return __hostDefaults(h, module, name, null, -1, -1); }");
+        emitLine("static java.util.Map<java.lang.String, java.lang.Object> __hostDefaults(java.lang.Class<?> h, java.lang.String module, java.lang.String name, java.lang.String oFile, int oLine, int oCol) {");
         emitLine("    try {");
         emitLine("        java.lang.reflect.Field f = h.getDeclaredField(name + \"_defaults\");");
         emitLine("        f.setAccessible(true);");
         emitLine("        java.lang.Object v = f.get(null);");
         emitLine("        if (v instanceof java.util.Map m) return m;");
-        emitLine("        throw new DealError(\"E8011\", \"host class '\" + name + \"' in module '\" + module + \"' has a non-map defaults value\");");
+        emitLine("        throw new DealError(\"E8011\", \"host class '\" + name + \"' in module '\" + module + \"' has a non-map defaults value\", oFile, oLine, oCol);");
         emitLine("    } catch (java.lang.NoSuchFieldException e) {");
-        emitLine("        throw new DealError(\"E8011\", \"host class '\" + name + \"' in module '\" + module + \"' is missing its defaults field (\" + name + \"_defaults)\");");
+        emitLine("        throw new DealError(\"E8011\", \"host class '\" + name + \"' in module '\" + module + \"' is missing its defaults field (\" + name + \"_defaults)\", oFile, oLine, oCol);");
         emitLine("    } catch (java.lang.IllegalAccessException e) {");
-        emitLine("        throw new DealError(\"E8011\", \"host class '\" + name + \"' in module '\" + module + \"' defaults are inaccessible\");");
+        emitLine("        throw new DealError(\"E8011\", \"host class '\" + name + \"' in module '\" + module + \"' defaults are inaccessible\", oFile, oLine, oCol);");
         emitLine("    }");
         emitLine("}");
         emitLine("// Defensive missing-default lookup for a host-class construction");
@@ -5565,9 +5592,10 @@ public final class JvmBackend {
         emitLine("// declaration default, and host declarations carry no default");
         emitLine("// expressions in the corpus). Raises E8001 instead of storing");
         emitLine("// a silent zero value.");
-        emitLine("static java.lang.Object __hostMissingDefault(java.util.Map<java.lang.String, java.lang.Object> defaults, java.lang.String name, java.lang.String cls) {");
+        emitLine("static java.lang.Object __hostMissingDefault(java.util.Map<java.lang.String, java.lang.Object> defaults, java.lang.String name, java.lang.String cls) { return __hostMissingDefault(defaults, name, cls, null, -1, -1); }");
+        emitLine("static java.lang.Object __hostMissingDefault(java.util.Map<java.lang.String, java.lang.Object> defaults, java.lang.String name, java.lang.String cls, java.lang.String oFile, int oLine, int oCol) {");
         emitLine("    java.lang.Object v = defaults.get(name);");
-        emitLine("    if (v == null) throw new DealError(\"E8001\", \"missing default for field '\" + name + \"' of class '\" + cls + \"'\");");
+        emitLine("    if (v == null) throw new DealError(\"E8001\", \"missing default for field '\" + name + \"' of class '\" + cls + \"'\", oFile, oLine, oCol);");
         emitLine("    return v;");
         emitLine("}");
         emitLine("// ---- DEAL classes and tables (ISSUE-0095) ----");
@@ -5696,11 +5724,17 @@ public final class JvmBackend {
         emitLine("// int). A primitive Java array cannot yield nil, so the JVM read raises the");
         emitLine("// boundary failure directly.");
         emitLine(int32Mode
-            ? "static int __intArrayRead($DealRt.__IntArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected int, got null\"); return a.data[(int) i]; }"
-            : "static long __intArrayRead($DealRt.__IntArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected int, got null\"); return a.data[(int) i]; }");
-        emitLine("static double __numberArrayRead($DealRt.__NumberArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected number, got null\"); return a.data[(int) i]; }");
-        emitLine("static java.lang.String __stringArrayRead($DealRt.__StringArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected string, got null\"); return a.data[(int) i]; }");
-        emitLine("static boolean __booleanArrayRead($DealRt.__BooleanArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected boolean, got null\"); return a.data[(int) i]; }");
+            ? "static int __intArrayRead($DealRt.__IntArray a, long i) { return __intArrayRead(a, i, null, -1, -1); }"
+            : "static long __intArrayRead($DealRt.__IntArray a, long i) { return __intArrayRead(a, i, null, -1, -1); }");
+        emitLine(int32Mode
+            ? "static int __intArrayRead($DealRt.__IntArray a, long i, java.lang.String oFile, int oLine, int oCol) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\", oFile, oLine, oCol); if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected int, got null\", oFile, oLine, oCol); return a.data[(int) i]; }"
+            : "static long __intArrayRead($DealRt.__IntArray a, long i, java.lang.String oFile, int oLine, int oCol) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\", oFile, oLine, oCol); if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected int, got null\", oFile, oLine, oCol); return a.data[(int) i]; }");
+        emitLine("static double __numberArrayRead($DealRt.__NumberArray a, long i) { return __numberArrayRead(a, i, null, -1, -1); }");
+        emitLine("static double __numberArrayRead($DealRt.__NumberArray a, long i, java.lang.String oFile, int oLine, int oCol) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\", oFile, oLine, oCol); if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected number, got null\", oFile, oLine, oCol); return a.data[(int) i]; }");
+        emitLine("static java.lang.String __stringArrayRead($DealRt.__StringArray a, long i) { return __stringArrayRead(a, i, null, -1, -1); }");
+        emitLine("static java.lang.String __stringArrayRead($DealRt.__StringArray a, long i, java.lang.String oFile, int oLine, int oCol) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\", oFile, oLine, oCol); if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected string, got null\", oFile, oLine, oCol); return a.data[(int) i]; }");
+        emitLine("static boolean __booleanArrayRead($DealRt.__BooleanArray a, long i) { return __booleanArrayRead(a, i, null, -1, -1); }");
+        emitLine("static boolean __booleanArrayRead($DealRt.__BooleanArray a, long i, java.lang.String oFile, int oLine, int oCol) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\", oFile, oLine, oCol); if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected boolean, got null\", oFile, oLine, oCol); return a.data[(int) i]; }");
         emitLine("// boxed array reads for === / !== operand positions (ISSUE-0094 rework):");
         emitLine("// the read-site contract (spec §Bounds and nil behavior) applies no typed");
         emitLine("// boundary to a comparison operand, so LuaJIT reads nil past the end and");
@@ -5711,11 +5745,17 @@ public final class JvmBackend {
         emitLine("// E8002 — LuaJIT emits that check unconditionally at the read, whatever");
         emitLine("// the surrounding position.");
         emitLine(int32Mode
-            ? "static java.lang.Integer __intArrayReadBoxed($DealRt.__IntArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return java.lang.Integer.valueOf(a.data[(int) i]); }"
-            : "static java.lang.Long __intArrayReadBoxed($DealRt.__IntArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return java.lang.Long.valueOf(a.data[(int) i]); }");
-        emitLine("static java.lang.Double __numberArrayReadBoxed($DealRt.__NumberArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return java.lang.Double.valueOf(a.data[(int) i]); }");
-        emitLine("static java.lang.String __stringArrayReadBoxed($DealRt.__StringArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return a.data[(int) i]; }");
-        emitLine("static java.lang.Boolean __booleanArrayReadBoxed($DealRt.__BooleanArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return java.lang.Boolean.valueOf(a.data[(int) i]); }");
+            ? "static java.lang.Integer __intArrayReadBoxed($DealRt.__IntArray a, long i) { return __intArrayReadBoxed(a, i, null, -1, -1); }"
+            : "static java.lang.Long __intArrayReadBoxed($DealRt.__IntArray a, long i) { return __intArrayReadBoxed(a, i, null, -1, -1); }");
+        emitLine(int32Mode
+            ? "static java.lang.Integer __intArrayReadBoxed($DealRt.__IntArray a, long i, java.lang.String oFile, int oLine, int oCol) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\", oFile, oLine, oCol); if (i >= (long) a.data.length) return null; return java.lang.Integer.valueOf(a.data[(int) i]); }"
+            : "static java.lang.Long __intArrayReadBoxed($DealRt.__IntArray a, long i, java.lang.String oFile, int oLine, int oCol) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\", oFile, oLine, oCol); if (i >= (long) a.data.length) return null; return java.lang.Long.valueOf(a.data[(int) i]); }");
+        emitLine("static java.lang.Double __numberArrayReadBoxed($DealRt.__NumberArray a, long i) { return __numberArrayReadBoxed(a, i, null, -1, -1); }");
+        emitLine("static java.lang.Double __numberArrayReadBoxed($DealRt.__NumberArray a, long i, java.lang.String oFile, int oLine, int oCol) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\", oFile, oLine, oCol); if (i >= (long) a.data.length) return null; return java.lang.Double.valueOf(a.data[(int) i]); }");
+        emitLine("static java.lang.String __stringArrayReadBoxed($DealRt.__StringArray a, long i) { return __stringArrayReadBoxed(a, i, null, -1, -1); }");
+        emitLine("static java.lang.String __stringArrayReadBoxed($DealRt.__StringArray a, long i, java.lang.String oFile, int oLine, int oCol) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\", oFile, oLine, oCol); if (i >= (long) a.data.length) return null; return a.data[(int) i]; }");
+        emitLine("static java.lang.Boolean __booleanArrayReadBoxed($DealRt.__BooleanArray a, long i) { return __booleanArrayReadBoxed(a, i, null, -1, -1); }");
+        emitLine("static java.lang.Boolean __booleanArrayReadBoxed($DealRt.__BooleanArray a, long i, java.lang.String oFile, int oLine, int oCol) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\", oFile, oLine, oCol); if (i >= (long) a.data.length) return null; return java.lang.Boolean.valueOf(a.data[(int) i]); }");
         emitLine("// boolean boundary check for nil-aware && / || results (ISSUE-0094 rework):");
         emitLine("// a past-end boolean[] read in an and/or operand is Lua's nil — the");
         emitLine("// operand is falsy and the Lua result can itself be nil (nil and x yields");
@@ -5726,7 +5766,8 @@ public final class JvmBackend {
         emitLine("// with this helper: null fails exactly where LuaJIT's check_boolean(nil)");
         emitLine("// fails — E8001 \"expected boolean, got null\" (LuaJIT: E8001 \"expected");
         emitLine("// boolean\").");
-        emitLine("static boolean booleanNotNull(java.lang.Boolean v) { if (v == null) throw new DealError(\"E8001\", \"expected boolean, got null\"); return v; }");
+        emitLine("static boolean booleanNotNull(java.lang.Boolean v) { return booleanNotNull(v, null, -1, -1); }");
+        emitLine("static boolean booleanNotNull(java.lang.Boolean v, java.lang.String oFile, int oLine, int oCol) { if (v == null) throw new DealError(\"E8001\", \"expected boolean, got null\", oFile, oLine, oCol); return v; }");
         emitLine("// array writes: 0 <= i <= length (E8002 otherwise); i == length appends one");
         emitLine("// element (spec §Array writes); the stored value is runtime-checked against the");
         emitLine("// element type — int elements route through checkInt (E8004, like LuaJIT's");
@@ -5736,11 +5777,17 @@ public final class JvmBackend {
         emitLine("// evaluated — the helper call's Java arguments evaluate left to right before");
         emitLine("// the bounds check, per spec-v1.2 §Operational semantics rule 3.");
         emitLine(int32Mode
-            ? "static int __intArrayWrite($DealRt.__IntArray a, long i, int v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (i == (long) a.data.length) { int[] nd = new int[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }"
-            : "static long __intArrayWrite($DealRt.__IntArray a, long i, long v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); v = checkInt(v); if (i == (long) a.data.length) { long[] nd = new long[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
-        emitLine("static double __numberArrayWrite($DealRt.__NumberArray a, long i, double v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (i == (long) a.data.length) { double[] nd = new double[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
-        emitLine("static java.lang.String __stringArrayWrite($DealRt.__StringArray a, long i, java.lang.String v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (i == (long) a.data.length) { java.lang.String[] nd = new java.lang.String[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
-        emitLine("static boolean __booleanArrayWrite($DealRt.__BooleanArray a, long i, boolean v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (i == (long) a.data.length) { boolean[] nd = new boolean[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
+            ? "static int __intArrayWrite($DealRt.__IntArray a, long i, int v) { return __intArrayWrite(a, i, v, null, -1, -1); }"
+            : "static long __intArrayWrite($DealRt.__IntArray a, long i, long v) { return __intArrayWrite(a, i, v, null, -1, -1); }");
+        emitLine(int32Mode
+            ? "static int __intArrayWrite($DealRt.__IntArray a, long i, int v, java.lang.String oFile, int oLine, int oCol) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\", oFile, oLine, oCol); if (i == (long) a.data.length) { int[] nd = new int[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }"
+            : "static long __intArrayWrite($DealRt.__IntArray a, long i, long v, java.lang.String oFile, int oLine, int oCol) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\", oFile, oLine, oCol); v = checkInt(v, oFile, oLine, oCol); if (i == (long) a.data.length) { long[] nd = new long[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
+        emitLine("static double __numberArrayWrite($DealRt.__NumberArray a, long i, double v) { return __numberArrayWrite(a, i, v, null, -1, -1); }");
+        emitLine("static double __numberArrayWrite($DealRt.__NumberArray a, long i, double v, java.lang.String oFile, int oLine, int oCol) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\", oFile, oLine, oCol); if (i == (long) a.data.length) { double[] nd = new double[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
+        emitLine("static java.lang.String __stringArrayWrite($DealRt.__StringArray a, long i, java.lang.String v) { return __stringArrayWrite(a, i, v, null, -1, -1); }");
+        emitLine("static java.lang.String __stringArrayWrite($DealRt.__StringArray a, long i, java.lang.String v, java.lang.String oFile, int oLine, int oCol) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\", oFile, oLine, oCol); if (i == (long) a.data.length) { java.lang.String[] nd = new java.lang.String[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
+        emitLine("static boolean __booleanArrayWrite($DealRt.__BooleanArray a, long i, boolean v) { return __booleanArrayWrite(a, i, v, null, -1, -1); }");
+        emitLine("static boolean __booleanArrayWrite($DealRt.__BooleanArray a, long i, boolean v, java.lang.String oFile, int oLine, int oCol) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\", oFile, oLine, oCol); if (i == (long) a.data.length) { boolean[] nd = new boolean[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
         emitLine();
         emitLine("// ---- DEAL nullable and nullable-array runtime support (ISSUE-0108) ----");
         emitLine("// (T | null)[] maps to the SHARED $DealRt wrappers over BOXED");
@@ -5753,21 +5800,33 @@ public final class JvmBackend {
         emitLine("// null (check_nullable permits it) and check only the index");
         emitLine("// bounds.");
         emitLine(int32Mode
-            ? "static java.lang.Integer __intOrNullArrayWrite($DealRt.__IntOrNullArray a, long i, java.lang.Integer v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (i == (long) a.data.length) { java.lang.Integer[] nd = new java.lang.Integer[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }"
-            : "static java.lang.Long __intOrNullArrayWrite($DealRt.__IntOrNullArray a, long i, java.lang.Long v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (i == (long) a.data.length) { java.lang.Long[] nd = new java.lang.Long[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
-        emitLine("static java.lang.Double __numberOrNullArrayWrite($DealRt.__NumberOrNullArray a, long i, java.lang.Double v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (i == (long) a.data.length) { java.lang.Double[] nd = new java.lang.Double[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
-        emitLine("static java.lang.String __stringOrNullArrayWrite($DealRt.__StringOrNullArray a, long i, java.lang.String v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (i == (long) a.data.length) { java.lang.String[] nd = new java.lang.String[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
-        emitLine("static java.lang.Boolean __booleanOrNullArrayWrite($DealRt.__BooleanOrNullArray a, long i, java.lang.Boolean v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (i == (long) a.data.length) { java.lang.Boolean[] nd = new java.lang.Boolean[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
+            ? "static java.lang.Integer __intOrNullArrayWrite($DealRt.__IntOrNullArray a, long i, java.lang.Integer v) { return __intOrNullArrayWrite(a, i, v, null, -1, -1); }"
+            : "static java.lang.Long __intOrNullArrayWrite($DealRt.__IntOrNullArray a, long i, java.lang.Long v) { return __intOrNullArrayWrite(a, i, v, null, -1, -1); }");
+        emitLine(int32Mode
+            ? "static java.lang.Integer __intOrNullArrayWrite($DealRt.__IntOrNullArray a, long i, java.lang.Integer v, java.lang.String oFile, int oLine, int oCol) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\", oFile, oLine, oCol); if (i == (long) a.data.length) { java.lang.Integer[] nd = new java.lang.Integer[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }"
+            : "static java.lang.Long __intOrNullArrayWrite($DealRt.__IntOrNullArray a, long i, java.lang.Long v, java.lang.String oFile, int oLine, int oCol) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\", oFile, oLine, oCol); if (i == (long) a.data.length) { java.lang.Long[] nd = new java.lang.Long[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
+        emitLine("static java.lang.Double __numberOrNullArrayWrite($DealRt.__NumberOrNullArray a, long i, java.lang.Double v) { return __numberOrNullArrayWrite(a, i, v, null, -1, -1); }");
+        emitLine("static java.lang.Double __numberOrNullArrayWrite($DealRt.__NumberOrNullArray a, long i, java.lang.Double v, java.lang.String oFile, int oLine, int oCol) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\", oFile, oLine, oCol); if (i == (long) a.data.length) { java.lang.Double[] nd = new java.lang.Double[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
+        emitLine("static java.lang.String __stringOrNullArrayWrite($DealRt.__StringOrNullArray a, long i, java.lang.String v) { return __stringOrNullArrayWrite(a, i, v, null, -1, -1); }");
+        emitLine("static java.lang.String __stringOrNullArrayWrite($DealRt.__StringOrNullArray a, long i, java.lang.String v, java.lang.String oFile, int oLine, int oCol) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\", oFile, oLine, oCol); if (i == (long) a.data.length) { java.lang.String[] nd = new java.lang.String[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
+        emitLine("static java.lang.Boolean __booleanOrNullArrayWrite($DealRt.__BooleanOrNullArray a, long i, java.lang.Boolean v) { return __booleanOrNullArrayWrite(a, i, v, null, -1, -1); }");
+        emitLine("static java.lang.Boolean __booleanOrNullArrayWrite($DealRt.__BooleanOrNullArray a, long i, java.lang.Boolean v, java.lang.String oFile, int oLine, int oCol) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\", oFile, oLine, oCol); if (i == (long) a.data.length) { java.lang.Boolean[] nd = new java.lang.Boolean[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
         emitLine("// (T | null)[] reads: null past the end (the LuaJIT nil — a valid");
         emitLine("// nullable element, so NO E8001 at the read) and the stored boxed");
         emitLine("// element otherwise; a negative index still raises E8002 (LuaJIT");
         emitLine("// emits that check unconditionally at the read).");
         emitLine(int32Mode
-            ? "static java.lang.Integer __intOrNullArrayRead($DealRt.__IntOrNullArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return a.data[(int) i]; }"
-            : "static java.lang.Long __intOrNullArrayRead($DealRt.__IntOrNullArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return a.data[(int) i]; }");
-        emitLine("static java.lang.Double __numberOrNullArrayRead($DealRt.__NumberOrNullArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return a.data[(int) i]; }");
-        emitLine("static java.lang.String __stringOrNullArrayRead($DealRt.__StringOrNullArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return a.data[(int) i]; }");
-        emitLine("static java.lang.Boolean __booleanOrNullArrayRead($DealRt.__BooleanOrNullArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return a.data[(int) i]; }");
+            ? "static java.lang.Integer __intOrNullArrayRead($DealRt.__IntOrNullArray a, long i) { return __intOrNullArrayRead(a, i, null, -1, -1); }"
+            : "static java.lang.Long __intOrNullArrayRead($DealRt.__IntOrNullArray a, long i) { return __intOrNullArrayRead(a, i, null, -1, -1); }");
+        emitLine(int32Mode
+            ? "static java.lang.Integer __intOrNullArrayRead($DealRt.__IntOrNullArray a, long i, java.lang.String oFile, int oLine, int oCol) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\", oFile, oLine, oCol); if (i >= (long) a.data.length) return null; return a.data[(int) i]; }"
+            : "static java.lang.Long __intOrNullArrayRead($DealRt.__IntOrNullArray a, long i, java.lang.String oFile, int oLine, int oCol) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\", oFile, oLine, oCol); if (i >= (long) a.data.length) return null; return a.data[(int) i]; }");
+        emitLine("static java.lang.Double __numberOrNullArrayRead($DealRt.__NumberOrNullArray a, long i) { return __numberOrNullArrayRead(a, i, null, -1, -1); }");
+        emitLine("static java.lang.Double __numberOrNullArrayRead($DealRt.__NumberOrNullArray a, long i, java.lang.String oFile, int oLine, int oCol) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\", oFile, oLine, oCol); if (i >= (long) a.data.length) return null; return a.data[(int) i]; }");
+        emitLine("static java.lang.String __stringOrNullArrayRead($DealRt.__StringOrNullArray a, long i) { return __stringOrNullArrayRead(a, i, null, -1, -1); }");
+        emitLine("static java.lang.String __stringOrNullArrayRead($DealRt.__StringOrNullArray a, long i, java.lang.String oFile, int oLine, int oCol) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\", oFile, oLine, oCol); if (i >= (long) a.data.length) return null; return a.data[(int) i]; }");
+        emitLine("static java.lang.Boolean __booleanOrNullArrayRead($DealRt.__BooleanOrNullArray a, long i) { return __booleanOrNullArrayRead(a, i, null, -1, -1); }");
+        emitLine("static java.lang.Boolean __booleanOrNullArrayRead($DealRt.__BooleanOrNullArray a, long i, java.lang.String oFile, int oLine, int oCol) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\", oFile, oLine, oCol); if (i >= (long) a.data.length) return null; return a.data[(int) i]; }");
         emitLine("// ---- DEAL bytes-array runtime support (ISSUE-0160 recursive");
         emitLine("// bytes-bearing closure) ----");
         emitLine("// bytes[] / (bytes | null)[] map to the SHARED $DealRt");
@@ -5783,11 +5842,16 @@ public final class JvmBackend {
         emitLine("// read yields null past the end for === / !== operand positions");
         emitLine("// (no typed boundary at a comparison operand — LuaJIT computes");
         emitLine("// the comparison on nil).");
-        emitLine("static $DealRt.Bytes __bytesArrayRead($DealRt.__BytesArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected bytes, got null\"); return a.data[(int) i]; }");
-        emitLine("static $DealRt.Bytes __bytesArrayReadBoxed($DealRt.__BytesArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return a.data[(int) i]; }");
-        emitLine("static $DealRt.Bytes __bytesArrayWrite($DealRt.__BytesArray a, long i, $DealRt.Bytes v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (!(v instanceof $DealRt.Bytes)) throw new DealError(\"E8001\", \"expected bytes, got \" + $describe(v)); if (i == (long) a.data.length) { $DealRt.Bytes[] nd = new $DealRt.Bytes[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
-        emitLine("static $DealRt.Bytes __bytesOrNullArrayWrite($DealRt.__BytesOrNullArray a, long i, $DealRt.Bytes v) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\"); if (v != null && !(v instanceof $DealRt.Bytes)) throw new DealError(\"E8001\", \"expected bytes, got \" + $describe(v)); if (i == (long) a.data.length) { $DealRt.Bytes[] nd = new $DealRt.Bytes[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
-        emitLine("static $DealRt.Bytes __bytesOrNullArrayRead($DealRt.__BytesOrNullArray a, long i) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\"); if (i >= (long) a.data.length) return null; return a.data[(int) i]; }");
+        emitLine("static $DealRt.Bytes __bytesArrayRead($DealRt.__BytesArray a, long i) { return __bytesArrayRead(a, i, null, -1, -1); }");
+        emitLine("static $DealRt.Bytes __bytesArrayRead($DealRt.__BytesArray a, long i, java.lang.String oFile, int oLine, int oCol) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\", oFile, oLine, oCol); if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected bytes, got null\", oFile, oLine, oCol); return a.data[(int) i]; }");
+        emitLine("static $DealRt.Bytes __bytesArrayReadBoxed($DealRt.__BytesArray a, long i) { return __bytesArrayReadBoxed(a, i, null, -1, -1); }");
+        emitLine("static $DealRt.Bytes __bytesArrayReadBoxed($DealRt.__BytesArray a, long i, java.lang.String oFile, int oLine, int oCol) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\", oFile, oLine, oCol); if (i >= (long) a.data.length) return null; return a.data[(int) i]; }");
+        emitLine("static $DealRt.Bytes __bytesArrayWrite($DealRt.__BytesArray a, long i, $DealRt.Bytes v) { return __bytesArrayWrite(a, i, v, null, -1, -1); }");
+        emitLine("static $DealRt.Bytes __bytesArrayWrite($DealRt.__BytesArray a, long i, $DealRt.Bytes v, java.lang.String oFile, int oLine, int oCol) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\", oFile, oLine, oCol); if (!(v instanceof $DealRt.Bytes)) throw new DealError(\"E8001\", \"expected bytes, got \" + $describe(v), oFile, oLine, oCol); if (i == (long) a.data.length) { $DealRt.Bytes[] nd = new $DealRt.Bytes[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
+        emitLine("static $DealRt.Bytes __bytesOrNullArrayWrite($DealRt.__BytesOrNullArray a, long i, $DealRt.Bytes v) { return __bytesOrNullArrayWrite(a, i, v, null, -1, -1); }");
+        emitLine("static $DealRt.Bytes __bytesOrNullArrayWrite($DealRt.__BytesOrNullArray a, long i, $DealRt.Bytes v, java.lang.String oFile, int oLine, int oCol) { if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\", oFile, oLine, oCol); if (v != null && !(v instanceof $DealRt.Bytes)) throw new DealError(\"E8001\", \"expected bytes, got \" + $describe(v), oFile, oLine, oCol); if (i == (long) a.data.length) { $DealRt.Bytes[] nd = new $DealRt.Bytes[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; } return v; }");
+        emitLine("static $DealRt.Bytes __bytesOrNullArrayRead($DealRt.__BytesOrNullArray a, long i) { return __bytesOrNullArrayRead(a, i, null, -1, -1); }");
+        emitLine("static $DealRt.Bytes __bytesOrNullArrayRead($DealRt.__BytesOrNullArray a, long i, java.lang.String oFile, int oLine, int oCol) { if (i < 0L) throw new DealError(\"E8002\", \"negative array index\", oFile, oLine, oCol); if (i >= (long) a.data.length) return null; return a.data[(int) i]; }");
         emitLine("// Class arrays (C[], (C | null)[]) map to the shared");
         emitLine("// $DealRt.__RefArray holding java.lang.Object[]; every class");
         emitLine("// declaration also emits a per-class subclass ($Array$<C>) so");
@@ -5809,9 +5873,13 @@ public final class JvmBackend {
         emitLine("// null fails at runtime with E8001 (runtime.lua's int_convert/");
         emitLine("// number_convert \"cannot convert null to ...\" shapes).");
         emitLine(int32Mode
-            ? "static int intFromNullable(java.lang.Integer v) { if (v == null) throw new DealError(\"E8001\", \"cannot convert null to int\"); return v; }"
-            : "static long intFromNullable(java.lang.Long v) { if (v == null) throw new DealError(\"E8001\", \"cannot convert null to int\"); return v; }");
-        emitLine("static double numberFromNullable(java.lang.Double v) { if (v == null) throw new DealError(\"E8001\", \"cannot convert null to number\"); return v; }");
+            ? "static int intFromNullable(java.lang.Integer v) { return intFromNullable(v, null, -1, -1); }"
+            : "static long intFromNullable(java.lang.Long v) { return intFromNullable(v, null, -1, -1); }");
+        emitLine(int32Mode
+            ? "static int intFromNullable(java.lang.Integer v, java.lang.String oFile, int oLine, int oCol) { if (v == null) throw new DealError(\"E8001\", \"cannot convert null to int\", oFile, oLine, oCol); return v; }"
+            : "static long intFromNullable(java.lang.Long v, java.lang.String oFile, int oLine, int oCol) { if (v == null) throw new DealError(\"E8001\", \"cannot convert null to int\", oFile, oLine, oCol); return v; }");
+        emitLine("static double numberFromNullable(java.lang.Double v) { return numberFromNullable(v, null, -1, -1); }");
+        emitLine("static double numberFromNullable(java.lang.Double v, java.lang.String oFile, int oLine, int oCol) { if (v == null) throw new DealError(\"E8001\", \"cannot convert null to number\", oFile, oLine, oCol); return v; }");
         emitLine();
         emitLine("// ---- DEAL stdlib support (ISSUE-0097, ISSUE-0106 v1.2 scalar strings): std/string, std/math, std/time ----");
         emitLine("// DEAL strings are sequences of Unicode scalar values (spec-v1.2 §String");
@@ -5878,7 +5946,8 @@ public final class JvmBackend {
         emitLine("// std/math.sqrt rejects negative inputs with E8001 (std/math.lua); NaN passes");
         emitLine("// through to NaN like LuaJIT's x < 0 guard and math.sqrt. floor/ceil/abs/min/max");
         emitLine("// map to java.lang.Math directly (same IEEE 754 semantics).");
-        emitLine("static double __mathSqrt(double x) { if (x < 0.0) throw new DealError(\"E8001\", \"sqrt of negative number\"); return java.lang.Math.sqrt(x); }");
+        emitLine("static double __mathSqrt(double x) { return __mathSqrt(x, null, -1, -1); }");
+        emitLine("static double __mathSqrt(double x, java.lang.String oFile, int oLine, int oCol) { if (x < 0.0) throw new DealError(\"E8001\", \"sqrt of negative number\", oFile, oLine, oCol); return java.lang.Math.sqrt(x); }");
         emitLine();
     }
 
@@ -6349,9 +6418,14 @@ public final class JvmBackend {
         emitLine("    if (c >= 0xD800 && c <= 0xDFFF) return false;");
         emitLine("    return true;");
         emitLine("}");
-        emitLine("static java.lang.Object $check(java.lang.String descriptor, java.lang.Object v) {");
+        emitLine("// D1: the origin-threading overload carries the (file/line/column)");
+        emitLine("// parameters into every raise this seam performs, including the");
+        emitLine("// wrapped re-raises of its delegating helpers; the short overload");
+        emitLine("// passes the explicit absent sentinel (null, -1, -1).");
+        emitLine("static java.lang.Object $check(java.lang.String descriptor, java.lang.Object v) { return $check(descriptor, v, null, -1, -1); }");
+        emitLine("static java.lang.Object $check(java.lang.String descriptor, java.lang.Object v, java.lang.String oFile, int oLine, int oCol) {");
         indent++;
-        emitLine("if (!__canonical(descriptor)) throw new DealError(\"E8001\", \"internal: cannot parse type descriptor: \" + descriptor);");
+        emitLine("if (!__canonical(descriptor)) throw new DealError(\"E8001\", \"internal: cannot parse type descriptor: \" + descriptor, oFile, oLine, oCol);");
         emitLine("if (descriptor.startsWith(\"?\")) {");
         indent++;
         emitLine("if (v == null) return null;");
@@ -6362,22 +6436,22 @@ public final class JvmBackend {
         emitLine("// here) passes; the seam previously lacked the row because every");
         emitLine("// statically provable null crossing bypasses $check — the async-export");
         emitLine("// host entry (ISSUE-0161) is the first dynamic null check site.");
-        emitLine("if (descriptor.equals(\"null\")) { if (v == null) return null; throw new DealError(\"E8001\", \"expected null, got \" + $describe(v)); }");
-        emitLine("if (descriptor.equals(\"table\")) { if (v instanceof $DealRt.Table t) return t; throw new DealError(\"E8001\", \"expected table, got \" + $describe(v)); }");
-        emitLine("if (descriptor.equals(\"boolean\")) { if (v instanceof java.lang.Boolean b) return b; throw new DealError(\"E8001\", \"expected boolean, got \" + $describe(v)); }");
-        emitLine("if (descriptor.equals(\"string\")) { if (v instanceof java.lang.String s) { if (__hasUnpairedSurrogate(s)) throw new DealError(\"E8001\", \"expected string, got string with unpaired surrogate code units\"); return s; } throw new DealError(\"E8001\", \"expected string, got \" + $describe(v)); }");
+        emitLine("if (descriptor.equals(\"null\")) { if (v == null) return null; throw new DealError(\"E8001\", \"expected null, got \" + $describe(v), oFile, oLine, oCol); }");
+        emitLine("if (descriptor.equals(\"table\")) { if (v instanceof $DealRt.Table t) return t; throw new DealError(\"E8001\", \"expected table, got \" + $describe(v), oFile, oLine, oCol); }");
+        emitLine("if (descriptor.equals(\"boolean\")) { if (v instanceof java.lang.Boolean b) return b; throw new DealError(\"E8001\", \"expected boolean, got \" + $describe(v), oFile, oLine, oCol); }");
+        emitLine("if (descriptor.equals(\"string\")) { if (v instanceof java.lang.String s) { if (__hasUnpairedSurrogate(s)) throw new DealError(\"E8001\", \"expected string, got string with unpaired surrogate code units\", oFile, oLine, oCol); return s; } throw new DealError(\"E8001\", \"expected string, got \" + $describe(v), oFile, oLine, oCol); }");
         emitLine(int32Mode
-            ? "if (descriptor.equals(\"int\")) { if (v instanceof java.lang.Integer i) return checkInt(i); if (v instanceof java.lang.Double d) { if (d.isNaN()) throw new DealError(\"E8001\", \"expected int, got NaN\"); if (d.isInfinite()) throw new DealError(\"E8001\", \"expected int, got infinity\"); if (d % 1.0 != 0.0) throw new DealError(\"E8001\", \"expected int, got non-integer number\"); return checkInt((long) (double) d); } throw new DealError(\"E8001\", \"expected int, got \" + $describe(v)); }"
-            : "if (descriptor.equals(\"int\")) { if (v instanceof java.lang.Long l) return checkInt(l); if (v instanceof java.lang.Double d) { if (d.isNaN()) throw new DealError(\"E8001\", \"expected int, got NaN\"); if (d.isInfinite()) throw new DealError(\"E8001\", \"expected int, got infinity\"); if (d % 1.0 != 0.0) throw new DealError(\"E8001\", \"expected int, got non-integer number\"); return checkInt((long) (double) d); } throw new DealError(\"E8001\", \"expected int, got \" + $describe(v)); }");
+            ? "if (descriptor.equals(\"int\")) { if (v instanceof java.lang.Integer i) return checkInt(i, oFile, oLine, oCol); if (v instanceof java.lang.Double d) { if (d.isNaN()) throw new DealError(\"E8001\", \"expected int, got NaN\", oFile, oLine, oCol); if (d.isInfinite()) throw new DealError(\"E8001\", \"expected int, got infinity\", oFile, oLine, oCol); if (d % 1.0 != 0.0) throw new DealError(\"E8001\", \"expected int, got non-integer number\", oFile, oLine, oCol); return checkInt((long) (double) d, oFile, oLine, oCol); } throw new DealError(\"E8001\", \"expected int, got \" + $describe(v), oFile, oLine, oCol); }"
+            : "if (descriptor.equals(\"int\")) { if (v instanceof java.lang.Long l) return checkInt(l, oFile, oLine, oCol); if (v instanceof java.lang.Double d) { if (d.isNaN()) throw new DealError(\"E8001\", \"expected int, got NaN\", oFile, oLine, oCol); if (d.isInfinite()) throw new DealError(\"E8001\", \"expected int, got infinity\", oFile, oLine, oCol); if (d % 1.0 != 0.0) throw new DealError(\"E8001\", \"expected int, got non-integer number\", oFile, oLine, oCol); return checkInt((long) (double) d, oFile, oLine, oCol); } throw new DealError(\"E8001\", \"expected int, got \" + $describe(v), oFile, oLine, oCol); }");
         emitLine(int32Mode
-            ? "if (descriptor.equals(\"number\")) { if (v instanceof java.lang.Integer i) return (double) i; if (v instanceof java.lang.Double d) return d; throw new DealError(\"E8001\", \"expected number, got \" + $describe(v)); }"
-            : "if (descriptor.equals(\"number\")) { if (v instanceof java.lang.Long l) return (double) l; if (v instanceof java.lang.Double d) return d; throw new DealError(\"E8001\", \"expected number, got \" + $describe(v)); }");
+            ? "if (descriptor.equals(\"number\")) { if (v instanceof java.lang.Integer i) return (double) i; if (v instanceof java.lang.Double d) return d; throw new DealError(\"E8001\", \"expected number, got \" + $describe(v), oFile, oLine, oCol); }"
+            : "if (descriptor.equals(\"number\")) { if (v instanceof java.lang.Long l) return (double) l; if (v instanceof java.lang.Double d) return d; throw new DealError(\"E8001\", \"expected number, got \" + $describe(v), oFile, oLine, oCol); }");
         emitLine("// bytes row (the canonical matcher table): the shared $DealRt.Bytes");
         emitLine("// carrier is the JVM bytes representation (ISSUE-0301 D6 — the");
         emitLine("// final runtime-owned wrapper over byte[]); anything else raises");
         emitLine("// E8001. Allocation/indexing/mutation lower to the emitted");
         emitLine("// bytesNew/bytesLength/bytesGet/bytesSet helpers (ISSUE-0158).");
-        emitLine("if (descriptor.equals(\"bytes\")) { if (v instanceof $DealRt.Bytes b) return b; throw new DealError(\"E8001\", \"expected bytes, got \" + $describe(v)); }");
+        emitLine("if (descriptor.equals(\"bytes\")) { if (v instanceof $DealRt.Bytes b) return b; throw new DealError(\"E8001\", \"expected bytes, got \" + $describe(v), oFile, oLine, oCol); }");
         // Class branches (plain class descriptors and per-class array
         // descriptors) are appended by emitClass before the generic [D]
         // dispatch: every generated branch keys on its own descriptor
@@ -6391,7 +6465,7 @@ public final class JvmBackend {
         emitLine("// representation — elements checked recursively in index order,");
         emitLine("// E8003 at the first failing index); any other value raises");
         emitLine("// E8001 \"expected array\".");
-        emitLine("if (descriptor.startsWith(\"[\") && descriptor.endsWith(\"]\")) { return $checkArray(descriptor, v); }");
+        emitLine("if (descriptor.startsWith(\"[\") && descriptor.endsWith(\"]\")) { return $checkArray(descriptor, v, oFile, oLine, oCol); }");
         emitLine("// function row (the canonical matcher table): a shared");
         emitLine("// $DealRt.FnValue whose carried canonical descriptor equals the");
         emitLine("// expected text byte-for-byte passes; any descriptor delta raises");
@@ -6402,43 +6476,44 @@ public final class JvmBackend {
         emitLine("if (v instanceof $DealRt.FnValue f) {");
         indent++;
         emitLine("if (f.descriptor().equals(descriptor)) return v;");
-        emitLine("throw new DealError(\"E8010\", \"function signature mismatch: expected \" + descriptor + \", got \" + f.descriptor());");
+        emitLine("throw new DealError(\"E8010\", \"function signature mismatch: expected \" + descriptor + \", got \" + f.descriptor(), oFile, oLine, oCol);");
         indent--;
         emitLine("}");
-        emitLine("throw new DealError(\"E8001\", \"expected function\");");
+        emitLine("throw new DealError(\"E8001\", \"expected function\", oFile, oLine, oCol);");
         indent--;
         emitLine("}");
-        emitLine("throw new DealError(\"E8001\", \"expected \" + descriptor + \", got \" + $describe(v));");
+        emitLine("throw new DealError(\"E8001\", \"expected \" + descriptor + \", got \" + $describe(v), oFile, oLine, oCol);");
         indent--;
         emitLine("}");
         emitLine("// The generated recursive [D] realization (ISSUE-0301 D5): one");
         emitLine("// branch per element shape — the fixed primitive/nullable rows,");
         emitLine("// the per-class rows appended by emitClass, and the generated");
         emitLine("// per-element-shape rows for nested/function/bytes arrays.");
-        emitLine("static java.lang.Object $checkArray(java.lang.String descriptor, java.lang.Object v) {");
+        emitLine("static java.lang.Object $checkArray(java.lang.String descriptor, java.lang.Object v) { return $checkArray(descriptor, v, null, -1, -1); }");
+        emitLine("static java.lang.Object $checkArray(java.lang.String descriptor, java.lang.Object v, java.lang.String oFile, int oLine, int oCol) {");
         indent++;
-        emitLine("if (descriptor.equals(\"[int]\")) { if (v instanceof $DealRt.__IntArray a) return a; return $dynamicIntArray(v); }");
-        emitLine("if (descriptor.equals(\"[number]\")) { if (v instanceof $DealRt.__NumberArray a) return a; return $dynamicNumberArray(v); }");
-        emitLine("if (descriptor.equals(\"[string]\")) { if (v instanceof $DealRt.__StringArray a) return a; return $dynamicStringArray(v); }");
-        emitLine("if (descriptor.equals(\"[boolean]\")) { if (v instanceof $DealRt.__BooleanArray a) return a; return $dynamicBooleanArray(v); }");
+        emitLine("if (descriptor.equals(\"[int]\")) { if (v instanceof $DealRt.__IntArray a) return a; return $dynamicIntArray(v, oFile, oLine, oCol); }");
+        emitLine("if (descriptor.equals(\"[number]\")) { if (v instanceof $DealRt.__NumberArray a) return a; return $dynamicNumberArray(v, oFile, oLine, oCol); }");
+        emitLine("if (descriptor.equals(\"[string]\")) { if (v instanceof $DealRt.__StringArray a) return a; return $dynamicStringArray(v, oFile, oLine, oCol); }");
+        emitLine("if (descriptor.equals(\"[boolean]\")) { if (v instanceof $DealRt.__BooleanArray a) return a; return $dynamicBooleanArray(v, oFile, oLine, oCol); }");
         // ISSUE-0160 D5: the [bytes] row accepts the concrete shared
         // __BytesArray carrier (identity) and converts an array-mode
         // $DealRt.Table with the element-level E8003 wrap; the [?bytes]
         // row below additionally accepts the widening __BytesArray form
         // with the same storage copy the retired primitive gates
         // performed.
-        emitLine("if (descriptor.equals(\"[bytes]\")) { if (v instanceof $DealRt.__BytesArray a) return a; return $dynamicBytesArray(v); }");
+        emitLine("if (descriptor.equals(\"[bytes]\")) { if (v instanceof $DealRt.__BytesArray a) return a; return $dynamicBytesArray(v, oFile, oLine, oCol); }");
         emitLine(int32Mode
-            ? "if (descriptor.equals(\"[?int]\")) { if (v instanceof $DealRt.__IntOrNullArray a) return a; if (v instanceof $DealRt.__IntArray a) { java.lang.Integer[] nd = new java.lang.Integer[a.data.length]; for (int i = 0; i < a.data.length; i++) nd[i] = java.lang.Integer.valueOf(a.data[i]); return new $DealRt.__IntOrNullArray(nd); } return $dynamicIntOrNullArray(v); }"
-            : "if (descriptor.equals(\"[?int]\")) { if (v instanceof $DealRt.__IntOrNullArray a) return a; if (v instanceof $DealRt.__IntArray a) { java.lang.Long[] nd = new java.lang.Long[a.data.length]; for (int i = 0; i < a.data.length; i++) nd[i] = java.lang.Long.valueOf(a.data[i]); return new $DealRt.__IntOrNullArray(nd); } return $dynamicIntOrNullArray(v); }");
-        emitLine("if (descriptor.equals(\"[?number]\")) { if (v instanceof $DealRt.__NumberOrNullArray a) return a; if (v instanceof $DealRt.__NumberArray a) { java.lang.Double[] nd = new java.lang.Double[a.data.length]; for (int i = 0; i < a.data.length; i++) nd[i] = java.lang.Double.valueOf(a.data[i]); return new $DealRt.__NumberOrNullArray(nd); } return $dynamicNumberOrNullArray(v); }");
-        emitLine("if (descriptor.equals(\"[?string]\")) { if (v instanceof $DealRt.__StringOrNullArray a) return a; if (v instanceof $DealRt.__StringArray a) { java.lang.String[] nd = new java.lang.String[a.data.length]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); return new $DealRt.__StringOrNullArray(nd); } return $dynamicStringOrNullArray(v); }");
-        emitLine("if (descriptor.equals(\"[?boolean]\")) { if (v instanceof $DealRt.__BooleanOrNullArray a) return a; if (v instanceof $DealRt.__BooleanArray a) { java.lang.Boolean[] nd = new java.lang.Boolean[a.data.length]; for (int i = 0; i < a.data.length; i++) nd[i] = java.lang.Boolean.valueOf(a.data[i]); return new $DealRt.__BooleanOrNullArray(nd); } return $dynamicBooleanOrNullArray(v); }");
-        emitLine("if (descriptor.equals(\"[?bytes]\")) { if (v instanceof $DealRt.__BytesOrNullArray a) return a; if (v instanceof $DealRt.__BytesArray a) { $DealRt.Bytes[] nd = new $DealRt.Bytes[a.data.length]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); return new $DealRt.__BytesOrNullArray(nd); } return $dynamicBytesOrNullArray(v); }");
+            ? "if (descriptor.equals(\"[?int]\")) { if (v instanceof $DealRt.__IntOrNullArray a) return a; if (v instanceof $DealRt.__IntArray a) { java.lang.Integer[] nd = new java.lang.Integer[a.data.length]; for (int i = 0; i < a.data.length; i++) nd[i] = java.lang.Integer.valueOf(a.data[i]); return new $DealRt.__IntOrNullArray(nd); } return $dynamicIntOrNullArray(v, oFile, oLine, oCol); }"
+            : "if (descriptor.equals(\"[?int]\")) { if (v instanceof $DealRt.__IntOrNullArray a) return a; if (v instanceof $DealRt.__IntArray a) { java.lang.Long[] nd = new java.lang.Long[a.data.length]; for (int i = 0; i < a.data.length; i++) nd[i] = java.lang.Long.valueOf(a.data[i]); return new $DealRt.__IntOrNullArray(nd); } return $dynamicIntOrNullArray(v, oFile, oLine, oCol); }");
+        emitLine("if (descriptor.equals(\"[?number]\")) { if (v instanceof $DealRt.__NumberOrNullArray a) return a; if (v instanceof $DealRt.__NumberArray a) { java.lang.Double[] nd = new java.lang.Double[a.data.length]; for (int i = 0; i < a.data.length; i++) nd[i] = java.lang.Double.valueOf(a.data[i]); return new $DealRt.__NumberOrNullArray(nd); } return $dynamicNumberOrNullArray(v, oFile, oLine, oCol); }");
+        emitLine("if (descriptor.equals(\"[?string]\")) { if (v instanceof $DealRt.__StringOrNullArray a) return a; if (v instanceof $DealRt.__StringArray a) { java.lang.String[] nd = new java.lang.String[a.data.length]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); return new $DealRt.__StringOrNullArray(nd); } return $dynamicStringOrNullArray(v, oFile, oLine, oCol); }");
+        emitLine("if (descriptor.equals(\"[?boolean]\")) { if (v instanceof $DealRt.__BooleanOrNullArray a) return a; if (v instanceof $DealRt.__BooleanArray a) { java.lang.Boolean[] nd = new java.lang.Boolean[a.data.length]; for (int i = 0; i < a.data.length; i++) nd[i] = java.lang.Boolean.valueOf(a.data[i]); return new $DealRt.__BooleanOrNullArray(nd); } return $dynamicBooleanOrNullArray(v, oFile, oLine, oCol); }");
+        emitLine("if (descriptor.equals(\"[?bytes]\")) { if (v instanceof $DealRt.__BytesOrNullArray a) return a; if (v instanceof $DealRt.__BytesArray a) { $DealRt.Bytes[] nd = new $DealRt.Bytes[a.data.length]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); return new $DealRt.__BytesOrNullArray(nd); } return $dynamicBytesOrNullArray(v, oFile, oLine, oCol); }");
         for (String branch : refArrayCheckBranches) {
             emitLine(branch);
         }
-        emitLine("throw new DealError(\"E8001\", \"expected array, got \" + $describe(v));");
+        emitLine("throw new DealError(\"E8001\", \"expected array, got \" + $describe(v), oFile, oLine, oCol);");
         indent--;
         emitLine("}");
         // Dynamic [D] conversions: an array-mode $DealRt.Table crossed a
@@ -6447,19 +6522,33 @@ public final class JvmBackend {
         // failing index — the inner failure is suppressed exactly like
         // LuaJIT's pcall-wrapped element checks).
         emitLine(int32Mode
-            ? "static $DealRt.__IntArray $dynamicIntArray(java.lang.Object v) { if (v instanceof $DealRt.Table t && t.$array() != null) { java.util.ArrayList<java.lang.Object> a = t.$array(); int[] data = new int[a.size()]; for (int i = 0; i < a.size(); i++) { try { data[i] = ((java.lang.Integer) $check(\"int\", a.get(i))).intValue(); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return new $DealRt.__IntArray(data); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }"
-            : "static $DealRt.__IntArray $dynamicIntArray(java.lang.Object v) { if (v instanceof $DealRt.Table t && t.$array() != null) { java.util.ArrayList<java.lang.Object> a = t.$array(); long[] data = new long[a.size()]; for (int i = 0; i < a.size(); i++) { try { data[i] = ((java.lang.Long) $check(\"int\", a.get(i))).longValue(); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return new $DealRt.__IntArray(data); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
-        emitLine("static $DealRt.__NumberArray $dynamicNumberArray(java.lang.Object v) { if (v instanceof $DealRt.Table t && t.$array() != null) { java.util.ArrayList<java.lang.Object> a = t.$array(); double[] data = new double[a.size()]; for (int i = 0; i < a.size(); i++) { try { data[i] = ((java.lang.Double) $check(\"number\", a.get(i))).doubleValue(); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return new $DealRt.__NumberArray(data); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
-        emitLine("static $DealRt.__StringArray $dynamicStringArray(java.lang.Object v) { if (v instanceof $DealRt.Table t && t.$array() != null) { java.util.ArrayList<java.lang.Object> a = t.$array(); java.lang.String[] data = new java.lang.String[a.size()]; for (int i = 0; i < a.size(); i++) { try { data[i] = (java.lang.String) $check(\"string\", a.get(i)); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return new $DealRt.__StringArray(data); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
-        emitLine("static $DealRt.__BooleanArray $dynamicBooleanArray(java.lang.Object v) { if (v instanceof $DealRt.Table t && t.$array() != null) { java.util.ArrayList<java.lang.Object> a = t.$array(); boolean[] data = new boolean[a.size()]; for (int i = 0; i < a.size(); i++) { try { data[i] = ((java.lang.Boolean) $check(\"boolean\", a.get(i))).booleanValue(); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return new $DealRt.__BooleanArray(data); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
-        emitLine("static $DealRt.__BytesArray $dynamicBytesArray(java.lang.Object v) { if (v instanceof $DealRt.Table t && t.$array() != null) { java.util.ArrayList<java.lang.Object> a = t.$array(); $DealRt.Bytes[] data = new $DealRt.Bytes[a.size()]; for (int i = 0; i < a.size(); i++) { try { data[i] = ($DealRt.Bytes) $check(\"bytes\", a.get(i)); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return new $DealRt.__BytesArray(data); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
-        emitLine("static $DealRt.__BytesOrNullArray $dynamicBytesOrNullArray(java.lang.Object v) { if (v instanceof $DealRt.Table t && t.$array() != null) { java.util.ArrayList<java.lang.Object> a = t.$array(); $DealRt.Bytes[] data = new $DealRt.Bytes[a.size()]; for (int i = 0; i < a.size(); i++) { try { data[i] = ($DealRt.Bytes) $check(\"?bytes\", a.get(i)); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return new $DealRt.__BytesOrNullArray(data); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
+            ? "static $DealRt.__IntArray $dynamicIntArray(java.lang.Object v) { return $dynamicIntArray(v, null, -1, -1); }"
+            : "static $DealRt.__IntArray $dynamicIntArray(java.lang.Object v) { return $dynamicIntArray(v, null, -1, -1); }");
         emitLine(int32Mode
-            ? "static $DealRt.__IntOrNullArray $dynamicIntOrNullArray(java.lang.Object v) { if (v instanceof $DealRt.Table t && t.$array() != null) { java.util.ArrayList<java.lang.Object> a = t.$array(); java.lang.Integer[] data = new java.lang.Integer[a.size()]; for (int i = 0; i < a.size(); i++) { try { data[i] = (java.lang.Integer) $check(\"?int\", a.get(i)); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return new $DealRt.__IntOrNullArray(data); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }"
-            : "static $DealRt.__IntOrNullArray $dynamicIntOrNullArray(java.lang.Object v) { if (v instanceof $DealRt.Table t && t.$array() != null) { java.util.ArrayList<java.lang.Object> a = t.$array(); java.lang.Long[] data = new java.lang.Long[a.size()]; for (int i = 0; i < a.size(); i++) { try { data[i] = (java.lang.Long) $check(\"?int\", a.get(i)); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return new $DealRt.__IntOrNullArray(data); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
-        emitLine("static $DealRt.__NumberOrNullArray $dynamicNumberOrNullArray(java.lang.Object v) { if (v instanceof $DealRt.Table t && t.$array() != null) { java.util.ArrayList<java.lang.Object> a = t.$array(); java.lang.Double[] data = new java.lang.Double[a.size()]; for (int i = 0; i < a.size(); i++) { try { data[i] = (java.lang.Double) $check(\"?number\", a.get(i)); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return new $DealRt.__NumberOrNullArray(data); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
-        emitLine("static $DealRt.__StringOrNullArray $dynamicStringOrNullArray(java.lang.Object v) { if (v instanceof $DealRt.Table t && t.$array() != null) { java.util.ArrayList<java.lang.Object> a = t.$array(); java.lang.String[] data = new java.lang.String[a.size()]; for (int i = 0; i < a.size(); i++) { try { data[i] = (java.lang.String) $check(\"?string\", a.get(i)); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return new $DealRt.__StringOrNullArray(data); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
-        emitLine("static $DealRt.__BooleanOrNullArray $dynamicBooleanOrNullArray(java.lang.Object v) { if (v instanceof $DealRt.Table t && t.$array() != null) { java.util.ArrayList<java.lang.Object> a = t.$array(); java.lang.Boolean[] data = new java.lang.Boolean[a.size()]; for (int i = 0; i < a.size(); i++) { try { data[i] = (java.lang.Boolean) $check(\"?boolean\", a.get(i)); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return new $DealRt.__BooleanOrNullArray(data); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v)); }");
+            ? "static $DealRt.__IntArray $dynamicIntArray(java.lang.Object v, java.lang.String oFile, int oLine, int oCol) { if (v instanceof $DealRt.Table t && t.$array() != null) { java.util.ArrayList<java.lang.Object> a = t.$array(); int[] data = new int[a.size()]; for (int i = 0; i < a.size(); i++) { try { data[i] = ((java.lang.Integer) $check(\"int\", a.get(i), oFile, oLine, oCol)).intValue(); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\", oFile, oLine, oCol); } } return new $DealRt.__IntArray(data); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v), oFile, oLine, oCol); }"
+            : "static $DealRt.__IntArray $dynamicIntArray(java.lang.Object v, java.lang.String oFile, int oLine, int oCol) { if (v instanceof $DealRt.Table t && t.$array() != null) { java.util.ArrayList<java.lang.Object> a = t.$array(); long[] data = new long[a.size()]; for (int i = 0; i < a.size(); i++) { try { data[i] = ((java.lang.Long) $check(\"int\", a.get(i), oFile, oLine, oCol)).longValue(); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\", oFile, oLine, oCol); } } return new $DealRt.__IntArray(data); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v), oFile, oLine, oCol); }");
+        emitLine("static $DealRt.__NumberArray $dynamicNumberArray(java.lang.Object v) { return $dynamicNumberArray(v, null, -1, -1); }");
+        emitLine("static $DealRt.__NumberArray $dynamicNumberArray(java.lang.Object v, java.lang.String oFile, int oLine, int oCol) { if (v instanceof $DealRt.Table t && t.$array() != null) { java.util.ArrayList<java.lang.Object> a = t.$array(); double[] data = new double[a.size()]; for (int i = 0; i < a.size(); i++) { try { data[i] = ((java.lang.Double) $check(\"number\", a.get(i), oFile, oLine, oCol)).doubleValue(); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\", oFile, oLine, oCol); } } return new $DealRt.__NumberArray(data); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v), oFile, oLine, oCol); }");
+        emitLine("static $DealRt.__StringArray $dynamicStringArray(java.lang.Object v) { return $dynamicStringArray(v, null, -1, -1); }");
+        emitLine("static $DealRt.__StringArray $dynamicStringArray(java.lang.Object v, java.lang.String oFile, int oLine, int oCol) { if (v instanceof $DealRt.Table t && t.$array() != null) { java.util.ArrayList<java.lang.Object> a = t.$array(); java.lang.String[] data = new java.lang.String[a.size()]; for (int i = 0; i < a.size(); i++) { try { data[i] = (java.lang.String) $check(\"string\", a.get(i), oFile, oLine, oCol); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\", oFile, oLine, oCol); } } return new $DealRt.__StringArray(data); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v), oFile, oLine, oCol); }");
+        emitLine("static $DealRt.__BooleanArray $dynamicBooleanArray(java.lang.Object v) { return $dynamicBooleanArray(v, null, -1, -1); }");
+        emitLine("static $DealRt.__BooleanArray $dynamicBooleanArray(java.lang.Object v, java.lang.String oFile, int oLine, int oCol) { if (v instanceof $DealRt.Table t && t.$array() != null) { java.util.ArrayList<java.lang.Object> a = t.$array(); boolean[] data = new boolean[a.size()]; for (int i = 0; i < a.size(); i++) { try { data[i] = ((java.lang.Boolean) $check(\"boolean\", a.get(i), oFile, oLine, oCol)).booleanValue(); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\", oFile, oLine, oCol); } } return new $DealRt.__BooleanArray(data); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v), oFile, oLine, oCol); }");
+        emitLine("static $DealRt.__BytesArray $dynamicBytesArray(java.lang.Object v) { return $dynamicBytesArray(v, null, -1, -1); }");
+        emitLine("static $DealRt.__BytesArray $dynamicBytesArray(java.lang.Object v, java.lang.String oFile, int oLine, int oCol) { if (v instanceof $DealRt.Table t && t.$array() != null) { java.util.ArrayList<java.lang.Object> a = t.$array(); $DealRt.Bytes[] data = new $DealRt.Bytes[a.size()]; for (int i = 0; i < a.size(); i++) { try { data[i] = ($DealRt.Bytes) $check(\"bytes\", a.get(i), oFile, oLine, oCol); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\", oFile, oLine, oCol); } } return new $DealRt.__BytesArray(data); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v), oFile, oLine, oCol); }");
+        emitLine("static $DealRt.__BytesOrNullArray $dynamicBytesOrNullArray(java.lang.Object v) { return $dynamicBytesOrNullArray(v, null, -1, -1); }");
+        emitLine("static $DealRt.__BytesOrNullArray $dynamicBytesOrNullArray(java.lang.Object v, java.lang.String oFile, int oLine, int oCol) { if (v instanceof $DealRt.Table t && t.$array() != null) { java.util.ArrayList<java.lang.Object> a = t.$array(); $DealRt.Bytes[] data = new $DealRt.Bytes[a.size()]; for (int i = 0; i < a.size(); i++) { try { data[i] = ($DealRt.Bytes) $check(\"?bytes\", a.get(i), oFile, oLine, oCol); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\", oFile, oLine, oCol); } } return new $DealRt.__BytesOrNullArray(data); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v), oFile, oLine, oCol); }");
+        emitLine(int32Mode
+            ? "static $DealRt.__IntOrNullArray $dynamicIntOrNullArray(java.lang.Object v) { return $dynamicIntOrNullArray(v, null, -1, -1); }"
+            : "static $DealRt.__IntOrNullArray $dynamicIntOrNullArray(java.lang.Object v) { return $dynamicIntOrNullArray(v, null, -1, -1); }");
+        emitLine(int32Mode
+            ? "static $DealRt.__IntOrNullArray $dynamicIntOrNullArray(java.lang.Object v, java.lang.String oFile, int oLine, int oCol) { if (v instanceof $DealRt.Table t && t.$array() != null) { java.util.ArrayList<java.lang.Object> a = t.$array(); java.lang.Integer[] data = new java.lang.Integer[a.size()]; for (int i = 0; i < a.size(); i++) { try { data[i] = (java.lang.Integer) $check(\"?int\", a.get(i), oFile, oLine, oCol); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\", oFile, oLine, oCol); } } return new $DealRt.__IntOrNullArray(data); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v), oFile, oLine, oCol); }"
+            : "static $DealRt.__IntOrNullArray $dynamicIntOrNullArray(java.lang.Object v, java.lang.String oFile, int oLine, int oCol) { if (v instanceof $DealRt.Table t && t.$array() != null) { java.util.ArrayList<java.lang.Object> a = t.$array(); java.lang.Long[] data = new java.lang.Long[a.size()]; for (int i = 0; i < a.size(); i++) { try { data[i] = (java.lang.Long) $check(\"?int\", a.get(i), oFile, oLine, oCol); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\", oFile, oLine, oCol); } } return new $DealRt.__IntOrNullArray(data); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v), oFile, oLine, oCol); }");
+        emitLine("static $DealRt.__NumberOrNullArray $dynamicNumberOrNullArray(java.lang.Object v) { return $dynamicNumberOrNullArray(v, null, -1, -1); }");
+        emitLine("static $DealRt.__NumberOrNullArray $dynamicNumberOrNullArray(java.lang.Object v, java.lang.String oFile, int oLine, int oCol) { if (v instanceof $DealRt.Table t && t.$array() != null) { java.util.ArrayList<java.lang.Object> a = t.$array(); java.lang.Double[] data = new java.lang.Double[a.size()]; for (int i = 0; i < a.size(); i++) { try { data[i] = (java.lang.Double) $check(\"?number\", a.get(i), oFile, oLine, oCol); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\", oFile, oLine, oCol); } } return new $DealRt.__NumberOrNullArray(data); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v), oFile, oLine, oCol); }");
+        emitLine("static $DealRt.__StringOrNullArray $dynamicStringOrNullArray(java.lang.Object v) { return $dynamicStringOrNullArray(v, null, -1, -1); }");
+        emitLine("static $DealRt.__StringOrNullArray $dynamicStringOrNullArray(java.lang.Object v, java.lang.String oFile, int oLine, int oCol) { if (v instanceof $DealRt.Table t && t.$array() != null) { java.util.ArrayList<java.lang.Object> a = t.$array(); java.lang.String[] data = new java.lang.String[a.size()]; for (int i = 0; i < a.size(); i++) { try { data[i] = (java.lang.String) $check(\"?string\", a.get(i), oFile, oLine, oCol); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\", oFile, oLine, oCol); } } return new $DealRt.__StringOrNullArray(data); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v), oFile, oLine, oCol); }");
+        emitLine("static $DealRt.__BooleanOrNullArray $dynamicBooleanOrNullArray(java.lang.Object v) { return $dynamicBooleanOrNullArray(v, null, -1, -1); }");
+        emitLine("static $DealRt.__BooleanOrNullArray $dynamicBooleanOrNullArray(java.lang.Object v, java.lang.String oFile, int oLine, int oCol) { if (v instanceof $DealRt.Table t && t.$array() != null) { java.util.ArrayList<java.lang.Object> a = t.$array(); java.lang.Boolean[] data = new java.lang.Boolean[a.size()]; for (int i = 0; i < a.size(); i++) { try { data[i] = (java.lang.Boolean) $check(\"?boolean\", a.get(i), oFile, oLine, oCol); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\", oFile, oLine, oCol); } } return new $DealRt.__BooleanOrNullArray(data); } throw new DealError(\"E8001\", \"expected array, got \" + $describe(v), oFile, oLine, oCol); }");
         // Host-boundary array validation (ISSUE-0303 D2): the host is
         // exactly the producer whose values the boundary must not trust
         // by construction — a Java host implementation can construct an
@@ -6485,21 +6574,22 @@ public final class JvmBackend {
         // generated row (a class-array descriptor whose carrier $check
         // gates in its own branches) falls through with the carrier
         // already validated.
-        emitLine("static java.lang.Object $hostCheckArray(java.lang.String descriptor, java.lang.Object v) {");
+        emitLine("static java.lang.Object $hostCheckArray(java.lang.String descriptor, java.lang.Object v) { return $hostCheckArray(descriptor, v, null, -1, -1); }");
+        emitLine("static java.lang.Object $hostCheckArray(java.lang.String descriptor, java.lang.Object v, java.lang.String oFile, int oLine, int oCol) {");
         indent++;
-        emitLine("java.lang.Object a = $check(descriptor, v);");
+        emitLine("java.lang.Object a = $check(descriptor, v, oFile, oLine, oCol);");
         emitLine(int32Mode
-            ? "if (descriptor.equals(\"[int]\")) { $DealRt.__IntArray w = ($DealRt.__IntArray) a; for (int i = 0; i < w.data.length; i++) { try { $check(\"int\", java.lang.Integer.valueOf(w.data[i])); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return a; }"
-            : "if (descriptor.equals(\"[int]\")) { $DealRt.__IntArray w = ($DealRt.__IntArray) a; for (int i = 0; i < w.data.length; i++) { try { $check(\"int\", java.lang.Long.valueOf(w.data[i])); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return a; }");
-        emitLine("if (descriptor.equals(\"[number]\")) { $DealRt.__NumberArray w = ($DealRt.__NumberArray) a; for (int i = 0; i < w.data.length; i++) { try { $check(\"number\", java.lang.Double.valueOf(w.data[i])); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return a; }");
-        emitLine("if (descriptor.equals(\"[string]\")) { $DealRt.__StringArray w = ($DealRt.__StringArray) a; for (int i = 0; i < w.data.length; i++) { try { $check(\"string\", w.data[i]); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return a; }");
-        emitLine("if (descriptor.equals(\"[boolean]\")) { $DealRt.__BooleanArray w = ($DealRt.__BooleanArray) a; for (int i = 0; i < w.data.length; i++) { try { $check(\"boolean\", java.lang.Boolean.valueOf(w.data[i])); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return a; }");
-        emitLine("if (descriptor.equals(\"[bytes]\")) { $DealRt.__BytesArray w = ($DealRt.__BytesArray) a; for (int i = 0; i < w.data.length; i++) { try { $check(\"bytes\", w.data[i]); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return a; }");
-        emitLine("if (descriptor.equals(\"[?int]\")) { $DealRt.__IntOrNullArray w = ($DealRt.__IntOrNullArray) a; for (int i = 0; i < w.data.length; i++) { try { $check(\"?int\", w.data[i]); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return a; }");
-        emitLine("if (descriptor.equals(\"[?number]\")) { $DealRt.__NumberOrNullArray w = ($DealRt.__NumberOrNullArray) a; for (int i = 0; i < w.data.length; i++) { try { $check(\"?number\", w.data[i]); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return a; }");
-        emitLine("if (descriptor.equals(\"[?string]\")) { $DealRt.__StringOrNullArray w = ($DealRt.__StringOrNullArray) a; for (int i = 0; i < w.data.length; i++) { try { $check(\"?string\", w.data[i]); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return a; }");
-        emitLine("if (descriptor.equals(\"[?boolean]\")) { $DealRt.__BooleanOrNullArray w = ($DealRt.__BooleanOrNullArray) a; for (int i = 0; i < w.data.length; i++) { try { $check(\"?boolean\", w.data[i]); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return a; }");
-        emitLine("if (descriptor.equals(\"[?bytes]\")) { $DealRt.__BytesOrNullArray w = ($DealRt.__BytesOrNullArray) a; for (int i = 0; i < w.data.length; i++) { try { $check(\"?bytes\", w.data[i]); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); } } return a; }");
+            ? "if (descriptor.equals(\"[int]\")) { $DealRt.__IntArray w = ($DealRt.__IntArray) a; for (int i = 0; i < w.data.length; i++) { try { $check(\"int\", java.lang.Integer.valueOf(w.data[i]), oFile, oLine, oCol); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\", oFile, oLine, oCol); } } return a; }"
+            : "if (descriptor.equals(\"[int]\")) { $DealRt.__IntArray w = ($DealRt.__IntArray) a; for (int i = 0; i < w.data.length; i++) { try { $check(\"int\", java.lang.Long.valueOf(w.data[i]), oFile, oLine, oCol); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\", oFile, oLine, oCol); } } return a; }");
+        emitLine("if (descriptor.equals(\"[number]\")) { $DealRt.__NumberArray w = ($DealRt.__NumberArray) a; for (int i = 0; i < w.data.length; i++) { try { $check(\"number\", java.lang.Double.valueOf(w.data[i]), oFile, oLine, oCol); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\", oFile, oLine, oCol); } } return a; }");
+        emitLine("if (descriptor.equals(\"[string]\")) { $DealRt.__StringArray w = ($DealRt.__StringArray) a; for (int i = 0; i < w.data.length; i++) { try { $check(\"string\", w.data[i], oFile, oLine, oCol); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\", oFile, oLine, oCol); } } return a; }");
+        emitLine("if (descriptor.equals(\"[boolean]\")) { $DealRt.__BooleanArray w = ($DealRt.__BooleanArray) a; for (int i = 0; i < w.data.length; i++) { try { $check(\"boolean\", java.lang.Boolean.valueOf(w.data[i]), oFile, oLine, oCol); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\", oFile, oLine, oCol); } } return a; }");
+        emitLine("if (descriptor.equals(\"[bytes]\")) { $DealRt.__BytesArray w = ($DealRt.__BytesArray) a; for (int i = 0; i < w.data.length; i++) { try { $check(\"bytes\", w.data[i], oFile, oLine, oCol); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\", oFile, oLine, oCol); } } return a; }");
+        emitLine("if (descriptor.equals(\"[?int]\")) { $DealRt.__IntOrNullArray w = ($DealRt.__IntOrNullArray) a; for (int i = 0; i < w.data.length; i++) { try { $check(\"?int\", w.data[i], oFile, oLine, oCol); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\", oFile, oLine, oCol); } } return a; }");
+        emitLine("if (descriptor.equals(\"[?number]\")) { $DealRt.__NumberOrNullArray w = ($DealRt.__NumberOrNullArray) a; for (int i = 0; i < w.data.length; i++) { try { $check(\"?number\", w.data[i], oFile, oLine, oCol); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\", oFile, oLine, oCol); } } return a; }");
+        emitLine("if (descriptor.equals(\"[?string]\")) { $DealRt.__StringOrNullArray w = ($DealRt.__StringOrNullArray) a; for (int i = 0; i < w.data.length; i++) { try { $check(\"?string\", w.data[i], oFile, oLine, oCol); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\", oFile, oLine, oCol); } } return a; }");
+        emitLine("if (descriptor.equals(\"[?boolean]\")) { $DealRt.__BooleanOrNullArray w = ($DealRt.__BooleanOrNullArray) a; for (int i = 0; i < w.data.length; i++) { try { $check(\"?boolean\", w.data[i], oFile, oLine, oCol); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\", oFile, oLine, oCol); } } return a; }");
+        emitLine("if (descriptor.equals(\"[?bytes]\")) { $DealRt.__BytesOrNullArray w = ($DealRt.__BytesOrNullArray) a; for (int i = 0; i < w.data.length; i++) { try { $check(\"?bytes\", w.data[i], oFile, oLine, oCol); } catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\", oFile, oLine, oCol); } } return a; }");
         for (String branch : hostRefArrayCheckBranches) {
             emitLine(branch);
         }
@@ -7200,8 +7290,8 @@ public final class JvmBackend {
         classCheckBranches.add("    if (v instanceof " + record + " b) return b;");
         classCheckBranches.add("    java.lang.String actualIdentity = $identityOf(v);");
         classCheckBranches.add("    if (actualIdentity != null) throw new DealError(\"E8001\", \"expected instance of "
-            + identity + ", got \" + actualIdentity);");
-        classCheckBranches.add("    throw new DealError(\"E8001\", \"expected class instance, got \" + $describe(v));");
+            + identity + ", got \" + actualIdentity, oFile, oLine, oCol);");
+        classCheckBranches.add("    throw new DealError(\"E8001\", \"expected class instance, got \" + $describe(v), oFile, oLine, oCol);");
         classCheckBranches.add("}");
         // ISSUE-0570: the class-element array descriptors in the shared
         // seam — [<identity>] and [?<identity>] dispatch on the shared
@@ -7217,12 +7307,12 @@ public final class JvmBackend {
         classCheckBranches.add("        java.lang.Object[] data = new java.lang.Object[a.size()];");
         classCheckBranches.add("        for (int i = 0; i < a.size(); i++) {");
         classCheckBranches.add("            try { data[i] = $check("
-            + quoteJavaString(identity) + ", a.get(i)); }");
-        classCheckBranches.add("            catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); }");
+            + quoteJavaString(identity) + ", a.get(i), oFile, oLine, oCol); }");
+        classCheckBranches.add("            catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\", oFile, oLine, oCol); }");
         classCheckBranches.add("        }");
         classCheckBranches.add("        return new " + arr + "(data);");
         classCheckBranches.add("    }");
-        classCheckBranches.add("    throw new DealError(\"E8001\", \"expected array, got \" + $describe(v));");
+        classCheckBranches.add("    throw new DealError(\"E8001\", \"expected array, got \" + $describe(v), oFile, oLine, oCol);");
         classCheckBranches.add("}");
         classCheckBranches.add("if (descriptor.equals("
             + quoteJavaString("[?" + identity + "]") + ")) {");
@@ -7232,12 +7322,12 @@ public final class JvmBackend {
         classCheckBranches.add("        java.lang.Object[] data = new java.lang.Object[a.size()];");
         classCheckBranches.add("        for (int i = 0; i < a.size(); i++) {");
         classCheckBranches.add("            try { data[i] = $check("
-            + quoteJavaString("?" + identity) + ", a.get(i)); }");
-        classCheckBranches.add("            catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); }");
+            + quoteJavaString("?" + identity) + ", a.get(i), oFile, oLine, oCol); }");
+        classCheckBranches.add("            catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\", oFile, oLine, oCol); }");
         classCheckBranches.add("        }");
         classCheckBranches.add("        return new " + arr + "(data);");
         classCheckBranches.add("    }");
-        classCheckBranches.add("    throw new DealError(\"E8001\", \"expected array, got \" + $describe(v));");
+        classCheckBranches.add("    throw new DealError(\"E8001\", \"expected array, got \" + $describe(v), oFile, oLine, oCol);");
         classCheckBranches.add("}");
         // The host-boundary element re-check rows (ISSUE-0570): the Java
         // host can construct the $HostArr$ wrapper with junk elements,
@@ -7257,8 +7347,8 @@ public final class JvmBackend {
         hostRefArrayCheckBranches.add("        if (e instanceof " + record + ") continue;");
         hostRefArrayCheckBranches.add("        java.lang.String id = $identityOf(e);");
         hostRefArrayCheckBranches.add("        if (id != null) throw new DealError(\"E8001\", \"expected instance of "
-            + identity + ", got \" + id);");
-        hostRefArrayCheckBranches.add("        throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\");");
+            + identity + ", got \" + id, oFile, oLine, oCol);");
+        hostRefArrayCheckBranches.add("        throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\", oFile, oLine, oCol);");
         hostRefArrayCheckBranches.add("    }");
         hostRefArrayCheckBranches.add("    return a;");
         hostRefArrayCheckBranches.add("}");
@@ -7270,8 +7360,8 @@ public final class JvmBackend {
         hostRefArrayCheckBranches.add("        if (e == null || e instanceof " + record + ") continue;");
         hostRefArrayCheckBranches.add("        java.lang.String id = $identityOf(e);");
         hostRefArrayCheckBranches.add("        if (id != null) throw new DealError(\"E8001\", \"expected instance of "
-            + identity + ", got \" + id);");
-        hostRefArrayCheckBranches.add("        throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\");");
+            + identity + ", got \" + id, oFile, oLine, oCol);");
+        hostRefArrayCheckBranches.add("        throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\", oFile, oLine, oCol);");
         hostRefArrayCheckBranches.add("    }");
         hostRefArrayCheckBranches.add("    return a;");
         hostRefArrayCheckBranches.add("}");
@@ -7300,13 +7390,19 @@ public final class JvmBackend {
         String clsName = classNameFor(raw);
         emitLine("// Load-time validation of host module '" + raw
             + "' (declared exports must exist; extras are ignored).");
-        emitLine("static void " + hostLoadMethodName(alias) + "() {");
+        // D1: the load helper gains the origin (file/line/column)
+        // parameters and propagates them into every raise it performs;
+        // the short overload passes the explicit absent sentinel.
+        emitLine("static void " + hostLoadMethodName(alias) + "() { "
+            + hostLoadMethodName(alias) + "(null, -1, -1); }");
+        emitLine("static void " + hostLoadMethodName(alias)
+            + "(java.lang.String oFile, int oLine, int oCol) {");
         indent++;
         emitLine("java.lang.Class<?> __h;");
         emitLine("try { __h = java.lang.Class.forName(\"" + clsName + "\"); }"
             + " catch (java.lang.ClassNotFoundException e) {"
             + " throw new DealError(\"E8011\", \"host module '" + raw
-            + "' not found (class " + clsName + ")\"); }");
+            + "' not found (class " + clsName + ")\", oFile, oLine, oCol); }");
         for (Map.Entry<String, Type> ex : exports.entrySet()) {
             if (ex.getValue() instanceof Type.Func f) {
                 StringBuilder pcs = new StringBuilder();
@@ -7319,11 +7415,11 @@ public final class JvmBackend {
                     + quoteJavaString(ex.getKey()) + ", "
                     + quoteJavaString(typeDescriptor(f)) + ","
                     + " new java.lang.Class[]{ "
-                    + pcs + " });");
+                    + pcs + " }, oFile, oLine, oCol);");
             } else if (ex.getValue() instanceof Type.Class c) {
                 emitLine(hostDefaultsFieldName(alias, c.name())
                     + " = __hostDefaults(__h, \"" + raw + "\", "
-                    + quoteJavaString(c.name()) + ");");
+                    + quoteJavaString(c.name()) + ", oFile, oLine, oCol);");
             }
         }
         indent--;
@@ -7359,22 +7455,31 @@ public final class JvmBackend {
                                        String exportName, Type.Func f) {
         Type ret = f.returnType();
         String javaRet = hostReturnJavaType(ret);
-        StringBuilder sig = new StringBuilder("static ").append(javaRet)
-            .append(' ').append(hostWrapperName(alias, exportName))
-            .append('(');
         List<String> argNames = new ArrayList<>();
         for (int i = 0; i < f.paramTypes().size(); i++) {
-            if (i > 0) sig.append(", ");
-            sig.append("java.lang.Object __a").append(i);
             argNames.add("__a" + i);
         }
-        sig.append(") {");
-        emitLine(sig.toString());
+        String paramList = String.join(", ", argNames.stream()
+            .map(n -> "java.lang.Object " + n).toList());
+        // D1: the wrapper gains the origin (file/line/column) parameters
+        // and propagates them unchanged into every raise it performs
+        // (the parameter/return boundary re-raises and the async-shape
+        // failures alike); the short overload passes the explicit absent
+        // sentinel (null, -1, -1).
+        String delegateArgs = argNames.isEmpty() ? "" : String.join(", ", argNames) + ", ";
+        String delegateReturn = "void".equals(javaRet) ? "" : "return ";
+        emitLine("static " + javaRet + " " + hostWrapperName(alias, exportName)
+            + "(" + paramList + ") { " + delegateReturn
+            + hostWrapperName(alias, exportName)
+            + "(" + delegateArgs + "null, -1, -1); }");
+        emitLine("static " + javaRet + " " + hostWrapperName(alias, exportName)
+            + "(" + (paramList.isEmpty() ? "" : paramList + ", ")
+            + "java.lang.String oFile, int oLine, int oCol) {");
         indent++;
         for (int i = 0; i < f.paramTypes().size(); i++) {
             emitLine(argNames.get(i) + " = __hostParamCheck(" + (i + 1) + ", "
                 + quoteJavaString(typeDescriptor(f.paramTypes().get(i)))
-                + ", " + argNames.get(i) + ");");
+                + ", " + argNames.get(i) + ", oFile, oLine, oCol);");
         }
         StringBuilder args = new StringBuilder();
         for (int i = 0; i < argNames.size(); i++) {
@@ -7383,7 +7488,7 @@ public final class JvmBackend {
         }
         emitLine("java.lang.Object __r = __hostInvoke("
             + hostMethodFieldName(alias, exportName)
-            + ", new java.lang.Object[]{ " + args + " });");
+            + ", new java.lang.Object[]{ " + args + " }, oFile, oLine, oCol);");
         String fn = raw + "." + exportName;
         if (f.isAsync()) {
             // Shape check at the call site (LuaJIT's E8010 "host async
@@ -7392,7 +7497,7 @@ public final class JvmBackend {
             // other causes in E8010.
             emitLine("if (!(__r instanceof java.util.concurrent.CompletableFuture))"
                 + " throw new DealError(\"E8010\", \"host async function '"
-                + fn + "' must return an async operation, got \" + $describe(__r));");
+                + fn + "' must return an async operation, got \" + $describe(__r), oFile, oLine, oCol);");
             emitLine("java.lang.Object __v;");
             emitLine("try { __v = ((java.util.concurrent.CompletableFuture) __r).join(); }"
                 + " catch (java.util.concurrent.CompletionException e) {"
@@ -7400,10 +7505,10 @@ public final class JvmBackend {
                 + " if (__c instanceof RuntimeException rr) throw rr;"
                 + " if (__c instanceof Error er) throw er;"
                 + " throw new DealError(\"E8010\", \"host async function '"
-                + fn + "' operation failed: \" + __c); }");
-            emitLine(hostReturnStatement("__v", ret, fn, true));
+                + fn + "' operation failed: \" + __c, oFile, oLine, oCol); }");
+            emitLine(hostReturnStatement("__v", ret, fn, true, ", oFile, oLine, oCol"));
         } else {
-            emitLine(hostReturnStatement("__r", ret, fn, false));
+            emitLine(hostReturnStatement("__r", ret, fn, false, ", oFile, oLine, oCol"));
         }
         indent--;
         emitLine("}");
@@ -7420,15 +7525,15 @@ public final class JvmBackend {
      * sync returns (host-module-abi D3 case 2).
      */
     private String hostReturnStatement(String valueCode, Type ret, String fn,
-                                       boolean completion) {
+                                       boolean completion, String origin) {
         if (ret instanceof Type.Null) {
             return "__hostCheck(\"null\", " + valueCode + ", "
-                + quoteJavaString(fn) + ", " + completion + ");";
+                + quoteJavaString(fn) + ", " + completion + origin + ");";
         }
         String cast = hostReturnCast(ret);
         return "return (" + cast + ") __hostCheck("
             + quoteJavaString(typeDescriptor(ret)) + ", " + valueCode + ", "
-            + quoteJavaString(fn) + ", " + completion + ");";
+            + quoteJavaString(fn) + ", " + completion + origin + ");";
     }
 
     /** The boxed Java cast of a checked host return value for the
@@ -8495,8 +8600,8 @@ public final class JvmBackend {
         classCheckBranches.add("    if (v instanceof " + gen + " b) return b;");
         classCheckBranches.add("    java.lang.String actualIdentity = $identityOf(v);");
         classCheckBranches.add("    if (actualIdentity != null) throw new DealError(\"E8001\", \"expected instance of "
-            + identity + ", got \" + actualIdentity);");
-        classCheckBranches.add("    throw new DealError(\"E8001\", \"expected class instance, got \" + $describe(v));");
+            + identity + ", got \" + actualIdentity, oFile, oLine, oCol);");
+        classCheckBranches.add("    throw new DealError(\"E8001\", \"expected class instance, got \" + $describe(v), oFile, oLine, oCol);");
         classCheckBranches.add("}");
 
         // Class arrays (ISSUE-0108): C[] maps to a per-class __RefArray
@@ -8551,13 +8656,13 @@ public final class JvmBackend {
         classCheckBranches.add("        java.lang.Object[] data = new java.lang.Object[a.size()];");
         classCheckBranches.add("        for (int i = 0; i < a.size(); i++) {");
         classCheckBranches.add("            try { data[i] = $check("
-            + quoteJavaString(identity) + ", a.get(i)); }");
-        classCheckBranches.add("            catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); }");
+            + quoteJavaString(identity) + ", a.get(i), oFile, oLine, oCol); }");
+        classCheckBranches.add("            catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\", oFile, oLine, oCol); }");
         classCheckBranches.add("        }");
         classCheckBranches.add("        return new " + classArrayWrapperName(cd.name())
             + "(data);");
         classCheckBranches.add("    }");
-        classCheckBranches.add("    throw new DealError(\"E8001\", \"expected array, got \" + $describe(v));");
+        classCheckBranches.add("    throw new DealError(\"E8001\", \"expected array, got \" + $describe(v), oFile, oLine, oCol);");
         classCheckBranches.add("}");
         classCheckBranches.add("if (descriptor.equals("
             + quoteJavaString("[?" + identity + "]") + ")) {");
@@ -8571,52 +8676,60 @@ public final class JvmBackend {
         classCheckBranches.add("        java.lang.Object[] data = new java.lang.Object[a.size()];");
         classCheckBranches.add("        for (int i = 0; i < a.size(); i++) {");
         classCheckBranches.add("            try { data[i] = $check("
-            + quoteJavaString("?" + identity) + ", a.get(i)); }");
-        classCheckBranches.add("            catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); }");
+            + quoteJavaString("?" + identity) + ", a.get(i), oFile, oLine, oCol); }");
+        classCheckBranches.add("            catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\", oFile, oLine, oCol); }");
         classCheckBranches.add("        }");
         classCheckBranches.add("        return new " + classOrNullArrayWrapperName(cd.name())
             + "(data);");
         classCheckBranches.add("    }");
-        classCheckBranches.add("    throw new DealError(\"E8001\", \"expected array, got \" + $describe(v));");
+        classCheckBranches.add("    throw new DealError(\"E8001\", \"expected array, got \" + $describe(v), oFile, oLine, oCol);");
         classCheckBranches.add("}");
         emitLine("static " + gen + " " + classArrayReadName(cd.name())
-            + "($DealRt.__RefArray a, long i) {");
+            + "($DealRt.__RefArray a, long i) { return " + classArrayReadName(cd.name()) + "(a, i, null, -1, -1); }");
+        emitLine("static " + gen + " " + classArrayReadName(cd.name())
+            + "($DealRt.__RefArray a, long i, java.lang.String oFile, int oLine, int oCol) {");
         indent++;
-        emitLine("if (i < 0L) throw new DealError(\"E8002\", \"negative array index\");");
+        emitLine("if (i < 0L) throw new DealError(\"E8002\", \"negative array index\", oFile, oLine, oCol);");
         emitLine("if (i >= (long) a.data.length) throw new DealError(\"E8001\", "
-            + "\"expected instance of " + identity + ", got null\");");
+            + "\"expected instance of " + identity + ", got null\", oFile, oLine, oCol);");
         emitLine("java.lang.Object v = a.data[(int) i];");
         emitLine("if (v instanceof " + gen + " c) return c;");
         emitLine("throw new DealError(\"E8001\", \"expected instance of "
-            + identity + ", got \" + $describe(v));");
+            + identity + ", got \" + $describe(v), oFile, oLine, oCol);");
         indent--;
         emitLine("}");
         emitLine("static " + gen + " " + classOrNullArrayReadName(cd.name())
-            + "($DealRt.__RefArray a, long i) {");
+            + "($DealRt.__RefArray a, long i) { return " + classOrNullArrayReadName(cd.name()) + "(a, i, null, -1, -1); }");
+        emitLine("static " + gen + " " + classOrNullArrayReadName(cd.name())
+            + "($DealRt.__RefArray a, long i, java.lang.String oFile, int oLine, int oCol) {");
         indent++;
-        emitLine("if (i < 0L) throw new DealError(\"E8002\", \"negative array index\");");
+        emitLine("if (i < 0L) throw new DealError(\"E8002\", \"negative array index\", oFile, oLine, oCol);");
         emitLine("if (i >= (long) a.data.length) return null;");
         emitLine("java.lang.Object v = a.data[(int) i];");
         emitLine("if (v == null) return null;");
         emitLine("if (v instanceof " + gen + " c) return c;");
         emitLine("throw new DealError(\"E8001\", \"expected instance of "
-            + identity + ", got \" + $describe(v));");
+            + identity + ", got \" + $describe(v), oFile, oLine, oCol);");
         indent--;
         emitLine("}");
         emitLine("static " + gen + " " + classArrayWriteName(cd.name())
-            + "($DealRt.__RefArray a, long i, java.lang.Object v) {");
+            + "($DealRt.__RefArray a, long i, java.lang.Object v) { return " + classArrayWriteName(cd.name()) + "(a, i, v, null, -1, -1); }");
+        emitLine("static " + gen + " " + classArrayWriteName(cd.name())
+            + "($DealRt.__RefArray a, long i, java.lang.Object v, java.lang.String oFile, int oLine, int oCol) {");
         indent++;
-        emitLine("if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\");");
-        emitLine("if (!(v instanceof " + gen + " c)) throw new DealError(\"E8001\", \"expected instance of " + identity + ", got \" + $describe(v));");
+        emitLine("if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\", oFile, oLine, oCol);");
+        emitLine("if (!(v instanceof " + gen + " c)) throw new DealError(\"E8001\", \"expected instance of " + identity + ", got \" + $describe(v), oFile, oLine, oCol);");
         emitLine("if (i == (long) a.data.length) { java.lang.Object[] nd = new java.lang.Object[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = c; a.data = nd; } else { a.data[(int) i] = c; }");
         emitLine("return c;");
         indent--;
         emitLine("}");
         emitLine("static " + gen + " " + classOrNullArrayWriteName(cd.name())
-            + "($DealRt.__RefArray a, long i, java.lang.Object v) {");
+            + "($DealRt.__RefArray a, long i, java.lang.Object v) { return " + classOrNullArrayWriteName(cd.name()) + "(a, i, v, null, -1, -1); }");
+        emitLine("static " + gen + " " + classOrNullArrayWriteName(cd.name())
+            + "($DealRt.__RefArray a, long i, java.lang.Object v, java.lang.String oFile, int oLine, int oCol) {");
         indent++;
-        emitLine("if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\");");
-        emitLine("if (v != null && !(v instanceof " + gen + " c)) throw new DealError(\"E8001\", \"expected instance of " + identity + ", got \" + $describe(v));");
+        emitLine("if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\", oFile, oLine, oCol);");
+        emitLine("if (v != null && !(v instanceof " + gen + " c)) throw new DealError(\"E8001\", \"expected instance of " + identity + ", got \" + $describe(v), oFile, oLine, oCol);");
         emitLine("if (v instanceof " + gen + " c) {");
         indent++;
         emitLine("if (i == (long) a.data.length) { java.lang.Object[] nd = new java.lang.Object[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = c; a.data = nd; } else { a.data[(int) i] = c; }");
@@ -9689,12 +9802,13 @@ public final class JvmBackend {
         emitLine("// pcall-equivalent. Hostile deep nesting past the bounded");
         emitLine("// table-value depth guard raises E8001 too, never a raw");
         emitLine("// stack exhaustion.");
-        emitLine("static $DealRt.Table $jsonParse(java.lang.String s) {");
+        emitLine("static $DealRt.Table $jsonParse(java.lang.String s) { return $jsonParse(s, null, -1, -1); }");
+        emitLine("static $DealRt.Table $jsonParse(java.lang.String s, java.lang.String oFile, int oLine, int oCol) {");
         indent++;
         emitLine("java.lang.Object v = __jsonParse(s);");
-        emitLine("if (v == null) throw new DealError(\"E8001\", \"JSON parse error\" + ($jsonLastError == null ? \"\" : \": \" + $jsonLastError));");
+        emitLine("if (v == null) throw new DealError(\"E8001\", \"JSON parse error\" + ($jsonLastError == null ? \"\" : \": \" + $jsonLastError), oFile, oLine, oCol);");
         emitLine("try { return ($DealRt.Table) __jsonTableValue(v, 0); }");
-        emitLine("catch (java.lang.RuntimeException e) { throw new DealError(\"E8001\", \"JSON nesting too deep\"); }");
+        emitLine("catch (java.lang.RuntimeException e) { throw new DealError(\"E8001\", \"JSON nesting too deep\", oFile, oLine, oCol); }");
         indent--;
         emitLine("}");
         emitLine("// JSON stringify (std/json.lua contract): null, Boolean, String, Long");
@@ -9705,36 +9819,38 @@ public final class JvmBackend {
         emitLine("// NaN/Infinity raise E8001 exactly like std/json.lua's encode_value");
         emitLine("// rejection; a cycle or any other value raises E8001 (the spec's");
         emitLine("// finite-acyclic JSON-shape validation).");
-        emitLine("static java.lang.String __jsonStringify(java.lang.Object v) {");
+        emitLine("static java.lang.String __jsonStringify(java.lang.Object v) { return __jsonStringify(v, null, -1, -1); }");
+        emitLine("static java.lang.String __jsonStringify(java.lang.Object v, java.lang.String oFile, int oLine, int oCol) {");
         indent++;
         emitLine("java.lang.StringBuilder sb = new java.lang.StringBuilder();");
-        emitLine("__jsonAppend(sb, v, java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>()));");
+        emitLine("__jsonAppend(sb, v, java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>()), oFile, oLine, oCol);");
         emitLine("return sb.toString();");
         indent--;
         emitLine("}");
-        emitLine("static void __jsonAppend(java.lang.StringBuilder sb, java.lang.Object v, java.util.Set<java.lang.Object> stack) {");
+        emitLine("static void __jsonAppend(java.lang.StringBuilder sb, java.lang.Object v, java.util.Set<java.lang.Object> stack) { __jsonAppend(sb, v, stack, null, -1, -1); }");
+        emitLine("static void __jsonAppend(java.lang.StringBuilder sb, java.lang.Object v, java.util.Set<java.lang.Object> stack, java.lang.String oFile, int oLine, int oCol) {");
         indent++;
         emitLine("if (v == null) { sb.append(\"null\"); return; }");
         emitLine("if (v instanceof java.lang.Boolean b) { sb.append(b.booleanValue() ? \"true\" : \"false\"); return; }");
-        emitLine("if (v instanceof java.lang.String s) { sb.append(__jsonQuote(s)); return; }");
+        emitLine("if (v instanceof java.lang.String s) { sb.append(__jsonQuote(s, oFile, oLine, oCol)); return; }");
         emitLine(int32Mode
             ? "if (v instanceof java.lang.Integer i) { sb.append(i.toString()); return; }"
             : "if (v instanceof java.lang.Long l) { sb.append(l.toString()); return; }");
         emitLine("if (v instanceof java.lang.Number n) {");
         indent++;
         emitLine("double d = n.doubleValue();");
-        emitLine("if (java.lang.Double.isNaN(d)) throw new DealError(\"E8001\", \"cannot encode NaN as JSON\");");
-        emitLine("if (java.lang.Double.isInfinite(d)) throw new DealError(\"E8001\", \"cannot encode Infinity as JSON\");");
+        emitLine("if (java.lang.Double.isNaN(d)) throw new DealError(\"E8001\", \"cannot encode NaN as JSON\", oFile, oLine, oCol);");
+        emitLine("if (java.lang.Double.isInfinite(d)) throw new DealError(\"E8001\", \"cannot encode Infinity as JSON\", oFile, oLine, oCol);");
         emitLine("sb.append(java.lang.Double.toString(d));");
         emitLine("return;");
         indent--;
         emitLine("}");
         emitLine("if (v instanceof java.util.List<?> list) {");
         indent++;
-        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
+        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\", oFile, oLine, oCol);");
         emitLine("sb.append('[');");
         emitLine("boolean first = true;");
-        emitLine("for (java.lang.Object e : list) { if (!first) sb.append(','); first = false; __jsonAppend(sb, e, stack); }");
+        emitLine("for (java.lang.Object e : list) { if (!first) sb.append(','); first = false; __jsonAppend(sb, e, stack, oFile, oLine, oCol); }");
         emitLine("sb.append(']');");
         emitLine("stack.remove(v);");
         emitLine("return;");
@@ -9742,10 +9858,10 @@ public final class JvmBackend {
         emitLine("}");
         emitLine("if (v instanceof java.util.Map<?, ?> map) {");
         indent++;
-        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
+        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\", oFile, oLine, oCol);");
         emitLine("sb.append('{');");
         emitLine("boolean first = true;");
-        emitLine("for (java.util.Map.Entry<?, ?> e : map.entrySet()) { if (!first) sb.append(','); first = false; sb.append(__jsonQuote(java.lang.String.valueOf(e.getKey()))); sb.append(':'); __jsonAppend(sb, e.getValue(), stack); }");
+        emitLine("for (java.util.Map.Entry<?, ?> e : map.entrySet()) { if (!first) sb.append(','); first = false; sb.append(__jsonQuote(java.lang.String.valueOf(e.getKey()), oFile, oLine, oCol)); sb.append(':'); __jsonAppend(sb, e.getValue(), stack, oFile, oLine, oCol); }");
         emitLine("sb.append('}');");
         emitLine("stack.remove(v);");
         emitLine("return;");
@@ -9753,20 +9869,20 @@ public final class JvmBackend {
         emitLine("}");
         emitLine("if (v instanceof $DealRt.Table t) {");
         indent++;
-        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
+        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\", oFile, oLine, oCol);");
         emitLine("java.util.ArrayList<java.lang.Object> arr = t.$array();");
         emitLine("if (arr != null) {");
         indent++;
         emitLine("sb.append('[');");
         emitLine("boolean first = true;");
-        emitLine("for (java.lang.Object e : arr) { if (!first) sb.append(','); first = false; __jsonAppend(sb, e, stack); }");
+        emitLine("for (java.lang.Object e : arr) { if (!first) sb.append(','); first = false; __jsonAppend(sb, e, stack, oFile, oLine, oCol); }");
         emitLine("sb.append(']');");
         indent--;
         emitLine("} else {");
         indent++;
         emitLine("sb.append('{');");
         emitLine("boolean first = true;");
-        emitLine("for (java.util.Map.Entry<java.lang.String, java.lang.Object> e : t.$entries().entrySet()) { if (!first) sb.append(','); first = false; sb.append(__jsonQuote(e.getKey())); sb.append(':'); __jsonAppend(sb, e.getValue(), stack); }");
+        emitLine("for (java.util.Map.Entry<java.lang.String, java.lang.Object> e : t.$entries().entrySet()) { if (!first) sb.append(','); first = false; sb.append(__jsonQuote(e.getKey(), oFile, oLine, oCol)); sb.append(':'); __jsonAppend(sb, e.getValue(), stack, oFile, oLine, oCol); }");
         emitLine("sb.append('}');");
         indent--;
         emitLine("}");
@@ -9776,7 +9892,7 @@ public final class JvmBackend {
         emitLine("}");
         emitLine("if (v instanceof $DealRt.__IntArray a) {");
         indent++;
-        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
+        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\", oFile, oLine, oCol);");
         emitLine("sb.append('[');");
         emitLine("boolean first = true;");
         emitLine(int32Mode
@@ -9789,10 +9905,10 @@ public final class JvmBackend {
         emitLine("}");
         emitLine("if (v instanceof $DealRt.__NumberArray a) {");
         indent++;
-        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
+        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\", oFile, oLine, oCol);");
         emitLine("sb.append('[');");
         emitLine("boolean first = true;");
-        emitLine("for (double e : a.data) { if (!first) sb.append(','); first = false; if (java.lang.Double.isNaN(e)) throw new DealError(\"E8001\", \"cannot encode NaN as JSON\"); if (java.lang.Double.isInfinite(e)) throw new DealError(\"E8001\", \"cannot encode Infinity as JSON\"); sb.append(java.lang.Double.toString(e)); }");
+        emitLine("for (double e : a.data) { if (!first) sb.append(','); first = false; if (java.lang.Double.isNaN(e)) throw new DealError(\"E8001\", \"cannot encode NaN as JSON\", oFile, oLine, oCol); if (java.lang.Double.isInfinite(e)) throw new DealError(\"E8001\", \"cannot encode Infinity as JSON\", oFile, oLine, oCol); sb.append(java.lang.Double.toString(e)); }");
         emitLine("sb.append(']');");
         emitLine("stack.remove(v);");
         emitLine("return;");
@@ -9800,10 +9916,10 @@ public final class JvmBackend {
         emitLine("}");
         emitLine("if (v instanceof $DealRt.__StringArray a) {");
         indent++;
-        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
+        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\", oFile, oLine, oCol);");
         emitLine("sb.append('[');");
         emitLine("boolean first = true;");
-        emitLine("for (java.lang.String e : a.data) { if (!first) sb.append(','); first = false; sb.append(__jsonQuote(e)); }");
+        emitLine("for (java.lang.String e : a.data) { if (!first) sb.append(','); first = false; sb.append(__jsonQuote(e, oFile, oLine, oCol)); }");
         emitLine("sb.append(']');");
         emitLine("stack.remove(v);");
         emitLine("return;");
@@ -9811,7 +9927,7 @@ public final class JvmBackend {
         emitLine("}");
         emitLine("if (v instanceof $DealRt.__BooleanArray a) {");
         indent++;
-        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
+        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\", oFile, oLine, oCol);");
         emitLine("sb.append('[');");
         emitLine("boolean first = true;");
         emitLine("for (boolean e : a.data) { if (!first) sb.append(','); first = false; sb.append(e ? \"true\" : \"false\"); }");
@@ -9822,7 +9938,7 @@ public final class JvmBackend {
         emitLine("}");
         emitLine("if (v instanceof $DealRt.__IntOrNullArray a) {");
         indent++;
-        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
+        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\", oFile, oLine, oCol);");
         emitLine("sb.append('[');");
         emitLine("boolean first = true;");
         emitLine(int32Mode
@@ -9835,10 +9951,10 @@ public final class JvmBackend {
         emitLine("}");
         emitLine("if (v instanceof $DealRt.__NumberOrNullArray a) {");
         indent++;
-        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
+        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\", oFile, oLine, oCol);");
         emitLine("sb.append('[');");
         emitLine("boolean first = true;");
-        emitLine("for (java.lang.Double e : a.data) { if (!first) sb.append(','); first = false; if (e == null) { sb.append(\"null\"); } else { if (java.lang.Double.isNaN(e)) throw new DealError(\"E8001\", \"cannot encode NaN as JSON\"); if (java.lang.Double.isInfinite(e)) throw new DealError(\"E8001\", \"cannot encode Infinity as JSON\"); sb.append(java.lang.Double.toString(e)); } }");
+        emitLine("for (java.lang.Double e : a.data) { if (!first) sb.append(','); first = false; if (e == null) { sb.append(\"null\"); } else { if (java.lang.Double.isNaN(e)) throw new DealError(\"E8001\", \"cannot encode NaN as JSON\", oFile, oLine, oCol); if (java.lang.Double.isInfinite(e)) throw new DealError(\"E8001\", \"cannot encode Infinity as JSON\", oFile, oLine, oCol); sb.append(java.lang.Double.toString(e)); } }");
         emitLine("sb.append(']');");
         emitLine("stack.remove(v);");
         emitLine("return;");
@@ -9846,10 +9962,10 @@ public final class JvmBackend {
         emitLine("}");
         emitLine("if (v instanceof $DealRt.__StringOrNullArray a) {");
         indent++;
-        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
+        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\", oFile, oLine, oCol);");
         emitLine("sb.append('[');");
         emitLine("boolean first = true;");
-        emitLine("for (java.lang.String e : a.data) { if (!first) sb.append(','); first = false; if (e == null) { sb.append(\"null\"); } else { sb.append(__jsonQuote(e)); } }");
+        emitLine("for (java.lang.String e : a.data) { if (!first) sb.append(','); first = false; if (e == null) { sb.append(\"null\"); } else { sb.append(__jsonQuote(e, oFile, oLine, oCol)); } }");
         emitLine("sb.append(']');");
         emitLine("stack.remove(v);");
         emitLine("return;");
@@ -9857,7 +9973,7 @@ public final class JvmBackend {
         emitLine("}");
         emitLine("if (v instanceof $DealRt.__BooleanOrNullArray a) {");
         indent++;
-        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
+        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\", oFile, oLine, oCol);");
         emitLine("sb.append('[');");
         emitLine("boolean first = true;");
         emitLine("for (java.lang.Boolean e : a.data) { if (!first) sb.append(','); first = false; if (e == null) { sb.append(\"null\"); } else { sb.append(e.booleanValue() ? \"true\" : \"false\"); } }");
@@ -9875,10 +9991,10 @@ public final class JvmBackend {
         emitLine("// carrier name (__BytesArray) must never leak into the message).");
         emitLine("if (v instanceof $DealRt.__BytesArray a) {");
         indent++;
-        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
+        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\", oFile, oLine, oCol);");
         emitLine("sb.append('[');");
         emitLine("boolean first = true;");
-        emitLine("for ($DealRt.Bytes e : a.data) { if (!first) sb.append(','); first = false; __jsonAppend(sb, e, stack); }");
+        emitLine("for ($DealRt.Bytes e : a.data) { if (!first) sb.append(','); first = false; __jsonAppend(sb, e, stack, oFile, oLine, oCol); }");
         emitLine("sb.append(']');");
         emitLine("stack.remove(v);");
         emitLine("return;");
@@ -9886,10 +10002,10 @@ public final class JvmBackend {
         emitLine("}");
         emitLine("if (v instanceof $DealRt.__BytesOrNullArray a) {");
         indent++;
-        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
+        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\", oFile, oLine, oCol);");
         emitLine("sb.append('[');");
         emitLine("boolean first = true;");
-        emitLine("for ($DealRt.Bytes e : a.data) { if (!first) sb.append(','); first = false; if (e == null) { sb.append(\"null\"); } else { __jsonAppend(sb, e, stack); } }");
+        emitLine("for ($DealRt.Bytes e : a.data) { if (!first) sb.append(','); first = false; if (e == null) { sb.append(\"null\"); } else { __jsonAppend(sb, e, stack, oFile, oLine, oCol); } }");
         emitLine("sb.append(']');");
         emitLine("stack.remove(v);");
         emitLine("return;");
@@ -9905,10 +10021,10 @@ public final class JvmBackend {
         emitLine("// any other non-JSON-shaped value.");
         emitLine("if (v instanceof $DealRt.__RefArray a) {");
         indent++;
-        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
+        emitLine("if (!stack.add(v)) throw new DealError(\"E8001\", \"value is not JSON-shaped\", oFile, oLine, oCol);");
         emitLine("sb.append('[');");
         emitLine("boolean first = true;");
-        emitLine("for (java.lang.Object e : a.data) { if (!first) sb.append(','); first = false; __jsonAppend(sb, e, stack); }");
+        emitLine("for (java.lang.Object e : a.data) { if (!first) sb.append(','); first = false; __jsonAppend(sb, e, stack, oFile, oLine, oCol); }");
         emitLine("sb.append(']');");
         emitLine("stack.remove(v);");
         emitLine("return;");
@@ -9918,7 +10034,7 @@ public final class JvmBackend {
         emitLine("// outside the JSON-shaped set — a function, a bytes");
         emitLine("// carrier, an unknown object — raises the unsupported-");
         emitLine("// type E8001 with the Lua type name.");
-        emitLine("throw new DealError(\"E8001\", \"unsupported type for JSON encoding: \" + (v instanceof $DealRt.FnValue ? \"function\" : v instanceof $DealRt.Bytes ? \"bytes\" : v.getClass().getSimpleName()));");
+        emitLine("throw new DealError(\"E8001\", \"unsupported type for JSON encoding: \" + (v instanceof $DealRt.FnValue ? \"function\" : v instanceof $DealRt.Bytes ? \"bytes\" : v.getClass().getSimpleName()), oFile, oLine, oCol);");
         indent--;
         emitLine("}");
         emitLine("// ---- @jsonable table-field shape validation (ISSUE-0160 D6) ----");
@@ -9937,16 +10053,18 @@ public final class JvmBackend {
         emitLine("// (\"unsupported type for JSON encoding: bytes\" — std/json.lua's");
         emitLine("// explicit bytes arm), so the two LuaJIT surfaces stay");
         emitLine("// byte-distinct exactly like the reference runtime.");
-        emitLine("static $DealRt.Table __jsonShape($DealRt.Table v) {");
+        emitLine("static $DealRt.Table __jsonShape($DealRt.Table v) { return __jsonShape(v, null, -1, -1); }");
+        emitLine("static $DealRt.Table __jsonShape($DealRt.Table v, java.lang.String oFile, int oLine, int oCol) {");
         indent++;
         emitLine("java.util.Set<java.lang.Object> seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());");
-        emitLine("__jsonShapeWalk(v, seen, 0);");
+        emitLine("__jsonShapeWalk(v, seen, 0, oFile, oLine, oCol);");
         emitLine("return v;");
         indent--;
         emitLine("}");
-        emitLine("static void __jsonShapeWalk(java.lang.Object v, java.util.Set<java.lang.Object> seen, int depth) {");
+        emitLine("static void __jsonShapeWalk(java.lang.Object v, java.util.Set<java.lang.Object> seen, int depth) { __jsonShapeWalk(v, seen, depth, null, -1, -1); }");
+        emitLine("static void __jsonShapeWalk(java.lang.Object v, java.util.Set<java.lang.Object> seen, int depth, java.lang.String oFile, int oLine, int oCol) {");
         indent++;
-        emitLine("if (depth > " + JSON_TABLE_DEPTH_LIMIT + ") throw new DealError(\"E8001\", \"maximum JSON nesting depth (512) exceeded\");");
+        emitLine("if (depth > " + JSON_TABLE_DEPTH_LIMIT + ") throw new DealError(\"E8001\", \"maximum JSON nesting depth (512) exceeded\", oFile, oLine, oCol);");
         emitLine("if (v == null) return;");
         emitLine("if (v instanceof java.lang.Boolean) return;");
         emitLine("if (v instanceof java.lang.String) return;");
@@ -9955,21 +10073,21 @@ public final class JvmBackend {
         emitLine("if (v instanceof java.lang.Number n) {");
         indent++;
         emitLine("double d = n.doubleValue();");
-        emitLine("if (java.lang.Double.isNaN(d) || java.lang.Double.isInfinite(d)) throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
+        emitLine("if (java.lang.Double.isNaN(d) || java.lang.Double.isInfinite(d)) throw new DealError(\"E8001\", \"value is not JSON-shaped\", oFile, oLine, oCol);");
         emitLine("return;");
         indent--;
         emitLine("}");
         emitLine("if (v instanceof $DealRt.Table t) {");
         indent++;
-        emitLine("if (!seen.add(v)) throw new DealError(\"E8001\", \"cyclic value cannot be encoded as JSON\");");
+        emitLine("if (!seen.add(v)) throw new DealError(\"E8001\", \"cyclic value cannot be encoded as JSON\", oFile, oLine, oCol);");
         emitLine("java.util.ArrayList<java.lang.Object> arr = t.$array();");
         emitLine("if (arr != null) {");
         indent++;
-        emitLine("for (java.lang.Object e : arr) __jsonShapeWalk(e, seen, depth + 1);");
+        emitLine("for (java.lang.Object e : arr) __jsonShapeWalk(e, seen, depth + 1, oFile, oLine, oCol);");
         indent--;
         emitLine("} else {");
         indent++;
-        emitLine("for (java.lang.Object e : t.$entries().values()) __jsonShapeWalk(e, seen, depth + 1);");
+        emitLine("for (java.lang.Object e : t.$entries().values()) __jsonShapeWalk(e, seen, depth + 1, oFile, oLine, oCol);");
         indent--;
         emitLine("}");
         emitLine("seen.remove(v);");
@@ -9978,8 +10096,8 @@ public final class JvmBackend {
         emitLine("}");
         emitLine("if (v instanceof $DealRt.__RefArray a) {");
         indent++;
-        emitLine("if (!seen.add(v)) throw new DealError(\"E8001\", \"cyclic value cannot be encoded as JSON\");");
-        emitLine("for (java.lang.Object e : a.data) __jsonShapeWalk(e, seen, depth + 1);");
+        emitLine("if (!seen.add(v)) throw new DealError(\"E8001\", \"cyclic value cannot be encoded as JSON\", oFile, oLine, oCol);");
+        emitLine("for (java.lang.Object e : a.data) __jsonShapeWalk(e, seen, depth + 1, oFile, oLine, oCol);");
         emitLine("seen.remove(v);");
         emitLine("return;");
         indent--;
@@ -9992,28 +10110,29 @@ public final class JvmBackend {
         emitLine("if (v instanceof $DealRt.__BooleanOrNullArray) return;");
         emitLine("if (v instanceof $DealRt.__NumberArray a) {");
         indent++;
-        emitLine("for (double e : a.data) { if (java.lang.Double.isNaN(e) || java.lang.Double.isInfinite(e)) throw new DealError(\"E8001\", \"value is not JSON-shaped\"); }");
+        emitLine("for (double e : a.data) { if (java.lang.Double.isNaN(e) || java.lang.Double.isInfinite(e)) throw new DealError(\"E8001\", \"value is not JSON-shaped\", oFile, oLine, oCol); }");
         emitLine("return;");
         indent--;
         emitLine("}");
         emitLine("if (v instanceof $DealRt.__NumberOrNullArray a) {");
         indent++;
-        emitLine("for (java.lang.Double e : a.data) { if (e != null && (java.lang.Double.isNaN(e) || java.lang.Double.isInfinite(e))) throw new DealError(\"E8001\", \"value is not JSON-shaped\"); }");
+        emitLine("for (java.lang.Double e : a.data) { if (e != null && (java.lang.Double.isNaN(e) || java.lang.Double.isInfinite(e))) throw new DealError(\"E8001\", \"value is not JSON-shaped\", oFile, oLine, oCol); }");
         emitLine("return;");
         indent--;
         emitLine("}");
-        emitLine("if (v instanceof java.util.List<?> l) { for (java.lang.Object e : l) __jsonShapeWalk(e, seen, depth + 1); return; }");
-        emitLine("if (v instanceof java.util.Map<?, ?> m) { for (java.lang.Object e : m.values()) __jsonShapeWalk(e, seen, depth + 1); return; }");
-        emitLine("throw new DealError(\"E8001\", \"value is not JSON-shaped\");");
+        emitLine("if (v instanceof java.util.List<?> l) { for (java.lang.Object e : l) __jsonShapeWalk(e, seen, depth + 1, oFile, oLine, oCol); return; }");
+        emitLine("if (v instanceof java.util.Map<?, ?> m) { for (java.lang.Object e : m.values()) __jsonShapeWalk(e, seen, depth + 1, oFile, oLine, oCol); return; }");
+        emitLine("throw new DealError(\"E8001\", \"value is not JSON-shaped\", oFile, oLine, oCol);");
         indent--;
         emitLine("}");
-        emitLine("static java.lang.String __jsonQuote(java.lang.String s) {");
+        emitLine("static java.lang.String __jsonQuote(java.lang.String s) { return __jsonQuote(s, null, -1, -1); }");
+        emitLine("static java.lang.String __jsonQuote(java.lang.String s, java.lang.String oFile, int oLine, int oCol) {");
         indent++;
         emitLine("// ISSUE-0302 stringify-side unpaired-surrogate scan");
         emitLine("// (std/json.lua escape parity): a string that is not");
         emitLine("// scalar-valid UTF-8 raises E8001 BEFORE any character");
         emitLine("// is emitted, so no partial output ever escapes.");
-        emitLine("if (__hasUnpairedSurrogate(s)) throw new DealError(\"E8001\", \"cannot encode invalid UTF-8 as JSON\");");
+        emitLine("if (__hasUnpairedSurrogate(s)) throw new DealError(\"E8001\", \"cannot encode invalid UTF-8 as JSON\", oFile, oLine, oCol);");
         emitLine("java.lang.StringBuilder sb = new java.lang.StringBuilder(\"\\\"\");");
         emitLine("for (int i = 0; i < s.length(); i++) {");
         indent++;
@@ -11999,7 +12118,12 @@ public final class JvmBackend {
         }
         if (codeCode == null) codeCode = "\"\"";
         if (messageCode == null) messageCode = "\"\"";
-        return "new DealError(" + codeCode + ", " + messageCode + ")";
+        // D1: the raise statement carries the origin (file/line/column)
+        // parameters explicitly — the user-throw leaf's per-site origin
+        // literals land here; today every throw site passes the explicit
+        // absent sentinel (null, -1, -1).
+        return "new DealError(" + codeCode + ", " + messageCode
+            + ", null, -1, -1)";
     }
 
     private String emitClassConstruction(Type.Class cls, ObjectLiteralExpr obj) {
@@ -12100,7 +12224,7 @@ public final class JvmBackend {
             preStatements.add(new PreLine("if (!" + defaultsRef
                 + ".containsKey(" + quoteJavaString(prop.name())
                 + ")) throw new DealError(\"E8007\", \"extra field '"
-                + prop.name() + "' in class '" + identity + "'\");", 0));
+                + prop.name() + "' in class '" + identity + "'\", null, -1, -1);", 0));
         }
         // Phases 2\u20134: constructor arguments in field declaration
         // order — provided values, defaults-map fills for omitted
@@ -14105,7 +14229,7 @@ public final class JvmBackend {
             .append(")) { throw new DealError(\"E8010\", ")
             .append("\"function signature mismatch: expected ")
             .append(fnDescriptor(target)).append(", got ")
-            .append(fnDescriptor(actual)).append("\"); } } @Override ");
+            .append(fnDescriptor(actual)).append("\", null, -1, -1); } } @Override ");
         sb.append(javaReturnType(target.returnType(), value.span()))
             .append(" invoke(");
         for (int i = 0; i < target.paramTypes().size(); i++) {
@@ -17838,12 +17962,12 @@ public final class JvmBackend {
             body.append("        java.lang.Object[] data = new java.lang.Object[a.size()];\n");
             body.append("        for (int i = 0; i < a.size(); i++) {\n");
             body.append("            try { data[i] = $check(")
-                .append(quoteJavaString(elemDesc)).append(", a.get(i)); }\n");
-            body.append("            catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); }\n");
+                .append(quoteJavaString(elemDesc)).append(", a.get(i), oFile, oLine, oCol); }\n");
+            body.append("            catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\", oFile, oLine, oCol); }\n");
             body.append("        }\n");
             body.append("        return new ").append(ref).append("(data);\n");
             body.append("    }\n");
-            body.append("    throw new DealError(\"E8001\", \"expected array, got \" + $describe(v));\n");
+            body.append("    throw new DealError(\"E8001\", \"expected array, got \" + $describe(v), oFile, oLine, oCol);\n");
             body.append("}\n");
             for (String line : body.toString().split("\n", -1)) {
                 if (line.isEmpty()) continue;
@@ -17862,8 +17986,8 @@ public final class JvmBackend {
             hostBody.append("    for (int i = 0; i < w.data.length; i++) {\n");
             hostBody.append("        try { $check(")
                 .append(quoteJavaString(elemDesc))
-                .append(", w.data[i]); }\n");
-            hostBody.append("        catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\"); }\n");
+                .append(", w.data[i], oFile, oLine, oCol); }\n");
+            hostBody.append("        catch (DealError inner) { throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\", oFile, oLine, oCol); }\n");
             hostBody.append("    }\n");
             hostBody.append("    return a;\n");
             hostBody.append("}\n");
@@ -17890,18 +18014,24 @@ public final class JvmBackend {
             .append(" element helpers (ISSUE-0102; ISSUE-0301 shared carrier)\n");
         body.append("static ").append(innerRef)
             .append(" __nestedRead$").append(outerId)
-            .append("(").append(outerRef).append(" a, long i) {\n");
-        body.append("    if (i < 0L) throw new DealError(\"E8002\", \"negative array index\");\n");
-        body.append("    if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected ").append(desc).append(", got null\");\n");
+            .append("(").append(outerRef).append(" a, long i) { return __nestedRead$").append(outerId).append("(a, i, null, -1, -1); }\n");
+        body.append("static ").append(innerRef)
+            .append(" __nestedRead$").append(outerId)
+            .append("(").append(outerRef).append(" a, long i, java.lang.String oFile, int oLine, int oCol) {\n");
+        body.append("    if (i < 0L) throw new DealError(\"E8002\", \"negative array index\", oFile, oLine, oCol);\n");
+        body.append("    if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected ").append(desc).append(", got null\", oFile, oLine, oCol);\n");
         body.append("    return (").append(innerRef)
             .append(") a.data[(int) i];\n");
         body.append("}\n");
         body.append("static ").append(innerRef)
             .append(" __nestedWrite$").append(outerId)
-            .append("(").append(outerRef).append(" a, long i, java.lang.Object v) {\n");
-        body.append("    if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\");\n");
+            .append("(").append(outerRef).append(" a, long i, java.lang.Object v) { return __nestedWrite$").append(outerId).append("(a, i, v, null, -1, -1); }\n");
+        body.append("static ").append(innerRef)
+            .append(" __nestedWrite$").append(outerId)
+            .append("(").append(outerRef).append(" a, long i, java.lang.Object v, java.lang.String oFile, int oLine, int oCol) {\n");
+        body.append("    if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\", oFile, oLine, oCol);\n");
         body.append("    if (!(v instanceof ").append(innerRef)
-            .append(")) throw new DealError(\"E8003\", \"array element type mismatch: expected ").append(desc).append("\");\n");
+            .append(")) throw new DealError(\"E8003\", \"array element type mismatch: expected ").append(desc).append("\", oFile, oLine, oCol);\n");
         body.append("    if (i == (long) a.data.length) { java.lang.Object[] nd = new java.lang.Object[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; }\n");
         body.append("    return (").append(innerRef).append(") v;\n");
         body.append("}\n");
@@ -17928,33 +18058,37 @@ public final class JvmBackend {
         String readName = orNull ? "__fnOrNullRead$" + shapeId
             : "__fnRead$" + shapeId;
         body.append("static ").append(shapeRef).append(' ').append(readName)
-            .append("(").append(outerRef).append(" a, long i) {\n");
-        body.append("    if (i < 0L) throw new DealError(\"E8002\", \"negative array index\");\n");
-        body.append("    if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected ").append(desc).append(", got null\");\n");
+            .append("(").append(outerRef).append(" a, long i) { return ").append(readName).append("(a, i, null, -1, -1); }\n");
+        body.append("static ").append(shapeRef).append(' ').append(readName)
+            .append("(").append(outerRef).append(" a, long i, java.lang.String oFile, int oLine, int oCol) {\n");
+        body.append("    if (i < 0L) throw new DealError(\"E8002\", \"negative array index\", oFile, oLine, oCol);\n");
+        body.append("    if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected ").append(desc).append(", got null\", oFile, oLine, oCol);\n");
         body.append("    java.lang.Object v = a.data[(int) i];\n");
         if (orNull) {
             body.append("    if (v == null) return null;\n");
         } else {
-            body.append("    if (v == null) throw new DealError(\"E8001\", \"expected ").append(desc).append(", got null\");\n");
+            body.append("    if (v == null) throw new DealError(\"E8001\", \"expected ").append(desc).append(", got null\", oFile, oLine, oCol);\n");
         }
         body.append("    if (v instanceof ").append(shapeRef)
             .append(" fv) return fv;\n");
         body.append("    throw new DealError(\"E8001\", \"expected ")
-            .append(desc).append(", got \" + $describe(v));\n");
+            .append(desc).append(", got \" + $describe(v), oFile, oLine, oCol);\n");
         body.append("}\n");
         String writeName = orNull ? "__fnOrNullWrite$" + shapeId
             : "__fnWrite$" + shapeId;
         body.append("static ").append(shapeRef).append(' ').append(writeName)
-            .append("(").append(outerRef).append(" a, long i, java.lang.Object v) {\n");
-        body.append("    if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\");\n");
+            .append("(").append(outerRef).append(" a, long i, java.lang.Object v) { return ").append(writeName).append("(a, i, v, null, -1, -1); }\n");
+        body.append("static ").append(shapeRef).append(' ').append(writeName)
+            .append("(").append(outerRef).append(" a, long i, java.lang.Object v, java.lang.String oFile, int oLine, int oCol) {\n");
+        body.append("    if (i < 0L || i > (long) a.data.length) throw new DealError(\"E8002\", \"array index out of bounds\", oFile, oLine, oCol);\n");
         if (orNull) {
             body.append("    if (v != null && !(v instanceof ").append(shapeRef)
                 .append(")) throw new DealError(\"E8001\", \"expected ")
-                .append(desc).append(", got \" + $describe(v));\n");
+                .append(desc).append(", got \" + $describe(v), oFile, oLine, oCol);\n");
         } else {
             body.append("    if (!(v instanceof ").append(shapeRef)
                 .append(")) throw new DealError(\"E8001\", \"expected ")
-                .append(desc).append(", got \" + $describe(v));\n");
+                .append(desc).append(", got \" + $describe(v), oFile, oLine, oCol);\n");
         }
         body.append("    if (i == (long) a.data.length) { java.lang.Object[] nd = new java.lang.Object[a.data.length + 1]; java.lang.System.arraycopy(a.data, 0, nd, 0, a.data.length); nd[nd.length - 1] = v; a.data = nd; } else { a.data[(int) i] = v; }\n");
         body.append("    return (").append(shapeRef).append(") v;\n");

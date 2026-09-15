@@ -458,6 +458,7 @@ public class JvmBackendTest {
             new TestCase("testInt32NumPowHelperCollision", () -> testInt32NumPowHelperCollision()),
             new TestCase("testInt32ArrayAndFieldBoundaries", () -> testInt32ArrayAndFieldBoundaries()),
             new TestCase("testBytesRuntimeLane", () -> testBytesRuntimeLane()),
+            new TestCase("testOriginThreadingSurface", () -> testOriginThreadingSurface()),
             new TestCase("testRecursiveBytesClosureLane", () -> testRecursiveBytesClosureLane()),
             new TestCase("testCommonShadowInvocationPipeline", () -> testCommonShadowInvocationPipeline()),
             new TestCase("testLegacyByteCompat", () -> testLegacyByteCompat()),
@@ -1848,8 +1849,9 @@ public class JvmBackendTest {
                     "element read lowers to the __intArrayRead helper call");
                 check(java.contains("((long) xs.data.length)"),
                     ".length lowers to a wrapped storage-length read");
-                check(java.contains("v = checkInt(v);"),
-                    "int element stores route through checkInt (E8004)");
+                check(java.contains("v = checkInt(v, oFile, oLine, oCol);"),
+                    "int element stores route through checkInt (E8004) "
+                        + "with the origin-threading parameters");
                 check(java.contains("i == (long) a.data.length"),
                     "append growth at i == length is present");
                 check(java.contains("static boolean __booleanArrayWrite"),
@@ -2695,7 +2697,7 @@ public class JvmBackendTest {
                 check(java.contains(
                         "static $DealRt.Bytes __bytesArrayRead(")
                         && java.contains(
-                        "if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected bytes, got null\");"),
+                        "if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected bytes, got null\", oFile, oLine, oCol);"),
                     "the element-typed bytes[] helper keeps the E8001 "
                         + "past-end raise: " + java);
                 check(java.contains(
@@ -3830,7 +3832,7 @@ public class JvmBackendTest {
                 check(res.source().contains("return __errorCode(e$c[0]);"),
                     "the closure reads the catch variable through the cell");
                 check(res.source().contains(
-                        "e$c[0] = new DealError(\"E2\", \"second\");"),
+                        "e$c[0] = new DealError(\"E2\", \"second\", null, -1, -1);"),
                     "the DEAL-level reassignment writes the cell");
             }
         }
@@ -9704,7 +9706,7 @@ public class JvmBackendTest {
             "the table-read int target routes through the shared $check "
                 + "seam's int branch");
         check(tableOutJava.contains(
-                "if (v instanceof java.lang.Integer i) return checkInt(i);"),
+                "if (v instanceof java.lang.Integer i) return checkInt(i, oFile, oLine, oCol);"),
             "the $check int branch routes through the signed32 checkInt "
                 + "under int32 (the gate runs at the read boundary)");
 
@@ -9744,7 +9746,7 @@ public class JvmBackendTest {
                 + hostInitJava.lines().filter(l -> l.contains("int t = "))
                 .findFirst().orElse("<missing>"));
         check(hostInitJava.contains(
-                "if (v instanceof java.lang.Integer i) return checkInt(i);"),
+                "if (v instanceof java.lang.Integer i) return checkInt(i, oFile, oLine, oCol);"),
             "the dynamic host value crossed the signed32 checkInt at the "
                 + "host seam (the gate ran, never skipped)");
 
@@ -10647,7 +10649,7 @@ public class JvmBackendTest {
             "artifact emits bytesNew over the shared carrier");
         check(artifact.contains(
                 "if (n < 0L) throw new DealError(\"E8012\", "
-                    + "\"bytes length must be non-negative\")"),
+                    + "\"bytes length must be non-negative\", oFile, oLine, oCol)"),
             "bytesNew pins the E8012 negative-length gate");
         check(artifact.contains("static int bytesLength($DealRt.Bytes b)"),
             "artifact emits bytesLength");
@@ -10655,11 +10657,11 @@ public class JvmBackendTest {
             "bytesGet returns the unsigned 0..255 byte");
         check(artifact.contains(
                 "if (v < 0 || v > 255) throw new DealError(\"E8013\", "
-                    + "\"bytes value out of range\")"),
+                    + "\"bytes value out of range\", oFile, oLine, oCol)"),
             "bytesSet pins the E8013 value-range gate");
         check(artifact.contains(
                 "if (i < 0 || i >= b.data.length) throw new DealError("
-                    + "\"E8012\", \"bytes index out of bounds\")"),
+                    + "\"E8012\", \"bytes index out of bounds\", oFile, oLine, oCol)"),
             "bytesGet/bytesSet pin the E8012 bounds gate (never appends)");
         check(artifact.contains("bytesNew(") && artifact.contains(
                 "bytesLength(") && artifact.contains("bytesGet(")
@@ -11113,7 +11115,7 @@ public class JvmBackendTest {
                 + "_json_table_shape mirror)");
         check(artifact.contains(
                 "throw new DealError(\"E8001\", \"value is not "
-                    + "JSON-shaped\");"),
+                    + "JSON-shaped\", oFile, oLine, oCol);"),
             "the @jsonable shape walk raises the LuaJIT-equal "
                 + "'value is not JSON-shaped' for a bytes value");
         check(artifact.contains("case \"bytes\":")
@@ -13111,11 +13113,11 @@ public class JvmBackendTest {
             if (!res.hasErrors()) {
                 String java = res.source();
                 check(java.contains(
-                        "sb.append(__jsonQuote(java.lang.String.valueOf(e.getKey())))"),
+                        "sb.append(__jsonQuote(java.lang.String.valueOf(e.getKey()), oFile, oLine, oCol))"),
                     "the JSON-object branch quotes map keys through the "
                     + "scanning __jsonQuote helper");
                 check(java.contains(
-                        "sb.append(__jsonQuote(e.getKey()))"),
+                        "sb.append(__jsonQuote(e.getKey(), oFile, oLine, oCol))"),
                     "the $DealRt.Table object branch quotes table keys "
                     + "through the scanning __jsonQuote helper");
             }
@@ -13152,7 +13154,7 @@ public class JvmBackendTest {
                 check(java.contains(
                         "if (__hasUnpairedSurrogate(s)) throw new "
                         + "DealError(\"E8001\", \"cannot encode "
-                        + "invalid UTF-8 as JSON\");"),
+                        + "invalid UTF-8 as JSON\", oFile, oLine, oCol);"),
                     "the emitted __jsonQuote carries the stringify-side "
                     + "unpaired-surrogate scan");
                 check(java.contains(
@@ -13708,6 +13710,170 @@ public class JvmBackendTest {
         }
         System.out.println("  seam dispatch descriptors pinned");
     }
+
+    /**
+     * D1 origin-threading surface (jvm-canonical-error-snapshot-convergence):
+     * every raising helper of the retained emitter carries the origin
+     * (file/line/column) parameters and propagates them unchanged into
+     * every raise it performs — the wrapped E8003/E8010 re-raises
+     * included — and the short overloads pass the explicit absent sentinel
+     * (null, -1, -1). No raise site passes an actual origin at this leaf,
+     * so every emitted raise carries an origin argument whose value is the
+     * received parameter (inside a threaded helper) or the sentinel
+     * literal (the user-throw raise statement).
+     */
+    private static void testOriginThreadingSurface() {
+        System.out.println("-- D1 origin-threading surface --");
+        Frontend f = compileFrontend("""
+            export function test(): int {
+              let xs: int[] = [1, 2];
+              xs[1] = 3;
+              let b: bytes = bytes(4);
+              let v: int = b[0];
+              let n: int = xs.length;
+              try {
+                throw { code: "E1", message: "boom" };
+              } catch (e) {
+                if (e.code !== "E1") { return -1; }
+              }
+              return xs[0] + v + n;
+            }
+            """, "jvmtest-origin-threading.deal");
+        check(f.errors().isEmpty(),
+            "origin-threading fixture frontend clean: " + f.errors());
+        if (f.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                f.program(), f.checkResult(),
+                "jvmtest-origin-threading.deal", "Main");
+            check(!res.hasErrors(), "origin-threading fixture codegen clean: "
+                + res.diagnostics());
+            if (!res.hasErrors()) {
+                String java = res.source();
+                check(java.contains(
+                        "static long checkInt(long v, java.lang.String oFile, int oLine, int oCol)"),
+                    "checkInt carries the origin parameters");
+                check(java.contains(
+                        "static long intAdd(long a, long b) { return intAdd(a, b, null, -1, -1); }"),
+                    "the int helper's short overload passes the explicit "
+                        + "absent sentinel");
+                check(java.contains(
+                        "static $DealRt.Bytes bytesNew(long length) { return bytesNew(length, null, -1, -1); }"),
+                    "the bytes constructor's short overload passes the "
+                        + "explicit absent sentinel");
+                check(java.contains(
+                        "static $DealRt.Bytes bytesNew(long length, java.lang.String oFile, int oLine, int oCol)"),
+                    "bytesNew carries the origin parameters");
+                check(java.contains(
+                        "throw new DealError(\"E8012\", \"bytes length must be non-negative\", oFile, oLine, oCol);"),
+                    "the bytes-construction raise propagates the origin");
+                check(java.contains(
+                        "static long bytesGet($DealRt.Bytes b, long i, java.lang.String oFile, int oLine, int oCol)"),
+                    "bytesGet carries the origin parameters");
+                check(java.contains(
+                        "static long __intArrayRead($DealRt.__IntArray a, long i, java.lang.String oFile, int oLine, int oCol)"),
+                    "the int-array read helper carries the origin parameters");
+                check(java.contains(
+                        "static long __intArrayWrite($DealRt.__IntArray a, long i, long v, java.lang.String oFile, int oLine, int oCol)"),
+                    "the int-array write helper carries the origin parameters");
+                check(java.contains(
+                        "static boolean booleanNotNull(java.lang.Boolean v, java.lang.String oFile, int oLine, int oCol)"),
+                    "the boolean boundary helper carries the origin parameters");
+                check(java.contains(
+                        "static java.lang.Object $check(java.lang.String descriptor, java.lang.Object v, java.lang.String oFile, int oLine, int oCol)"),
+                    "the shared $check seam carries the origin parameters");
+                check(java.contains(
+                        "static java.lang.Object $checkArray(java.lang.String descriptor, java.lang.Object v, java.lang.String oFile, int oLine, int oCol)"),
+                    "the recursive $checkArray realization carries the "
+                        + "origin parameters");
+                check(java.contains(
+                        "static java.lang.Object $hostCheckArray(java.lang.String descriptor, java.lang.Object v, java.lang.String oFile, int oLine, int oCol)"),
+                    "the host-boundary array seam carries the origin "
+                        + "parameters");
+                check(java.contains(
+                        "static $DealRt.__IntArray $dynamicIntArray(java.lang.Object v, java.lang.String oFile, int oLine, int oCol)"),
+                    "the dynamic array conversion carries the origin "
+                        + "parameters");
+                check(java.contains(
+                        "throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\", oFile, oLine, oCol);"),
+                    "the wrapped E8003 dynamic-element re-raise propagates "
+                        + "the origin");
+                check(java.contains(
+                        "throw new DealError(\"E8010\", \"parameter \" + i + \" type mismatch: \" + inner.getMessage(), oFile, oLine, oCol);"),
+                    "the wrapped E8010 host-parameter re-raise propagates "
+                        + "the origin");
+                check(java.contains(
+                        "throw new DealError(\"E8011\", \"host export '\" + name + \"' in module '\" + module + \"' missing or has signature mismatch: expected \" + desc, oFile, oLine, oCol);"),
+                    "the host load-time E8011 raise propagates the origin");
+                check(java.contains(
+                        "new DealError(\"E1\", \"boom\", null, -1, -1)"),
+                    "the user-throw raise statement passes the explicit "
+                        + "absent sentinel");
+                check(java.contains("static java.lang.Object __hostCheck(java.lang.String desc, java.lang.Object v, java.lang.String fn, boolean completion) { return __hostCheck(desc, v, fn, completion, null, -1, -1); }"),
+                    "the host return check's short overload passes the "
+                        + "explicit absent sentinel");
+
+                // Structural guarantee: every emitted DealError
+                // constructor call carries an origin argument — either
+                // the received oFile/oLine/oCol or the sentinel literal.
+                int raises = 0;
+                int originLess = 0;
+                int idx = java.indexOf("new DealError(");
+                while (idx >= 0) {
+                    raises++;
+                    int end = java.indexOf(';', idx);
+                    String args = end < 0 ? java.substring(idx)
+                        : java.substring(idx, end);
+                    if (!args.contains("oFile") && !args.contains("null, -1, -1")) {
+                        originLess++;
+                    }
+                    idx = java.indexOf("new DealError(", idx + 1);
+                }
+                check(raises > 20, "the fixture artifact emits a substantial "
+                    + "raise surface: raises = " + raises);
+                check(originLess == 0, "every emitted raise carries an "
+                    + "origin argument (file/line/column parameters or the "
+                    + "explicit absent sentinel): origin-less = " + originLess);
+            }
+        }
+
+        // The JSON runtime's raising helpers carry the same surface.
+        Frontend j = compileFrontend("""
+            import * as json from "std/json"
+            export function test(): string { return json.stringify({ a: 1 }); }
+            """, "jvmtest-origin-threading-json.deal");
+        check(j.errors().isEmpty(),
+            "origin-threading JSON fixture frontend clean: " + j.errors());
+        if (j.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                j.program(), j.checkResult(),
+                "jvmtest-origin-threading-json.deal", "Main");
+            check(!res.hasErrors(), "origin-threading JSON fixture codegen "
+                + "clean: " + res.diagnostics());
+            if (!res.hasErrors()) {
+                String java = res.source();
+                check(java.contains(
+                        "static $DealRt.Table $jsonParse(java.lang.String s) { return $jsonParse(s, null, -1, -1); }"),
+                    "$jsonParse's short overload passes the explicit "
+                        + "absent sentinel");
+                check(java.contains(
+                        "static void __jsonAppend(java.lang.StringBuilder sb, java.lang.Object v, java.util.Set<java.lang.Object> stack, java.lang.String oFile, int oLine, int oCol)"),
+                    "the JSON encoder recursion carries the origin "
+                        + "parameters");
+                check(java.contains(
+                        "static java.lang.String __jsonQuote(java.lang.String s, java.lang.String oFile, int oLine, int oCol)"),
+                    "the JSON string quoting helper carries the origin "
+                        + "parameters");
+                check(java.contains(
+                        "throw new DealError(\"E8001\", \"value is not JSON-shaped\", oFile, oLine, oCol);"),
+                    "the JSON shape raise propagates the origin");
+                check(java.contains(
+                        "throw new DealError(\"E8001\", \"cannot encode invalid UTF-8 as JSON\", oFile, oLine, oCol);"),
+                    "the JSON invalid-UTF-8 raise propagates the origin");
+            }
+        }
+        System.out.println("  origin-threading helper surface pinned");
+    }
+
     private static void testSharedCheckSeamCanonicalParsing()
             throws Exception {
         System.out.println("-- Shared $check seam: canonical parsing precedes the legacy '?' shortcut (ISSUE-0315) --");
@@ -14595,13 +14761,13 @@ public class JvmBackendTest {
             "the wrapper signature takes java.lang.Object parameters "
                 + "(ISSUE-0303 D2: the wrapper checks each argument "
                 + "against the declared descriptor at the call)");
-        check(java.contains("__a0 = __hostParamCheck(1, \"int\", __a0);"),
+        check(java.contains("__a0 = __hostParamCheck(1, \"int\", __a0, oFile, oLine, oCol);"),
             "the wrapper checks each argument at the call "
                 + "(HOST_PARAMETER boundary, E8010 'parameter {i} type "
                 + "mismatch')");
-        check(java.contains("__hostCheck(\"int\", __r, \"host/log.add\", false)"),
+        check(java.contains("__hostCheck(\"int\", __r, \"host/log.add\", false, oFile, oLine, oCol)"),
             "the sync wrapper checks the return boundary (E8010 path)");
-        check(java.contains("__hostCheck(\"string\", __v, \"host/log.fetch\", true)"),
+        check(java.contains("__hostCheck(\"string\", __v, \"host/log.fetch\", true, oFile, oLine, oCol)"),
             "the async wrapper checks the completion value (E8001 path)");
         check(java.contains(
                 "__hasUnpairedSurrogate(s)) throw new DealError(completion ? \"E8001\" : \"E8010\""),
@@ -15001,11 +15167,11 @@ public class JvmBackendTest {
             check(javaBytes.contains(
                     "static $DealRt.Bytes __host$host$echoBytes(java.lang.Object __a0)"),
                 "the bytes wrapper returns the shared carrier");
-            check(javaBytes.contains("__a0 = __hostParamCheck(1, \"bytes\", __a0);"),
+            check(javaBytes.contains("__a0 = __hostParamCheck(1, \"bytes\", __a0, oFile, oLine, oCol);"),
                 "the bytes parameter check keys on the canonical \"bytes\" "
                     + "descriptor at the call");
             check(javaBytes.contains(
-                    "__hostCheck(\"bytes\", __r, \"host/byteshost.echoBytes\", false)"),
+                    "__hostCheck(\"bytes\", __r, \"host/byteshost.echoBytes\", false, oFile, oLine, oCol)"),
                 "the bytes return check keys on the canonical \"bytes\" "
                     + "descriptor");
         }
