@@ -112,8 +112,10 @@ public class ClassConstructionDifferentialTest {
 
     private static final ModuleId MODULE = new ModuleId("main");
     private static final ModuleId OWNER = new ModuleId("owner");
+    private static final ModuleId OTHER = new ModuleId("other");
     private static final String SOURCE_ID = "main.deal";
     private static final String OWNER_SOURCE_ID = "owner.deal";
+    private static final String OTHER_SOURCE_ID = "other.deal";
     private static final String CALLER_SOURCE_ID = "caller.deal";
     private static final String REGISTRY_HASH =
         CapabilityRegistry.releaseRegistry().capabilityRegistryHash();
@@ -280,65 +282,178 @@ public class ClassConstructionDifferentialTest {
             coverages.put(ordered.get(i), coverage);
         }
         SemanticIdAllocator allocator = SemanticIdAllocator.over(ordered);
-        SemanticLowerer.ClassDeclarationCoreResult ownerResult =
-            SemanticLowerer.lowerModuleClassCore(moduleOf(owner, OWNER, List.of()),
-                SemanticProfile.DEAL_V1_2_INT32, coverages.get(OWNER),
-                built.index().interfaceIndexDigest(), REGISTRY_HASH,
-                built.index().modules().get(OWNER), Map.of(), allocator);
-        check(ownerResult != null && ownerResult.lowering() != null
-                && !ownerResult.lowering().hasErrors()
-                && ownerResult.lowering().unit() != null,
-            "the owner module lowers to a validated unit: "
-                + (ownerResult == null || ownerResult.lowering() == null ? "null"
-                    : ownerResult.lowering().diagnostics()));
-        if (ownerResult == null || ownerResult.lowering() == null
-                || ownerResult.lowering().hasErrors()
-                || ownerResult.lowering().unit() == null) {
+        LoweredSlice ownerSlice = lowerOne(owner, OWNER, List.of(), coverages.get(OWNER),
+            built.index().interfaceIndexDigest(), built.index().modules().get(OWNER),
+            Map.of(), allocator, "the owner module");
+        if (ownerSlice == null) {
             return null;
         }
         ExternalModuleInterface ownerInterface = built.index().modules().get(OWNER);
-        LoweredModuleUnit ownerUnit = ownerResult.lowering().unit();
+        Map<ClassId, SharedFactoryFacts> facts = sharedFacts(ownerInterface, ownerSlice);
+        if (facts == null) {
+            return null;
+        }
+        LoweredSlice callerSlice = lowerOne(caller, MODULE,
+            List.of(new ResolvedImport("Owner", OWNER.path(), OWNER,
+                ExternalModuleKind.IMPLEMENTATION)),
+            coverages.get(MODULE), built.index().interfaceIndexDigest(),
+            built.index().modules().get(MODULE), facts, allocator, "the caller module");
+        if (callerSlice == null) {
+            return null;
+        }
+        return new XmodPair(ownerSlice, callerSlice, ownerInterface, built.index());
+    }
+
+    /**
+     * Lowers one module of a closure through the production class arms.
+     */
+    private static LoweredSlice lowerOne(CheckedSlice slice, ModuleId moduleId,
+            List<ResolvedImport> imports, Map<ConstructKind, List<SemanticOpKind>> coverage,
+            String interfaceHash, ExternalModuleInterface ownInterface,
+            Map<ClassId, SharedFactoryFacts> facts, SemanticIdAllocator allocator,
+            String what) {
+        SemanticLowerer.ClassDeclarationCoreResult result =
+            SemanticLowerer.lowerModuleClassCore(moduleOf(slice, moduleId, imports),
+                SemanticProfile.DEAL_V1_2_INT32, coverage, interfaceHash, REGISTRY_HASH,
+                ownInterface, facts, allocator);
+        check(result != null && result.lowering() != null && !result.lowering().hasErrors()
+                && result.lowering().unit() != null,
+            what + " lowers to a validated unit: "
+                + (result == null || result.lowering() == null ? "null"
+                    : result.lowering().diagnostics()));
+        if (result == null || result.lowering() == null || result.lowering().hasErrors()
+                || result.lowering().unit() == null) {
+            return null;
+        }
+        return new LoweredSlice(result.lowering().unit(), result.lowering().table(),
+            result.registry());
+    }
+
+    /**
+     * The owner-side construction facts of every exported class of a
+     * lowered module (the K-D2 production records a caller's imported
+     * construction resolves through; the two-module convention below is
+     * the {@link ClassConstructionIntegrationTailTest} one).
+     */
+    private static Map<ClassId, SharedFactoryFacts> sharedFacts(
+            ExternalModuleInterface moduleInterface, LoweredSlice slice) {
         Map<ClassId, SharedFactoryFacts> facts = new LinkedHashMap<>();
-        for (ClassInterface entry : ownerInterface.classes()) {
-            ClassLayout ownerLayout = ownerUnit.classLayouts().get(entry.classId());
-            OpId factoryOpId = ownerResult.registry().factoryFor(entry.constructionEntry());
-            SemanticOp factoryOp = opById(ownerUnit, factoryOpId);
-            check(ownerLayout != null && factoryOpId != null && factoryOp != null
+        for (ClassInterface entry : moduleInterface.classes()) {
+            ClassLayout layout = slice.unit().classLayouts().get(entry.classId());
+            OpId factoryOpId = slice.registry().factoryFor(entry.constructionEntry());
+            SemanticOp factoryOp = opById(slice.unit(), factoryOpId);
+            check(layout != null && factoryOpId != null && factoryOp != null
                     && factoryOp.result() instanceof ValueId,
-                "the owner facts resolve: layout, registry binding, factory op, and "
+                "the facts resolve: layout, registry binding, factory op, and "
                     + "factory result of " + entry.classId());
-            if (ownerLayout == null || factoryOpId == null || factoryOp == null
+            if (layout == null || factoryOpId == null || factoryOp == null
                     || !(factoryOp.result() instanceof ValueId factoryResult)) {
                 return null;
             }
             facts.put(entry.classId(), new SharedFactoryFacts(entry.classId(), entry,
-                ownerLayout, factoryOpId, factoryResult));
+                layout, factoryOpId, factoryResult));
         }
-        List<ResolvedImport> callerImports = List.of(new ResolvedImport("Owner",
-            "owner", OWNER, ExternalModuleKind.IMPLEMENTATION));
-        SemanticLowerer.ClassDeclarationCoreResult callerResult =
-            SemanticLowerer.lowerModuleClassCore(moduleOf(caller, MODULE, callerImports),
-                SemanticProfile.DEAL_V1_2_INT32, coverages.get(MODULE),
-                built.index().interfaceIndexDigest(), REGISTRY_HASH,
-                built.index().modules().get(MODULE), facts, allocator);
-        check(callerResult != null && callerResult.lowering() != null
-                && !callerResult.lowering().hasErrors()
-                && callerResult.lowering().unit() != null,
-            "the caller module lowers to a validated unit: "
-                + (callerResult == null || callerResult.lowering() == null ? "null"
-                    : callerResult.lowering().diagnostics()));
-        if (callerResult == null || callerResult.lowering() == null
-                || callerResult.lowering().hasErrors()
-                || callerResult.lowering().unit() == null) {
+        return facts;
+    }
+
+    /**
+     * The three-module closure of the nested-transfer seed: {@code other}
+     * exports the defaulted class the {@code owner} constructs inside its
+     * own default block, and the entry module constructs the owner's
+     * class — so the owner-side default evaluation performs a second
+     * factory transfer nested inside the first.
+     */
+    private record XmodTriple(LoweredSlice other, LoweredSlice owner,
+                              LoweredSlice caller,
+                              deal.semantic.ir.ProjectInterfaceIndex index) {
+    }
+
+    private static XmodTriple lowerXmodTriple(String otherSource, String ownerSource,
+                                              String callerSource) {
+        CheckedSlice other = checkSlice(otherSource, OTHER, null);
+        if (other == null) {
             return null;
         }
-        return new XmodPair(
-            new LoweredSlice(ownerResult.lowering().unit(), ownerResult.lowering().table(),
-                ownerResult.registry()),
-            new LoweredSlice(callerResult.lowering().unit(), callerResult.lowering().table(),
-                callerResult.registry()),
-            ownerInterface,
-            built.index());
+        CheckedSlice owner = checkSlice(ownerSource, OWNER,
+            new OwnerResolver(OTHER.path(), other));
+        if (owner == null) {
+            return null;
+        }
+        CheckedSlice caller = checkSlice(callerSource, MODULE,
+            new OwnerResolver(OWNER.path(), owner));
+        if (caller == null) {
+            return null;
+        }
+        CompilerInvocation invocation = CompilerProfileProvider.resolveCommonShadow(
+            SemanticProfile.DEAL_V1_2_INT32, ReleaseState.V1_2_ACTIVE,
+            CapabilityRegistry.releaseRegistry());
+        ModuleFact otherFact = new ModuleFact(OTHER_SOURCE_ID, OTHER, false, false,
+            other.program(), ownerExports(other), other.symbols(), other.checks(), List.of());
+        ModuleFact ownerFact = new ModuleFact(OWNER_SOURCE_ID, OWNER, false, false,
+            owner.program(), ownerExports(owner), owner.symbols(), owner.checks(),
+            List.of(new ModuleFact.ImportFact("Other", OTHER.path(), OTHER_SOURCE_ID)));
+        ModuleFact callerFact = new ModuleFact(CALLER_SOURCE_ID, MODULE, false, false,
+            caller.program(), Map.of(), caller.symbols(), caller.checks(),
+            List.of(new ModuleFact.ImportFact("Owner", OWNER.path(), OWNER_SOURCE_ID)));
+        deal.semantic.CheckedProjectBuildResult built = CheckedProjectBuilder.build(invocation,
+            MODULE, List.of(otherFact, ownerFact, callerFact));
+        check(built != null && !built.hasErrors() && built.index() != null,
+            "the three-module checked project builds cleanly: "
+                + (built == null ? "null" : built.diagnostics()));
+        if (built == null || built.hasErrors() || built.index() == null) {
+            return null;
+        }
+        RequirementManifestResult manifests = LoweringSupport.computeManifests(invocation,
+            built.input(), built.index());
+        if (manifests == null || !manifests.diagnostics().isEmpty()
+                || manifests.manifests().size() != 3) {
+            fail("the three-module foundation detector fails: "
+                + (manifests == null ? "null" : manifests.diagnostics()));
+            return null;
+        }
+        List<ModuleId> ordered = List.of(OTHER, OWNER, MODULE);
+        Map<ModuleId, Map<ConstructKind, List<SemanticOpKind>>> coverages =
+            new LinkedHashMap<>();
+        for (int i = 0; i < ordered.size(); i++) {
+            Map<ConstructKind, List<SemanticOpKind>> coverage =
+                new LinkedHashMap<>(manifests.manifests().get(i).constructCoverage());
+            coverage.remove(ConstructKind.IMPORT_EXPORT_ENTRY);
+            coverages.put(ordered.get(i), coverage);
+        }
+        SemanticIdAllocator allocator = SemanticIdAllocator.over(ordered);
+        LoweredSlice otherSlice = lowerOne(other, OTHER, List.of(), coverages.get(OTHER),
+            built.index().interfaceIndexDigest(), built.index().modules().get(OTHER),
+            Map.of(), allocator, "the other module");
+        if (otherSlice == null) {
+            return null;
+        }
+        Map<ClassId, SharedFactoryFacts> otherFacts = sharedFacts(
+            built.index().modules().get(OTHER), otherSlice);
+        if (otherFacts == null) {
+            return null;
+        }
+        LoweredSlice ownerSlice = lowerOne(owner, OWNER,
+            List.of(new ResolvedImport("Other", OTHER.path(), OTHER,
+                ExternalModuleKind.IMPLEMENTATION)),
+            coverages.get(OWNER), built.index().interfaceIndexDigest(),
+            built.index().modules().get(OWNER), otherFacts, allocator, "the owner module");
+        if (ownerSlice == null) {
+            return null;
+        }
+        Map<ClassId, SharedFactoryFacts> ownerFacts = sharedFacts(
+            built.index().modules().get(OWNER), ownerSlice);
+        if (ownerFacts == null) {
+            return null;
+        }
+        LoweredSlice callerSlice = lowerOne(caller, MODULE,
+            List.of(new ResolvedImport("Owner", OWNER.path(), OWNER,
+                ExternalModuleKind.IMPLEMENTATION)),
+            coverages.get(MODULE), built.index().interfaceIndexDigest(),
+            built.index().modules().get(MODULE), ownerFacts, allocator, "the caller module");
+        if (callerSlice == null) {
+            return null;
+        }
+        return new XmodTriple(otherSlice, ownerSlice, callerSlice, built.index());
     }
 
     /** The owner's export map (the orchestrator's derivation). */
@@ -357,17 +472,23 @@ public class ClassConstructionDifferentialTest {
         return exports;
     }
 
-    /** The owner-symbol resolver for the caller's checking. */
+    /** The imported-module symbol resolver for a checking slice. */
     private static final class OwnerResolver implements ModuleResolver {
         private final Map<String, deal.types.Type> exports;
         private final Map<String, Symbol.ClassSymbol> classSymbols = new LinkedHashMap<>();
+        private final String resolvedPath;
 
         OwnerResolver(CheckedSlice owner) {
-            this.exports = ownerExports(owner);
-            for (StatementNode stmt : owner.program().statements()) {
+            this(OWNER.path(), owner);
+        }
+
+        OwnerResolver(String modulePath, CheckedSlice module) {
+            this.resolvedPath = modulePath;
+            this.exports = ownerExports(module);
+            for (StatementNode stmt : module.program().statements()) {
                 if (stmt instanceof ExportDeclaration exp
                         && exp.declaration() instanceof ClassDeclaration cd) {
-                    Symbol sym = owner.symbols().resolve(cd.name());
+                    Symbol sym = module.symbols().resolve(cd.name());
                     if (sym instanceof Symbol.ClassSymbol cs) {
                         classSymbols.put(cd.name(), cs);
                     }
@@ -378,7 +499,7 @@ public class ClassConstructionDifferentialTest {
         @Override
         public Map<String, deal.types.Type> resolveModule(String modulePath, String importingModule,
                 Set<String> modulesInProgress) throws ModuleNotFoundException {
-            if ("owner".equals(modulePath)) {
+            if (resolvedPath.equals(modulePath)) {
                 return exports;
             }
             throw new ModuleNotFoundException("Module not found: " + modulePath);
@@ -387,7 +508,7 @@ public class ClassConstructionDifferentialTest {
         @Override
         public Symbol.ClassSymbol resolveClassSymbol(String className, String modulePath,
                 String importingModule) throws ModuleNotFoundException {
-            if (OWNER.path().equals(modulePath)) {
+            if (resolvedPath.equals(modulePath)) {
                 return classSymbols.get(className);
             }
             return null;
@@ -490,26 +611,52 @@ public class ClassConstructionDifferentialTest {
         return verdict;
     }
 
-    private static SemanticDifferentialHarness.Verdict runProjectMatrix(XmodPair pair,
-            String what) {
-        if (pair == null) {
+    /** One emitted project closure (modules in walk order). */
+    private record ProjectClosure(ExecutableLoweredProject project,
+                                  Map<ModuleId, StructuredBodyTable> tables,
+                                  Map<ModuleId, ClassFactoryRegistry> registries) {
+    }
+
+    private static ProjectClosure closure(List<ModuleId> order,
+            Map<ModuleId, LoweredSlice> slices, ModuleId entry,
+            deal.semantic.ir.ProjectInterfaceIndex index) {
+        Map<ModuleId, LoweredModuleUnit> modules = new LinkedHashMap<>();
+        Map<ModuleId, StructuredBodyTable> tables = new LinkedHashMap<>();
+        Map<ModuleId, ClassFactoryRegistry> registries = new LinkedHashMap<>();
+        for (ModuleId module : order) {
+            LoweredSlice slice = slices.get(module);
+            modules.put(module, slice.unit());
+            tables.put(module, slice.table());
+            registries.put(module, slice.registry());
+        }
+        return new ProjectClosure(new ExecutableLoweredProject(
+            SemanticProfile.DEAL_V1_2_INT32, index, modules, entry), tables, registries);
+    }
+
+    private static ProjectClosure pairClosure(XmodPair pair) {
+        Map<ModuleId, LoweredSlice> slices = new LinkedHashMap<>();
+        slices.put(OWNER, pair.owner());
+        slices.put(MODULE, pair.caller());
+        return closure(List.of(OWNER, MODULE), slices, MODULE, pair.index());
+    }
+
+    private static ProjectClosure tripleClosure(XmodTriple triple) {
+        Map<ModuleId, LoweredSlice> slices = new LinkedHashMap<>();
+        slices.put(OTHER, triple.other());
+        slices.put(OWNER, triple.owner());
+        slices.put(MODULE, triple.caller());
+        return closure(List.of(OTHER, OWNER, MODULE), slices, MODULE, triple.index());
+    }
+
+    private static SemanticDifferentialHarness.Verdict runProjectMatrix(ProjectClosure closure,
+            SemanticDifferentialHarness.TerminalExpectation terminal, String what) {
+        if (closure == null) {
             return null;
         }
-        Map<ModuleId, LoweredModuleUnit> modules = new LinkedHashMap<>();
-        modules.put(OWNER, pair.owner().unit());
-        modules.put(MODULE, pair.caller().unit());
-        ExecutableLoweredProject project = new ExecutableLoweredProject(
-            SemanticProfile.DEAL_V1_2_INT32, pair.index(), modules, MODULE);
-        Map<ModuleId, StructuredBodyTable> tables = Map.of(OWNER, pair.owner().table(),
-            MODULE, pair.caller().table());
-        Map<ModuleId, ClassFactoryRegistry> registries = Map.of(OWNER,
-            pair.owner().registry(), MODULE, pair.caller().registry());
-        SemanticDifferentialHarness.Verdict verdict =
-            SemanticDifferentialHarness.runProject(project, tables, registries,
-                new SemanticDifferentialHarness.Expectation(List.of(),
-                    new SemanticDifferentialHarness.TerminalExpectation.SuccessWith("null"),
-                    what),
-                WORKSPACE);
+        SemanticDifferentialHarness.Verdict verdict = SemanticDifferentialHarness.runProject(
+            closure.project(), closure.tables(), closure.registries(),
+            new SemanticDifferentialHarness.Expectation(List.of(), terminal, what),
+            WORKSPACE);
         check(verdict.pass(), what + ": the three-consumer project verdict passes:\n"
             + verdict.report());
         return verdict;
@@ -809,7 +956,8 @@ public class ClassConstructionDifferentialTest {
                 "the imported construction carries SHARED_FACTORY with the "
                     + "constructionEntry and no local default ids");
         }
-        SemanticDifferentialHarness.Verdict verdict = runProjectMatrix(pair,
+        SemanticDifferentialHarness.Verdict verdict = runProjectMatrix(pairClosure(pair),
+            new SemanticDifferentialHarness.TerminalExpectation.SuccessWith("null"),
             "cross-module factory");
         if (verdict == null) {
             return;
@@ -844,7 +992,217 @@ public class ClassConstructionDifferentialTest {
     }
 
     // =========================================================================
-    // 6. Negative controls (failing verdicts, fail closed)
+    // 6. Module context on the cross-module construction surfaces
+    // =========================================================================
+
+    /** The first op of a kind originating in the given source file, or null. */
+    private static SemanticOp opOfKindIn(LoweredModuleUnit unit, SemanticOpKind kind,
+                                         String sourceId) {
+        for (SemanticOp op : unit.ops()) {
+            if (op.kind() == kind && sourceId.equals(op.origin().sourceId())) {
+                return op;
+            }
+        }
+        return null;
+    }
+
+    private static String originTextOf(SemanticOp op) {
+        return op.origin().sourceId() + ":" + op.origin().span().startLine() + ":"
+            + op.origin().span().startColumn();
+    }
+
+    /**
+     * Every consumer's event for the given op in the given phase, asserted
+     * to carry the op's own module (the trace contract the harness checks:
+     * {@code event.module() == op.opId().module().path()}).
+     */
+    private static void checkEventModule(SemanticDifferentialHarness.Verdict verdict,
+            SemanticOp op, SemanticRuntimeModel.Phase phase, String modulePath,
+            String what) {
+        boolean saw = false;
+        for (SemanticRuntimeModel.ConsumerRun run : verdict.runs()) {
+            for (SemanticRuntimeModel.TraceEvent event : run.trace()) {
+                if (event.op().equals(op.opId()) && event.phase() == phase) {
+                    check(modulePath.equals(event.module()),
+                        run.consumer() + ": " + what + " carries module "
+                            + modulePath + ", got " + event.module());
+                    saw = true;
+                }
+            }
+        }
+        check(saw, what + " appears in every consumer's trace");
+    }
+
+    private static final String FAILING_OWNER_SOURCE = """
+        let base: int = 0;
+
+        export class Blowup {
+          zip: int = 100 / base;
+        }
+        """;
+
+    private static final String FAILING_CALLER_SOURCE = """
+        import * as Owner from "owner"
+
+        let blowup: Owner.Blowup = {}
+        """;
+
+    /**
+     * The owner default fails at run time (E8005 raised by the helper the
+     * emitted BINARY arm calls) while the owner's factory transfer runs
+     * under the caller's CLASS_NEW: the owner-side terminals keep the
+     * owner module, the caller's CLASS_NEW terminal keeps the caller
+     * module, and the helper-raised failure event keeps the module of the
+     * op that raised it.
+     */
+    static void testCrossModuleDefaultFailureModuleContext() {
+        System.out.println("-- Cross-module default failure: owner-side terminals stay on "
+            + "the owner module, the caller terminal on the caller module --");
+        XmodPair pair = lowerXmodPair(FAILING_OWNER_SOURCE, FAILING_CALLER_SOURCE);
+        if (pair == null) {
+            return;
+        }
+        SemanticOp division = opOfKindIn(pair.owner().unit(), SemanticOpKind.BINARY,
+            OWNER_SOURCE_ID);
+        SemanticOp construction = opOfKindIn(pair.caller().unit(), SemanticOpKind.CLASS_NEW,
+            SOURCE_ID);
+        if (division == null || construction == null) {
+            fail("the failing seed lowers the owner division and the caller "
+                + "CLASS_NEW");
+            return;
+        }
+        SemanticDifferentialHarness.Verdict verdict = runProjectMatrix(pairClosure(pair),
+            new SemanticDifferentialHarness.TerminalExpectation.FailureWith("E8005",
+                originTextOf(division)),
+            "cross-module default failure");
+        if (verdict == null) {
+            return;
+        }
+        checkEventModule(verdict, division, SemanticRuntimeModel.Phase.FAILURE,
+            OWNER.path(), "the helper-raised division failure");
+        checkEventModule(verdict, construction, SemanticRuntimeModel.Phase.FAILURE,
+            MODULE.path(), "the caller's CLASS_NEW FAILURE terminal");
+        checkEventModule(verdict, construction, SemanticRuntimeModel.Phase.START,
+            MODULE.path(), "the caller's CLASS_NEW START");
+    }
+
+    private static final String BOOM_OWNER_SOURCE = """
+        let zero: int = 0;
+        let boom: int = 100 / zero;
+
+        export class Marker {
+          tag: int = 1;
+        }
+        """;
+
+    private static final String BOOM_CALLER_SOURCE = """
+        import * as Owner from "owner"
+
+        let marker: Owner.Marker = {}
+        """;
+
+    /**
+     * A helper-raised failure in a non-entry module's init walk: the
+     * combined walk switches the module per module, so the failed
+     * division the helper raises for the second module must carry that
+     * module's path — not the entry module's.
+     */
+    static void testNonEntryModuleHelperFailureModuleContext() {
+        System.out.println("-- Non-entry module helper failure: the walk's helper-raised "
+            + "events carry their own module --");
+        XmodPair pair = lowerXmodPair(BOOM_OWNER_SOURCE, BOOM_CALLER_SOURCE);
+        if (pair == null) {
+            return;
+        }
+        SemanticOp division = opOfKindIn(pair.owner().unit(), SemanticOpKind.BINARY,
+            OWNER_SOURCE_ID);
+        if (division == null) {
+            fail("the non-entry failure seed lowers the owner division");
+            return;
+        }
+        SemanticDifferentialHarness.Verdict verdict = runProjectMatrix(pairClosure(pair),
+            new SemanticDifferentialHarness.TerminalExpectation.FailureWith("E8005",
+                originTextOf(division)),
+            "non-entry module walk failure");
+        if (verdict == null) {
+            return;
+        }
+        checkEventModule(verdict, division, SemanticRuntimeModel.Phase.FAILURE,
+            OWNER.path(), "the owner walk's helper-raised division failure");
+    }
+
+    private static final String NEST_OTHER_SOURCE = """
+        export class Inner {
+          seed: int = 7;
+        }
+        """;
+
+    private static final String NEST_OWNER_SOURCE = """
+        import * as Other from "other"
+
+        export class Outer {
+          inner: Other.Inner = {}
+          label: string = "outer";
+        }
+        """;
+
+    private static final String NEST_CALLER_SOURCE = """
+        import * as Owner from "owner"
+
+        let outer: Owner.Outer = {}
+        """;
+
+    /**
+     * The nested imported construction: the entry module constructs the
+     * owner's class, whose default constructs another module's class — a
+     * second factory transfer nested inside the first. After the inner
+     * transfer returns, every subsequent event of the enclosing walk must
+     * still carry the enclosing module (the module save of the outer
+     * transfer is restored, not the inner one's).
+     */
+    static void testNestedImportedConstruction() {
+        System.out.println("-- Nested imported construction: the inner factory "
+            + "transfer restores the enclosing module context --");
+        XmodTriple triple = lowerXmodTriple(NEST_OTHER_SOURCE, NEST_OWNER_SOURCE,
+            NEST_CALLER_SOURCE);
+        if (triple == null) {
+            return;
+        }
+        SemanticOp outerConstruction = opOfKindIn(triple.caller().unit(),
+            SemanticOpKind.CLASS_NEW, SOURCE_ID);
+        SemanticOp innerConstruction = opOfKindIn(triple.owner().unit(),
+            SemanticOpKind.CLASS_NEW, OWNER_SOURCE_ID);
+        check(outerConstruction != null && innerConstruction != null,
+            "the nested seed lowers the caller construction and the owner default's "
+                + "nested construction");
+        if (outerConstruction == null || innerConstruction == null) {
+            return;
+        }
+        KindPayload.ClassNewPayload innerPayload = classNewPayload(innerConstruction);
+        check(innerPayload.defaultOwner() == deal.semantic.ir.DefaultOwner.SHARED_FACTORY
+                && OTHER.path().equals(innerPayload.classId().modulePath()),
+            "the owner default's nested construction is a SHARED_FACTORY transfer to "
+                + "the other module, got " + innerPayload.defaultOwner() + " / "
+                + innerPayload.classId());
+        SemanticDifferentialHarness.Verdict verdict = runProjectMatrix(tripleClosure(triple),
+            new SemanticDifferentialHarness.TerminalExpectation.SuccessWith("null"),
+            "nested imported construction");
+        if (verdict == null) {
+            return;
+        }
+        // Every event after the inner transfer belongs to the enclosing
+        // op's module again: the outer construction's START, the inner
+        // construction's own events (owner), and the outer terminal.
+        checkEventModule(verdict, innerConstruction, SemanticRuntimeModel.Phase.START,
+            OWNER.path(), "the nested construction's START");
+        checkEventModule(verdict, innerConstruction, SemanticRuntimeModel.Phase.SUCCESS,
+            OWNER.path(), "the nested construction's SUCCESS");
+        checkEventModule(verdict, outerConstruction, SemanticRuntimeModel.Phase.SUCCESS,
+            MODULE.path(), "the enclosing construction's SUCCESS");
+    }
+
+    // =========================================================================
+    // 7. Negative controls (failing verdicts, fail closed)
     // =========================================================================
 
     /** Runs one corrupted-unit seed and asserts a failing verdict. */
@@ -981,7 +1339,7 @@ public class ClassConstructionDifferentialTest {
     }
 
     // =========================================================================
-    // 7. The emitter totality gate (one arm per kind; the default stays)
+    // 8. The emitter totality gate (one arm per kind; the default stays)
     // =========================================================================
 
     static void testEmitterTotality() {
@@ -1020,6 +1378,9 @@ public class ClassConstructionDifferentialTest {
         testExtraKeyE8007();
         testPresentNullVsMissing();
         testCrossModuleFactory();
+        testCrossModuleDefaultFailureModuleContext();
+        testNonEntryModuleHelperFailureModuleContext();
+        testNestedImportedConstruction();
         testNegativeWrongConstructionOrder();
         testNegativeWrongCrossUnitParent();
         testNegativeDuplicatedBoundary();

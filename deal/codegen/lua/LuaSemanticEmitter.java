@@ -487,6 +487,12 @@ public final class LuaSemanticEmitter {
             out.append("__frames = __frames or {}\n");
             out.append("__seq = __seq or 0\n");
             out.append("local __module\n");
+            // The nesting-safe module save/restore stack of the
+            // cross-module CLASS_FACTORY transfer: one push per transfer,
+            // one pop per restore — a transfer nested inside another
+            // (an owner default that constructs another module's class)
+            // restores its own saved module, never the enclosing one's.
+            out.append("local __modStack = {}\n");
             out.append("__allocIds = __allocIds or {}\n");
             out.append("__allocNext = __allocNext or 1\n");
             out.append(PRELUDE);
@@ -536,7 +542,7 @@ public final class LuaSemanticEmitter {
             // scope; every check/return temp is a top-level assignment).
             out.append("local __chk, __rvT, __rvcT, __okT, __resT, __terrT, "
                 + "__cerrT, __wrappedT, __itT, __itnT, __elemT, __okB, __chkB, "
-                + "__instT, __fT, __prevModT, __eT\n");
+                + "__instT, __fT, __eT\n");
 
             // Function factories first (capture cells are factory
             // arguments); the local names are pre-declared so bodies can
@@ -2245,13 +2251,34 @@ public final class LuaSemanticEmitter {
         }
 
         /**
+         * The nesting-safe module save of a factory transfer: one stack
+         * push; the stack order is the transfer nesting order.
+         */
+        private void emitModulePush() {
+            out.append("__modStack[#__modStack + 1] = __module\n");
+        }
+
+        /**
+         * The matching restore: the transfer's own saved module, never an
+         * enclosing transfer's (the nesting-safe pop).
+         */
+        private void emitModulePop() {
+            out.append("__module = __modStack[#__modStack]\n");
+            out.append("__modStack[#__modStack] = nil\n");
+        }
+
+        /**
          * K-D4 step 2, SHARED_FACTORY: the transfer to the owner's
          * CLASS_FACTORY entry — the factory's events parent to this
          * caller op (cross-unit) and carry the owner's module path; its
          * CLASS_DEFAULT children evaluate in the declaring module's
          * scope (skipping provided fields) and fill the untagged
          * internal transfer instance, which the factory publishes as its
-         * result for the caller's CLASS_DEFAULT_FIELD extraction.
+         * result for the caller's CLASS_DEFAULT_FIELD extraction. The
+         * module switch is one stack push/pop pair (a nested transfer
+         * inside an owner default restores its own saved module; the
+         * caller's own terminals are emitted after the pop, so every
+         * event carries its op's module).
          */
         private void emitClassNewFactoryTransfer(SemanticOp op,
                 KindPayload.ClassNewPayload payload, java.util.Set<String> provided) {
@@ -2274,7 +2301,7 @@ public final class LuaSemanticEmitter {
                     + " publishes no ValueId result (producer defect)");
             }
             String ownerPath = factoryOpId.module().path();
-            out.append("__prevModT = __module\n");
+            emitModulePush();
             out.append("__module = ").append(luaString(ownerPath)).append("\n");
             out.append("__ev(").append(luaString(opKey(factoryOp.opId())))
                 .append(", \"START\", \"CLASS_FACTORY\", ")
@@ -2310,9 +2337,13 @@ public final class LuaSemanticEmitter {
                     .append(luaString(factoryOp.contract().canonicalDigest()))
                     .append(", ").append(luaString(opKey(op.opId())))
                     .append(", {}, nil, __errtext(__resT))\n");
+                // Restore the caller's module before the caller's own
+                // terminal: the owner-side terminals above carry the
+                // owner's module, the caller's CLASS_NEW FAILURE carries
+                // the caller's (the oracle's own tagging).
+                emitModulePop();
                 emitFailureEvent(op.opId(), op.kind().name(), op,
                     "__errtext(__resT)");
-                out.append("  __module = __prevModT\n");
                 out.append("  error(__resT, 0)\n");
                 out.append("end\n");
                 if (defaultOp.result() instanceof ValueId resultId) {
@@ -2351,7 +2382,7 @@ public final class LuaSemanticEmitter {
                 .append(luaString(factoryOp.contract().canonicalDigest()))
                 .append(", ").append(luaString(opKey(op.opId())))
                 .append(", {}, __atom(\"class\", __instT), nil)\n");
-            out.append("__module = __prevModT\n");
+            emitModulePop();
         }
 
         /** The declared layout entry of one field name, or null. */

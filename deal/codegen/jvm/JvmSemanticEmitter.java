@@ -609,6 +609,11 @@ public final class JvmSemanticEmitter {
             for (LoweredModuleUnit moduleUnit : units.values()) {
                 out.append(indent(indent)).append("MODULE = ")
                     .append(javaString(moduleUnit.moduleId().path())).append(";\n");
+                // Every MODULE switch is mirrored into JvmRuntime's module
+                // context: the runtime helpers (raise/arith/bcheck/...) emit
+                // their events through currentModule(), so a helper-raised
+                // failure in a non-entry module must carry that module.
+                out.append(indent(indent)).append("JvmRuntime.setModule(MODULE);\n");
                 emitBlockOps(moduleUnit.moduleInit().initBlock(), indent);
             }
         }
@@ -2407,6 +2412,7 @@ public final class JvmSemanticEmitter {
                 .append(op.opId().id()).append(" = MODULE;\n");
             out.append(indent(indent)).append("MODULE = ")
                 .append(javaString(ownerPath)).append(";\n");
+            out.append(indent(indent)).append("JvmRuntime.setModule(MODULE);\n");
             if (trace) {
                 out.append(indent(indent)).append("JvmRuntime.ev(MODULE, ")
                     .append(javaString(opKey(factoryOp.opId())))
@@ -2455,11 +2461,16 @@ public final class JvmSemanticEmitter {
                         .append(javaString(factoryOp.contract().canonicalDigest()))
                         .append(", ").append(javaString(opKey(op.opId())))
                         .append(", List.of(), null, JvmRuntime.errtext(__e));\n");
-                    emitFailureEvent(op.opId(), op.kind().name(), op,
-                        "JvmRuntime.errtext(__e)", indent + 1);
                 }
+                // Restore the caller's module context before the caller's
+                // own terminal: the owner-side terminals above carry the
+                // owner's module, the caller's CLASS_NEW FAILURE carries
+                // the caller's (the oracle's own tagging).
                 out.append(indent(indent)).append("  MODULE = __prevMod_")
                     .append(op.opId().id()).append(";\n");
+                out.append(indent(indent)).append("  JvmRuntime.setModule(MODULE);\n");
+                emitFailureEvent(op.opId(), op.kind().name(), op,
+                    "JvmRuntime.errtext(__e)", indent + 1);
                 out.append(indent(indent)).append("  throw __e;\n");
                 out.append(indent(indent)).append("}\n");
                 if (trace) {
@@ -2506,6 +2517,7 @@ public final class JvmSemanticEmitter {
             }
             out.append(indent(indent)).append("MODULE = __prevMod_")
                 .append(op.opId().id()).append(";\n");
+            out.append(indent(indent)).append("JvmRuntime.setModule(MODULE);\n");
         }
 
         /** The declared layout entry of one field name, or null. */
