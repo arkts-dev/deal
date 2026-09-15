@@ -2,6 +2,8 @@ package deal.compiler;
 
 import deal.semantic.ir.CanonicalJson;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -21,14 +23,31 @@ public class DealConstruction {
         }
     }
     public enum Kind { VALUE, STATEMENT, BLOCK, DECLARATION, UI }
-    public record Built(Kind kind, String source) {}
+    public record Built(Kind kind, ConstructionProjection.Fragment fragment) {
+        public Built(Kind kind, String source) { this(kind, new ConstructionProjection.Text(source)); }
+        public String source() { return ConstructionProjection.render(fragment).source(); }
+    }
+    protected static Built emit(Kind kind, Object... parts) { return new Built(kind, ConstructionProjection.concat(parts)); }
     public static void validateHandle(String id) { identifier(id); }
+    public static Kind resultKind(String operation) {
+        return switch (operation) {
+            case "text", "integer", "boolean", "reference", "path", "field", "index", "emptyArray", "record", "binary", "unary", "call" -> Kind.VALUE;
+            case "local", "assign", "return", "if", "while" -> Kind.STATEMENT;
+            case "block", "returnRecord" -> Kind.BLOCK;
+            case "declareRecord", "declareFunction" -> Kind.DECLARATION;
+            default -> null;
+        };
+    }
     private final Map<String, Built> handles = new LinkedHashMap<>();
     private final Map<String, CanonicalJson.Obj> pending = new LinkedHashMap<>();
     private final Set<String> resolving = new java.util.HashSet<>();
     private final java.util.Deque<String> callStack = new java.util.ArrayDeque<>();
 
     public final String build(CanonicalJson.Obj batch, Kind expected) {
+        return buildProjection(batch, expected).source();
+    }
+
+    public final ConstructionProjection.Result buildProjection(CanonicalJson.Obj batch, Kind expected) {
         handles.clear();
         pending.clear();
         resolving.clear();
@@ -41,7 +60,7 @@ public class DealConstruction {
             if (pending.putIfAbsent(id, call) != null) throw new IllegalArgumentException("CC1002: duplicate handle " + id);
         }
         // Calls are pure construction nodes. Only the requested result and its dependencies project source.
-        return get(stringField(batch, "result"), expected).source();
+        return ConstructionProjection.render(get(stringField(batch, "result"), expected).fragment());
     }
 
     private Built resolve(String id) {
@@ -53,10 +72,14 @@ public class DealConstruction {
         callStack.push(id);
         try {
                 Built built = invoke(stringField(call, "op"), call);
+                Kind declared = resultKind(stringField(call, "op"));
+                if (declared != null && declared != built.kind()) throw new IllegalStateException("Constructor result-kind contract mismatch");
                 if (built.source().length() > 131_072)
                     throw new IllegalArgumentException("construction result exceeds source resource limit");
-                handles.put(id, built);
-                return built;
+                Built owned = new Built(built.kind(), new ConstructionProjection.Origin(id, built.kind(), built.fragment()));
+                resolved(id, call, owned);
+                handles.put(id, owned);
+                return owned;
         } catch (IllegalArgumentException failure) {
                 if (failure instanceof Failure typed && typed.ownerId != null) throw typed;
                 throw new Failure(id, "CC1003 at " + id + ": " + failure.getMessage());
@@ -65,6 +88,9 @@ public class DealConstruction {
             resolving.remove(id);
         }
     }
+
+    /** Frontends may retain their AST alongside validated constructor handles. */
+    protected void resolved(String id, CanonicalJson.Obj call, Built built) {}
 
     protected Built invoke(String op, CanonicalJson.Obj c) {
         return switch (op) {
@@ -84,38 +110,38 @@ public class DealConstruction {
                     return identifier(s.value());
                 }).toList()));
             }
-            case "field" -> new Built(Kind.VALUE, value(c, "object") + "." + identifier(stringField(c, "name")));
-            case "index" -> new Built(Kind.VALUE, value(c, "array") + "[" + value(c, "index") + "]");
+            case "field" -> emit(Kind.VALUE, value(c, "object"), ".", identifier(stringField(c, "name")));
+            case "index" -> emit(Kind.VALUE, value(c, "array"), "[", value(c, "index"), "]");
             case "emptyArray" -> new Built(Kind.VALUE, "[]");
-            case "record" -> new Built(Kind.VALUE, "{" + fields(c, false) + "}");
-            case "returnRecord" -> new Built(Kind.BLOCK, "return {" + fields(c, false) + "};");
+            case "record" -> emit(Kind.VALUE, "{", fields(c, false), "}");
+            case "returnRecord" -> emit(Kind.BLOCK, "return {", fields(c, false), "};");
             case "binary" -> {
                 String operator = stringField(c, "operator");
                 if (!BINARY.contains(operator)) throw new IllegalArgumentException("unsupported binary operator");
-                yield new Built(Kind.VALUE, "(" + value(c, "left") + " " + operator + " " + value(c, "right") + ")");
+                yield emit(Kind.VALUE, "(", value(c, "left"), " " + operator + " ", value(c, "right"), ")");
             }
             case "unary" -> {
                 String operator = stringField(c, "operator");
                 if (!Set.of("!", "-").contains(operator)) throw new IllegalArgumentException("unsupported unary operator");
-                yield new Built(Kind.VALUE, "(" + operator + value(c, "value") + ")");
+                yield emit(Kind.VALUE, "(" + operator, value(c, "value"), ")");
             }
-            case "call" -> new Built(Kind.VALUE, identifier(stringField(c, "name")) + "(" + refs(c, "arguments", Kind.VALUE, ", ") + ")");
-            case "local" -> new Built(Kind.STATEMENT, "let " + identifier(stringField(c, "name")) + ": "
-                    + type(stringField(c, "type")) + " = " + value(c, "value") + ";");
-            case "assign" -> new Built(Kind.STATEMENT, value(c, "target") + " = " + value(c, "value") + ";");
-            case "return" -> new Built(Kind.STATEMENT, "return " + value(c, "value") + ";");
-            case "if" -> new Built(Kind.STATEMENT, "if (" + value(c, "condition") + ") {\n"
-                    + get(stringField(c, "then"), Kind.BLOCK).source() + "\n} else {\n"
-                    + get(stringField(c, "else"), Kind.BLOCK).source() + "\n}");
-            case "while" -> new Built(Kind.STATEMENT, "while (" + value(c, "condition") + ") {\n"
-                    + get(stringField(c, "body"), Kind.BLOCK).source() + "\n}");
-            case "block" -> new Built(Kind.BLOCK, String.join("\n", requireArray(field(c, "statements"), "statements").items().stream()
+            case "call" -> emit(Kind.VALUE, identifier(stringField(c, "name")) + "(", refs(c, "arguments", Kind.VALUE, ", "), ")");
+            case "local" -> emit(Kind.STATEMENT, "let " + identifier(stringField(c, "name")) + ": "
+                    + type(stringField(c, "type")) + " = ", value(c, "value"), ";");
+            case "assign" -> emit(Kind.STATEMENT, value(c, "target"), " = ", value(c, "value"), ";");
+            case "return" -> emit(Kind.STATEMENT, "return ", value(c, "value"), ";");
+            case "if" -> emit(Kind.STATEMENT, "if (", value(c, "condition"), ") {\n",
+                    get(stringField(c, "then"), Kind.BLOCK).fragment(), "\n} else {\n",
+                    get(stringField(c, "else"), Kind.BLOCK).fragment(), "\n}");
+            case "while" -> emit(Kind.STATEMENT, "while (", value(c, "condition"), ") {\n",
+                    get(stringField(c, "body"), Kind.BLOCK).fragment(), "\n}");
+            case "block" -> new Built(Kind.BLOCK, ConstructionProjection.join("\n", requireArray(field(c, "statements"), "statements").items().stream()
                     .map(item -> {
                         if (!(item instanceof CanonicalJson.Str s)) throw new IllegalArgumentException("statement or block handle required");
-                        return get(s.value(), Kind.BLOCK).source();
+                        return get(s.value(), Kind.BLOCK).fragment();
                     }).toList()));
-            case "declareRecord" -> new Built(Kind.DECLARATION, "export class " + identifier(stringField(c, "name"))
-                    + " {\n" + fields(c, true) + "\n}");
+            case "declareRecord" -> emit(Kind.DECLARATION, "export class " + identifier(stringField(c, "name"))
+                    + " {\n", fields(c, true), "\n}");
             case "declareFunction" -> function(c);
             default -> throw new IllegalArgumentException("unknown construction operation " + op);
         };
@@ -127,25 +153,47 @@ public class DealConstruction {
             var p = requireObject(raw, "parameter");
             parameters.add(identifier(stringField(p, "name")) + ": " + type(stringField(p, "type")));
         }
-        return new Built(Kind.DECLARATION, "export function " + identifier(stringField(c, "name")) + "("
-                + String.join(", ", parameters) + "): " + type(stringField(c, "returns")) + " {\n"
-                + get(stringField(c, "body"), Kind.BLOCK).source() + "\n}");
+        return emit(Kind.DECLARATION, "export function " + identifier(stringField(c, "name")) + "("
+                + String.join(", ", parameters) + "): " + type(stringField(c, "returns")) + " {\n",
+                get(stringField(c, "body"), Kind.BLOCK).fragment(), "\n}");
     }
 
-    protected final String fields(CanonicalJson.Obj c, boolean declaration) {
-        List<String> result = new ArrayList<>();
+    protected final ConstructionProjection.Fragment fields(CanonicalJson.Obj c, boolean declaration) {
+        List<ConstructionProjection.Fragment> result = new ArrayList<>();
         Set<String> names = new java.util.HashSet<>();
         for (var raw : requireArray(field(c, "fields"), "fields").items()) {
             var f = requireObject(raw, "field");
             String name = identifier(stringField(f, "name"));
             if (!names.add(name)) throw new IllegalArgumentException("duplicate field " + name);
-            result.add(name + (declaration ? ": " + type(stringField(f, "type")) + " = " : ": ")
-                    + value(f, "value") + (declaration ? ";" : ""));
+            result.add(ConstructionProjection.concat(name + (declaration ? ": " + type(stringField(f, "type")) + " = " : ": "),
+                    value(f, "value"), declaration ? ";" : ""));
         }
-        return String.join(declaration ? "\n" : ", ", result);
+        return ConstructionProjection.join(declaration ? "\n" : ", ", result);
+    }
+
+    private Set<String> inspectedReferences;
+
+    public record CallDependencies(Kind resultKind, Set<String> handles) {
+        public CallDependencies { handles = Collections.unmodifiableSet(new LinkedHashSet<>(handles)); }
+    }
+
+    /** Uses the same operand readers as construction; literals and symbol names are not handles. */
+    public final CallDependencies inspectDependencies(CanonicalJson.Obj call) {
+        if (inspectedReferences != null) throw new IllegalStateException("Nested dependency inspection");
+        inspectedReferences = new LinkedHashSet<>();
+        try {
+            var result = invoke(stringField(call, "op"), call);
+            return new CallDependencies(result.kind(), inspectedReferences);
+        } finally {
+            inspectedReferences = null;
+        }
     }
 
     protected final Built get(String id, Kind kind) {
+        if (inspectedReferences != null) {
+            inspectedReferences.add(id);
+            return new Built(kind, "");
+        }
         Built value;
         try {
             value = resolve(id);
@@ -159,10 +207,13 @@ public class DealConstruction {
             throw failure;
         }
         if (kind == Kind.BLOCK && (value.kind() == Kind.STATEMENT || value.kind() == Kind.UI))
-            return new Built(Kind.BLOCK, value.source());
+            return new Built(Kind.BLOCK, value.fragment());
         if (value.kind() != kind) throw new Failure("CC1005", callStack.isEmpty() ? id : callStack.peek(),
                 "expected " + kind + " handle: " + id + "; actual " + value.kind()
                         + ". Replace the incorrect operand reference, preserving the referenced call when it is used elsewhere."
+                        + (kind == Kind.BLOCK && value.kind() == Kind.VALUE
+                                ? " A block contains STATEMENT or BLOCK handles, not VALUE handles. Value constructors are evaluated through their consumers; remove this VALUE id from the statements list when an assign, local or return already consumes it. Otherwise add a statement constructor consuming this value. Do not delete the value constructor or alter its consumers."
+                                : "")
                         + (kind == Kind.UI && value.kind() == Kind.VALUE
                                 ? " A value is not a visual node. Create a NEW component constructor consuming this value as a property, then replace this child reference with that component's id. Do not resend the same children list."
                                 : "")
@@ -175,31 +226,31 @@ public class DealConstruction {
         return value;
     }
 
-    protected String value(CanonicalJson.Obj c, String key) {
+    protected ConstructionProjection.Fragment value(CanonicalJson.Obj c, String key) {
         var operand = field(c, key);
-        if (operand instanceof CanonicalJson.Str s) return s.value().isEmpty() ? "\"\"" : get(s.value(), Kind.VALUE).source();
+        if (operand instanceof CanonicalJson.Str s) return s.value().isEmpty() ? new ConstructionProjection.Text("\"\"") : get(s.value(), Kind.VALUE).fragment();
         if (operand instanceof CanonicalJson.Obj literal) {
             if (literal.entries().size() != 1) throw new IllegalArgumentException("Inline operand needs exactly one constructor tag");
             String tag = literal.entries().getFirst().key();
             if (tag.equals("emptyArray")) {
                 if (!(field(literal, tag) instanceof CanonicalJson.Bool marker) || !marker.value())
                     throw new IllegalArgumentException("Inline emptyArray marker must be true");
-                return "[]";
+                return new ConstructionProjection.Text("[]");
             }
             if (tag.equals("integer") || tag.equals("boolean")) return invoke(tag,
-                    CanonicalJson.obj(List.of(CanonicalJson.e("value", field(literal, tag))))).source();
-            if (literal.entries().getFirst().key().equals("text")) return encode(stringField(literal, "text"));
+                    CanonicalJson.obj(List.of(CanonicalJson.e("value", field(literal, tag))))).fragment();
+            if (literal.entries().getFirst().key().equals("text")) return new ConstructionProjection.Text(encode(stringField(literal, "text")));
             if (literal.entries().getFirst().key().equals("path")) return invoke("path",
-                    CanonicalJson.obj(List.of(CanonicalJson.e("parts", field(literal, "path"))))).source();
+                    CanonicalJson.obj(List.of(CanonicalJson.e("parts", field(literal, "path"))))).fragment();
             throw new IllegalArgumentException("Inline operand needs text, path, integer, boolean or emptyArray");
         }
-        if (operand instanceof CanonicalJson.Bool) return encode(operand);
-        return Integer.toString(intField(c, key));
+        if (operand instanceof CanonicalJson.Bool) return new ConstructionProjection.Text(encode(operand));
+        return new ConstructionProjection.Text(Integer.toString(intField(c, key)));
     }
-    protected final String refs(CanonicalJson.Obj c, String key, Kind kind, String separator) {
-        return String.join(separator, requireArray(field(c, key), key).items().stream()
+    protected final ConstructionProjection.Fragment refs(CanonicalJson.Obj c, String key, Kind kind, String separator) {
+        return ConstructionProjection.join(separator, requireArray(field(c, key), key).items().stream()
                 .map(v -> { if (!(v instanceof CanonicalJson.Str s)) throw new IllegalArgumentException("handle required");
-                    return get(s.value(), kind).source(); }).toList());
+                    return get(s.value(), kind).fragment(); }).toList());
     }
     protected static String identifier(String name) {
         if (name.isEmpty() || !(Character.isLetter(name.charAt(0)) || name.charAt(0) == '_'))
