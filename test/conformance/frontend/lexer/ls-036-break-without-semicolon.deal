@@ -1,0 +1,11 @@
+// @spec: Lexical elements
+// @description: A break statement may omit its semicolon before a closing brace
+// @expected: compile-ok
+// @features: parser, semicolon, break, loop, v1.2
+
+export function main(): null {
+  while (true) {
+    break
+  }
+  return null;
+}

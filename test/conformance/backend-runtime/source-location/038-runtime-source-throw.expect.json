@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "backends": ["luajit", "jvm", "js"],
+  "expected": {
+    "mode": "runtime-error",
+    "transcript": {
+      "stdout": "DEAL_ERROR_CODE: PINNED_THROW\nDEAL_ERROR_SNAPSHOT: {\"code\":\"PINNED_THROW\",\"message\":\"location\",\"sourceFile\":\"backend-runtime/source-location/038-runtime-source-throw.deal\",\"line\":7,\"column\":3}\n",
+      "stderr": ""
+    },
+    "exitCode": 1,
+    "error": {
+      "code": "PINNED_THROW",
+      "message": "location",
+      "sourceFile": "backend-runtime/source-location/038-runtime-source-throw.deal",
+      "line": 7,
+      "column": 3
+    }
+  }
+}

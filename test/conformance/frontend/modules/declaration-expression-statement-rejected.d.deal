@@ -1,0 +1,6 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: A declaration file rejects a top-level expression statement
+// @expected: compile-error E7001
+// @features: modules, declarations, diagnostics, v1.2
+
+1 + 2;

@@ -1,5 +1,5 @@
 // IR golden fixture: jvm-semantic-slice-jvm-slice-boolean-comparisons
-// Migrated IR-containment pins from test/conformance/fixtures/jvm-semantic-slice.json case 'jvm-slice-boolean-comparisons' (ISSUE-0358).
+// Migrated IR-containment pin for legacy case 'jvm-slice-boolean-comparisons' (ISSUE-0358).
 
 export function test(): boolean {
   let a: boolean = 3 < 5 && 5 <= 5 && 7 > 2 && 2 >= 2;

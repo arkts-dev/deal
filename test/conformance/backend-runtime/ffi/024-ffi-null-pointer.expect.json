@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "backends": {
+    "luajit": {
+      "mode": "runtime-error",
+      "transcript": {
+        "stdout": "DEAL_ERROR_CODE: FFI_NULL_POINTER\nDEAL_ERROR_SNAPSHOT: {\"code\":\"FFI_NULL_POINTER\",\"message\":\"C pointer return was NULL\",\"sourceFile\":\"backend-runtime/ffi/024-ffi-null-pointer.deal\",\"line\":8,\"column\":30}\n",
+        "stderr": ""
+      },
+      "exitCode": 1,
+      "error": {
+        "code": "FFI_NULL_POINTER",
+        "message": "C pointer return was NULL",
+        "sourceFile": "backend-runtime/ffi/024-ffi-null-pointer.deal",
+        "line": 8,
+        "column": 30
+      }
+    },
+    "jvm": { "mode": "compile-reject", "diagnostic": { "code": "E6006" } },
+    "js": { "mode": "compile-reject", "diagnostic": { "code": "E6006" } }
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "feature": "bytes-core",
+  "spec": "spec-v1.2.md §JSON serialization",
+  "description": "a bytes-typed @jsonable field is the E4007 non-jsonable rejection on both pipelines",
+  "expected": { "compile-error": "E4007" },
+  "backends": ["luajit", "jvm"],
+  "invocation": "compile-only",
+  "support": []
+}

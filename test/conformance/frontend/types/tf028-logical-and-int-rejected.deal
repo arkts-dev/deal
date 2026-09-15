@@ -1,0 +1,9 @@
+// @spec: Type system
+// @description: Logical and requires boolean operands
+// @expected: compile-error E3007
+// @features: type-system, expression-types, logical, diagnostics, v1.2
+
+export function main(): null {
+  let value: boolean = true && 1;
+  return null;
+}

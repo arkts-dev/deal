@@ -1,5 +1,5 @@
 // IR golden fixture: jvm-skeleton-jvm-int-arithmetic
-// Migrated IR-containment pins from test/conformance/fixtures/jvm-skeleton.json case 'jvm-int-arithmetic' (ISSUE-0358).
+// Migrated IR-containment pin for legacy case 'jvm-int-arithmetic' (ISSUE-0358).
 
 function add(a: int, b: int): int { return a + b; }
 function sub(a: int, b: int): int { return a - b; }

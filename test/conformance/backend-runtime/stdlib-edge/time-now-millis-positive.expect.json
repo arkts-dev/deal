@@ -1,12 +1,20 @@
 {
   "version": 1,
-  "backends": ["luajit", "jvm", "js"],
+  "backends": [
+    "luajit",
+    "jvm",
+    "js"
+  ],
   "expected": {
-    "mode": "runtime-ok",
+    "mode": "runtime-error",
     "transcript": {
-      "stdout": "",
+      "stdout": "DEAL_ERROR_CODE: E8004\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8004\",\"message\":\"int out of safe range\"}\n",
       "stderr": ""
     },
-    "exitCode": 0
+    "exitCode": 1,
+    "error": {
+      "code": "E8004",
+      "message": "int out of safe range"
+    }
   }
 }

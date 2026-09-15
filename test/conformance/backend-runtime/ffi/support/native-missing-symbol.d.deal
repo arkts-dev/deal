@@ -1,0 +1,34 @@
+// @expected: companion
+// @description: Classified support module — the C FFI declaration companion of the candidate/native-missing-symbol externals entry: ffi_missing_symbol is declared but absent from support/native.c, so importing this entry raises FFI_SYMBOL_MISSING at the import site (the load_ffi symbol-resolution gate).
+
+// @extern-c
+
+// @c-struct
+export class Pair {
+  left: int = 0;
+  right: int = 0;
+}
+
+// @c-pointer
+export class Handle {
+}
+
+export function ffi_add(a: int, b: int): int;
+export function ffi_half(value: number): number;
+export function ffi_not(value: boolean): boolean;
+export function ffi_strlen(value: string): int;
+export function ffi_echo(value: string): string;
+export function ffi_bytes_sum(value: bytes): int;
+export function ffi_pair_swap(value: Pair): Pair;
+export function ffi_pair_sum(value: Pair): int;
+export function ffi_handle_new(value: int): Handle;
+export function ffi_handle_value(value: Handle): int;
+export function ffi_handle_free(value: Handle): null;
+export function ffi_null_string(): string;
+export function ffi_invalid_utf8(): string;
+export function ffi_null_handle(): Handle;
+export function ffi_identity_int(value: int): int;
+export function ffi_noop(): null;
+export function ffi_borrowed_string(): string;
+export function ffi_overwrite_borrowed_string(): null;
+export function ffi_missing_symbol(): int;

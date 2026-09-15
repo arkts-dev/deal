@@ -1,0 +1,11 @@
+// ISSUE-0165 DIRECTIVES: the fixed normative name `jsonable` matches
+// first; the remaining line text `x` is its forbidden argument (E1045),
+// never an unknown-name recovery.
+// @jsonablex
+export class Tagged {
+  x: int = 1;
+}
+
+export function main(): null {
+  return null;
+}

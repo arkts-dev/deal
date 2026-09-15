@@ -1,0 +1,10 @@
+// @spec: Type system
+// @description: Nullable values with different wrapped types are not assignable
+// @expected: compile-error E3001
+// @features: type-system, nullable, invariance, diagnostics, v1.2
+
+export function main(): null {
+  let source: int | null = 1;
+  let target: number | null = source;
+  return null;
+}

@@ -52,7 +52,7 @@ import java.util.Objects;
  *       inner values compare by the inner descriptor's equality rule:
  *       int/number/string/boolean value rules for those inner kinds and
  *       allocation/function identity (both operands {@code Ref} views)
- *       for array/table/class/function inner kinds; NE is the
+ *       for array/table/class/function/bytes inner kinds; NE is the
  *       negation.</li>
  *   <li>{@code NULLABLE_NULL_EQ/NE} (side {@code LEFT|RIGHT} names the
  *       nullable operand) — EQ true exactly when the named-side operand
@@ -62,6 +62,11 @@ import java.util.Objects;
  *       descriptor, required); compares allocation/function identity by
  *       token equality of the two {@code Ref} views; a null/missing
  *       operand follows the null rules.</li>
+ *   <li>{@code BYTES_EQ/NE} — the one equal checked descriptor is the
+ *       {@code bytes} descriptor (ISSUE-0158's row; the payload's inner
+ *       descriptor, required); compares allocation identity of the two
+ *       bytes carriers by token equality of the two {@code Ref} views; a
+ *       null/missing operand follows the null rules.</li>
  * </ul>
  *
  * <p><b>Payload requirements.</b> The {@code NULLABLE_*} family requires
@@ -70,8 +75,9 @@ import java.util.Objects;
  * the side mode ({@code LEFT|RIGHT|BOTH} for {@code NULLABLE_EQ/NE};
  * {@code LEFT|RIGHT} for {@code NULLABLE_NULL_EQ/NE}).
  * {@code REFERENCE_*} requires the one equal checked descriptor with
- * kind {@code ARRAY|TABLE|CLASS|FUNCTION}. The other selectors carry no
- * inner descriptor or side and ignore those arguments.</p>
+ * kind {@code ARRAY|TABLE|CLASS|FUNCTION}; {@code BYTES_*} requires the
+ * {@code bytes} descriptor. The other selectors carry no inner
+ * descriptor or side and ignore those arguments.</p>
  *
  * <p><b>Fail-closed discipline.</b> No comparison selector ever raises a
  * DEAL failure (all comparisons are policy {@code NO_DEAL_FAILURE}) and
@@ -80,13 +86,13 @@ import java.util.Objects;
  * closed table — an arithmetic selector (the signed-int32/containers
  * epics own arithmetic execution), a wrong operand family for the
  * selector, a null-literal selector fed value operands, a missing or
- * broken {@code NULLABLE_*}/{@code REFERENCE_*} payload, or a wrong
- * inner-value family for the nullable inner descriptor — fails closed as
- * a producer {@link Defect}, never as a DEAL projection and never as a
- * crash (the same fail-closed discipline as the boundary-table
- * projection engine, whose types a comparison never touches). A
- * null/missing operand is never a defect: the null rules return a
- * boolean for every selector.</p>
+ * broken {@code NULLABLE_*}/{@code REFERENCE_*}/{@code BYTES_*} payload,
+ * or a wrong inner-value family for the nullable inner descriptor —
+ * fails closed as a producer {@link Defect}, never as a DEAL projection
+ * and never as a crash (the same fail-closed discipline as the
+ * boundary-table projection engine, whose types a comparison never
+ * touches). A null/missing operand is never a defect: the null rules
+ * return a boolean for every selector.</p>
  *
  * <p><b>Purity and bounds.</b> No mutation, no randomness, no I/O, no
  * retry, no target knowledge, no AST, no checker state; repeated calls
@@ -120,7 +126,7 @@ public final class ComparisonExecutor {
     }
 
     // =========================================================================
-    // compare — the closed 28-selector execution form
+    // compare — the closed 30-selector execution form
     // =========================================================================
 
     /**
@@ -131,15 +137,15 @@ public final class ComparisonExecutor {
      * most once.
      *
      * @param selector       the closed comparison selector; must be one
-     *                       of the 28 comparison values of
+     *                       of the 30 comparison values of
      *                       {@link BinarySelector}
      * @param left           the completed left operand view; non-null
      * @param right          the completed right operand view; non-null
      * @param innerDescriptor the payload's inner descriptor for the
      *                        {@code NULLABLE_*} selectors and the one
      *                        equal checked descriptor for
-     *                        {@code REFERENCE_*}; {@code null} for every
-     *                        other selector
+     *                        {@code REFERENCE_*}/{@code BYTES_*};
+     *                        {@code null} for every other selector
      * @param side           the payload's side mode for the
      *                       {@code NULLABLE_*} selectors; {@code null}
      *                       for every other selector
@@ -149,8 +155,9 @@ public final class ComparisonExecutor {
      *                               selector, if the operand family does
      *                               not match the selector, if a
      *                               null-literal selector receives value
-     *                               operands, if a {@code NULLABLE_*} or
-     *                               {@code REFERENCE_*} payload field is
+     *                               operands, if a {@code NULLABLE_*},
+     *                               {@code REFERENCE_*}, or
+     *                               {@code BYTES_*} payload field is
      *                               missing or outside the closed shape,
      *                               or if a nullable inner value does not
      *                               match the inner descriptor's kind —
@@ -195,6 +202,15 @@ public final class ComparisonExecutor {
                 boolean eq = referenceEquals(left, right);
                 yield selector == BinarySelector.REFERENCE_EQ ? eq : !eq;
             }
+            case BYTES_EQ, BYTES_NE -> {
+                requireBytesDescriptor(innerDescriptor);
+                if (isNullish(left) || isNullish(right)) {
+                    boolean bothNullish = isNullish(left) && isNullish(right);
+                    yield selector == BinarySelector.BYTES_EQ ? bothNullish : !bothNullish;
+                }
+                boolean eq = referenceEquals(left, right);
+                yield selector == BinarySelector.BYTES_EQ ? eq : !eq;
+            }
             case INT32_EQ, INT32_NE, INT32_LT, INT32_LE, INT32_GT, INT32_GE,
                  NUMBER_EQ, NUMBER_NE, NUMBER_LT, NUMBER_LE, NUMBER_GT, NUMBER_GE,
                  STRING_EQ, STRING_NE, STRING_LT, STRING_LE, STRING_GT, STRING_GE,
@@ -214,7 +230,7 @@ public final class ComparisonExecutor {
                 yield scalarCompare(selector, left, right);
             }
             default -> throw new Defect("selector " + selector.name() + " is an arithmetic "
-                + "selector: comparison execution covers the 28 comparison selectors only "
+                + "selector: comparison execution covers the 30 comparison selectors only "
                 + "(the signed-int32/containers epics own arithmetic execution)");
         };
     }
@@ -272,6 +288,15 @@ public final class ComparisonExecutor {
         }
     }
 
+    /** {@code BYTES_*}: the one equal checked descriptor is the bytes descriptor. */
+    private static void requireBytesDescriptor(RuntimeDescriptor descriptor) {
+        if (!(descriptor instanceof RuntimeDescriptor.Bytes)) {
+            throw new Defect("BYTES_* requires the one equal checked bytes descriptor "
+                + "(RuntimeDescriptor.Bytes); got "
+                + (descriptor == null ? "null" : descriptor.canonicalSpecText()));
+        }
+    }
+
     // =========================================================================
     // The B-D2 value rules
     // =========================================================================
@@ -318,6 +343,7 @@ public final class ComparisonExecutor {
             case RuntimeDescriptor.Table ignored -> referenceEquals(left, right);
             case RuntimeDescriptor.Class ignored -> referenceEquals(left, right);
             case RuntimeDescriptor.Func ignored -> referenceEquals(left, right);
+            case RuntimeDescriptor.Bytes ignored -> referenceEquals(left, right);
             case RuntimeDescriptor.Null ignored -> throw new Defect(
                 "unreachable nullable-inner dispatch: the inner descriptor must not be null; "
                     + "got " + inner.canonicalSpecText());
@@ -367,7 +393,7 @@ public final class ComparisonExecutor {
         if (view instanceof ComparisonOperandView.Ref value) {
             return value;
         }
-        throw new Defect("expected a Ref operand view for a reference comparison, got "
+        throw new Defect("expected a Ref operand view for a reference/bytes comparison, got "
             + variant(view));
     }
 

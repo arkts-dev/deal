@@ -2,7 +2,9 @@ package deal.ir;
 
 import deal.ast.*;
 import deal.checker.CheckResult;
+import deal.descriptors.CanonicalRuntimeTypeDescriptor;
 import deal.identity.CanonicalClassIdentityIndex;
+import deal.identity.CanonicalClassIdentity;
 import deal.checker.Symbol;
 import deal.checker.SymbolTable;
 import deal.types.Type;
@@ -43,6 +45,40 @@ public final class IrDumper implements Visitor<String> {
      * without an index is the pinned internal invariant violation.
      */
     private final CanonicalClassIdentityIndex identityIndex;
+
+    /**
+     * The compilation's canonical descriptor service
+     * (descriptor-identity-propagation D2): {@link #specTypeDescriptor}
+     * delegates to {@link CanonicalRuntimeTypeDescriptor#encode(Type)} —
+     * the one {@code Type}&rarr;text producer.  The {@code Type.Error}
+     * sentinel arm is removed: the sentinel has no descriptor and
+     * {@code encode} fails closed for it (the pinned internal invariant
+     * violation — never emitted, never an artifact).
+     */
+    private final CanonicalRuntimeTypeDescriptor descriptors;
+
+    /** Fail-closed index for the legacy declaration-file overloads (no
+     * identity index supplied): the AST-based descriptor path never
+     * reaches a class atom, so any class lookup through it is the pinned
+     * internal invariant violation, byte-identical to the pre-service
+     * contract. */
+    private static final class FailClosedIndex implements CanonicalClassIdentityIndex {
+        @Override
+        public String descriptorTextFor(CanonicalClassIdentity identity) {
+            throw new IllegalStateException(
+                "IrDumper class descriptor requires the compilation's"
+                    + " identity index (internal invariant violation)");
+        }
+
+        @Override
+        public CanonicalClassIdentity identityForDescriptorText(
+                String descriptorText) {
+            throw new IllegalStateException(
+                "IrDumper identity lookup requires the compilation's"
+                    + " identity index (internal invariant violation)");
+        }
+    }
+
     private int indent;
 
     private Type currentReturnType;
@@ -64,6 +100,8 @@ public final class IrDumper implements Visitor<String> {
         this.modulePath = modulePath;
         this.isDeclFile = isDeclFile;
         this.identityIndex = identityIndex;
+        this.descriptors = new CanonicalRuntimeTypeDescriptor(
+            identityIndex != null ? identityIndex : new FailClosedIndex());
         this.indent = 0;
     }
 
@@ -135,50 +173,23 @@ public final class IrDumper implements Visitor<String> {
 
     /**
      * Converts an internal {@link Type} to its spec-format
-     * {@code RuntimeTypeDescriptor} string.
+     * {@code RuntimeTypeDescriptor} string by delegating to the one
+     * {@link CanonicalRuntimeTypeDescriptor#encode(Type)} service
+     * (descriptor-identity-propagation D2): {@code [D]} arrays,
+     * {@code ?D} nullables, {@code bytes}, exact
+     * {@code async? (...) -> D} functions, and class atoms
+     * byte-for-byte from the identity index.  The local per-producer
+     * emitter is retired; the {@code Type.Error} sentinel arm is
+     * removed — the sentinel has no descriptor, so {@code encode}
+     * fails closed for it (the pinned internal invariant violation,
+     * never emitted, never an artifact).
      *
      * <p>When {@link Type.Func#isAsync()} is {@code true},
      * the async prefix is emitted automatically.</p>
      */
     private String specTypeDescriptor(Type t) {
         if (t == null) return "null";
-        return switch (t) {
-            case Type.Null ignored -> "null";
-            case Type.Boolean ignored -> "boolean";
-            case Type.Int ignored -> "int";
-            case Type.Number ignored -> "number";
-            case Type.String ignored -> "string";
-            case Type.Table ignored -> "table";
-            case Type.Bytes ignored -> "bytes";
-            case Type.Error ignored -> "Error";
-            case Type.Array arr -> "[" + specTypeDescriptor(arr.element()) + "]";
-            case Type.Nullable n -> "?" + specTypeDescriptor(n.inner());
-            case Type.Class cls -> {
-                // v1.2 identity carriage: class text comes only from the
-                // compilation's identity index — never from the retired
-                // dotted module path (descriptor-identity-propagation D2).
-                if (identityIndex == null) {
-                    throw new IllegalStateException(
-                        "IrDumper class descriptor requires the compilation's"
-                            + " identity index (internal invariant violation)");
-                }
-                yield identityIndex.descriptorTextFor(cls.identity());
-            }
-            case Type.Func f -> {
-                StringBuilder sb = new StringBuilder();
-                // Async prefix
-                if (f.isAsync()) {
-                    sb.append("async");
-                }
-                sb.append("(");
-                for (int i = 0; i < f.paramTypes().size(); i++) {
-                    if (i > 0) sb.append(",");
-                    sb.append(specTypeDescriptor(f.paramTypes().get(i)));
-                }
-                sb.append(")->").append(specTypeDescriptor(f.returnType()));
-                yield sb.toString();
-            }
-        };
+        return descriptors.encode(t);
     }
 
     /**

@@ -3,12 +3,24 @@ package deal.test;
 import deal.ast.*;
 import deal.checker.*;
 import deal.diagnostics.CompilerDiagnostic;
+import deal.identity.CanonicalClassIdentity;
+import deal.diagnostics.DiagnosticNote;
+import deal.diagnostics.DiagnosticOrder;
+import deal.diagnostics.DiagnosticRange;
+import deal.diagnostics.RangeOrigin;
 import deal.lexer.*;
 import deal.parser.*;
 import deal.types.Type;
 import deal.types.Types;
+import deal.Main;
 import deal.test.IdentityTestFixtures;
 
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.*;
 
 /**
@@ -193,10 +205,10 @@ public class CheckerTest {
         testUnaryOperators();
         testOperatorTypeErrors();
 
-        // -- Bytes comparison gate (E3019, binary-comparison-selectors B-D7) --
-        testBytesComparisonGateE3019();
+        // -- Bytes equality admission (ISSUE-0158 gate lift) --
+        testBytesEqualityAdmission();
         testBytesComparisonNonAdmittedUnchanged();
-        testBytesComparisonGateNegatives();
+        testBytesComparisonAdmissionNegatives();
 
         // -- Type Checking: Assignments --
         testAssignment_exact();
@@ -215,6 +227,9 @@ public class CheckerTest {
         testArrayLengthDeleteRejected();
         testArrayAppendIdiomCompiles();
         testArrayMethodDiagnosticSuggestsAppendIdiom();
+        // D4 (deal-v1.2-int32-and-bytes-architecture): bytes .length too
+        testBytesLengthAssignmentRejected();
+        testBytesLengthDeleteRejected();
         testTableLengthWriteUnaffected();
         testClassFieldLengthWriteUnaffected();
 
@@ -399,6 +414,16 @@ public class CheckerTest {
         testJsonableImportedClass_valid();
         testJsonableImportedClass_invalid();
 
+        // ISSUE-0519 (deterministic-diagnostics D2): SymbolTable
+        // storage pin and definition-order alias selection
+        testSymbolTableSymbolsInsertionOrder();
+        testSymbolTableAliasSelectionDefinitionOrder();
+
+        // D1 canonical report-time diagnostic ordering
+        // (deterministic-diagnostics): helper-order assertions plus the
+        // both-surfaces assertion over a real Main.run compile.
+        testDiagnosticOrderHelper();
+        testDiagnosticOrderBothSurfaces();
 
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
@@ -664,76 +689,88 @@ public class CheckerTest {
         assertError(out, "E3006", "int === bool error");
     }
 
-    // =========================================================================
-    // Bytes comparison gate (E3019 — binary-comparison-selectors B-D7)
-    // =========================================================================
+    // =======================================================================
+    // Bytes equality admission (ISSUE-0158, the binary-comparison-selectors
+    // B-D7 gate lift)
+    // =======================================================================
 
     /**
-     * Retypes a resolved parameter symbol before type checking. The v1.2
-     * frontend cannot produce a bytes-typed expression today (bytes value
-     * semantics are ISSUE-0111/ISSUE-0158's, so the {@code bytes} type
-     * name and the {@code bytes(n)} intrinsic are unresolved), which makes
-     * the E3019 gate's admission path unreachable from source in this
-     * revision. The gate lives in {@code checkBinary} and fires on the
-     * checked operand types; this helper drives that exact code path by
-     * replacing a resolved parameter's declared type with a synthetic
-     * bytes-involving type before type checking runs.
+     * Equal bytes-containing types and nullable-bytes-vs-null pairs are
+     * checker-admitted as {@code boolean} — bytes compare by reference
+     * identity (spec-v1.2 equality semantics). The v1.2 frontend resolves
+     * the {@code bytes} type name and the {@code bytes(n)} intrinsic, so
+     * the admission path is driven from real source. The former E3019
+     * bytes-comparison gate is lifted; the closed BYTES_EQ/BYTES_NE
+     * comparison row and the bytes descriptor carry the pair through
+     * lowering.
      */
-    private static CheckerOutput checkProgramWithParamRetyped(String source,
-            String functionName, String paramName, Type replacementType) {
-        LexResult lex = new Lexer(source, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
+    static void testBytesEqualityAdmission() {
+        System.out.println("-- Bytes Equality Admission (ISSUE-0158 gate lift) --");
 
-        if (parse.hasErrors()) {
-            StubModuleResolver resolver = new StubModuleResolver();
-            NameResolver nr = new NameResolver("test.deal", resolver);
-            nr.resolve(parse.program());
-            List<CompilerDiagnostic> diags = new ArrayList<>(parse.diagnostics());
-            diags.addAll(nr.diagnostics());
-            return new CheckerOutput(
-                new CheckResult(Map.of(), new SymbolTable(), diags),
-                parse.program()
-            );
-        }
-
-        StubModuleResolver resolver = new StubModuleResolver();
-        NameResolver nr = new NameResolver("test.deal", resolver);
-        SymbolTable symTable = nr.resolve(parse.program());
-
-        boolean retyped = false;
-        for (StatementNode stmt : parse.program().statements()) {
-            if (stmt instanceof FunctionDeclaration fd && fd.name().equals(functionName)) {
-                SymbolTable scope = nr.scopeMap().get(fd);
-                if (scope == null) continue;
-                Symbol sym = scope.resolveLocal(paramName);
-                if (sym instanceof Symbol.VariableSymbol vs) {
-                    scope.remove(paramName);
-                    scope.define(paramName,
-                        new Symbol.VariableSymbol(paramName, replacementType, vs.isParameter()));
-                    retyped = true;
-                }
-            }
-        }
-        check(retyped, "parameter '" + paramName + "' of function '" + functionName
-            + "' was retyped to " + replacementType);
-
-        List<CompilerDiagnostic> diags = new ArrayList<>(nr.diagnostics());
-        if (!hasErrors(diags)) {
-            CheckResult result = TypeChecker.check("test.deal", symTable, nr, parse.program());
-            diags.addAll(result.diagnostics());
-            return new CheckerOutput(
-                new CheckResult(result.typeMap(), symTable, diags),
-                parse.program()
-            );
-        }
-        return new CheckerOutput(
-            new CheckResult(Map.of(), symTable, diags),
-            parse.program()
+        // bytes === bytes / bytes !== bytes: boolean-typed, no diagnostics.
+        CheckerOutput out = checkProgram(
+            "function f(): null {\n"
+            + "  let a: bytes = bytes(2);\n"
+            + "  let b: bytes = a;\n"
+            + "  let c: boolean = a === b;\n"
+            + "  let d: boolean = a !== bytes(2);\n"
+            + "  return null;\n"
+            + "}"
         );
+        assertNoErrors(out, "bytes ===/!== bytes admitted");
+        Type comparisonType = out.result.typeMap().get(firstComparisonExpr(out.program()));
+        check(comparisonType == Type.Boolean.INSTANCE,
+            "bytes === bytes is typed boolean, got " + comparisonType);
+
+        // bytes[] === bytes[] (equal reference shapes containing bytes).
+        out = checkProgram(
+            "function f(): null {\n"
+            + "  let xs: bytes[] = [bytes(1)];\n"
+            + "  let ys: bytes[] = xs;\n"
+            + "  let c: boolean = xs === ys;\n"
+            + "  return null;\n"
+            + "}"
+        );
+        assertNoErrors(out, "bytes[] === bytes[] admitted");
+
+        // bytes|null === bytes|null (equal nullable bytes pairs).
+        out = checkProgram(
+            "function f(): null {\n"
+            + "  let a: bytes | null = bytes(1);\n"
+            + "  let b: bytes | null = a;\n"
+            + "  let c: boolean = a === b;\n"
+            + "  return null;\n"
+            + "}"
+        );
+        assertNoErrors(out, "bytes|null === bytes|null admitted");
+
+        // bytes|null === null / null === bytes|null (both directions).
+        out = checkProgram(
+            "function f(): null {\n"
+            + "  let a: bytes | null = bytes(1);\n"
+            + "  let b: bytes | null = null;\n"
+            + "  let c: boolean = a === null;\n"
+            + "  let d: boolean = b === null;\n"
+            + "  let e: boolean = null === a;\n"
+            + "  let g: boolean = a !== null;\n"
+            + "  return null;\n"
+            + "}"
+        );
+        assertNoErrors(out, "bytes|null vs null admitted in both directions");
+
+        // Functions whose signatures contain bytes compare by identity.
+        out = checkProgram(
+            "function id(b: bytes): bytes { return b; }\n"
+            + "function f(): null {\n"
+            + "  let c: boolean = id === id;\n"
+            + "  return null;\n"
+            + "}"
+        );
+        assertNoErrors(out, "bytes-bearing function identity admitted");
     }
 
-    /** Finds the first {@link BinaryExpr} anywhere in the program (test fixture). */
-    private static BinaryExpr firstBinaryExpr(ProgramNode program) {
+    /** Finds the first {@link BinaryExpr} comparison in a function body (test fixture). */
+    private static BinaryExpr firstComparisonExpr(ProgramNode program) {
         for (StatementNode stmt : program.statements()) {
             if (stmt instanceof FunctionDeclaration fd) {
                 for (StatementNode bodyStmt : fd.body().statements()) {
@@ -744,103 +781,41 @@ public class CheckerTest {
                 }
             }
         }
-        fail("no binary expression found in the fixture program");
+        fail("no comparison binary expression found in the fixture program");
         return null;
-    }
-
-    static void testBytesComparisonGateE3019() {
-        System.out.println("-- Bytes Comparison Gate (E3019) --");
-
-        String[] sources = {
-            // bytes === bytes / !==
-            "function f(b: int): null {\n"
-                + "  let c: boolean = b === b;\n"
-                + "  return null;\n"
-                + "}",
-            "function f(b: int): null {\n"
-                + "  let c: boolean = b !== b;\n"
-                + "  return null;\n"
-                + "}",
-        };
-        for (String source : sources) {
-            CheckerOutput out = checkProgramWithParamRetyped(source, "f", "b",
-                Type.Bytes.INSTANCE);
-            assertError(out, "E3019", "bytes ===/!== bytes");
-            BinaryExpr bin = firstBinaryExpr(out.program());
-            boolean atComparison = out.result.diagnostics().stream()
-                .filter(d -> d.code().equals("E3019"))
-                .anyMatch(d -> d.line() == bin.span().startLine()
-                    && d.column() == bin.span().startColumn());
-            check(atComparison, "E3019 must be reported at the comparison expression's span");
-        }
-
-        // bytes[] === bytes[]
-        CheckerOutput out = checkProgramWithParamRetyped(
-            "function f(b: int): null {\n"
-            + "  let c: boolean = b === b;\n"
-            + "  return null;\n"
-            + "}", "f", "b", Types.array(Type.Bytes.INSTANCE));
-        assertError(out, "E3019", "bytes[] === bytes[]");
-
-        // bytes|null === bytes|null
-        out = checkProgramWithParamRetyped(
-            "function f(b: int): null {\n"
-            + "  let c: boolean = b === b;\n"
-            + "  return null;\n"
-            + "}", "f", "b", Types.nullable(Type.Bytes.INSTANCE));
-        assertError(out, "E3019", "bytes|null === bytes|null");
-
-        // bytes|null === null (left nullable)
-        out = checkProgramWithParamRetyped(
-            "function f(b: int): null {\n"
-            + "  let c: boolean = b === null;\n"
-            + "  return null;\n"
-            + "}", "f", "b", Types.nullable(Type.Bytes.INSTANCE));
-        assertError(out, "E3019", "bytes|null === null");
-
-        // null === bytes|null (right nullable)
-        out = checkProgramWithParamRetyped(
-            "function f(b: int): null {\n"
-            + "  let c: boolean = null === b;\n"
-            + "  return null;\n"
-            + "}", "f", "b", Types.nullable(Type.Bytes.INSTANCE));
-        assertError(out, "E3019", "null === bytes|null");
     }
 
     static void testBytesComparisonNonAdmittedUnchanged() {
         System.out.println("-- Bytes comparisons: non-admitted pairs keep E3006/E3007 --");
 
-        // bytes === number — not admitted by the equality rules → E3006,
-        // never E3019.
-        CheckerOutput out = checkProgramWithParamRetyped(
-            "function f(b: int): null {\n"
+        // bytes === number — not admitted by the equality rules → E3006.
+        CheckerOutput out = checkProgram(
+            "function f(): null {\n"
+            + "  let b: bytes = bytes(1);\n"
             + "  let c: boolean = b === 1;\n"
             + "  return null;\n"
-            + "}", "f", "b", Type.Bytes.INSTANCE);
+            + "}"
+        );
         assertError(out, "E3006", "bytes === number keeps E3006");
-        check(out.result.diagnostics().stream()
-                .noneMatch(d -> d.code().equals("E3019")),
-            "bytes === number must not report E3019");
 
         // bytes relational — relationals stay E3007 (spec pins relationals
-        // to int/number/string), never E3019.
-        out = checkProgramWithParamRetyped(
-            "function f(b: int): null {\n"
+        // to int/number/string).
+        out = checkProgram(
+            "function f(): null {\n"
+            + "  let b: bytes = bytes(1);\n"
             + "  let c: boolean = b < b;\n"
             + "  return null;\n"
-            + "}", "f", "b", Type.Bytes.INSTANCE);
+            + "}"
+        );
         assertError(out, "E3007", "bytes relational keeps E3007");
-        check(out.result.diagnostics().stream()
-                .noneMatch(d -> d.code().equals("E3019")),
-            "bytes relational must not report E3019");
     }
 
-    static void testBytesComparisonGateNegatives() {
-        System.out.println("-- Bytes Comparison Gate: non-bytes pairs are unaffected --");
+    static void testBytesComparisonAdmissionNegatives() {
+        System.out.println("-- Bytes equality admission: non-bytes pairs are unaffected --");
 
         // null === null, nullable-vs-null, equal nullable pairs, array and
         // function reference identity — every non-bytes admitted pair
-        // stays admitted without E3019.
+        // stays admitted (no E3019 exists anymore).
         CheckerOutput out = checkProgram(
             "function f(): null {\n"
             + "  let a: boolean = null === null;\n"
@@ -1157,6 +1132,39 @@ public class CheckerTest {
             .filter(d -> d.code().equals("E3017"))
             .anyMatch(d -> d.line() == 2 && d.column() == 8);
         check(atTarget, "E3017 must be reported at the target span");
+    }
+
+    // D4 (deal-v1.2-int32-and-bytes-architecture): bytes .length is
+    // compiler-resolved and read-only exactly like array .length —
+    // assignment and deletion are E3017 at the member target.
+    static void testBytesLengthAssignmentRejected() {
+        System.out.println("-- Bytes Length Assignment Rejected (E3017) --");
+        CheckerOutput out = checkProgram(
+            "let b: bytes = bytes(4);\n" +
+            "b.length = 9;"
+        );
+        assertError(out, "E3017", "assignment to bytes .length");
+        // E3017 is reported at the target span (line 2, column 1 — the
+        // start of `b.length`), not the value span.
+        boolean atTarget = out.result.diagnostics().stream()
+            .filter(d -> d.code().equals("E3017"))
+            .anyMatch(d -> d.line() == 2 && d.column() == 1);
+        check(atTarget, "bytes E3017 must be reported at the target span");
+    }
+
+    static void testBytesLengthDeleteRejected() {
+        System.out.println("-- Bytes Length Delete Rejected (E3017) --");
+        CheckerOutput out = checkProgram(
+            "let b: bytes = bytes(4);\n" +
+            "delete b.length;"
+        );
+        assertError(out, "E3017", "delete of bytes .length");
+        // E3017 is reported at the target span (line 2, column 8 — the
+        // start of `b.length` after `delete `).
+        boolean atTarget = out.result.diagnostics().stream()
+            .filter(d -> d.code().equals("E3017"))
+            .anyMatch(d -> d.line() == 2 && d.column() == 8);
+        check(atTarget, "bytes E3017 must be reported at the target span");
     }
 
     // The append idiom's target is an IndexExpr whose index is the
@@ -2624,6 +2632,17 @@ public class CheckerTest {
     }
 
     static void testJsonableNonJsonableType_nonJsonableClass() {
+        System.out.println("-- @jsonable: bytes field → E4007 --");
+        // v1.2 bytes is not jsonable: a bytes-typed @jsonable field is
+        // E4007 (deal-v1.2-int32-and-bytes-architecture D3).
+        CheckerOutput bytesField = checkProgram(
+            "// @jsonable\n" +
+            "export class Holder {\n" +
+            "  payload: bytes = bytes(2);\n" +
+            "}\n"
+        );
+        assertError(bytesField, "E4007", "bytes field is not jsonable");
+
         System.out.println("-- @jsonable: non-@jsonable class field → E4007 --");
         CheckerOutput out = checkProgram(
             "class Plain { x: int; }\n" +
@@ -3084,4 +3103,348 @@ public class CheckerTest {
             "narrowedVariableNames should be empty after invalidateAll");
     }
 
+    // =========================================================================
+    // ISSUE-0519 (deterministic-diagnostics D2): SymbolTable storage pin
+    // =========================================================================
+
+    /**
+     * symbols() must iterate in define() insertion order: the storage
+     * field itself is a LinkedHashMap, so iteration is insertion order —
+     * never a JDK hash-bucket order.  The key pair "b" (hash bucket 2
+     * under HashMap's default 16-bucket table) then "aa" (bucket 0)
+     * inverts under hash-bucket iteration ([aa, b]) and stays [b, aa]
+     * under insertion iteration: a HashMap-backed field fails this
+     * assertion, a LinkedHashMap-backed field passes.  The returned map
+     * must also be a defensive copy.
+     */
+    static void testSymbolTableSymbolsInsertionOrder() {
+        System.out.println("-- SymbolTable: symbols() insertion order and defensive copy --");
+        SymbolTable table = new SymbolTable();
+        table.define("b", new Symbol.VariableSymbol("b", Type.Int.INSTANCE, false));
+        table.define("aa", new Symbol.VariableSymbol("aa", Type.Int.INSTANCE, false));
+
+        List<String> names = new ArrayList<>();
+        for (String key : table.symbols().keySet()) {
+            names.add(key);
+        }
+        check(names.equals(List.of("b", "aa")),
+            "symbols() iteration equals define() insertion order [b, aa], got " + names);
+
+        List<String> entryOrder = new ArrayList<>();
+        for (Map.Entry<String, Symbol> entry : table.symbols().entrySet()) {
+            entryOrder.add(entry.getKey());
+        }
+        check(entryOrder.equals(List.of("b", "aa")),
+            "symbols() entrySet iteration equals define() insertion order [b, aa], got "
+                + entryOrder);
+
+        Map<String, Symbol> copy = table.symbols();
+        copy.put("zz", new Symbol.VariableSymbol("zz", Type.Int.INSTANCE, false));
+        check(table.resolveLocal("zz") == null,
+            "symbols() returns a defensive copy: a put on the returned map does not affect the table");
+        copy.clear();
+        check(table.resolveLocal("b") != null && table.resolveLocal("aa") != null,
+            "symbols() returns a defensive copy: clearing the returned map does not affect the table");
+    }
+
+    /**
+     * The first-match alias scan findImportAliasForClass performs
+     * (symbols().entrySet() iteration; exports().get(name) instanceof
+     * Type.Class with canonical class-identity equality) must select the
+     * earliest-defined alias when two module aliases export a same-named
+     * class with the same module path.  Reversed definition order must
+     * reverse the winner: a HashMap-backed storage field iterates
+     * hash-bucket order ("a" lands in bucket 1, "b" in bucket 2 under
+     * the default 16-bucket table), so the reversed table would still
+     * yield "a" and this assertion fails — the insertion-ordered field
+     * is the definition-order guarantee.
+     */
+    static void testSymbolTableAliasSelectionDefinitionOrder() {
+        System.out.println("-- SymbolTable: alias selection follows definition order --");
+        Type.Class cType = IdentityTestFixtures.classType("C", "m");
+        Map<String, Type> exports = Map.of("C", cType);
+
+        SymbolTable forward = new SymbolTable();
+        forward.define("a", new Symbol.ModuleSymbol("a", exports, null));
+        forward.define("b", new Symbol.ModuleSymbol("b", exports, null));
+        check("a".equals(findImportAliasForClassScan(forward, "C", cType.identity())),
+            "first-match scan picks the earliest-defined alias (a)");
+
+        SymbolTable reversed = new SymbolTable();
+        reversed.define("b", new Symbol.ModuleSymbol("b", exports, null));
+        reversed.define("a", new Symbol.ModuleSymbol("a", exports, null));
+        check("b".equals(findImportAliasForClassScan(reversed, "C", cType.identity())),
+            "first-match scan follows definition order: reversed definition picks b");
+    }
+
+    /**
+     * The exact scan LuaBackend.findImportAliasForClass performs over the
+     * returned symbols() copy: entrySet() iteration, exports().get(name)
+     * instanceof Type.Class, canonical class-identity equality — first
+     * match wins.
+     */
+    private static String findImportAliasForClassScan(SymbolTable table,
+            String className, CanonicalClassIdentity identity) {
+        for (Map.Entry<String, Symbol> entry : table.symbols().entrySet()) {
+            Symbol sym = entry.getValue();
+            if (sym instanceof Symbol.ModuleSymbol ms) {
+                Type exportType = ms.exports().get(className);
+                if (exportType instanceof Type.Class tc
+                        && tc.identity().equals(identity)) {
+                    return entry.getKey();
+                }
+            }
+        }
+        return null;
+    }
+
+    // D1 canonical report-time diagnostic ordering (deterministic-diagnostics)
+    // =========================================================================
+
+    /**
+     * Builds one D9-normalized test diagnostic over a valid SOURCE range
+     * with full control of the D1 key fields. Notes are empty.
+     */
+    private static CompilerDiagnostic orderDiag(String file, int line,
+            int column, int scalarOffset, String code, String message,
+            String severity) {
+        return new CompilerDiagnostic(code, severity, message,
+            new DiagnosticRange(file, line, column, line, column + 1,
+                scalarOffset, scalarOffset + 1, 1, RangeOrigin.SOURCE),
+            null, null);
+    }
+
+    /** The file field of one E5003 main line (the text before the first ':'). */
+    private static String fileFieldOf(String line) {
+        int colon = line.indexOf(':');
+        return colon < 0 ? "" : line.substring(0, colon);
+    }
+
+    /**
+     * D1 helper-order assertions over a constructed diagnostic list whose
+     * input order differs from D1 order: file, scalar-offset, line/column,
+     * code, message, and severity ordering; stability for equal keys;
+     * input-list non-mutation; null yields the empty list.
+     */
+    static void testDiagnosticOrderHelper() {
+        System.out.println("-- D1 helper: canonical diagnostic ordering --");
+
+        // File ordering: file path byte order (String.compareTo).
+        CompilerDiagnostic fileB = orderDiag(
+            "b.deal", 1, 1, 0, "E0001", "m", "error");
+        CompilerDiagnostic fileA = orderDiag(
+            "a.deal", 1, 1, 0, "E0001", "m", "error");
+        List<CompilerDiagnostic> byFile = DiagnosticOrder.canonical(
+            List.of(fileB, fileA));
+        check(byFile.size() == 2 && byFile.get(0) == fileA
+                && byFile.get(1) == fileB,
+            "D1 helper: file ordering (a.deal before b.deal)");
+
+        // Scalar-offset ordering: ascending startScalarOffset.
+        CompilerDiagnostic offHigh = orderDiag(
+            "f.deal", 1, 1, 20, "E0001", "m", "error");
+        CompilerDiagnostic offLow = orderDiag(
+            "f.deal", 1, 1, 5, "E0001", "m", "error");
+        List<CompilerDiagnostic> byOffset = DiagnosticOrder.canonical(
+            List.of(offHigh, offLow));
+        check(byOffset.size() == 2 && byOffset.get(0) == offLow
+                && byOffset.get(1) == offHigh,
+            "D1 helper: scalar-offset ordering (5 before 20)");
+
+        // Line ordering: after file and scalar offset.
+        CompilerDiagnostic lineHigh = orderDiag(
+            "f.deal", 3, 1, 7, "E0001", "m", "error");
+        CompilerDiagnostic lineLow = orderDiag(
+            "f.deal", 1, 1, 7, "E0001", "m", "error");
+        List<CompilerDiagnostic> byLine = DiagnosticOrder.canonical(
+            List.of(lineHigh, lineLow));
+        check(byLine.size() == 2 && byLine.get(0) == lineLow
+                && byLine.get(1) == lineHigh,
+            "D1 helper: line ordering (1 before 3)");
+
+        // Column ordering: after file, scalar offset, and line.
+        CompilerDiagnostic colHigh = orderDiag(
+            "f.deal", 1, 5, 7, "E0001", "m", "error");
+        CompilerDiagnostic colLow = orderDiag(
+            "f.deal", 1, 2, 7, "E0001", "m", "error");
+        List<CompilerDiagnostic> byColumn = DiagnosticOrder.canonical(
+            List.of(colHigh, colLow));
+        check(byColumn.size() == 2 && byColumn.get(0) == colLow
+                && byColumn.get(1) == colHigh,
+            "D1 helper: column ordering (2 before 5)");
+
+        // Code ordering.
+        CompilerDiagnostic codeHigh = orderDiag(
+            "f.deal", 1, 1, 7, "E2000", "m", "error");
+        CompilerDiagnostic codeLow = orderDiag(
+            "f.deal", 1, 1, 7, "E1000", "m", "error");
+        List<CompilerDiagnostic> byCode = DiagnosticOrder.canonical(
+            List.of(codeHigh, codeLow));
+        check(byCode.size() == 2 && byCode.get(0) == codeLow
+                && byCode.get(1) == codeHigh,
+            "D1 helper: code ordering (E1000 before E2000)");
+
+        // Message ordering.
+        CompilerDiagnostic msgHigh = orderDiag(
+            "f.deal", 1, 1, 7, "E1000", "zebra", "error");
+        CompilerDiagnostic msgLow = orderDiag(
+            "f.deal", 1, 1, 7, "E1000", "apple", "error");
+        List<CompilerDiagnostic> byMessage = DiagnosticOrder.canonical(
+            List.of(msgHigh, msgLow));
+        check(byMessage.size() == 2 && byMessage.get(0) == msgLow
+                && byMessage.get(1) == msgHigh,
+            "D1 helper: message ordering (apple before zebra)");
+
+        // Severity ordering: "error" before "warning".
+        CompilerDiagnostic sevWarning = orderDiag(
+            "f.deal", 1, 1, 7, "E1000", "apple", "warning");
+        CompilerDiagnostic sevError = orderDiag(
+            "f.deal", 1, 1, 7, "E1000", "apple", "error");
+        List<CompilerDiagnostic> bySeverity = DiagnosticOrder.canonical(
+            List.of(sevWarning, sevError));
+        check(bySeverity.size() == 2 && bySeverity.get(0) == sevError
+                && bySeverity.get(1) == sevWarning,
+            "D1 helper: severity ordering (error before warning)");
+
+        // Stability: equal keys keep their input relative order (the
+        // distinguishing note does not participate in the D1 key).
+        CompilerDiagnostic first = new CompilerDiagnostic(
+            "E1000", "error", "apple",
+            new DiagnosticRange("f.deal", 1, 1, 1, 2, 7, 8, 1,
+                RangeOrigin.SOURCE),
+            List.of(new DiagnosticNote("first note", null)), null);
+        CompilerDiagnostic second = new CompilerDiagnostic(
+            "E1000", "error", "apple",
+            new DiagnosticRange("f.deal", 1, 1, 1, 2, 7, 8, 1,
+                RangeOrigin.SOURCE),
+            List.of(new DiagnosticNote("second note", null)), null);
+        List<CompilerDiagnostic> stable = DiagnosticOrder.canonical(
+            List.of(first, second));
+        check(stable.size() == 2 && stable.get(0) == first
+                && stable.get(1) == second,
+            "D1 helper: stability for equal keys keeps input order");
+
+        // Input-list non-mutation and the fresh-list contract.
+        List<CompilerDiagnostic> input = new ArrayList<>(
+            List.of(fileB, fileA, offHigh, offLow));
+        List<CompilerDiagnostic> snapshot = new ArrayList<>(input);
+        List<CompilerDiagnostic> result = DiagnosticOrder.canonical(input);
+        check(result != input,
+            "D1 helper: canonical returns a new list, never the input");
+        check(input.equals(snapshot),
+            "D1 helper: the input list is not mutated");
+        check(input.get(0) == fileB && input.get(1) == fileA,
+            "D1 helper: the input list element order is unchanged");
+
+        // Null input yields the empty list.
+        check(DiagnosticOrder.canonical(null).isEmpty(),
+            "D1 helper: null input yields the empty list");
+    }
+
+    /**
+     * D1 both-surfaces assertion: a scratch temp project whose phase-3
+     * checker diagnostics are collected dependency-first ([z, a]) while
+     * the D1 file order is [a, z], so the assertion genuinely fails when
+     * DiagnosticOrder.canonical is unwired from either report site.
+     */
+    static void testDiagnosticOrderBothSurfaces() {
+        System.out.println("-- D1 both surfaces: stderr and "
+            + "--diagnostics-json emit the canonical order --");
+        Path root;
+        try {
+            root = Files.createTempDirectory("deal_d1_order_");
+        } catch (IOException e) {
+            fail("D1 both surfaces: cannot create temp directory: "
+                + e.getMessage());
+            return;
+        }
+        try {
+            Files.writeString(root.resolve("deal.json"),
+                "{\"languageVersion\":\"1.2\",\"backend\":\"luajit\","
+                    + "\"moduleRoots\":[\"src\"]}\n");
+            Files.createDirectories(root.resolve("src"));
+            // z is a's import dependency: buildCheckOrder is
+            // dependency-first, so the E5003 collection order is
+            // [z, a] while the D1 file order is [a, z].
+            Files.writeString(root.resolve("src/z.deal"),
+                "export function f(): int { return 1.0; }\n");
+            Files.writeString(root.resolve("src/a.deal"),
+                "import * as z from \"./z\"\n"
+                    + "export function main(): null { return null; }\n"
+                    + "function g(): int { return 1.0; }\n");
+            Path entry = root.resolve("src/a.deal").toAbsolutePath();
+            Path jsonPath = root.resolve("diagnostics.json");
+
+            ByteArrayOutputStream err = new ByteArrayOutputStream();
+            PrintStream originalErr = System.err;
+            int exitCode;
+            try {
+                System.setErr(new PrintStream(err, true,
+                    StandardCharsets.UTF_8));
+                exitCode = Main.run(new String[]{
+                    "compile", entry.toString(),
+                    "--diagnostics-json", jsonPath.toString()});
+                System.err.flush();
+            } finally {
+                System.setErr(originalErr);
+            }
+            String stderr = err.toString(StandardCharsets.UTF_8);
+
+            check(exitCode == 1, "D1 both surfaces: compile exits 1");
+            List<String> e5003Lines = stderr.lines()
+                .filter(l -> l.contains(": ERROR E5003: "))
+                .toList();
+            check(e5003Lines.size() == 2,
+                "D1 both surfaces: exactly two E5003 main lines, got "
+                    + e5003Lines.size());
+            if (e5003Lines.size() == 2) {
+                int aIndex = -1;
+                int zIndex = -1;
+                for (int i = 0; i < e5003Lines.size(); i++) {
+                    String file = fileFieldOf(e5003Lines.get(i));
+                    if (file.endsWith("src/a.deal")) aIndex = i;
+                    if (file.endsWith("src/z.deal")) zIndex = i;
+                }
+                check(aIndex == 0 && zIndex == 1,
+                    "D1 both surfaces: stderr E5003 file order is "
+                        + "src/a.deal then src/z.deal (aIndex=" + aIndex
+                        + ", zIndex=" + zIndex + ")");
+            }
+            check(stderr.lines().anyMatch(
+                    l -> l.equals("2 error(s), 0 warning(s)")),
+                "D1 both surfaces: summary line is "
+                    + "'2 error(s), 0 warning(s)'");
+
+            String json = Files.readString(jsonPath);
+            check(json.contains("\"version\": 1"),
+                "D1 both surfaces: JSON document stays version 1");
+            int arrayStart = json.indexOf("\"diagnostics\": [");
+            check(arrayStart >= 0,
+                "D1 both surfaces: JSON document has the diagnostics array");
+            int aFile = json.indexOf("src/a.deal", arrayStart);
+            int zFile = json.indexOf("src/z.deal", arrayStart);
+            check(aFile >= 0 && zFile >= 0 && aFile < zFile,
+                "D1 both surfaces: JSON diagnostics array lists src/a.deal "
+                    + "before src/z.deal");
+        } catch (IOException e) {
+            fail("D1 both surfaces: I/O failure: " + e.getMessage());
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
+    /** Deletes a scratch temp tree (best effort, recursion-safe). */
+    private static void deleteRecursively(Path dir) {
+        try {
+            if (dir == null || !Files.exists(dir)) return;
+            Files.walk(dir).sorted(Comparator.reverseOrder())
+                .forEach(f -> {
+                    try {
+                        Files.deleteIfExists(f);
+                    } catch (Exception ignored) {
+                    }
+                });
+        } catch (Exception ignored) {
+        }
+    }
 }

@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "feature": "bytes-defaults",
+  "spec": "spec-v1.2.md §Name resolution",
+  "description": "changed-provider identity: the same unchanged fixture compiles twice per backend, differing only in the resolved out-of-root provider's content; each compilation must produce its pinned oracle result (a changed provider flows through production compilation, never stale reuse)",
+  "expected": "runtime-ok",
+  "backends": ["luajit", "jvm"],
+  "invocation": "synthetic-main",
+  "oracle": { "exportName": "defaultsOracle", "functionDescriptor": "()->int" },
+  "support": [],
+  "providerVariants": {
+    "providerPath": "shared/provider.deal",
+    "variantA": "shared/provider-a.deal",
+    "variantB": "shared/provider-b.deal",
+    "oracleResults": [42, 24]
+  }
+}

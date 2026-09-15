@@ -1,0 +1,6 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: Import/export support module classified as a discovery companion
+// @expected: companion
+// @features: companion, modules, imports-exports
+
+export function id(value: int): int { return value; }

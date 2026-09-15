@@ -222,6 +222,60 @@ public class ComparisonSelectorLoweringTest {
             NullableSide.BOTH,
             "[int]|null !== [int]|null uses NULLABLE_NE BOTH, never REFERENCE_NE");
 
+        // Bytes rows (ISSUE-0158, the B-D7 gate lift): equal bytes types
+        // use the BYTES_* row with the shared checked bytes descriptor.
+        checkPayload(
+            ComparisonSelectorLowering.payloadOf(BinaryOp.EQ, Type.Bytes.INSTANCE,
+                Type.Bytes.INSTANCE),
+            BinarySelector.BYTES_EQ, RuntimeDescriptor.Bytes.INSTANCE, null,
+            "bytes === bytes");
+        checkPayload(
+            ComparisonSelectorLowering.payloadOf(BinaryOp.NEQ, Type.Bytes.INSTANCE,
+                Type.Bytes.INSTANCE),
+            BinarySelector.BYTES_NE, RuntimeDescriptor.Bytes.INSTANCE, null,
+            "bytes !== bytes");
+
+        // Nullable bytes vs null keeps the NULLABLE_NULL_* row with the
+        // bytes inner descriptor.
+        Type nullableBytes = Types.nullable(Type.Bytes.INSTANCE);
+        checkPayload(
+            ComparisonSelectorLowering.payloadOf(BinaryOp.EQ, nullableBytes, Type.Null.INSTANCE),
+            BinarySelector.NULLABLE_NULL_EQ, RuntimeDescriptor.Bytes.INSTANCE, NullableSide.LEFT,
+            "bytes|null === null");
+        checkPayload(
+            ComparisonSelectorLowering.payloadOf(BinaryOp.NEQ, nullableBytes, Type.Null.INSTANCE),
+            BinarySelector.NULLABLE_NULL_NE, RuntimeDescriptor.Bytes.INSTANCE, NullableSide.LEFT,
+            "bytes|null !== null");
+        checkPayload(
+            ComparisonSelectorLowering.payloadOf(BinaryOp.EQ, Type.Null.INSTANCE, nullableBytes),
+            BinarySelector.NULLABLE_NULL_EQ, RuntimeDescriptor.Bytes.INSTANCE, NullableSide.RIGHT,
+            "null === bytes|null");
+
+        // Equal nullable bytes pairs: NULLABLE_* BOTH with the bytes
+        // inner descriptor (never BYTES_* — null is not a reference).
+        checkPayload(
+            ComparisonSelectorLowering.payloadOf(BinaryOp.EQ, nullableBytes, nullableBytes),
+            BinarySelector.NULLABLE_EQ, RuntimeDescriptor.Bytes.INSTANCE, NullableSide.BOTH,
+            "bytes|null === bytes|null uses NULLABLE_EQ BOTH");
+        checkPayload(
+            ComparisonSelectorLowering.payloadOf(BinaryOp.NEQ, nullableBytes, nullableBytes),
+            BinarySelector.NULLABLE_NE, RuntimeDescriptor.Bytes.INSTANCE, NullableSide.BOTH,
+            "bytes|null !== bytes|null uses NULLABLE_NE BOTH");
+
+        // Bytes-containing reference shapes keep their REFERENCE_* row
+        // with the recursive bytes descriptor.
+        Type bytesArray = Types.array(Type.Bytes.INSTANCE);
+        checkPayload(
+            ComparisonSelectorLowering.payloadOf(BinaryOp.EQ, bytesArray, bytesArray),
+            BinarySelector.REFERENCE_EQ, new RuntimeDescriptor.Array(RuntimeDescriptor.Bytes.INSTANCE),
+            null, "bytes[] === bytes[]");
+        Type funcWithBytes = Types.func(List.of(Type.Int.INSTANCE), Type.Bytes.INSTANCE);
+        checkPayload(
+            ComparisonSelectorLowering.payloadOf(BinaryOp.EQ, funcWithBytes, funcWithBytes),
+            BinarySelector.REFERENCE_EQ, new RuntimeDescriptor.Func(
+                List.of(RuntimeDescriptor.Int.INSTANCE), RuntimeDescriptor.Bytes.INSTANCE),
+            null, "(int)=>bytes === (int)=>bytes");
+
         // Equal reference types: REFERENCE_* with the shared checked
         // descriptor for array, table, class, and function.
         Type intArray = Types.array(Type.Int.INSTANCE);
@@ -324,28 +378,9 @@ public class ComparisonSelectorLoweringTest {
     static void testDefectRows() {
         System.out.println("-- No-row pairs raise the COMPARISON_SELECTOR defect --");
 
-        // Bytes-involving pairs (the E3019 gate removes them before
-        // lowering; reaching the producer is a defect — B-D7).
-        expectDefect(() -> ComparisonSelectorLowering.payloadOf(BinaryOp.EQ,
-            Type.Bytes.INSTANCE, Type.Bytes.INSTANCE), "bytes === bytes");
-        expectDefect(() -> ComparisonSelectorLowering.payloadOf(BinaryOp.NEQ,
-            Type.Bytes.INSTANCE, Type.Bytes.INSTANCE), "bytes !== bytes");
-        Type bytesArray = Types.array(Type.Bytes.INSTANCE);
-        expectDefect(() -> ComparisonSelectorLowering.payloadOf(BinaryOp.EQ,
-            bytesArray, bytesArray), "bytes[] === bytes[]");
-        Type nullableBytes = Types.nullable(Type.Bytes.INSTANCE);
-        expectDefect(() -> ComparisonSelectorLowering.payloadOf(BinaryOp.EQ,
-            nullableBytes, nullableBytes), "bytes|null === bytes|null");
-        expectDefect(() -> ComparisonSelectorLowering.payloadOf(BinaryOp.EQ,
-            nullableBytes, Type.Null.INSTANCE), "bytes|null === null");
-        expectDefect(() -> ComparisonSelectorLowering.payloadOf(BinaryOp.EQ,
-            Type.Null.INSTANCE, nullableBytes), "null === bytes|null");
-        Type funcWithBytes = Types.func(List.of(Type.Int.INSTANCE), Type.Bytes.INSTANCE);
-        expectDefect(() -> ComparisonSelectorLowering.payloadOf(BinaryOp.EQ,
-            funcWithBytes, funcWithBytes), "(int)=>bytes === (int)=>bytes");
-
         // Mixed pairs (E3006 at the checker) and non-orderable
-        // relationals (E3007 at the checker).
+        // relationals (E3007 at the checker) stay defects; every admitted
+        // bytes-involving pair has a map row since the ISSUE-0158 lift.
         expectDefect(() -> ComparisonSelectorLowering.payloadOf(BinaryOp.EQ,
             Type.Bytes.INSTANCE, Type.Number.INSTANCE), "bytes === number");
         expectDefect(() -> ComparisonSelectorLowering.payloadOf(BinaryOp.EQ,
@@ -400,9 +435,12 @@ public class ComparisonSelectorLoweringTest {
     static void testE6005ComparisonSelectorCarrier() {
         System.out.println("-- E6005 COMPARISON_SELECTOR failure carrier --");
 
+        // The E6005 guard is unreachable for user programs: every
+        // checker-admitted pair has a row (bytes rows included since the
+        // ISSUE-0158 lift). A mixed pair drives the defect carrier.
         ComparisonSelectorLowering.Defect defect = defect(
             () -> ComparisonSelectorLowering.payloadOf(BinaryOp.EQ,
-                Type.Bytes.INSTANCE, Type.Bytes.INSTANCE));
+                Type.Bytes.INSTANCE, Type.Number.INSTANCE));
 
         LoweringFailureDetail detail =
             ComparisonSelectorLowering.loweringFailureDetail(MOD, defect);
@@ -515,11 +553,33 @@ public class ComparisonSelectorLoweringTest {
         check(nullableOp.resultType() == RuntimeDescriptor.Boolean.INSTANCE,
             "nullable comparison result type is boolean");
 
-        // A no-row pair raises the Defect from produce (defensive guard).
-        expectDefect(() -> ComparisonSelectorLowering.produce(MOD, BinaryOp.EQ,
+        // The bytes row produces one BYTES_EQ op with the shared bytes
+        // descriptor (ISSUE-0158 lift).
+        SemanticOp bytesOp = ComparisonSelectorLowering.produce(MOD, BinaryOp.EQ,
             Type.Bytes.INSTANCE, Type.Bytes.INSTANCE, new ValueId(9), new ValueId(10),
+            origin(), SemanticIdAllocator.over(List.of(MOD)), 5, 0);
+        check(bytesOp.payload() instanceof KindPayload.BinaryPayload payload
+                && payload.selector() == BinarySelector.BYTES_EQ
+                && payload.innerDescriptor() == RuntimeDescriptor.Bytes.INSTANCE
+                && payload.side() == null,
+            "produce carries the BYTES_EQ payload with the shared bytes descriptor");
+        check(bytesOp.operandTypes().equals(List.of(RuntimeDescriptor.Bytes.INSTANCE,
+                RuntimeDescriptor.Bytes.INSTANCE)),
+            "the bytes comparison operand types are the bytes descriptors");
+        check(bytesOp.resultType() == RuntimeDescriptor.Boolean.INSTANCE,
+            "the bytes comparison result type is boolean");
+        check(bytesOp.failurePolicy() == FailurePolicyId.NO_DEAL_FAILURE,
+            "the bytes comparison policy is NO_DEAL_FAILURE");
+        String bytesRecomputed = ContractSnapshotCanonicalizer.digest(bytesOp.contract());
+        check(bytesRecomputed.equals(bytesOp.contract().canonicalDigest()),
+            "the bytes comparison contract digest recomputes equal (T3-valid op)");
+
+        // A no-row pair (mixed) raises the Defect from produce (defensive
+        // guard).
+        expectDefect(() -> ComparisonSelectorLowering.produce(MOD, BinaryOp.EQ,
+            Type.Bytes.INSTANCE, Type.Number.INSTANCE, new ValueId(9), new ValueId(10),
             origin(), SemanticIdAllocator.over(List.of(MOD)), 5, 0),
-            "produce(bytes === bytes) raises the COMPARISON_SELECTOR defect");
+            "produce(bytes === number) raises the COMPARISON_SELECTOR defect");
 
         // Fail closed on null/negative inputs.
         try {
@@ -573,17 +633,15 @@ public class ComparisonSelectorLoweringTest {
     static void testPhase3CheckerGateAbortsBeforeRouting() throws Exception {
         System.out.println("-- Phase-3 gate position: checker diagnostics abort before routing --");
 
-        // The E3019 gate lives in checkBinary (phase 3, the checker). The
-        // orchestrator fails the compile on phase-3 checker diagnostics
-        // before the checked project (phase 3.5) and the route plan
-        // (phase 3.7) are produced, so no route purpose ever carries a
-        // bytes comparison into lowering. The v1.2 frontend cannot
-        // produce a bytes-typed expression yet (bytes value semantics are
-        // ISSUE-0111/ISSUE-0158's, so the bytes type name is unresolved —
-        // E3004), which makes the exact E3019 shadow-route scenario
-        // unsourceable in this revision; this pin proves the structural
-        // backbone: any phase-3 checker rejection (E3019 included, once
-        // bytes comparisons become producible) aborts the compile in
+        // The orchestrator fails the compile on phase-3 checker
+        // diagnostics before the checked project (phase 3.5) and the
+        // route plan (phase 3.7) are produced, so no route purpose ever
+        // carries a checker-rejected comparison into lowering. The
+        // ISSUE-0158 lift removed the former E3019 bytes-comparison gate:
+        // admitted bytes-involving pairs now carry their BYTES_*/nullable
+        // rows through lowering, and non-admitted pairs (E3006/E3007)
+        // still abort in phase 3. This pin proves the structural
+        // backbone: any phase-3 checker rejection aborts the compile in
         // phase 3 — before phase 3.5 and before phase 3.7 route planning —
         // with no lowering and no E6005.
         Path tmp = Files.createTempDirectory("deal-comparison-gate");

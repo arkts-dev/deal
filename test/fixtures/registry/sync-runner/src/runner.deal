@@ -1,0 +1,10 @@
+// D12 HostInvocationFailure record shape: a sync export requested
+// through the async-export invocation mode must map to
+// HostInvocationFailure, never to a DEAL error code.
+export function runner(): null {
+  return null;
+}
+
+export function main(): null {
+  return null;
+}

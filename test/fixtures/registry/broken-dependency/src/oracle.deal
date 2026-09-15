@@ -1,0 +1,16 @@
+// D12 async-export record shape (broken-dependency failure mode): one
+// canonical async()->null oracle that awaits an imported first-class
+// async dependency, plus the valid non-async main(): null the
+// async-export invocation mode requires. The awaited dependency throws
+// TEST_FAIL, so the scenario fails with the exact propagated DEAL error
+// on both matrix-required backends (LuaJIT and JVM).
+import * as broken from "./broken";
+
+export async function oracle(): null {
+  let out: string = await broken.explode();
+  return null;
+}
+
+export function main(): null {
+  return null;
+}

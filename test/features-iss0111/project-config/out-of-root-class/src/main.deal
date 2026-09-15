@@ -1,0 +1,8 @@
+// ISSUE-0165 PROJECT_CONFIG: a project class outside every configured
+// root has no representable public class identity and is E2010 before
+// class/export/default metadata or artifacts are published.
+import * as shared from "../shared/cls"
+
+export function main(): null {
+  return null;
+}

@@ -1,5 +1,5 @@
 // IR golden fixture: jvm-skeleton-jvm-literals-output
-// Migrated IR-containment pins from test/conformance/fixtures/jvm-skeleton.json case 'jvm-literals-output' (ISSUE-0358).
+// Migrated IR-containment pin for legacy case 'jvm-literals-output' (ISSUE-0358).
 
 import * as console from "std/console"
 function intLit(): int { return 42; }

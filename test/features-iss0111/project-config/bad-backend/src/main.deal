@@ -1,0 +1,5 @@
+// ISSUE-0165 PROJECT_CONFIG: an unknown manifest backend value (a legacy
+// spelling) is E2010 — manifest backends are exactly "luajit" or "jvm".
+export function main(): null {
+  return null;
+}

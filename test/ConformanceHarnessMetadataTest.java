@@ -1,5 +1,7 @@
 package deal.test;
 
+import deal.semantic.ir.SemanticProfile;
+
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -33,6 +35,7 @@ public class ConformanceHarnessMetadataTest {
         testCrTerminators();
         testEofTerminatedHeader();
         testNoHeaderReturnsInputUnchanged();
+        testProfileMetadata();
         testMaterializationPin();
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
@@ -97,13 +100,14 @@ public class ConformanceHarnessMetadataTest {
     // Helper behavior pins
     // =========================================================================
 
-    /** Every one of the five header prefixes drops its full line. */
+    /** Every metadata header prefix drops its full line. */
     private static void testHeaderLinesDropped() {
         String source = "// @spec: a\n"
             + "// @description: b\n"
             + "// @expected: c\n"
             + "// @features: d\n"
             + "// @issue: e\n"
+            + "// @profile: legacy-safe-int\n"
             + "export function ok(): int { return 1; }\n";
         checkEq("export function ok(): int { return 1; }\n",
             ConformanceHarnessMetadata.stripClassificationHeaders(source),
@@ -199,6 +203,35 @@ public class ConformanceHarnessMetadataTest {
         checkEq("",
             ConformanceHarnessMetadata.stripClassificationHeaders(""),
             "empty input unchanged");
+    }
+
+    private static void testProfileMetadata() {
+        checkEq(SemanticProfile.DEAL_V1_2_INT32,
+            ConformanceHarnessMetadata.profileFromMetadata(
+                "export function main(): null { return null; }", "default"),
+            "missing profile metadata defaults to v1.2");
+        checkEq(SemanticProfile.LEGACY_SAFE_INT,
+            ConformanceHarnessMetadata.profileFromMetadata(
+                "// @profile: legacy-safe-int\nexport function main(): null { return null; }",
+                "legacy"),
+            "legacy profile metadata resolves legacy-safe-int");
+        boolean unknownRejected = false;
+        try {
+            ConformanceHarnessMetadata.profileFromMetadata(
+                "// @profile: unknown", "unknown");
+        } catch (IllegalArgumentException e) {
+            unknownRejected = e.getMessage().contains("unknown @profile");
+        }
+        check(unknownRejected, "unknown profile metadata fails closed");
+        boolean duplicateRejected = false;
+        try {
+            ConformanceHarnessMetadata.profileFromMetadata(
+                "// @profile: legacy-safe-int\n// @profile: deal-v1.2-int32",
+                "duplicate");
+        } catch (IllegalArgumentException e) {
+            duplicateRejected = e.getMessage().contains("duplicate @profile");
+        }
+        check(duplicateRejected, "duplicate profile metadata fails closed");
     }
 
     // =========================================================================

@@ -1,0 +1,69 @@
+// ISSUE-0165 BYTES_DEFAULTS JSON phase-order row (int32/bytes page D5):
+// the synthetic entry imports this module unchanged and calls
+// jsonPhaseOracle() once. C$fromJson pins the shared construction
+// contract on both backends: provided fields overlay the defaults and
+// publish the decoded values; an omitted required default evaluates once
+// per attempt (the array default is fresh per reconstruction, never
+// shared); a provided-value failure, an extra key, and a non-object
+// input each reject with the DEAL null.
+function mkArr(): int[] {
+  let a: int[] = [7, 8];
+  return a;
+}
+
+// @jsonable
+export class Payload {
+  a: int = 1;
+  arr: int[] = mkArr();
+}
+
+export function jsonPhaseOracle(): int {
+  // Fully provided: no default participates, the decoded values publish.
+  let ok: Payload | null = Payload$fromJson("{ \"a\": 10, \"arr\": [5, 6] }");
+  if (ok !== null) {
+    if (ok.a !== 10 || ok.arr[0] !== 5 || ok.arr[1] !== 6) {
+      throw { code: "TEST_FAIL", message: "json phase: provided overlay mismatch" };
+    }
+  } else {
+    throw { code: "TEST_FAIL", message: "json phase: valid JSON must publish" };
+  }
+  // Omitted required default: evaluates once per attempt — two
+  // reconstructions own distinct arrays and mutations never alias.
+  let p1: Payload | null = Payload$fromJson("{ \"a\": 1 }");
+  if (p1 !== null) {
+    let p2: Payload | null = Payload$fromJson("{ \"a\": 1 }");
+    if (p2 !== null) {
+      if (p1.arr[0] !== 7 || p1.arr[1] !== 8) {
+        throw { code: "TEST_FAIL", message: "json phase: omitted default mismatch" };
+      }
+      if (p1.arr === p2.arr) {
+        throw { code: "TEST_FAIL", message: "json phase: default array shared across attempts" };
+      }
+      p1.arr[0] = 9;
+      if (p2.arr[0] !== 7) {
+        throw { code: "TEST_FAIL", message: "json phase: attempts alias the default array" };
+      }
+    } else {
+      throw { code: "TEST_FAIL", message: "json phase: omitted default must publish" };
+    }
+  } else {
+    throw { code: "TEST_FAIL", message: "json phase: omitted default must publish" };
+  }
+  // A provided-value failure returns the DEAL null and publishes no
+  // instance.
+  let bad: Payload | null = Payload$fromJson("{ \"a\": \"nope\", \"arr\": [1] }");
+  if (bad !== null) {
+    throw { code: "TEST_FAIL", message: "json phase: provided-value failure must return null" };
+  }
+  // Extra keys reject with null.
+  let extra: Payload | null = Payload$fromJson("{ \"a\": 1, \"arr\": [1], \"c\": 3 }");
+  if (extra !== null) {
+    throw { code: "TEST_FAIL", message: "json phase: extra keys must return null" };
+  }
+  // Non-object input rejects with null.
+  let non: Payload | null = Payload$fromJson("[1, 2]");
+  if (non !== null) {
+    throw { code: "TEST_FAIL", message: "json phase: non-object input must return null" };
+  }
+  return 42;
+}

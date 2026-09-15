@@ -25,10 +25,14 @@ public interface ModuleResolver {
      *        set when creating nested NameResolver instances
      * @return a map from export name to resolved type
      * @throws ModuleNotFoundException if the module cannot be found
+     * @throws CffiImportWithoutNativeLibraryException when the imported
+     *         module is a C FFI declaration file that is not backed by
+     *         an externals entry specifying {@code nativeLibrary} — the
+     *         v1.2 C FFI manifest policy rejection (E2010 at the import)
      */
     Map<String, Type> resolveModule(String modulePath, String importingModule,
                                      Set<String> modulesInProgress)
-        throws ModuleNotFoundException;
+        throws ModuleNotFoundException, CffiImportWithoutNativeLibraryException;
 
     /**
      * Resolve a class symbol from an imported module.
@@ -124,6 +128,35 @@ public interface ModuleResolver {
 
         public ModuleNotFoundException(String message) {
             super(message);
+        }
+    }
+
+    /**
+     * Exception thrown when a module import violates the v1.2 C FFI
+     * manifest policy: the imported module is a C FFI declaration file
+     * (a {@code .d.deal} file carrying {@code // @extern-c}) that no
+     * externals entry declares with {@code nativeLibrary}. The checker
+     * maps this rejection to E2010 at the import span
+     * (docs/spec-v1.2.md:1891 — "A C FFI entry must include
+     * nativeLibrary").
+     */
+    final class CffiImportWithoutNativeLibraryException extends Exception {
+        private static final long serialVersionUID = 1L;
+
+        private final String modulePath;
+
+        public CffiImportWithoutNativeLibraryException(String modulePath) {
+            super("C FFI declaration file '" + modulePath
+                + "' imported without an externals entry specifying "
+                + "nativeLibrary");
+            java.util.Objects.requireNonNull(modulePath,
+                "modulePath must not be null");
+            this.modulePath = modulePath;
+        }
+
+        /** The import path of the C FFI declaration file. */
+        public String modulePath() {
+            return modulePath;
         }
     }
 }

@@ -1,0 +1,17 @@
+// @spec: Modules, declarations, standard library, and host ABI — Import forms and import typing
+// @description: Normalized import spellings resolving to one source preserve one nominal class identity
+// @expected: compile-ok
+// @features: modules, classes, nominal-identity, path-normalization, v1.2
+
+import * as A from "./type_identity_model";
+import * as B from "././type_identity_model";
+
+export function check(): int {
+  let a: A.Item = A.make(7);
+  let b: B.Item = a;
+  return B.read(b);
+}
+
+export function main(): null {
+  return null;
+}

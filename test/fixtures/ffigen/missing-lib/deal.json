@@ -1,0 +1,10 @@
+{
+  "languageVersion": "1.2",
+  "moduleRoots": ["src"],
+  "externals": {
+    "ffi/missing_lib": {
+      "declaration": "ffi.d.deal",
+      "nativeLibrary": "../../../../build/ffigen-no-such-lib.so"
+    }
+  }
+}

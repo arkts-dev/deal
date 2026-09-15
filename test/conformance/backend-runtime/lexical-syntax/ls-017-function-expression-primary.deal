@@ -1,0 +1,14 @@
+// @spec: Lexical elements
+// @description: A parenthesized function expression remains callable as a postfix expression
+// @expected: runtime-ok
+// @features: parser, function-expression, parenthesized-expression, call, v1.2
+
+export function test_parenthesized_function_expression_call(): null {
+  let value: int = (function(input: int): int { return input + 1; })(4);
+  if (value !== 5) {
+    throw { code: "TEST_FAIL", message: "parenthesized function expression call parsed incorrectly" };
+  }
+  return null;
+}
+
+export function main(): null { return test_parenthesized_function_expression_call(); }

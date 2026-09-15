@@ -523,6 +523,13 @@ public class ContainerClaimingSeamTest {
                 containerOp.kind() + " homes to CONTAINERS_AND_STRINGS");
         }
 
+        check(ContainerClaimingSeam.homeRows(
+                op(SemanticOpKind.OPTIONAL_READ,
+                    new KindPayload.OptionalReadPayload(nextValue(), true, INT),
+                    nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE, null))
+                .equals(List.of(SemanticCapability.CONTAINERS_AND_STRINGS)),
+            "OPTIONAL_READ homes to CONTAINERS_AND_STRINGS (the extras envelope)");
+
         SemanticOp elementBoundary = boundaryWith(nextOpId(),
             BoundaryKind.ARRAY_LITERAL_ELEMENT, INT, FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR,
             null);

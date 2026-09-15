@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "feature": "directives",
+  "spec": "Ordered anchor transition — an ordinary comment breaks the run without anchoring",
+  "description": "an ordinary comment clears the pending declaration run WITHOUT anchoring it, so the @jsonable never attaches to the class and warns E1043 (the breaking directive keeps its own semantics; the run never anchors)",
+  "expected": "compile-ok",
+  "backends": ["luajit", "jvm"],
+  "invocation": "compile-only",
+  "support": []
+}

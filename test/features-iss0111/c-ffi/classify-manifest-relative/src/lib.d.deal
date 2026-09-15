@@ -1,0 +1,6 @@
+// @extern-c
+
+// The same-name int32 signature of the dual fixture: the
+// manifest-relative handle resolves this symbol through the retained
+// handle and the pinned battery asserts the working call.
+export function fixture_dual_combine(a: int, b: int): int;

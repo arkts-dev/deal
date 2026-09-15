@@ -1,0 +1,7 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: Repeated calls through a cached host binding invoke the host method each time
+// @expected: runtime-ok
+// @features: host-abi, repeated-call, binding-cache
+
+import * as host from "host/boundary";
+export function main(): null { let first: int = host.nextValue(); let second: int = host.nextValue(); if (first !== 1 || second !== 2) { throw { code: "TEST_FAIL", message: "host repeated call was cached or skipped" }; } return null; }

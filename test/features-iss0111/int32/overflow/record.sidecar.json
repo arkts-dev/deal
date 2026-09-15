@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "feature": "signed-int32",
+  "spec": "Numeric overflow — addition overflow raises E8004",
+  "description": "2147483647 + 1 must raise E8004 on both backends",
+  "expected": { "runtime-error": "E8004" },
+  "backends": ["luajit", "jvm"],
+  "invocation": "direct-main",
+  "support": []
+}

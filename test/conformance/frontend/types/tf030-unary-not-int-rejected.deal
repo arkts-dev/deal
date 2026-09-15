@@ -1,0 +1,9 @@
+// @spec: Type system
+// @description: Logical negation requires a boolean operand
+// @expected: compile-error E3007
+// @features: type-system, expression-types, unary-operators, diagnostics, v1.2
+
+export function main(): null {
+  let value: boolean = !1;
+  return null;
+}

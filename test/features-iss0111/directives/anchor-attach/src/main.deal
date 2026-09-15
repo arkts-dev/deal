@@ -1,0 +1,14 @@
+// ISSUE-0165 DIRECTIVES: the immediate/whitespace attachment rows —
+// the blank line preserves the pending declaration run, the run anchors
+// to the next non-comment token (the class declaration) before that
+// token is emitted, and the valid @jsonable applies with no E1043.
+
+// @jsonable
+
+export class Tagged {
+  x: int = 1;
+}
+
+export function main(): null {
+  return null;
+}

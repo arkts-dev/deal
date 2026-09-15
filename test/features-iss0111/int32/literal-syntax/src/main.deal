@@ -1,0 +1,7 @@
+// ISSUE-0165 SIGNED_INT32: a positive int literal above 2147483647 is a
+// parse-time E1036 (parser numeric guard, int32 page D1). The diagnostic
+// must originate in this fixture.
+export function main(): null {
+  let x: int = 2147483648;
+  return null;
+}

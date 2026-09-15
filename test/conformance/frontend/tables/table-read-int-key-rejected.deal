@@ -1,0 +1,11 @@
+// @spec: Tables
+// @description: A computed table read rejects a non-string key statically.
+// @expected: compile-error E3007
+// @features: tables, dynamic-keys, diagnostics
+
+export function main(): null {
+  let t: table = {};
+  let key: int = 1;
+  let value: string = t[key];
+  return null;
+}

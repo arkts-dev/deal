@@ -845,8 +845,8 @@ public class CheckedProjectBuilderTest {
                     + "count: int = 1; }\n");
             Files.writeString(src.resolve("main.deal"),
                 "import * as lib from \"host/lib\"\n"
-                    + "export class C { v: int; }\n"
-                    + "export class D { w: boolean; }\n"
+                    + "export class C { v: int = 0; }\n"
+                    + "export class D { w: boolean = false; }\n"
                     + "export function main(): null { return null; }\n");
             Files.writeString(tmp.resolve("deal.json"),
                 "{\n  \"languageVersion\": \"1.2\",\n"
@@ -923,7 +923,7 @@ public class CheckedProjectBuilderTest {
                 "lib.B fields carry optional/nullable/hasDefault from the record; got "
                     + b.fields());
             check(c.fields().equals(List.of(
-                    new FieldInterface("v", "int", false, false, false))),
+                    new FieldInterface("v", "int", false, false, true))),
                 "main.C fields derive from the checked ClassSymbol records; got " + c.fields());
 
             // The index never records a route: no route-shaped component exists
@@ -1135,7 +1135,7 @@ public class CheckedProjectBuilderTest {
                 + "export class B { y: string; }\n");
         Files.writeString(src.resolve("entry.deal"),
             "import * as lib from \"host/lib\"\n"
-                + "export class C { v: int; }\n"
+                + "export class C { v: int = 0; }\n"
                 + "export function main(): null { return null; }\n");
         Files.writeString(tmp.resolve("deal.json"),
             "{\n  \"languageVersion\": \"1.2\",\n"

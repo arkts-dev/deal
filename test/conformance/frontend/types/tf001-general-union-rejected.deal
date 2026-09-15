@@ -1,0 +1,9 @@
+// @spec: Type system
+// @description: A general int-or-number union is rejected because nullable is the sole union constructor
+// @expected: compile-error E1030
+// @features: type-system, unions, diagnostics, v1.2
+
+export function main(): null {
+  let value: int | number = 1;
+  return null;
+}

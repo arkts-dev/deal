@@ -1,5 +1,5 @@
 // IR golden fixture: jvm-async-slice-jvm-async-discard-position
-// Migrated IR-containment pins from test/conformance/fixtures/jvm-async-slice.json case 'jvm-async-discard-position' (ISSUE-0358).
+// Migrated IR-containment pin for legacy case 'jvm-async-discard-position' (ISSUE-0358).
 
 import * as console from "std/console"
 async function tick(tag: string): int { console.log(tag); return 1; }

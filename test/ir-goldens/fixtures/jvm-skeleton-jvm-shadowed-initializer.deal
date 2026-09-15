@@ -1,5 +1,5 @@
 // IR golden fixture: jvm-skeleton-jvm-shadowed-initializer
-// Migrated IR-containment pins from test/conformance/fixtures/jvm-skeleton.json case 'jvm-shadowed-initializer' (ISSUE-0358).
+// Migrated IR-containment pin for legacy case 'jvm-shadowed-initializer' (ISSUE-0358).
 
 export function test(): int {
   let x: int = 5;

@@ -61,39 +61,64 @@ import java.util.stream.Stream;
  *       stdout ({@code DEAL_ERROR_CODE: <code>} then
  *       {@code DEAL_ERROR_SNAPSHOT: <canonical JSON>}). The Error
  *       Expectation is the authoritative field set: mandatory
- *       {@code code}/{@code message}/{@code sourceFile}/{@code line}/
- *       {@code column} (the code equals the fixture's {@code @expected}
- *       code; the sourceFile names the module that threw — the fixture
- *       itself or a corpus module of its transitive import closure — in
- *       canonical corpus-relative form), optional {@code expected}/
- *       {@code actual} pinned as the {@code _err} pair where the spec
- *       diagnostic carries them, and no {@code frames}/{@code cause}
- *       pins (today's runtime error values carry no structured frames;
- *       the cause chain is pinned nowhere). The snapshot JSON of the
- *       framing must byte-equal the canonical snapshot serialization
- *       recomputed from the error object: fixed key order
- *       {@code code, message, sourceFile, line, column, expected,
- *       actual, frames, cause}, minimal RFC 8259 §7 escaping, raw UTF-8,
- *       canonical decimal integers, no whitespace between tokens.</li>
- *   <li>The backend-runtime known-fail population is empty since
- *       ISSUE-0339 promoted the last tracked fixture
+
+ *       {@code code}/{@code message} plus the span group
+ *       {@code sourceFile}/{@code line}/{@code column} (the code equals
+ *       the fixture's {@code @expected} code; the sourceFile names the
+ *       module that threw — the fixture itself or a corpus module of
+ *       its transitive import closure — in canonical corpus-relative
+ *       form). The span group is mandatory for every runtime-error
+ *       fixture except the one sanctioned span-less shape
+ *       ({@code stdlib-edge/time-now-millis-positive.deal}: the locked
+ *       time selector's retained {@code nowMillis} wrapper raises E8004
+ *       with no file/line/column at all —
+ *       {@code luajit-time-selector-disposition}, Failure and
+ *       operations — so its sidecar omits the whole group and pinning
+ *       any of the three is a classification failure), optional
+ *       {@code expected}/ {@code actual} pinned as the {@code _err}
+ *       pair where the spec diagnostic carries them, and no
+ *       {@code frames}/{@code cause} pins (today's runtime error values
+ *       carry no structured frames; the cause chain is pinned nowhere).
+ *       The snapshot JSON of the framing must byte-equal the canonical
+ *       snapshot serialization recomputed from the error object: fixed
+ *       key order {@code code, message, sourceFile, line, column,
+ *       expected, actual, frames, cause}, minimal RFC 8259 §7 escaping,
+ *       raw UTF-8, canonical decimal integers, no whitespace between
+ *       tokens.</li>
+ *   <li>The backend-runtime known-fail population is empty. ISSUE-0378
+ *       restored {@code arithmetic/int-add-overflow.deal} byte-exactly
+ *       with its canonical known-fail header and its three-backend
+ *       runtime-error sidecar; the gate-closure promotion then dropped
+ *       the known-fail marker, leaving the fixture as a real
+ *       runtime-error fixture whose uniform E8004 sidecar stays. The
+ *       two-backend slice re-home
+ *       stays covered by the ordinary signed-int32 runtime fixture.
+ *       ISSUE-0339 promoted the last previously tracked fixture
  *       ({@code bytes-buffer-ops.deal}, which received its runtime-ok
- *       sidecar in the same change that dropped its known-fail marker).
- *       The promoted {@code int-add-overflow.deal} received its
- *       runtime-error sidecar in the same change that dropped its
- *       known-fail marker (ISSUE-0332); the A5 profile-selection merge
- *       then removed the backend-runtime home with its sidecar — the
- *       JS lane's legacy range gate makes a uniform three-backend E8004
- *       sidecar impossible until JS v1.2 int32 lands, so its coverage
- *       re-homed to the two-backend slice surface
- *       ({@code jvm-int32-slice.json#int32-add-overflow}), and this
- *       population excludes it.</li>
+ *       sidecar in the same change that dropped its known-fail
+ *       marker). ISSUE-0502 (the gap-suite runtime population
+ *       landing) adds the gap bytes fixture
+ *       {@code backend-runtime/bytes/bytes-boundary-order.deal}
+ *       <b>promoted</b> — the issue's retained-known-fail candidate
+ *       ({@code known-fail runtime-ok}, {@code @issue: ISSUE-0111})
+ *       was probed on the real lanes this run and passes on both
+ *       (ISSUE-0158 lifted the E3019 bytes-equality gate with the
+ *       BYTES_EQ/NE comparison row, so bytes compare by reference
+ *       identity today), and the zero-skip promotion gate forces the
+ *       stale marker off — it counts in the runtime-ok population
+ *       with its empty-transcript three-backend runtime-ok sidecar
+ *       (the presence rule, ISSUE-0353). The backend-runtime
+ *       known-fail population therefore stays empty.</li>
+
  *   <li>All other fixtures ({@code compile-ok}, {@code compile-error},
  *       {@code companion}, frontend fixtures) carry no sidecar except
  *       the Diagnostics-bullet fixtures.</li>
- *   <li>The two Diagnostics-bullet fixtures
+ *   <li>The four Diagnostics-bullet fixtures
  *       ({@code frontend/diagnostics/assignment-mismatch.deal},
- *       {@code frontend/diagnostics/return-mismatch.deal}) carry a
+ *       {@code frontend/diagnostics/return-mismatch.deal},
+ *       {@code frontend/diagnostics/039-diagnostic-exact-span.deal},
+ *       {@code frontend/diagnostics/041-diagnostic-assignment-location.deal})
+ *       carry a
  *       Compile Expectation Sidecar that validates clean, and its pin
  *       matches the real frontend diagnostic set field-exact: exactly one
  *       error diagnostic, equal {@code code}/{@code line}/{@code column}/
@@ -118,133 +143,15 @@ public class SidecarCorpusValidationTest {
         "frontend/diagnostics/assignment-mismatch.deal";
     private static final String DIAG_RETURN =
         "frontend/diagnostics/return-mismatch.deal";
+    private static final String DIAG_EXACT_SPAN =
+        "frontend/diagnostics/039-diagnostic-exact-span.deal";
+    private static final String DIAG_ASSIGNMENT_LOCATION =
+        "frontend/diagnostics/041-diagnostic-assignment-location.deal";
 
     /** The only runtime-ok fixture whose transcript carries stdout bytes. */
     private static final String CONSOLE_FIXTURE =
         "backend-runtime/stdlib/console/import-log.deal";
     private static final String CONSOLE_STDOUT = "hello\n";
-
-    /** The exact runtime-ok population (ISSUE-0349 completeness, plus
-     * the stdlib/math int-minmax-extremes fixture ISSUE-0337 added with
-     * its sidecar in the same change; plus the two async fixtures
-     * ISSUE-0335 added with their sidecars in the same change:
-     * direct-await-completion-values and async-cross-module-chain; plus
-     * the four canonical-boundary runtime-ok fixtures ISSUE-0336 added
-     * with their sidecars in the same change; plus the six bytes
-     * fixtures ISSUE-0339 added/promoted with their sidecars in the
-     * same change: the promoted bytes-buffer-ops and the new
-     * bytes-length, bytes-descriptor-boundary,
-     * bytes-class-field-descriptor, bytes-write-single-evaluation, and
-     * bytes-write-validation-order fixtures; plus the two stdlib/json
-     * D5 fixtures ISSUE-0342 added with their sidecars in the same
-     * change: int32-boundary-parse and json-stringify-roundtrip; plus
-     * the ISSUE-0397 I6 arithmetic/int32-mod-min-neg-one fixture — the
-     * truncated remainder -2147483648 % -1 == 0 on all three lanes —
-     * added with its uniform sidecar in the same change; plus the
-     * host-class-default-isolation fixture ISSUE-0334 added with its
-     * sidecar in the same change; plus the three stdlib/table keys
-     * fixtures ISSUE-0341 added with their sidecars in the same
-     * change: keys-string-inclusion, keys-nonstring-exclusion, and
-     * keys-order-pin; plus the six ISSUE-0340 default-plan runtime-ok
-     * fixtures — plan-fresh-literals, plan-reexecuted-calls,
-     * plan-load-time-zero-invocations, plan-imported-provider-scope,
-     * plan-phase-order-provided-before-defaults, and
-     * plan-host-discriminator — each added with its sidecar in the
-     * same change; plus the jsonable-fromjson-nested-depth3 fixture
-     * the ISSUE-0340 review fix added with its sidecar in the same
-     * change, pinning the depth >= 3 nested compiler-class fromJson
-     * decode). */
-    private static final int RUNTIME_OK_COUNT = 219;
-
-    /**
-     * The exact runtime-error population (ISSUE-0350 completeness, plus
-     * the int32 E8004 fixtures ISSUE-0332 promoted/added: the
-     * promoted int-add-overflow — later re-homed to the two-backend
-     * slice surface by the A5 profile-selection merge, which removed the
-     * backend-runtime fixture with its sidecar, so this population
-     * excludes it — and the new int-sub-overflow, int-mul-overflow,
-     * int-conversion-out-of-range, and source-location/int32-overflow-source
-     * fixtures each land their sidecar in the same change as their
-     * expectation; plus the stdlib/math int-abs-min-overflow E8004
-     * fixture ISSUE-0337 added with its sidecar in the same change; plus
-     * the host-async-shape-value E8010 fixture ISSUE-0335 added with its
-     * sidecar in the same change; plus the canonical signature-mismatch
-     * E8010 fixture ISSUE-0336 added with its sidecar in the same change;
-     * plus the six int-neg/bytes error fixtures ISSUE-0339 added with
-     * their sidecars in the same change: int-neg-min, bytes-index-bounds,
-     * bytes-write-range, source-location/int-neg-min-source,
-     * source-location/bytes-index-bounds-source, and
-     * source-location/bytes-write-range-source; plus the
-     * stdlib/json/json-stringify-bytes-error E8001 fixture ISSUE-0342
-     * added with its sidecar in the same change; plus the two
-     * ISSUE-0397 I6 arithmetic pow-band fixtures — int32-pow-overflow
-     * (2 ** 62 → E8004, the finite band) and int32-pow-infinity
-     * (2 ** 1024 → E8001 infinity, the NaN/infinity-first band) — each
-     * added with its uniform three-backend sidecar in the same change;
-     * plus the host-class-extra-field E8007 fixture ISSUE-0334 added
-     * with its sidecar in the same change; plus the stdlib/table
-     * keys-nontable-error E8001 fixture ISSUE-0341 added with its
-     * sidecar in the same change).
-     */
-    private static final int RUNTIME_ERROR_COUNT = 81;
-
-    /**
-     * ISSUE-0397 count-pin criterion record (MR-0305 review cycles 1
-     * and 2, the count-pin finding). The amended criterion — the
-     * count-pin amendment prescribed by the MR-0305 review and applied
-     * by this tree — pins the count movement as
-     * {@code RUNTIME_OK_COUNT 207 -> 208} and
-     * {@code RUNTIME_ERROR_COUNT 77 -> 79} with the known-fail
-     * population unchanged at the empty set: the written delta (+1
-     * runtime-ok, +2 runtime-error, known-fail unchanged) applied to
-     * the evolved merge-base pins. The written absolute values
-     * ({@code 192 -> 193}, {@code 63 -> 65}, known-fail
-     * {@code {backend-runtime/bytes/bytes-buffer-ops.deal}}) were
-     * authored against an earlier tree and are unattainable in this
-     * one: at the MR's merge base (52a262da, the canonical revision;
-     * content-identical to its ancestor 6c4fac5d — and 113c048 already
-     * carried the same 207/77 pins with an empty known-fail
-     * population) the corpus had grown through the
-     * merged sibling issues ISSUE-0332 (signed32 gate), ISSUE-0335
-     * (async), ISSUE-0336 (boundaries), ISSUE-0337 (math), ISSUE-0339
-     * (bytes — which promoted
-     * {@code backend-runtime/bytes/bytes-buffer-ops.deal} to a
-     * runtime-ok fixture in commit 8d6a78f), and ISSUE-0342 (json).
-     * This record states the amended criterion the tree implements and
-     * verifies; the issue-tracker update to the amended wording is
-     * flagged on MR-0305 for the issue authority (the implementer's
-     * tooling cannot amend the issue record) — the MR-0146 precedent
-     * resolved its equivalent criteria conflict on the same basis. The
-     * amended values are the only pin set that keeps the corpus honest
-     * and every gate green: the corpus carries 208/79, so pins at the
-     * written 193/65 would deterministically fail the completeness
-     * checks, and reverting the corpus to the written population would
-     * revert unrelated merged sibling-issue work (out of scope).
-     *
-     * ISSUE-0334 lands on the amended 208/79 corpus and adds exactly
-     * two host-class fixtures with their sidecars in the same change:
-     * the runtime-ok host-class-default-isolation fixture (pins move
-     * 208 -> 209) and the runtime-error E8007 host-class-extra-field
-     * fixture (pins move 79 -> 80). The known-fail population stays
-     * empty.
-     *
-     * ISSUE-0341 then lands on the 209/80 corpus and adds the three
-     * stdlib/table keys runtime-ok fixtures (keys-string-inclusion,
-     * keys-nonstring-exclusion, keys-order-pin) and the
-     * keys-nontable-error runtime-error fixture with their sidecars in
-     * the same change, moving the pins to 212/81. ISSUE-0340 then
-     * lands on the 212/81 corpus and adds exactly six default-plan
-     * runtime-ok fixtures with their sidecars in the same change —
-     * plan-fresh-literals, plan-reexecuted-calls,
-     * plan-load-time-zero-invocations, plan-imported-provider-scope,
-     * plan-phase-order-provided-before-defaults, and
-     * plan-host-discriminator (pins move 212 -> 218); the ISSUE-0340
-     * review fix then adds the jsonable-fromjson-nested-depth3
-     * runtime-ok fixture with its sidecar in the same change (pins
-     * move 218 -> 219). The known-fail population stays empty. The
-     * pins below carry those ISSUE-0334, ISSUE-0341, and ISSUE-0340
-     * deltas.
-     */
 
     /** The G4.6 lane error framing prefixes. */
     private static final String DEAL_ERROR_CODE_LINE = "DEAL_ERROR_CODE: ";
@@ -377,15 +284,18 @@ public class SidecarCorpusValidationTest {
     // =========================================================================
 
     private static void validateRuntimeOkFixture(Fixture fixture,
-            Path sidecarPath, Set<String> corpusIndex) throws Exception {
+            Path sidecarPath, Set<String> corpusIndex,
+            Map<String, Fixture> corpusByPath) throws Exception {
         if (!Files.exists(sidecarPath)) {
             fail(fixture.corpusPath() + ": runtime-ok fixture is missing its "
                 + "Structured Expectation Sidecar " + sidecarPath.getFileName());
             return;
         }
         String sidecarText = Files.readString(sidecarPath);
+        List<SidecarSchemaValidator.CompilationModule> compilationSet =
+            compilationSetFor(fixture, corpusByPath);
         Optional<SidecarSchemaValidator.ClassificationFailure> failure =
-            validateSidecar(fixture, sidecarText, corpusIndex);
+            validateSidecar(fixture, sidecarText, compilationSet, corpusIndex);
         if (failure.isPresent()) {
             fail(failure.get().message());
             return;
@@ -394,13 +304,12 @@ public class SidecarCorpusValidationTest {
             + ": runtime-ok sidecar validates clean (schema v1)");
 
         // Transcript authoring pins (C4): stderr always empty; stdout empty
-        // except the single std/console fixture.
+        // except the single std/console fixture. The divergent C6 form
+        // audits its luajit leg's runtime expectation.
         CanonicalJson.Value root = CanonicalJson.parse(sidecarText);
         checkNoErrorField(root, "<root>", fixture.corpusPath());
-        CanonicalJson.Obj expected = (CanonicalJson.Obj)
-            ((CanonicalJson.Obj) root).entries().stream()
-                .filter(e -> e.key().equals("expected"))
-                .findFirst().orElseThrow().value();
+        CanonicalJson.Obj expected = expectationObject(
+            (CanonicalJson.Obj) root, fixture.corpusPath());
         CanonicalJson.Obj transcript = (CanonicalJson.Obj)
             expected.entries().stream()
                 .filter(e -> e.key().equals("transcript"))
@@ -443,11 +352,11 @@ public class SidecarCorpusValidationTest {
         check(true, fixture.corpusPath()
             + ": runtime-error sidecar validates clean (schema v1)");
 
+        // The divergent C6 form audits its luajit leg's runtime
+        // expectation (the uniform form audits its shared expected).
         CanonicalJson.Value root = CanonicalJson.parse(sidecarText);
-        CanonicalJson.Obj expected = (CanonicalJson.Obj)
-            ((CanonicalJson.Obj) root).entries().stream()
-                .filter(e -> e.key().equals("expected"))
-                .findFirst().orElseThrow().value();
+        CanonicalJson.Obj expected = expectationObject(
+            (CanonicalJson.Obj) root, fixture.corpusPath());
         CanonicalJson.Obj error = (CanonicalJson.Obj)
             expected.entries().stream()
                 .filter(e -> e.key().equals("error"))
@@ -466,14 +375,27 @@ public class SidecarCorpusValidationTest {
         check(!message.isEmpty(), fixture.corpusPath()
             + ": error.message must be the exact canonical template "
             + "instantiation, not an empty placeholder");
-        int line = intField(error, "line");
-        int column = intField(error, "column");
-        check(line >= 1, fixture.corpusPath()
-            + ": error.line must trace to the throwing site (a positive "
-            + "line), got " + line);
-        check(column >= 1, fixture.corpusPath()
-            + ": error.column must trace to the throwing site (a positive "
-            + "column), got " + column);
+        int line = optionalIntField(error, "line");
+        int column = optionalIntField(error, "column");
+        boolean spanless = SidecarSchemaValidator.SANCTIONED_SPANLESS_FIXTURE
+            .equals(fixture.corpusPath());
+        if (spanless) {
+            check(!hasErrorField(error, "sourceFile")
+                    && !hasErrorField(error, "line")
+                    && !hasErrorField(error, "column"),
+                fixture.corpusPath() + ": the sanctioned span-less shape "
+                    + "must omit the whole span group (sourceFile, line, "
+                    + "column) — the retained nowMillis wrapper raises "
+                    + "E8004 with no span and a sidecar never pins "
+                    + "fabricated values");
+        } else {
+            check(line >= 1, fixture.corpusPath()
+                + ": error.line must trace to the throwing site (a positive "
+                + "line), got " + line);
+            check(column >= 1, fixture.corpusPath()
+                + ": error.column must trace to the throwing site (a positive "
+                + "column), got " + column);
+        }
         check(!hasErrorField(error, "frames"), fixture.corpusPath()
             + ": no runtime-error sidecar pins frames — today's runtime "
             + "error values carry no structured frames");
@@ -587,6 +509,40 @@ public class SidecarCorpusValidationTest {
         return sb.toString();
     }
 
+    /**
+     * The runtime expectation object the audits read: the uniform
+     * sidecar's {@code expected} object, or — for the sanctioned C6
+     * divergent form — the {@code backends.luajit} entry (the runtime
+     * leg of the split; the jvm/js legs are compile-reject pins).
+     */
+    private static CanonicalJson.Obj expectationObject(CanonicalJson.Obj root,
+            String fixturePath) {
+        CanonicalJson.Value expected = root.entries().stream()
+            .filter(e -> e.key().equals("expected"))
+            .map(CanonicalJson.Entry::value)
+            .findFirst().orElse(null);
+        if (expected instanceof CanonicalJson.Obj expectedObj) {
+            return expectedObj;
+        }
+        CanonicalJson.Value backends = root.entries().stream()
+            .filter(e -> e.key().equals("backends"))
+            .map(CanonicalJson.Entry::value)
+            .findFirst().orElse(null);
+        if (backends instanceof CanonicalJson.Obj backendObj) {
+            CanonicalJson.Value luajit = backendObj.entries().stream()
+                .filter(e -> e.key().equals("luajit"))
+                .map(CanonicalJson.Entry::value)
+                .findFirst().orElse(null);
+            if (luajit instanceof CanonicalJson.Obj luajitObj) {
+                return luajitObj;
+            }
+        }
+        fail(fixturePath + ": the sidecar root carries no readable "
+            + "runtime expectation (uniform expected or divergent "
+            + "backends.luajit)");
+        return CanonicalJson.obj();
+    }
+
     private static Map<String, CanonicalJson.Value> fieldsOf(CanonicalJson.Obj obj) {
         Map<String, CanonicalJson.Value> fields = new HashMap<>();
         for (CanonicalJson.Entry entry : obj.entries()) {
@@ -616,6 +572,26 @@ public class SidecarCorpusValidationTest {
             .filter(e -> e.key().equals(key))
             .findFirst().orElseThrow().value();
         return ((CanonicalJson.Int) value).value();
+    }
+
+    /**
+     * The absent-tolerant integer accessor for the span group: returns 0
+     * when the field is absent — the sanctioned span-less error shape
+     * omits {@code line}/{@code column} entirely, and the audit rules
+     * branch on the fixture path before reading them.
+     */
+    private static int optionalIntField(CanonicalJson.Obj obj, String key) {
+        CanonicalJson.Value value = null;
+        for (CanonicalJson.Entry entry : obj.entries()) {
+            if (entry.key().equals(key)) {
+                value = entry.value();
+                break;
+            }
+        }
+        if (!(value instanceof CanonicalJson.Int integer)) {
+            return 0;
+        }
+        return integer.value();
     }
 
     private static String describe(String s) {
@@ -659,6 +635,27 @@ public class SidecarCorpusValidationTest {
                 continue;
             }
             Fixture dependency = corpusByPath.get(resolved);
+            if (dependency != null) {
+                collectCompilationModules(dependency.corpusPath(),
+                    dependency.source(), corpusByPath, set, inProgress);
+            }
+        }
+        // Corpus C FFI externals (ISSUE-0507): a candidate/* import
+        // resolves through the corpus-owned FFI wiring into its support
+        // declaration — the module carrying the @extern-c directive the
+        // divergent sidecar's C6 trigger check requires.
+        for (String importPath : CorpusDiscovery.ffiImportPaths(source)) {
+            CorpusFfi.Wiring wiring = CorpusFfi.wiringFor(CORPUS_ROOT,
+                importPath);
+            if (wiring == null) {
+                continue;
+            }
+            String declarationPath = slash(CORPUS_ROOT.toAbsolutePath()
+                .normalize().relativize(
+                    CORPUS_ROOT.resolve(CorpusFfi.FFI_DIR)
+                        .resolve(wiring.declarationCorpusPath())
+                        .toAbsolutePath().normalize()));
+            Fixture dependency = corpusByPath.get(declarationPath);
             if (dependency != null) {
                 collectCompilationModules(dependency.corpusPath(),
                     dependency.source(), corpusByPath, set, inProgress);
@@ -865,58 +862,84 @@ public class SidecarCorpusValidationTest {
         }
 
         // The exact sidecar paths the corpus may carry: one per runtime-ok
-        // fixture, one per runtime-error fixture, plus the two
-        // Diagnostics-bullet Compile Expectation Sidecars.
+        // fixture, one per runtime-error fixture, one per known-fail
+        // runtime fixture (the differential gate's presence rule,
+        // ISSUE-0353 — none is tracked today: the gate-closure
+        // promotion dropped the restored int-add-overflow marker and
+        // the ISSUE-0502 retained candidate bytes-boundary-order.deal
+        // was promoted after ISSUE-0158 lifted the E3019 gate, so
+        // every runtime-classified fixture is a real runtime-ok or
+        // runtime-error fixture), plus the Diagnostics-bullet
+        // Compile Expectation Sidecars (the two ISSUE-0501 gap
+        // fixtures extend the closed set to four).
         Set<String> allowedSidecars = new HashSet<>();
-        int runtimeOk = 0;
-        int runtimeError = 0;
         for (Fixture fixture : fixtures) {
             boolean isRuntimeOk = "runtime-ok".equals(fixture.expectedTag());
             boolean isRuntimeError =
                 fixture.expectedTag().startsWith("runtime-error ");
             boolean isDiagnosticsPin = fixture.corpusPath().equals(DIAG_ASSIGNMENT)
-                || fixture.corpusPath().equals(DIAG_RETURN);
+                || fixture.corpusPath().equals(DIAG_RETURN)
+                || fixture.corpusPath().equals(DIAG_EXACT_SPAN)
+                || fixture.corpusPath().equals(DIAG_ASSIGNMENT_LOCATION);
             Path sidecarPath = sidecarFor(fixture.corpusPath());
 
             if (isRuntimeOk) {
-                runtimeOk++;
                 allowedSidecars.add(sidecarPath.toString());
-                validateRuntimeOkFixture(fixture, sidecarPath, corpusIndex);
+                validateRuntimeOkFixture(fixture, sidecarPath, corpusIndex,
+                    corpusByPath);
             } else if (isRuntimeError) {
-                runtimeError++;
                 allowedSidecars.add(sidecarPath.toString());
                 validateRuntimeErrorFixture(fixture, sidecarPath, corpusIndex,
                     corpusByPath);
             } else if (isDiagnosticsPin) {
                 allowedSidecars.add(sidecarPath.toString());
                 validateCompileSidecarFixture(fixture, sidecarPath, corpusIndex);
+            } else if (fixture.expectedTag().startsWith("known-fail ")
+                    && fixture.expectedTag().substring(
+                        "known-fail ".length()).startsWith("runtime")) {
+                // A known-fail whose underlying mode is a runtime mode
+                // A runtime-mode known-fail fixture (none is tracked
+                // today — the ISSUE-0502 retained candidate
+                // bytes-boundary-order.deal passed both lanes after
+                // ISSUE-0158 lifted the E3019 gate and was promoted)
+                // would carry its three-backend sidecar: the
+                // differential gate's presence rule (ISSUE-0353)
+                // requires a valid sidecar for every runtime-classified
+                // fixture — including a known-fail whose underlying
+                // mode is a runtime mode — and the gate has no
+                // silent default.
+                allowedSidecars.add(sidecarPath.toString());
+                check(Files.exists(sidecarPath), fixture.corpusPath()
+                    + ": the known-fail runtime fixture must carry its "
+                    + "three-backend sidecar (the differential gate's "
+                    + "presence rule), missing "
+                    + sidecarPath.getFileName());
             } else {
                 check(!Files.exists(sidecarPath), fixture.corpusPath()
-                    + ": no sidecar is authored for this classification yet "
-                    + "(" + fixture.expectedTag() + " — known-fail sidecars "
-                    + "land at the zero-skip flip; compile/companion/frontend "
-                    + "fixtures carry none except the Diagnostics-bullet "
-                    + "fixtures), found "
+                    + ": no sidecar is authored for this classification "
+                    + "(" + fixture.expectedTag() + " — compile/"
+                    + "companion/frontend fixtures carry none except the "
+                    + "Diagnostics-bullet fixtures; a known-fail compile "
+                    + "fixture carries none), found "
                     + sidecarPath.getFileName());
             }
         }
 
-        // Completeness: the runtime-ok population and the runtime-error
-        // population are each their task's whole set.
-        check(runtimeOk == RUNTIME_OK_COUNT, "the corpus must carry exactly "
-            + RUNTIME_OK_COUNT + " runtime-ok fixtures with sidecars, found "
-            + runtimeOk);
-        check(runtimeError == RUNTIME_ERROR_COUNT, "the corpus must carry "
-            + "exactly " + RUNTIME_ERROR_COUNT + " runtime-error fixtures "
-            + "with sidecars, found " + runtimeError);
-
-        // The tracked known-fail population is empty: the last tracked
-        // backend-runtime known-fail (bytes-buffer-ops; int-add-overflow
-        // was promoted by ISSUE-0332 and its backend-runtime home was
-        // removed by the A5 profile-selection merge, whose coverage
-        // re-homes to the two-backend slice surface) was promoted by
-        // ISSUE-0339, so no backend-runtime fixture carries a known-fail
-        // marker — and no pin may name the removed fixture.
+        // The tracked backend-runtime known-fail population is
+        // empty (ISSUE-0502, the gap-suite runtime population
+        // landing): the issue's retained-known-fail candidate
+        // backend-runtime/bytes/bytes-boundary-order.deal passes both
+        // real lanes in this tree — ISSUE-0158 lifted the E3019
+        // bytes-equality gate (bytes EQ/NEQ admitted by reference
+        // identity), so the criterion's both-lane probe-fail premise
+        // no longer holds and the zero-skip promotion gate forces
+        // the stale marker off. The fixture lands promoted as
+        // runtime-ok with its empty-transcript three-backend sidecar
+        // (the differential gate's presence rule, ISSUE-0353). The
+        // ISSUE-0380 promotion of the restored int-add-overflow
+        // fixture and the ISSUE-0477 promotion of the FFI-manifest
+        // frontend pin leave the backend-runtime known-fail
+        // population empty.
         Set<String> knownFail = new TreeSet<>();
         for (Fixture fixture : fixtures) {
             if (fixture.corpusPath().startsWith("backend-runtime/")
@@ -926,8 +949,10 @@ public class SidecarCorpusValidationTest {
         }
         Set<String> expectedKnownFail = new TreeSet<>();
         check(knownFail.equals(expectedKnownFail),
-            "the tracked known-fail population must be exactly "
-                + expectedKnownFail + ", got " + knownFail);
+
+            "the tracked backend-runtime known-fail population must be "
+                + "empty post-unit, got " + knownFail);
+
 
         // No stray sidecar anywhere in the corpus.
         try (Stream<Path> stream = Files.walk(CORPUS_ROOT)) {
@@ -938,8 +963,9 @@ public class SidecarCorpusValidationTest {
                 check(allowedSidecars.contains(sidecar.toString()),
                     "stray sidecar file " + CORPUS_ROOT.relativize(sidecar)
                         + " — a sidecar may exist only next to a runtime-ok "
-                        + "fixture, a runtime-error fixture, or the "
-                        + "Diagnostics-bullet fixtures");
+                        + "fixture, a runtime-error fixture, a known-fail "
+                        + "runtime fixture, or the Diagnostics-bullet "
+                        + "fixtures");
             }
         }
 

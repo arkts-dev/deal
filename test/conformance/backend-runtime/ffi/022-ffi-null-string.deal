@@ -1,0 +1,10 @@
+// @spec: Modules, declarations, standard library, and host ABI — C FFI externals entries
+// @description: A NULL const char pointer return raises FFI_NULL_STRING at the call site after the native call (the load_ffi conversion gate).
+// @expected: runtime-error FFI_NULL_STRING
+// @features: c-ffi, abi, runtime-errors
+
+import * as native from "candidate/native";
+export function main(): null {
+  let value: string = native.ffi_null_string();
+  return null;
+}

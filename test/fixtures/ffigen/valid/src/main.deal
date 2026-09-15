@@ -1,0 +1,69 @@
+import * as ffi from "ffi/valid";
+import * as json from "std/json";
+
+export function main(): null {
+  return null;
+}
+
+// Roundtrip scenario functions (D7 phase 5): every call routes through
+// the generated wrapper with the call-site span triplet appended.
+export function scenario_add_int(): int {
+  return ffi.fixture_add_int(20, 22);
+}
+
+// The order-observable left-to-right sub path: (7, 2) returns 5 while
+// (2, 7) would return -5.
+export function scenario_sub_int(): int {
+  return ffi.fixture_sub_int(7, 2);
+}
+
+export function scenario_add_number(): number {
+  return ffi.fixture_add_number(1.25, 2.5);
+}
+
+export function scenario_not(): boolean {
+  return ffi.fixture_not(0);
+}
+
+export function scenario_echo_string(): string {
+  return ffi.fixture_echo_string("hello");
+}
+
+export function scenario_bytes_sum(): int {
+  let b: bytes = bytes(2);
+  b[0] = 7;
+  b[1] = 8;
+  return ffi.fixture_bytes_sum(b);
+}
+
+export function scenario_count_call(): null {
+  return ffi.fixture_count_call();
+}
+
+export function scenario_count_call_int(): int {
+  return ffi.fixture_count_call_int();
+}
+
+export function scenario_call_count(): int {
+  return ffi.fixture_call_count();
+}
+
+export function scenario_reset_counter(): null {
+  return ffi.fixture_reset_counter();
+}
+
+// The wrapper-call error split (D7 phase 7): parsing "\u0000" through
+// std/json produces a DEAL string containing U+0000 (the spec pins no
+// source-literal escape for it), so the echo call raises
+// FFI_INVALID_STRING before the native call.
+export function scenario_invalid_string(): string {
+  let doc: table = json.parse("{\"s\":\"\\u0000\"}");
+  let s: string = doc.s;
+  return ffi.fixture_echo_string(s);
+}
+
+// A NULL C-string return raises FFI_NULL_STRING after the native call
+// (the fixture counter incremented on entry, so native effects remain).
+export function scenario_null_string(): string {
+  return ffi.fixture_null_string();
+}

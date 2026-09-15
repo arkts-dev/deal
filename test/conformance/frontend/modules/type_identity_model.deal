@@ -1,0 +1,15 @@
+// @expected: companion
+// @spec: Modules, declarations, standard library, and host ABI — Import forms and import typing
+// @description: Support module for normalized-path nominal identity
+
+export class Item {
+  value: int = 0;
+}
+
+export function make(value: int): Item {
+  return { value: value };
+}
+
+export function read(item: Item): int {
+  return item.value;
+}

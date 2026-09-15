@@ -1,0 +1,10 @@
+// @spec: Lexical elements
+// @description: A line break after assignment does not terminate the initializer
+// @expected: compile-ok
+// @features: parser, semicolon, line-break, assignment, v1.2
+
+export function main(): null {
+  let value: int =
+    1;
+  return null;
+}

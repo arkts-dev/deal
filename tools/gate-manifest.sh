@@ -35,6 +35,16 @@ PROD_SOURCES=(
   'deal/project/*.java'
   'deal/identity/*.java'
   'deal/Main.java'
+  # ISSUE-0457 registration: the distribution-discovery package
+  # (DistributionHome — runtime/stdlib resolution outside the checkout).
+  'deal/distribution/*.java'
+  # ISSUE-0458 registration: the transactional whole-project artifact
+  # publication package (Artifact, ArtifactSet, PublicationStager).
+  'deal/publication/*.java'
+  # ISSUE-0162 registration: the validated C FFI metadata and forward
+  # binding generation package (FfiDeclarationValidator, descriptor
+  # records, CdefBundle, forward cells, LuaFfiBindingGenerator).
+  'deal/ffi/*.java'
 )
 
 # TEST_SOURCES: the remainder of today's compile list, verbatim, in
@@ -45,7 +55,6 @@ TEST_SOURCES=(
   'test/CheckedProjectBuilderTest.java'
   'test/LoweringSupportTest.java'
   'test/MigrationPlannerTest.java'
-  'test/StagingPublicationTest.java'
   'test/FoundationIntegrationTest.java'
   'test/InvocationProfileRegistryTest.java'
   'test/DiagnosticRangeTest.java'
@@ -59,8 +68,18 @@ TEST_SOURCES=(
   'test/AddressChainProtocolTest.java'
   'test/AddressChainLoweringTest.java'
   'test/ControlFlowLoweringTest.java'
+  'test/EvaluationOrderIntegrationTest.java'
+  'test/SemanticDifferentialHarness.java'
+  'test/RuntimeIntegrationMatrixTest.java'
+  # ISSUE-0582 registration: the CALLS family's FUNCTION_ADAPT/
+  # CALLBACK_INVOKE differential corpus — the production-chain adapter
+  # seeds (SHARED_CELL reassignment, VALUE retention, xN boundaries),
+  # the host-driven callback dispatch drives, the hand-built E8010/
+  # thunk-re-evaluation/body-failure controls, the validator and
+  # fail-closed negatives, the emitOp arm pins, and the production-mode
+  # realization on both targets (sequencing step 6 first half).
+  'test/CallAdapterCallbackIntegrationTest.java'
   'test/UnicodeScalarsTest.java'
-  'test/BoundaryRealizationReportTest.java'
   'test/FailureContractRegistryTest.java'
   'test/CanonicalJsonTest.java'
   'test/SemanticIrValidatorTest.java'
@@ -81,6 +100,11 @@ TEST_SOURCES=(
   'test/BindingImmutabilityProofTest.java'
   'test/AdapterCreationRuleTest.java'
   'test/AdapterShapeMapPayloadTest.java'
+  'test/BindingsValidationTest.java'
+  # ISSUE-0452 registration: the epic's integration verification tail
+  # (Sequencing item 9): the fixed creation-rule/shape-map corpus and
+  # the executed boundary-position E8010 drive through E4's machinery.
+  'test/BindingsIntegrationVerificationTest.java'
   'test/AstAndTypesTest.java'
   'test/TypesBytesTest.java'
   'test/LexerTest.java'
@@ -90,9 +114,9 @@ TEST_SOURCES=(
   'test/IrDumperTest.java'
   'test/IrGoldenTest.java'
   'test/TypeDescriptorTest.java'
+  'test/DescriptorEmissionByteIdentityTest.java'
   'test/CanonicalRuntimeTypeDescriptorTest.java'
   'test/RuntimeTypeMatcherTest.java'
-  'test/BackendConformanceTest.java'
   'test/JvmBackendTest.java'
   'test/JsBackendTest.java'
   'test/JsE2eTest.java'
@@ -101,11 +125,11 @@ TEST_SOURCES=(
   'test/ModuleSystemTest.java'
   'test/ProjectMigrationIntegrationTest.java'
   'test/ProjectIntegrationGatesTest.java'
+  'test/ProjectGraphFixturesGatesTest.java'
   'test/StdlibDeclParseTest.java'
   'test/SourceMapTest.java'
   'test/RuntimeSourceLocationTest.java'
   'test/StdlibContractTest.java'
-  'test/StdlibTimePreActivationPinTest.java'
   'test/GenerateStdlibGoldenIr.java'
   'test/ConformanceTest.java'
   'test/ConformanceHarnessMetadata.java'
@@ -115,6 +139,15 @@ TEST_SOURCES=(
   'test/LuaAbiTest.java'
   'test/LuaAbiBackendTest.java'
   'test/LuaJitAsyncExportInvokerTest.java'
+  # ISSUE-0346 registration: the REGISTRY delegated-boundary
+  # consumption test — D12-shaped async-export record projects
+  # through the production orchestrator + production invoker.
+  'test/RegistryAsyncExportBoundaryTest.java'
+  'test/JvmAsyncExportInvokerTest.java'
+  # ISSUE-0161 registration: the JVM lane of the REGISTRY delegated
+  # boundary — D12-shaped async-export record projects through the
+  # production orchestrator + production JvmAsyncExportInvoker.
+  'test/JvmRegistryAsyncExportBoundaryTest.java'
   'test/CrossModuleTypingTest.java'
   'test/ProtectedPathOpsTest.java'
   'test/CanonicalIdentityTest.java'
@@ -122,6 +155,11 @@ TEST_SOURCES=(
   'test/RepairWorkspaceV2Test.java'
   'deal/test/containment/ContainedProcessBroker.java'
   'deal/test/containment/PreflightCoordinator.java'
+  # ISSUE-0564 registration (dealpg4-java-broker-session-tests D4): the
+  # P5-hosted live broker session suite — hosted in-process by the
+  # PreflightCoordinator JVM inside the P5 outer session; no TEST_MAINS
+  # record (the suite runs inside P5 in both scripts).
+  'deal/test/containment/BrokerSessionTestSuite.java'
   'deal/test/conformance/SidecarSchemaValidator.java'
   'deal/test/conformance/SidecarSchemaValidatorTest.java'
   'deal/test/conformance/SidecarCorpusValidationTest.java'
@@ -129,6 +167,199 @@ TEST_SOURCES=(
   'deal/test/containment/ContainedProcessBrokerStateTest.java'
   'deal/project/ProjectLocatorTest.java'
   'deal/module/ModuleIdentityResolverTest.java'
+  # ISSUE-0457 registration: the DistributionHome tier-selection suite.
+  'test/DistributionHomeTest.java'
+  # ISSUE-0458 registration: the transactional publication contract
+  # suite (forced-failure stage test, fresh-root publish, stale-set
+  # purge, crash recovery, concurrency, IR dumps, out-of-checkout
+  # copies, and the publish I/O failure path).
+  'test/PublicationStagerTest.java'
+  # ISSUE-0493 registration: the closed StdlibFunctionCatalog (the 20
+  # declared stdlib exports with declared descriptors) and the
+  # checked-fact stdlib recognition predicate battery (enumeration,
+  # negative lookups, recognition over real checked projects, and the
+  # anti-hollow spelling control).
+  'test/StdlibFunctionCatalogTest.java'
+  # ISSUE-0494 registration: the STDLIB_CALL lowering battery (D2,
+  # Verification 4).
+  'test/StdlibCallLoweringTest.java'
+  # ISSUE-0495 registration: the SharedStdlibSemantics executor
+  # battery (D4/D5, Verification 1 and 3; the combined T2/T1 drive).
+  'test/SharedStdlibSemanticsTest.java'
+  # ISSUE-0496 registration: the stdlib failure-projection wiring and
+  # active boundary-realization payload battery (D6, Verification 2 and 4).
+  'test/StdlibFailureProjectionTest.java'
+  # ISSUE-0497 registration: the STDLIB_SEMANTICS claiming arms (the
+  # ContainerClaimingSeam STDLIB_CALL → STDLIB_SEMANTICS home row and
+  # the plan-time manifest arm), the time-lock negative proofs, and the
+  # stdlib-export value-read disposition battery
+  # (stdlib-operations-and-time-lock D3/D8/D9, Verification 4 and 5).
+  'test/StdlibClaimingTimeLockTest.java'
+  # ISSUE-0498 registration: the target-helper equivalence battery —
+  # every retained helper candidate (Lua std/*.lua, JS std/*.js, the
+  # JVM backend's emitted stdlib helpers) compared against
+  # SharedStdlibSemantics plus the projection wiring on the full
+  # declared input domain, with the known divergent verdicts detected
+  # by the comparison, the trim candidates, test-local derived outcomes,
+  # and promotion evidence
+  # (stdlib-operations-and-time-lock D7, Verification 6; sequencing
+  # item 6).
+  'test/StdlibEquivalenceBatteryTest.java'
+  # ISSUE-0499 registration: the epic's decomposition tail — the
+  # end-to-end stdlib and time-lock integration verification
+  # (stdlib-operations-and-time-lock Contracts §Integration verification
+  # task, Verification 7-8; sequencing item 7, the last task).
+  'test/StdlibIntegrationTest.java'
+  # ISSUE-0511 registration: the class-declaration lowering battery
+  # (class-construction-jsonable-operations K-D2/K-D3/K-D4,
+  # Verification 1 — the declaration arm: class layouts,
+  # CLASS_FACTORY registration, CLASS_DEFAULT emission, default-block
+  # admission, and determinism).
+  'test/ClassDeclarationLoweringTest.java'
+  # ISSUE-0512 registration: the CLASS_NEW LOCAL executor battery
+  # (class-construction-jsonable-operations K-D4/K-D11, Verification 1 —
+  # the closed D16 order with fixture side-effect probes).
+  'test/ClassOpsExecutorTest.java'
+  # ISSUE-0512 registration: the CLASS_NEW LOCAL lowering battery
+  # (class-construction-jsonable-operations K-D4 — the pinned literal
+  # payload shapes, the combined T1+T2 executor drive, and determinism).
+  'test/ClassNewLoweringTest.java'
+  # ISSUE-0236 registration: the E7 (D13/D15 call machine) integration
+  # verification — the real production chain over direct/indirect/host/
+  # external calls, async starts and awaits, entries/callbacks, adapter
+  # invocation with statically fixed sources, and deterministic
+  # re-lowering/re-execution parity.
+  'test/CallMachineIntegrationTest.java'
+  # ISSUE-0513 registration: the field-operation executor battery
+  # (class-construction-jsonable-operations K-D6/K-D7, Verification 4 —
+  # the presence matrix, nominal receiver failures, the required-field
+  # missing read, write-commit ordering, single evaluation, and the
+  # fail-closed discipline over T2-produced instances).
+  'test/FieldOpsExecutorTest.java'
+  # ISSUE-0513 registration: the field-operation lowering battery
+  # (class-construction-jsonable-operations K-D6/K-D7 — the pinned
+  # read/write/delete/has arms, the cross-module nullable read shape,
+  # the combined T1+T2+T3 executor drive, and determinism).
+  'test/FieldOpsLoweringTest.java'
+  # ISSUE-0514 registration: the shared-factory executor battery
+  # (class-construction-jsonable-operations K-D4/K-D5, Verification 2 —
+  # the CLASS_FACTORY execution contract, the ClassFactoryId-resolved
+  # transfer, the skip-provided rule, the untagged transfer instance,
+  # the executed cross-unit parentOpId pin, the owner-scope default
+  # evaluation, the extraction rule, and the fail-closed discipline).
+  'test/SharedFactoryExecutorTest.java'
+  # ISSUE-0514 registration: the shared-factory lowering battery
+  # (class-construction-jsonable-operations K-D4/K-D5 — the pinned
+  # SHARED_FACTORY payloads, the literal-order eval-order pin, the
+  # combined T1+T2+T3+T4 cross-unit executor drive reproducing the
+  # jvm-xmod-class-construction-* pin shapes at the unit level, the
+  # RETAINED_ABI deferral negative, same-module LOCAL preservation, and
+  # determinism).
+  'test/SharedFactoryLoweringTest.java'
+  # ISSUE-0515 registration: the JSON_FROM_CLASS/JSON_TO_CLASS executor
+  # battery (class-construction-jsonable-operations K-D8/K-D9/K-D10/
+  # K-D11, Verification 5-6 — the fixture JSON delegate implementing
+  # the pinned rows, null on every listed failure, the {}/[] collapse,
+  # the three-state roundtrip, the nested factory trigger, the exact
+  # template and pinned fieldPath convention, the call-origin
+  # anchoring, cycles, nonfinite numbers, depth bounds, and the
+  # fail-closed discipline).
+  'test/JsonClassExecutorTest.java'
+  # ISSUE-0515 registration: the generated C$fromJson/C$toJson lowering
+  # battery (class-construction-jsonable-operations K-D8/K-D10 —
+  # the pinned generated bodies, LoweredBody registrations, the
+  # JsonDefaultChildTable record, the combined T1..T5 two-module
+  # end-to-end drive, and determinism).
+  'test/JsonClassLoweringTest.java'
+  # ISSUE-0507 registration: the corpus C FFI support component
+  # (CorpusFfi — the corpus-owned externals wiring, the GCC
+  # native-library bootstrap, the production FfiDeclarationValidator /
+  # FFIGEN boundary surface, and the checker-facing export/class-symbol
+  # registry the lanes' module resolvers consume) — consumed by the
+  # manifest-listed ConformanceTest/JvmConformanceTest/
+  # JsConformanceTest/SidecarCorpusValidationTest runners at startup,
+  # so the strict full-set compile list (the manifest exactly) is
+  # self-consistent.
+  'deal/test/conformance/CorpusFfi.java'
+  # ISSUE-0507 registration (self-consistency closure): the
+  # manifest-listed JvmConformanceTest/JsConformanceTest runners and
+  # the manifest-listed SidecarCorpusValidationTest consume
+  # SidecarExpectations (the structured expectation record surface)
+  # and CorpusDiscovery (the corpus walker, extended with the FFI
+  # import-path surface by ISSUE-0507), which previously compiled
+  # only from the gate-script-level additions. Both join the manifest
+  # so the strict full-set compile list stays self-consistent.
+  'deal/test/conformance/SidecarExpectations.java'
+  'deal/test/conformance/CorpusDiscovery.java'
+  # ISSUE-0162 registration: the C FFI declaration validation and
+  # forward binding generation battery.
+  'test/FfiDeclarationValidatorTest.java'
+  # ISSUE-0516 registration: the class epic's decomposition tail — the
+  # production ClassConstructionValidator battery (K-D11), the claiming
+  # seam battery (K-D7/K-D11), and the end-to-end integration
+  # verification driving T1-T6 with the injected-fault contract.
+  'test/ClassConstructionValidatorTest.java'
+  'test/ClassClaimingSeamTest.java'
+  'test/ClassIntegrationVerificationTest.java'
+  # ISSUE-0540 registration: the default-plan carrier shape battery -
+  # fields, immutability, ordering, uniqueness/presence rejection,
+  # completion seams, the invoke contract, and the reused landed
+  # carriers (default-plan-carriers D10, Verification 1-9). Test-list
+  # wiring only: the production carriers compile from the
+  # deal/module glob.
+  'deal/module/DefaultPlanCarriersTest.java'
+  # ISSUE-0531 registration: the dynamically-resolved-invocation IR
+  # battery (the closed Dynamic callee and dynamic return-boundary set,
+  # the runtime selection protocol, the validator positives/negatives on
+  # both surfaces, and the callback-delivered HostFunctionValue
+  # registration closure with the materializingBoundaryOpId
+  # correlation).
+  'test/DynamicResolutionIrTest.java'
+  'test/DefaultSemanticPlannerTest.java'
+  'deal/module/DefaultIrRecorderTest.java'
+  'test/E2IdentityIntegrationGatesTest.java'
+  'test/DefaultSemanticSerializerTest.java'
+  'test/ModuleDependencyGraphTest.java'
+  'test/RuntimeDefaultLoweringTest.java'
+  'test/RuntimeConstructionPhasesTest.java'
+  'deal/test/conformance/CoverageManifestValidator.java'
+  'deal/test/conformance/CoverageManifestValidatorTest.java'
+  'deal/test/conformance/CoverageManifestCorpusTest.java'
+  'test/GateClosureStrictGateTest.java'
+  'deal/test/conformance/LuaLane.java'
+  'deal/test/conformance/LuaLaneTest.java'
+  'deal/test/conformance/JsLane.java'
+  'deal/test/conformance/JsLaneTest.java'
+  'deal/test/conformance/JvmLane.java'
+  'deal/test/conformance/JvmLaneTest.java'
+  'deal/test/conformance/MismatchClass.java'
+  'deal/test/conformance/GateMismatch.java'
+  'deal/test/conformance/ErrorSnapshot.java'
+  'deal/test/conformance/StructuredExpectationComparator.java'
+  'deal/test/conformance/FrontendCompiler.java'
+  'deal/test/conformance/CompileDiagnosticComparator.java'
+  'deal/test/conformance/Lane.java'
+  'deal/test/conformance/LaneCase.java'
+  'deal/test/conformance/LaneExecution.java'
+  'deal/test/conformance/GateDispatcher.java'
+  'deal/test/conformance/SidecarGateLoader.java'
+  'deal/test/conformance/DifferentialGate.java'
+  'deal/test/conformance/StructuredExpectationComparatorTest.java'
+  'deal/test/conformance/CompileDiagnosticComparatorTest.java'
+  'deal/test/conformance/GateDispatcherTest.java'
+  'deal/test/conformance/GateClassificationTest.java'
+  'deal/test/conformance/DifferentialGateCorpusTest.java'
+  'deal/test/conformance/CorpusFrontendResolver.java'
+  'deal/test/conformance/DifferentialGateLanesCorpusTest.java'
+  'test/CapabilityRegistryTransitionTest.java'
+  'test/SemanticProductionGateTest.java'
+  'deal/test/feature/FeatureId.java'
+  'deal/test/feature/V12FeatureMetadata.java'
+  'deal/test/feature/FeatureBackendMatrix.java'
+  'deal/test/feature/V12FeatureFixtureCatalog.java'
+  'deal/test/feature/V12FeatureGate.java'
+  'deal/test/feature/V12FeatureGateTest.java'
+  'test/ClassConstructionIntegrationTailTest.java'
 )
 
 # TEST_MAINS: ordered "<class>|<banner>|<command>" records reproducing
@@ -136,11 +367,11 @@ TEST_SOURCES=(
 # golden-ir. For guarded luajit/node records the command field carries
 # today's command lines followed by today's verbatim WARNING skip line.
 TEST_MAINS=(
-  'bg|=== Launching Backend Conformance Tests (background) ===|java -ea -cp build deal.test.BackendConformanceTest'
   'bg|=== Launching JVM Backend Tests (background) ===|java -ea -cp build deal.test.JvmBackendTest'
   'bg|=== Launching Lua ABI Unit Tests (background; JUnit4 + Hamcrest) ===|java -ea -cp build:/usr/share/java/junit4.jar:/usr/share/java/hamcrest-core.jar org.junit.runner.JUnitCore deal.test.LuaAbiTest deal.test.LuaAbiBackendTest deal.test.CrossModuleTypingTest'
   'bg|=== Launching Conformance Tests (background) ===|java -ea -cp build deal.test.ConformanceTest test/conformance/'
   'bg|=== Launching JVM Conformance Tests (background; ISSUE-0102 origin — ISSUE-0168 capability accounting) ===|java -ea -cp build deal.test.JvmConformanceTest test/conformance/'
+  'bg|=== Launching JS Conformance Tests (background) ===|java -ea -cp build deal.test.JsConformanceTest test/conformance/'
   'fg|=== Running ContainedProcessBroker Framing Tests ===|java -ea -cp build deal.test.containment.ContainedProcessBrokerFramingTest'
   'fg|=== Running ContainedProcessBroker State Tests ===|java -ea -cp build deal.test.containment.ContainedProcessBrokerStateTest'
   'fg|=== Running Diagnostic Range Tests ===|java -ea -cp build deal.test.DiagnosticRangeTest'
@@ -149,7 +380,6 @@ TEST_MAINS=(
   'fg|=== Running Checked Project Builder Tests (ISSUE-0288) ===|java -ea -cp build deal.test.CheckedProjectBuilderTest'
   'fg|=== Running Lowering Support / Requirement Manifest Tests (ISSUE-0289) ===|java -ea -cp build deal.test.LoweringSupportTest'
   'fg|=== Running Migration Planner / Route Plan Tests (ISSUE-0290) ===|java -ea -cp build deal.semantic.MigrationPlannerTest'
-  'fg|=== Running Staging / ABI Validation / Atomic Publication Tests (ISSUE-0291) ===|java -ea -cp build deal.semantic.StagingPublicationTest'
   'fg|=== Running Foundation Integration Tests (ISSUE-0292) ===|java -ea -cp build deal.test.FoundationIntegrationTest'
   'fg|=== Running Invocation / Profile / Capability Registry Tests (ISSUE-0284) ===|java -ea -cp build deal.test.InvocationProfileRegistryTest'
   'fg|=== Running Semantic IR Schema Tests (ISSUE-0282) ===|java -ea -cp build deal.test.SemanticIrSchemaTest'
@@ -160,11 +390,16 @@ TEST_MAINS=(
   'fg|=== Running Address Chain Protocol / Normalized Slot Tests (ISSUE-0234 A-D1/A-D3/A-D9) ===|java -ea -cp build deal.test.AddressChainProtocolTest'
   'fg|=== Running Address Chain Lowering Tests (ISSUE-0405 ASSIGN/DELETE chains) ===|java -ea -cp build deal.test.AddressChainLoweringTest'
   'fg|=== Running Control Flow Lowering Tests (ISSUE-0409 BRANCH/LOOP/FOR_EACH/TRY_CATCH/THROW/BREAK/CONTINUE/DISCARD) ===|java -ea -cp build deal.test.ControlFlowLoweringTest'
+  'fg|=== Running Evaluation Order Integration Tests (ISSUE-0410, decomposition tail) ===|java -ea -cp build deal.test.EvaluationOrderIntegrationTest'
+  'fg|=== Running the Runtime Integration Matrix (ISSUE-0410: semantic oracle + shared LuaJIT + shared JVM) ===|java -ea -cp build deal.test.RuntimeIntegrationMatrixTest'
+  # ISSUE-0582 registration: the CALLS family's FUNCTION_ADAPT/
+  # CALLBACK_INVOKE differential corpus (sequencing step 6 first half).
+  'fg|=== Running the Call Adapter / Callback Integration Matrix (ISSUE-0582: semantic oracle + shared LuaJIT + shared JVM) ===|java -ea -cp build deal.test.CallAdapterCallbackIntegrationTest'
   'fg|=== Running Unicode Scalars Tests (ISSUE-0382, ISSUE-0232 D5) ===|java -ea -cp build deal.test.UnicodeScalarsTest'
-  'fg|=== Running Boundary Realization Report Tests (ISSUE-0365 D4) ===|java -ea -cp build deal.test.BoundaryRealizationReportTest'
   'fg|=== Running Failure Contract Registry Tests (ISSUE-0285) ===|java -ea -cp build deal.test.FailureContractRegistryTest'
   'fg|=== Running Canonical JSON / Snapshot Digest Tests (ISSUE-0283) ===|java -ea -cp build deal.test.CanonicalJsonTest'
   'fg|=== Running Semantic IR Validator Tests (ISSUE-0286) ===|java -ea -cp build deal.test.SemanticIrValidatorTest'
+  'fg|=== Running Dynamic Resolution IR Tests (ISSUE-0531) ===|java -ea -cp build deal.test.DynamicResolutionIrTest'
   'fg|=== Running Boundary Table Corpus Tests (ISSUE-0366, wiki Verification 4) ===|java -ea -cp build deal.test.BoundaryTableCorpusTest'
   'fg|=== Running Boundary Integration Tests (ISSUE-0367, decomposition tail) ===|java -ea -cp build deal.test.BoundaryIntegrationTest'
   'fg|=== Running Control Flow Validator Tests (ISSUE-0408) ===|java -ea -cp build deal.test.ControlFlowValidatorTest'
@@ -182,6 +417,8 @@ TEST_MAINS=(
 'fg|=== Running Binding Immutability Proof Tests (ISSUE-0448 proof child) ===|java -ea -cp build deal.test.BindingImmutabilityProofTest'
 'fg|=== Running Adapter Creation Rule Tests (ISSUE-0449 creation-rule child) ===|java -ea -cp build deal.test.AdapterCreationRuleTest'
 'fg|=== Running Adapter Shape Map / Payload Tests (ISSUE-0450 shape-map child) ===|java -ea -cp build deal.test.AdapterShapeMapPayloadTest'
+'fg|=== Running Bindings Production Validation Tests (ISSUE-0451 B9 validation child) ===|java -ea -cp build deal.test.BindingsValidationTest'
+'fg|=== Running Bindings Integration Verification (ISSUE-0452, sequencing item 9) ===|java -ea -cp build deal.test.BindingsIntegrationVerificationTest'
   'fg|=== Running Protected Path Ops Tests (ISSUE-0262) ===|java -ea -cp build deal.test.ProtectedPathOpsTest'
   'fg|=== Running Identity Carrier Package Tests (ISSUE-0309) ===|java -ea -cp build deal.test.CanonicalIdentityTest'
   'fg|=== Running Compiler Workspace Protocol Tests ===|java -ea -cp build deal.test.CompilerWorkspaceTest'
@@ -193,6 +430,7 @@ TEST_MAINS=(
   'fg|=== Running Project Locator Tests (ISSUE-0265 T4) ===|java -ea -cp build deal.project.ProjectLocatorTest'
   'fg|=== Running Module Identity Resolver Classifier Tests (ISSUE-0266 T5) ===|java -ea -cp build deal.module.ModuleIdentityResolverTest'
   'fg|=== Running Module Identity Assembly Tests (ISSUE-0268 T7) ===|java -ea -cp build deal.module.ModuleIdentityAssemblyTest'
+  'fg|=== Running C FFI Declaration Validation and Forward Binding Tests (ISSUE-0162) ===|java -ea -cp build deal.test.FfiDeclarationValidatorTest'
   'fg|=== Running AST/Types Tests ===|java -ea -cp build deal.test.AstAndTypesTest'
   'fg|=== Running Types Bytes Tests (ISSUE-0308) ===|java -ea -cp build deal.test.TypesBytesTest'
   'fg|=== Running Directive Tests ===|java -ea -cp build deal.test.DirectiveTest'
@@ -202,6 +440,7 @@ TEST_MAINS=(
   'fg|=== Running IR Dumper Tests ===|java -ea -cp build deal.test.IrDumperTest'
   'fg|=== Running IR Golden Tests ===|java -ea -cp build deal.test.IrGoldenTest'
   'fg|=== Running Type Descriptor Tests ===|java -ea -cp build deal.test.TypeDescriptorTest'
+  'fg|=== Running Descriptor Emission Byte Identity Tests (ISSUE-0315) ===|java -ea -cp build deal.test.DescriptorEmissionByteIdentityTest'
   'fg|=== Running Canonical Runtime Type Descriptor Tests (ISSUE-0310/0311/0314) ===|java -ea -cp build deal.test.CanonicalRuntimeTypeDescriptorTest'
   'fg|=== Running Runtime Type Matcher Tests (ISSUE-0312) ===|java -ea -cp build deal.test.RuntimeTypeMatcherTest'
   'fg|=== Running JS Backend Unit Tests ===|java -ea -cp build deal.test.JsBackendTest'
@@ -211,8 +450,12 @@ TEST_MAINS=(
   'fg|=== Running Module System Tests ===|java -ea -cp build deal.test.ModuleSystemTest'
   'fg|=== Running Project Migration Integration Tests (ISSUE-0269 T8) ===|java -ea -cp build deal.test.ProjectMigrationIntegrationTest'
   'fg|=== Running Project Integration Gates (ISSUE-0270 T9: out-of-root both-backend gates) ===|java -ea -cp build deal.test.ProjectIntegrationGatesTest'
+  'fg|=== Running Production Project-Graph Fixture Gates (ISSUE-0506 D11) ===|java -ea -cp build deal.test.ProjectGraphFixturesGatesTest'
   'fg|=== Running Source Module Resolver Tests (ISSUE-0267 T6) ===|java -ea -cp build deal.module.SourceModuleResolverTest'
   'fg|=== Running LuaJIT Async Export Invoker Tests (ISSUE-0417 component, ISSUE-0418 verification matrix) ===|java -ea -cp build:/usr/share/java/junit4.jar:/usr/share/java/hamcrest-core.jar org.junit.runner.JUnitCore deal.test.LuaJitAsyncExportInvokerTest'
+'fg|=== Running Registry Async-Export Boundary Tests (ISSUE-0346 REGISTRY) ===|java -ea -cp build:/usr/share/java/junit4.jar:/usr/share/java/hamcrest-core.jar org.junit.runner.JUnitCore deal.test.RegistryAsyncExportBoundaryTest'
+  'fg|=== Running JVM Async Export Invoker Tests (ISSUE-0161 JVM host ABI) ===|java -ea -cp build:/usr/share/java/junit4.jar:/usr/share/java/hamcrest-core.jar org.junit.runner.JUnitCore deal.test.JvmAsyncExportInvokerTest'
+  'fg|=== Running JVM Registry Async-Export Boundary Tests (ISSUE-0161 JVM lane of the REGISTRY boundary) ===|java -ea -cp build:/usr/share/java/junit4.jar:/usr/share/java/hamcrest-core.jar org.junit.runner.JUnitCore deal.test.JvmRegistryAsyncExportBoundaryTest'
   'fg|=== Running Stdlib .d.deal Parse Tests ===|java -ea -cp build deal.test.StdlibDeclParseTest'
   'fg|=== Running Source Map Tests ===|java -ea -cp build deal.test.SourceMapTest'
   'fg|=== Running Runtime Source Location Tests ===|java -ea -cp build deal.test.RuntimeSourceLocationTest'
@@ -234,7 +477,129 @@ WARNING: node not found, skipping standard library JS tests'
   'luajit|=== Running Async Nesting Stress Tests ===|luajit test_async_nesting.lua
 WARNING: luajit not found, skipping async nesting stress tests'
   'fg||java -ea -cp build deal.test.StdlibContractTest'
-  'fg|=== std/time.nowMillis Pre-Activation Pin (ISSUE-0369) ===|java -ea -cp build deal.test.StdlibTimePreActivationPinTest'
   'golden-ir|=== Stdlib Golden IR Check ===|java -ea -cp build deal.test.GenerateStdlibGoldenIr "$TEMP_FILE" 2>/dev/null'
   'fg|=== Running Conformance Harness Metadata Seam Tests ===|java -ea -cp build deal.test.ConformanceHarnessMetadataTest'
+  # ISSUE-0457 registration: the DistributionHome tier-selection proofs
+  # (project-local, classpath-resource, DEAL_HOME, and CWD tiers).
+  'fg|=== Running Distribution Home Tier-Selection Tests (ISSUE-0457) ===|java -ea -cp build deal.test.DistributionHomeTest'
+  # ISSUE-0458 registration: the transactional publication contract
+  # suite (whole-project-artifact-publication Verification 1-7).
+  'fg|=== Running Publication Stager Tests (ISSUE-0458) ===|java -ea -cp build deal.test.PublicationStagerTest'
+  # ISSUE-0493 registration: the closed stdlib catalog and the
+  # checked-fact recognition predicate (stdlib-operations-and-time-lock
+  # D1, sequencing item 1).
+  'fg|=== Running Stdlib Function Catalog / Checked-Fact Recognition Tests (ISSUE-0493) ===|java -ea -cp build deal.test.StdlibFunctionCatalogTest'
+  # ISSUE-0494 registration: the STDLIB_CALL lowering arm — the
+  # 20-id battery, argument operand completion, descriptor-kind-rule
+  # boundaries, single-source policy stamping, dump determinism, the
+  # validator negative, and the time lock (stdlib-operations-and-time-lock
+  # D2, Verification 4; sequencing item 2).
+  'fg|=== Running Stdlib STDLIB_CALL Lowering Tests (ISSUE-0494) ===|java -ea -cp build deal.test.StdlibCallLoweringTest'
+  # ISSUE-0495 registration: the single stdlib algorithm executor —
+  # the 20-id family batteries, exact projections, the console effect
+  # contract, boundary precedence, and the combined T2/T1 drive
+  # (stdlib-operations-and-time-lock D4/D5, Verification 1 and 3;
+  # sequencing item 3).
+  'fg|=== Running Shared Stdlib Semantics Tests (ISSUE-0495) ===|java -ea -cp build deal.test.SharedStdlibSemanticsTest'
+  # ISSUE-0496 registration: the stdlib failure-projection wiring and
+  # boundary realization reporting — exact projections, precedence,
+  # realization reports, and the validator stdlibCell negative
+  # (stdlib-operations-and-time-lock D6, Verification 2 and 4;
+  # sequencing item 4).
+  'fg|=== Running Stdlib Failure Projection / Boundary Realization Tests (ISSUE-0496) ===|java -ea -cp build deal.test.StdlibFailureProjectionTest'
+  # ISSUE-0497 registration: the STDLIB_SEMANTICS claiming arms, the
+  # time-lock negative proofs, and the stdlib-export value-read
+  # disposition (stdlib-operations-and-time-lock D3/D8/D9,
+  # Verification 4 and 5; sequencing item 5).
+  'fg|=== Running Stdlib Claiming / Time-Lock Tests (ISSUE-0497) ===|java -ea -cp build deal.test.StdlibClaimingTimeLockTest'
+  # ISSUE-0498 registration: the target-helper equivalence battery —
+  # the retained Lua/JS/JVM helper candidates actually run against the
+  # common algorithm plus the projection wiring, the known divergent
+  # verdicts detected by the comparison, the wiring admission rule,
+  # and the STDLIB_SEMANTICS promotion-evidence registry
+  # (stdlib-operations-and-time-lock D7, Verification 6; sequencing
+  # item 6).
+  'fg|=== Running Stdlib Target-Helper Equivalence Battery (ISSUE-0498) ===|java -ea -cp build deal.test.StdlibEquivalenceBatteryTest'
+  # ISSUE-0499 registration: the epic's decomposition tail — one
+  # pipeline drives T1-T6 end-to-end (catalog, lowering, the shared
+  # algorithms, the exact projections, the claiming seam plus the time
+  # lock and the D3 disposition, and the equivalence-battery verdicts),
+  # and the injected-fault variants prove the all-constituents contract
+  # (stdlib-operations-and-time-lock Contracts §Integration verification
+  # task, Verification 7-8; sequencing item 7, the last task).
+  'fg|=== Running Stdlib Integration Verification (ISSUE-0499, decomposition tail) ===|java -ea -cp build deal.test.StdlibIntegrationTest'
+  'fg|=== Running Class Declaration Lowering Tests (ISSUE-0511 declaration arm) ===|java -ea -cp build deal.test.ClassDeclarationLoweringTest'
+  # ISSUE-0512 registration: the CLASS_NEW LOCAL execution battery —
+  # the closed K-D4/D16 order with fixture side-effect probes
+  # (class-construction-jsonable-operations K-D4/K-D11,
+  # Verification 1; sequencing item 2).
+  'fg|=== Running Class Ops Executor Tests (ISSUE-0512 K-D4/K-D11) ===|java -ea -cp build deal.test.ClassOpsExecutorTest'
+  # ISSUE-0512 registration: the CLASS_NEW LOCAL lowering battery —
+  # the pinned literal payload shapes, the combined T1+T2 executor
+  # drive, and determinism (class-construction-jsonable-operations
+  # K-D4; sequencing item 2).
+  'fg|=== Running Class New Lowering Tests (ISSUE-0512 LOCAL arm) ===|java -ea -cp build deal.test.ClassNewLoweringTest'
+  # ISSUE-0513 registration: the field-operation executor battery — the
+  # K-D6/K-D7 presence semantics, the canonical receiver projections,
+  # and the commit discipline (class-construction-jsonable-operations
+  # K-D6/K-D7, Verification 4; sequencing item 3).
+  'fg|=== Running Call Machine Integration Verification (ISSUE-0236, E7) ===|java -ea -cp build deal.test.CallMachineIntegrationTest'
+  'fg|=== Running Field Ops Executor Tests (ISSUE-0513 K-D6/K-D7) ===|java -ea -cp build deal.test.FieldOpsExecutorTest'
+  # ISSUE-0513 registration: the field-operation lowering battery — the
+  # pinned read/write/delete/has arms and the combined T1+T2+T3 drive
+  # (class-construction-jsonable-operations K-D6/K-D7; sequencing
+  # item 3).
+  'fg|=== Running Field Ops Lowering Tests (ISSUE-0513 K-D6/K-D7 arms) ===|java -ea -cp build deal.test.FieldOpsLoweringTest'
+  # ISSUE-0514 registration: the shared-factory executor battery —
+  # driven through the assembled ClassOpsExecutor (K-D4/K-D5).
+  'fg|=== Running Shared Factory Executor Tests (ISSUE-0514 K-D4/K-D5) ===|java -ea -cp build deal.test.SharedFactoryExecutorTest'
+  # ISSUE-0514 registration: the shared-factory lowering battery — the
+  # imported-construction slice through the extended two-module seam.
+  'fg|=== Running Shared Factory Lowering Tests (ISSUE-0514 SHARED_FACTORY arm) ===|java -ea -cp build deal.test.SharedFactoryLoweringTest'
+  # ISSUE-0540 registration: the carrier-shape battery main - one
+  # foreground record (default-plan-carriers D10).
+  'fg|=== Running Default Plan Carrier Shape Tests (ISSUE-0540) ===|java -ea -cp build deal.module.DefaultPlanCarriersTest'
+  # ISSUE-0515 registration: the JSON walker executor battery — the
+  # generated C$fromJson/C$toJson walk contracts over the fixture JSON
+  # delegate (class-construction-jsonable-operations K-D8/K-D9/K-D10/
+  # K-D11; sequencing item 5).
+  'fg|=== Running Json Class Executor Tests (ISSUE-0515 K-D8/K-D9/K-D10/K-D11) ===|java -ea -cp build deal.test.JsonClassExecutorTest'
+  # ISSUE-0515 registration: the generated @jsonable body lowering
+  # battery — the pinned generated bodies, the JsonDefaultChildTable
+  # record, and the combined T1..T5 end-to-end drive
+  # (class-construction-jsonable-operations K-D8/K-D10; sequencing
+  # item 5).
+  'fg|=== Running Json Class Lowering Tests (ISSUE-0515 K-D8/K-D10) ===|java -ea -cp build deal.test.JsonClassLoweringTest'
+  # ISSUE-0516 registration: the class epic's decomposition tail — the
+  # production validator battery, the claiming seams, and the
+  # end-to-end integration verification
+  # (class-construction-jsonable-operations K-D7/K-D11, Verification 7;
+  # sequencing item 6, the last task).
+  'fg|=== Running Class Construction Validator Tests (ISSUE-0516 K-D11) ===|java -ea -cp build deal.test.ClassConstructionValidatorTest'
+  'fg|=== Running Class Claiming Seam Tests (ISSUE-0516 K-D7/K-D11) ===|java -ea -cp build deal.test.ClassClaimingSeamTest'
+  'fg|=== Running Class Integration Verification (ISSUE-0516, decomposition tail) ===|java -ea -cp build deal.test.ClassIntegrationVerificationTest'
+  'fg|=== Running Default Semantic Planner Tests (ISSUE-0541) ===|java -ea -cp build deal.test.DefaultSemanticPlannerTest'
+  'fg|=== Running Default IR Recorder Tests (ISSUE-0541) ===|java -ea -cp build deal.module.DefaultIrRecorderTest'
+  'fg|=== Running E2 Identity Integration Gates (ISSUE-0316) ===|java -ea -cp build deal.test.E2IdentityIntegrationGatesTest'
+  'fg|=== Running Default Semantic Serializer Tests (ISSUE-0542) ===|java -ea -cp build deal.test.DefaultSemanticSerializerTest'
+  'fg|=== Running Module Dependency Graph Tests (ISSUE-0543) ===|java -ea -cp build deal.test.ModuleDependencyGraphTest'
+  'fg|=== Running Runtime Default Lowering Tests (ISSUE-0544) ===|java -ea -cp build deal.test.RuntimeDefaultLoweringTest'
+  'fg|=== Running Runtime Construction Phases Tests (ISSUE-0545) ===|java -ea -cp build deal.test.RuntimeConstructionPhasesTest'
+  'fg|=== Running Coverage Manifest Validator Tests (ISSUE-0474) ===|java -ea -cp build deal.test.conformance.CoverageManifestValidatorTest'
+  'fg|=== Running Coverage Manifest Corpus Tests (ISSUE-0475) ===|java -ea -cp build deal.test.conformance.CoverageManifestCorpusTest'
+  'fg|=== Running Gate Closure Strict Gate Tests (ISSUE-0477) ===|java -ea -cp build deal.test.GateClosureStrictGateTest'
+  'fg|=== Running Lua Lane Tests (ISSUE-0354) ===|java -ea -cp build deal.test.conformance.LuaLaneTest'
+  'fg|=== Running JS Lane Tests (ISSUE-0356) ===|java -ea -cp build deal.test.conformance.JsLaneTest'
+  'fg|=== Running JVM Lane Tests (ISSUE-0355) ===|java -ea -cp build deal.test.conformance.JvmLaneTest'
+  'fg|=== Running Differential Gate Comparator Tests (ISSUE-0353) ===|java -ea -cp build deal.test.conformance.StructuredExpectationComparatorTest'
+  'fg|=== Running Compile Diagnostic Comparator Tests (ISSUE-0353) ===|java -ea -cp build deal.test.conformance.CompileDiagnosticComparatorTest'
+  'fg|=== Running Gate Dispatcher Tests (ISSUE-0353) ===|java -ea -cp build deal.test.conformance.GateDispatcherTest'
+  'fg|=== Running Gate Classification Tests (ISSUE-0353) ===|java -ea -cp build deal.test.conformance.GateClassificationTest'
+  'fg|=== Running Differential Gate Corpus Tests (ISSUE-0353) ===|java -ea -cp build deal.test.conformance.DifferentialGateCorpusTest'
+  'fg|=== Running Differential Gate Lanes Corpus Tests (ISSUE-0357) ===|java -ea -cp build deal.test.conformance.DifferentialGateLanesCorpusTest'
+  'fg|=== Running Capability Registry Transition Surface Tests (ISSUE-0485) ===|java -ea -cp build deal.test.CapabilityRegistryTransitionTest'
+  'fg|=== Running Semantic Production Gate Tests (ISSUE-0239) ===|java -ea -cp build deal.test.SemanticProductionGateTest'
+  'fg|=== Running V12 Feature Catalog/Matrix Tests (ISSUE-0165) ===|java -ea -cp build deal.test.feature.V12FeatureGateTest'
+  'fg|=== Running the Production V12 Feature/Native Gate (ISSUE-0165) ===|java -ea -cp build deal.test.feature.V12FeatureGate'
+  'fg|=== Running Class Construction Integration Tail Tests (ISSUE-0517) ===|java -ea -cp build deal.test.ClassConstructionIntegrationTailTest'
 )

@@ -1,0 +1,7 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: Source code cannot call compiler-only require as an undeclared identifier
+// @expected: compile-error E2001
+// @features: modules, resolution, require, diagnostics, v1.2
+
+export function probe(): table { return require("./support/parent_lib"); }
+export function main(): null { return null; }

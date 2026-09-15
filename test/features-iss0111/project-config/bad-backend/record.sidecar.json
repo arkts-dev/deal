@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "feature": "project-config",
+  "spec": "Package manifest — manifest backends are exactly luajit or jvm",
+  "description": "the gate publishes manifest-inject.json as deal.json with backend:lua; the pinned legacy-spelling E2010 fragment must be observed",
+  "expected": { "compile-error": "E2010" },
+  "backends": ["luajit", "jvm"],
+  "invocation": "compile-only",
+  "support": [],
+  "manifestPolicy": "inject",
+  "manifestErrorFragment": "unsupported backend 'lua'"
+}

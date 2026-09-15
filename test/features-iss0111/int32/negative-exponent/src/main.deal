@@ -1,0 +1,8 @@
+// ISSUE-0165 SIGNED_INT32: a negative integer exponent must raise E8006
+// on both backends.
+export function main(): null {
+  let base: int = 2;
+  let exponent: int = -1;
+  let x: int = base ** exponent;
+  return null;
+}

@@ -67,12 +67,22 @@ import java.util.regex.Pattern;
  *       {@code error} field (an {@code error} field on {@code runtime-ok}
  *       is a classification failure).</li>
  *   <li>{@code runtime-error} — {@code exitCode} 1 and an {@code error}
- *       object with the mandatory fields {@code code}, {@code message},
- *       {@code sourceFile}, {@code line}, {@code column}. Recognized
- *       optional fields are exactly {@code expected}, {@code actual},
- *       {@code frames}, {@code cause}; any other field in the error
- *       object is an unknown-field failure. The sidecar is the
- *       authoritative field set (C2).</li>
+ *       object with the mandatory fields {@code code} and {@code
+ *       message} plus the span group {@code sourceFile}, {@code line},
+ *       {@code column}. The span group is mandatory for every fixture
+ *       except the one sanctioned span-less shape — the locked time
+ *       selector's retained {@code nowMillis} wrapper raises E8004 with
+ *       no file/line/column at all
+ *       ({@code luajit-time-selector-disposition}, Failure and
+ *       operations), so the sidecar of exactly
+ *       {@code backend-runtime/stdlib-edge/time-now-millis-positive.deal}
+ *       omits the whole group, and pinning any of the three there is a
+ *       classification failure (a sidecar must never pin span values
+ *       the runtime cannot produce). Recognized optional fields are
+ *       exactly {@code expected}, {@code actual}, {@code frames},
+ *       {@code cause}; any other field in the error object is an
+ *       unknown-field failure. The sidecar is the authoritative field
+ *       set (C2).</li>
  *   <li>{@code compile-reject} — exactly a {@code diagnostic} object with
  *       mandatory {@code code} plus optional-pinned {@code line}/
  *       {@code column} ({@code message} is compile-sidecar-only); no
@@ -229,6 +239,24 @@ public final class SidecarSchemaValidator {
 
     private static final List<String> MANDATORY_ERROR_FIELDS =
         List.of("code", "message", "sourceFile", "line", "column");
+
+    /**
+     * The one sanctioned span-less runtime-error shape: the locked time
+     * selector's retained {@code nowMillis} wrapper raises E8004 with no
+     * file/line/column at all
+     * ({@code luajit-time-selector-disposition}, Failure and operations
+     * — "the E8004 carries the route's existing shape (the retained
+     * wrapper passes no span)"), so this fixture's sidecar omits the
+     * whole span group and pinning any of the three is a classification
+     * failure (a sidecar must never pin span values the runtime cannot
+     * produce).
+     */
+    static final String SANCTIONED_SPANLESS_FIXTURE =
+        "backend-runtime/stdlib-edge/time-now-millis-positive.deal";
+
+    /** The mandatory fields of the sanctioned span-less error object. */
+    private static final List<String> SPANLESS_MANDATORY_ERROR_FIELDS =
+        List.of("code", "message");
 
     private static final List<String> ERROR_STRING_FIELDS =
         List.of("code", "message", "sourceFile", "expected", "actual", "cause");
@@ -818,10 +846,32 @@ public final class SidecarSchemaValidator {
                         + "fields are exactly expected, actual, frames, cause)");
             }
         }
-        for (String mandatory : MANDATORY_ERROR_FIELDS) {
+        boolean spanless = SANCTIONED_SPANLESS_FIXTURE
+            .equals(context.fixturePath());
+        for (String mandatory : spanless
+                ? SPANLESS_MANDATORY_ERROR_FIELDS
+                : MANDATORY_ERROR_FIELDS) {
             if (!fields.containsKey(mandatory)) {
                 return failure(context, prefix + "." + mandatory,
                     "missing mandatory error field \"" + mandatory + "\"");
+            }
+        }
+        // The sanctioned span-less shape closes the other direction too:
+        // the retained nowMillis wrapper raises E8004 with no span, so
+        // pinning any of the three span fields there is a fabricated
+        // value the runtime can never produce — a classification
+        // failure, never a tolerated pin.
+        if (spanless) {
+            for (String key : List.of("sourceFile", "line", "column")) {
+                if (fields.containsKey(key)) {
+                    return failure(context, prefix + "." + key,
+                        "the sanctioned span-less fixture must not pin "
+                            + key + " — the retained nowMillis wrapper "
+                            + "raises E8004 with no file/line/column "
+                            + "(luajit-time-selector-disposition, Failure "
+                            + "and operations); a sidecar never pins span "
+                            + "values the runtime cannot produce");
+                }
             }
         }
         for (String key : ERROR_STRING_FIELDS) {
@@ -838,8 +888,11 @@ public final class SidecarSchemaValidator {
                     "error field " + key + " must be an integer");
             }
         }
-        String sourceFile =
-            ((CanonicalJson.Str) fields.get("sourceFile")).value();
+        CanonicalJson.Value sourceFileValue = fields.get("sourceFile");
+        if (sourceFileValue == null) {
+            return Optional.empty();
+        }
+        String sourceFile = ((CanonicalJson.Str) sourceFileValue).value();
         return checkSourceFile(context, prefix + ".sourceFile", sourceFile);
     }
 

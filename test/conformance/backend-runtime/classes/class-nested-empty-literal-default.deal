@@ -1,0 +1,13 @@
+// @spec: Classes
+// @description: An empty nested object literal receives the nested class defaults.
+// @expected: runtime-ok
+// @features: classes, nested-classes, contextual-typing
+
+class Address { zip: int = 90210; }
+class User { home: Address = {}; }
+
+export function main(): null {
+  let u: User = { home: {} };
+  if (u.home.zip !== 90210) { throw { code: "TEST_FAIL", message: "nested default absent" }; }
+  return null;
+}

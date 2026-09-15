@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "feature": "bytes-core",
+  "spec": "spec-v1.2.md §Arrays / §Bytes",
+  "description": "nested bytes arrays (bytes[][]) on both backends: allocation, per-element reference identity, aliasing through an array reference copy, and mutation visibility",
+  "expected": "runtime-ok",
+  "backends": ["luajit", "jvm"],
+  "invocation": "direct-main",
+  "support": []
+}

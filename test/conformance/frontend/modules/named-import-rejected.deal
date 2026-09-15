@@ -1,0 +1,6 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: A named import is rejected because namespace import is the only import form
+// @expected: compile-error E1019
+// @features: modules, imports, diagnostics, v1.2
+
+import { value } from "./support/export_function_lib";

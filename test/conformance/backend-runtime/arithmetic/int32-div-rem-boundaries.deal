@@ -1,0 +1,28 @@
+// @spec: Runtime execution model — Integer division
+// @description: Signed division truncates toward zero and INT_MIN divided by -1 raises E8004 after operand effects
+// @expected: runtime-ok
+// @features: int32, arithmetic, errors, evaluation-order
+
+export function main(): null {
+  if (5 / 2 !== 2 || -5 / 2 !== -2 || -5 % 2 !== -1 || 5 % -2 !== 1) {
+    throw { code: "TEST_FAIL", message: "signed division or remainder mismatch" };
+  }
+
+  let trace: string = "";
+  function lhs(): int { trace = trace + "L"; return -2147483648; }
+  function rhs(): int { trace = trace + "R"; return -1; }
+
+  try {
+    let impossible: int = lhs() / rhs();
+    trace = trace + "X";
+  } catch (e) {
+    trace = trace + "C";
+    if (e.code !== "E8004") {
+      throw { code: "TEST_FAIL", message: "wrong overflow code: " + e.code };
+    }
+  }
+  if (trace !== "LRC") {
+    throw { code: "TEST_FAIL", message: "division overflow order: " + trace };
+  }
+  return null;
+}

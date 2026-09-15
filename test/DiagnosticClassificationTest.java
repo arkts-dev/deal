@@ -301,9 +301,9 @@ public class DiagnosticClassificationTest {
         coverage.put("E3017", "CheckerTest (array length read-only)");
         coverage.put("E3018",
             "CheckerTest (table index write/delete key static string gate)");
-        coverage.put("E3019",
-            "CheckerTest (bytes comparison gate, synthetic bytes-typed admission path) / "
-            + "ComparisonSelectorLoweringTest (E6005 COMPARISON_SELECTOR producer guard)");
+        coverage.put("E3020",
+            "DefaultSemanticPlannerTest (evaluator-scope await in a class"
+            + " default — the planner's sync gate)");
 
         coverage.put("E4001", "CheckerTest (missing required field)");
         coverage.put("E4002", "CheckerTest (extra field)");
@@ -329,6 +329,10 @@ public class DiagnosticClassificationTest {
             "FailureContractRegistryTest (registry-owned detail/message construction; "
             + "ISSUE-0230 foundation, ISSUE-0285) — LoweringFoundationTest pins the "
             + "registration");
+        coverage.put("E6006",
+            "FfiDeclarationValidatorTest (JVM extern-C rejection) / "
+            + "JsBackendTest (@extern-c import rejection) / the corpus "
+            + "backend-runtime/ffi C6 divergent sidecars (ISSUE-0507)");
 
         coverage.put("E7001", "ModuleSystemTest (decl file exec stmt)");
         coverage.put("E7002",
@@ -343,10 +347,10 @@ public class DiagnosticClassificationTest {
         coverage.put("E8006", "test_runtime.lua (negative exponent)");
         coverage.put("E8007", "test_runtime.lua (extra class field)");
         coverage.put("E8010", "test_runtime.lua (function sig mismatch) / "
-            + "BackendConformanceTest jvm-host-abi-slice "
+            + "JVM backend integration test jvm-host-abi-slice "
             + "(host return boundary) / JvmBackendTest (host ABI)");
         coverage.put("E8011", "test_runtime.lua (host module load validation) / "
-            + "BackendConformanceTest jvm-host-abi-slice "
+            + "JVM backend integration test jvm-host-abi-slice "
             + "(missing host export) / JvmBackendTest (host ABI)");
         coverage.put("E8012", "test_runtime.lua (bytes_new negative length; "
             + "bytes_get/bytes_set index bounds) / JsBackendTest (bytes E8012 "

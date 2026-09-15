@@ -1,0 +1,10 @@
+// @spec: Diagnostics
+// @description: A past-end array read reports E8001 at the original DEAL index expression
+// @expected: runtime-error E8001
+// @features: diagnostics, runtime-location, arrays
+
+export function main(): null {
+  let values: int[] = [1];
+  let value: int = values[2];
+  return null;
+}

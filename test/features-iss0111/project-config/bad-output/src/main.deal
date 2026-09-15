@@ -1,0 +1,6 @@
+// ISSUE-0165 PROJECT_CONFIG: a non-string output value is E2010 before
+// any directory or artifact is created (the gate injects the malformed
+// manifest verbatim).
+export function main(): null {
+  return null;
+}

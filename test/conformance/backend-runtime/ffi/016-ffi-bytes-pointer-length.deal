@@ -1,0 +1,17 @@
+// @spec: Modules, declarations, standard library, and host ABI — C FFI externals entries
+// @description: A bytes argument preserves immediate length, order, and unsigned values above 127 across the C ABI (ffi_bytes_sum over bytes(128, 255, 1) folds 3 → 899 → 231298 → 59443587).
+// @expected: runtime-ok
+// @features: c-ffi, bytes, uint8, length
+
+import * as native from "candidate/native";
+export function main(): null {
+  let data: bytes = bytes(3);
+  data[0] = 128;
+  data[1] = 255;
+  data[2] = 1;
+  let value: int = native.ffi_bytes_sum(data);
+  if (value !== 59443587) {
+    throw { code: "TEST_FAIL", message: "ffi bytes width, sign, order, or length" };
+  }
+  return null;
+}

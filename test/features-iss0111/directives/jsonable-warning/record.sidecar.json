@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "feature": "directives",
+  "spec": "JSON serialization — invalid @jsonable is the E1043 warning-and-ignore path",
+  "description": "argument-free @jsonable on an exported function warns E1043 and applies no metadata",
+  "expected": "compile-ok",
+  "backends": ["luajit", "jvm"],
+  "invocation": "compile-only",
+  "support": []
+}

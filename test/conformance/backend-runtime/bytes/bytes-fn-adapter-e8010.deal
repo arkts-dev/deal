@@ -1,0 +1,18 @@
+// @spec: Functions — arity extension at a check position
+// @description: an arity-extended bytes-bearing function value at a call-argument boundary raises E8010 with the pinned function signature mismatch contract (v1.2)
+// @expected: runtime-error E8010
+// @features: bytes, functions, arity, runtime-errors
+
+function id(b: bytes): bytes { return b; }
+
+function apply2(cb: (b: bytes, v: int) => bytes, b: bytes): bytes {
+  return cb(b, 5);
+}
+
+export function test_bytes_fn_adapter_e8010(): int {
+  return apply2(id, bytes(1))[0];
+}
+
+export function main(): null {
+  return null;
+}

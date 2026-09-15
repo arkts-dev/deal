@@ -337,6 +337,40 @@ public final class FunctionBindingRegistry {
     public FunctionValueMaterialization registerHostOrExternalImport(
             FunctionAllocationIdentity identity, KindPayload producerPayload,
             FunctionValueImportFacts facts, ModuleRoutePlan plan) {
+        return registerHostOrExternalImportWithRoutes(identity, producerPayload, facts,
+            plan == null ? Map.of() : plan.entries());
+    }
+
+    /**
+     * The route-map variant of the host/external import materialization
+     * seam (the E7 lowering surface): identical classification and
+     * registration with the {@code executionOwner} resolved from the
+     * supplied callee-route map — one route record per callee module
+     * (shared callee → {@code SHARED_BODY}; retained-ABI callee →
+     * {@code RETAINED_ABI}).
+     *
+     * @param identity        the produced allocation identity; non-null
+     * @param producerPayload the pinned member-read/export-read payload
+     *                        record of the producing op; non-null
+     * @param facts           the checker facts (host or imported module
+     *                        id, export name, descriptor); non-null
+     * @param calleeRoutes    the callee-module route facts keyed by
+     *                        {@link ModuleId}; non-null
+     * @return the recorded producer-fact classification of the site
+     */
+    public FunctionValueMaterialization registerHostOrExternalImportWithRoutes(
+            FunctionAllocationIdentity identity, KindPayload producerPayload,
+            FunctionValueImportFacts facts, Map<ModuleId, ModuleRoute> calleeRoutes) {
+        Objects.requireNonNull(calleeRoutes, "calleeRoutes must not be null");
+        registerHostOrExternalImportCore(identity, producerPayload, facts, calleeRoutes);
+        return materializations.get(Objects.requireNonNull(identity,
+            "identity must not be null"));
+    }
+
+    /** The shared registration core over the callee-route facts. */
+    private void registerHostOrExternalImportCore(
+            FunctionAllocationIdentity identity, KindPayload producerPayload,
+            FunctionValueImportFacts facts, Map<ModuleId, ModuleRoute> calleeRoutes) {
         Objects.requireNonNull(identity, "identity must not be null");
         Objects.requireNonNull(producerPayload, "producerPayload must not be null");
         Objects.requireNonNull(facts, "facts must not be null — a function-typed "
@@ -396,8 +430,7 @@ public final class FunctionBindingRegistry {
                 FunctionValueMaterializationSource.HOST_EXPORT, facts.hostModuleId(),
                 facts.exportName(), funcDescriptor, producingKind, null);
         } else {
-            ModuleRoute calleeRoute = plan == null ? null
-                : plan.entries().get(facts.importedModuleId());
+            ModuleRoute calleeRoute = calleeRoutes.get(facts.importedModuleId());
             if (calleeRoute == null) {
                 throw new IllegalStateException("the cross-module import of '"
                     + facts.importedModuleId() + "'." + facts.exportName()
@@ -417,7 +450,6 @@ public final class FunctionBindingRegistry {
                 facts.exportName(), funcDescriptor, producingKind, null);
         }
         materializations.put(identity, classification);
-        return classification;
     }
 
     /**

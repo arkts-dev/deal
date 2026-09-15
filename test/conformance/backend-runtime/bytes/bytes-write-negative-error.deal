@@ -1,0 +1,10 @@
+// @spec: Bytes
+// @description: A byte write below zero is rejected at runtime.
+// @expected: runtime-error E8013
+// @features: bytes, writes, boundaries
+
+export function main(): null {
+  let b: bytes = bytes(1);
+  b[0] = -1;
+  return null;
+}

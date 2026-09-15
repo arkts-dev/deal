@@ -934,7 +934,7 @@ static int hang_peer_entry(void)
                 return 42;
         }
     }
-    if (memcmp(line, "DEALPG4 HELLO_OK 4 31", 21) != 0)
+    if (memcmp(line, "DEALPG4 HELLO_OK 4 63", 21) != 0)
         return 42;
     n = snprintf(cmd, sizeof cmd, "DEALPG4 FEATURE_READY %s\n", nonce);
     if (n <= 0 || (size_t)n >= sizeof cmd

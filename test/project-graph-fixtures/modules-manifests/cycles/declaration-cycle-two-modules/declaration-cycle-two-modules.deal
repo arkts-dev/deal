@@ -1,0 +1,4 @@
+
+import * as A from "./support/decl_two_a";
+export function probe(x: A.A): A.A { return x; }
+export function main(): null { return null; }

@@ -1,0 +1,4 @@
+// Determinism corpus module (deterministic-diagnostics D3): one phase-3
+// checker diagnostic — the number literal 2.0 is not assignable to the
+// declared int, so the checker raises E3001.
+export function f(): int { let y: int = 2.0; return y; }

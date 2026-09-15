@@ -1,5 +1,5 @@
 // IR golden fixture: jvm-arrays-slice-jvm-arr-cmp-both-reads-index-hoist-parity
-// Migrated IR-containment pins from test/conformance/fixtures/jvm-arrays-slice.json case 'jvm-arr-cmp-both-reads-index-hoist-parity' (ISSUE-0358).
+// Migrated IR-containment pin for legacy case 'jvm-arr-cmp-both-reads-index-hoist-parity' (ISSUE-0358).
 
 import * as console from "std/console"
 function pick(label: string, z: null): int { console.log(label); return 0; }

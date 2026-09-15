@@ -1,0 +1,62 @@
+// ISSUE-0165 staged sync-bytes oracle fixture (E13 gate evidence): the
+// production shape of BYTES_SYNC_FUNCTION — main(): null plus an oracle
+// that assigns, containerizes (nullable + array), invokes, and asserts a
+// first-class sync (bytes)->bytes value with reference identity across
+// the typed boundary. The gate compiles it through the production
+// orchestrator and executes it once on LuaJIT; the JVM leg stays an
+// honest E6000 in this revision (the ISSUE-0160 recursive bytes-bearing
+// wrapper closure is a sibling lane, absent from the canonical tree).
+
+function doubleFirst(b: bytes): bytes {
+  b[0] = b[0] * 2;
+  return b;
+}
+
+function negate(b: bytes): bytes {
+  b[0] = 255 - b[0] + 1;
+  return b;
+}
+
+function mk(v: int): bytes {
+  let b: bytes = bytes(2);
+  b[0] = v;
+  return b;
+}
+
+export function main(): null {
+  // First-class sync function value over bytes: assigned and invoked
+  // through a typed boundary.
+  let f: (b: bytes) => bytes = doubleFirst;
+  let b: bytes = f(mk(1));
+  if (b[0] !== 2) {
+    throw { code: "TEST_FAIL", message: "sync bytes function value mismatch" };
+  }
+  // Containerized in a nullable: the value survives the boundary.
+  let g: ((b: bytes) => bytes) | null = f;
+  let c: bytes = bytes(0);
+  if (g !== null) {
+    c = g(mk(1));
+  }
+  if (c[0] !== 2) {
+    throw { code: "TEST_FAIL", message: "nullable function value mismatch" };
+  }
+  // Containerized in an array: per-element reference identity and
+  // invocation.
+  let arr: ((b: bytes) => bytes)[] = [f, negate];
+  let d: bytes = arr[0](mk(1));
+  if (d[0] !== 2) {
+    throw { code: "TEST_FAIL", message: "function array element 0 mismatch" };
+  }
+  let e: bytes = arr[1](d);
+  if (e[0] !== 254) {
+    throw { code: "TEST_FAIL", message: "function array element 1 mismatch" };
+  }
+  // Reference identity: the invoked function returns its argument by
+  // reference — the caller-visible mutation is the same object.
+  let id: bytes = mk(5);
+  let ret: bytes = f(id);
+  if (ret !== id || id[0] !== 10) {
+    throw { code: "TEST_FAIL", message: "function value lost bytes identity" };
+  }
+  return null;
+}

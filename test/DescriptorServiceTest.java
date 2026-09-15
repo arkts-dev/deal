@@ -205,15 +205,21 @@ public class DescriptorServiceTest {
         check("[[[int]]]".equals(triple.canonicalSpecText()),
             "array depth 3; got " + triple.canonicalSpecText());
 
-        expectDefect(() -> DescriptorService.describe(Type.Bytes.INSTANCE),
-            "Type.Bytes (no descriptor member exists in deal.semantic-ir/1)");
+        check(RuntimeDescriptor.Bytes.INSTANCE
+                == DescriptorService.describe(Type.Bytes.INSTANCE),
+            "Bytes -> Bytes.INSTANCE (the ISSUE-0158 v1.2 bytes member)");
+        check(new RuntimeDescriptor.Array(RuntimeDescriptor.Bytes.INSTANCE).equals(
+                DescriptorService.describe(new Type.Array(Type.Bytes.INSTANCE))),
+            "Array(Bytes) -> [bytes]");
+        check(new RuntimeDescriptor.Nullable(RuntimeDescriptor.Bytes.INSTANCE).equals(
+                DescriptorService.describe(new Type.Nullable(Type.Bytes.INSTANCE))),
+            "Nullable(Bytes) -> ?bytes");
+        check(new RuntimeDescriptor.Func(List.of(RuntimeDescriptor.Bytes.INSTANCE),
+                RuntimeDescriptor.Null.INSTANCE).equals(DescriptorService.describe(
+                    new Type.Func(List.of(Type.Bytes.INSTANCE), Type.Null.INSTANCE))),
+            "Func with a bytes parameter -> (bytes)->null");
         expectDefect(() -> DescriptorService.describe(Type.Error.INSTANCE),
             "Type.Error (the internal checker sentinel is excluded from common units)");
-        expectDefect(() -> DescriptorService.describe(new Type.Array(Type.Bytes.INSTANCE)),
-            "Array(Bytes) — no bytes descriptor at any depth");
-        expectDefect(() -> DescriptorService.describe(
-                new Type.Func(List.of(Type.Bytes.INSTANCE), Type.Null.INSTANCE)),
-            "Func with a bytes parameter — no bytes descriptor at any depth");
         expectDefect(() -> DescriptorService.describe(new Type.Array(Type.Error.INSTANCE)),
             "Array(Error) — no sentinel descriptor at any depth");
     }
@@ -233,6 +239,9 @@ public class DescriptorServiceTest {
             new Case("number", Type.Number.INSTANCE),
             new Case("string", Type.String.INSTANCE),
             new Case("table", Type.Table.INSTANCE),
+            new Case("bytes", Type.Bytes.INSTANCE),
+            new Case("[bytes]", new Type.Array(Type.Bytes.INSTANCE)),
+            new Case("?bytes", new Type.Nullable(Type.Bytes.INSTANCE)),
             new Case("@src/app/User", IdentityTestFixtures.classType("User", "src/app")),
             new Case("@/Error", IdentityTestFixtures.errorClassType()),
             new Case("[int]", new Type.Array(Type.Int.INSTANCE)),
@@ -379,19 +388,18 @@ public class DescriptorServiceTest {
     // =========================================================================
 
     static void testFailClosedE6005() {
-        System.out.println("-- fail-closed bytes/Error path and the E6005 conversion seam --");
+        System.out.println("-- fail-closed Error path and the E6005 conversion seam --");
 
-        DescriptorService.Defect bytesDefect =
-            defect(() -> DescriptorService.describe(Type.Bytes.INSTANCE));
+        // Type.Bytes is descriptor-representable since ISSUE-0158 (the
+        // bytes member); only the internal Error sentinel stays fail
+        // closed.
         DescriptorService.Defect errorDefect =
             defect(() -> DescriptorService.describe(Type.Error.INSTANCE));
-        check(bytesDefect.getMessage().contains("Type.Bytes"),
-            "the bytes defect names the bytes primitive");
         check(errorDefect.getMessage().contains("Type.Error"),
             "the Error defect names the checker sentinel");
 
         ModuleId module = new ModuleId("test.module");
-        for (DescriptorService.Defect d : List.of(bytesDefect, errorDefect)) {
+        for (DescriptorService.Defect d : List.of(errorDefect)) {
             CompilerDiagnostic diag = DescriptorService.e6005(module, d);
             check("E6005".equals(diag.code()), "the seam diagnostic code is E6005");
             check(diag.diagnosticCode() != null
@@ -457,7 +465,7 @@ public class DescriptorServiceTest {
     // =========================================================================
 
     private static final Pattern SINGLETON_CONSTRUCTION = Pattern.compile(
-        "RuntimeDescriptor\\.(Null|Boolean|Int|Number|String|Table)\\.INSTANCE");
+        "RuntimeDescriptor\\.(Null|Boolean|Int|Number|String|Table|Bytes)\\.INSTANCE");
 
     static void testProducerSingularityScan() {
         System.out.println("-- producer-singularity scan over deal/**/*.java --");

@@ -58,7 +58,8 @@ import java.util.regex.Pattern;
  *   <li>The registry: 24 entries, all SHADOW, in the S4 capability order
  *       with LUAJIT before JVM; the digest equals a stored golden
  *       recomputed in a fresh JVM invocation byte-identically; no
- *       consumer axis and no promotion transition logic.</li>
+ *       consumer axis; the single pure transition surface {@code withState}
+ *       (D3, ISSUE-0485) carries no gate policy and mutates nothing.</li>
  *   <li>The CLI: inventing {@code --profile}/{@code --purpose} fails with
  *       "unknown option"; existing CLI behaviors are unchanged;
  *       {@code deal/Main.java} constructs PUBLIC_BUILD through the
@@ -129,6 +130,18 @@ public class InvocationProfileRegistryTest {
     /** Stored golden: releaseStateHash for V1_2_ACTIVE over the registry hash. */
     private static final String PINNED_RELEASE_STATE_HASH_ACTIVE =
         "dc4c3fe0ae1356816a9454644af201fbf8289c03de1603a2c1e671f99441aa36";
+
+    /** Stored golden: releaseStateHash for the committed E12 configuration
+     * plus the step-1 (ISSUE-0575), step-2 (ISSUE-0577), step-3
+     * (ISSUE-0578), step-4 (ISSUE-0579), and step-5 (ISSUE-0581)
+     * cutover promotions —
+     * V1_2_ACTIVE over the promoted release registry hash (the
+     * releaseCapabilityRegistry digest, never the all-SHADOW default;
+     * FOUNDATION_VALUES, SIGNED_INT32, CONTAINERS_AND_STRINGS,
+     * DESCRIPTORS, BOUNDARIES, EVALUATION_ORDER, and BINDINGS promoted
+     * for both targets). */
+    private static final String PINNED_ACTIVATED_RELEASE_STATE_HASH =
+        "771fd6c434ccde0b50d6b7854ea24149e16f97b293e6c8304f64f3827388ce59";
 
     private static final List<String> CAPABILITY_ORDER = List.of(
         "FOUNDATION_VALUES", "SIGNED_INT32", "CONTAINERS_AND_STRINGS", "DESCRIPTORS",
@@ -554,7 +567,7 @@ public class InvocationProfileRegistryTest {
         check(Files.exists(cliOutVerbose.resolve("trivial.lua")),
             "CLI compile with --verbose emits the artifact");
         check(cliVerboseStream.toString(StandardCharsets.UTF_8)
-                .contains("Release-state hash: " + PINNED_RELEASE_STATE_HASH_PRE),
+                .contains("Release-state hash: " + PINNED_ACTIVATED_RELEASE_STATE_HASH),
             "the CLI verbose path prints the recorded release-state hash");
     }
 
@@ -611,8 +624,10 @@ public class InvocationProfileRegistryTest {
             check(true, "entries() rejects clear()");
         }
 
-        // No promotion transition logic: the class declares no mutation or
-        // transition method — all public methods are pinned accessors.
+        // No promotion transition policy: the single D3 transition surface
+        // withState (ISSUE-0485) is a pure derivation — the five pinned
+        // accessors plus withState are the complete public surface, and no
+        // mutation or gate-policy method exists.
         Set<String> publicMethods = new LinkedHashSet<>();
         for (Method m : CapabilityRegistry.class.getDeclaredMethods()) {
             if (Modifier.isPublic(m.getModifiers())) {
@@ -620,9 +635,9 @@ public class InvocationProfileRegistryTest {
             }
         }
         check(publicMethods.equals(Set.of("releaseRegistry", "entries", "state",
-                "canonicalJson", "capabilityRegistryHash")),
-            "the registry public surface is exactly the five pinned accessors; got "
-                + publicMethods);
+                "canonicalJson", "capabilityRegistryHash", "withState")),
+            "the registry public surface is exactly the five pinned accessors plus "
+                + "the single withState transition (D3); got " + publicMethods);
         for (Field f : CapabilityRegistry.class.getDeclaredFields()) {
             check(Modifier.isFinal(f.getModifiers()),
                 "registry field " + f.getName() + " is final (no in-place transition)");

@@ -51,8 +51,10 @@ import java.util.function.BooleanSupplier;
  * <p>The transport is a real Unix-domain socket pair: the test binds a
  * {@link ServerSocketChannel} on a temporary socket path and runs a
  * scripted peer that answers the handshake and invocation records
- * exactly as the outer broker answers them ({@code HELLO_OK 4 63} for
- * the canonical version-4 capability bitmask, {@code READY_ACK
+ * exactly as the live outer broker answers them
+ * ({@code HELLO_OK 4 63} for the capability bitmask — the six
+ * battery-backed probe bits 1|2|4|8|16|32 the artifact advertises
+ * since the ISSUE-0524 atomic CAPS flip), {@code READY_ACK
  * <nonce>} for {@code FEATURE_READY}, {@code INVOKED}/{@code
  * STARTED}/{@code REPORT}/{@code CLEAN} for a round-trip). This is a
  * test-only double for the peer side of the state machine; the live
@@ -65,6 +67,12 @@ import java.util.function.BooleanSupplier;
 public final class ContainedProcessBrokerStateTest {
 
     private static final String NONCE = "0123456789abcdef0123456789abcdef";
+    /** Capability bitmask (tools/src/selftest.h DEALPG4_PROBE_CAPS and
+     * the ContainedProcessBroker mask-63 expectation): the live outer
+     * broker advertises 63 (bits 1|2|4|8|16|32) since the ISSUE-0524
+     * atomic CAPS flip, so the scripted peer answers the same value
+     * (its scripted HELLO_OK must satisfy the client's mask-63
+     * check). */
     private static final int EXPECTED_CAPS = 63;
 
     /** STUB_READY nonce scripted for the invocation scenarios. */
@@ -182,15 +190,21 @@ public final class ContainedProcessBrokerStateTest {
         final ServerSocketChannel server;
         final List<String> seenLines = new java.util.concurrent.CopyOnWriteArrayList<>();
         final String helloOkVersion;
+        final int caps;
         volatile IOException failure;
 
         ScriptedPeer(ServerSocketChannel server) {
-            this(server, "4");
+            this(server, "4", EXPECTED_CAPS);
         }
 
         ScriptedPeer(ServerSocketChannel server, String helloOkVersion) {
+            this(server, helloOkVersion, EXPECTED_CAPS);
+        }
+
+        ScriptedPeer(ServerSocketChannel server, String helloOkVersion, int caps) {
             this.server = server;
             this.helloOkVersion = helloOkVersion;
+            this.caps = caps;
         }
 
         @Override
@@ -203,7 +217,7 @@ public final class ContainedProcessBrokerStateTest {
                     seenLines.add(line);
                     if (line.startsWith("DEALPG4 HELLO ")) {
                         writeLine(out, "DEALPG4 HELLO_OK " + helloOkVersion
-                                + " " + EXPECTED_CAPS);
+                                + " " + caps);
                     } else if (line.startsWith("DEALPG4 FEATURE_READY ")) {
                         writeLine(out, "DEALPG4 READY_ACK " + NONCE);
                     } else if (line.equals("DEALPG4 BYE")) {
@@ -387,6 +401,50 @@ public final class ContainedProcessBrokerStateTest {
                             "DEALPG4 FEATURE_READY " + NONCE,
                             "DEALPG4 BYE")),
                     "exact emitted record sequence: " + peer.seenLines);
+        } finally {
+            closeQuietly(broker, server, socketPath, socketDir);
+        }
+    }
+
+    /**
+     * Fail-closed capability check (ContainedProcessBroker
+     * mask-63 expectation): a live handshake against a peer
+     * answering {@code HELLO_OK 4 30} — the advertised bitmask
+     * minus capability bit 1 (subreaper) — must be rejected with
+     * {@code CAPABILITY_MISSING} before any {@code FEATURE_READY},
+     * and the rejected session never emits a record beyond
+     * {@code HELLO}.
+     */
+    private static void runCapsRejectionScenario() throws Exception {
+        Path socketDir = Files.createTempDirectory("dealpg4-state-test-caps");
+        Path socketPath = socketDir.resolve("broker.sock");
+        ContainedProcessBroker broker = null;
+        ServerSocketChannel server = null;
+        try {
+            server = ServerSocketChannel.open(StandardProtocolFamily.UNIX);
+            server.bind(UnixDomainSocketAddress.of(socketPath));
+            ScriptedPeer peer = new ScriptedPeer(server, "4", 30);
+            Thread peerThread = new Thread(peer, "scripted-broker-peer-caps");
+            peerThread.setDaemon(true);
+            peerThread.start();
+
+            boolean rejected = false;
+            String token = null;
+            try {
+                ContainedProcessBroker.connect(socketPath.toString(), NONCE);
+            } catch (ContainedProcessBroker.ContainmentException e) {
+                rejected = true;
+                token = e.token();
+            }
+            check(rejected, "caps 30: handshake accepted a HELLO_OK missing capability bit 1");
+            check("CAPABILITY_MISSING".equals(token),
+                    "caps 30: rejected with token '" + token
+                            + "', expected CAPABILITY_MISSING");
+            check(peer.seenLines.size() == 1
+                            && peer.seenLines.get(0).equals("DEALPG4 HELLO " + NONCE),
+                    "caps 30: only HELLO reached the socket before the rejection");
+            check(peer.failure == null, "caps 30: scripted peer saw only expected records: "
+                    + (peer.failure == null ? "ok" : peer.failure));
         } finally {
             closeQuietly(broker, server, socketPath, socketDir);
         }
@@ -589,6 +647,7 @@ public final class ContainedProcessBrokerStateTest {
     private static void run() throws Exception {
         System.out.println("=== Running ContainedProcessBroker State Tests ===");
         runOrderingScenario();
+        runCapsRejectionScenario();
         runLeadingZeroVersionScenario();
         runCancelScenario();
         runHappyPathScenario();

@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "feature": "c-ffi-declaration-error",
+  "spec": "C FFI declaration files — exactly one C marker per exported class",
+  "description": "under @extern-c a double-marked exported class is E7002 at the class",
+  "expected": { "compile-error": "E7002" },
+  "backends": ["luajit", "jvm"],
+  "invocation": "compile-only",
+  "support": []
+}

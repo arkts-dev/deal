@@ -1,0 +1,13 @@
+// @spec: Lexical elements
+// @description: A function call result is not a valid assignment target
+// @expected: compile-error E1033
+// @features: parser, assignment-target, call, negative, v1.2
+
+function value(): int {
+  return 1;
+}
+
+export function main(): null {
+  value() = 2;
+  return null;
+}

@@ -1,0 +1,14 @@
+// @spec: Lexical elements
+// @description: Equality comparison binds more tightly than logical AND
+// @expected: runtime-ok
+// @features: parser, precedence, equality, logical-and, v1.2
+
+export function test_equality_before_logical_and(): null {
+  let value: boolean = 1 === 2 && true;
+  if (value !== false) {
+    throw { code: "TEST_FAIL", message: "equality did not bind before logical AND" };
+  }
+  return null;
+}
+
+export function main(): null { return test_equality_before_logical_and(); }

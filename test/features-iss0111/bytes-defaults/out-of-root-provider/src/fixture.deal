@@ -1,0 +1,15 @@
+// ISSUE-0165 BYTES_DEFAULTS out-of-root-provider row (int32/bytes page
+// D5-D6): a rooted class default calls a function in the class-free
+// ../shared provider module (importer-relative resolution may leave the
+// roots; the private semantic identity carries the runtime edge, never
+// public descriptor text).
+import * as P from "../shared/provider"
+
+class Box {
+  v: int = P.marker();
+}
+
+export function defaultsOracle(): int {
+  let b: Box = {};
+  return b.v;
+}

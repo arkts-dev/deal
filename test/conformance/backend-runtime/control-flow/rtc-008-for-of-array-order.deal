@@ -1,0 +1,13 @@
+// @spec: Control flow
+// @description: For-of over an array observes elements in index order
+// @expected: runtime-ok
+// @features: control-flow, for-of, arrays
+
+export function test_for_of_array_order(): null {
+  let digits: int = 0;
+  for (let value: int of [1, 2, 3]) { digits = digits * 10 + value; }
+  if (digits !== 123) { throw { code: "TEST_FAIL", message: "for-of array order changed" }; }
+  return null;
+}
+
+export function main(): null { return test_for_of_array_order(); }

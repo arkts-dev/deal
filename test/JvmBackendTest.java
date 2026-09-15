@@ -17,6 +17,9 @@ import deal.codegen.Backend;
 import deal.codegen.jvm.JvmBackend;
 import deal.lexer.LexResult;
 import deal.lexer.Lexer;
+import deal.identity.CanonicalModuleIdentity;
+import deal.identity.ProjectModuleIdentity;
+import deal.module.ModuleIdentityResolver;
 import deal.module.ModuleShapeValidator;
 import deal.module.CompilationOrchestrator;
 import deal.project.ProjectContext;
@@ -174,9 +177,10 @@ import java.util.concurrent.atomic.AtomicInteger;
  *       {@code trim}, the negative-input {@code sqrt} E8001, the
  *       extreme-negative {@code absInt}, and the second-truncated
  *       {@code nowMillis()} — while {@code std/table}
- *       and {@code std/json} imports (used and unused) stay E6000 at the
- *       import statement because their functions require {@code table}
- *       values, all compiled and executed with {@code javac} +
+ *       and {@code std/json} (ISSUE-0302) also execute: {@code keys}
+ *       over the shared table carrier and {@code json.parse}/
+ *       {@code json.stringify} over the emitted shared JSON runtime,
+ *       all compiled and executed with {@code javac} +
  *       {@code java} subprocesses,</li>
  *   <li>observable-behavior preservation for null-typed side effects
  *       (null-typed returns/initializers/assignments/arguments — including
@@ -281,18 +285,24 @@ import java.util.concurrent.atomic.AtomicInteger;
  *       reference equality, call-result-callee evaluation order (the
  *       callee materialized into a single-assignment temporary at its
  *       evaluation position, before any argument's hoisted
- *       pre-statements), the deferred signature shapes
- *       (nested/nullable function types, arrays of functions, and
- *       function equality/inequality over array-/class-/nullable-
- *       parameter signatures) rejected with E6000, and cross-module
+ *       pre-statements), the shared-carrier shape encoding and $check behaviors
+ *       ({@code testSharedCarrierShapeEncoding},
+ *       {@code testSharedCarrierCheckBehaviors}), function
+ *       equality/inequality over array-/class-/nullable-parameter
+ *       signatures now emitting on the shared wrappers, and
+ *       cross-module
  *       function values (a Func-typed argument to an imported module
- *       call — including the arity-extension/E8010-boundary shape — and
- *       an imported call result with Func static type) rejected with
- *       E6000 and no entry artifact by the orchestrator
- *       ({@code testCrossModuleFunctionValuesRejected} — the per-module
- *       wrapper classes cannot cross a module boundary, so the pre-fix
- *       emissions were artifacts javac rejected after the CLI reported
- *       success). Every v1.1 module-field/load-time shape — the LIVE
+ *       call — including the arity-extension/E8010-boundary shape —
+ *       an imported call result with Func static type, and an imported
+ *       call-result callee) compiling and executing on the shared
+ *       $DealRt carriers with reference identity across the module
+ *       boundary
+ *       ({@code testCrossModuleFunctionValues},
+ *       {@code testSharedCarrierCrossModuleIdentity} — the pre-fix
+ *       per-module wrapper classes could not cross a module boundary,
+ *       so the pre-fix emissions were artifacts javac rejected after
+ *       the CLI reported success). Every v1.1 module-field/load-time
+ *       shape — the LIVE
  *       static-field-delegation adapter, the load-time indirect-call
  *       guards, the module-level call-result callee hazards, and the
  *       rest function-type arm — is a v1.2 frontend grammar gate
@@ -301,12 +311,12 @@ import java.util.concurrent.atomic.AtomicInteger;
  *       longer reach a backend.</li>
  * </ul>
  *
- * <p>The end-to-end JVM conformance fixtures live in
- * {@code test/conformance/fixtures/jvm-skeleton.json} and run under
- * {@link BackendConformanceTest}; this class covers the seams and edge
- * behavior at unit level.
+ * <p>This class covers JVM backend seams, edge behavior, and generated
+ * artifact execution directly.
  */
 public class JvmBackendTest {
+
+    private static final int DEFAULT_JOBS = 1;
 
     private static final AtomicInteger passed = new AtomicInteger();
     private static final AtomicInteger failed = new AtomicInteger();
@@ -351,13 +361,13 @@ public class JvmBackendTest {
         // wall-clock budget. The methods are independent — each writes
         // into its own per-thread temp dir and its own per-test output
         // buffer — so they run on a worker pool with the same
-        // deterministic-outcome machinery BackendConformanceTest uses
+        // deterministic-outcome machinery legacy JSON conformance harness uses
         // (atomic counters, per-test buffered output flushed as one
         // contiguous block, completion-order blocks). The CLI-warning
         // captures route through the per-thread ERR_CAPTURE override
         // instead of a global System.setErr swap, so no test needs a
         // serialized main-thread tail. The pool is sized at 2x the core
-        // count for the same reason BackendConformanceTest oversubscribes:
+        // count for the same reason legacy JSON conformance harness oversubscribes:
         // per-test work is dominated by javac/java subprocess latency, so
         // the extra workers overlap spawns under concurrent host load.
         PrintStream realOut = System.out;
@@ -390,6 +400,8 @@ public class JvmBackendTest {
             new TestCase("testArrayReadComparisonBothReadsOrder", () -> testArrayReadComparisonBothReadsOrder()),
             new TestCase("testArrayReadComparisonPlainLeftOperandOrder", () -> testArrayReadComparisonPlainLeftOperandOrder()),
             new TestCase("testArrayBoundaryLessReadPositions", () -> testArrayBoundaryLessReadPositions()),
+            new TestCase("testArrayDeleteRejected", () -> testArrayDeleteRejected()),
+            new TestCase("testBytesArrayPastEndReadsYieldTheDealNull", () -> testBytesArrayPastEndReadsYieldTheDealNull()),
             new TestCase("testArrayUnsupportedElementTypesRejected", () -> testArrayUnsupportedElementTypesRejected()),
             new TestCase("testArrayUseBeforeDeclarationGuards", () -> testArrayUseBeforeDeclarationGuards()),
             new TestCase("testNullReturnSideEffects", () -> testNullReturnSideEffects()),
@@ -405,12 +417,21 @@ public class JvmBackendTest {
             new TestCase("testLegacyGenerateOverloadChain", () -> testLegacyGenerateOverloadChain()),
             new TestCase("testTypeDescriptorEmitter", () -> testTypeDescriptorEmitter()),
             new TestCase("testSharedCheckSeam", () -> testSharedCheckSeam()),
+            new TestCase("testSharedCheckSeamCanonicalParsing", () -> testSharedCheckSeamCanonicalParsing()),
             new TestCase("testNullableSlice", () -> testNullableSlice()),
             new TestCase("testAsyncSlice", () -> testAsyncSlice()),
             new TestCase("testJsonableSlice", () -> testJsonableSlice()),
+            new TestCase("testJsonStdlibBoundary", () -> testJsonStdlibBoundary()),
             new TestCase("testImportedClassValues", () -> testImportedClassValues()),
             new TestCase("testFunctionValues", () -> testFunctionValues()),
-            new TestCase("testCrossModuleFunctionValuesRejected", () -> testCrossModuleFunctionValuesRejected()),
+            new TestCase("testSharedCarrierShapeEncoding", () -> testSharedCarrierShapeEncoding()),
+            new TestCase("testSharedShapeCollectionOrder", () -> testSharedShapeCollectionOrder()),
+            new TestCase("testSharedCarrierCheckBehaviors", () -> testSharedCarrierCheckBehaviors()),
+            new TestCase("testSharedCarrierCrossModuleIdentity", () -> testSharedCarrierCrossModuleIdentity()),
+            new TestCase("testSharedCarrierHostClassShapes", () -> testSharedCarrierHostClassShapes()),
+            new TestCase("testHostClassArraySeamRuntime", () -> testHostClassArraySeamRuntime()),
+            new TestCase("testSharedCarrierIndirectClassShape", () -> testSharedCarrierIndirectClassShape()),
+            new TestCase("testCrossModuleFunctionValues", () -> testCrossModuleFunctionValues()),
             new TestCase("testUseBeforeDeclarationRejected", () -> testUseBeforeDeclarationRejected()),
             new TestCase("testFunctionBodyModuleFieldAccessGuards", () -> testFunctionBodyModuleFieldAccessGuards()),
             new TestCase("testAssignmentBeforeDeclarationRejected", () -> testAssignmentBeforeDeclarationRejected()),
@@ -434,6 +455,8 @@ public class JvmBackendTest {
             new TestCase("testInt32NumberPowBand", () -> testInt32NumberPowBand()),
             new TestCase("testInt32NumPowHelperCollision", () -> testInt32NumPowHelperCollision()),
             new TestCase("testInt32ArrayAndFieldBoundaries", () -> testInt32ArrayAndFieldBoundaries()),
+            new TestCase("testBytesRuntimeLane", () -> testBytesRuntimeLane()),
+            new TestCase("testRecursiveBytesClosureLane", () -> testRecursiveBytesClosureLane()),
             new TestCase("testCommonShadowInvocationPipeline", () -> testCommonShadowInvocationPipeline()),
             new TestCase("testLegacyByteCompat", () -> testLegacyByteCompat()),
             new TestCase("testOrchestratorJvmBackend", () -> testOrchestratorJvmBackend()),
@@ -441,7 +464,7 @@ public class JvmBackendTest {
             new TestCase("testOrchestratorJvmRejectsUnsupported", () -> testOrchestratorJvmRejectsUnsupported()),
             new TestCase("testOrchestratorJvmImportSupported", () -> testOrchestratorJvmImportSupported()),
             new TestCase("testStdlibCallEmission", () -> testStdlibCallEmission()),
-            new TestCase("testStdlibTableBoundaryRejected", () -> testStdlibTableBoundaryRejected()),
+            new TestCase("testStdlibTableBoundaryAccepted", () -> testStdlibTableBoundaryAccepted()),
             new TestCase("testStdlibExecution", () -> testStdlibExecution()),
             new TestCase("testStdlibSqrtNegativeRuntimeError", () -> testStdlibSqrtNegativeRuntimeError()),
             new TestCase("testStdlibScalarSemantics", () -> testStdlibScalarSemantics()),
@@ -467,11 +490,10 @@ public class JvmBackendTest {
             new TestCase("testOrchestratorJvmSourceMapWarning", () -> testOrchestratorJvmSourceMapWarning()),
             new TestCase("testStrictBackendField", () -> testStrictBackendField()),
             new TestCase("testCliBackendFlag", () -> testCliBackendFlag()),
-            new TestCase("testFixtureConfigValidation", () -> testFixtureConfigValidation()),
             new TestCase("testIrDumpExactMigration", () -> testIrDumpExactMigration()));
 
         int workers = Math.max(1, Math.min(
-            2 * Runtime.getRuntime().availableProcessors(),
+            Integer.getInteger("deal.test.jobs", DEFAULT_JOBS),
             parallelTests.size()));
         ExecutorService pool = Executors.newFixedThreadPool(workers);
         try {
@@ -526,7 +548,7 @@ public class JvmBackendTest {
     /**
      * Runs one test method on a worker thread with its own output
      * buffer, flushed as one contiguous block under the console lock
-     * when the method finishes — the BackendConformanceTest worker
+     * when the method finishes — the legacy JSON conformance harness worker
      * pattern at per-test granularity (ISSUE-0274).
      */
     private static void runTestCaseWorker(TestCase test) {
@@ -660,7 +682,7 @@ public class JvmBackendTest {
     @SuppressWarnings("deprecation")
     private static Frontend compileFrontend(String source, String filename) {
         return compileFrontend(source, filename,
-            new BackendConformanceTest.StubModuleResolver());
+            StubModuleResolver.acceptingUnknownModules());
     }
 
     /** Frontend compile with an explicit module resolver (ISSUE-0096 module
@@ -735,7 +757,7 @@ public class JvmBackendTest {
 
     /**
      * Compiles the generated artifact with the javac frontend in-process
-     * ({@code BackendConformanceTest.compileWithJavac} — the identical
+     * ({@code StubModuleResolver.compileWithJavac} — the identical
      * javac passes the binary runs; ISSUE-0109 gate-time work, the
      * several hundred spawn sites here each paid a full JVM boot) and
      * executes it with {@code java} in a subprocess — artifact execution
@@ -752,7 +774,7 @@ public class JvmBackendTest {
         // and the backend's locality predicate (ISSUE-0095) recognizes a
         // local Type.Class by its module path matching the backend-held
         // module path or source path — the same alignment the
-        // BackendConformanceTest adapter uses.
+        // legacy JSON conformance harness adapter uses.
         JvmBackend.JvmCodegenResult res = JvmBackend.generate(
             f.program(), f.checkResult(), "jvmtest-" + name + ".deal", "Main");
         if (res.hasErrors()) {
@@ -762,10 +784,10 @@ public class JvmBackendTest {
         Path dir = Files.createTempDirectory("jvmtest_run_");
         Files.writeString(dir.resolve("Main.java"), res.source());
         Files.writeString(dir.resolve("JvmConformanceRunner.java"),
-            BackendConformanceTest.buildJvmRunner(f.program(), "Main"));
+            StubModuleResolver.buildJvmRunner(f.program(), "Main"));
 
         StringBuilder javacErr = new StringBuilder();
-        boolean javacOk = BackendConformanceTest.compileWithJavac(dir,
+        boolean javacOk = StubModuleResolver.compileWithJavac(dir,
             List.of("Main.java", "JvmConformanceRunner.java"), javacErr);
         if (!javacOk) {
             throw new RuntimeException("javac failed: " + javacErr);
@@ -790,7 +812,7 @@ public class JvmBackendTest {
      * Compiles every {@code .java} artifact in {@code dir} together with a
      * generated runner (auto-invoking the entry program's zero-arity
      * exports) with the javac frontend in-process
-     * ({@code BackendConformanceTest.compileWithJavac}; ISSUE-0109
+     * ({@code StubModuleResolver.compileWithJavac}; ISSUE-0109
      * gate-time work) and executes with {@code java} in a subprocess —
      * artifact execution stays the same contract the conformance adapter
      * enforces for multi-module fixtures.
@@ -798,7 +820,7 @@ public class JvmBackendTest {
     private static ExecResult runJvmArtifacts(Path dir, ProgramNode entryProgram,
                                               String entryClass) throws Exception {
         Files.writeString(dir.resolve("JvmConformanceRunner.java"),
-            BackendConformanceTest.buildJvmRunner(entryProgram, entryClass));
+            StubModuleResolver.buildJvmRunner(entryProgram, entryClass));
 
         List<String> javaFiles = new ArrayList<>();
         try (var stream = Files.list(dir)) {
@@ -807,7 +829,7 @@ public class JvmBackendTest {
                   .forEach(p -> javaFiles.add(p.getFileName().toString()));
         }
         StringBuilder javacErr = new StringBuilder();
-        boolean javacOk = BackendConformanceTest.compileWithJavac(dir,
+        boolean javacOk = StubModuleResolver.compileWithJavac(dir,
             javaFiles, javacErr);
         if (!javacOk) {
             throw new RuntimeException("javac failed: " + javacErr);
@@ -1015,16 +1037,6 @@ public class JvmBackendTest {
                   return 1;
                 }
                 """),
-            new Case("async function expression", """
-                export function test(): null {
-                  let f: async () => int = async function(): int { return 5; };
-                  return null;
-                }
-                """),
-            new Case("unused stdlib module import whose functions need table values", """
-                import * as j from "std/json"
-                export function test(): int { return 1; }
-                """),
             new Case("unused non-console module import", """
                 import * as m from "./other"
                 export function test(): int { return 1; }
@@ -1071,6 +1083,12 @@ public class JvmBackendTest {
         // rejection list now compile (each generates an artifact the
         // runtime fixtures above also execute through javac + java).
         List<Case> promoted = List.of(
+            new Case("async function expression (ISSUE-0304)", """
+                export function test(): null {
+                  let f: async () => int = async function(): int { return 5; };
+                  return null;
+                }
+                """),
             new Case("optional class field", """
                 class Point { x?: int; }
                 export function test(): int { return 1; }
@@ -1080,6 +1098,10 @@ public class JvmBackendTest {
                   let rows: int[][] = [[1, 2], [3, 4]];
                   return rows[0][1];
                 }
+                """),
+            new Case("unused std/json import (ISSUE-0302)", """
+                import * as j from "std/json"
+                export function test(): int { return 1; }
                 """),
             new Case("array of function elements", """
                 function add1(x: int): int { return x + 1; }
@@ -1132,18 +1154,15 @@ public class JvmBackendTest {
                 "backend now accepts " + c.what() + ": " + res.diagnostics());
         }
 
-        // Exact rejection-detail-text pins migrated from the JSON slice
-        // corpus (ISSUE-0359; v12-three-backend-conformance-corpus C1/C6:
-        // backend-internal E6000 detail texts are never corpus fields — the
-        // corpus keeps only the E6000 code pins). Each pin mirrors one JSON
-        // corpus E6000 case and asserts the EXACT current detail text, so a
-        // production text drift trips the unit test while the JSON cases
-        // keep pinning only the code.
-        //
-        // Cross-module function-value flow (jvm-function-values-slice.json:
-        // jvm-fv-xmod-callback-arg-e6000, jvm-fv-xmod-arity-extension-
-        // arg-e6000, jvm-fv-xmod-return-out-e6000,
-        // jvm-fv-xmod-callresult-callee-e6000).
+        // Cross-module function-value flow on the shared $DealRt
+        // carriers (jvm-function-values-slice: the four former
+        // E6000 rejection pins are runtime pins now — ISSUE-0301). The
+        // emission-shape pins here assert the promoted forms: the
+        // callback argument crosses as the shared wrapper field, the
+        // arity-extension argument carries the imported parameter
+        // boundary's E8010 raising construction, and the returned
+        // function value / call-result callee hold the SAME shared
+        // wrapper class the caller types.
         Map<String, Map<String, Type>> xmodLib = Map.of(
             "./lib", Map.of(
                 "apply", Types.func(List.of(
@@ -1155,57 +1174,48 @@ public class JvmBackendTest {
                     Type.Int.INSTANCE), Type.Int.INSTANCE),
                 "picker", Types.func(List.of(),
                     Types.func(List.of(Type.Int.INSTANCE), Type.Int.INSTANCE))));
-        String xmodArgText = "JVM backend (skeleton) does not support "
-            + "function values passed to an imported module call (the "
-            + "per-module wrapper classes cannot cross a module boundary \u2014 "
-            + "cross-module function values are deferred to ISSUE-0110) yet";
-        String xmodReturnText = "JVM backend (skeleton) does not support "
-            + "function values returned from an imported module call (the "
-            + "per-module wrapper classes cannot cross a module boundary \u2014 "
-            + "cross-module function values are deferred to ISSUE-0110) yet";
-        record XmodPin(String what, String source, String detailText) {}
+        record XmodPin(String what, String source, String emission) {}
         List<XmodPin> xmodPins = List.of(
             new XmodPin("callback passed into an imported module call", """
                 import * as lib from "./lib"
                 function inc(x: int): int { return x + 1; }
                 export function test(): int { return lib.apply(inc, 41); }
-                """, xmodArgText),
+                """, "Lib.apply(inc$fn, 41L)"),
             new XmodPin("arity-extension adapter argument to an imported module call", """
                 import * as lib from "./lib"
                 function inc(x: int): int { return x + 1; }
                 export function test(): int { return lib.apply2(inc, 41); }
-                """, xmodArgText),
+                """, "Lib.apply2(new $DealRt.Fn2_I_S_R_I() { { if (!checkSig(\"(int,string)->int\", \"(int)->int\"))"),
             new XmodPin("function value returned from an imported module call", """
                 import * as lib from "./lib"
                 export function test(): int {
                   let f: (x: int) => int = lib.picker();
                   return f(41);
                 }
-                """, xmodReturnText),
+                """, "$DealRt.Fn1_I_R_I f = Lib.picker();"),
             new XmodPin("imported call result used as a call-result callee", """
                 import * as lib from "./lib"
                 export function test(): int { return lib.picker()(41); }
-                """, xmodReturnText));
+                """, "__fn0.invoke(41L)"));
         for (XmodPin pin : xmodPins) {
             Frontend f = compileFrontend(pin.source(),
-                "jvmtest-xmod-rejection.deal", new FixedModuleResolver(xmodLib));
+                "jvmtest-xmod-carrier.deal", new FixedModuleResolver(xmodLib));
             if (!f.errors().isEmpty()) {
-                fail("frontend must accept the JSON-corpus rejection shape '"
-                    + pin.what() + "' (the backend rejects it): " + f.errors());
+                fail("frontend must accept the shared-carrier shape '"
+                    + pin.what() + "': " + f.errors());
                 continue;
             }
             JvmBackend.JvmCodegenResult res = JvmBackend.generate(
-                f.program(), f.checkResult(), "jvmtest-xmod-rejection.deal",
+                f.program(), f.checkResult(), "jvmtest-xmod-carrier.deal",
                 "main", Map.of("./lib", "lib"));
-            check(res.hasErrors(), "backend rejects " + pin.what());
-            check(res.diagnostics().stream().anyMatch(d ->
-                    "E6000".equals(d.code())
-                        && pin.detailText().equals(d.message())),
-                "E6000 detail text exact for " + pin.what() + ": "
-                    + res.diagnostics());
+            check(!res.hasErrors(), "backend accepts " + pin.what() + ": "
+                + res.diagnostics());
+            check(res.source().contains(pin.emission()),
+                "emission shape for " + pin.what() + " (" + pin.emission()
+                    + ")");
         }
 
-        // @jsonable optional table field (jvm-jsonable-slice.json:
+        // @jsonable optional table field (jvm-jsonable-slice:
         // jvm-jsonable-optional-table-rejected).
         Frontend jsonableF = compileFrontend("""
             // @jsonable
@@ -1827,9 +1837,9 @@ public class JvmBackendTest {
             if (!res.hasErrors()) {
                 String java = res.source();
                 check(java.contains("static final class __IntArray"),
-                    "__IntArray wrapper class emitted");
-                check(java.contains("new __IntArray(new long[]{10L, 20L})"),
-                    "int[] literal lowers to new __IntArray(new long[]{…})");
+                    "shared $DealRt __IntArray wrapper class emitted");
+                check(java.contains("new $DealRt.__IntArray(new long[]{10L, 20L})"),
+                    "int[] literal lowers to new $DealRt.__IntArray(new long[]{…})");
                 check(java.contains("__intArrayWrite(xs, 1L, 99L);"),
                     "element write lowers to the __intArrayWrite helper call");
                 check(java.contains("__intArrayRead(xs, 0L)"),
@@ -1912,6 +1922,27 @@ public class JvmBackendTest {
         check(order.output().contains("DEAL_ERROR_CODE: E8004"),
             "the RHS value check (E8004) runs before the bounds check per "
             + "spec rule 3: " + order.output());
+    }
+
+    private static void testArrayDeleteRejected() {
+        System.out.println("-- Array delete rejected with E6000 --");
+        Frontend frontend = compileFrontend("""
+            export function main(): null {
+              let xs: int[] = [1, 2, 3];
+              delete xs[1];
+            }
+            """, "jvmtest-array-delete.deal");
+        check(frontend.errors().isEmpty(),
+            "array-delete frontend clean: " + frontend.errors());
+        if (frontend.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult result = JvmBackend.generate(
+                frontend.program(), frontend.checkResult(),
+                "jvmtest-array-delete.deal", "main");
+            check(result.hasErrors() && result.diagnostics().stream()
+                    .anyMatch(diagnostic -> "E6000".equals(diagnostic.code())),
+                "the JVM backend rejects array-index delete with E6000: "
+                    + result.diagnostics());
+        }
     }
 
     /** Array evaluation order with hoisted null-typed side effects: the
@@ -2488,6 +2519,202 @@ public class JvmBackendTest {
         }
     }
 
+    /** The bytes-array past-end nil shapes (the recursive bytes
+     * closure, ISSUE-0160 E8 D1; the cycle-3 parity finding): a
+     * {@code (bytes | null)[]} read past the end and a {@code bytes[]}
+     * read past the end consumed at a {@code bytes | null} target both
+     * yield the DEAL null — the nullable element/target accepts the
+     * LuaJIT nil with no boundary failure — exactly like the settled
+     * {@code __intOrNullArrayRead} convention, and standalone discarded
+     * past-end reads of both shapes drop the nil silently. The emitted
+     * {@code __bytesOrNullArrayRead} past-end branch returns null, the
+     * element-typed {@code __bytesArrayRead} keeps its E8001 raise for
+     * the non-nullable target, the nil-accepting positions route
+     * through the boxed {@code __bytesArrayReadBoxed} helper, and a
+     * negative index still raises E8002 on every helper (LuaJIT raises
+     * that unconditionally at the read). The LuaJIT lane pins the same
+     * shapes cross-backend in
+     * {@code retired JSON slice jvm-arrays-slice}
+     * ({@code jvm-bytes-arr-past-end-null-parity},
+     * {@code jvm-bytes-arr-negative-read-e8002}). */
+    private static void testBytesArrayPastEndReadsYieldTheDealNull()
+            throws Exception {
+        System.out.println("-- Bytes-array past-end nil reads (javac + java) --");
+
+        // Shape 1 — (bytes | null)[] past-end read into a bytes | null
+        // parameter: the nullable element accepts the LuaJIT nil, so the
+        // read yields the DEAL null and probe returns 7 (the pre-fix
+        // helper raised E8001 "expected bytes, got null" here).
+        ExecResult orNullShape = compileAndRunJvm("""
+            import * as console from "std/console"
+            function probe(b: bytes | null): int { return 7; }
+            export function test(): null {
+              let ys: (bytes | null)[] = [];
+              ys[0] = bytes(3);
+              let inb: int = probe(ys[0]);
+              console.log("value-ok");
+              let past: int = probe(ys[1]);
+              console.log("past-end-ok");
+              if (inb !== 7 || past !== 7) {
+                throw { code: "TEST_FAIL", message: "probe" };
+              }
+              ys[1];
+              console.log("discard-ok");
+            }
+            """, "bytesarrornullpastend");
+        check(orNullShape.exitCode() == 0,
+            "(bytes | null)[] past-end read yields the DEAL null (exit "
+                + "0): " + orNullShape.output());
+        check(orNullShape.output().contains(
+                "value-ok\npast-end-ok\ndiscard-ok"),
+            "the in-bounds and past-end reads both cross the bytes | null "
+                + "boundary (value-ok, past-end-ok) and the discarded "
+                + "past-end read drops the nil (discard-ok): "
+                + orNullShape.output());
+
+        // Shape 2 — bytes[] past-end read into a bytes | null parameter:
+        // the read site's contextual target accepts the nil, so the read
+        // routes through the boxed helper (the pre-fix code fell through
+        // to the element-typed __bytesArrayRead and raised E8001).
+        ExecResult boxedShape = compileAndRunJvm("""
+            import * as console from "std/console"
+            function probe(b: bytes | null): int { return 7; }
+            export function test(): null {
+              let xs: bytes[] = [];
+              xs[0] = bytes(2);
+              let inb: int = probe(xs[0]);
+              console.log("value-ok");
+              let past: int = probe(xs[1]);
+              console.log("past-end-ok");
+              if (inb !== 7 || past !== 7) {
+                throw { code: "TEST_FAIL", message: "probe" };
+              }
+              xs[1];
+              console.log("discard-ok");
+            }
+            """, "bytesarrboxedpastend");
+        check(boxedShape.exitCode() == 0,
+            "bytes[] past-end read at a bytes | null target yields the "
+                + "DEAL null (exit 0): " + boxedShape.output());
+        check(boxedShape.output().contains(
+                "value-ok\npast-end-ok\ndiscard-ok"),
+            "the boxed bytes[] past-end read crosses the bytes | null "
+                + "boundary (past-end-ok) and the discard drops the nil "
+                + "(value-ok, past-end-ok, discard-ok): "
+                + boxedShape.output());
+
+        // The element-typed read keeps the non-nullable boundary: a
+        // bytes[] past-end read at a bytes target still raises E8001
+        // (LuaJIT's check_bytes at the read site).
+        ExecResult nonNullTarget = compileAndRunJvm("""
+            export function test(): int {
+              let xs: bytes[] = [];
+              let b: bytes = xs[0];
+              return b.length;
+            }
+            """, "bytesarrnonnulltarget");
+        check(nonNullTarget.exitCode() == 1
+                && nonNullTarget.output().contains("DEAL_ERROR_CODE: E8001")
+                && nonNullTarget.output().contains("expected bytes, got null"),
+            "bytes[] past-end read at a bytes target still raises E8001 "
+                + "'expected bytes, got null': " + nonNullTarget.output());
+
+        // A negative index still raises E8002 on every helper route
+        // (LuaJIT raises that unconditionally at the read).
+        ExecResult negBoxed = compileAndRunJvm("""
+            import * as console from "std/console"
+            function probe(b: bytes | null): int { return 7; }
+            export function test(): null {
+              let xs: bytes[] = [];
+              let r: int = probe(xs[-1]);
+              console.log("unreachable");
+            }
+            """, "bytesarrnegboxed");
+        check(negBoxed.exitCode() == 1
+                && negBoxed.output().contains("DEAL_ERROR_CODE: E8002")
+                && !negBoxed.output().contains("unreachable"),
+            "the boxed bytes[] read's negative index still raises E8002: "
+                + negBoxed.output());
+        ExecResult negOrNull = compileAndRunJvm("""
+            import * as console from "std/console"
+            function probe(b: bytes | null): int { return 7; }
+            export function test(): null {
+              let ys: (bytes | null)[] = [];
+              let r: int = probe(ys[-1]);
+              console.log("unreachable");
+            }
+            """, "bytesarrnegororsnull");
+        check(negOrNull.exitCode() == 1
+                && negOrNull.output().contains("DEAL_ERROR_CODE: E8002")
+                && !negOrNull.output().contains("unreachable"),
+            "the (bytes | null)[] read's negative index still raises "
+                + "E8002: " + negOrNull.output());
+
+        // Emission shapes: the or-null helper returns null past the end
+        // (no raise), the element-typed helper keeps the E8001 raise,
+        // the boxed helper exists with its own null past-end branch, and
+        // the nil-accepting sites emit the boxed helper call.
+        Frontend f = compileFrontend("""
+            import * as console from "std/console"
+            function probe(b: bytes | null): int { return 7; }
+            export function test(): null {
+              let xs: bytes[] = [];
+              xs[0] = bytes(2);
+              let ys: (bytes | null)[] = [];
+              ys[0] = bytes(3);
+              let b: int = probe(xs[0]);
+              let c: int = probe(xs[1]);
+              let d: int = probe(ys[0]);
+              let e: int = probe(ys[1]);
+              if (b + c + d + e === 28) { console.log("x"); }
+              xs[1];
+              ys[1];
+              let g: bytes = xs[1];
+              g.length;
+            }
+            """, "jvmtest-bytesarrpastend-emission.deal");
+        check(f.errors().isEmpty(), "bytes-array past-end emission "
+            + "frontend clean: " + f.errors());
+        if (f.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                f.program(), f.checkResult(),
+                "jvmtest-bytesarrpastend-emission.deal", "main");
+            check(!res.hasErrors(), "bytes-array past-end emission codegen "
+                + "clean: " + res.diagnostics());
+            if (!res.hasErrors()) {
+                String java = res.source();
+                check(java.contains(
+                        "static $DealRt.Bytes __bytesOrNullArrayRead(")
+                        && java.contains(
+                        "if (i >= (long) a.data.length) return null;"),
+                    "the (bytes | null)[] read helper yields the DEAL "
+                        + "null past the end (return null branch): "
+                        + java);
+                check(java.contains(
+                        "static $DealRt.Bytes __bytesArrayRead(")
+                        && java.contains(
+                        "if (i >= (long) a.data.length) throw new DealError(\"E8001\", \"expected bytes, got null\");"),
+                    "the element-typed bytes[] helper keeps the E8001 "
+                        + "past-end raise: " + java);
+                check(java.contains(
+                        "static $DealRt.Bytes __bytesArrayReadBoxed(")
+                        && java.contains("__bytesArrayReadBoxed(xs, 1L)"),
+                    "the boxed bytes[] read helper exists and the "
+                        + "bytes | null target site routes through it: "
+                        + java);
+                check(java.contains("__bytesArrayReadBoxed(xs, 1L)")
+                        && java.contains("__bytesOrNullArrayRead(ys, 1L)"),
+                    "both discarded past-end reads use the nil-yielding "
+                        + "helpers (no element-typed E8001 at a discard): "
+                        + java);
+                check(java.contains("__bytesArrayRead(xs, 1L)"),
+                    "the non-nullable bytes target keeps the "
+                        + "element-typed read helper (the boundary "
+                        + "failure shape): " + java);
+            }
+        }
+    }
+
     /** Plain-value-left {@code ===}/{@code !==} operand evaluation
      * order (ISSUE-0094 rework): when the LEFT operand is a plain
      * non-nil-capable value and the RIGHT operand carries the LuaJIT
@@ -2905,7 +3132,7 @@ public class JvmBackendTest {
         Path dir = Files.createTempDirectory("jvmtest_entry_");
         Files.writeString(dir.resolve("Main.java"), res.source());
         StringBuilder javacErr = new StringBuilder();
-        boolean javacOk = BackendConformanceTest.compileWithJavac(dir,
+        boolean javacOk = StubModuleResolver.compileWithJavac(dir,
             List.of("Main.java"), javacErr);
         check(javacOk, "entry artifact compiles: " + javacErr);
         if (javacOk) {
@@ -3089,7 +3316,7 @@ public class JvmBackendTest {
         check(!parse.hasErrors(), "synthetic-E6000 probe parses clean: "
             + parse.diagnostics());
         NameResolver nr = new NameResolver("jvmtest-jsonable-synth.deal",
-            new BackendConformanceTest.StubModuleResolver());
+            new StubModuleResolver());
         SymbolTable symTable = nr.resolve(parse.program());
         CheckResult result = TypeChecker.check("jvmtest-jsonable-synth.deal",
             symTable, nr, parse.program());
@@ -3301,28 +3528,29 @@ public class JvmBackendTest {
             }
         }
 
-        // Rejection: for-of over an unsupported function signature or a
-        // nested array of function elements records E6000 (no artifact a
-        // javac step would reject after the CLI reported success).
-        Frontend badSig = compileFrontend("""
+        // ISSUE-0301 shared carrier: a function-type ANNOTATION whose
+        // signature has an array parameter is representable now — the
+        // annotation resolves to the same shared per-signature wrapper
+        // the inferred shapes carry (no E6000 remains for shapes this
+        // surface covers), so the array-of-function for-of compiles
+        // clean.
+        Frontend arraySig = compileFrontend("""
             function bad(xs: int[]): int { return 1; }
             export function test(): int {
               let fs: ((xs: int[]) => int)[] = [];
               for (let f: (xs: int[]) => int of fs) { }
               return 0;
             }
-            """, "jvmtest-forof-badsig.deal");
-        check(badSig.errors().isEmpty(),
-            "unsupported-signature for-of probe frontend clean: "
-                + badSig.errors());
-        if (badSig.errors().isEmpty()) {
+            """, "jvmtest-forof-arraysig.deal");
+        check(arraySig.errors().isEmpty(),
+            "array-param annotation for-of probe frontend clean: "
+                + arraySig.errors());
+        if (arraySig.errors().isEmpty()) {
             JvmBackend.JvmCodegenResult er = JvmBackend.generate(
-                badSig.program(), badSig.checkResult(),
-                "jvmtest-forof-badsig.deal", "main");
-            check(er.hasErrors(), "unsupported-signature for-of rejected");
-            check(er.diagnostics().stream()
-                    .anyMatch(d -> "E6000".equals(d.code())),
-                "E6000 for the unsupported-signature for-of: "
+                arraySig.program(), arraySig.checkResult(),
+                "jvmtest-forof-arraysig.deal", "main");
+            check(!er.hasErrors(),
+                "array-param annotation for-of codegen clean: "
                     + er.diagnostics());
         }
         Frontend badNested = compileFrontend("""
@@ -3340,10 +3568,8 @@ public class JvmBackendTest {
             JvmBackend.JvmCodegenResult er = JvmBackend.generate(
                 badNested.program(), badNested.checkResult(),
                 "jvmtest-forof-badnested.deal", "main");
-            check(er.hasErrors(), "nested-function-array for-of rejected");
-            check(er.diagnostics().stream()
-                    .anyMatch(d -> "E6000".equals(d.code())),
-                "E6000 for the nested-function-array for-of: "
+            check(!er.hasErrors(),
+                "nested-function-array for-of codegen clean: "
                     + er.diagnostics());
         }
 
@@ -3390,60 +3616,109 @@ public class JvmBackendTest {
                     + exec.output());
         }
 
-        // The unsupported-signature for-of fails the orchestrator with
-        // E6000 and writes no entry artifact (the slice contract: E6000,
-        // never a broken artifact).
-        writeFile("src2/refof_bad.deal", """
+        // ISSUE-0160 (recursive bytes-bearing closure): the
+        // bytes-signature function-array for-of now compiles through
+        // the orchestrator — the bytes carriers map to the shared
+        // $DealRt wrappers and the per-signature read helper — and the
+        // emitted artifacts run through javac + java.
+        writeFile("src2/refof_bytes.deal", """
             export function main(): null { return null; }
-            function bad(xs: int[]): int { return 1; }
+            function bad(xs: bytes): int { return 1; }
             export function run(): int {
-              let fs: ((xs: int[]) => int)[] = [];
-              for (let f: (xs: int[]) => int of fs) { }
+              let fs: ((xs: bytes) => int)[] = [bad];
+              let total: int = 0;
+              for (let f: (xs: bytes) => int of fs) {
+                total = total + f(bytes(2));
+              }
+              return total;
+            }
+            """);
+        Path bytesEntry = tmpDir.get().resolve("src2/refof_bytes.deal").toAbsolutePath();
+        Path bytesOut = tmpDir.get().resolve("build/refof_bytes");
+        List<Path> roots2 = List.of(tmpDir.get().resolve("src2").toAbsolutePath());
+        CompilationOrchestrator bytesOrchestrator = new CompilationOrchestrator(
+            bytesEntry, bytesOut, false, false, false, Backend.JVM,
+            null, roots2,
+            Path.of(".").toAbsolutePath().normalize());
+        boolean bytesSuccess = bytesOrchestrator.compile();
+        check(bytesSuccess,
+            "the bytes-signature for-of compiles through the orchestrator: "
+                + bytesOrchestrator.diagnostics());
+        check(bytesOrchestrator.diagnostics().isEmpty(),
+            "zero diagnostics for the bytes-signature for-of: "
+                + bytesOrchestrator.diagnostics());
+        check(Files.exists(bytesOut.resolve("Refof_bytes.java")),
+            "the bytes-signature for-of entry module writes its artifact");
+        if (bytesSuccess && Files.exists(bytesOut.resolve("Refof_bytes.java"))) {
+            ExecResult bytesExec = runJvmArtifacts(bytesOut,
+                parseProgram("export function run(): int { return 1; }"),
+                "Refof_bytes");
+            check(bytesExec.exitCode() == 0 && bytesExec.output().contains("1"),
+                "the bytes-signature for-of artifacts run: f(bytes(2))=1: "
+                    + bytesExec.output());
+        }
+
+        // The table-signature function-array for-of stays E6000 (table
+        // carriers inside function signatures are the ISSUE-0110
+        // descriptor-join family, never the bytes closure — the
+        // recursive bytes-bearing wrapper closure is retired) and
+        // writes no entry artifact (E6000, never a broken artifact).
+        writeFile("src3/refof_table.deal", """
+            export function main(): null { return null; }
+            function bad(t: table): int { return 1; }
+            export function run(): int {
+              let fs: ((t: table) => int)[] = [];
+              for (let f: (t: table) => int of fs) { }
               return 0;
             }
             """);
-        Path badEntry = tmpDir.get().resolve("src2/refof_bad.deal").toAbsolutePath();
-        Path badOut = tmpDir.get().resolve("build/refof_bad");
-        List<Path> roots2 = List.of(tmpDir.get().resolve("src2").toAbsolutePath());
-        CompilationOrchestrator badOrchestrator = new CompilationOrchestrator(
-            badEntry, badOut, false, false, false, Backend.JVM,
-            null, roots2,
+        Path tableEntry = tmpDir.get().resolve("src3/refof_table.deal").toAbsolutePath();
+        Path tableOut = tmpDir.get().resolve("build/refof_table");
+        List<Path> roots3 = List.of(tmpDir.get().resolve("src3").toAbsolutePath());
+        CompilationOrchestrator tableOrchestrator = new CompilationOrchestrator(
+            tableEntry, tableOut, false, false, false, Backend.JVM,
+            null, roots3,
             Path.of(".").toAbsolutePath().normalize());
-        boolean badSuccess = badOrchestrator.compile();
-        check(!badSuccess,
-            "the unsupported-signature for-of fails the orchestrator: "
-                + badOrchestrator.diagnostics());
-        check(badOrchestrator.diagnostics().stream()
+        boolean tableSuccess = tableOrchestrator.compile();
+        check(!tableSuccess,
+            "the table-signature for-of fails the orchestrator: "
+                + tableOrchestrator.diagnostics());
+        check(tableOrchestrator.diagnostics().stream()
                 .anyMatch(d -> "E6000".equals(d.code())),
-            "orchestrator reports E6000 for the unsupported-signature "
-                + "for-of: " + badOrchestrator.diagnostics());
-        check(!Files.exists(badOut.resolve("Refof_bad.java")),
-            "no entry artifact when the ref-shape for-of is rejected");
+            "orchestrator reports E6000 for the table-signature for-of: "
+                + tableOrchestrator.diagnostics());
+        check(!Files.exists(tableOut.resolve("Refof_table.java")),
+            "no entry artifact when the table-signature for-of is rejected");
 
         // Backend-boundary pin (T12): the for-of E6000 arrives through
         // the backend's native List<CompilerDiagnostic> and renders at
         // its real source position — SOURCE origin with exact scalar
-        // offsets, never synthetic (1,1). The unsupported call anchors at
-        // the for-of statement's own span.
-        CompilerDiagnostic e6000 = badOrchestrator.diagnostics().stream()
+        // offsets, never synthetic (1,1). The table-signature rejection
+        // (table carriers inside function signatures — the ISSUE-0110
+        // descriptor-join family) anchors at the loop variable's table
+        // annotation.
+        String tableSrc = Files.readString(tableEntry);
+        int forIdx = tableSrc.indexOf("table", tableSrc.indexOf("for (let f"));
+        check(forIdx >= 0, "fixture contains the table annotation");
+        int lineStart = tableSrc.lastIndexOf('\n', forIdx) + 1;
+        int expectedLine = tableSrc.substring(0, forIdx).split("\n", -1).length;
+        int expectedColumn = forIdx - lineStart + 1;
+        int expectedOffset = ScalarSourceCursor.scalarCount(tableSrc, 0, forIdx);
+        CompilerDiagnostic e6000 = tableOrchestrator.diagnostics().stream()
             .filter(d -> "E6000".equals(d.code())
-                && d.message().contains("function arrays whose signature"))
+                && d.message().contains("table carriers"))
+            .filter(d -> d.range() != null
+                && d.range().startLine() == expectedLine
+                && d.range().startColumn() == expectedColumn)
             .findFirst().orElse(null);
         check(e6000 != null, "for-of E6000 present for the boundary pin");
         if (e6000 != null) {
             DiagnosticRange range = e6000.range();
             check(range.origin() == RangeOrigin.SOURCE,
                 "backend-boundary E6000 range origin is SOURCE: " + range);
-            String src = Files.readString(badEntry);
-            int forIdx = src.indexOf("for (let f");
-            check(forIdx >= 0, "fixture contains the for-of statement");
-            int lineStart = src.lastIndexOf('\n', forIdx) + 1;
-            int expectedLine = src.substring(0, forIdx).split("\n", -1).length;
-            int expectedColumn = forIdx - lineStart + 1;
-            int expectedOffset = ScalarSourceCursor.scalarCount(src, 0, forIdx);
             check(range.startLine() == expectedLine
                     && range.startColumn() == expectedColumn,
-                "backend-boundary E6000 starts at the for-of statement: "
+                "backend-boundary E6000 starts at the table annotation: "
                     + range);
             check(range.startScalarOffset() == expectedOffset,
                 "backend-boundary E6000 start scalar offset is exact ("
@@ -4760,7 +5035,7 @@ public class JvmBackendTest {
      * those shapes no longer reach a backend. The in-function shapes run
      * cross-backend with LuaJIT parity, and the removed module-level
      * shapes are E1049-gated in
-     * {@code test/conformance/fixtures/jvm-function-values-slice.json}.
+     * {@code retired JSON slice jvm-function-values-slice}.
      */
     /**
      * Regression guard (MR-0339 review round 1, major finding): the
@@ -4800,7 +5075,7 @@ public class JvmBackendTest {
             "overload-chain probe parses clean: " + parse.diagnostics());
         if (parse.hasErrors()) return;
         NameResolver nr = new NameResolver("Main",
-            new BackendConformanceTest.StubModuleResolver());
+            new StubModuleResolver());
         SymbolTable symTable = nr.resolve(parse.program());
         CheckResult result = TypeChecker.check("Main", symTable, nr,
             parse.program());
@@ -4885,25 +5160,25 @@ public class JvmBackendTest {
                 + res.diagnostics());
             if (!res.hasErrors()) {
                 String src = res.source();
-                check(src.contains("static abstract class Fn2_II_R_I implements $FnValue {"),
-                    "per-signature wrapper class emitted");
+                check(src.contains("static abstract class Fn2_I_I_R_I implements FnValue {"),
+                    "shared per-signature wrapper class emitted inside $DealRt");
                 check(src.contains(
                     "final java.lang.String descriptor = \"(int,int)->int\";"),
-                    "wrapper carries the spec-convention descriptor");
-                check(src.contains("static final Fn2_II_R_I add$fn = new Fn2_II_R_I()"),
+                    "wrapper carries the canonical descriptor");
+                check(src.contains("static final $DealRt.Fn2_I_I_R_I add$fn = new $DealRt.Fn2_I_I_R_I()"),
                     "per-declaration wrapper instance field emitted");
                 check(src.contains("f.invoke(1L, 2L)"),
                     "indirect call dispatches through invoke");
                 check(src.contains(
-                    "Fn2_II_R_I g = new Fn2_II_R_I() { @Override long invoke(long p0, long p1) { return Main.inc(p0); } };"),
+                    "$DealRt.Fn2_I_I_R_I g = new $DealRt.Fn2_I_I_R_I() { @Override long invoke(long p0, long p1) { return Main.inc(p0); } };"),
                     "arity adapter delegates to the qualified static method, dropping p1");
                 check(src.contains(
-                        "static final Fn2_II_R_I add$fn = new Fn2_II_R_I() {")
+                        "static final $DealRt.Fn2_I_I_R_I add$fn = new $DealRt.Fn2_I_I_R_I() {")
                     && src.contains(
                         "long invoke(long p0, long p1) { return Main.add(p0, p1); }"),
                     "declaration wrapper delegates to the qualified static method");
-                check(src.contains("static final Fn1_N_R_I _int$fn = new Fn1_N_R_I() {")
-                    && src.contains("static final Fn1_I_R_N _number$fn = new Fn1_I_R_N() {"),
+                check(src.contains("static final $DealRt.Fn1_N_R_I _int$fn = new $DealRt.Fn1_N_R_I() {")
+                    && src.contains("static final $DealRt.Fn1_I_R_N _number$fn = new $DealRt.Fn1_I_R_N() {"),
                     "intrinsic function-value wrappers emitted");
                 check(!src.contains(" -> "),
                     "no lambda is emitted (descriptor strings may carry the arrow glyph)");
@@ -4967,7 +5242,7 @@ public class JvmBackendTest {
                 check(res.source().contains("return Main.invoke(p0);"),
                     "the declaration wrapper delegates to the qualified static invoke");
                 check(res.source().contains(
-                        "Fn2_II_R_I g = new Fn2_II_R_I() { @Override long invoke(long p0, long p1) { return Main.invoke(p0); } };"),
+                        "$DealRt.Fn2_I_I_R_I g = new $DealRt.Fn2_I_I_R_I() { @Override long invoke(long p0, long p1) { return Main.invoke(p0); } };"),
                     "the arity adapter delegates to the qualified static invoke");
                 check(!res.source().contains("return invoke(p0);"),
                     "never a bare invoke call recursing into the wrapper's own invoke");
@@ -5003,7 +5278,7 @@ public class JvmBackendTest {
             check(!res.hasErrors(), "local adapter probe codegen clean: "
                 + res.diagnostics());
             if (!res.hasErrors()) {
-                check(res.source().contains("Fn1_I_R_I __fn0 = g;"),
+                check(res.source().contains("$DealRt.Fn1_I_R_I __fn0 = g;"),
                     "adapter snapshots the local into an effectively-final temporary");
                 check(res.source().contains("__fn0.invoke(p0)"),
                     "adapter delegates through the snapshot temporary");
@@ -5144,7 +5419,7 @@ public class JvmBackendTest {
             check(!res.hasErrors(), "call-result callee emit probe codegen "
                 + "clean: " + res.diagnostics());
             if (!res.hasErrors()) {
-                check(res.source().contains("Fn2_II_R_I __fn0 = picker();"),
+                check(res.source().contains("$DealRt.Fn2_I_I_R_I __fn0 = picker();"),
                     "the call-result callee is materialized into a temporary "
                     + "at its evaluation position");
                 check(res.source().contains("__fn0.invoke(41L, 1L)"),
@@ -5268,7 +5543,7 @@ public class JvmBackendTest {
         // parameter's descriptor, and the emitted artifact must be valid
         // Java. The pre-fix JVM materialized the later operand's RAISING
         // construction into an actual-shape temporary
-        // (`Fn0_R_I __t0 = new Fn2_IS_R_I() {…}`), which javac rejected
+        // (`Fn0_R_I __t0 = new Fn2_I_S_R_I() {…}`), which javac rejected
         // ("incompatible types") after the CLI reported success — and
         // which would have raised the SECOND parameter's check before
         // the first's.
@@ -5319,18 +5594,18 @@ public class JvmBackendTest {
                 "two-check emission probe codegen clean: " + res.diagnostics());
             if (!res.hasErrors()) {
                 String src = res.source();
-                check(src.contains("Fn1_I_R_I __fn0 = inc$fn;"),
+                check(src.contains("$DealRt.Fn1_I_R_I __fn0 = inc$fn;"),
                     "the first check operand's value temp carries its ACTUAL shape");
-                check(src.contains("Fn0_R_I __fn1 = pickZero();"),
+                check(src.contains("$DealRt.Fn0_R_I __fn1 = pickZero();"),
                     "the later check operand's value temp carries its ACTUAL shape");
                 check(!src.contains("Fn0_R_I __t")
-                    && !src.contains("Fn2_IS_R_I __t")
+                    && !src.contains("Fn2_I_S_R_I __t")
                     && !src.contains("Fn1_I_R_I __t"),
                     "no materialization temp holds a raising construction");
-                check(src.contains("new Fn2_IS_R_I() { { if (!checkSig(\"(int,string)->int\", \"(int)->int\"))")
-                    && src.contains("new Fn2_IS_R_I() { { if (!checkSig(\"(int,string)->int\", \"()->int\"))"),
+                check(src.contains("new $DealRt.Fn2_I_S_R_I() { { if (!checkSig(\"(int,string)->int\", \"(int)->int\"))")
+                    && src.contains("new $DealRt.Fn2_I_S_R_I() { { if (!checkSig(\"(int,string)->int\", \"()->int\"))"),
                     "both raising constructions stay inline at their argument positions in parameter order");
-                check(src.contains("apply2(new Fn2_IS_R_I()"),
+                check(src.contains("apply2(new $DealRt.Fn2_I_S_R_I()"),
                     "the inline raise sits directly in the call argument list");
             }
         }
@@ -5604,22 +5879,14 @@ public class JvmBackendTest {
                     + "' rejected with E1049: " + gf.errors());
         }
 
-        // Deferred signature shapes → E6000 (ISSUE-0110).
+        // ISSUE-0301: the shared wrapper scope covers the complete
+        // canonical grammar, so function equality/inequality over
+        // array/class/nullable-parameter signatures — the former
+        // deferred E6000 shapes — now emits wrapper classes and
+        // executes: wrapper equality is reference identity, so two
+        // distinct declarations never compare equal.
         record DeferredCase(String what, String source) {}
-        List<DeferredCase> deferred = List.of(
-            // The four former deferred cases — async function types
-            // (ISSUE-0099), nested and nullable function types, and
-            // arrays of functions (ISSUE-0102) — are promoted out of
-            // this list: async function-type bindings run through the
-            // ISSUE-0099 wrapper machinery (testAsyncSlice), and the
-            // ISSUE-0102 promoted block below pins the other three.
-            // Function equality/inequality over deferred signature
-            // shapes: the value use reaches emitIdentifier's
-            // FunctionSymbol branch without a typed function-value
-            // boundary in between, and the wrapper field emitFunction
-            // gates on does not exist for these signatures — E6000,
-            // never an artifact javac rejects after the CLI reported
-            // success.
+        List<DeferredCase> promotedEquality = List.of(
             new DeferredCase(
                 "function equality with array-parameter signatures", """
                 function f(xs: int[]): int { return xs[0]; }
@@ -5639,18 +5906,18 @@ public class JvmBackendTest {
                 function g(x: int | null): int { return 2; }
                 export function test(): boolean { return f === g; }
                 """));
-        for (DeferredCase c : deferred) {
+        for (DeferredCase c : promotedEquality) {
             Frontend df = compileFrontend(c.source, "jvmtest-fv-deferred.deal");
             if (!df.errors().isEmpty()) {
-                fail("frontend must accept the deferred case '" + c.what()
-                    + "' (the backend rejects it): " + df.errors());
+                fail("frontend must accept the promoted equality case '"
+                    + c.what() + "': " + df.errors());
                 continue;
             }
-            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
-                df.program(), df.checkResult(), "jvmtest-fv-deferred.deal", "main");
-            check(res.hasErrors(), "backend rejects " + c.what());
-            check(res.diagnostics().stream().anyMatch(d -> "E6000".equals(d.code())),
-                "E6000 for " + c.what() + ": " + res.diagnostics());
+            ExecResult er = compileAndRunJvm(c.source, "jvmtest-fv-deferred");
+            check(er.exitCode() == 0 && er.output().contains(
+                    c.what().contains("inequality") ? "true" : "false"),
+                c.what() + " runs through javac + java with reference "
+                    + "identity semantics: " + er.output());
         }
 
         // ISSUE-0102: nested and nullable function types promoted out of
@@ -5701,39 +5968,1059 @@ public class JvmBackendTest {
     }
 
     /**
-     * ISSUE-0098 cross-module function values: the per-signature wrapper
-     * classes are emitted per module as NESTED classes, so a function
-     * value cannot cross a project-module boundary — a Func-typed
-     * argument to an imported module call, or a Func-typed call result
-     * used as an assignment value / call-result callee, is E6000 with no
-     * entry artifact (never an artifact javac rejects after the CLI
-     * reported success). The pre-fix emissions
-     * ({@code Lib.apply(inc$fn, 41L)}, {@code Fn1_I_R_I f =
-     * Lib.picker();}, {@code Fn1_I_R_I __fn0 = Lib.picker();}) were all
-     * javac-rejected, and the member-call path also silently skipped the
-     * LuaJIT parameter-boundary E8010 check the same-module path emits.
-     * The same four shapes are pinned by the multi-module conformance
-     * fixtures in {@code test/conformance/fixtures/
-     * jvm-function-values-slice.json} through
-     * {@code BackendConformanceTest.runMultiModuleTestCase}.
+     * ISSUE-0301 shape-naming property cases (jvm-v12-runtime-value-
+     * surface D2/D3, Verification 3): the injective encoding over the
+     * complete canonical grammar. {@link JvmBackend#fnShapeId} maps
+     * every distinct function signature — primitives including
+     * {@code null} and {@code bytes}, arrays, nullables, classes (by
+     * canonical identity text), and nested sync/async functions — to a
+     * distinct identifier, and the array-shape id
+     * ({@code __A$} + escaped descriptor) maps distinct element shapes
+     * to distinct identifiers. Generated ids can never collide with
+     * {@link JvmBackend#javaName} output: they contain {@code _} or
+     * {@code $}, neither of which a translated user identifier can
+     * contain.
      */
-    private static void testCrossModuleFunctionValuesRejected() throws Exception {
-        System.out.println("-- Orchestrator: cross-module function values → E6000 --");
+    private static void testSharedCarrierShapeEncoding() {
+        System.out.println("-- Shared carrier shape encoding (ISSUE-0301) --");
 
-        record XmodCase(String what, String libSource, String entrySource) {}
+        List<Type> types = List.of(
+            Type.Boolean.INSTANCE,
+            Type.Int.INSTANCE,
+            Type.Number.INSTANCE,
+            Type.String.INSTANCE,
+            Type.Null.INSTANCE,
+            Type.Bytes.INSTANCE,
+            Type.Table.INSTANCE,
+            new Type.Array(Type.Int.INSTANCE),
+            new Type.Array(new Type.Array(Type.Int.INSTANCE)),
+            new Type.Array(Type.Bytes.INSTANCE),
+            new Type.Array(new Type.Func(List.of(Type.Int.INSTANCE),
+                Type.Int.INSTANCE, false)),
+            new Type.Array(new Type.Func(List.of(Type.Int.INSTANCE),
+                Type.Int.INSTANCE, true)),
+            new Type.Nullable(Type.Int.INSTANCE),
+            new Type.Nullable(IdentityTestFixtures.classType("C", "lib")),
+            new Type.Array(new Type.Nullable(Type.String.INSTANCE)),
+            IdentityTestFixtures.classType("Box", "lib"),
+            IdentityTestFixtures.classType("Box", "main"),
+            IdentityTestFixtures.errorClassType(),
+            new Type.Func(List.of(), Type.Int.INSTANCE, false),
+            new Type.Func(List.of(Type.Int.INSTANCE), Type.Int.INSTANCE, false),
+            new Type.Func(List.of(Type.Int.INSTANCE), Type.Int.INSTANCE, true),
+            new Type.Func(List.of(Type.Int.INSTANCE, Type.String.INSTANCE),
+                Type.Number.INSTANCE, false),
+            new Type.Func(List.of(new Type.Array(Type.Int.INSTANCE)),
+                Type.Boolean.INSTANCE, false),
+            new Type.Func(List.of(new Type.Nullable(Type.Int.INSTANCE)),
+                IdentityTestFixtures.classType("C", "lib"), false),
+            new Type.Func(List.of(new Type.Func(List.of(Type.Int.INSTANCE),
+                Type.Int.INSTANCE, false)), Type.Int.INSTANCE, false),
+            new Type.Func(List.of(new Type.Func(List.of(Type.Int.INSTANCE),
+                Type.Int.INSTANCE, true)), Type.Int.INSTANCE, false),
+            new Type.Func(List.of(Type.Bytes.INSTANCE), Type.Null.INSTANCE,
+                false));
+        // The shape ids consume the ONE static JVM type-descriptor
+        // emitter (ISSUE-0301 descriptor seam): class atoms project
+        // from the carried canonical identities, so the property cases
+        // exercise the service-driven class atoms.
+        Map<String, Type> ids = new LinkedHashMap<>();
+        for (Type t : types) {
+            String id = t instanceof Type.Func f
+                ? JvmBackend.fnShapeId(f)
+                : "__A$" + JvmBackend.escapedIdentifier(
+                    JvmBackend.typeDescriptor(t));
+            Type previous = ids.putIfAbsent(id, t);
+            check(previous == null,
+                "distinct canonical type " + t + " maps to a distinct id '"
+                    + id + "' (collision with " + previous + ")");
+            check(id.contains("_") || id.contains("$"),
+                "generated shape id '" + id + "' carries a character "
+                    + "javaName output can never contain");
+        }
+        check(ids.size() == types.size(),
+            "every canonical shape in the corpus produced a distinct id");
+        // Pinned spot values: the primitive letter codes and the async
+        // marker position survive the complete-grammar extension.
+        check("Fn2_I_I_R_I".equals(JvmBackend.fnShapeId(
+                new Type.Func(List.of(Type.Int.INSTANCE, Type.Int.INSTANCE),
+                    Type.Int.INSTANCE, false))),
+            "sync (int,int)->int keeps the pinned Fn2_I_I_R_I id");
+        check("FnA1_I_R_I".equals(JvmBackend.fnShapeId(
+                new Type.Func(List.of(Type.Int.INSTANCE),
+                    Type.Int.INSTANCE, true))),
+            "async (int)->int maps to the distinct FnA1_I_R_I id");
+        check("Fn1_Y_R_V".equals(JvmBackend.fnShapeId(
+                new Type.Func(List.of(Type.Bytes.INSTANCE),
+                    Type.Null.INSTANCE, false))),
+            "bytes params map to the Y code (bytes is covered)");
+        // User-name disjointness: javaName escapes $ and _, so no
+        // translated user identifier can spell a generated id.
+        for (String user : List.of("Fn1_I_R_I", "invoke", "descriptor",
+                "__IntArray", "add", "x$1", "_x")) {
+            String translated = JvmBackend.javaName(user);
+            check(!translated.contains("_"),
+                "javaName output never contains a raw underscore ("
+                    + translated + ") — the generated ids' underscore "
+                    + "positions are unreachable from any user identifier");
+            check(!ids.containsKey(translated),
+                "the translated user identifier '" + user + "' never "
+                    + "equals a generated shape id");
+        }
+    }
+
+    /**
+     * ISSUE-0301 D4 deterministic collection order (the review-round
+     * correction of the HashMap-seeded order): the collected
+     * project-shape set is seeded ONLY through source-ordered walks —
+     * the two intrinsic wrappers, the host declarations in
+     * import-statement order (their export maps in declaration order),
+     * then the AST walk (declaration order) closing every type
+     * annotation and expression type. The result is a pinned exact
+     * list: no hash-bucket iteration participates (the checker's
+     * typeMap is a HashMap and the host export maps reach the backend
+     * through unordered copies — the walk, not their iteration order,
+     * drives the output).
+     */
+    private static void testSharedShapeCollectionOrder() {
+        System.out.println("-- Shared shape collection order (ISSUE-0301) --");
+        Map<String, Map<String, Type>> hostModules = new LinkedHashMap<>();
+        Map<String, Type> hostExports = new LinkedHashMap<>();
+        hostExports.put("take", new Type.Func(List.of(Type.String.INSTANCE),
+            Type.Int.INSTANCE, false));
+        hostExports.put("xs", new Type.Array(Type.Int.INSTANCE));
+        hostModules.put("hostx", hostExports);
+        Frontend f = compileFrontend("""
+            import * as hostx from "hostx"
+            function f1(x: int): int { return x; }
+            export function g(): int {
+              let a: int[] = [1];
+              return f1(a[0]);
+            }
+            """, "jvmtest-shape-order.deal",
+            new FixedModuleResolver(Map.of("hostx", hostExports)));
+        check(f.errors().isEmpty(),
+            "shape-order fixture frontend clean: " + f.errors());
+        if (!f.errors().isEmpty()) return;
+        Map<String, CanonicalModuleIdentity> classification =
+            new LinkedHashMap<>();
+        classification.put("",
+            CanonicalModuleIdentity.BuiltinModule.INSTANCE);
+        for (String path : List.of("main", "jvmtest-shape-order.deal")) {
+            classification.put(path,
+                new CanonicalModuleIdentity.ProjectModule(
+                    new ProjectModuleIdentity(path, path, List.of())));
+        }
+        ModuleIdentityResolver.IdentityIndex idx =
+            ModuleIdentityResolver.buildIndex(classification);
+        List<Type> shapes = JvmBackend.collectShapes(f.program(),
+            f.checkResult(), "jvmtest-shape-order.deal", "main",
+            Map.of(), Map.of(), hostModules, Map.of(),
+            SemanticProfile.LEGACY_SAFE_INT, idx,
+            idx.moduleIdentityLookup());
+        List<Type> expected = List.of(
+            new Type.Func(List.of(Type.Number.INSTANCE),
+                Type.Int.INSTANCE, false),
+            new Type.Func(List.of(Type.Int.INSTANCE),
+                Type.Number.INSTANCE, false),
+            new Type.Func(List.of(Type.String.INSTANCE),
+                Type.Int.INSTANCE, false),
+            new Type.Array(Type.Int.INSTANCE),
+            new Type.Func(List.of(Type.Int.INSTANCE),
+                Type.Int.INSTANCE, false),
+            new Type.Func(List.of(), Type.Int.INSTANCE, false));
+        check(shapes.equals(expected),
+            "the collected shape list is the pinned source-ordered "
+                + "sequence " + expected + ", got: " + shapes);
+    }
+
+    /**
+     * ISSUE-0301 $check realization behaviors (jvm-v12-runtime-value-
+     * surface D5, Verification 4): the generated recursive [D] row
+     * accepts the matching shared wrapper and an array-mode $DealRt.Table
+     * (the __jsonTableValue dynamic representation — elements checked
+     * recursively in index order, E8003 "array element {i} type
+     * mismatch" at the first failing index), any other non-array value
+     * raises E8001 "expected array"; the function row byte-compares the
+     * carried canonical descriptor (a descriptor delta raises E8010, a
+     * non-wrapper raises E8001 "expected function"); the bytes row
+     * delegates to the $DealRt.Bytes carrier predicate. The array-mode
+     * table fixtures build the dynamic representation through a
+     * @jsonable class's table field (the __jsonTableValue output) and
+     * cross it at a typed array boundary.
+     */
+    private static void testSharedCarrierCheckBehaviors() throws Exception {
+        System.out.println("-- Shared carrier $check behaviors (ISSUE-0301) --");
+
+        // Array-mode table accepted as the [int] dynamic representation.
+        ExecResult ok = compileAndRunJvm("""
+            // @jsonable
+            export class Wrap {
+              data: table = {};
+            }
+            export function test(): int {
+              let w: Wrap | null = Wrap$fromJson(
+                  "{\\"data\\": {\\"xs\\": [1, 2]}}");
+              if (w !== null) {
+                let holder: table = w.data;
+                let xs: int[] = holder.xs;
+                return xs[1];
+              }
+              return 0;
+            }
+            """, "carrier-dynarray-ok");
+        check(ok.exitCode() == 0 && ok.output().contains("2"),
+            "an array-mode $DealRt.Table crosses an [int] boundary with "
+                + "recursive element checks: " + ok.output());
+
+        // E8003 at the first failing index inside the dynamic array.
+        ExecResult badElem = compileAndRunJvm("""
+            // @jsonable
+            export class Wrap {
+              data: table = {};
+            }
+            export function test(): int {
+              let w: Wrap | null = Wrap$fromJson(
+                  "{\\"data\\": {\\"xs\\": [1, 2.5, 3]}}");
+              if (w !== null) {
+                let holder: table = w.data;
+                let xs: int[] = holder.xs;
+                return xs[0];
+              }
+              return 0;
+            }
+            """, "carrier-dynarray-badelem");
+        check(badElem.exitCode() == 1
+                && badElem.output().contains("DEAL_ERROR_CODE: E8003")
+                && badElem.output().contains(
+                    "array element 2 type mismatch"),
+            "the first failing index raises E8003 \"array element 2 type "
+                + "mismatch\" (the inner non-integer cause is suppressed "
+                + "like LuaJIT's pcall-wrapped checks): " + badElem.output());
+
+        // Recursive [D] over nested arrays: the dynamic [[int]] row
+        // checks elements recursively in index order.
+        ExecResult nestedOk = compileAndRunJvm("""
+            // @jsonable
+            export class Wrap {
+              data: table = {};
+            }
+            export function test(): int {
+              let w: Wrap | null = Wrap$fromJson(
+                  "{\\"data\\": {\\"xs\\": [[1, 2], [3, 4]]}}");
+              if (w !== null) {
+                let holder: table = w.data;
+                let rows: int[][] = holder.xs;
+                return rows[1][1];
+              }
+              return 0;
+            }
+            """, "carrier-dynarray-nested-ok");
+        check(nestedOk.exitCode() == 0 && nestedOk.output().contains("4"),
+            "an array-mode table crosses a nested [[int]] boundary with "
+                + "recursive element checks: " + nestedOk.output());
+
+        ExecResult nestedBad = compileAndRunJvm("""
+            // @jsonable
+            export class Wrap {
+              data: table = {};
+            }
+            export function test(): int {
+              let w: Wrap | null = Wrap$fromJson(
+                  "{\\"data\\": {\\"xs\\": [[1, 2], [3, \\"bad\\"]]}}");
+              if (w !== null) {
+                let holder: table = w.data;
+                let rows: int[][] = holder.xs;
+                return rows[0][0];
+              }
+              return 0;
+            }
+            """, "carrier-dynarray-nested-bad");
+        check(nestedBad.exitCode() == 1
+                && nestedBad.output().contains("DEAL_ERROR_CODE: E8003")
+                && nestedBad.output().contains(
+                    "array element 2 type mismatch"),
+            "a failing nested element raises E8003 at the first failing "
+                + "index (row 2): " + nestedBad.output());
+
+        // An object-mode table (or any non-array value) raises E8001
+        // "expected array" at the [D] boundary.
+        ExecResult objMode = compileAndRunJvm("""
+            // @jsonable
+            export class Wrap {
+              data: table = {};
+            }
+            export function test(): int {
+              let w: Wrap | null = Wrap$fromJson(
+                  "{\\"data\\": {\\"xs\\": {\\"x\\": 1}}}");
+              if (w !== null) {
+                let holder: table = w.data;
+                let xs: int[] = holder.xs;
+                return 0;
+              }
+              return 0;
+            }
+            """, "carrier-dynarray-objmode");
+        check(objMode.exitCode() == 1
+                && objMode.output().contains("DEAL_ERROR_CODE: E8001")
+                && objMode.output().contains("expected array, got table"),
+            "an object-mode table raises E8001 \"expected array, got "
+                + "table\": " + objMode.output());
+
+        // A function-typed table read byte-compares the carried
+        // descriptor; a non-wrapper raises E8001 "expected function".
+        ExecResult fnValue = compileAndRunJvm("""
+            function inc(x: int): int { return x + 1; }
+            export function test(): int {
+              let t: table = { fn: inc };
+              let f: (x: int) => int = t.fn;
+              return f(41);
+            }
+            """, "jvmtest-carrier-fnrow-ok");
+        check(fnValue.exitCode() == 0 && fnValue.output().contains("42"),
+            "a wrapper whose carried descriptor equals the expected text "
+                + "passes the function row: " + fnValue.output());
+
+        ExecResult fnBad = compileAndRunJvm("""
+            export function test(): int {
+              let t: table = { fn: 42 };
+              let f: (x: int) => int = t.fn;
+              return 0;
+            }
+            """, "jvmtest-carrier-fnrow-bad");
+        check(fnBad.exitCode() == 1
+                && fnBad.output().contains("DEAL_ERROR_CODE: E8001")
+                && fnBad.output().contains("expected function"),
+            "a non-wrapper value raises E8001 \"expected function\" at "
+                + "the function row: " + fnBad.output());
+
+        // Function-array [D] row: the emitted $checkArray accepts the
+        // typed ((x:int)=>int)[] wrapper (identity) and converts a
+        // dynamic array-mode table holding function wrappers with
+        // recursive element checks — E8003 "array element {i} type
+        // mismatch" at the first failing index. No DEAL expression can
+        // build a dynamic table holding function values (functions are
+        // not JSON), so the probe drives the REAL emitted helpers with
+        // a hand-built runner over the production artifact.
+        Frontend fnArrProbe = compileFrontend("""
+            function inc(x: int): int { return x + 1; }
+            export function test(): int {
+              let holder: table = {};
+              let fs: ((x: int) => int)[] = holder.fs;
+              return 0;
+            }
+            """, "jvmtest-carrier-fnarr.deal");
+        check(fnArrProbe.errors().isEmpty(),
+            "function-array probe frontend clean: " + fnArrProbe.errors());
+        if (fnArrProbe.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                fnArrProbe.program(), fnArrProbe.checkResult(),
+                "jvmtest-carrier-fnarr.deal", "Main");
+            check(!res.hasErrors(),
+                "function-array probe codegen clean: " + res.diagnostics());
+            Path dir = Files.createTempDirectory("jvmtest_fnarr_");
+            Files.writeString(dir.resolve("Main.java"), res.source());
+            Files.writeString(dir.resolve("Runner.java"), """
+                public final class Runner {
+                    public static void main(String[] args) {
+                        try {
+                            java.util.ArrayList<java.lang.Object> els =
+                                new java.util.ArrayList<>();
+                            els.add(Main.inc$fn);
+                            els.add(java.lang.Long.valueOf(42));
+                            $DealRt.Table t = new $DealRt.Table(els);
+                            Main.$check("[(int)->int]", t);
+                            System.out.println("no-error");
+                        } catch (Main.DealError e) {
+                            System.out.println("DEAL_ERROR_CODE: " + e.code);
+                            System.out.println(e.getMessage());
+                            System.exit(1);
+                        }
+                    }
+                }
+                """);
+            StringBuilder javacErr = new StringBuilder();
+            boolean javacOk = StubModuleResolver.compileWithJavac(dir,
+                List.of("Main.java", "Runner.java"), javacErr);
+            check(javacOk, "function-array probe artifacts compile: "
+                + javacErr);
+            if (javacOk) {
+                ProcessBuilder java = new ProcessBuilder("java", "-cp",
+                    dir.toString(), "Runner");
+                java.redirectErrorStream(true);
+                Process p = java.start();
+                String out = new String(p.getInputStream().readAllBytes())
+                    .trim();
+                int exit = p.waitFor();
+                check(exit == 1
+                        && out.contains("DEAL_ERROR_CODE: E8003")
+                        && out.contains("array element 2 type mismatch"),
+                    "a dynamic function-array conversion raises E8003 at "
+                        + "the first failing index (element 2, the Long "
+                        + "is not a wrapper): " + out);
+                Files.writeString(dir.resolve("Runner.java"), """
+                    public final class Runner {
+                        public static void main(String[] args) {
+                            try {
+                                java.util.ArrayList<java.lang.Object> els =
+                                    new java.util.ArrayList<>();
+                                els.add(Main.inc$fn);
+                                $DealRt.Table t = new $DealRt.Table(els);
+                                Main.$check("[(int)->int]", t);
+                                System.out.println("fn-array-row-ok");
+                            } catch (Main.DealError e) {
+                                System.out.println("DEAL_ERROR_CODE: " + e.code);
+                                System.exit(1);
+                            }
+                        }
+                    }
+                    """);
+                ProcessBuilder javac2 = new ProcessBuilder("javac",
+                    "-encoding", "UTF-8", "Main.java", "Runner.java");
+                javac2.directory(dir.toFile());
+                javac2.redirectErrorStream(true);
+                Process p2 = javac2.start();
+                String javacOut2 = new String(
+                    p2.getInputStream().readAllBytes()).trim();
+                int javacExit2 = p2.waitFor();
+                check(javacExit2 == 0,
+                    "positive runner compiles: " + javacOut2);
+                ProcessBuilder java2 = new ProcessBuilder("java", "-cp",
+                    dir.toString(), "Runner");
+                java2.redirectErrorStream(true);
+                Process p3 = java2.start();
+                String out2 = new String(p3.getInputStream().readAllBytes())
+                    .trim();
+                int exit2 = p3.waitFor();
+                check(exit2 == 0 && out2.contains("fn-array-row-ok"),
+                    "a dynamic function-array of genuine wrappers passes "
+                        + "the [D] row element-wise: " + out2);
+            }
+            try {
+                Files.walk(dir).sorted(Comparator.reverseOrder())
+                    .forEach(p2 -> { try { Files.deleteIfExists(p2); }
+                        catch (IOException ignored) {} });
+            } catch (IOException ignored) { }
+        }
+
+        // The bytes row delegates to the $DealRt.Bytes carrier predicate
+        // (matcher table): emission inspection — the ISSUE-0158 bytes
+        // lane constructs real $DealRt.Bytes values through the emitted
+        // helpers (testBytesRuntimeLane exercises the behavior).
+        Frontend bytesProbe = compileFrontend("""
+            export function test(): int { return 1; }
+            """, "jvmtest-carrier-bytesrow.deal");
+        check(bytesProbe.errors().isEmpty(),
+            "bytes-row probe frontend clean: " + bytesProbe.errors());
+        if (bytesProbe.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                bytesProbe.program(), bytesProbe.checkResult(),
+                "jvmtest-carrier-bytesrow.deal", "main");
+            check(!res.hasErrors(), "bytes-row probe codegen clean: "
+                + res.diagnostics());
+            check(res.source().contains(
+                    "if (descriptor.equals(\"bytes\")) { if (v "
+                        + "instanceof $DealRt.Bytes b) return b;"),
+                "the emitted $check carries the canonical bytes row over "
+                    + "the $DealRt.Bytes carrier");
+            check(res.source().contains(
+                    "static final class Bytes {"),
+                "the shared $DealRt scope carries the final Bytes wrapper "
+                    + "over byte[]");
+        }
+    }
+
+    /**
+     * ISSUE-0301 identity/equality across module boundaries
+     * (jvm-v12-runtime-value-surface Verification 5): wrapper reference
+     * equality, alias-observed writes, and append stability hold when
+     * the carriers cross a module boundary — the shared $DealRt classes
+     * keep one identity per project. Executes the real orchestrator
+     * pipeline (codegen → javac → java).
+     */
+    private static void testSharedCarrierCrossModuleIdentity()
+            throws Exception {
+        System.out.println("-- Shared carrier cross-module identity (ISSUE-0301) --");
+
+        writeFile("src/lib.deal", """
+            export function make(): int[] { return [5]; }
+            export function sum(xs: int[]): int { return xs[0] + xs[1]; }
+            export function picker(): (x: int) => int { return inc; }
+            function inc(x: int): int { return x + 1; }
+            """);
+        writeFile("src/entry.deal", """
+            import * as lib from "./lib"
+            export function main(): null { return null; }
+            export function run(): int {
+              let a: int[] = lib.make();
+              a[1] = 7;
+              a[0] = 9;
+              let b: int[] = a;
+              b[1] = 8;
+              let f1: (x: int) => int = lib.picker();
+              let f2: (x: int) => int = lib.picker();
+              let eq: int = 0;
+              if (f1 === f2) { eq = 1; }
+              let t: table = { fn: lib.picker() };
+              let f3: (x: int) => int = t.fn;
+              return lib.sum(a) + a[1] + f1(40) + eq + f3(0);
+            }
+            """);
+
+        Path entryFile = tmpDir.get().resolve("src/entry.deal").toAbsolutePath();
+        Path outputDir = tmpDir.get().resolve("build/carrier_identity");
+        List<Path> roots = List.of(tmpDir.get().resolve("src").toAbsolutePath());
+
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputDir, false, false, false, false, Backend.JVM,
+            null, roots, Path.of(".").toAbsolutePath().normalize());
+        boolean success = orchestrator.compile();
+        check(success, "shared-carrier identity project compiles: "
+            + orchestrator.diagnostics());
+        if (success && Files.exists(outputDir.resolve("Entry.java"))) {
+            ExecResult exec = runJvmArtifacts(outputDir,
+                parseProgram("export function run(): int { return 1; }"),
+                "Entry");
+            check(exec.exitCode() == 0 && exec.output().contains("68"),
+                "cross-module identity holds: lib.sum(a)=17 (the lib-built "
+                    + "array keeps its identity and observes the entry's "
+                    + "append and aliased write when passed back), a[1]=8, "
+                    + "f1(40)=41, wrapper reference equality =1, "
+                    + "table-read wrapper byte-compare passes and f3(0)=1 "
+                    + "→ 68: " + exec.output());
+        }
+    }
+
+    /**
+     * ISSUE-0301 host-class-typed shapes now flow on the ISSUE-0303
+     * synthesized shared records: a project whose non-entry module
+     * imports a host module with a class export pre-registers
+     * shared-scope wrappers whose invoke signatures reference the
+     * synthesized {@code $DealRt.$Host$...} record classes (single
+     * emission point, canonical externals identity) — the pre-0303
+     * state rejected the project at the import (the retired E6000
+     * exclusion), and the pre-fix shared-scope wrapper over the
+     * never-emitted host Java class can no longer exist. The project
+     * compiles through the real orchestrator pipeline (collection seam
+     * → codegen → publish), the entry artifact carries the synthesized
+     * record and the wrapper reference, and the artifact set runs
+     * against a real host implementation class.
+     */
+    private static void testSharedCarrierHostClassShapes()
+            throws Exception {
+        System.out.println("-- Shared carrier host-class shapes on the "
+            + "synthesized records (ISSUE-0303) --");
+
+        writeFile("deal.json", """
+            {
+              "languageVersion": "1.2",
+              "moduleRoots": ["src"],
+              "externals": {
+                "host/cfg": { "declaration": "bindings/cfg.d.deal" }
+              }
+            }
+            """);
+        writeFile("bindings/cfg.d.deal", """
+            export class ServerConfig {
+              port: int;
+            }
+            export function load(): ServerConfig;
+            """);
+        writeFile("src/hostshape_lib.deal", """
+            import * as Cfg from "host/cfg"
+            export function load(): Cfg.ServerConfig {
+              return Cfg.load();
+            }
+            """);
+        writeFile("src/hostshape_entry.deal", """
+            import * as Lib from "./hostshape_lib"
+            export function main(): null { return null; }
+            """);
+        // The host implementation class: the declared class's defaults
+        // map (load-time capture) and a load() returning a synthesized
+        // record instance.
+        writeFile("HostCfg.java", """
+            public final class HostCfg {
+                public static final java.util.Map<String, Object> ServerConfig_defaults =
+                    java.util.Map.of("port", Integer.valueOf(8080));
+                public static Object load() {
+                    return new $DealRt.$Host$host$scfg$ServerConfig(8080);
+                }
+            }
+            """);
+
+        Path entryFile = tmpDir.get().resolve("src/hostshape_entry.deal")
+            .toAbsolutePath().normalize();
+        Path outputRoot = tmpDir.get()
+            .resolve("build/hostclass_shapes");
+        List<Path> roots = List.of(
+            tmpDir.get().resolve("src").toAbsolutePath());
+        Map<String, String> externals = Map.of("host/cfg",
+            tmpDir.get().resolve("bindings/cfg.d.deal").toString());
+        check(Files.exists(tmpDir.get().resolve("bindings/cfg.d.deal")),
+            "deal.json externals bind the host declaration");
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputRoot, false, false, false, Backend.JVM,
+            externals, roots, Path.of(".").toAbsolutePath().normalize());
+        boolean ok = orchestrator.compile();
+        check(ok, "the host-class project compiles (the synthesized "
+            + "records replace the retired import-time E6000): "
+            + orchestrator.diagnostics());
+        Path entryArtifact = outputRoot.resolve("Hostshape_entry.java");
+        check(Files.exists(entryArtifact),
+            "the entry artifact is published for the host-class project");
+        if (Files.exists(entryArtifact)) {
+            String java = Files.readString(entryArtifact);
+            check(java.contains("$Host$host$scfg$ServerConfig"),
+                "the shared $DealRt scope synthesizes the declared host "
+                    + "class record (deterministic specifier + class name)");
+            check(java.contains("interface FnValue"),
+                "the shared $DealRt scope still carries the function "
+                    + "carrier interface");
+        }
+        // The artifact set runs against the real host class: the load
+        // method captures the defaults map reflectively and the
+        // synthesized-record return crosses the class-typed boundary.
+        Files.copy(tmpDir.get().resolve("HostCfg.java"),
+            outputRoot.resolve("HostCfg.java"));
+        ExecResult exec = runJvmArtifacts(outputRoot,
+            parseProgram("export function main(): null { return null; }"),
+            "Hostshape_entry");
+        check(exec.exitCode() == 0,
+            "the host-class artifact set runs against the real host "
+                + "class (exit 0): " + exec.output());
+    }
+
+    /**
+     * ISSUE-0570 acceptance remediation: declared host-class ARRAY
+     * parameters/returns execute on the shared per-class
+     * {@code $DealRt.$HostArr$...} {@code __RefArray} carrier — the
+     * remaining import-time E6000 is removed
+     * (jvm-v12-host-abi-completion D1's blanket gate removal). The
+     * wrapper seam keeps the D2 boundary checks: carrier and
+     * wrong-kind element failures raise E8010 (parameter {i} / return
+     * value 1 mismatch) and a foreign-identity element raises the
+     * pinned nominal E8001 (the class-typed identity rule extended to
+     * class elements). The nullable-array and nullable-element forms
+     * join the same carrier, and the record FIELD position keeps its
+     * existing class-element array storage (the presence fixture's
+     * peers pin).
+     */
+    private static void testHostClassArraySeamRuntime()
+            throws Exception {
+        System.out.println("-- Host class-array seam runtime support "
+            + "(ISSUE-0570) --");
+
+        writeFile("deal.json", """
+            {
+              "languageVersion": "1.2",
+              "moduleRoots": ["src"],
+              "externals": {
+                "host/cfg": { "declaration": "bindings/cfg.d.deal" },
+                "host/other": { "declaration": "bindings/other.d.deal" }
+              }
+            }
+            """);
+        writeFile("bindings/cfg.d.deal", """
+            export class ServerConfig {
+              port: int;
+            }
+            export function make(): ServerConfig[];
+            export function makeMaybe(): ServerConfig[] | null;
+            export function makeForeign(): ServerConfig[];
+            export function makeJunk(): ServerConfig[];
+            export function makeBadCarrier(): ServerConfig[];
+            export function makeWithNull(): ServerConfig[];
+            export function take(cfgs: ServerConfig[]): int;
+            export function takeMaybe(cfgs: (ServerConfig | null)[]): int;
+            """);
+        writeFile("bindings/other.d.deal", """
+            export class ServerConfig {
+              value: string;
+            }
+            """);
+        writeFile("src/entry.deal", """
+            import * as cfg from "host/cfg"
+            import * as other from "host/other"
+            export function main(): null { return null; }
+            export function run(): int { let cs = cfg.make(); if (cs.length !== 2) { throw { code: "TEST_FAIL", message: "host class array return length mismatch" }; } return cfg.take(cs); }
+            export function runMaybe(): int { let cs = cfg.makeMaybe(); if (cs !== null) { return cs.length; } return 0; }
+            export function runTakeMaybe(): int { let holder: table = { v: cfg.make() }; let cs: (cfg.ServerConfig | null)[] = holder.v; return cfg.takeMaybe(cs); }
+            export function runForeign(): int { let cs = cfg.makeForeign(); return cs.length; }
+            export function runForeignParam(): int { let cs = cfg.makeForeign(); return cfg.take(cs); }
+            export function runJunk(): int { let cs = cfg.makeJunk(); return cs.length; }
+            export function runBadCarrier(): int { let cs = cfg.makeBadCarrier(); return cs.length; }
+            export function runParamCarrier(): int { let holder: table = { v: "x" }; return cfg.take(holder.v); }
+            export function runParamNullElem(): int { let cs = cfg.makeWithNull(); return cfg.take(cs); }
+            """);
+
+        Path entryFile = tmpDir.get().resolve("src/entry.deal")
+            .toAbsolutePath().normalize();
+        Path outputRoot = tmpDir.get().resolve("build/class_array_runtime");
+        List<Path> roots = List.of(
+            tmpDir.get().resolve("src").toAbsolutePath());
+        Map<String, String> externals = Map.of(
+            "host/cfg",
+            tmpDir.get().resolve("bindings/cfg.d.deal").toString(),
+            "host/other",
+            tmpDir.get().resolve("bindings/other.d.deal").toString());
+        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
+            entryFile, outputRoot, false, false, false, Backend.JVM,
+            externals, roots, Path.of(".").toAbsolutePath().normalize());
+        boolean ok = orchestrator.compile();
+        check(ok, "the class-array host export shapes compile (the "
+            + "import-time E6000 is gone): " + orchestrator.diagnostics());
+        Path artifact = outputRoot.resolve("Entry.java");
+        check(ok && Files.exists(artifact),
+            "the entry artifact is published for the class-array project");
+        if (ok && Files.exists(artifact)) {
+            String java = Files.readString(artifact);
+            check(java.contains("$HostArr$host$scfg$ServerConfig"),
+                "the wrapper seam and the shared scope reference the "
+                    + "per-class $HostArr$ carrier");
+            check(java.contains("$Host$host$sother$ServerConfig"),
+                "the second declared host class's record is synthesized "
+                    + "in the shared scope");
+        }
+        if (ok) {
+            Files.writeString(outputRoot.resolve("HostCfg.java"), """
+                public final class HostCfg {
+                    public static final java.util.Map<String, Object> ServerConfig_defaults =
+                        java.util.Map.of("port", Integer.valueOf(8080));
+                    public static Object make() {
+                        return new $DealRt.$HostArr$host$scfg$ServerConfig(new Object[] {
+                            new $DealRt.$Host$host$scfg$ServerConfig(Integer.valueOf(11)),
+                            new $DealRt.$Host$host$scfg$ServerConfig(Integer.valueOf(22))
+                        });
+                    }
+                    public static Object makeMaybe() { return null; }
+                    public static Object makeForeign() {
+                        return new $DealRt.$HostArr$host$scfg$ServerConfig(new Object[] {
+                            new $DealRt.$Host$host$sother$ServerConfig("x")
+                        });
+                    }
+                    public static Object makeJunk() {
+                        return new $DealRt.$HostArr$host$scfg$ServerConfig(new Object[] { "junk" });
+                    }
+                    public static Object makeBadCarrier() {
+                        return new $DealRt.__StringArray(new String[] { "a" });
+                    }
+                    public static Object makeWithNull() {
+                        return new $DealRt.$HostArr$host$scfg$ServerConfig(new Object[] { null });
+                    }
+                    public static Object take($DealRt.$HostArr$host$scfg$ServerConfig cfgs) {
+                        int t = 0;
+                        for (java.lang.Object o : cfgs.data) {
+                            t += ((Integer) (($DealRt.$Host$host$scfg$ServerConfig) o).port).intValue();
+                        }
+                        return Integer.valueOf(t);
+                    }
+                    public static Object takeMaybe($DealRt.$HostArr$host$scfg$ServerConfig cfgs) {
+                        return Integer.valueOf(cfgs.data.length);
+                    }
+                }
+                """);
+            Files.writeString(outputRoot.resolve("HostOther.java"), """
+                public final class HostOther {
+                    public static final java.util.Map<String, Object> ServerConfig_defaults =
+                        java.util.Map.of("value", new Object());
+                }
+                """);
+
+            // Success scenario: the plain and nullable forms cross the
+            // boundary on the one shared carrier (33 / 0 / 2).
+            ExecResult okRun = runJvmArtifacts(outputRoot, parseProgram("""
+                import * as cfg from "host/cfg"
+                export function main(): null { return null; }
+                export function run(): int { return 1; }
+                export function runMaybe(): int { return 1; }
+                export function runTakeMaybe(): int { return 1; }
+                """), "Entry");
+            check(okRun.exitCode() == 0
+                    && okRun.output().equals("33\n0\n2"),
+                "the class-array project executes against the real host "
+                    + "(33/0/2): " + okRun.output());
+
+            // Foreign-identity element on the RETURN side: the nominal
+            // E8001 propagates unchanged (never wrapped E8010).
+            ExecResult foreign = runJvmArtifacts(outputRoot, parseProgram("""
+                import * as cfg from "host/cfg"
+                export function main(): null { return null; }
+                export function runForeign(): int { return 1; }
+                """), "Entry");
+            check(foreign.exitCode() == 1
+                    && foreign.output().contains("DEAL_ERROR_CODE: E8001")
+                    && foreign.output().contains("expected instance of"),
+                "a foreign-identity class element in a host class-array "
+                    + "RETURN raises the pinned nominal E8001: "
+                    + foreign.output());
+
+            // Foreign-identity element on the PARAMETER side: same E8001.
+            ExecResult foreignParam = runJvmArtifacts(outputRoot,
+                parseProgram("""
+                    import * as cfg from "host/cfg"
+                    export function main(): null { return null; }
+                    export function runForeignParam(): int { return 1; }
+                    """), "Entry");
+            check(foreignParam.exitCode() == 1
+                    && foreignParam.output().contains("DEAL_ERROR_CODE: E8001")
+                    && foreignParam.output().contains("expected instance of"),
+                "a foreign-identity class element in a host class-array "
+                    + "PARAMETER raises the pinned nominal E8001: "
+                    + foreignParam.output());
+
+            // Wrong-kind element (return side): E8010 return mismatch
+            // wrapping the E8003 element failure.
+            ExecResult junk = runJvmArtifacts(outputRoot, parseProgram("""
+                import * as cfg from "host/cfg"
+                export function main(): null { return null; }
+                export function runJunk(): int { return 1; }
+                """), "Entry");
+            check(junk.exitCode() == 1
+                    && junk.output().contains("DEAL_ERROR_CODE: E8010")
+                    && junk.output().contains("array element 1 type mismatch"),
+                "a wrong-kind element in a host class-array return "
+                    + "raises E8010: " + junk.output());
+
+            // Wrong carrier (return side): E8010.
+            ExecResult badCarrier = runJvmArtifacts(outputRoot,
+                parseProgram("""
+                    import * as cfg from "host/cfg"
+                    export function main(): null { return null; }
+                    export function runBadCarrier(): int { return 1; }
+                    """), "Entry");
+            check(badCarrier.exitCode() == 1
+                    && badCarrier.output().contains("DEAL_ERROR_CODE: E8010"),
+                "a wrong carrier in a host class-array return raises "
+                    + "E8010: " + badCarrier.output());
+
+            // Wrong carrier (parameter side, table-read deferral):
+            // E8010 parameter mismatch at the call.
+            ExecResult paramCarrier = runJvmArtifacts(outputRoot,
+                parseProgram("""
+                    import * as cfg from "host/cfg"
+                    export function main(): null { return null; }
+                    export function runParamCarrier(): int { return 1; }
+                    """), "Entry");
+            check(paramCarrier.exitCode() == 1
+                    && paramCarrier.output().contains("DEAL_ERROR_CODE: E8010")
+                    && paramCarrier.output().contains("parameter 1 type mismatch"),
+                "a non-array argument at a host class-array parameter "
+                    + "raises E8010 parameter mismatch: "
+                    + paramCarrier.output());
+
+            // Null element crossing the plain C[] parameter: E8010
+            // (the single carrier serves both shapes, so the element
+            // row rejects the null).
+            ExecResult paramNull = runJvmArtifacts(outputRoot,
+                parseProgram("""
+                    import * as cfg from "host/cfg"
+                    export function main(): null { return null; }
+                    export function runParamNullElem(): int { return 1; }
+                    """), "Entry");
+            check(paramNull.exitCode() == 1
+                    && paramNull.output().contains("DEAL_ERROR_CODE: E8010")
+                    && paramNull.output().contains("array element 1 type mismatch"),
+                "a null element crossing the plain C[] parameter raises "
+                    + "E8010: " + paramNull.output());
+        }
+
+        // The record FIELD position keeps class-element arrays: the
+        // presence-shape peers field still compiles through the
+        // per-class $HostArr$ carrier.
+        writeFile("bindings/cfg.d.deal", """
+            export class ServerConfig {
+              port: int;
+              peers?: ServerConfig[];
+            }
+            export function ping(): string;
+            """);
+        writeFile("src/entry.deal", """
+            import * as cfg from "host/cfg"
+            export function main(): null { return null; }
+            export function run(): string { return cfg.ping(); }
+            """);
+        Path outputRoot2 = tmpDir.get().resolve("build/class_array_field");
+        Map<String, String> externals2 = Map.of("host/cfg",
+            tmpDir.get().resolve("bindings/cfg.d.deal").toString());
+        CompilationOrchestrator orchestrator2 = new CompilationOrchestrator(
+            entryFile, outputRoot2, false, false, false, Backend.JVM,
+            externals2, roots, Path.of(".").toAbsolutePath().normalize());
+        boolean ok2 = orchestrator2.compile();
+        check(ok2, "a class-array host-class FIELD stays supported (the "
+            + "record storage maps onto the $HostArr$ carrier): "
+            + orchestrator2.diagnostics());
+        if (ok2) {
+            Path artifact2 = outputRoot2.resolve("Entry.java");
+            check(Files.exists(artifact2),
+                "field-variant entry artifact published");
+            if (Files.exists(artifact2)) {
+                String java = Files.readString(artifact2);
+                check(java.contains("$HostArr$host$scfg$ServerConfig"),
+                    "the shared scope emits the per-class $HostArr$ "
+                        + "wrapper for the class-array field");
+            }
+        }
+    }
+
+    /**
+     * ISSUE-0301 qualified imported-class shapes in a NON-ENTRY module:
+     * a checker-legal project where a non-entry module declares a
+     * function with a qualified imported-class parameter must compile
+     * into a javac-clean artifact set — the entry module's shared
+     * {@code $DealRt} declares the collected wrapper classes and their
+     * invoke signatures reference the real declaring module's emitted
+     * class. Pre-fix defects: the silent collection resolver looked the
+     * import ALIAS up in the RAW-path-keyed importResolutions map, so
+     * the shape was silently dropped (Type.Error) from the project-wide
+     * set, and the entry's shared-scope pre-registration resolved class
+     * references only through its own direct imports, so a shape
+     * referencing a class from a module the entry does not import
+     * produced an artifact javac rejected ("cannot find symbol: class
+     * Fn1_$$asrc$sU_R_I") after the CLI reported success. Both breaks
+     * reproduce through the real orchestrator pipeline; the second
+     * variant (entry directly imports the declaring module) pins the
+     * alias-keyed collection fix, the first pins the compilation-wide
+     * class-declaration identity surface.
+     */
+    private static void testSharedCarrierIndirectClassShape()
+            throws Exception {
+        System.out.println("-- Shared carrier indirect qualified-class shape (ISSUE-0301) --");
+
+        writeFile("src/util.deal", """
+            export class U {
+              x: int = 0;
+            }
+            """);
+        writeFile("src/lib.deal", """
+            import * as util from "./util"
+            export function make(): util.U { return { x: 5 }; }
+            export function inc(u: util.U): int { return u.x; }
+            """);
+        writeFile("src/entry.deal", """
+            import * as lib from "./lib"
+            export function main(): null { return null; }
+            export function run(): int { return 42; }
+            """);
+
+        Path entryFile = tmpDir.get().resolve("src/entry.deal")
+            .toAbsolutePath().normalize();
+        List<Path> roots = List.of(
+            tmpDir.get().resolve("src").toAbsolutePath());
+
+        // Variant 1: the entry imports ONLY lib — the declaring module
+        // (util) is not one of the entry's direct imports, so the
+        // wrapper's Util.$C_U invoke reference must resolve through the
+        // compilation-wide class-declaration identity surface.
+        Path outputDir1 = tmpDir.get().resolve("build/indirect_class_shape");
+        CompilationOrchestrator orchestrator1 = new CompilationOrchestrator(
+            entryFile, outputDir1, false, false, false, false, Backend.JVM,
+            null, roots, Path.of(".").toAbsolutePath().normalize());
+        boolean ok1 = orchestrator1.compile();
+        check(ok1, "indirect qualified-class project compiles (entry "
+            + "imports only lib): " + orchestrator1.diagnostics());
+        if (ok1) {
+            Path entryArtifact = outputDir1.resolve("Entry.java");
+            check(Files.exists(entryArtifact),
+                "the two-pass site writes the clean entry artifact");
+            if (Files.exists(entryArtifact)) {
+                String artifact = Files.readString(entryArtifact);
+                check(artifact.contains("Fn1_$$asrc$sU_R_I")
+                        && artifact.contains("invoke(Util.$C_U p0)"),
+                    "the entry's shared $DealRt declares the collected "
+                        + "(util.U)->int wrapper whose invoke references "
+                        + "the real declaring module's class (pre-fix: "
+                        + "the shape was dropped by the raw-path-keyed "
+                        + "silent resolver and Lib.java referenced a "
+                        + "wrapper javac rejected as 'cannot find "
+                        + "symbol')");
+                check(artifact.contains("Fn0_R_$$asrc$sU")
+                        && artifact.contains("Util.$C_U invoke()"),
+                    "the ()->util.U wrapper (the make export) is "
+                        + "pre-registered the same way");
+            }
+            ExecResult exec = runJvmArtifacts(outputDir1,
+                parseProgram("export function run(): int { return 42; }"),
+                "Entry");
+            check(exec.exitCode() == 0 && exec.output().contains("42"),
+                "the full artifact set is javac-clean and executes: "
+                    + exec.output());
+        }
+
+        // Variant 2: the entry imports lib AND util directly — the shape
+        // is dropped during the NON-ENTRY module's collection (the
+        // alias-keyed silent resolver) unless the silent QualifiedType
+        // arm uses the alias map; the entry's own direct imports then
+        // resolve the wrapper reference.
+        writeFile("src/entry.deal", """
+            import * as lib from "./lib"
+            import * as util from "./util"
+            export function main(): null { return null; }
+            export function run(): int { return 42; }
+            """);
+        Path outputDir2 = tmpDir.get().resolve("build/direct_class_shape");
+        CompilationOrchestrator orchestrator2 = new CompilationOrchestrator(
+            entryFile, outputDir2, false, false, false, false, Backend.JVM,
+            null, roots, Path.of(".").toAbsolutePath().normalize());
+        boolean ok2 = orchestrator2.compile();
+        check(ok2, "direct-import qualified-class project compiles (entry "
+            + "imports lib and util): " + orchestrator2.diagnostics());
+        if (ok2) {
+            Path entryArtifact = outputDir2.resolve("Entry.java");
+            check(Files.exists(entryArtifact),
+                "the two-pass site writes the clean entry artifact");
+            if (Files.exists(entryArtifact)) {
+                String artifact = Files.readString(entryArtifact);
+                check(artifact.contains("Fn1_$$asrc$sU_R_I")
+                        && artifact.contains("invoke(Util.$C_U p0)"),
+                    "the shared $DealRt declares the (util.U)->int "
+                        + "wrapper in the direct-import variant too");
+            }
+            ExecResult exec = runJvmArtifacts(outputDir2,
+                parseProgram("export function run(): int { return 42; }"),
+                "Entry");
+            check(exec.exitCode() == 0 && exec.output().contains("42"),
+                "the direct-import artifact set is javac-clean and "
+                    + "executes: " + exec.output());
+        }
+    }
+
+    /**
+     * ISSUE-0301 cross-module function values on the shared $DealRt
+     * carriers: the per-signature wrapper classes live in ONE shared
+     * scope emitted by the selected entry module, so function values
+     * cross a project-module boundary unchanged — a Func-typed argument
+     * to an imported module call, a Func-typed call result used as an
+     * assignment value, and an imported call-result callee all compile
+     * and execute (the pre-fix per-module wrapper classes were artifacts
+     * javac rejected after the CLI reported success), and the
+     * member-call path now applies the same LuaJIT parameter-boundary
+     * E8010 check the same-module path emits (an arity-extension
+     * argument raises "function signature mismatch: expected
+     * (int,string)->int, got (int)->int" at the imported call). The
+     * The same four shapes are pinned directly by this focused
+     * multi-module backend test.
+     */
+    private static void testCrossModuleFunctionValues() throws Exception {
+        System.out.println("-- Orchestrator: cross-module function values on the shared carriers --");
+
+        record XmodCase(String what, String libSource, String entrySource,
+                        String expectedOutput, String expectedErrorCode) {}
         List<XmodCase> cases = List.of(
             new XmodCase("callback argument",
                 "export function apply(f: (x: int) => int, v: int): int { return f(v); }\n",
                 "import * as lib from \"./lib\"\n"
                     + "function inc(x: int): int { return x + 1; }\n"
                     + "export function main(): null { return null; }\n"
-                    + "export function test(): int { return lib.apply(inc, 41); }\n"),
+                    + "export function test(): int { return lib.apply(inc, 41); }\n",
+                "42", null),
             new XmodCase("arity-extension argument (E8010 boundary)",
                 "export function apply2(f: (a: int, b: string) => int, v: int): int { return f(v, \"i\"); }\n",
                 "import * as lib from \"./lib\"\n"
                     + "function inc(x: int): int { return x + 1; }\n"
                     + "export function main(): null { return null; }\n"
-                    + "export function test(): int { return lib.apply2(inc, 41); }\n"),
+                    + "export function test(): int { return lib.apply2(inc, 41); }\n",
+                null, "E8010"),
             new XmodCase("returned function value",
                 "export function picker(): (x: int) => int { return inc; }\n"
                     + "function inc(x: int): int { return x + 1; }\n",
@@ -5742,13 +7029,15 @@ public class JvmBackendTest {
                     + "export function test(): int {\n"
                     + "  let f: (x: int) => int = lib.picker();\n"
                     + "  return f(41);\n"
-                    + "}\n"),
+                    + "}\n",
+                "42", null),
             new XmodCase("imported call-result callee",
                 "export function picker(): (x: int) => int { return inc; }\n"
                     + "function inc(x: int): int { return x + 1; }\n",
                 "import * as lib from \"./lib\"\n"
                     + "export function main(): null { return null; }\n"
-                    + "export function test(): int { return lib.picker()(41); }\n"));
+                    + "export function test(): int { return lib.picker()(41); }\n",
+                "42", null));
 
         for (XmodCase c : cases) {
             writeFile("src/lib.deal", c.libSource());
@@ -5763,18 +7052,31 @@ public class JvmBackendTest {
                 null, roots, Path.of(".").toAbsolutePath().normalize());
 
             boolean success = orchestrator.compile();
-            check(!success, "cross-module function-value case '" + c.what()
-                + "' is rejected: " + orchestrator.diagnostics());
-            check(orchestrator.diagnostics().stream()
-                    .anyMatch(d -> "E6000".equals(d.code())),
-                "E6000 for cross-module function-value case '" + c.what()
-                    + "': " + orchestrator.diagnostics());
-            // The rejected ENTRY module writes no artifact (the clean
-            // lib module may still be written by the orchestrator's
-            // two-pass design) — never an artifact javac rejects after
-            // the CLI reported success.
-            check(!Files.exists(outputDir.resolve("Entry.java")),
-                "no entry artifact for '" + c.what() + "'");
+            check(success, "cross-module function-value case '" + c.what()
+                + "' compiles: " + orchestrator.diagnostics());
+            Path entryArtifact = outputDir.resolve("Entry.java");
+            check(success && Files.exists(entryArtifact),
+                "entry artifact written for '" + c.what() + "'");
+            if (!success || !Files.exists(entryArtifact)) {
+                continue;
+            }
+            ExecResult exec = runJvmArtifacts(outputDir,
+                parseProgram("export function test(): int { return 0; }"),
+                "Entry");
+            if (c.expectedErrorCode() == null) {
+                check(exec.exitCode() == 0
+                        && exec.output().contains(c.expectedOutput()),
+                    "cross-module case '" + c.what() + "' runs through "
+                        + "javac + java and prints " + c.expectedOutput()
+                        + ": " + exec.output());
+            } else {
+                check(exec.exitCode() == 1
+                        && exec.output().contains("DEAL_ERROR_CODE: "
+                            + c.expectedErrorCode()),
+                    "cross-module case '" + c.what() + "' raises "
+                        + c.expectedErrorCode() + " at the imported "
+                        + "parameter boundary: " + exec.output());
+            }
 
             if (Files.isDirectory(outputDir)) {
                 try (var stream = Files.walk(outputDir)) {
@@ -7277,28 +8579,62 @@ public class JvmBackendTest {
                     + "the real stored int32 mode");
         }
 
-        // The default orchestrator invocation stays
-        // PRE_ACTIVATION → LEGACY_SAFE_INT and plumbs the legacy mode.
+        // The default orchestrator invocation is now the committed
+        // V1_2_ACTIVE public build: it plumbs the int32 mode. The
+        // ISSUE-0239 E10 plan-time arm reroutes the dual-shape
+        // fixture (an exported function called from source) LEGACY,
+        // so the retained backend still emits it and the recorded
+        // result proves the plumb end to end; the explicit
+        // PRE_ACTIVATION invocation keeps the legacy mode for the
+        // negative-control comparison (the internal matrix row).
+        writeFile("src/plumb_dual.deal",
+            "export function run(): int { return 41 + 1; }\n"
+                + "export function main(): null { run() return null; }\n");
+        Path dualEntryFile = tmpDir.get().resolve("src/plumb_dual.deal")
+            .toAbsolutePath().normalize();
+        CompilationOrchestrator defaultOrchestrator =
+            new CompilationOrchestrator(
+                dualEntryFile, outputRoot, false, false, false, Backend.JVM,
+                null, roots, Path.of(".").toAbsolutePath().normalize());
+        boolean defaultOk = defaultOrchestrator.compile();
+        check(defaultOk, "default orchestrator compile succeeds: "
+            + defaultOrchestrator.diagnostics());
+        check(defaultOrchestrator.invocation().semanticProfile()
+                == SemanticProfile.DEAL_V1_2_INT32,
+            "the orchestrator default invocation derives DEAL_V1_2_INT32 "
+                + "under the committed V1_2_ACTIVE release state");
+        if (defaultOk) {
+            JvmBackend.JvmCodegenResult plumbed =
+                defaultOrchestrator.jvmGeneratedResults()
+                    .get(dualEntryFile.toString());
+            check(plumbed != null && plumbed.int32Mode(),
+                "the default invocation plumbs the int32 mode into the "
+                    + "backend post-flip (the dual-shape module reroutes "
+                    + "LEGACY at plan time under the ISSUE-0239 arm)");
+        }
+
         CompilationOrchestrator legacyOrchestrator =
             new CompilationOrchestrator(
-                entryFile, outputRoot, false, false, false, Backend.JVM,
-                null, roots, Path.of(".").toAbsolutePath().normalize());
+                entryFile, outputRoot, false, false, false, false, Backend.JVM,
+                null, roots, Path.of(".").toAbsolutePath().normalize(), null,
+                CompilerProfileProvider.resolve(ReleaseState.PRE_ACTIVATION,
+                    CapabilityRegistry.releaseRegistry()));
         boolean legacyOk = legacyOrchestrator.compile();
-        check(legacyOk, "default orchestrator compile succeeds: "
+        check(legacyOk, "explicit legacy orchestrator compile succeeds: "
             + legacyOrchestrator.diagnostics());
         check(legacyOrchestrator.invocation().semanticProfile()
                 == SemanticProfile.LEGACY_SAFE_INT,
-            "orchestrator default invocation stays "
-                + "PRE_ACTIVATION → LEGACY_SAFE_INT");
+            "the explicit PRE_ACTIVATION invocation keeps LEGACY_SAFE_INT "
+                + "(the internal matrix row)");
         if (legacyOk) {
             JvmBackend.JvmCodegenResult plumbed =
                 legacyOrchestrator.jvmGeneratedResults()
                     .get(entryFile.toString());
             check(plumbed != null && !plumbed.int32Mode(),
-                "default invocation plumbs the LEGACY int mode into the "
-                    + "backend");
+                "the explicit legacy invocation plumbs the LEGACY int mode "
+                    + "into the backend");
         }
-        if (int32Ok && legacyOk) {
+        if (defaultOk && legacyOk) {
             String int32Source = int32Orchestrator.jvmGeneratedResults()
                 .get(entryFile.toString()).source();
             String legacySource = legacyOrchestrator.jvmGeneratedResults()
@@ -7309,10 +8645,11 @@ public class JvmBackendTest {
             check(int32Source.contains("static int intAdd(int a, int b)")
                     && !legacySource.contains("static int intAdd(int a, int b)"),
                 "orchestrator plumb selects the backend int mode: int32 "
-                    + "carriers under V1_2_ACTIVE, legacy carriers under "
-                    + "the default PRE_ACTIVATION invocation");
+                    + "carriers under V1_2_ACTIVE (the default), legacy "
+                    + "carriers under the explicit PRE_ACTIVATION invocation");
         }
     }
+
 
     private static final String LEGACY_BASE_INT_HELPERS = String.join("\n",
         "    // DEAL int safe range: \u00b1(2^53-1), mirroring deal/runtime.lua's",
@@ -7380,7 +8717,7 @@ public class JvmBackendTest {
         if (res == null || !res.int32Mode()) return new ExecResult("", 1);
         Frontend f = compileFrontend(source, "i32_" + name + ".deal");
         Files.writeString(outputRoot.resolve("JvmConformanceRunner.java"),
-            BackendConformanceTest.buildJvmRunner(f.program(),
+            StubModuleResolver.buildJvmRunner(f.program(),
                 res.className()));
         List<String> javaFiles = new ArrayList<>();
         try (var stream = Files.list(outputRoot)) {
@@ -7389,7 +8726,7 @@ public class JvmBackendTest {
                   .forEach(p -> javaFiles.add(p.getFileName().toString()));
         }
         StringBuilder javacErr = new StringBuilder();
-        boolean javacOk = BackendConformanceTest.compileWithJavac(outputRoot,
+        boolean javacOk = StubModuleResolver.compileWithJavac(outputRoot,
             javaFiles, javacErr);
         if (!javacOk) {
             throw new RuntimeException("javac failed for " + name + ": "
@@ -7404,10 +8741,14 @@ public class JvmBackendTest {
         return new ExecResult(out, exit);
     }
 
-    /** The same full-pipeline run under the untouched default invocation
-     * ({@code PRE_ACTIVATION → LEGACY_SAFE_INT}) — the integration
-     * counterpart that proves a missing or defaulted profile produces
-     * legacy artifacts where the int32 edges do not raise. */
+    /** The same full-pipeline run under the explicit legacy invocation
+     * ({@code PUBLIC_BUILD + PRE_ACTIVATION → LEGACY_SAFE_INT}, the
+     * pre-activation matrix row that stays available as an internal
+     * derivation after E12's flip) — the integration counterpart that
+     * proves the retained legacy profile produces legacy artifacts where
+     * the int32 edges do not raise. The default invocation is now the
+     * committed V1_2_ACTIVE public build, so legacy negative controls
+     * pass the legacy invocation explicitly. */
     private static ExecResult runLegacyProject(String source, String name)
             throws Exception {
         writeFile("src/legacy_" + name + ".deal", source);
@@ -7419,7 +8760,9 @@ public class JvmBackendTest {
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entryFile, outputRoot, false, false, false, false,
             Backend.JVM, null, roots,
-            Path.of(".").toAbsolutePath().normalize());
+            Path.of(".").toAbsolutePath().normalize(), null,
+            CompilerProfileProvider.resolve(ReleaseState.PRE_ACTIVATION,
+                CapabilityRegistry.releaseRegistry()));
         boolean ok = orchestrator.compile();
         check(ok, "legacy orchestrator compile succeeds for " + name + ": "
             + orchestrator.diagnostics());
@@ -7427,11 +8770,11 @@ public class JvmBackendTest {
         JvmBackend.JvmCodegenResult res =
             orchestrator.jvmGeneratedResults().get(entryFile.toString());
         check(res != null && !res.int32Mode(),
-            "default invocation plumbs the LEGACY int mode for " + name);
+            "the explicit legacy invocation plumbs the LEGACY int mode for " + name);
         if (res == null || res.int32Mode()) return new ExecResult("", 1);
         Frontend f = compileFrontend(source, "legacy_" + name + ".deal");
         Files.writeString(outputRoot.resolve("JvmConformanceRunner.java"),
-            BackendConformanceTest.buildJvmRunner(f.program(),
+            StubModuleResolver.buildJvmRunner(f.program(),
                 res.className()));
         List<String> javaFiles = new ArrayList<>();
         try (var stream = Files.list(outputRoot)) {
@@ -7440,7 +8783,7 @@ public class JvmBackendTest {
                   .forEach(p -> javaFiles.add(p.getFileName().toString()));
         }
         StringBuilder javacErr = new StringBuilder();
-        boolean javacOk = BackendConformanceTest.compileWithJavac(outputRoot,
+        boolean javacOk = StubModuleResolver.compileWithJavac(outputRoot,
             javaFiles, javacErr);
         if (!javacOk) {
             throw new RuntimeException("javac failed for " + name + ": "
@@ -7524,7 +8867,7 @@ public class JvmBackendTest {
         Files.copy(tmpDir.get().resolve("HostLog.java"),
             outputRoot.resolve("HostLog.java"));
         Files.writeString(outputRoot.resolve("JvmConformanceRunner.java"),
-            BackendConformanceTest.buildJvmRunner(parseProgram("""
+            StubModuleResolver.buildJvmRunner(parseProgram("""
                 export function main(): null { return null; }
                 export function test(): int { return 0; }
                 """), res.className()));
@@ -7535,7 +8878,7 @@ public class JvmBackendTest {
                   .forEach(p -> javaFiles.add(p.getFileName().toString()));
         }
         StringBuilder javacErr = new StringBuilder();
-        boolean javacOk = BackendConformanceTest.compileWithJavac(outputRoot,
+        boolean javacOk = StubModuleResolver.compileWithJavac(outputRoot,
             javaFiles, javacErr);
         if (!javacOk) {
             throw new RuntimeException("javac failed for " + name + ": "
@@ -7822,9 +9165,12 @@ public class JvmBackendTest {
                 + "the DEAL null (the gate ran at the boundary): "
                 + req.output());
         String reqJava = int32Artifact(reqSource, "jsonable_req_default_artifact");
-        check(reqJava.contains("int f0 = checkInt((java.lang.System.currentTimeMillis() / 1000L) * 1000L);"),
+        check(reqJava.contains("int f0 = 0;")
+                && reqJava.contains(
+                    "f0 = checkInt((java.lang.System.currentTimeMillis() / 1000L) * 1000L);"),
             "the jsonable required-int default field slot gates through "
-                + "checkInt: "
+                + "checkInt at the ISSUE-0302 omitted-default phase (the "
+                + "declaration carries the type-safe placeholder): "
                 + reqJava.lines().filter(l -> l.contains("f0 = "))
                 .findFirst().orElse("<missing>"));
         check(!reqJava.contains("int f0 = (java.lang.System.currentTimeMillis() / 1000L)"),
@@ -7855,18 +9201,22 @@ public class JvmBackendTest {
                 + nullableReq.output());
         String nullableReqJava = int32Artifact(nullableReqSource,
             "jsonable_nullable_req_default_artifact");
-        check(nullableReqJava.contains("java.lang.Integer f0 = checkInt((java.lang.System.currentTimeMillis() / 1000L) * 1000L);"),
+        check(nullableReqJava.contains("java.lang.Integer f0 = null;")
+                && nullableReqJava.contains(
+                    "f0 = checkInt((java.lang.System.currentTimeMillis() / 1000L) * 1000L);"),
             "the jsonable nullable-required int default Integer slot "
-                + "gates through checkInt: "
+                + "gates through checkInt at the ISSUE-0302 "
+                + "omitted-default phase: "
                 + nullableReqJava.lines().filter(l -> l.contains("f0 = "))
                 .findFirst().orElse("<missing>"));
         check(!nullableReqJava.contains("java.lang.Integer f0 = (java.lang.System.currentTimeMillis() / 1000L)"),
             "no javac-rejected long-to-Integer default field slot");
 
-        // Jsonable optional int default via $fromJsonValue: the Object
-        // slot stores checkInt's Integer (never an unchecked boxed Long),
-        // and the boundary raise converts to the DEAL null like the
-        // required variant.
+        // Jsonable optional int default: a declared default on an
+        // OPTIONAL field is checker-validated metadata that NEVER
+        // evaluates (provider-versioned-default-plans D2, runtime page
+        // D1) — the omitted field stays ABSENT ($MISSING), so fromJson
+        // publishes a live instance and no boundary ever raises.
         String optSource = """
             import * as time from "std/time"
             // @jsonable
@@ -7884,20 +9234,24 @@ public class JvmBackendTest {
         check(opt.exitCode() == 0,
             "jsonable optional-int default run exits 0 (never-throw): "
                 + opt.output());
-        check(opt.output().contains("null-ok"),
-            "jsonable optional-int default boundary raise converts to "
-                + "the DEAL null (no unchecked boxed-Long instance): "
-                + opt.output());
+        check(opt.output().contains("bad"),
+            "the optional default never evaluates: fromJson publishes a "
+                + "live instance with the omitted field absent (the "
+                + "probe returns \"bad\"): " + opt.output());
         String optJava = int32Artifact(optSource, "jsonable_opt_default_artifact");
-        check(optJava.contains("java.lang.Object f0 = checkInt((java.lang.System.currentTimeMillis() / 1000L) * 1000L);"),
-            "the jsonable optional-int default Object slot gates through "
-                + "checkInt: "
+        check(optJava.contains("java.lang.Object f0 = $MISSING;"),
+            "the jsonable optional-int slot holds the Missing sentinel "
+                + "placeholder (the declared default never runs): "
+                + optJava.lines().filter(l -> l.contains("f0 = "))
+                .findFirst().orElse("<missing>"));
+        check(!optJava.contains("f0 = checkInt("),
+            "no default evaluation at the jsonable optional-int slot: "
                 + optJava.lines().filter(l -> l.contains("f0 = "))
                 .findFirst().orElse("<missing>"));
 
         // Jsonable optional int default at direct construction: the
-        // constructor optional slot raises exactly E8004 once at the
-        // boundary (no never-throw wrapper on the construction path).
+        // omitted optional field stays absent — no default evaluation,
+        // no E8004 raise, the construction succeeds.
         String ctorSource = """
             import * as time from "std/time"
             // @jsonable
@@ -7911,18 +9265,19 @@ public class JvmBackendTest {
             }
             """;
         ExecResult ctor = runInt32Project(ctorSource, "jsonable_ctor_opt_slot");
-        check(ctor.exitCode() == 1,
-            "jsonable constructor optional slot run exits 1: "
+        check(ctor.exitCode() == 0,
+            "jsonable constructor optional slot run exits 0 (the "
+                + "optional default never evaluates): " + ctor.output());
+        check(ctor.output().contains("ok")
+                && !ctor.output().contains("DEAL_ERROR_CODE"),
+            "jsonable constructor optional slot never raises (no "
+                + "default evaluation at construction): "
                 + ctor.output());
-        check(countOccurrences(ctor.output(),
-                "DEAL_ERROR_CODE: E8004 int out of safe range") == 1,
-            "jsonable constructor optional slot raises exactly E8004 "
-                + "once at the boundary: " + ctor.output());
         String ctorJava = int32Artifact(ctorSource,
             "jsonable_ctor_opt_slot_artifact");
-        check(ctorJava.contains("new $C_C(checkInt((java.lang.System.currentTimeMillis() / 1000L) * 1000L))"),
-            "the jsonable constructor optional slot gates through "
-                + "checkInt: "
+        check(ctorJava.contains("return new $C_C(f0);"),
+            "the jsonable constructor optional slot constructs with the "
+                + "Missing sentinel slot (never the default expression): "
                 + ctorJava.lines().filter(l -> l.contains("new $C_C"))
                 .findFirst().orElse("<missing>"));
 
@@ -8842,7 +10197,7 @@ public class JvmBackendTest {
         String fieldSource = """
             import * as time from "std/time"
             export class C {
-              f: int;
+              f: int = 0;
             }
             export function main(): null { return null; }
             export function test(): int {
@@ -8956,11 +10311,19 @@ public class JvmBackendTest {
         check(!orchestrator.jvmGeneratedResults()
                 .containsKey(entryFile.toString()),
             "no generated result recorded for the rejected module");
-        try (var stream = Files.list(outputRoot)) {
-            check(stream.noneMatch(p -> p.getFileName().toString()
-                    .endsWith(".java")),
-                "the rejected module wrote no Java artifact (javac never "
-                    + "sees a duplicate numPow)");
+        // Transactional publication (whole-project-artifact-publication
+        // D3/D4): the rejection fails the whole compilation, so nothing
+        // is published — the live root does not exist at all.
+        check(!Files.exists(outputRoot),
+            "the rejected module published no live root at all "
+                + "(transactional whole-set contract)");
+        if (Files.exists(outputRoot)) {
+            try (var stream = Files.list(outputRoot)) {
+                check(stream.noneMatch(p -> p.getFileName().toString()
+                        .endsWith(".java")),
+                    "the rejected module wrote no Java artifact (javac never "
+                        + "sees a duplicate numPow)");
+            }
         }
 
         // Parity control: the analogous numMod declaration hits the
@@ -9038,7 +10401,7 @@ public class JvmBackendTest {
         if (res == null || !res.int32Mode()) return new ExecResult("", 1);
         Frontend f = compileFrontend(source, "inv_" + name + ".deal");
         Files.writeString(outputRoot.resolve("JvmConformanceRunner.java"),
-            BackendConformanceTest.buildJvmRunner(f.program(),
+            StubModuleResolver.buildJvmRunner(f.program(),
                 res.className()));
         List<String> javaFiles = new ArrayList<>();
         try (var stream = Files.list(outputRoot)) {
@@ -9047,7 +10410,7 @@ public class JvmBackendTest {
                   .forEach(p -> javaFiles.add(p.getFileName().toString()));
         }
         StringBuilder javacErr = new StringBuilder();
-        boolean javacOk = BackendConformanceTest.compileWithJavac(outputRoot,
+        boolean javacOk = StubModuleResolver.compileWithJavac(outputRoot,
             javaFiles, javacErr);
         if (!javacOk) {
             throw new RuntimeException("javac failed for " + name + ": "
@@ -9060,6 +10423,986 @@ public class JvmBackendTest {
         String out = new String(p2.getInputStream().readAllBytes()).trim();
         int exit = p2.waitFor();
         return new ExecResult(out, exit);
+    }
+
+    // =========================================================================
+    // ISSUE-0158 v1.2 bytes lane (int32-bytes): helpers, emission, behavior
+    // =========================================================================
+
+    /**
+     * The v1.2 bytes lane on the JVM backend (ISSUE-0158,
+     * deal-v1.2-int32-and-bytes-architecture D3/D4): the emitted
+     * artifact carries the four bytes helpers over the shared
+     * {@code $DealRt.Bytes} byte[] carrier, and the real pipeline
+     * (orchestrator → JvmBackend → javac → java under
+     * DEAL_V1_2_INT32) executes the pinned helper contract: fresh
+     * zero-filled allocation, the immutable signed-int32 {@code length},
+     * unsigned 0..255 reads, exactly-one-byte writes with the returned
+     * value, E8012 negative length / bounds (no append), E8013 value
+     * range, reference aliasing/identity, per-instance class-field
+     * isolation, and receiver/index/RHS single-evaluation order with
+     * validation after the RHS and no storage change on a failed write.
+     * The default (legacy) invocation compiles the same lane with the
+     * profile-matched long index/value/result carriers (the E8012/E8013
+     * gates before the narrowing) and must produce a javac-compiling,
+     * correctly executing artifact too — never a long-into-int javac
+     * rejection.
+     */
+    private static void testBytesRuntimeLane() throws Exception {
+        System.out.println("-- v1.2 bytes runtime lane (ISSUE-0158) --");
+
+        // ---- Emitted helper surface (int32 artifact inspection) ----
+        String artifact = int32Artifact("""
+            export function main(): null { return null; }
+            export function run(): int {
+              let b: bytes = bytes(1);
+              return b.length;
+            }
+            """, "bytes_helpers_artifact");
+        check(artifact.contains("static $DealRt.Bytes bytesNew(long length)"),
+            "artifact emits bytesNew over the shared carrier");
+        check(artifact.contains(
+                "if (n < 0L) throw new DealError(\"E8012\", "
+                    + "\"bytes length must be non-negative\")"),
+            "bytesNew pins the E8012 negative-length gate");
+        check(artifact.contains("static int bytesLength($DealRt.Bytes b)"),
+            "artifact emits bytesLength");
+        check(artifact.contains("return b.data[i] & 0xFF;"),
+            "bytesGet returns the unsigned 0..255 byte");
+        check(artifact.contains(
+                "if (v < 0 || v > 255) throw new DealError(\"E8013\", "
+                    + "\"bytes value out of range\")"),
+            "bytesSet pins the E8013 value-range gate");
+        check(artifact.contains(
+                "if (i < 0 || i >= b.data.length) throw new DealError("
+                    + "\"E8012\", \"bytes index out of bounds\")"),
+            "bytesGet/bytesSet pin the E8012 bounds gate (never appends)");
+        check(artifact.contains("bytesNew(") && artifact.contains(
+                "bytesLength(") && artifact.contains("bytesGet(")
+                && artifact.contains("bytesSet("),
+            "the intrinsic call, .length, and index read/write lower to "
+                + "the emitted helpers");
+
+        // ---- Behavior battery (real pipeline under DEAL_V1_2_INT32) ----
+        // prelude: module-level declarations (classes/helper functions)
+        // spliced between main and the pinned test body — DEAL v1.2
+        // module top level holds only declarations.
+        record BytesPin(String name, String prelude, String body,
+                        String expected) {}
+        List<BytesPin> pins = List.of(
+            new BytesPin("alloc-zero-fill", "",
+                "let b: bytes = bytes(4);\n"
+                    + "      if (b.length !== 4) { throw { code: \"TEST_FAIL\", message: \"length\" }; }\n"
+                    + "      if (b[0] !== 0 || b[1] !== 0 || b[2] !== 0 || b[3] !== 0) { throw { code: \"TEST_FAIL\", message: \"zero fill\" }; }\n"
+                    + "      return 1;",
+                "1"),
+            new BytesPin("unsigned-read-write", "",
+                "let b: bytes = bytes(2);\n"
+                    + "      b[0] = 255;\n"
+                    + "      b[1] = 128;\n"
+                    + "      let hi: int = b[0];\n"
+                    + "      let lo: int = b[1];\n"
+                    + "      if (hi !== 255 || lo !== 128) { throw { code: \"TEST_FAIL\", message: \"unsigned roundtrip\" }; }\n"
+                    + "      return hi - lo;",
+                "127"),
+            new BytesPin("write-returns-value", "",
+                "let b: bytes = bytes(1);\n"
+                    + "      let v: int = (b[0] = 200);\n"
+                    + "      return v;",
+                "200"),
+            new BytesPin("empty-buffer", "",
+                "let b: bytes = bytes(0);\n"
+                    + "      if (b.length !== 0) { throw { code: \"TEST_FAIL\", message: \"empty length\" }; }\n"
+                    + "      return 0;",
+                "0"),
+            new BytesPin("empty-read-bounds", "",
+                "let b: bytes = bytes(0);\n"
+                    + "      return b[0];",
+                "E8012"),
+            new BytesPin("empty-write-bounds", "",
+                "let b: bytes = bytes(0);\n"
+                    + "      b[0] = 1;\n"
+                    + "      return 0;",
+                "E8012"),
+            new BytesPin("negative-length", "",
+                "let b: bytes = bytes(-1);\n"
+                    + "      return 0;",
+                "E8012"),
+            new BytesPin("read-bounds-high", "",
+                "let b: bytes = bytes(4);\n"
+                    + "      return b[4];",
+                "E8012"),
+            new BytesPin("read-bounds-low", "",
+                "let b: bytes = bytes(4);\n"
+                    + "      return b[-1];",
+                "E8012"),
+            new BytesPin("write-bounds-high-no-append", "",
+                "let b: bytes = bytes(2);\n"
+                    + "      b[2] = 7;\n"
+                    + "      return 0;",
+                "E8012"),
+            new BytesPin("write-bounds-low", "",
+                "let b: bytes = bytes(2);\n"
+                    + "      b[-1] = 7;\n"
+                    + "      return 0;",
+                "E8012"),
+            new BytesPin("write-value-high", "",
+                "let b: bytes = bytes(1);\n"
+                    + "      b[0] = 256;\n"
+                    + "      return 0;",
+                "E8013"),
+            new BytesPin("write-value-low", "",
+                "let b: bytes = bytes(1);\n"
+                    + "      b[0] = -1;\n"
+                    + "      return 0;",
+                "E8013"),
+            new BytesPin("alias-mutation", "",
+                "let b: bytes = bytes(4);\n"
+                    + "      let alias: bytes = b;\n"
+                    + "      alias[2] = 7;\n"
+                    + "      return b[2];",
+                "7"),
+            new BytesPin("identity-alias-eq", "",
+                "let a: bytes = bytes(2);\n"
+                    + "      let b: bytes = a;\n"
+                    + "      if (!(a === b)) { throw { code: \"TEST_FAIL\", message: \"alias identity\" }; }\n"
+                    + "      return 1;",
+                "1"),
+            new BytesPin("identity-distinct-ne", "",
+                "let a: bytes = bytes(2);\n"
+                    + "      let c: bytes = bytes(2);\n"
+                    + "      if (a === c) { throw { code: \"TEST_FAIL\", message: \"distinct buffers\" }; }\n"
+                    + "      if (!(a !== c)) { throw { code: \"TEST_FAIL\", message: \"distinct ne\" }; }\n"
+                    + "      return 1;",
+                "1"),
+            new BytesPin("identity-nullable-vs-null", "",
+                "let n: bytes | null = null;\n"
+                    + "      if (!(n === null)) { throw { code: \"TEST_FAIL\", message: \"null eq\" }; }\n"
+                    + "      if (n !== null) { throw { code: \"TEST_FAIL\", message: \"null ne\" }; }\n"
+                    + "      let m: bytes | null = bytes(1);\n"
+                    + "      if (m === null) { throw { code: \"TEST_FAIL\", message: \"value eq\" }; }\n"
+                    + "      if (!(m !== null)) { throw { code: \"TEST_FAIL\", message: \"value ne\" }; }\n"
+                    + "      if (!(null === n)) { throw { code: \"TEST_FAIL\", message: \"null right\" }; }\n"
+                    + "      return 1;",
+                "1"),
+            new BytesPin("identity-nullable-pair", "",
+                "let a: bytes | null = bytes(1);\n"
+                    + "      let b: bytes | null = a;\n"
+                    + "      if (!(a === b)) { throw { code: \"TEST_FAIL\", message: \"pair eq\" }; }\n"
+                    + "      let c: bytes | null = bytes(1);\n"
+                    + "      if (a === c) { throw { code: \"TEST_FAIL\", message: \"pair distinct\" }; }\n"
+                    + "      return 1;",
+                "1"),
+            new BytesPin("fresh-instances", "",
+                "let a: bytes = bytes(2);\n"
+                    + "      let c: bytes = bytes(2);\n"
+                    + "      a[0] = 9;\n"
+                    + "      return c[0];",
+                "0"),
+            new BytesPin("fn-param-return", "",
+                "function first(b: bytes): int { return b[0]; }\n"
+                    + "      function fill(b: bytes, v: int): bytes { b[0] = v; return b; }\n"
+                    + "      let x: bytes = fill(bytes(3), 200);\n"
+                    + "      return first(x) + x.length;",
+                "203"),
+            new BytesPin("eval-order",
+                "class Log {\n"
+                    + "  seq: int[] = [];\n"
+                    + "  buf: bytes = bytes(4);\n"
+                    + "}\n"
+                    + "function record(l: Log, tag: int): int { l.seq[l.seq.length] = tag; return tag; }\n"
+                    + "function pick(l: Log, tag: int): bytes { record(l, tag); return l.buf; }\n",
+                "let l: Log = { seq: [], buf: bytes(4) };\n"
+                    + "      pick(l, 1)[record(l, 2)] = record(l, 3);\n"
+                    + "      if (l.seq.length !== 3 || l.seq[0] !== 1 || l.seq[1] !== 2 || l.seq[2] !== 3) { throw { code: \"TEST_FAIL\", message: \"order\" }; }\n"
+                    + "      return l.buf[2];",
+                "3"),
+            new BytesPin("failed-write-nonmutation",
+                "class Log {\n"
+                    + "  seq: int[] = [];\n"
+                    + "  buf: bytes = bytes(4);\n"
+                    + "}\n"
+                    + "function record(l: Log, tag: int): int { l.seq[l.seq.length] = tag; return tag; }\n"
+                    + "function pick(l: Log, tag: int): bytes { record(l, tag); return l.buf; }\n"
+                    + "function badValue(l: Log): int { record(l, 3); return 300; }\n",
+                "let l: Log = { seq: [], buf: bytes(4) };\n"
+                    + "      try { pick(l, 1)[record(l, 2)] = badValue(l); throw { code: \"TEST_FAIL\", message: \"no E8013\" }; }\n"
+                    + "      catch (e) { if (e.code !== \"E8013\") { throw e; } }\n"
+                    + "      if (l.seq.length !== 3 || l.seq[0] !== 1 || l.seq[1] !== 2 || l.seq[2] !== 3) { throw { code: \"TEST_FAIL\", message: \"side effects\" }; }\n"
+                    + "      if (l.buf[1] !== 0) { throw { code: \"TEST_FAIL\", message: \"storage changed\" }; }\n"
+                    + "      return 0;",
+                "0"),
+            new BytesPin("class-field-isolation",
+                "class Payload {\n"
+                    + "  data: bytes = bytes(2);\n"
+                    + "  tag: string = \"\";\n"
+                    + "}\n",
+                "let p: Payload = { data: bytes(3), tag: \"a\" };\n"
+                    + "      p.data[1] = 200;\n"
+                    + "      let q: Payload = { data: bytes(1), tag: \"b\" };\n"
+                    + "      if (q.data.length !== 1) { throw { code: \"TEST_FAIL\", message: \"second length\" }; }\n"
+                    + "      if (p.data[1] !== 200) { throw { code: \"TEST_FAIL\", message: \"shared storage\" }; }\n"
+                    + "      return p.data.length;",
+                "3"),
+            new BytesPin("length-int-arithmetic", "",
+                "let b: bytes = bytes(3);\n"
+                    + "      let l: int = b.length;\n"
+                    + "      return l * 2 + 1;",
+                "7"));
+        for (BytesPin pin : pins) {
+            String source = "export function main(): null { return null; }\n"
+                + pin.prelude()
+                + "export function test(): int {\n      " + pin.body() + "\n"
+                + "    }\n";
+            ExecResult r = runInt32Project(source, pin.name());
+            if (pin.expected().startsWith("E8")) {
+                check(r.exitCode() == 1,
+                    pin.name() + " run exits 1: " + r.output());
+                check(r.output().contains("DEAL_ERROR_CODE: "
+                        + pin.expected()),
+                    pin.name() + " raises exactly " + pin.expected()
+                        + ": " + r.output());
+            } else {
+                check(r.exitCode() == 0,
+                    pin.name() + " run exits 0: " + r.output());
+                check(r.output().contains(pin.expected()),
+                    pin.name() + " computes the pinned value "
+                        + pin.expected() + ": " + r.output());
+            }
+        }
+
+        // ---- Legacy-profile pin (LEGACY_SAFE_INT long carriers) ----
+        // The explicit legacy invocation (PRE_ACTIVATION →
+        // LEGACY_SAFE_INT) compiles v1.2 bytes programs with the legacy
+        // long int carrier. The emitted bytes helpers must follow the
+        // same carrier — long index/value parameters with the E8012/E8013
+        // gates before the narrowing, and long results — so the artifact
+        // compiles under javac and executes the pinned bytes semantics,
+        // never the pre-fix long-into-int "possible lossy conversion"
+        // artifact the review found.
+        String legacyJava = legacyArtifact("""
+            export function main(): null { return null; }
+            export function run(): int {
+              let b: bytes = bytes(1);
+              return b.length;
+            }
+            """, "bytes_helpers_legacy_artifact");
+        check(legacyJava.contains("static long bytesLength($DealRt.Bytes b)"),
+            "legacy artifact emits the long-carrier bytesLength");
+        check(legacyJava.contains(
+                "static long bytesGet($DealRt.Bytes b, long i)"),
+            "legacy artifact emits the long-carrier bytesGet");
+        check(legacyJava.contains(
+                "static long bytesSet($DealRt.Bytes b, long i, long v)"),
+            "legacy artifact emits the long-carrier bytesSet");
+        check(legacyJava.contains("b.data[(int) i]"),
+            "legacy bytesGet/bytesSet narrow the index only after the "
+                + "E8012 bounds gate");
+
+        // The real legacy-invocation pipeline (orchestrator →
+        // JvmBackend → javac → java): runLegacyProject compiles every
+        // emitted artifact with javac and throws on any javac error, so
+        // a green run is also a javac-compiling-artifact pin.
+        ExecResult legacyRun = runLegacyProject("""
+            export function main(): null { return null; }
+            export function test(): int {
+              let b: bytes = bytes(3);
+              b[0] = 255;
+              b[1] = 128;
+              let alias: bytes = b;
+              alias[2] = 7;
+              if (b.length !== 3) { throw { code: "TEST_FAIL", message: "length" }; }
+              if (b[0] !== 255 || b[1] !== 128 || b[2] !== 7) { throw { code: "TEST_FAIL", message: "roundtrip" }; }
+              if (!(alias === b)) { throw { code: "TEST_FAIL", message: "identity" }; }
+              return b[0] + b[1] + b[2];
+            }
+            """, "bytes_legacy_full");
+        check(legacyRun.exitCode() == 0,
+            "legacy bytes program compiles under javac and runs green: "
+                + legacyRun.output());
+        check(legacyRun.output().contains("390"),
+            "legacy bytes program computes 255 + 128 + 7 = 390 with "
+                + "unsigned reads through the long carriers: "
+                + legacyRun.output());
+        ExecResult legacyValue = runLegacyProject("""
+            export function main(): null { return null; }
+            export function test(): int {
+              let b: bytes = bytes(1);
+              b[0] = 300;
+              return 0;
+            }
+            """, "bytes_legacy_e8013");
+        check(legacyValue.exitCode() == 1
+                && legacyValue.output().contains("DEAL_ERROR_CODE: E8013"),
+            "legacy bytes value-range gate raises exactly E8013: "
+                + legacyValue.output());
+        ExecResult legacyBounds = runLegacyProject("""
+            export function main(): null { return null; }
+            export function test(): int { return bytes(1)[1]; }
+            """, "bytes_legacy_e8012");
+        check(legacyBounds.exitCode() == 1
+                && legacyBounds.output().contains("DEAL_ERROR_CODE: E8012"),
+            "legacy bytes bounds gate raises exactly E8012: "
+                + legacyBounds.output());
+
+        // The legacy collision table registers the long-carrier helper
+        // signatures: a user function named bytesGet whose legacy-mapped
+        // parameters equal the emitted legacy helper is rejected with
+        // E6000 before emission — never a duplicate Java method.
+        Frontend legacyCollision = compileFrontend("""
+            function bytesGet(b: bytes, i: int): int { return b[i]; }
+            export function main(): null { return null; }
+            export function test(): int { return bytesGet(bytes(1), 0); }
+            """, "jvmtest-bytesget-legacy-collision.deal");
+        check(legacyCollision.errors().isEmpty(),
+            "legacy bytesGet collision frontend clean: "
+                + legacyCollision.errors());
+        if (legacyCollision.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult collisionRes = JvmBackend.generate(
+                legacyCollision.program(), legacyCollision.checkResult(),
+                "jvmtest-bytesget-legacy-collision.deal", "main",
+                Map.of(), Map.of(), Map.of(), true,
+                SemanticProfile.LEGACY_SAFE_INT);
+            check(collisionRes.hasErrors() && collisionRes.diagnostics()
+                    .stream().anyMatch(d -> "E6000".equals(d.code())
+                        && d.message().contains("collides with the emitted "
+                            + "runtime helper 'bytesGet'")),
+                "legacy bytesGet-named function collides with the "
+                    + "long-carrier legacy helper (E6000, never a "
+                    + "duplicate Java method): "
+                    + collisionRes.diagnostics());
+        }
+    }
+
+    /** The recursive bytes-bearing type closure (ISSUE-0160/E8, consumed
+     * by ISSUE-0306): arbitrary-depth Array/Nullable bytes compositions,
+     * sync/async bytes-bearing function signatures, the shared
+     * __BytesArray/__BytesOrNullArray carriers, the [bytes]/[?bytes]
+     * $checkArray rows, the pinned JSON bytes rejection, and the host
+     * bytes ABI arms — all through the real emitted artifact surface. */
+    private static void testRecursiveBytesClosureLane() throws Exception {
+        System.out.println("-- Recursive bytes-bearing type closure (ISSUE-0160) --");
+
+        // ---- Emitted artifact surface (int32 artifact inspection) ----
+        String artifact = int32Artifact("""
+            // @jsonable
+            export class Holder { payload: table = {}; }
+            function id(b: bytes): bytes { return b; }
+            async function echo(b: bytes): bytes { return b; }
+            function bump(b: bytes, v: int): bytes { b[0] = b[0] + v; return b; }
+            function picker(): (b: bytes) => bytes { return id; }
+            function combine(f: (b: bytes) => bytes): (b: bytes) => bytes {
+              return f;
+            }
+            class Box {
+              cb: (b: bytes) => bytes = id;
+              both: (b: bytes, v: int) => bytes = bump;
+              maybe: ((b: bytes) => bytes) | null = null;
+            }
+            export function main(): null { return null; }
+            export function run(): int {
+              let b: bytes = bytes(2);
+              let xs: bytes[] = [b];
+              let ns: (bytes | null)[] = [];
+              let fs: ((b: bytes) => bytes)[] = [id];
+              let g: async (b: bytes) => bytes = echo;
+              let t: table = {};
+              t.x = b;
+              let c: bytes = t.x;
+              let d: bytes | null = t.x;
+              let box: Box = {};
+              let via: bytes = box.cb(bytes(1));
+              return xs[0][0] + b.length + via.length;
+            }
+            """, "bytes_closure_artifact");
+        check(artifact.contains(
+                "static final class __BytesArray { Bytes[] data; "
+                    + "__BytesArray(Bytes[] data) { this.data = data; } }"),
+            "the shared scope carries the concrete __BytesArray carrier "
+                + "over $DealRt.Bytes[] storage");
+        check(artifact.contains(
+                "static final class __BytesOrNullArray { Bytes[] data; "
+                    + "__BytesOrNullArray(Bytes[] data) { this.data = data; } }"),
+            "the shared scope carries the concrete __BytesOrNullArray "
+                + "carrier");
+        check(artifact.contains("static $DealRt.Bytes __bytesArrayRead("),
+            "bytes[] reads lower to the typed __bytesArrayRead helper");
+        check(artifact.contains("static $DealRt.Bytes __bytesArrayWrite("),
+            "bytes[] writes lower to the typed __bytesArrayWrite helper");
+        check(artifact.contains("static $DealRt.Bytes __bytesArrayReadBoxed("),
+            "the boxed bytes[] read supports === / !== nil semantics");
+        check(artifact.contains(
+                "static $DealRt.Bytes __bytesOrNullArrayRead("),
+            "(bytes | null)[] reads lower to the or-null helper");
+        check(artifact.contains(
+                "static $DealRt.Bytes __bytesOrNullArrayWrite("),
+            "(bytes | null)[] writes lower to the or-null helper");
+        check(artifact.contains(
+                "\"expected bytes, got \" + $describe(v)"),
+            "the bytes[] element policy rejects a null element with the "
+                + "pinned E8001 shape");
+        check(artifact.contains("descriptor.equals(\"[bytes]\")"),
+            "the $checkArray seam carries the [bytes] row");
+        check(artifact.contains("descriptor.equals(\"[?bytes]\")"),
+            "the $checkArray seam carries the [?bytes] widening row");
+        check(artifact.contains("static $DealRt.__BytesArray $dynamicBytesArray("),
+            "an array-mode table converts through $dynamicBytesArray "
+                + "with the E8003 element wrap");
+        check(artifact.contains(
+                "static $DealRt.__BytesOrNullArray $dynamicBytesOrNullArray("),
+            "an array-mode table converts through $dynamicBytesOrNullArray");
+        check(artifact.contains("static abstract class Fn1_Y_R_Y"),
+            "(bytes)->bytes uses the shared Y-segment wrapper shape");
+        check(artifact.contains(
+                "static abstract class Fn1_Y_R_Y implements FnValue {\n"
+                    + "        final java.lang.String descriptor = "
+                    + "\"(bytes)->bytes\";"),
+            "the (bytes)->bytes wrapper carries the complete canonical "
+                + "descriptor text (bytes)->bytes");
+        check(artifact.contains("static abstract class FnA1_Y_R_Y"),
+            "async(bytes)->bytes uses the distinct async wrapper shape");
+        check(artifact.contains(
+                "final java.lang.String descriptor = \"async(bytes)->bytes\";"),
+            "the async bytes wrapper carries the complete canonical "
+                + "async(bytes)->bytes descriptor");
+        check(artifact.contains("static abstract class Fn2_Y_I_R_Y"),
+            "(bytes,int)->bytes uses the two-parameter Y-segment wrapper "
+                + "shape (ISSUE-0548 sync function-shape closure)");
+        check(artifact.contains(
+                "static abstract class Fn2_Y_I_R_Y implements FnValue {\n"
+                    + "        final java.lang.String descriptor = "
+                    + "\"(bytes,int)->bytes\";"),
+            "the (bytes,int)->bytes wrapper carries the complete "
+                + "canonical descriptor text (bytes,int)->bytes");
+        check(artifact.contains(
+                "static abstract class Fn0_R_$$lbytes$r$m$gbytes "
+                    + "implements FnValue {"),
+            "()->(bytes)->bytes uses the descriptor-escaped nested "
+                + "function shape id");
+        check(artifact.contains(
+                "        final java.lang.String descriptor = "
+                    + "\"()->(bytes)->bytes\";"),
+            "the ()->(bytes)->bytes wrapper carries the complete "
+                + "canonical descriptor text ()->(bytes)->bytes");
+        check(artifact.contains(
+                "static abstract class "
+                    + "Fn1_$$lbytes$r$m$gbytes_R_$$lbytes$r$m$gbytes "
+                    + "implements FnValue {"),
+            "((bytes)->bytes)->(bytes)->bytes uses the descriptor-escaped "
+                + "nested function shape id");
+        check(artifact.contains(
+                "        final java.lang.String descriptor = "
+                    + "\"((bytes)->bytes)->(bytes)->bytes\";"),
+            "the ((bytes)->bytes)->(bytes)->bytes wrapper carries the "
+                + "complete canonical descriptor text");
+        check(artifact.contains("$DealRt.Fn1_Y_R_Y cb;"),
+            "a plain class field of bytes-bearing function type stores "
+                + "the shared wrapper reference");
+        check(artifact.contains("$DealRt.Fn2_Y_I_R_Y both;"),
+            "a two-parameter class field of bytes-bearing function "
+                + "type stores the shared wrapper reference");
+        check(artifact.contains("$DealRt.Fn1_Y_R_Y maybe;"),
+            "a nullable class field of bytes-bearing function type "
+                + "stores the shared wrapper reference (Java null is "
+                + "the DEAL null)");
+        check(artifact.contains(
+                "$DealRt.Fn1_Y_R_Y __fn0 = (box).cb;"),
+            "a call through a class field holding a bytes-bearing "
+                + "function value materializes the callee FIELD READ "
+                + "into a wrapper temporary at the callee's evaluation "
+                + "position");
+        check(artifact.contains("$DealRt.Bytes via = __fn0.invoke("),
+            "the call through the class field dispatches through the "
+                + "materialized wrapper temporary's invoke");
+        check(!artifact.contains(
+                "if (v instanceof $DealRt.Bytes) throw new DealError("
+                    + "\"E8001\", \"unsupported type for JSON encoding: "
+                    + "bytes\")"),
+            "the stringifier carries no bytes-specific arm (the "
+                + "unsupported-type message belongs to the std/json "
+                + "stringify surface's encode_value-parity default arm, "
+                + "not the @jsonable one)");
+        check(artifact.contains(
+                "static $DealRt.Table __jsonShape($DealRt.Table v) {"),
+            "the @jsonable runtime emits the __jsonShape table-field "
+                + "validation helper (deal/runtime.lua's "
+                + "_json_table_shape mirror)");
+        check(artifact.contains(
+                "throw new DealError(\"E8001\", \"value is not "
+                    + "JSON-shaped\");"),
+            "the @jsonable shape walk raises the LuaJIT-equal "
+                + "'value is not JSON-shaped' for a bytes value");
+        check(artifact.contains("case \"bytes\":")
+                && artifact.contains(
+                    "if (v instanceof $DealRt.Bytes b) return b;"),
+            "__hostCheck carries the bytes return-boundary branch");
+
+        check(artifact.contains("(($DealRt.Bytes) $check(\"bytes\", "),
+            "a bytes-typed table read lowers through the canonical "
+                + "$check bytes row");
+        check(artifact.contains("(($DealRt.Bytes) $check(\"?bytes\", "),
+            "a (bytes | null) table read lowers through the canonical "
+                + "$check ?bytes row");
+
+        // ---- Behavior battery (real pipeline under DEAL_V1_2_INT32) ----
+        record ClosurePin(String name, String prelude, String body,
+                          String expected) {}
+        List<ClosurePin> pins = List.of(
+            new ClosurePin("nested-alias", "",
+                "let b: bytes = bytes(2);\n"
+                    + "      let xs: bytes[][] = [[b]];\n"
+                    + "      xs[0][0][0] = 7;\n"
+                    + "      if (b[0] !== 7) { throw { code: \"TEST_FAIL\", message: \"alias\" }; }\n"
+                    + "      return b[0];",
+                "7"),
+            new ClosurePin("nested-read-write", "",
+                "let xs: bytes[][] = [[bytes(1)], [bytes(2)]];\n"
+                    + "      xs[1][0][0] = 9;\n"
+                    + "      return xs[0][0][0] + xs[1][0][0];",
+                "9"),
+            new ClosurePin("nullable-elements", "",
+                "let ns: (bytes | null)[] = [];\n"
+                    + "      ns[ns.length] = bytes(1);\n"
+                    + "      ns[ns.length] = null;\n"
+                    + "      let first: bytes | null = ns[0];\n"
+                    + "      if (first !== null) { first[0] = 9; }\n"
+                    + "      if (ns[1] !== null) { throw { code: \"TEST_FAIL\", message: \"null element\" }; }\n"
+                    + "      let again: bytes | null = ns[0];\n"
+                    + "      if (again !== null) {\n"
+                    + "        if (again[0] !== 9) { throw { code: \"TEST_FAIL\", message: \"write\" }; }\n"
+                    + "        return again[0];\n"
+                    + "      }\n"
+                    + "      throw { code: \"TEST_FAIL\", message: \"lost element\" };",
+                "9"),
+            new ClosurePin("fn-array-invoke",
+                "function bump(b: bytes, v: int): bytes { b[0] = b[0] + v; return b; }\n",
+                "let fs: ((b: bytes, v: int) => bytes)[] = [bump, bump];\n"
+                    + "      fs[fs.length] = bump;\n"
+                    + "      let r: bytes = fs[0](bytes(2), 5);\n"
+                    + "      return r[0];",
+                "5"),
+            new ClosurePin("fn-array-nullable",
+                "function id(b: bytes): bytes { return b; }\n",
+                "let ns: (((b: bytes) => bytes) | null)[] = [];\n"
+                    + "      ns[ns.length] = id;\n"
+                    + "      ns[ns.length] = null;\n"
+                    + "      let g: ((b: bytes) => bytes) | null = ns[0];\n"
+                    + "      if (g !== null) { return g(bytes(3)).length; }\n"
+                    + "      throw { code: \"TEST_FAIL\", message: \"nullable fn\" };",
+                "3"),
+            new ClosurePin("array-identity",
+                "function id(b: bytes): bytes { return b; }\n",
+                "let b: bytes = bytes(2);\n"
+                    + "      let xs: bytes[] = [b];\n"
+                    + "      let copy: bytes[] = [bytes(2)];\n"
+                    + "      if (!(xs[0] === b)) { throw { code: \"TEST_FAIL\", message: \"element identity\" }; }\n"
+                    + "      if (xs === copy) { throw { code: \"TEST_FAIL\", message: \"array identity\" }; }\n"
+                    + "      return 1;",
+                "1"),
+            new ClosurePin("past-end-read", "",
+                "let xs: bytes[] = [];\n"
+                    + "      return xs[0][0];",
+                "E8001"),
+            new ClosurePin("callee-first-field-read",
+                "function markOne(b: bytes | null): bytes { if (b !== null) { b[0] = 1; return b; } return bytes(0); }\n"
+                    + "    function markTwo(b: bytes | null): bytes { if (b !== null) { b[0] = 2; return b; } return bytes(0); }\n"
+                    + "    class Box { cb: (b: bytes | null) => bytes = markOne; }\n"
+                    + "    function retarget(box: Box): table { box.cb = markTwo; return { x: bytes(1) }; }\n",
+                "let box: Box = {};\n"
+                    + "      let r: bytes = box.cb(retarget(box).x);\n"
+                    + "      if (r[0] !== 1) { throw { code: \"TEST_FAIL\", message: \"callee-first field read\" }; }\n"
+                    + "      return r[0];",
+                "1"),
+            new ClosurePin("json-rejection",
+                "// @jsonable\nexport class Holder { payload: table = {}; }\n",
+                "let h: Holder = { payload: { inner: {} } };\n"
+                    + "      h.payload.inner.b = bytes(2);\n"
+                    + "      let s: string = Holder$toJson(h);\n"
+                    + "      return 0;",
+                "E8001"));
+        for (ClosurePin pin : pins) {
+            String source = "export function main(): null { return null; }\n"
+                + pin.prelude()
+                + "export function test(): int {\n      " + pin.body() + "\n"
+                + "    }\n";
+            ExecResult r = runInt32Project(source, pin.name());
+            if (pin.expected().startsWith("E8")) {
+                check(r.exitCode() == 1,
+                    pin.name() + " run exits 1: " + r.output());
+                check(r.output().contains("DEAL_ERROR_CODE: "
+                        + pin.expected()),
+                    pin.name() + " raises exactly " + pin.expected()
+                        + ": " + r.output());
+            } else {
+                check(r.exitCode() == 0,
+                    pin.name() + " run exits 0: " + r.output());
+                check(r.output().contains(pin.expected()),
+                    pin.name() + " computes the pinned value "
+                        + pin.expected() + ": " + r.output());
+            }
+        }
+        check(pins.stream().anyMatch(p ->
+                p.name().equals("json-rejection")),
+            "the JSON rejection pin ran");
+
+        // Async bytes-bearing function values (await needs an async test
+        // function, so these run as standalone sources).
+        ExecResult asyncBytes = runInt32Project("""
+            async function echo(b: bytes): bytes { return b; }
+            export function main(): null { return null; }
+            export async function test(): int {
+              let f: async (b: bytes) => bytes = echo;
+              let out: bytes = await f(bytes(2));
+              return out.length;
+            }
+            """, "async_bytes_value");
+        check(asyncBytes.exitCode() == 0,
+            "async bytes function value run exits 0: " + asyncBytes.output());
+        check(asyncBytes.output().contains("2"),
+            "awaited async bytes function value completes with length 2: "
+                + asyncBytes.output());
+        ExecResult asyncContainer = runInt32Project("""
+            async function echo(b: bytes): bytes { return b; }
+            export function main(): null { return null; }
+            export async function test(): int {
+              let fs: ((async (b: bytes) => bytes) | null)[] = [];
+              fs[fs.length] = echo;
+              fs[fs.length] = null;
+              let g: (async (b: bytes) => bytes) | null = fs[0];
+              if (g !== null) {
+                let again: bytes = await g(bytes(3));
+                return again[0];
+              }
+              throw { code: "TEST_FAIL", message: "async container" };
+            }
+            """, "async_bytes_container");
+        check(asyncContainer.exitCode() == 0,
+            "containerized async bytes value run exits 0: "
+                + asyncContainer.output());
+        check(asyncContainer.output().contains("0"),
+            "containerized async bytes value completes with the zero-filled "
+                + "first byte: " + asyncContainer.output());
+        // ISSUE-0549 (async bytes closure): function-typed class fields
+        // hold async bytes-bearing wrapper references (the DEAL null for
+        // the nullable form), direct member calls dispatch the field's
+        // invoke through the await-site completion check, discard awaits
+        // evaluate exactly once, awaited errors propagate, and bytes[]
+        // signatures/callbacks flow through await.
+        ExecResult asyncFieldCall = runInt32Project("""
+            async function echo(b: bytes): bytes { return b; }
+            export class Holder {
+              cb: async (b: bytes) => bytes = echo;
+              maybe: (async (b: bytes) => bytes) | null = null;
+              n: int = 7;
+            }
+            export function main(): null { return null; }
+            export async function test(): int {
+              let h: Holder = { cb: echo, maybe: null, n: 9 };
+              let via: bytes = await h.cb(bytes(5));
+              let m: (async (b: bytes) => bytes) | null = h.maybe;
+              if (m !== null) { throw { code: "TEST_FAIL", message: "null field" }; }
+              h.maybe = echo;
+              let m2: (async (b: bytes) => bytes) | null = h.maybe;
+              if (m2 !== null) {
+                let again: bytes = await m2(bytes(6));
+                return via.length + h.n + again.length;
+              }
+              throw { code: "TEST_FAIL", message: "field write" };
+            }
+            """, "async_bytes_field_call");
+        check(asyncFieldCall.exitCode() == 0,
+            "async bytes class-field call run exits 0: "
+                + asyncFieldCall.output());
+        check(asyncFieldCall.output().contains("20"),
+            "class fields hold the async bytes wrapper reference (5 + 9 + 6 "
+                + "= 20) with the DEAL null default preserved: "
+                + asyncFieldCall.output());
+        ExecResult asyncClosureBattery = runInt32Project("""
+            async function echo(b: bytes): bytes { return b; }
+            async function countArr(a: bytes[]): int { return a.length; }
+            async function applyBytes(f: async (b: bytes) => bytes, b: bytes): bytes {
+              return await f(b);
+            }
+            async function failEcho(b: bytes): bytes {
+              throw { code: "E_TEST", message: "boom" };
+            }
+            export function main(): null { return null; }
+            export async function test(): int {
+              let arr: bytes[] = [bytes(2), bytes(3)];
+              let n: int = await countArr(arr);
+              let via: bytes = await applyBytes(echo, bytes(4));
+              let hits: int = 0;
+              async function counter(b: bytes): bytes {
+                hits = hits + 1;
+                return b;
+              }
+              await counter(bytes(1));
+              let caught: boolean = false;
+              try {
+                await failEcho(bytes(1));
+              } catch (e) {
+                caught = e.code === "E_TEST";
+              }
+              if (!caught) { throw { code: "TEST_FAIL", message: "propagate" }; }
+              return n * 10 + via.length + hits;
+            }
+            """, "async_bytes_closure_battery");
+        check(asyncClosureBattery.exitCode() == 0,
+            "async bytes closure battery run exits 0: "
+                + asyncClosureBattery.output());
+        check(asyncClosureBattery.output().contains("25"),
+            "bytes[] signature (2), callback (4), and exactly-once discard "
+                + "await (1) complete through await: 2*10 + 4 + 1 = 25: "
+                + asyncClosureBattery.output());
+        // The @jsonable C$toJson surface validates table fields through
+        // the emitted __jsonShape walk — deal/runtime.lua's
+        // _json_table_shape mirror, before std/json's encode_value ever
+        // runs — so a table-held bytes value raises E8001 "value is
+        // not JSON-shaped", byte-identical to the LuaJIT @jsonable
+        // reference. The std/json stringify surface (landed with
+        // ISSUE-0302) keeps its own encode_value-parity arm — E8001
+        // "unsupported type for JSON encoding: bytes" for the same
+        // table — exactly like std/json.lua's explicit bytes arm, so
+        // the two LuaJIT surfaces stay byte-distinct on the JVM.
+        String jsonSource = "export function main(): null { return null; }\n"
+            + "// @jsonable\nexport class Holder { payload: table = {}; }\n"
+            + "export function test(): int {\n"
+            + "      let h: Holder = { payload: { inner: {} } };\n"
+            + "      h.payload.inner.b = bytes(2);\n"
+            + "      let s: string = Holder$toJson(h);\n"
+            + "      return 0;\n"
+            + "    }\n";
+        ExecResult jsonRun = runInt32Project(jsonSource, "json_rejection_msg");
+        check(jsonRun.exitCode() == 1,
+            "the bytes JSON rejection run exits 1: " + jsonRun.output());
+        check(jsonRun.output().contains("DEAL_ERROR_CODE: E8001"),
+            "the bytes JSON rejection raises E8001: " + jsonRun.output());
+        check(jsonRun.output().contains("value is not JSON-shaped"),
+            "the JVM stringifier raises the LuaJIT-equal default message: "
+                + jsonRun.output());
+
+        // The std/json stringify surface raises the encode_value-parity
+        // message for the same table-held bytes value (std/json.lua's
+        // explicit bytes arm) — the two JVM stringify surfaces stay
+        // byte-distinct exactly like the LuaJIT reference runtime.
+        ExecResult stdJsonBytes = compileAndRunJvm("""
+            import * as json from "std/json"
+            export function test(): string {
+              let t: table = { inner: {} };
+              t.inner.b = bytes(2);
+              return json.stringify(t);
+            }
+            """, "std_json_stringify_bytes_msg");
+        check(stdJsonBytes.output().contains("DEAL_ERROR_CODE: E8001"),
+            "the std/json bytes stringify raises E8001: "
+                + stdJsonBytes.output());
+        check(stdJsonBytes.output().contains(
+                "unsupported type for JSON encoding: bytes"),
+            "the std/json stringify raises the encode_value-parity bytes "
+                + "message: " + stdJsonBytes.output());
+
+        // ISSUE-0551: a table-held typed bytes[] array reaches its
+        // elements through the emitted __BytesArray/__BytesOrNullArray
+        // serialization branches, so a bytes element raises the pinned
+        // encode_value-parity bytes message — never the carrier's own
+        // class name leaking into the error (LuaJIT walks the array and
+        // rejects the element).
+        ExecResult stdJsonBytesArray = compileAndRunJvm("""
+            import * as json from "std/json"
+            export function test(): string {
+              let b: bytes = bytes(1);
+              let arr: bytes[] = [b];
+              let t: table = { inner: {} };
+              t.inner.arr = arr;
+              return json.stringify(t);
+            }
+            """, "std_json_stringify_bytes_array_msg");
+        check(stdJsonBytesArray.output().contains("DEAL_ERROR_CODE: E8001"),
+            "the std/json bytes-array stringify raises E8001: "
+                + stdJsonBytesArray.output());
+        check(stdJsonBytesArray.output().contains(
+                "unsupported type for JSON encoding: bytes"),
+            "the std/json stringify of a table-held bytes[] rejects the "
+                + "element with the pinned bytes message: "
+                + stdJsonBytesArray.output());
+        check(!stdJsonBytesArray.output().contains("__BytesArray"),
+            "no carrier class name leaks into the nested bytes rejection "
+                + "message: " + stdJsonBytesArray.output());
+
+        // ---- Dynamic scalar table-read boundary (ISSUE-0160 D5) ----
+        // Table writes store the raw wrapper reference; a bytes-typed
+        // read routes through the canonical $check realization — the
+        // bytes row accepts exactly a $DealRt.Bytes (reference identity
+        // preserved), the ?bytes row passes the DEAL null, and any
+        // wrong-kind value raises E8001 "expected bytes, got {actual}".
+        ExecResult tableBytesOk = runInt32Project("""
+            export function main(): null { return null; }
+            export function test(): int {
+              let t: table = {};
+              t.x = bytes(2);
+              let b: bytes = t.x;
+              b[0] = 7;
+              let n: bytes | null = null;
+              t.y = n;
+              let d: bytes | null = t.y;
+              let extra: int = 0;
+              if (d !== null) { extra = 1; }
+              let e: bytes | null = t.x;
+              if (e !== null) { e[0] = 9; }
+              return b[0] + extra;
+            }
+            """, "table_bytes_read_ok");
+        check(tableBytesOk.exitCode() == 0,
+            "table-held bytes read roundtrip runs green: "
+                + tableBytesOk.output());
+        check(tableBytesOk.output().contains("9"),
+            "the bytes-typed table read preserves reference identity "
+                + "(the re-read alias sees the 7 \u2192 9 write) and the "
+                + "?bytes row passes the DEAL null: "
+                + tableBytesOk.output());
+        ExecResult tableBytesBad = runInt32Project("""
+            export function main(): null { return null; }
+            export function test(): int {
+              let t: table = {};
+              t.x = 7;
+              let b: bytes = t.x;
+              return b.length;
+            }
+            """, "table_bytes_read_bad");
+        check(tableBytesBad.exitCode() == 1
+                && tableBytesBad.output().contains(
+                    "DEAL_ERROR_CODE: E8001")
+                && tableBytesBad.output().contains(
+                    "expected bytes, got "),
+            "the bytes-typed table read raises E8001 with the pinned "
+                + "\"expected bytes, got {actual}\" message for a "
+                + "wrong-kind value: " + tableBytesBad.output());
+        ExecResult tableBytesBadNullable = runInt32Project("""
+            export function main(): null { return null; }
+            export function test(): int {
+              let t: table = {};
+              t.x = "nope";
+              let b: bytes | null = t.x;
+              let r: int = 0;
+              if (b !== null) { r = b.length; }
+              return r;
+            }
+            """, "table_bytes_read_bad_nullable");
+        check(tableBytesBadNullable.exitCode() == 1
+                && tableBytesBadNullable.output().contains(
+                    "DEAL_ERROR_CODE: E8001")
+                && tableBytesBadNullable.output().contains(
+                    "expected bytes, got "),
+            "the ?bytes table read raises E8001 with the pinned message "
+                + "for a wrong-kind value: "
+                + tableBytesBadNullable.output());
+
+        // ---- Legacy-profile pin (LEGACY_SAFE_INT long carriers) ----
+        // The bytes-array carriers are profile-independent ($DealRt.Bytes
+        // storage); the array helpers follow the emitted int carriers the
+        // same way the bytes helpers do, so the closure shapes compile
+        // and execute under the untouched default invocation.
+        ExecResult legacyRun = runLegacyProject("""
+            export function main(): null { return null; }
+            function id(b: bytes): bytes { return b; }
+            export function test(): int {
+              let b: bytes = bytes(2);
+              let xs: bytes[][] = [[b]];
+              xs[0][0][0] = 7;
+              let ns: (bytes | null)[] = [];
+              ns[ns.length] = b;
+              ns[ns.length] = null;
+              let fs: ((b: bytes) => bytes)[] = [id];
+              if (fs[0](b).length !== 2) { throw { code: "TEST_FAIL", message: "fn" }; }
+              let extra: int = 0;
+              if (ns[1] === null) { extra = 1; }
+              return b[0] + extra;
+            }
+            """, "bytes_closure_legacy_full");
+        check(legacyRun.exitCode() == 0,
+            "legacy closure program compiles under javac and runs green: "
+                + legacyRun.output());
+        check(legacyRun.output().contains("8"),
+            "legacy closure program computes 7 + 1 = 8: "
+                + legacyRun.output());
+
+        // ---- No-E6000-for-bytes negative pin (D9) ----
+        // A bytes-closure program tripping an unrelated guard must name
+        // the unrelated cause — never bytes nesting or function shape.
+        Frontend reassigned = compileFrontend("""
+            function id(b: bytes): bytes { return b; }
+            export function main(): null { return null; }
+            export function test(): int {
+              let f: (b: bytes) => bytes = id;
+              let g: (b: bytes, extra: int) => bytes = f;
+              f = id;
+              return 0;
+            }
+            """, "jvmtest-bytes-closure-reassigned.deal");
+        check(reassigned.errors().isEmpty(),
+            "bytes closure reassigned-adapter probe frontend clean: "
+                + reassigned.errors());
+        if (reassigned.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                reassigned.program(), reassigned.checkResult(),
+                "jvmtest-bytes-closure-reassigned.deal", "main",
+                Map.of(), Map.of(), Map.of(), true,
+                SemanticProfile.DEAL_V1_2_INT32);
+            check(res.hasErrors() && res.diagnostics().stream()
+                    .anyMatch(d -> "E6000".equals(d.code())
+                        && d.message().contains("reassigns")),
+                "the reassigned-binding adapter guard fires with the "
+                    + "reassignment reason (never bytes): "
+                    + res.diagnostics());
+            check(res.diagnostics().stream()
+                    .noneMatch(d -> "E6000".equals(d.code())
+                        && d.message().contains("bytes")),
+                "no E6000 names bytes nesting or function shape: "
+                    + res.diagnostics());
+        }
+
+        // ---- Live module-field rebinding (the criterion's
+        // module-binding surface; the LuaJIT side is pinned by
+        // jvm-bytes-lua-ref-reassigned-adapter in
+        // jvm-bytes-slice) ----
+        // An arity adapter over a module-level function re-reads the
+        // chunk local live on LuaJIT (id = stamp retargets the
+        // (bytes,int)->bytes adapter), so the JVM backend must never
+        // snapshot: it retains the reason-bearing E6000 for the
+        // module-binding reassignment — never bytes nesting or function
+        // shape.
+        Frontend moduleRebind = compileFrontend("""
+            function id(b: bytes): bytes { return b; }
+            function stamp(b: bytes): bytes { b[0] = 5; return b; }
+            export function main(): null { return null; }
+            export function test(): int {
+              let h: (b: bytes, extra: int) => bytes = id;
+              id = stamp;
+              return 0;
+            }
+            """, "jvmtest-bytes-closure-module-rebind.deal");
+        check(moduleRebind.errors().isEmpty(),
+            "bytes closure module-rebind adapter probe frontend clean "
+                + "(LuaJIT compiles and retargets this shape; the JVM "
+                + "backend rejects it): " + moduleRebind.errors());
+        if (moduleRebind.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                moduleRebind.program(), moduleRebind.checkResult(),
+                "jvmtest-bytes-closure-module-rebind.deal", "main",
+                Map.of(), Map.of(), Map.of(), true,
+                SemanticProfile.DEAL_V1_2_INT32);
+            check(res.hasErrors() && res.diagnostics().stream()
+                    .anyMatch(d -> "E6000".equals(d.code())
+                        && d.message().contains("assignment to 'id'")),
+                "the module-binding reassignment guard fires with the "
+                    + "assignment reason (never bytes): "
+                    + res.diagnostics());
+            check(res.diagnostics().stream()
+                    .noneMatch(d -> "E6000".equals(d.code())
+                        && d.message().contains("bytes")),
+                "no E6000 names bytes nesting or function shape: "
+                    + res.diagnostics());
+        }
     }
 
     /** The combined T1+T3 verification (ISSUE-0394): the profile flows
@@ -9269,7 +11612,7 @@ public class JvmBackendTest {
               x?: int;
             }
             export class CallbackHolder {
-              cb: (x: int) => int;
+              cb: (x: int) => int = function(x: int): int { return x; };
             }
             export function run(): int { return 1; }
             """);
@@ -9332,11 +11675,16 @@ public class JvmBackendTest {
      * unchanged — the per-signature wrapper shape class, the
      * per-declaration wrapper instance field assigned at the
      * declaration point, indirect awaited calls dispatching through
-     * {@code invoke}, and the arity-extension adapter. Async function
-     * expressions and non-representable function-type signatures stay
-     * E6000, and the pre-rebase module-level function-value read shapes
-     * are the v1.2 grammar gate E1049 — never an artifact javac
-     * rejects after the CLI reported success.
+     * {@code invoke}, and the arity-extension adapter. ISSUE-0304
+     * lifts the async-expressions lane: async function expressions and
+     * block-level async function declarations emit through the sync
+     * closure machinery with async descriptors and blocking bodies,
+     * and an {@code await E;} statement evaluates exactly once with
+     * the completion check. Non-representable function-type signatures
+     * (table carriers) stay E6000, and the pre-rebase
+     * module-level function-value read shapes are the v1.2 grammar
+     * gate E1049 — never an artifact javac rejects after the CLI
+     * reported success.
      */
     private static void testAsyncSlice() throws Exception {
         System.out.println("-- Async/await slice (javac + java) --");
@@ -9376,13 +11724,13 @@ public class JvmBackendTest {
             "null-returning async function → void method");
         check(java.contains("checkInt(g())"),
             "await of an int completion wraps the call in checkInt");
-        check(java.contains("static abstract class Fn0_R_I"),
-            "async () => int uses the ISSUE-0098 wrapper shape class");
-        check(java.contains("static abstract class Fn1_I_R_I"),
-            "async (x: int) => int uses the ISSUE-0098 wrapper shape class");
-        check(java.contains("static final Fn0_R_I value$fn = new Fn0_R_I()"),
+        check(java.contains("static abstract class FnA0_R_I"),
+            "async () => int uses the shared wrapper shape class");
+        check(java.contains("static abstract class FnA1_I_R_I"),
+            "async (x: int) => int uses the shared wrapper shape class");
+        check(java.contains("static final $DealRt.FnA0_R_I value$fn = new $DealRt.FnA0_R_I()"),
             "per-declaration wrapper instance field");
-        check(java.contains("Fn0_R_I f = value$fn;"),
+        check(java.contains("$DealRt.FnA0_R_I f = value$fn;"),
             "function-typed local initializes from the wrapper field");
         check(java.contains("checkInt(f.invoke())"),
             "awaited indirect call dispatches through invoke");
@@ -9479,8 +11827,12 @@ public class JvmBackendTest {
                     + hiddenRes.diagnostics());
         }
 
-        // Deferred shapes stay E6000: async function expressions and
-        // non-representable async signatures (array parameters).
+        // ISSUE-0304: async function expressions emit through the sync
+        // closure machinery with the async descriptor marker and the
+        // blocking body — the E6000 gate is lifted, the anonymous
+        // subclass carries the async shape id (FnA0_R_I), and the
+        // awaited indirect call runs the completion check (checkInt
+        // around invoke) at the await site.
         Frontend expr = compileFrontend("""
             export async function test(): int {
               let f: async () => int = async function(): int { return 42; };
@@ -9493,28 +11845,160 @@ public class JvmBackendTest {
         if (!expr.errors().isEmpty()) return;
         JvmBackend.JvmCodegenResult exprRes = JvmBackend.generate(
             expr.program(), expr.checkResult(), "jvmtest-async-expr.deal", "main");
-        check(exprRes.hasErrors() && exprRes.diagnostics().stream()
-                .anyMatch(d -> "E6000".equals(d.code())),
-            "async function expressions stay E6000 (deferred): "
+        check(!exprRes.hasErrors(),
+            "async function expression codegen clean: "
                 + exprRes.diagnostics());
+        check(exprRes.source().contains(
+                "$DealRt.FnA0_R_I f = new $DealRt.FnA0_R_I()"),
+            "async function expression emits an anonymous FnA0_R_I "
+                + "subclass into the typed local: " + exprRes.source());
+        check(exprRes.source().contains("checkInt(f.invoke())"),
+            "awaited async function expression runs the completion "
+                + "check at the await site: " + exprRes.source());
+        ExecResult exprRun = compileAndRunJvm("""
+            export async function test(): int {
+              let f: async () => int = async function(): int { return 42; };
+              return await f();
+            }
+            """, "asyncexpr");
+        check(exprRun.exitCode() == 0,
+            "async function expression executes: exit 0: "
+                + exprRun.output());
+        check(exprRun.output().contains("42"),
+            "awaited async function expression computes 42: "
+                + exprRun.output());
 
-        Frontend shape = compileFrontend("""
+        // An async function expression body's awaits compile as direct
+        // blocking calls with the completion check at the await site
+        // (checkInt around the inner direct call), and captured
+        // enclosing locals route through cells so a later reassignment
+        // is observed by the wrapper's invoke (LuaJIT's upvalue
+        // semantics) — the anonymous subclass with captured cells is
+        // valid Java.
+        Frontend exprAwait = compileFrontend("""
+            async function base(): int { return 5; }
+            export async function test(): int {
+              let x: int = 41;
+              let f: async () => int = async function(): int { return await base() + x; };
+              x = 100;
+              return await f();
+            }
+            """, "jvmtest-async-expr-await.deal");
+        check(exprAwait.errors().isEmpty(),
+            "frontend accepts the awaiting async function expression: "
+                + exprAwait.errors());
+        if (!exprAwait.errors().isEmpty()) return;
+        JvmBackend.JvmCodegenResult exprAwaitRes = JvmBackend.generate(
+            exprAwait.program(), exprAwait.checkResult(),
+            "jvmtest-async-expr-await.deal", "main");
+        check(!exprAwaitRes.hasErrors(),
+            "awaiting async function expression codegen clean: "
+                + exprAwaitRes.diagnostics());
+        check(exprAwaitRes.source().contains(
+                "return intAdd(checkInt(base()), x$c[0]);"),
+            "the expression body's await is a direct blocking call with "
+                + "the completion check, and the captured local routes "
+                + "through its cell: " + exprAwaitRes.source());
+        ExecResult exprAwaitRun = compileAndRunJvm("""
+            async function base(): int { return 5; }
+            export async function test(): int {
+              let x: int = 41;
+              let f: async () => int = async function(): int { return await base() + x; };
+              x = 100;
+              return await f();
+            }
+            """, "asyncexprawait");
+        check(exprAwaitRun.exitCode() == 0,
+            "awaiting async function expression executes: exit 0: "
+                + exprAwaitRun.output());
+        check(exprAwaitRun.output().contains("105"),
+            "the wrapper observes the reassigned cell (105 = 5 + 100): "
+                + exprAwaitRun.output());
+
+        // Block-level async function declarations (ISSUE-0304 D2/D3): a
+        // block-level async function declares like the block-level sync
+        // form — fresh cell plus anonymous wrapper instance at the
+        // declaration's source position — with the async descriptor;
+        // captured bindings cell-ify so the enclosing async function
+        // observes the writes; an `await g();` statement evaluates the
+        // call exactly once with the completion check and discards the
+        // value.
+        ExecResult block = compileAndRunJvm("""
+            export async function f(): int {
+              let completionState: int = 0;
+              let completionCount: int = 0;
+              async function g(): int {
+                let result: int = 42;
+                completionState = result;
+                completionCount = completionCount + 1;
+                return result;
+              }
+              await g();
+              if (completionState !== 42 || completionCount !== 1) {
+                throw { code: "TEST_FAIL", message: "block-level async" };
+              }
+              return 0;
+            }
+            """, "asyncblock");
+        check(block.exitCode() == 0,
+            "block-level async declaration executes: exit 0: "
+                + block.output());
+        check(block.output().contains("0"),
+            "enclosing async function observes g's captured writes: "
+                + block.output());
+
+        // ISSUE-0301 shared carrier: array/nullable/class signature
+        // shapes are representable in async ANNOTATIONS too — the
+        // shared per-signature wrapper machinery carries every shape
+        // the injective encoding covers (no E6000 remains for shapes
+        // this surface covers), and the awaited call executes through
+        // the real javac + java pipeline.
+        ExecResult shape = compileAndRunJvm("""
+            class C { v: int = 3; }
             async function total(xs: int[]): int { return xs[0]; }
+            async function nul(x: int | null): int { return 1; }
+            async function cls(c: C): int { return c.v; }
             export async function test(): int {
               let f: async (xs: int[]) => int = total;
+              let g: async (x: int | null) => int = nul;
+              let h: async (c: C) => int = cls;
               return await f([1]);
             }
-            """, "jvmtest-async-shape.deal");
-        check(shape.errors().isEmpty(),
-            "frontend accepts the non-representable async signature: "
-                + shape.errors());
-        if (!shape.errors().isEmpty()) return;
-        JvmBackend.JvmCodegenResult shapeRes = JvmBackend.generate(
-            shape.program(), shape.checkResult(), "jvmtest-async-shape.deal", "main");
-        check(shapeRes.hasErrors() && shapeRes.diagnostics().stream()
-                .anyMatch(d -> "E6000".equals(d.code())),
-            "async signatures with array parameters stay E6000 "
-                + "(deferred to ISSUE-0110): " + shapeRes.diagnostics());
+            """, "asyncshape");
+        check(shape.exitCode() == 0,
+            "async array/nullable/class annotation signatures exit 0: "
+                + shape.output());
+        check(shape.output().contains("1"),
+            "awaited call through the array-param wrapper computes 1: "
+                + shape.output());
+
+        // The table-carrier gate stays: a function-type ANNOTATION
+        // whose signature contains a table carrier raises E6000 with
+        // the table-carrier message (the ISSUE-0110 descriptor-join
+        // family; the recursive bytes-bearing wrapper closure landed
+        // with ISSUE-0160, so bytes carriers inside annotation
+        // signatures are representable).
+        Frontend tableSig = compileFrontend("""
+            async function pick(t: table): int { return 1; }
+            export async function test(): int {
+              let f: async (t: table) => int = pick;
+              return 0;
+            }
+            """, "jvmtest-async-tablesig.deal");
+        check(tableSig.errors().isEmpty(),
+            "frontend accepts the table-param annotation signature: "
+                + tableSig.errors());
+        if (tableSig.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult tableRes = JvmBackend.generate(
+                tableSig.program(), tableSig.checkResult(),
+                "jvmtest-async-tablesig.deal", "main");
+            check(tableRes.hasErrors() && tableRes.diagnostics().stream()
+                    .anyMatch(d -> "E6000".equals(d.code())
+                        && d.message().contains("table carriers")),
+                "table carriers inside an annotation signature stay E6000 "
+                    + "(table-carrier message): "
+                    + tableRes.diagnostics());
+        }
 
         // v1.2 grammar gate: the pre-rebase module-level function-value
         // read shapes (`let g: async () => int = value;` at top level,
@@ -9555,8 +12039,8 @@ public class JvmBackendTest {
      * array/class fields, and module-level calls of the generated
      * helpers stay E6000. Every runtime case compiles the emitted
      * artifact with javac and executes it with java; the same surface
-     * runs through the BackendConformanceTest adapter in
-     * {@code test/conformance/fixtures/jvm-jsonable-slice.json}.
+     * runs through the legacy JSON conformance harness adapter in
+     * {@code retired JSON slice jvm-jsonable-slice}.
      */
     private static void testJsonableSlice() throws Exception {
         System.out.println("-- @jsonable slice: generated helpers, descriptors, validation, boundaries --");
@@ -10077,18 +12561,26 @@ public class JvmBackendTest {
                 + res.diagnostics());
             if (!res.hasErrors()) {
                 String java = res.source();
-                check(java.contains("$DealRt.Table f0 = new $DealRt.Table();"),
+                check(java.contains("$DealRt.Table f0 = null;")
+                        && java.contains("f0 = new $DealRt.Table();"),
                     "a required no-default table field defaults to a "
-                    + "fresh empty $DealRt.Table (never Java null)");
+                    + "fresh empty $DealRt.Table (never Java null) — "
+                    + "ISSUE-0302 phase order: the declaration carries "
+                    + "the type-safe placeholder and the omitted-default "
+                    + "phase assigns the fresh table");
                 check(java.contains(
-                        "__IntArray f1 = new __IntArray(new long[0]);"),
+                        "$DealRt.__IntArray f1 = null;")
+                        && java.contains(
+                        "f1 = new $DealRt.__IntArray(new long[0]);"),
                     "a required no-default array field defaults to a "
                     + "fresh empty wrapper (never Java null)");
                 check(java.contains(
-                        "if (!m.containsKey(\"c\")) return null;"),
+                        "if (!provided2) return null;"),
                     "a required no-default class field's absent key is "
                     + "a fromJson validation failure (the placeholder "
-                    + "never crosses the typed boundary)");
+                    + "never crosses the typed boundary) — the "
+                    + "ISSUE-0302 phase order guards on the provided "
+                    + "flag after the omitted-default phase");
             }
         }
 
@@ -10196,6 +12688,300 @@ public class JvmBackendTest {
     }
 
     /**
+     * ISSUE-0302 (std/json boundary and @jsonable completion) unit
+     * surface: std/json import support with json.parse/json.stringify
+     * over the emitted shared JSON runtime, the fromJson top-level
+     * input gate, the provided-fields-before-defaults phase order,
+     * fresh per-level nested-array decoder locals (javac validity for
+     * int[][] and deeper shapes), recursive array serialization for
+     * table fields, the raw-control-character parse rejection, and the
+     * stringify-side unpaired-surrogate scan.
+     */
+    private static void testJsonStdlibBoundary() throws Exception {
+        System.out.println("-- ISSUE-0302: std/json boundary and @jsonable completion --");
+
+        // std/json joins the supported set: json.parse returns the
+        // shared $DealRt.Table (object mode for objects, array mode
+        // for arrays, integral numbers as the int carrier) and
+        // json.stringify roundtrips.
+        ExecResult roundtrip = compileAndRunJvm("""
+            import * as json from "std/json"
+            import * as str from "std/string"
+            export function test(): string {
+              let doc: table = { count: 42, ratio: 2.5, flag: true, nothing: null, name: "Ada" };
+              let encoded: string = json.stringify(doc);
+              if (!str.contains(encoded, "\\\"count\\\":42")) { return "enc:" + encoded; }
+              let back: table = json.parse(encoded);
+              let count: int = back.count;
+              let ratio: number = back.ratio;
+              let flag: boolean = back.flag;
+              let name: string = back.name;
+              if (count !== 42 || ratio !== 2.5 || !flag || name !== "Ada") { return "back"; }
+              return "ok";
+            }
+            """, "json-stdlib-roundtrip");
+        check(roundtrip.exitCode() == 0
+                && roundtrip.output().contains("ok"),
+            "std/json parse/stringify roundtrip through the shared "
+            + "runtime: " + roundtrip.output());
+
+        // Malformed input raises E8001 (the decoder's stored message),
+        // never a silent null and never a raw crash.
+        ExecResult malformed = compileAndRunJvm("""
+            import * as json from "std/json"
+            export function test(): string {
+              return json.parse("{oops").a;
+            }
+            """, "json-parse-malformed");
+        check(malformed.output().contains("DEAL_ERROR_CODE: E8001")
+                && malformed.output().contains("JSON parse error"),
+            "json.parse of malformed input raises E8001 with the "
+            + "decoder message: " + malformed.output());
+
+        // Raw U+0000-U+001F control characters inside JSON strings are
+        // rejected by json.parse with E8001 (std/json.lua parse_string
+        // parity), while C$fromJson collapses the same parse failure to
+        // the DEAL null.
+        ExecResult control = compileAndRunJvm("""
+            import * as json from "std/json"
+            // @jsonable
+            export class Wrap {
+              data: table = {};
+            }
+            export function test(): string {
+              let collapsed: Wrap | null = Wrap$fromJson("{\\"data\\":{\\"leaf\\":\\"<RAW_CTL>\\"}}");
+              if (collapsed !== null) { return "fromjson-accepted"; }
+              return json.parse("{\\"data\\":\\"<RAW_CTL>\\"}").data;
+            }
+            """.replace("<RAW_CTL>", "\u0001"),
+            "json-parse-raw-control");
+        check(control.output().contains("DEAL_ERROR_CODE: E8001")
+                && control.output().contains(
+                    "raw control character in string (must be escaped)"),
+            "raw control characters reject through json.parse with "
+            + "E8001 and collapse to the DEAL null through C$fromJson: "
+            + control.output());
+
+        // Top-level input gate: scalar / null / non-empty array -> the
+        // DEAL null; {} and [] both decode the defaulted instance and
+        // roundtrip identically.
+        ExecResult gate = compileAndRunJvm("""
+            // @jsonable
+            export class C {
+              x: int = 0;
+            }
+            export function test(): string {
+              if (C$fromJson("42") !== null) { return "42"; }
+              if (C$fromJson("\\\"x\\\"") !== null) { return "str"; }
+              if (C$fromJson("true") !== null) { return "true"; }
+              if (C$fromJson("null") !== null) { return "null"; }
+              if (C$fromJson("[1,2]") !== null) { return "arr"; }
+              let from_obj: C | null = C$fromJson("{}");
+              let from_arr: C | null = C$fromJson("[]");
+              if (from_obj !== null) {
+                if (from_arr !== null) {
+                  if (C$toJson(from_obj) !== C$toJson(from_arr)) { return "neq"; }
+                  return "ok";
+                }
+                return "arr-null";
+              }
+              return "obj-null";
+            }
+            """, "jsonable-top-level-gate");
+        check(gate.exitCode() == 0 && gate.output().contains("ok"),
+            "fromJson top-level gate: scalar/null/non-empty array -> "
+            + "the DEAL null and {}/[] collapse identically: "
+            + gate.output());
+
+        // Nested-array decoder javac validity: int[][] and int[][][]
+        // roundtrip — the emitted conversions allocate fresh local
+        // names per nesting level (no l0/a0/i0/e0 redeclaration).
+        ExecResult nested = compileAndRunJvm("""
+            // @jsonable
+            export class Matrix {
+              values: int[][] = [];
+            }
+            // @jsonable
+            export class Cube {
+              values: int[][][] = [];
+            }
+            export function test(): string {
+              let m: Matrix = { values: [[1, 2], [3, 4]] };
+              let m2: Matrix | null = Matrix$fromJson(Matrix$toJson(m));
+              if (m2 !== null) {
+                if (m2.values[0][0] !== 1 || m2.values[1][1] !== 4) { return "m"; }
+              } else { return "m-null"; }
+              let c: Cube = { values: [[[1, 2], [3, 4]], [[5, 6], [7, 8]]] };
+              let c2: Cube | null = Cube$fromJson(Cube$toJson(c));
+              if (c2 !== null) {
+                if (c2.values[0][0][0] !== 1 || c2.values[1][1][1] !== 8) { return "c"; }
+              } else { return "c-null"; }
+              return "ok";
+            }
+            """, "jsonable-nested-arrays-deep");
+        check(nested.exitCode() == 0 && nested.output().contains("ok"),
+            "nested array fields (int[][] and int[][][]) roundtrip with "
+            + "fresh per-level decoder locals: " + nested.output());
+
+        // Table fields holding nested arrays roundtrip recursively.
+        ExecResult tableArrays = compileAndRunJvm("""
+            // @jsonable
+            export class Wrap {
+              data: table = {};
+            }
+            export function test(): string {
+              let w: Wrap = { data: { values: [[1, 2], [3, 4]] } };
+              let w2: Wrap | null = Wrap$fromJson(Wrap$toJson(w));
+              if (w2 !== null) {
+                let w3: Wrap | null = Wrap$fromJson(Wrap$toJson(w2));
+                if (w3 !== null) {
+                  let t: table = w3.data;
+                  let values: int[][] = t.values;
+                  if (values[0][0] !== 1 || values[1][1] !== 4) { return "bad"; }
+                  return "ok";
+                }
+                return "w3-null";
+              }
+              return "w2-null";
+            }
+            """, "jsonable-table-field-nested-arrays");
+        check(tableArrays.exitCode() == 0
+                && tableArrays.output().contains("ok"),
+            "table fields holding [[1,2],[3,4]] roundtrip through "
+            + "C$toJson/C$fromJson without E8001: "
+            + tableArrays.output());
+
+        // Phase order: provided fields decode and validate in class
+        // source order BEFORE any omitted default evaluates — a
+        // provided-value failure returns the DEAL null with zero
+        // default side effects.
+        ExecResult phase = compileAndRunJvm("""
+            import * as console from "std/console"
+            function markDefault(): int {
+              console.log("DEFAULT-RAN");
+              return 1;
+            }
+            // @jsonable
+            export class Rec {
+              a: int = 0;
+              b: int = markDefault();
+            }
+            export function test(): string {
+              let bad: Rec | null = Rec$fromJson("{\\"a\\":\\"x\\"}");
+              if (bad !== null) { return "bad-not-null"; }
+              let good: Rec | null = Rec$fromJson("{\\"a\\":7}");
+              if (good !== null) {
+                if (good.a !== 7) { return "a"; }
+                if (good.b !== 1) { return "b"; }
+              } else {
+                return "good-null";
+              }
+              return "ok";
+            }
+            """, "jsonable-provided-before-defaults");
+        check(phase.exitCode() == 0 && phase.output().contains("ok"),
+            "fromJson decodes provided fields before evaluating omitted "
+            + "defaults: " + phase.output());
+        check(countOccurrences(phase.output(), "DEFAULT-RAN") == 1,
+            "a provided-value failure runs no defaults (the default "
+            + "side effect runs exactly once, for the successful "
+            + "decode): " + phase.output());
+
+        // Stringify-side unpaired-surrogate scan: a string value or a
+        // map key carrying a lone surrogate through C$toJson /
+        // json.stringify raises E8001 "cannot encode invalid UTF-8 as
+        // JSON" and emits no JSON output (std/json.lua escape parity).
+        ExecResult surrogateValue = compileAndRunJvm("""
+            // @jsonable
+            export class User {
+              name: string = "";
+            }
+            export function test(): string {
+              let u: User = { name: "<LONE_HIGH>" };
+              return User$toJson(u);
+            }
+            """.replace("<LONE_HIGH>", "\ud800"),
+            "jsonable-tojson-lone-surrogate");
+        check(surrogateValue.output().contains("DEAL_ERROR_CODE: E8001")
+                && surrogateValue.output().contains(
+                    "cannot encode invalid UTF-8 as JSON")
+                && !surrogateValue.output().contains("{"),
+            "C$toJson of a lone-surrogate string value raises E8001 "
+            + "with no JSON output: " + surrogateValue.output());
+
+        Frontend keyPathPin = compileFrontend("""
+            import * as json from "std/json"
+            export function test(): string {
+              let t: table = { a: 1 };
+              return json.stringify(t);
+            }
+            """, "jvmtest-json-stringify-key-path.deal");
+        check(keyPathPin.errors().isEmpty(),
+            "key-path pin frontend clean: " + keyPathPin.errors());
+        if (keyPathPin.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                keyPathPin.program(), keyPathPin.checkResult(),
+                "jvmtest-json-stringify-key-path.deal", "Main");
+            check(!res.hasErrors(),
+                "key-path pin codegen clean: " + res.diagnostics());
+            if (!res.hasErrors()) {
+                String java = res.source();
+                check(java.contains(
+                        "sb.append(__jsonQuote(java.lang.String.valueOf(e.getKey())))"),
+                    "the JSON-object branch quotes map keys through the "
+                    + "scanning __jsonQuote helper");
+                check(java.contains(
+                        "sb.append(__jsonQuote(e.getKey()))"),
+                    "the $DealRt.Table object branch quotes table keys "
+                    + "through the scanning __jsonQuote helper");
+            }
+        }
+
+        // Emission pins: std/json imports emit the shared JSON runtime
+        // (even without @jsonable classes), json.parse lowers to the
+        // $jsonParse helper, and the stringify-side scan + raw-control
+        // rejection sit in the emitted text.
+        Frontend stdlibPin = compileFrontend("""
+            import * as json from "std/json"
+            export function test(): table {
+              return json.parse("{\\"a\\":1}");
+            }
+            """, "jvmtest-json-stdlib-pin.deal");
+        check(stdlibPin.errors().isEmpty(),
+            "std/json pin frontend clean: " + stdlibPin.errors());
+        if (stdlibPin.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                stdlibPin.program(), stdlibPin.checkResult(),
+                "jvmtest-json-stdlib-pin.deal", "Main");
+            check(!res.hasErrors(),
+                "std/json import is not an E6000: " + res.diagnostics());
+            if (!res.hasErrors()) {
+                String java = res.source();
+                check(java.contains("static java.lang.Object __jsonParse("),
+                    "a std/json-importing module emits the shared JSON "
+                    + "runtime even without @jsonable classes");
+                check(java.contains(
+                        "static $DealRt.Table $jsonParse(java.lang.String s) {"),
+                    "the emitted $jsonParse helper backs json.parse");
+                check(java.contains("return $jsonParse("),
+                    "json.parse call sites lower to the $jsonParse helper");
+                check(java.contains(
+                        "if (__hasUnpairedSurrogate(s)) throw new "
+                        + "DealError(\"E8001\", \"cannot encode "
+                        + "invalid UTF-8 as JSON\");"),
+                    "the emitted __jsonQuote carries the stringify-side "
+                    + "unpaired-surrogate scan");
+                check(java.contains(
+                        "if (c < 0x20) throw new "
+                        + "java.lang.RuntimeException(\"raw control "
+                        + "character in string (must be escaped)\");"),
+                    "the emitted parser rejects raw U+0000-U+001F "
+                    + "control characters");
+            }
+        }
+    }
+
+    /**
      * ISSUE-0109: imported-class values, imported-class construction, and
      * cross-module nominal identity now compile and run through the real
      * orchestrator pipeline (module discovery → checking → per-module
@@ -10248,7 +13034,7 @@ public class JvmBackendTest {
             check(java.contains("Lib.$C_C c = Lib.getC();"),
                 "the inferred imported-class value declares the imported "
                 + "module's generated class type: " + java);
-            check(java.contains("return intAdd((c).v, 1L);"),
+            check(java.contains("return intAdd((c).v, 1);"),
                 "the imported class field read emits a direct access fed "
                 + "into int arithmetic: " + java);
             ExecResult exec = runJvmArtifacts(outputDir,
@@ -10301,7 +13087,7 @@ public class JvmBackendTest {
             check(java.contains("LibIndex.$C_C c = LibIndex.getC();"),
                 "the imported type references LibIndex.$C_C even with a "
                 + "local C: " + java);
-            check(java.contains("new $C_C(4L)"),
+            check(java.contains("new $C_C(4)"),
                 "the local construction keeps the local $C_C: " + java);
             ExecResult exec = runJvmArtifacts(outputDir2,
                 parseProgram("export function run(): int { return 1; }"),
@@ -10342,7 +13128,7 @@ public class JvmBackendTest {
             + orchestrator3.diagnostics());
         if (success3 && Files.exists(outputDir3.resolve("Entry.java"))) {
             String java = Files.readString(outputDir3.resolve("Entry.java"));
-            check(java.contains("new Lib.$C_C(9L)"),
+            check(java.contains("new Lib.$C_C(9)"),
                 "the imported construction emits new Lib.$C_C(...): " + java);
             ExecResult exec = runJvmArtifacts(outputDir3,
                 parseProgram("export function run(): int { return 1; }"),
@@ -10387,9 +13173,13 @@ public class JvmBackendTest {
             + "compiles: " + orchestrator4.diagnostics());
         if (success4 && Files.exists(outputDir4.resolve("Entry.java"))) {
             String java = Files.readString(outputDir4.resolve("Entry.java"));
-            check(java.contains("new Lib.$C_Point(10L, 20L)"),
-                "the empty literal emits every default inline: " + java);
-            check(java.contains("new Lib.$C_Point(2L, 5L)"),
+            check(java.contains(
+                    "new Lib.$C_Point(Lib.$default$$C_Point$x(), "
+                        + "Lib.$default$$C_Point$y())"),
+                "the empty literal routes every omitted default through"
+                    + " the provider's published-plan evaluator methods"
+                    + " (ISSUE-0544 E7): " + java);
+            check(java.contains("new Lib.$C_Point(2, 5)"),
                 "provided fields land in declaration order regardless of "
                 + "literal order: " + java);
             ExecResult exec = runJvmArtifacts(outputDir4,
@@ -10572,8 +13362,12 @@ public class JvmBackendTest {
             "table spells 'table'");
         check(JvmBackend.typeDescriptor(Type.Null.INSTANCE).equals("null"),
             "null spells 'null'");
-        check(JvmBackend.typeDescriptor(Type.Error.INSTANCE).equals("Error"),
-            "Error spells 'Error'");
+        try {
+            JvmBackend.typeDescriptor(Type.Error.INSTANCE);
+            fail("typeDescriptor: the internal Type.Error sentinel must never be emitted");
+        } catch (IllegalStateException expected) {
+            check(true, "Type.Error has no canonical descriptor (the pinned internal invariant violation — never emitted, never an artifact)");
+        }
         check(JvmBackend.typeDescriptor(Types.nullable(Type.Int.INSTANCE)).equals("?int"),
             "int | null spells '?int'");
         check(JvmBackend.typeDescriptor(Types.array(Type.Int.INSTANCE)).equals("[int]"),
@@ -10712,9 +13506,9 @@ public class JvmBackendTest {
             dir = Files.createTempDirectory("jvmtest_seam_");
             Files.writeString(dir.resolve("Main.java"), java);
             Files.writeString(dir.resolve("JvmConformanceRunner.java"),
-                BackendConformanceTest.buildJvmRunner(f.program(), "Main"));
+                StubModuleResolver.buildJvmRunner(f.program(), "Main"));
             StringBuilder err = new StringBuilder();
-            boolean ok = BackendConformanceTest.compileWithJavac(dir,
+            boolean ok = StubModuleResolver.compileWithJavac(dir,
                 List.of("Main.java", "JvmConformanceRunner.java"), err);
             check(ok, "the seam artifact compiles with javac: " + err);
         } catch (IOException e) {
@@ -10730,6 +13524,151 @@ public class JvmBackendTest {
         }
         System.out.println("  seam dispatch descriptors pinned");
     }
+    private static void testSharedCheckSeamCanonicalParsing()
+            throws Exception {
+        System.out.println("-- Shared $check seam: canonical parsing precedes the legacy '?' shortcut (ISSUE-0315) --");
+        Frontend f = compileFrontend("""
+            export function test(): int { return 1; }
+            """, "jvmtest-seam-canonical.deal");
+        check(f.errors().isEmpty(),
+            "seam-canonical fixture frontend clean: " + f.errors());
+        if (!f.errors().isEmpty()) return;
+        JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+            f.program(), f.checkResult(), "jvmtest-seam-canonical.deal",
+            "Main");
+        check(!res.hasErrors(),
+            "seam-canonical fixture codegen clean: " + res.diagnostics());
+        if (res.hasErrors()) return;
+        // The probe runner drives the emitted $check(descriptor, value)
+        // seam directly: every parse-rejected spelling must raise E8001
+        // with the pinned defensive message even for a NULL carrier (the
+        // retired '?' shortcut would have passed ?null/?[]/?/?int[] with
+        // null); canonical ? forms still pass null through.
+        StringBuilder runner = new StringBuilder();
+        runner.append("public final class CheckSeamProbeRunner {\n");
+        runner.append("    public static void main(String[] args) {\n");
+        runner.append("        java.lang.String[] spells = {\"?null\", \"?[]\", \"?\", \"?int[]\", \"int[]\", \"string|null\", \"(string,...int[])\", \"Error\", \"User\", \"@src.models.User\", \"@a/b.C\", \"@Foo\", \"??int\"};\n");
+        runner.append("        for (java.lang.String s : spells) {\n");
+        runner.append("            try {\n");
+        runner.append("                Main.$check(s, null);\n");
+        runner.append("                System.out.println(\"PASSED: \" + s);\n");
+        runner.append("            } catch (Main.DealError e) {\n");
+        runner.append("                System.out.println(\"REJECTED: \" + s + \" | \" + e.code + \" | \" + e.getMessage());\n");
+        runner.append("            }\n");
+        runner.append("        }\n");
+        runner.append("        try {\n");
+        runner.append("            System.out.println(\"ALPH_SPACE: \" + Main.__canonical(\"@a b/c\"));\n");
+        runner.append("            System.out.println(\"ALPH_ASTRAL: \" + Main.__canonical(\"@\" + java.lang.Character.toString(0x1F600) + \"/User\"));\n");
+        runner.append("            System.out.println(\"ALPH_LONE_HI: \" + Main.__canonical(\"@a\" + (char)0xD83D + \"/b\"));\n");
+        runner.append("            System.out.println(\"ALPH_LONE_LO: \" + Main.__canonical(\"@a\" + (char)0xDE00 + \"/b\"));\n");
+        runner.append("        } catch (Main.DealError e) {\n");
+        runner.append("            System.out.println(\"ALPH_FAIL: \" + e.code + \" | \" + e.getMessage());\n");
+        runner.append("        }\n");
+        runner.append("        try {\n");
+        runner.append("            Main.$check(\"@a b/c\", null);\n");
+        runner.append("            System.out.println(\"SPACE_CHECK: none\");\n");
+        runner.append("        } catch (Main.DealError e) {\n");
+        runner.append("            System.out.println(\"SPACE_CHECK: \" + e.code + \" | \" + e.getMessage());\n");
+        runner.append("        }\n");
+        runner.append("        try {\n");
+        runner.append("            Main.$check(\"@\" + java.lang.Character.toString(0x1F600) + \"/User\", null);\n");
+        runner.append("            System.out.println(\"ASTRAL_CHECK: none\");\n");
+        runner.append("        } catch (Main.DealError e) {\n");
+        runner.append("            System.out.println(\"ASTRAL_CHECK: \" + e.code + \" | \" + e.getMessage());\n");
+        runner.append("        }\n");
+        runner.append("        try {\n");
+        runner.append("            System.out.println(\"CANON_OK: ?int -> \" + (Main.$check(\"?int\", null) == null));\n");
+        runner.append("            System.out.println(\"CANON_OK: ?[int] -> \" + (Main.$check(\"?[int]\", null) == null));\n");
+        runner.append("            System.out.println(\"CANON_OK: ?(int)->int -> \" + (Main.$check(\"?(int)->int\", null) == null));\n");
+        runner.append("            System.out.println(\"CANON_OK: ?@Main/Point -> \" + (Main.$check(\"?@Main/Point\", null) == null));\n");
+        runner.append("        } catch (Main.DealError e) {\n");
+        runner.append("            System.out.println(\"CANON_FAIL: \" + e.code + \" | \" + e.getMessage());\n");
+        runner.append("        }\n");
+        runner.append("        try {\n");
+        runner.append("            Main.$check(\"?int\", \"x\");\n");
+        runner.append("            System.out.println(\"MISMATCH: none\");\n");
+        runner.append("        } catch (Main.DealError e) {\n");
+        runner.append("            System.out.println(\"MISMATCH: \" + e.code);\n");
+        runner.append("        }\n");
+        runner.append("    }\n");
+        runner.append("}\n");
+        Path dir = null;
+        try {
+            dir = Files.createTempDirectory("jvmtest_seam_canonical_");
+            Files.writeString(dir.resolve("Main.java"), res.source());
+            Files.writeString(dir.resolve("CheckSeamProbeRunner.java"),
+                runner.toString());
+            StringBuilder err = new StringBuilder();
+            boolean ok = StubModuleResolver.compileWithJavac(dir,
+                List.of("Main.java", "CheckSeamProbeRunner.java"), err);
+            check(ok, "the seam-canonical artifact compiles with javac: "
+                + err);
+            if (!ok) return;
+            ProcessBuilder java = new ProcessBuilder("java", "-cp",
+                dir.toString(), "CheckSeamProbeRunner");
+            java.redirectErrorStream(true);
+            Process p = java.start();
+            String out = new String(p.getInputStream().readAllBytes())
+                .trim();
+            int exit = p.waitFor();
+            check(exit == 0, "seam-canonical probe exits 0: " + out);
+            for (String spelling : List.of("?null", "?[]", "?", "?int[]",
+                    "int[]", "string|null", "(string,...int[])", "Error",
+                    "User", "@src.models.User", "@a/b.C", "@Foo", "??int")) {
+                check(out.contains("REJECTED: " + spelling + " | E8001 | "
+                        + "internal: cannot parse type descriptor: "
+                        + spelling),
+                    "parse-rejected spelling '" + spelling
+                        + "' raises E8001 even for a null carrier: " + out);
+                check(!out.contains("PASSED: " + spelling),
+                    "parse-rejected spelling '" + spelling
+                        + "' never passes: " + out);
+            }
+            check(out.contains("CANON_OK: ?int -> true"),
+                "canonical '?int' passes null: " + out);
+            check(out.contains("CANON_OK: ?[int] -> true"),
+                "canonical '?[int]' passes null: " + out);
+            check(out.contains("CANON_OK: ?(int)->int -> true"),
+                "canonical '?(int)->int' passes null: " + out);
+            check(out.contains("CANON_OK: ?@Main/Point -> true"),
+                "canonical '?@Main/Point' passes null: " + out);
+            check(out.contains("MISMATCH: E8001"),
+                "a wrong-kind value against a canonical descriptor keeps"
+                    + " the pinned E8001: " + out);
+            check(out.contains("ALPH_SPACE: false"),
+                "space-bearing class-atom component fails __canonical: "
+                    + out);
+            check(out.contains("ALPH_ASTRAL: true"),
+                "astral scalar in a non-final component passes __canonical: "
+                    + out);
+            check(out.contains("ALPH_LONE_HI: false"),
+                "lone high surrogate rejected by __canonical: " + out);
+            check(out.contains("ALPH_LONE_LO: false"),
+                "lone low surrogate rejected by __canonical: " + out);
+            check(out.contains("SPACE_CHECK: E8001 | internal: cannot parse"
+                    + " type descriptor: @a b/c"),
+                "space-bearing atom raises the pinned E8001 defensive"
+                    + " parse message: " + out);
+            String astralAtom = "@" + new String(Character.toChars(0x1F600))
+                + "/User";
+            check(out.contains("ASTRAL_CHECK: E8001 | expected " + astralAtom
+                    + ", got null"),
+                "canonical astral atom passes parsing and reaches the"
+                    + " matcher fallback: " + out);
+        } catch (IOException e) {
+            fail("seam-canonical javac/java I/O: " + e);
+        } finally {
+            if (dir != null) {
+                try {
+                    Files.walk(dir).sorted(Comparator.reverseOrder())
+                        .forEach(p -> { try { Files.deleteIfExists(p); }
+                        catch (IOException ignored) {} });
+                } catch (IOException ignored) {}
+            }
+        }
+        System.out.println("  $check canonical parsing pins verified");
+    }
+
 
     private static void testNullableSlice() throws Exception {
         System.out.println("-- Nullable slice (ISSUE-0108): boxed representation, narrowing, nullable arrays --");
@@ -10903,7 +13842,7 @@ public class JvmBackendTest {
             // so the only load-time work is the imported module's own
             // initialization).
             Files.writeString(outputDir.resolve("JvmConformanceRunner.java"),
-                BackendConformanceTest.buildJvmRunner(
+                StubModuleResolver.buildJvmRunner(
                     parseProgram("""
                         export function run(): int { return 1; }
                         """), "Entry"));
@@ -11000,17 +13939,19 @@ public class JvmBackendTest {
             "the __strLength helper definition is emitted");
         check(java.contains("static java.lang.String __strSubstring("),
             "the __strSubstring helper definition is emitted");
-        check(java.contains("static __StringArray __strSplit("),
+        check(java.contains("static $DealRt.__StringArray __strSplit("),
             "the __strSplit helper definition is emitted");
         check(java.contains("static double __mathSqrt(double x)"),
             "the __mathSqrt helper definition is emitted");
     }
 
     /** {@code std/table} and {@code std/json} imports — used and unused —
-     * are E6000 at the import statement: their only functions require
-     * {@code table} values, which the JVM slice does not support. */
-    private static void testStdlibTableBoundaryRejected() throws Exception {
-        System.out.println("-- Stdlib table-boundary imports → E6000 --");
+     * compile through the supported-stdlib seam (ISSUE-0102 for
+     * {@code std/table}, ISSUE-0302 for {@code std/json}): their
+     * functions execute over the shared table carrier and the emitted
+     * shared JSON runtime, and the import is never an E6000. */
+    private static void testStdlibTableBoundaryAccepted() throws Exception {
+        System.out.println("-- Stdlib table-boundary imports compile (std/table, std/json) --");
 
         record Case(String what, String source, String module) {}
         List<Case> cases = List.of(
@@ -11041,33 +13982,36 @@ public class JvmBackendTest {
             Frontend f = compileFrontend(c.source(), "jvmtest-stdlib-boundary.deal");
             if (!f.errors().isEmpty()) {
                 fail("frontend must accept the table-boundary stdlib import '"
-                    + c.what() + "' (the backend rejects it): " + f.errors());
+                    + c.what() + "' (the backend compiles it): " + f.errors());
                 continue;
             }
             JvmBackend.JvmCodegenResult res = JvmBackend.generate(f.program(),
                 f.checkResult(), "jvmtest-stdlib-boundary.deal", "main");
+            check(!res.hasErrors(),
+                "backend accepts " + c.what() + ": " + res.diagnostics());
             if (c.module().equals("std/table")) {
-                // ISSUE-0102: std/table.keys now executes — tables map as
+                // ISSUE-0102: std/table.keys executes — tables map as
                 // first-class values, so the import compiles (the emitted
                 // artifact carries the __tableKeys helper).
-                check(!res.hasErrors(),
-                    "backend accepts " + c.what() + ": " + res.diagnostics());
                 check(res.source().contains("__tableKeys"),
                     "std/table import emits the keys helper");
                 continue;
             }
-            check(res.hasErrors(), "backend rejects " + c.what());
-            check(res.diagnostics().stream().anyMatch(d ->
-                    "E6000".equals(d.code())
-                        && d.message().contains("table values")
-                        && d.message().contains(c.module())),
-                "E6000 names the table boundary for " + c.what() + ": "
-                    + res.diagnostics());
+            // ISSUE-0302: a std/json-importing module emits the shared
+            // JSON runtime — the parse/stringify helpers back
+            // json.parse/json.stringify even without @jsonable classes.
+            check(res.source().contains("static java.lang.Object __jsonParse("),
+                "std/json import emits the shared JSON parser");
+            check(res.source().contains(
+                    "static $DealRt.Table $jsonParse(java.lang.String s) {"),
+                "std/json import emits the $jsonParse helper");
+            check(res.source().contains("static java.lang.String __jsonStringify("),
+                "std/json import emits the __jsonStringify helper");
         }
 
-        // The orchestrator's JVM path reports the same E6000 at the import
-        // statement and writes no artifact for the std/json-importing
-        // module (the backend is the single rejection site).
+        // The orchestrator's JVM path compiles the std/json-importing
+        // module and writes its artifact (the import is never a
+        // rejection site).
         writeFile("src/table_import.deal", """
             import * as j from "std/json"
             export function main(): null { return null; }
@@ -11080,13 +14024,10 @@ public class JvmBackendTest {
             entryFile, outputDir, false, false, false, Backend.JVM,
             null, roots, Path.of(".").toAbsolutePath().normalize());
         boolean success = orchestrator.compile();
-        check(!success, "orchestrator JVM path rejects std/json imports");
-        check(orchestrator.diagnostics().stream().anyMatch(d ->
-                "E6000".equals(d.code()) && d.message().contains("table values")),
-            "orchestrator reports the table boundary: "
-                + orchestrator.diagnostics());
-        check(!Files.exists(outputDir.resolve("Table_import.java")),
-            "no artifact written for the std/json-importing module");
+        check(success, "orchestrator JVM path compiles std/json imports: "
+            + orchestrator.diagnostics());
+        check(Files.exists(outputDir.resolve("Table_import.java")),
+            "the artifact is written for the std/json-importing module");
     }
 
     /** Real stdlib execution through the emitted artifact: every supported
@@ -11291,7 +14232,7 @@ public class JvmBackendTest {
                 "the imported module emits the std/string split helper call");
 
             Files.writeString(outputDir.resolve("JvmConformanceRunner.java"),
-                BackendConformanceTest.buildJvmRunner(
+                StubModuleResolver.buildJvmRunner(
                     parseProgram("""
                         export function run(): int { return 3; }
                         """), "Entry"));
@@ -11465,8 +14406,15 @@ public class JvmBackendTest {
             "the load method loads the module-path-derived host class");
         check(java.contains("__hostMethod(__h, \"host/log\", \"add\", \"(int,int)->int\""),
             "the presence check carries the declared descriptor");
-        check(java.contains("static long __host$log$add(long __a0, long __a1)"),
-            "the wrapper signature maps the declared parameter types");
+        check(java.contains(
+                "static long __host$log$add(java.lang.Object __a0, java.lang.Object __a1)"),
+            "the wrapper signature takes java.lang.Object parameters "
+                + "(ISSUE-0303 D2: the wrapper checks each argument "
+                + "against the declared descriptor at the call)");
+        check(java.contains("__a0 = __hostParamCheck(1, \"int\", __a0);"),
+            "the wrapper checks each argument at the call "
+                + "(HOST_PARAMETER boundary, E8010 'parameter {i} type "
+                + "mismatch')");
         check(java.contains("__hostCheck(\"int\", __r, \"host/log.add\", false)"),
             "the sync wrapper checks the return boundary (E8010 path)");
         check(java.contains("__hostCheck(\"string\", __v, \"host/log.fetch\", true)"),
@@ -11483,7 +14431,7 @@ public class JvmBackendTest {
         // the exported add run end to end.
         Files.copy(tmpDir.get().resolve("HostLog.java"), outputDir.resolve("HostLog.java"));
         Files.writeString(outputDir.resolve("JvmConformanceRunner.java"),
-            BackendConformanceTest.buildJvmRunner(
+            StubModuleResolver.buildJvmRunner(
                 parseProgram("""
                     export function main(): null { return null; }
                     export function run(): int { return 1; }
@@ -11523,7 +14471,7 @@ public class JvmBackendTest {
         Files.copy(tmpDir.get().resolve("HostLogMissing.java"),
             outputDir2.resolve("HostLog.java"));
         Files.writeString(outputDir2.resolve("JvmConformanceRunner.java"),
-            BackendConformanceTest.buildJvmRunner(
+            StubModuleResolver.buildJvmRunner(
                 parseProgram("""
                     export function main(): null { return null; }
                     export function run(): int { return 1; }
@@ -11568,7 +14516,7 @@ public class JvmBackendTest {
         Files.copy(tmpDir.get().resolve("HostLogBad.java"),
             outputDir3.resolve("HostLog.java"));
         Files.writeString(outputDir3.resolve("JvmConformanceRunner.java"),
-            BackendConformanceTest.buildJvmRunner(
+            StubModuleResolver.buildJvmRunner(
                 parseProgram("""
                     export function main(): null { return null; }
                     export function run(): string { return "x"; }
@@ -11611,7 +14559,7 @@ public class JvmBackendTest {
         Files.copy(tmpDir.get().resolve("HostLogBadSurrogate.java"),
             outputDirSur.resolve("HostLog.java"));
         Files.writeString(outputDirSur.resolve("JvmConformanceRunner.java"),
-            BackendConformanceTest.buildJvmRunner(
+            StubModuleResolver.buildJvmRunner(
                 parseProgram("""
                     export function run(): string { return "x"; }
                     """), "Entry_bad"));
@@ -11650,7 +14598,7 @@ public class JvmBackendTest {
         Files.copy(tmpDir.get().resolve("HostLog.java"),
             outputDir4.resolve("HostLog.java"));
         Files.writeString(outputDir4.resolve("JvmConformanceRunner.java"),
-            BackendConformanceTest.buildJvmRunner(
+            StubModuleResolver.buildJvmRunner(
                 parseProgram("""
                     export function main(): null { return null; }
                     export async function run(): string { return "x"; }
@@ -11688,7 +14636,7 @@ public class JvmBackendTest {
         Files.copy(tmpDir.get().resolve("HostLogAsyncShape.java"),
             outputDir5.resolve("HostLog.java"));
         Files.writeString(outputDir5.resolve("JvmConformanceRunner.java"),
-            BackendConformanceTest.buildJvmRunner(
+            StubModuleResolver.buildJvmRunner(
                 parseProgram("""
                     export function main(): null { return null; }
                     export async function run(): string { return "x"; }
@@ -11725,7 +14673,7 @@ public class JvmBackendTest {
         Files.copy(tmpDir.get().resolve("HostLogAsyncCompletion.java"),
             outputDir6.resolve("HostLog.java"));
         Files.writeString(outputDir6.resolve("JvmConformanceRunner.java"),
-            BackendConformanceTest.buildJvmRunner(
+            StubModuleResolver.buildJvmRunner(
                 parseProgram("""
                     export function main(): null { return null; }
                     export async function run(): string { return "x"; }
@@ -11766,7 +14714,7 @@ public class JvmBackendTest {
         Files.copy(tmpDir.get().resolve("HostLogAsyncSurrogate.java"),
             outputDir7.resolve("HostLog.java"));
         Files.writeString(outputDir7.resolve("JvmConformanceRunner.java"),
-            BackendConformanceTest.buildJvmRunner(
+            StubModuleResolver.buildJvmRunner(
                 parseProgram("""
                     export async function run(): string { return "x"; }
                     """), "Entry_async"));
@@ -11791,6 +14739,178 @@ public class JvmBackendTest {
                 "expected string, got string with unpaired surrogate code units"),
             "the completion boundary rejection carries the seam's message: "
                 + out7);
+
+        // ISSUE-0551: declared bytes host parameters/returns ride the
+        // shared $DealRt.Bytes carrier. The emitted wrapper keys the
+        // load-time class literal, the call-time parameter check, and the
+        // return check on the canonical "bytes" descriptor; a wrong-kind
+        // argument raises E8010 before the host method runs (the call
+        // counter stays unchanged), and a wrong-kind host return raises
+        // E8010 with the pinned host-function message.
+        writeFile("deal.json", """
+            {
+              "languageVersion": "1.2",
+              "moduleRoots": ["src"],
+              "output": "build/jvm_bytes",
+              "backend": "jvm",
+              "externals": {
+                "host/byteshost": { "declaration": "bindings/byteshost.d.deal" }
+              }
+            }
+            """);
+        writeFile("bindings/byteshost.d.deal", """
+            export function echoBytes(b: bytes): bytes;
+            export function nullableBytes(b: bytes | null): bytes | null;
+            export function calls(): int;
+            """);
+        writeFile("src/entry_bytes.deal", """
+            import * as host from "host/byteshost"
+            export function main(): null { return null; }
+            export function run(): string {
+              let b: bytes = bytes(2);
+              b[0] = 7;
+              let echo: bytes = host.echoBytes(b);
+              if (!(echo === b)) { throw { code: "TEST_FAIL", message: "echo identity" }; }
+              if (host.nullableBytes(null) !== null) { throw { code: "TEST_FAIL", message: "null roundtrip" }; }
+              let before: int = host.calls();
+              let holder: table = { item: "bad" };
+              let failed: boolean = false;
+              try {
+                let x: bytes = host.echoBytes(holder.item);
+              } catch (e) {
+                if (e.code !== "E8010") { throw { code: "TEST_FAIL", message: "wrong code " + e.code }; }
+                failed = true;
+              }
+              if (!failed) { throw { code: "TEST_FAIL", message: "no E8010" }; }
+              if (host.calls() !== before) { throw { code: "TEST_FAIL", message: "host ran after failed param check" }; }
+              return "bytes-host-ok";
+            }
+            """);
+        writeFile("HostByteshost.java", """
+            public final class HostByteshost {
+                private static int calls;
+                public static Object echoBytes($DealRt.Bytes b) { calls += 1; return b; }
+                public static Object nullableBytes($DealRt.Bytes b) { calls += 1; return b; }
+                public static long calls() { return calls; }
+            }
+            """);
+        Path entryBytes = tmpDir.get().resolve("src/entry_bytes.deal").toAbsolutePath();
+        Path outputDirBytes = tmpDir.get().resolve("build/jvm_bytes");
+        CompilationOrchestrator orchestratorBytes = new CompilationOrchestrator(
+            entryBytes, outputDirBytes, false, false, false, false,
+            Backend.JVM,
+            Map.of("host/byteshost",
+                tmpDir.get().resolve("bindings/byteshost.d.deal").toString()),
+            List.of(tmpDir.get().resolve("src").toAbsolutePath()),
+            Path.of(".").toAbsolutePath().normalize(), null,
+            CompilerProfileProvider.resolve(ReleaseState.PRE_ACTIVATION,
+                CapabilityRegistry.releaseRegistry()));
+        check(orchestratorBytes.compile(), "bytes host project compiles: "
+            + orchestratorBytes.diagnostics());
+        Path entryBytesArtifact = outputDirBytes.resolve("Entry_bytes.java");
+        check(Files.exists(entryBytesArtifact), "bytes host entry artifact written");
+        if (Files.exists(entryBytesArtifact)) {
+            String javaBytes = Files.readString(entryBytesArtifact);
+            check(javaBytes.contains("$DealRt.Bytes.class"),
+                "the bytes parameter resolves its load-time class literal "
+                    + "as the shared $DealRt.Bytes carrier");
+            check(javaBytes.contains(
+                    "static $DealRt.Bytes __host$host$echoBytes(java.lang.Object __a0)"),
+                "the bytes wrapper returns the shared carrier");
+            check(javaBytes.contains("__a0 = __hostParamCheck(1, \"bytes\", __a0);"),
+                "the bytes parameter check keys on the canonical \"bytes\" "
+                    + "descriptor at the call");
+            check(javaBytes.contains(
+                    "__hostCheck(\"bytes\", __r, \"host/byteshost.echoBytes\", false)"),
+                "the bytes return check keys on the canonical \"bytes\" "
+                    + "descriptor");
+        }
+        Files.copy(tmpDir.get().resolve("HostByteshost.java"),
+            outputDirBytes.resolve("HostByteshost.java"));
+        Files.writeString(outputDirBytes.resolve("JvmConformanceRunner.java"),
+            StubModuleResolver.buildJvmRunner(
+                parseProgram("""
+                    export function main(): null { return null; }
+                    export function run(): string { return "x"; }
+                    """), "Entry_bytes"));
+        ProcessBuilder javacBytes = new ProcessBuilder("javac",
+            "-encoding", "UTF-8", "Entry_bytes.java",
+            "HostByteshost.java", "JvmConformanceRunner.java");
+        javacBytes.directory(outputDirBytes.toFile());
+        javacBytes.redirectErrorStream(true);
+        Process pBytes = javacBytes.start();
+        String javacOutBytes = new String(pBytes.getInputStream().readAllBytes()).trim();
+        check(pBytes.waitFor() == 0, "bytes host artifacts compile with javac: "
+            + javacOutBytes);
+        ProcessBuilder javaRunBytes = new ProcessBuilder("java", "-cp",
+            outputDirBytes.toString(), "JvmConformanceRunner");
+        javaRunBytes.redirectErrorStream(true);
+        Process pBytesRun = javaRunBytes.start();
+        String outBytes = new String(pBytesRun.getInputStream().readAllBytes()).trim();
+        int exitBytes = pBytesRun.waitFor();
+        check(exitBytes == 0, "bytes host roundtrip + no-call-on-failure run: "
+            + outBytes);
+
+        // Wrong-kind bytes host return: E8010 with the pinned
+        // host-function message naming the declared descriptor.
+        writeFile("HostByteshostBad.java", """
+            public final class HostByteshost {
+                private static int calls;
+                public static Object echoBytes($DealRt.Bytes b) { return "junk"; }
+                public static Object nullableBytes($DealRt.Bytes b) { return b; }
+                public static int calls() { return calls; }
+            }
+            """);
+        writeFile("src/entry_bytes_bad.deal", """
+            import * as host from "host/byteshost"
+            export function main(): null { return null; }
+            export function run(): bytes {
+              let b: bytes = bytes(1);
+              return host.echoBytes(b);
+            }
+            """);
+        Path entryBytesBad = tmpDir.get().resolve("src/entry_bytes_bad.deal").toAbsolutePath();
+        Path outputDirBytesBad = tmpDir.get().resolve("build/jvm_bytes_bad");
+        CompilationOrchestrator orchestratorBytesBad = new CompilationOrchestrator(
+            entryBytesBad, outputDirBytesBad, false, false, false, false,
+            Backend.JVM,
+            Map.of("host/byteshost",
+                tmpDir.get().resolve("bindings/byteshost.d.deal").toString()),
+            List.of(tmpDir.get().resolve("src").toAbsolutePath()),
+            Path.of(".").toAbsolutePath().normalize(), null,
+            CompilerProfileProvider.resolve(ReleaseState.PRE_ACTIVATION,
+                CapabilityRegistry.releaseRegistry()));
+        check(orchestratorBytesBad.compile(), "bytes bad-return project compiles: "
+            + orchestratorBytesBad.diagnostics());
+        Files.copy(tmpDir.get().resolve("HostByteshostBad.java"),
+            outputDirBytesBad.resolve("HostByteshost.java"));
+        Files.writeString(outputDirBytesBad.resolve("JvmConformanceRunner.java"),
+            StubModuleResolver.buildJvmRunner(
+                parseProgram("""
+                    export function main(): null { return null; }
+                    export function run(): bytes { return bytes(0); }
+                    """), "Entry_bytes_bad"));
+        ProcessBuilder javacBytesBad = new ProcessBuilder("javac",
+            "-encoding", "UTF-8", "Entry_bytes_bad.java",
+            "HostByteshost.java", "JvmConformanceRunner.java");
+        javacBytesBad.directory(outputDirBytesBad.toFile());
+        javacBytesBad.redirectErrorStream(true);
+        Process pBytesBad = javacBytesBad.start();
+        String javacOutBytesBad = new String(pBytesBad.getInputStream().readAllBytes()).trim();
+        check(pBytesBad.waitFor() == 0, "bytes bad-return artifacts compile with javac: "
+            + javacOutBytesBad);
+        ProcessBuilder javaRunBytesBad = new ProcessBuilder("java", "-cp",
+            outputDirBytesBad.toString(), "JvmConformanceRunner");
+        javaRunBytesBad.redirectErrorStream(true);
+        Process pBytesBadRun = javaRunBytesBad.start();
+        String outBytesBad = new String(pBytesBadRun.getInputStream().readAllBytes()).trim();
+        int exitBytesBad = pBytesBadRun.waitFor();
+        check(exitBytesBad == 1 && outBytesBad.contains("DEAL_ERROR_CODE: E8010"),
+            "wrong-kind bytes host return reports E8010: " + outBytesBad);
+        check(outBytesBad.contains(
+                "host function 'host/byteshost.echoBytes' return value 1 type mismatch: expected bytes, got String"),
+            "the bytes return rejection carries the pinned host-function message: "
+                + outBytesBad);
     }
 
     /**
@@ -11801,12 +14921,21 @@ public class JvmBackendTest {
      */
     private static CompilationOrchestrator jvmTestOrchestrator(Path entryFile,
             Path outputDir) {
+        // The explicit legacy invocation keeps this helper's emission
+        // pins (the host-ABI slice's long-parameter HostLog fixtures and
+        // the legacy carrier pins) valid under the committed post-flip
+        // default — the legacy profile stays an internal derivation row
+        // (PUBLIC_BUILD + PRE_ACTIVATION), never a production rollback
+        // target. The activated default is pinned separately by
+        // testProfilePlumbIntMode and the E12 activation suite.
         return new CompilationOrchestrator(entryFile, outputDir, false, false,
-            false, Backend.JVM,
+            false, false, Backend.JVM,
             Map.of("host/log",
                 tmpDir.get().resolve("bindings/log.d.deal").toString()),
             List.of(tmpDir.get().resolve("src").toAbsolutePath()),
-            Path.of(".").toAbsolutePath().normalize());
+            Path.of(".").toAbsolutePath().normalize(), null,
+            CompilerProfileProvider.resolve(ReleaseState.PRE_ACTIVATION,
+                CapabilityRegistry.releaseRegistry()));
     }
 
     /** Parses a small DEAL snippet with the real lexer+parser for runner
@@ -11868,7 +14997,7 @@ public class JvmBackendTest {
             String java = Files.readString(entryArtifact);
             check(java.contains("Lib.__init$();"),
                 "the import emits the load-time init trigger for Lib");
-            check(java.contains("return Lib.add(10L, 20L);"),
+            check(java.contains("return Lib.add(10, 20);"),
                 "the imported direct call emits a static call on the "
                 + "imported class: " + java);
         }
@@ -12467,68 +15596,11 @@ public class JvmBackendTest {
     }
 
     /**
-     * Fixture-schema validation (conformance-test-architecture D6): a
-     * fixture combining expectedCompileError with runtime or IR assertions
-     * would silently drop those assertions (the compile-error gate returns
-     * before runtime/IR dispatch), so the harness must fail the fixture
-     * with a clear message instead of passing without running its checks.
-     */
-    private static void testFixtureConfigValidation() {
-        System.out.println("-- Fixture config validation --");
-
-        Map<String, Object> base = new LinkedHashMap<>();
-        base.put("expectedCompileError", "E3001");
-
-        Map<String, Object> withOutput = new LinkedHashMap<>(base);
-        withOutput.put("expectedOutput", "x");
-        check(BackendConformanceTest.fixtureConfigViolation(withOutput) != null,
-            "expectedCompileError + expectedOutput is a violation");
-
-        Map<String, Object> withError = new LinkedHashMap<>(base);
-        withError.put("expectedError", "E8001");
-        check(BackendConformanceTest.fixtureConfigViolation(withError) != null,
-            "expectedCompileError + expectedError is a violation");
-
-        Map<String, Object> withExit = new LinkedHashMap<>(base);
-        withExit.put("expectedExitCode", 1);
-        check(BackendConformanceTest.fixtureConfigViolation(withExit) != null,
-            "expectedCompileError + expectedExitCode is a violation");
-
-        Map<String, Object> withIr = new LinkedHashMap<>(base);
-        withIr.put("irContains", List.of("function test"));
-        check(BackendConformanceTest.fixtureConfigViolation(withIr) != null,
-            "expectedCompileError + irContains is a violation");
-
-        Map<String, Object> withIrNot = new LinkedHashMap<>(base);
-        withIrNot.put("irNotContains", List.of("function test"));
-        check(BackendConformanceTest.fixtureConfigViolation(withIrNot) != null,
-            "expectedCompileError + irNotContains is a violation");
-
-        // The valid configuration (all other fields null/empty) is clean.
-        Map<String, Object> valid = new LinkedHashMap<>(base);
-        valid.put("expectedOutput", null);
-        valid.put("expectedError", null);
-        valid.put("expectedExitCode", null);
-        valid.put("irContains", List.of());
-        valid.put("irNotContains", List.of());
-        check(BackendConformanceTest.fixtureConfigViolation(valid) == null,
-            "compile-error fixture with null/empty assertions is valid");
-
-        // Runtime fixtures without expectedCompileError are valid whatever
-        // they assert.
-        Map<String, Object> runtime = new LinkedHashMap<>();
-        runtime.put("expectedOutput", "x");
-        runtime.put("expectedExitCode", 0);
-        check(BackendConformanceTest.fixtureConfigViolation(runtime) == null,
-            "runtime fixture without expectedCompileError is valid");
-    }
-
-    /**
      * ISSUE-0358 IR-pin migration: exact IR-dump assertions for the
      * twelve multi-module JSON-slice cases whose
      * {@code irContains}/{@code irNotContains} pins ran against the
      * concatenated orchestrator {@code --dump-ir} output
-     * (BackendConformanceTest.collectIrDumps framing: one
+     * (legacy JSON conformance harness.collectIrDumps framing: one
      * {@code === IR: <file> ===} header per module dump, sorted by
      * file name). Every expected block is the exact dump text with
      * the per-test temp project root normalized to {@code <PROJECT>};
@@ -12537,7 +15609,7 @@ public class JvmBackendTest {
     private static void testIrDumpExactMigration() throws Exception {
         System.out.println("-- IR-dump exact migration (ISSUE-0358) --");
 
-        { // jvm-async-slice.json :: jvm-async-multi-module
+        { // jvm-async-slice :: jvm-async-multi-module
             String proj = "irpin00";
             writeFile(proj + "/lib.deal", "export async function plus(a: int, b: int): int { return a + b; }\nexport async function tag(s: string): string { return \"[\" + s + \"]\"; }");
             writeFile(proj + "/main.deal", "import * as lib from \"./lib\"\nexport function main(): null { return null; }\nexport async function test(): int {\n  let s: string = await lib.tag(\"x\");\n  if (s === \"[x]\") { return await lib.plus(2, 3); }\n  return 0;\n}");
@@ -12549,7 +15621,7 @@ public class JvmBackendTest {
                 irPinEntry, irPinOut, false, true, false, Backend.JVM,
                 irPinExternals, List.of(irPinRoot), null);
             boolean irPinOk = irPinOrch.compile();
-            check(irPinOk, "jvm-async-slice.json :: jvm-async-multi-module: orchestrator --dump-ir compile succeeds: "
+            check(irPinOk, "jvm-async-slice :: jvm-async-multi-module: orchestrator --dump-ir compile succeeds: "
                 + irPinOrch.diagnostics());
             StringBuilder irPinActual = new StringBuilder();
             List<Path> irPinDumps = new ArrayList<>();
@@ -12639,7 +15711,7 @@ module @<PROJECT>/main.deal:1:1-7:2
           literal 0 : int @<PROJECT>/main.deal:6:10-6:10
 """;
             if (!(irPinExpected + "\n").equals(irPinNormalized)) {
-                check(false, "jvm-async-slice.json :: jvm-async-multi-module: exact IR dump mismatch");
+                check(false, "jvm-async-slice :: jvm-async-multi-module: exact IR dump mismatch");
                 System.err.println("---- expected IR dump ----");
                 System.err.println(irPinExpected);
                 System.err.println("---- actual IR dump ----");
@@ -12647,7 +15719,7 @@ module @<PROJECT>/main.deal:1:1-7:2
             }
         }
 
-        { // jvm-host-abi-slice.json :: jvm-host-export-presence
+        { // jvm-host-abi-slice :: jvm-host-export-presence
             String proj = "irpin01";
             writeFile(proj + "/" + "bindings/log.d.deal", "export function info(level: int, s: string): null;\nexport function add(a: int, b: int): int;");
             writeFile(proj + "/entry.deal", "import * as log from \"host/log\"\nexport function main(): null {\n  log.info(1, \"hello\");\n  return null;\n}\nexport function run(): int { return log.add(2, 3); }");
@@ -12664,7 +15736,7 @@ module @<PROJECT>/main.deal:1:1-7:2
                 irPinEntry, irPinOut, false, true, false, Backend.JVM,
                 irPinExternals, List.of(irPinRoot), null);
             boolean irPinOk = irPinOrch.compile();
-            check(irPinOk, "jvm-host-abi-slice.json :: jvm-host-export-presence: orchestrator --dump-ir compile succeeds: "
+            check(irPinOk, "jvm-host-abi-slice :: jvm-host-export-presence: orchestrator --dump-ir compile succeeds: "
                 + irPinOrch.diagnostics());
             StringBuilder irPinActual = new StringBuilder();
             List<Path> irPinDumps = new ArrayList<>();
@@ -12718,7 +15790,7 @@ module @<PROJECT>/entry.deal:1:1-6:53
             literal 3 : int @<PROJECT>/entry.deal:6:48-6:48
 """;
             if (!(irPinExpected + "\n").equals(irPinNormalized)) {
-                check(false, "jvm-host-abi-slice.json :: jvm-host-export-presence: exact IR dump mismatch");
+                check(false, "jvm-host-abi-slice :: jvm-host-export-presence: exact IR dump mismatch");
                 System.err.println("---- expected IR dump ----");
                 System.err.println(irPinExpected);
                 System.err.println("---- actual IR dump ----");
@@ -12726,7 +15798,7 @@ module @<PROJECT>/entry.deal:1:1-6:53
             }
         }
 
-        { // jvm-integration-join.json :: jvm-join-xmod-class-descriptor
+        { // jvm-integration-join :: jvm-join-xmod-class-descriptor
             String proj = "irpin02";
             writeFile(proj + "/lib.deal", "export class Point { x: int = 0; }\nexport function make(x: int): Point { return { x: x }; }\n");
             writeFile(proj + "/main.deal", "import * as lib from \"./lib\"\nfunction use(p: lib.Point): int { return p.x; }\nexport function run(): int {\n  let got: int = use(lib.make(7));\n  return got;\n}\nexport function main(): null { return null; }\n");
@@ -12738,7 +15810,7 @@ module @<PROJECT>/entry.deal:1:1-6:53
                 irPinEntry, irPinOut, false, true, false, Backend.JVM,
                 irPinExternals, List.of(irPinRoot), null);
             boolean irPinOk = irPinOrch.compile();
-            check(irPinOk, "jvm-integration-join.json :: jvm-join-xmod-class-descriptor: orchestrator --dump-ir compile succeeds: "
+            check(irPinOk, "jvm-integration-join :: jvm-join-xmod-class-descriptor: orchestrator --dump-ir compile succeeds: "
                 + irPinOrch.diagnostics());
             StringBuilder irPinActual = new StringBuilder();
             List<Path> irPinDumps = new ArrayList<>();
@@ -12813,7 +15885,7 @@ module @<PROJECT>/main.deal:1:1-8:1
           literal null : null @<PROJECT>/main.deal:7:39-7:42
 """;
             if (!(irPinExpected + "\n").equals(irPinNormalized)) {
-                check(false, "jvm-integration-join.json :: jvm-join-xmod-class-descriptor: exact IR dump mismatch");
+                check(false, "jvm-integration-join :: jvm-join-xmod-class-descriptor: exact IR dump mismatch");
                 System.err.println("---- expected IR dump ----");
                 System.err.println(irPinExpected);
                 System.err.println("---- actual IR dump ----");
@@ -12821,7 +15893,7 @@ module @<PROJECT>/main.deal:1:1-8:1
             }
         }
 
-        { // jvm-integration-join.json :: jvm-join-xmod-table-read-desc
+        { // jvm-integration-join :: jvm-join-xmod-table-read-desc
             String proj = "irpin03";
             writeFile(proj + "/lib.deal", "export class Item { tag: string = \"\"; }\nexport function make(tag: string): Item { return { tag: tag }; }\n");
             writeFile(proj + "/main.deal", "import * as lib from \"./lib\"\nexport function run(): string {\n  let holder: table = { item: lib.make(\"x\") };\n  let i: lib.Item = holder.item;\n  return i.tag;\n}\nexport function main(): null { return null; }\n");
@@ -12833,7 +15905,7 @@ module @<PROJECT>/main.deal:1:1-8:1
                 irPinEntry, irPinOut, false, true, false, Backend.JVM,
                 irPinExternals, List.of(irPinRoot), null);
             boolean irPinOk = irPinOrch.compile();
-            check(irPinOk, "jvm-integration-join.json :: jvm-join-xmod-table-read-desc: orchestrator --dump-ir compile succeeds: "
+            check(irPinOk, "jvm-integration-join :: jvm-join-xmod-table-read-desc: orchestrator --dump-ir compile succeeds: "
                 + irPinOrch.diagnostics());
             StringBuilder irPinActual = new StringBuilder();
             List<Path> irPinDumps = new ArrayList<>();
@@ -12905,7 +15977,7 @@ module @<PROJECT>/main.deal:1:1-8:1
           literal null : null @<PROJECT>/main.deal:7:39-7:42
 """;
             if (!(irPinExpected + "\n").equals(irPinNormalized)) {
-                check(false, "jvm-integration-join.json :: jvm-join-xmod-table-read-desc: exact IR dump mismatch");
+                check(false, "jvm-integration-join :: jvm-join-xmod-table-read-desc: exact IR dump mismatch");
                 System.err.println("---- expected IR dump ----");
                 System.err.println(irPinExpected);
                 System.err.println("---- actual IR dump ----");
@@ -12913,7 +15985,7 @@ module @<PROJECT>/main.deal:1:1-8:1
             }
         }
 
-        { // jvm-integration-join.json :: jvm-join-xmod-mismatch-desc
+        { // jvm-integration-join :: jvm-join-xmod-mismatch-desc
             String proj = "irpin04";
             writeFile(proj + "/modela.deal", "export class Item { tag: string = \"\"; }\nexport function make(tag: string): Item { return { tag: tag }; }\n");
             writeFile(proj + "/modelb.deal", "export class Item { tag: string = \"\"; }\n");
@@ -12926,7 +15998,7 @@ module @<PROJECT>/main.deal:1:1-8:1
                 irPinEntry, irPinOut, false, true, false, Backend.JVM,
                 irPinExternals, List.of(irPinRoot), null);
             boolean irPinOk = irPinOrch.compile();
-            check(irPinOk, "jvm-integration-join.json :: jvm-join-xmod-mismatch-desc: orchestrator --dump-ir compile succeeds: "
+            check(irPinOk, "jvm-integration-join :: jvm-join-xmod-mismatch-desc: orchestrator --dump-ir compile succeeds: "
                 + irPinOrch.diagnostics());
             StringBuilder irPinActual = new StringBuilder();
             List<Path> irPinDumps = new ArrayList<>();
@@ -13009,7 +16081,7 @@ module @<PROJECT>/modelb.deal:1:1-2:1
         literal "" : string @<PROJECT>/modelb.deal:1:35-1:36
 """;
             if (!(irPinExpected + "\n").equals(irPinNormalized)) {
-                check(false, "jvm-integration-join.json :: jvm-join-xmod-mismatch-desc: exact IR dump mismatch");
+                check(false, "jvm-integration-join :: jvm-join-xmod-mismatch-desc: exact IR dump mismatch");
                 System.err.println("---- expected IR dump ----");
                 System.err.println(irPinExpected);
                 System.err.println("---- actual IR dump ----");
@@ -13017,7 +16089,7 @@ module @<PROJECT>/modelb.deal:1:1-2:1
             }
         }
 
-        { // jvm-modules-slice.json :: jvm-mod-imported-direct-call
+        { // jvm-modules-slice :: jvm-mod-imported-direct-call
             String proj = "irpin05";
             writeFile(proj + "/lib.deal", "export function add(a: int, b: int): int { return a + b; }");
             writeFile(proj + "/main.deal", "import * as lib from \"./lib\"\nexport function main(): null { return null; }\n\nexport function run(): int { return lib.add(2, 3); }");
@@ -13029,7 +16101,7 @@ module @<PROJECT>/modelb.deal:1:1-2:1
                 irPinEntry, irPinOut, false, true, false, Backend.JVM,
                 irPinExternals, List.of(irPinRoot), null);
             boolean irPinOk = irPinOrch.compile();
-            check(irPinOk, "jvm-modules-slice.json :: jvm-mod-imported-direct-call: orchestrator --dump-ir compile succeeds: "
+            check(irPinOk, "jvm-modules-slice :: jvm-mod-imported-direct-call: orchestrator --dump-ir compile succeeds: "
                 + irPinOrch.diagnostics());
             StringBuilder irPinActual = new StringBuilder();
             List<Path> irPinDumps = new ArrayList<>();
@@ -13088,7 +16160,7 @@ module @<PROJECT>/main.deal:1:1-4:53
             literal 3 : int @<PROJECT>/main.deal:4:48-4:48
 """;
             if (!(irPinExpected + "\n").equals(irPinNormalized)) {
-                check(false, "jvm-modules-slice.json :: jvm-mod-imported-direct-call: exact IR dump mismatch");
+                check(false, "jvm-modules-slice :: jvm-mod-imported-direct-call: exact IR dump mismatch");
                 System.err.println("---- expected IR dump ----");
                 System.err.println(irPinExpected);
                 System.err.println("---- actual IR dump ----");
@@ -13096,7 +16168,7 @@ module @<PROJECT>/main.deal:1:1-4:53
             }
         }
 
-        { // jvm-xmod-classes-slice.json :: jvm-xmod-class-export-import
+        { // jvm-xmod-classes-slice :: jvm-xmod-class-export-import
             String proj = "irpin06";
             writeFile(proj + "/lib.deal", "export class Point {\n  x: int = 0;\n  y: int = 0;\n}\nexport function make(x: int, y: int): Point { return { x: x, y: y }; }");
             writeFile(proj + "/main.deal", "import * as lib from \"./lib\"\nexport function main(): null { return null; }\n\nexport function run(): int {\n  let p: lib.Point = lib.make(3, 4);\n  return p.x * 10 + p.y;\n}");
@@ -13108,7 +16180,7 @@ module @<PROJECT>/main.deal:1:1-4:53
                 irPinEntry, irPinOut, false, true, false, Backend.JVM,
                 irPinExternals, List.of(irPinRoot), null);
             boolean irPinOk = irPinOrch.compile();
-            check(irPinOk, "jvm-xmod-classes-slice.json :: jvm-xmod-class-export-import: orchestrator --dump-ir compile succeeds: "
+            check(irPinOk, "jvm-xmod-classes-slice :: jvm-xmod-class-export-import: orchestrator --dump-ir compile succeeds: "
                 + irPinOrch.diagnostics());
             StringBuilder irPinActual = new StringBuilder();
             List<Path> irPinDumps = new ArrayList<>();
@@ -13186,7 +16258,7 @@ module @<PROJECT>/main.deal:1:1-7:2
               ident p : @irpin06/Point @<PROJECT>/main.deal:6:21-6:21
 """;
             if (!(irPinExpected + "\n").equals(irPinNormalized)) {
-                check(false, "jvm-xmod-classes-slice.json :: jvm-xmod-class-export-import: exact IR dump mismatch");
+                check(false, "jvm-xmod-classes-slice :: jvm-xmod-class-export-import: exact IR dump mismatch");
                 System.err.println("---- expected IR dump ----");
                 System.err.println(irPinExpected);
                 System.err.println("---- actual IR dump ----");
@@ -13194,7 +16266,7 @@ module @<PROJECT>/main.deal:1:1-7:2
             }
         }
 
-        { // jvm-xmod-classes-slice.json :: jvm-xmod-class-construction-defaults
+        { // jvm-xmod-classes-slice :: jvm-xmod-class-construction-defaults
             String proj = "irpin07";
             writeFile(proj + "/lib.deal", "export class Point {\n  x: int = 10;\n  y: int = 20;\n}\nexport function sum(p: Point): int { return p.x + p.y; }");
             writeFile(proj + "/main.deal", "import * as lib from \"./lib\"\nexport function main(): null { return null; }\n\nexport function run(): int {\n  let a: lib.Point = {};\n  let b: lib.Point = { y: 5, x: 2 };\n  return a.x + a.y * 10 + lib.sum(b);\n}");
@@ -13206,7 +16278,7 @@ module @<PROJECT>/main.deal:1:1-7:2
                 irPinEntry, irPinOut, false, true, false, Backend.JVM,
                 irPinExternals, List.of(irPinRoot), null);
             boolean irPinOk = irPinOrch.compile();
-            check(irPinOk, "jvm-xmod-classes-slice.json :: jvm-xmod-class-construction-defaults: orchestrator --dump-ir compile succeeds: "
+            check(irPinOk, "jvm-xmod-classes-slice :: jvm-xmod-class-construction-defaults: orchestrator --dump-ir compile succeeds: "
                 + irPinOrch.diagnostics());
             StringBuilder irPinActual = new StringBuilder();
             List<Path> irPinDumps = new ArrayList<>();
@@ -13291,7 +16363,7 @@ module @<PROJECT>/main.deal:1:1-8:2
               ident b : @irpin07/Point @<PROJECT>/main.deal:7:35-7:35
 """;
             if (!(irPinExpected + "\n").equals(irPinNormalized)) {
-                check(false, "jvm-xmod-classes-slice.json :: jvm-xmod-class-construction-defaults: exact IR dump mismatch");
+                check(false, "jvm-xmod-classes-slice :: jvm-xmod-class-construction-defaults: exact IR dump mismatch");
                 System.err.println("---- expected IR dump ----");
                 System.err.println(irPinExpected);
                 System.err.println("---- actual IR dump ----");
@@ -13299,7 +16371,7 @@ module @<PROJECT>/main.deal:1:1-8:2
             }
         }
 
-        { // jvm-xmod-classes-slice.json :: jvm-xmod-class-param-pass
+        { // jvm-xmod-classes-slice :: jvm-xmod-class-param-pass
             String proj = "irpin08";
             writeFile(proj + "/lib.deal", "export class Pair {\n  left: int = 0;\n  right: int = 0;\n}\nexport function sum(p: Pair): int { return p.left + p.right; }");
             writeFile(proj + "/main.deal", "import * as lib from \"./lib\"\nexport function main(): null { return null; }\n\nexport function run(): int {\n  let p: lib.Pair = { left: 5, right: 7 };\n  return lib.sum(p);\n}");
@@ -13311,7 +16383,7 @@ module @<PROJECT>/main.deal:1:1-8:2
                 irPinEntry, irPinOut, false, true, false, Backend.JVM,
                 irPinExternals, List.of(irPinRoot), null);
             boolean irPinOk = irPinOrch.compile();
-            check(irPinOk, "jvm-xmod-classes-slice.json :: jvm-xmod-class-param-pass: orchestrator --dump-ir compile succeeds: "
+            check(irPinOk, "jvm-xmod-classes-slice :: jvm-xmod-class-param-pass: orchestrator --dump-ir compile succeeds: "
                 + irPinOrch.diagnostics());
             StringBuilder irPinActual = new StringBuilder();
             List<Path> irPinDumps = new ArrayList<>();
@@ -13384,7 +16456,7 @@ module @<PROJECT>/main.deal:1:1-7:2
             ident p : @irpin08/Pair @<PROJECT>/main.deal:6:18-6:18
 """;
             if (!(irPinExpected + "\n").equals(irPinNormalized)) {
-                check(false, "jvm-xmod-classes-slice.json :: jvm-xmod-class-param-pass: exact IR dump mismatch");
+                check(false, "jvm-xmod-classes-slice :: jvm-xmod-class-param-pass: exact IR dump mismatch");
                 System.err.println("---- expected IR dump ----");
                 System.err.println(irPinExpected);
                 System.err.println("---- actual IR dump ----");
@@ -13392,7 +16464,7 @@ module @<PROJECT>/main.deal:1:1-7:2
             }
         }
 
-        { // jvm-xmod-classes-slice.json :: jvm-xmod-class-return-mutate-roundtrip
+        { // jvm-xmod-classes-slice :: jvm-xmod-class-return-mutate-roundtrip
             String proj = "irpin09";
             writeFile(proj + "/lib.deal", "export class Box {\n  value: int = 0;\n}\nexport function makeBox(): Box { return { value: 7 }; }\nexport function readBox(b: Box): int { return b.value; }");
             writeFile(proj + "/main.deal", "import * as lib from \"./lib\"\nexport function main(): null { return null; }\n\nexport function run(): int {\n  let b: lib.Box = lib.makeBox();\n  b.value = b.value + 5;\n  return lib.readBox(b);\n}");
@@ -13404,7 +16476,7 @@ module @<PROJECT>/main.deal:1:1-7:2
                 irPinEntry, irPinOut, false, true, false, Backend.JVM,
                 irPinExternals, List.of(irPinRoot), null);
             boolean irPinOk = irPinOrch.compile();
-            check(irPinOk, "jvm-xmod-classes-slice.json :: jvm-xmod-class-return-mutate-roundtrip: orchestrator --dump-ir compile succeeds: "
+            check(irPinOk, "jvm-xmod-classes-slice :: jvm-xmod-class-return-mutate-roundtrip: orchestrator --dump-ir compile succeeds: "
                 + irPinOrch.diagnostics());
             StringBuilder irPinActual = new StringBuilder();
             List<Path> irPinDumps = new ArrayList<>();
@@ -13490,7 +16562,7 @@ module @<PROJECT>/main.deal:1:1-8:2
             ident b : @irpin09/Box @<PROJECT>/main.deal:7:22-7:22
 """;
             if (!(irPinExpected + "\n").equals(irPinNormalized)) {
-                check(false, "jvm-xmod-classes-slice.json :: jvm-xmod-class-return-mutate-roundtrip: exact IR dump mismatch");
+                check(false, "jvm-xmod-classes-slice :: jvm-xmod-class-return-mutate-roundtrip: exact IR dump mismatch");
                 System.err.println("---- expected IR dump ----");
                 System.err.println(irPinExpected);
                 System.err.println("---- actual IR dump ----");
@@ -13498,7 +16570,7 @@ module @<PROJECT>/main.deal:1:1-8:2
             }
         }
 
-        { // jvm-xmod-classes-slice.json :: jvm-xmod-same-name-isolation
+        { // jvm-xmod-classes-slice :: jvm-xmod-same-name-isolation
             String proj = "irpin10";
             writeFile(proj + "/modela.deal", "export class Item {\n  tag: string = \"\";\n}\nexport function tag(i: Item): string { return \"a:\" + i.tag; }");
             writeFile(proj + "/modelb.deal", "export class Item {\n  tag: string = \"\";\n}\nexport function tag(i: Item): string { return \"b:\" + i.tag; }");
@@ -13511,7 +16583,7 @@ module @<PROJECT>/main.deal:1:1-8:2
                 irPinEntry, irPinOut, false, true, false, Backend.JVM,
                 irPinExternals, List.of(irPinRoot), null);
             boolean irPinOk = irPinOrch.compile();
-            check(irPinOk, "jvm-xmod-classes-slice.json :: jvm-xmod-same-name-isolation: orchestrator --dump-ir compile succeeds: "
+            check(irPinOk, "jvm-xmod-classes-slice :: jvm-xmod-same-name-isolation: orchestrator --dump-ir compile succeeds: "
                 + irPinOrch.diagnostics());
             StringBuilder irPinActual = new StringBuilder();
             List<Path> irPinDumps = new ArrayList<>();
@@ -13628,7 +16700,7 @@ module @<PROJECT>/modelb.deal:1:1-4:62
               ident i : @irpin10/Item @<PROJECT>/modelb.deal:4:54-4:54
 """;
             if (!(irPinExpected + "\n").equals(irPinNormalized)) {
-                check(false, "jvm-xmod-classes-slice.json :: jvm-xmod-same-name-isolation: exact IR dump mismatch");
+                check(false, "jvm-xmod-classes-slice :: jvm-xmod-same-name-isolation: exact IR dump mismatch");
                 System.err.println("---- expected IR dump ----");
                 System.err.println(irPinExpected);
                 System.err.println("---- actual IR dump ----");
@@ -13636,7 +16708,7 @@ module @<PROJECT>/modelb.deal:1:1-4:62
             }
         }
 
-        { // jvm-xmod-classes-slice.json :: jvm-xmod-class-param-return-local-fn
+        { // jvm-xmod-classes-slice :: jvm-xmod-class-param-return-local-fn
             String proj = "irpin11";
             writeFile(proj + "/lib.deal", "export class Point {\n  x: int = 0;\n  y: int = 0;\n}\nexport function sum(p: Point): int { return p.x + p.y; }");
             writeFile(proj + "/main.deal", "import * as lib from \"./lib\"\nexport function main(): null { return null; }\n\nfunction shift(p: lib.Point): lib.Point {\n  p.x = p.x + 1;\n  return p;\n}\nexport function run(): int {\n  let p: lib.Point = { x: 3, y: 4 };\n  let q: lib.Point = shift(p);\n  return lib.sum(q) + q.y;\n}");
@@ -13648,7 +16720,7 @@ module @<PROJECT>/modelb.deal:1:1-4:62
                 irPinEntry, irPinOut, false, true, false, Backend.JVM,
                 irPinExternals, List.of(irPinRoot), null);
             boolean irPinOk = irPinOrch.compile();
-            check(irPinOk, "jvm-xmod-classes-slice.json :: jvm-xmod-class-param-return-local-fn: orchestrator --dump-ir compile succeeds: "
+            check(irPinOk, "jvm-xmod-classes-slice :: jvm-xmod-class-param-return-local-fn: orchestrator --dump-ir compile succeeds: "
                 + irPinOrch.diagnostics());
             StringBuilder irPinActual = new StringBuilder();
             List<Path> irPinDumps = new ArrayList<>();
@@ -13745,7 +16817,7 @@ module @<PROJECT>/main.deal:1:1-12:2
               ident q : @irpin11/Point @<PROJECT>/main.deal:11:23-11:23
 """;
             if (!(irPinExpected + "\n").equals(irPinNormalized)) {
-                check(false, "jvm-xmod-classes-slice.json :: jvm-xmod-class-param-return-local-fn: exact IR dump mismatch");
+                check(false, "jvm-xmod-classes-slice :: jvm-xmod-class-param-return-local-fn: exact IR dump mismatch");
                 System.err.println("---- expected IR dump ----");
                 System.err.println(irPinExpected);
                 System.err.println("---- actual IR dump ----");

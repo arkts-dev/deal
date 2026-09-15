@@ -1,0 +1,14 @@
+// @spec: Lexical elements
+// @description: A single-quoted escaped quote decodes to one single-quote scalar
+// @expected: runtime-ok
+// @features: lexer, string, escape, v1.2
+
+export function test_single_quoted_escaped_quote(): null {
+  let value: string = 'can\'t';
+  if (value !== "can't") {
+    throw { code: "TEST_FAIL", message: "escaped single quote decoded incorrectly" };
+  }
+  return null;
+}
+
+export function main(): null { return test_single_quoted_escaped_quote(); }

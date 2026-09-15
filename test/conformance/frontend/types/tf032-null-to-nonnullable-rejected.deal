@@ -1,0 +1,9 @@
+// @spec: Type system
+// @description: Null is not assignable to a non-nullable target
+// @expected: compile-error E3001
+// @features: type-system, assignment, nullable, diagnostics, v1.2
+
+export function main(): null {
+  let value: int = null;
+  return null;
+}

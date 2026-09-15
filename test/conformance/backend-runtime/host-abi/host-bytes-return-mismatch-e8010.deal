@@ -1,0 +1,14 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: A host function returning a wrong-kind value for its declared bytes return raises E8010 at the call boundary (the bytes carrier check, never wrapped).
+// @expected: runtime-error E8010
+// @features: modules, host-abi, bytes, runtime-errors
+
+import * as host from "host/bytes_roundtrip"
+
+export function test_host_bytes_return_mismatch(): bytes {
+  return host.badBytesReturn();
+}
+
+export function main(): null {
+  return null;
+}

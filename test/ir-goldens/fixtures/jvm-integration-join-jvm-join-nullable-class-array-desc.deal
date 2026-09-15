@@ -1,5 +1,5 @@
 // IR golden fixture: jvm-integration-join-jvm-join-nullable-class-array-desc
-// Migrated IR-containment pins from test/conformance/fixtures/jvm-integration-join.json case 'jvm-join-nullable-class-array-desc' (ISSUE-0358).
+// Migrated IR-containment pin for legacy case 'jvm-join-nullable-class-array-desc' (ISSUE-0358).
 
 class Pt { x: int = 0; }
 function sum(ps: (Pt | null)[]): int {

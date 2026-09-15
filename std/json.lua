@@ -49,9 +49,9 @@ end
 -- RFC 8259 section 8.1/10: generated JSON text must be UTF-8 and strictly
 -- conform, so strings that are not scalar-valid UTF-8 are rejected with
 -- E8001 instead of being emitted as invalid bytes.
-local function escape(s)
+local function escape(s, file, line, column)
   if not __rt.utf8_valid(s) then
-    error(__rt._err("E8001", "cannot encode invalid UTF-8 as JSON", nil, nil, nil, nil, nil))
+    error(__rt._err("E8001", "cannot encode invalid UTF-8 as JSON", file, line, column, nil, nil))
   end
   return (string.gsub(s, '[%c\\"]', function(c)
     local byte = string.byte(c)
@@ -69,7 +69,7 @@ local function escape(s)
   end))
 end
 
-local function encode_value(v)
+local function encode_value(v, file, line, column)
   if v == __rt.__NULL then
     return 'null'
   end
@@ -78,13 +78,13 @@ local function encode_value(v)
   end
   local t = type(v)
   if t == 'string' then
-    return '"' .. escape(v) .. '"'
+    return '"' .. escape(v, file, line, column) .. '"'
   elseif t == 'number' then
     if v ~= v then
-      error(__rt._err("E8001", "cannot encode NaN as JSON", nil, nil, nil, nil, nil))
+      error(__rt._err("E8001", "cannot encode NaN as JSON", file, line, column, nil, nil))
     end
     if v == math.huge or v == -math.huge then
-      error(__rt._err("E8001", "cannot encode Infinity as JSON", nil, nil, nil, nil, nil))
+      error(__rt._err("E8001", "cannot encode Infinity as JSON", file, line, column, nil, nil))
     end
     return string.format('%.17g', v)
   elseif t == 'boolean' then
@@ -96,7 +96,7 @@ local function encode_value(v)
     -- it raises Error"; the explicit bytes arm mirrors the JS runtime's
     -- landed arm, js-v12-int32-bytes D3, message byte-identical).
     if v.__kind == "bytes" then
-      error(__rt._err("E8001", "unsupported type for JSON encoding: bytes", nil, nil, nil, "string, number, boolean, or table", "bytes"))
+      error(__rt._err("E8001", "unsupported type for JSON encoding: bytes", file, line, column, "string, number, boolean, or table", "bytes"))
     end
     -- Check if it's an array (sequential integer keys starting at 1)
     local isArray = true
@@ -111,7 +111,7 @@ local function encode_value(v)
     if isArray and maxIdx > 0 then
       local parts = {}
       for i = 1, maxIdx do
-        parts[#parts + 1] = encode_value(v[i])
+        parts[#parts + 1] = encode_value(v[i], file, line, column)
       end
       return '[' .. table.concat(parts, ',') .. ']'
     else
@@ -121,30 +121,34 @@ local function encode_value(v)
         -- converted to strings via tostring / JSON-compatible formatting.
         local key_str
         if type(k) == 'string' then
-          key_str = '"' .. escape(k) .. '"'
+          key_str = '"' .. escape(k, file, line, column) .. '"'
         elseif type(k) == 'number' then
           key_str = '"' .. string.format('%.17g', k) .. '"'
         else
-          key_str = '"' .. escape(tostring(k)) .. '"'
+          key_str = '"' .. escape(tostring(k), file, line, column) .. '"'
         end
-        parts[#parts + 1] = key_str .. ':' .. encode_value(val)
+        parts[#parts + 1] = key_str .. ':' .. encode_value(val, file, line, column)
       end
       return '{' .. table.concat(parts, ',') .. '}'
     end
   end
   -- Unsupported types: reject with runtime error
-  error(__rt._err("E8001", "unsupported type for JSON encoding: " .. t, nil, nil, nil, "string, number, boolean, or table", t))
+  error(__rt._err("E8001", "unsupported type for JSON encoding: " .. t, file, line, column, "string, number, boolean, or table", t))
 end
 
---- Encode a value to a JSON string.
-json.stringify = __rt.function_("(table)->string", function(v)
-  __rt.check_table(v)
-  return encode_value(v)
+--- Encode a value to a JSON string. The trailing span triplet carries
+-- the call site (ISSUE-0598), so every encode-side E8001 (function,
+-- bytes, NaN/Infinity, invalid UTF-8 leaves) reports it byte-exact.
+json.stringify = __rt.function_("(table)->string", function(v, file, line, column)
+  __rt.check_table(v, file, line, column)
+  return encode_value(v, file, line, column)
 end)
 
---- Decode a JSON string to a Lua table.
-json.parse = __rt.function_("(string)->table", function(s)
-  __rt.check_string(s)
+--- Decode a JSON string to a Lua table. The trailing span triplet
+-- carries the call site (ISSUE-0598): the entry string gate and every
+-- parse error report it.
+json.parse = __rt.function_("(string)->table", function(s, file, line, column)
+  __rt.check_string(s, file, line, column)
   -- Simple recursive descent parser
   local pos = 1
   local len = #s
@@ -155,7 +159,7 @@ json.parse = __rt.function_("(string)->table", function(s)
     local ctx_end = math.min(len, pos + 10)
     local ctx = s:sub(ctx_start, ctx_end)
     error(__rt._err("E8001", "JSON parse error at position " .. pos .. ": " .. msg
-      .. " (near '" .. ctx .. "')", nil, nil, nil, nil, nil))
+      .. " (near '" .. ctx .. "')", file, line, column, nil, nil))
   end
 
   -- Read four characters as hexadecimal digits; the first result is the

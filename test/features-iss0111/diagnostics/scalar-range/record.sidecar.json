@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "feature": "diagnostic-range",
+  "spec": "Diagnostics — every directive diagnostic carries a full scalar range",
+  "description": "the E1045 diagnostic must carry a SOURCE-origin full half-open scalar range",
+  "expected": { "compile-error": "E1045" },
+  "backends": ["luajit", "jvm"],
+  "invocation": "compile-only",
+  "support": []
+}

@@ -11,6 +11,10 @@ import deal.module.CompilationOrchestrator;
 import deal.module.ExportExtractor;
 import deal.parser.ParseResult;
 import deal.parser.Parser;
+import deal.project.ProjectLocator;
+import deal.semantic.CompilerInvocation;
+import deal.semantic.CompilerProfileProvider;
+import deal.semantic.ReleaseConfiguration;
 import deal.source.ScalarSourceCursor;
 import deal.types.Type;
 
@@ -26,8 +30,10 @@ import java.util.Map;
  * fixed-name-directive-events Verification 1-4, 6, 8): lexical forms,
  * the ordered anchoring machine, parser binding, the E1043(warning)/
  * E1044/E1045/E1046/E7002 contract, the exact (1,2) declaration-version
- * contract, template-embedded event rebasing, the registry delta, and
- * the production {@code // @spec:} E1044 pin.
+ * contract, template-embedded event rebasing, the registry delta, the
+ * production {@code // @spec:} E1044 pin, and the production C FFI
+ * manifest-policy pin (an unbacked {@code @extern-c} import is E2010 at
+ * the import span; a manifest-backed one compiles — ISSUE-0477).
  */
 public class DirectiveTest {
 
@@ -666,6 +672,155 @@ public class DirectiveTest {
     }
 
     // =========================================================================
+    // Production C FFI manifest policy (docs/spec-v1.2.md:1891)
+    // =========================================================================
+
+    /**
+     * The production emission site behind the promoted
+     * {@code ffi-manifest-missing-native-library-rejected.deal} E2010
+     * pin (ISSUE-0477): the production module resolver
+     * ({@code CompilationOrchestrator.ModuleResolverImpl}) rejects an
+     * import of a C FFI declaration file ({@code .d.deal} with
+     * {@code // @extern-c}) that no externals entry declares with
+     * {@code nativeLibrary} — E2010 at the import span via the
+     * checker's manifest-policy mapping. The same import through an
+     * externals entry carrying {@code nativeLibrary} compiles; an entry
+     * that omits {@code nativeLibrary} is the invalid-manifest-policy
+     * rejection again.
+     */
+    static void testProductionCffiManifestPolicy() throws Exception {
+        System.out.println("-- Production C FFI manifest policy: E2010 at the import --");
+
+        Path tmp = Files.createTempDirectory("deal_cffi_manifest_");
+        try {
+            String importLine = "import * as ffi from \"./ffi_math\";";
+            // Case 1 (the promoted conformance pin's exact shape): an
+            // import of a @extern-c declaration file that no externals
+            // entry declares with nativeLibrary is rejected with exactly
+            // one E2010 at the import span.
+            Files.writeString(tmp.resolve("deal.json"),
+                "{\"languageVersion\": \"1.2\", \"moduleRoots\": [\".\"]}\n");
+            Files.writeString(tmp.resolve("ffi_math.d.deal"),
+                "// @extern-c\n\nexport function add(a: int, b: int): int;\n");
+            Path entry = tmp.resolve("main.deal");
+            Files.writeString(entry,
+                importLine + "\n\n"
+                    + "export function test_ffi_add(): int {\n"
+                    + "  return ffi.add(1, 2);\n"
+                    + "}\n\n"
+                    + "export function main(): null { return null; }\n");
+            CompilationOrchestrator orchestrator = locateOrchestrator(entry);
+            if (orchestrator == null) {
+                return;
+            }
+            boolean ok = orchestrator.compile();
+            check(!ok, "the unlisted extern-C import fails the production compile");
+            List<CompilerDiagnostic> diags = orchestrator.diagnostics();
+            List<CompilerDiagnostic> e2010s = diags.stream()
+                .filter(d -> "E2010".equals(d.code()))
+                .toList();
+            check(e2010s.size() == 1,
+                "the unlisted extern-C import emits exactly one E2010, got "
+                    + e2010s.size() + ": " + diags);
+            if (e2010s.size() == 1) {
+                CompilerDiagnostic d = e2010s.get(0);
+                check(d.range().startScalarOffset() == 0,
+                    "E2010 starts at the import statement (offset 0), got "
+                        + d.range().startScalarOffset());
+                check(d.range().endScalarOffset() >= importLine.length(),
+                    "E2010 covers the whole import statement ("
+                        + importLine.length() + " chars), got end "
+                        + d.range().endScalarOffset());
+            }
+
+            // Case 2: the same declaration imported through an
+            // externals entry carrying nativeLibrary compiles with no
+            // E2010 (the manifest policy's passing shape).
+            Files.writeString(tmp.resolve("deal.json"),
+                "{\"languageVersion\": \"1.2\", \"moduleRoots\": [\".\"],"
+                    + " \"externals\": {\"ffi\": {\"declaration\":"
+                    + " \"ffi_math.d.deal\", \"nativeLibrary\": \"math\"}}}\n");
+            Files.writeString(entry,
+                "import * as ffi from \"ffi\";\n\n"
+                    + "export function test_ffi_add(): int {\n"
+                    + "  return ffi.add(1, 2);\n"
+                    + "}\n\n"
+                    + "export function main(): null { return null; }\n");
+            CompilationOrchestrator backed = locateOrchestrator(entry);
+            if (backed == null) {
+                return;
+            }
+            boolean backedOk = backed.compile();
+            check(backedOk,
+                "the manifest-backed extern-C import compiles: "
+                    + backed.diagnostics());
+            check(backed.diagnostics().stream()
+                    .noneMatch(d -> "E2010".equals(d.code())),
+                "the manifest-backed extern-C import emits no E2010: "
+                    + backed.diagnostics());
+
+            // Case 3: an externals entry that declares the file without
+            // nativeLibrary is the invalid-manifest-policy rejection —
+            // rejected at locate time by ProjectLocator step 4(b)
+            // (ISSUE-0508): exactly one E2010 at the externals entry's
+            // manifest value range naming the nativeLibrary policy, and
+            // no context is published (a C FFI entry must include
+            // nativeLibrary, docs/spec-v1.2.md:1891).
+            Files.writeString(tmp.resolve("deal.json"),
+                "{\"languageVersion\": \"1.2\", \"moduleRoots\": [\".\"],"
+                    + " \"externals\": {\"ffi\": {\"declaration\":"
+                    + " \"ffi_math.d.deal\"}}}\n");
+            ProjectLocator.LocateResult unbacked = ProjectLocator.locate(
+                entry.toString(), null);
+            check(unbacked.e2010() != null,
+                "the nativeLibrary-less externals entry is rejected at "
+                    + "locate time with an E2010");
+            check(unbacked.cliDiagnostic() == null
+                    && unbacked.context() == null,
+                "the nativeLibrary-less externals entry publishes exactly "
+                    + "the E2010 (no cliDiagnostic, no context)");
+            if (unbacked.e2010() != null) {
+                check("E2010".equals(unbacked.e2010().code()),
+                    "the locate-time rejection code is exactly E2010: "
+                        + unbacked.e2010().code());
+                check(unbacked.e2010().message().contains(
+                        "without a nativeLibrary"),
+                    "the locate-time E2010 names the nativeLibrary policy: "
+                        + unbacked.e2010().message());
+            }
+        } finally {
+            try {
+                Files.walk(tmp).sorted(Comparator.reverseOrder())
+                    .forEach(f -> { try { Files.deleteIfExists(f); }
+                        catch (IOException ignored) { } });
+            } catch (IOException ignored) { }
+        }
+    }
+
+    /**
+     * Locates the production context for {@code entry} and builds the
+     * context-driven orchestrator, or null after a failing check.
+     */
+    private static CompilationOrchestrator locateOrchestrator(Path entry) {
+        ProjectLocator.LocateResult located = ProjectLocator.locate(
+            entry.toString(), null);
+        check(located.context() != null && located.e2010() == null
+                && located.cliDiagnostic() == null,
+            "the manifest locates a context: "
+                + (located.e2010() != null
+                    ? located.e2010() : located.cliDiagnostic()));
+        if (located.context() == null) {
+            return null;
+        }
+        CompilerInvocation invocation = CompilerProfileProvider.resolve(
+            ReleaseConfiguration.CURRENT_RELEASE_STATE,
+            ReleaseConfiguration.releaseCapabilityRegistry());
+        return new CompilationOrchestrator(located.context(),
+            entry.toAbsolutePath().normalize(), false, false, false, false,
+            null, invocation);
+    }
+
+    // =========================================================================
     // Main
     // =========================================================================
 
@@ -680,6 +835,7 @@ public class DirectiveTest {
         testTemplateEmbedded();
         testRegistry();
         testProductionSpecHeaderE1044();
+        testProductionCffiManifestPolicy();
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {

@@ -5,9 +5,11 @@ import deal.checker.*;
 import deal.codegen.Backend;
 import deal.codegen.SourceMapGenerator;
 import deal.codegen.jvm.JvmBackend;
-import deal.codegen.js.HostModuleDeclarations;
+import deal.codegen.jvm.JvmSemanticEmitter;
+import deal.codegen.HostModuleDeclarations;
 import deal.codegen.js.JsBackend;
 import deal.codegen.lua.LuaBackend;
+import deal.codegen.lua.LuaSemanticEmitter;
 import deal.identity.CanonicalModuleIdentity;
 import deal.identity.ProjectModuleIdentity;
 import deal.ir.IrDumper;
@@ -19,34 +21,65 @@ import deal.project.OutputConfigResolver;
 import deal.project.ProjectContext;
 import deal.project.ProjectDeploymentIdentity;
 import deal.project.ProjectLocator;
+import deal.project.NativeLibraryRef;
 import deal.project.ProtectedPathOps;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticFormatter;
+import deal.diagnostics.DiagnosticOrder;
 import deal.diagnostics.DiagnosticRange;
 import deal.diagnostics.DiagnosticStructuredOutput;
+import deal.descriptors.CanonicalRuntimeTypeDescriptor;
+import deal.distribution.DistributionHome;
+import deal.ffi.FfiDeclarationValidator;
+import deal.ffi.FfiGeneratedModule;
+import deal.ffi.LuaFfiBindingGenerator;
 import deal.identity.CanonicalClassIdentity;
+import deal.publication.PublicationStager;
 import deal.parser.*;
 import deal.semantic.CheckedProjectBuildResult;
+import deal.semantic.CapabilityRegistry;
 import deal.semantic.CheckedProjectBuilder;
 import deal.semantic.CompilerInvocation;
 import deal.semantic.CompilerProfileProvider;
 import deal.semantic.LoweringSupport;
 import deal.semantic.MigrationPlanner;
 import deal.semantic.ModuleFact;
+import deal.semantic.ModuleRoute;
+import deal.semantic.ModuleRoutePlan;
 import deal.semantic.ReleaseConfiguration;
 import deal.semantic.RequirementManifestResult;
 import deal.semantic.RoutePlanResult;
+import deal.semantic.ArtifactOwner;
+import deal.semantic.CheckedModuleInput;
+import deal.semantic.SemanticLowerer;
+import deal.semantic.SemanticRequirementManifest;
+import deal.semantic.StagedArtifact;
+import deal.semantic.StagedArtifactSet;
+import deal.semantic.TargetAbiValidator;
+import deal.semantic.TargetModuleAbi;
 import deal.semantic.Target;
+import deal.semantic.ir.ClassFactoryId;
+import deal.semantic.ir.ClassId;
+import deal.semantic.ir.ClassInterface;
+import deal.semantic.ir.ExternalModuleInterface;
+import deal.semantic.ir.FieldInterface;
+import deal.semantic.ir.FunctionSignatureAbi;
+import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.ModuleId;
+import deal.semantic.ir.OpId;
+import deal.semantic.ir.RuntimeDescriptor;
+import deal.semantic.ir.SemanticIdAllocator;
+import deal.semantic.ir.SemanticOp;
+import deal.semantic.ir.SemanticOpKind;
+import deal.semantic.ir.SyncInvocationEntry;
 import deal.types.Type;
 import deal.types.Types;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import deal.descriptors.CanonicalRuntimeTypeDescriptor;
 import deal.diagnostics.DiagnosticCode;
 import java.util.*;
 
@@ -99,6 +132,23 @@ public final class CompilationOrchestrator {
      * are gone.
      */
     private final ProjectContext context;
+
+    /**
+     * True when the compilation's context was authored from a
+     * {@code deal.json} manifest (the production
+     * {@link ProjectContext}-taking constructor — CLI, the production
+     * orchestrator path, and project-level conformance); false for the
+     * test-only isolated-phase constructors whose context is
+     * synthesized from the harness's own declarations map (parent D10:
+     * those APIs may omit {@code ProjectContext}, and their externals
+     * map cannot carry {@code nativeLibrary}). The v1.2 C FFI manifest
+     * policy's {@code nativeLibrary} authoring rule
+     * (docs/spec-v1.2.md:1891 — "a C FFI entry must include
+     * nativeLibrary") is enforced exactly on manifest-authored
+     * contexts; the synthesized test-only entries are the harness's
+     * authority channel and count as manifest-backed.
+     */
+    private final boolean manifestAuthoredContext;
 
     /**
      * The T6 source resolver over {@link #context}: every import — and
@@ -173,9 +223,108 @@ public final class CompilationOrchestrator {
      */
     private RoutePlanResult routePlan;
 
+    /**
+     * The ISSUE-0239 E10 per-route emission counters of this compile:
+     * {@code semanticEmissionCount} modules were SHARED-routed and
+     * emitted from validated semantic IR by the shared emitter;
+     * {@code retainedEmissionCount} modules were LEGACY-routed and
+     * emitted by the retained backend. Both are zero before phase 4 and
+     * read-only after it.
+     */
+    private int semanticEmissionCount = 0;
+    private int retainedEmissionCount = 0;
+
+    /**
+     * The project-wide semantic-id allocator of the shared route
+     * (ISSUE-0239 E10): one allocator over the dependency-ordered
+     * implementation modules, created at the first SHARED lowering.
+     */
+    private SemanticIdAllocator sharedAllocator;
+
+    /**
+     * The lowered callees' recorded {@code EXTERNAL_ENTRY} op ids by
+     * module, filled in dependency order as SHARED modules lower
+     * (ISSUE-0239 E10: the caller-side {@code externalEntryRef}
+     * resolution).
+     */
+    private final Map<ModuleId, Map<String, OpId>> sharedCalleeEntries =
+        new HashMap<>();
+
+    /**
+     * The emitted SHARED-owner ABI manifests of this compile (ISSUE-0239
+     * E10): one per SHARED-routed module, validated against the staged
+     * set and the interface index before publication.
+     */
+    private final List<TargetModuleAbi> emittedSharedAbis = new ArrayList<>();
+
     private final Map<String, ModuleInfo> modules = new LinkedHashMap<>();
     private final List<CompilerDiagnostic> diagnostics = new ArrayList<>();
     private boolean hasErrors = false;
+
+    /**
+     * The dependency (check/initialization) order of this
+     * compilation, in module-path form — the one shared ordering
+     * algorithm of {@link ModuleDependencyGraph#initializationOrder}
+     * (Kahn over the import edges in module discovery order with the
+     * remaining cycle members appended at a stuck step). Phase 2
+     * derives the type-checking order from it; the runtime dependency
+     * graph phase (ISSUE-0543) republishes the identical order as the
+     * initialization order after graph success. The extern-C metadata
+     * phase orders imported provider references by it. Empty before
+     * phase 2.
+     */
+    private List<String> dependencyOrder = List.of();
+
+    /**
+     * The validated extern-C metadata published by the FFI phase
+     * (ISSUE-0162): dotted module path &rarr; the generated module
+     * inputs (descriptor, cdef bundle, retained plans, forward
+     * bindings). Populated only for the LuaJIT backend after successful
+     * validation; empty for JVM/JS and on any validation failure — a
+     * failed validation or an incapable backend publishes no metadata
+     * and no partial artifact.
+     */
+    private final Map<String, FfiGeneratedModule> ffiGenerations =
+        new LinkedHashMap<>();
+
+    /**
+     * The compiler-default planning result of this compile (ISSUE-0541,
+     * {@code provider-versioned-default-plans} D1): module source path
+     * &rarr; the planned classes (one {@link CompilerClassDefaultPlan}
+     * per plan-bearing class plus the ordered provisional
+     * {@link DefaultResourceOccurrence} list), in planning order —
+     * dependency order over the implementation modules and extern-C
+     * declaration modules. Plans stay compiler-internal until the
+     * dependency graph succeeds: this epic publishes them nowhere (no
+     * lowerer, no FFI descriptor, no artifact). Empty before the
+     * planning phase runs, when a preceding phase failed, or when
+     * planning produced error-level diagnostics.
+     */
+    private final Map<String, List<PlannedDefaultClass>>
+        plannedDefaultClasses = new LinkedHashMap<>();
+
+    /**
+     * The dependency graph's published result of this compile
+     * (ISSUE-0543): the completed plans — every plan's
+     * {@code runtimeDependencies} filled with the final digest-bearing
+     * records and the serializer-completed entry content preserved —
+     * keyed by module source path in planning order. Populated only
+     * after the graph phase succeeded; empty on E2005 and on any
+     * preceding failure (a failed graph publishes no plan).
+     */
+    private final Map<String, List<PlannedDefaultClass>>
+        completedDefaultPlans = new LinkedHashMap<>();
+
+    /**
+     * The merged final digest-bearing runtime dependency records of
+     * this compile (ISSUE-0543): ordinary RUNTIME_USE records in
+     * first-occurrence order followed by the per-plan
+     * DEFERRED_DEFAULT_BINDING records, structurally deduplicated.
+     * Empty before the graph phase runs or when the graph rejected the
+     * compilation (E2005 publishes no dependency record).
+     */
+    private List<RuntimeImportDependency> runtimeDependencies =
+        List.of();
 
     /**
      * The JVM codegen pass-1 results of this compile (ISSUE-0374 profile
@@ -193,6 +342,31 @@ public final class CompilationOrchestrator {
         new LinkedHashMap<>();
 
     /**
+     * The LuaJIT codegen results of this compile (ISSUE-0544 lowering
+     * observability, the JVM {@code jvmGeneratedResults} precedent):
+     * module source path &rarr; the {@link LuaBackend.GenerationResult}
+     * the backend generated for every module it accepted — including the
+     * realized {@code RuntimeClassDefaultPlan}s the lowering epic
+     * consumed. Read-only; empty before the LuaJIT codegen phase runs
+     * or when the backend rejected every module.
+     */
+    private final Map<String, LuaBackend.GenerationResult>
+        luaGeneratedResults = new LinkedHashMap<>();
+
+    /**
+     * The JavaScript codegen results of this compile (ISSUE-0544
+     * lowering observability, the JVM {@code jvmGeneratedResults}
+     * precedent): module source path &rarr; the
+     * {@link JsBackend.JsCodegenResult} the backend generated for every
+     * module it accepted — including the realized
+     * {@code RuntimeClassDefaultPlan}s the lowering epic consumed.
+     * Read-only; empty before the JS codegen phase runs or when the
+     * backend rejected every module.
+     */
+    private final Map<String, JsBackend.JsCodegenResult>
+        jsGeneratedResults = new LinkedHashMap<>();
+
+    /**
      * The {@code --diagnostics-json} output path, or {@code null} when the
      * structured document was not requested. When set, the orchestrator
      * writes the {@link DiagnosticStructuredOutput} document for every
@@ -201,6 +375,41 @@ public final class CompilationOrchestrator {
      * stderr with exit 1 (D8, parent D11 I/O discipline).
      */
     private final Path diagnosticsJsonPath;
+
+    /**
+     * The pinned three-tier distribution resolver of this compilation's
+     * project (ISSUE-0457,
+     * {@code release-distribution-packaging-and-discovery} D3): the
+     * runtime and stdlib deployment copies resolve their sources
+     * through it in the pinned order — project-local surface first,
+     * then the language distribution (classpath resources, then the
+     * {@code DEAL_HOME} filesystem layout), then the checkout CWD dev
+     * fallback.
+     */
+    private final DistributionHome distributionHome;
+
+    /**
+     * The transactional whole-project publication stager of the running
+     * {@link #compile()} call (design source
+     * {@code whole-project-artifact-publication} D1-D6): every output
+     * byte — phase-4 module artifacts, the runtime/stdlib deployment
+     * copies, the IR dumps, and the source-map sidecars — is staged
+     * into its per-invocation staging tree and atomically swapped into
+     * the live output root by the publish step; nothing writes the live
+     * root except that step. {@code null} outside a {@code compile()}
+     * call.
+     */
+    private PublicationStager stager;
+
+    /**
+     * The first staging write failure of the running compile (D4): when
+     * set, nothing is published, the stage tree is removed in
+     * {@link #compile()}, the diagnostics report is unchanged, and the
+     * pinned deterministic compiler I/O diagnostic
+     * {@code deal: cannot publish artifacts to '<root>': <reason>} is
+     * printed on stderr with exit 1.
+     */
+    private IOException pendingStageFailure;
 
     // Host externals (ISSUE-0082, host-module-abi D5, file-keyed since
     // ISSUE-0269): the externals declarations live in
@@ -275,6 +484,7 @@ public final class CompilationOrchestrator {
         this.invocation = java.util.Objects.requireNonNull(invocation,
             "invocation must not be null");
         this.context = java.util.Objects.requireNonNull(context, "context");
+        this.manifestAuthoredContext = true;
         this.backend = backendOf(context.backend());
         this.entryFile = entryFile.toAbsolutePath().normalize();
         this.outputRoot = Path.of(context.outputPath().absoluteNormalizedPath());
@@ -283,6 +493,8 @@ public final class CompilationOrchestrator {
         this.sourceMap = sourceMap;
         this.sourceMapExplicit = sourceMapExplicit;
         this.diagnosticsJsonPath = diagnosticsJsonPath;
+        this.distributionHome = DistributionHome.forManifestDirectory(
+            context.manifestDirectory());
         this.sourceResolver = new SourceModuleResolver(context);
         this.identityAssembly = new ModuleIdentityAssembly(context);
     }
@@ -377,6 +589,7 @@ public final class CompilationOrchestrator {
             "invocation must not be null");
         this.context = synthesizeContext(entryFile, outputRoot, backend,
             externalsDeclarations, moduleRoots, stdlibDir);
+        this.manifestAuthoredContext = false;
         this.backend = backend;
         this.entryFile = entryFile.toAbsolutePath().normalize();
         this.outputRoot = outputRoot.toAbsolutePath().normalize();
@@ -385,6 +598,8 @@ public final class CompilationOrchestrator {
         this.sourceMap = sourceMap;
         this.sourceMapExplicit = sourceMapExplicit;
         this.diagnosticsJsonPath = diagnosticsJsonPath;
+        this.distributionHome = DistributionHome.forManifestDirectory(
+            context.manifestDirectory());
         this.sourceResolver = new SourceModuleResolver(context);
         this.identityAssembly = new ModuleIdentityAssembly(context);
     }
@@ -577,9 +792,10 @@ public final class CompilationOrchestrator {
      * {@link CompilerProfileProvider} from
      * {@link ReleaseConfiguration#CURRENT_RELEASE_STATE} and the release
      * capability registry (A2 — the single release-owned selection
-     * point; while the release state is {@code PRE_ACTIVATION} the
-     * derived public profile is {@code LEGACY_SAFE_INT} and production
-     * SHARED routing stays unreachable, foundation F1/F4). The provider
+     * point; the release state is {@code V1_2_ACTIVE} after the E12
+     * activation release action, so the derived public profile is
+     * {@code DEAL_V1_2_INT32} and production SHARED routing is eligible
+     * for the promoted capability × target pairs, foundation F1/F4).
      * is the only invocation constructor — the orchestrator never
      * constructs an invocation itself.
      */
@@ -657,22 +873,91 @@ public final class CompilationOrchestrator {
         return routePlan;
     }
 
+    /**
+     * The number of SHARED-routed modules emitted from validated
+     * semantic IR in phase 4 of this compile (ISSUE-0239 E10) — zero
+     * before the codegen phase runs.
+     *
+     * @return the semantic-emission count
+     */
+    public int semanticEmissionCount() {
+        return semanticEmissionCount;
+    }
+
+    /**
+     * The number of LEGACY-routed modules emitted by the retained
+     * backend in phase 4 of this compile (ISSUE-0239 E10) — zero before
+     * the codegen phase runs.
+     *
+     * @return the retained-emission count
+     */
+    public int retainedEmissionCount() {
+        return retainedEmissionCount;
+    }
+
     // =========================================================================
     // Public API
     // =========================================================================
 
     public boolean compile() throws IOException {
-        boolean success = compileInternal();
+        // Transactional publication (whole-project-artifact-publication
+        // D1-D6): one fresh staging stager per compile; the stage tree
+        // and the per-root lock are created lazily at the first staged
+        // write (an IR dump in phase 1/3, or a phase-4 artifact) and
+        // the staged set is atomically swapped into the live output
+        // root only when the compilation succeeded.
+        stager = PublicationStager.forRoot(outputRoot);
+        pendingStageFailure = null;
+        boolean success;
+        try {
+            success = compileInternal();
+            if (success) {
+                try {
+                    stager.publish();
+                } catch (IOException publishFailure) {
+                    // Publish-step I/O failure (D4): the stager already
+                    // restored/cleaned per D2; report the pinned
+                    // deterministic compiler I/O diagnostic on stderr
+                    // with exit 1.
+                    System.err.println("deal: cannot publish artifacts to '"
+                        + outputRoot + "': " + publishFailure.getMessage());
+                    success = false;
+                }
+            }
+        } finally {
+            if (!stager.published()) {
+                // Any failure (or no publish) removes the stage tree and
+                // releases the per-root lock: the prior live set is
+                // untouched (an absent prior set stays absent) and no
+                // staging residue survives.
+                stager.discard();
+            }
+            stager = null;
+        }
+        if (pendingStageFailure != null) {
+            // Staging write failure (D4): nothing published, diagnostics
+            // report unchanged, pinned deterministic compiler I/O
+            // diagnostic on stderr with exit 1.
+            System.err.println("deal: cannot publish artifacts to '"
+                + outputRoot + "': " + pendingStageFailure.getMessage());
+            success = false;
+        }
 
         // Structured output (D8): the document is written for every
         // compilation — successful or failed — when --diagnostics-json
-        // was requested, without changing the exit code. A write failure
-        // is a deterministic compiler I/O diagnostic on stderr with exit
-        // 1; no raw path exception escapes (parent D11 I/O discipline).
+        // was requested, without changing the exit code; it is a
+        // caller-requested report outside the published set. A write
+        // failure is a deterministic compiler I/O diagnostic on stderr
+        // with exit 1; no raw path exception escapes (parent D11 I/O
+        // discipline).
         if (diagnosticsJsonPath != null) {
             try {
+                // D1 (deterministic-diagnostics): the document receives
+                // the canonical report-ordered list; the internal
+                // emission-order collection is unchanged.
                 Files.writeString(diagnosticsJsonPath,
-                    DiagnosticStructuredOutput.toJson(diagnostics));
+                    DiagnosticStructuredOutput.toJson(
+                        DiagnosticOrder.canonical(diagnostics)));
             } catch (IOException e) {
                 System.err.println("deal: cannot write diagnostics JSON to '"
                     + diagnosticsJsonPath + "': " + e.getMessage());
@@ -713,6 +998,7 @@ public final class CompilationOrchestrator {
         log("Phase 2: Dependency graph and ordering");
         List<String> checkOrder = buildCheckOrder();
         if (checkOrder == null) { printDiagnostics(); return false; }
+        this.dependencyOrder = List.copyOf(checkOrder);
 
         log("Phase 3: Type checking (" + checkOrder.size() + " modules)");
         typeCheckAll(checkOrder);
@@ -747,6 +1033,53 @@ public final class CompilationOrchestrator {
         // phase is skipped and the retained JS path is untouched.
         log("Phase 3.7: Route plan");
         planRoutesForCompile();
+        if (hasErrors) { printDiagnostics(); return false; }
+
+        // Default planning phase (ISSUE-0541, design source
+        // provider-versioned-default-plans D1-D4): after checking and
+        // declaration analysis, before serialization and the graph —
+        // one CompilerClassDefaultPlan per plan-bearing class
+        // (implementation classes planned by DefaultSemanticPlanner,
+        // C-struct classes planned by DeclarationSemanticAnalyzer),
+        // resolution/type-checking in the declaring lexical/import
+        // context, the complete typed evaluator IR walk, and the two
+        // plan-shape gates (E4001 declaration shape, E3020 sync
+        // evaluators). Host-declared classes are exempt and produce no
+        // plan. No evaluator is invoked and no library is loaded; no
+        // digest is computed and no dependency edge or graph runs
+        // (the serializer and graph epics own those).
+        log("Phase 3.8: Default planning and declaration default analysis");
+        planDefaultClasses();
+        if (hasErrors) { printDiagnostics(); return false; }
+
+        // Runtime dependency graph phase (ISSUE-0543, design source
+        // provider-versioned-default-plans D1/D7/D8): after planning,
+        // before FFI validation and codegen — the digest-free SCC pass
+        // merges the ordinary runtime-use edges (RUNTIME_USE) with the
+        // planner's default edges (DEFERRED_DEFAULT_BINDING) over the
+        // one RuntimeImportDependency carrier; a runtime SCC reports
+        // E2005 with a note per runtime edge and publishes no plan,
+        // FFI metadata, or artifact. Only an acyclic pass requests the
+        // provider digests (the serializer, with the ordinary
+        // occurrences demanded), publishes the final digest-bearing
+        // dependency records, completes every plan's
+        // runtimeDependencies, and fixes the initialization order.
+        // No evaluator is invoked and no library is loaded here.
+        log("Phase 3.85: Runtime dependency graph and plan publication");
+        evaluateDependencyGraph();
+        if (hasErrors) { printDiagnostics(); return false; }
+
+        // FFI phase (ISSUE-0162, design source
+        // deal-v1.2-directives-and-c-ffi-declarations D4/D7/D8): after
+        // semantic/graph success, validate every extern-C declaration
+        // module (E7002 policy), reject the C FFI on an incapable
+        // backend (JVM: E6006 FFI_UNSUPPORTED_BACKEND at @extern-c)
+        // before any artifact write, and publish the validated
+        // metadata/bundle/bindings on LuaJIT for later runtime loading.
+        // Validation never evaluates defaults; a failed validation or
+        // an incapable backend publishes no metadata and no artifact.
+        log("Phase 3.9: C FFI declaration validation and metadata");
+        validateCffiDeclarations();
         if (hasErrors) { printDiagnostics(); return false; }
 
         log("Phase 4: Code generation");
@@ -1213,175 +1546,47 @@ public final class CompilationOrchestrator {
     // ... (unchanged)
     // =========================================================================
 
+    /**
+     * Phase-2 module ordering for type checking: the one shared
+     * initialization-order algorithm over the import-declaration edge
+     * structure ({@link ModuleDependencyGraph#initializationOrder} —
+     * Kahn in module discovery order; when no module is ready, exactly
+     * the remaining cycle members are appended in discovery order and
+     * the sweep resumes, so an importer never precedes its imported
+     * module). Every import cycle orders here: type-only cycles are
+     * legal and impose no order, and runtime-cycle rejection moved to
+     * the post-checking dependency graph phase (ISSUE-0543) — the
+     * digest-free SCC pass over the merged ordinary + default runtime
+     * edges, where the resolved semantic resource identities and the
+     * planner's default edges exist.
+     */
     private List<String> buildCheckOrder() {
         Map<String, Set<String>> deps = new LinkedHashMap<>();
-        // The dependency graph retains each import declaration's span
-        // (D5): source path -> (resolved target -> import declaration
-        // span), for the E2005 cycle-edge anchor chain.
-        Map<String, Map<String, Span>> edgeSpans = new LinkedHashMap<>();
         for (Map.Entry<String, ModuleInfo> entry : modules.entrySet()) {
             String sourcePath = entry.getKey();
             ModuleInfo info = entry.getValue();
             Set<String> imports = new LinkedHashSet<>();
-            Map<String, Span> spans = new LinkedHashMap<>();
-
             for (StatementNode stmt : info.rawAst.statements()) {
                 if (stmt instanceof ImportDeclaration imp) {
                     String resolved = resolveImportPath(imp.modulePath(),
                         Path.of(sourcePath), imp.span());
                     if (resolved != null && modules.containsKey(resolved)) {
                         imports.add(resolved);
-                        spans.put(resolved, imp.span());
                     }
                 }
             }
             deps.put(sourcePath, imports);
-            edgeSpans.put(sourcePath, spans);
         }
-
-        List<String> order = new ArrayList<>();
-        Set<String> remaining = new LinkedHashSet<>(modules.keySet());
-
-        while (!remaining.isEmpty()) {
-            boolean found = false;
-            for (Iterator<String> it = remaining.iterator(); it.hasNext(); ) {
-                String src = it.next();
-                Set<String> imports = deps.get(src);
-                if (order.containsAll(imports)) {
-                    order.add(src);
-                    it.remove();
-                    found = true;
-                }
-            }
-            if (!found) {
-                return handleCycle(deps, edgeSpans, remaining);
-            }
-        }
-        return order;
-    }
-
-    private List<String> handleCycle(Map<String, Set<String>> deps,
-                                      Map<String, Map<String, Span>> edgeSpans,
-                                      Set<String> remaining) {
-        // Find the first cycle
-        List<String> cycle = new ArrayList<>();
-        String start = remaining.iterator().next();
-        Set<String> visited = new HashSet<>();
-        Deque<String> stack = new ArrayDeque<>();
-        findCycle(deps, start, visited, stack, cycle);
-        if (cycle.isEmpty()) {
-            cycle.addAll(remaining);
-        }
-
-        // Check if the first cycle has runtime dependencies
-        if (!isDeclarationOnlyCycle(cycle, deps)) {
-            reportCycleError(cycle, edgeSpans);
-            return null;
-        }
-
-        // First cycle is declaration-only. Now check non-cycle modules
-        // for additional cycles (multiple disconnected SCCs).
-        Set<String> allCycleNodes = new LinkedHashSet<>(cycle);
-        Set<String> nonCycle = new LinkedHashSet<>(remaining);
-        nonCycle.removeAll(allCycleNodes);
-
-        // Iteratively find and check additional cycles in the non-cycle set
-        List<String> additionalCycle;
-        while ((additionalCycle = findCycleInSet(deps, nonCycle)) != null
-                && !additionalCycle.isEmpty()) {
-            if (!isDeclarationOnlyCycle(additionalCycle, deps)) {
-                reportCycleError(additionalCycle, edgeSpans);
-                return null;
-            }
-            allCycleNodes.addAll(additionalCycle);
-            nonCycle.removeAll(additionalCycle);
-        }
-
-        // All cycles are declaration-only. Build the order.
-        List<String> order = new ArrayList<>();
-
-        // Step 1: non-cycle modules with all deps already in order
-        boolean progress;
-        do {
-            progress = false;
-            for (Iterator<String> it = nonCycle.iterator(); it.hasNext(); ) {
-                String src = it.next();
-                Set<String> imports = deps.get(src);
-                if (order.containsAll(imports)) {
-                    order.add(src);
-                    it.remove();
-                    progress = true;
-                }
-            }
-        } while (progress);
-
-        // Step 2: all cycle modules
-        order.addAll(allCycleNodes);
-
-        // Step 3: non-cycle modules whose deps are now satisfied
-        do {
-            progress = false;
-            for (Iterator<String> it = nonCycle.iterator(); it.hasNext(); ) {
-                String src = it.next();
-                Set<String> imports = deps.get(src);
-                if (order.containsAll(imports)) {
-                    order.add(src);
-                    it.remove();
-                    progress = true;
-                }
-            }
-        } while (progress);
-
-        // Step 4: any remaining modules (deps not fully satisfied)
-        if (!nonCycle.isEmpty()) {
-            for (String src : nonCycle) {
-                order.add(src);
-            }
-        }
-
-        return order;
-    }
-
-    /**
-     * Emits the E2005 runtime-cycle diagnostic with the D5 anchor chain:
-     * the import declaration span of the first cycle module that targets
-     * another cycle member (the dependency graph retains each import
-     * declaration's span), falling back to that module's program span,
-     * then to the canonical synthetic shape with a cycle-edge-naming
-     * anchor note.
-     */
-    private void reportCycleError(List<String> cycle,
-                                  Map<String, Map<String, Span>> edgeSpans) {
-        StringBuilder cyclePath = new StringBuilder();
-        for (int i = 0; i < cycle.size(); i++) {
-            if (i > 0) cyclePath.append(" -> ");
-            cyclePath.append(cycle.get(i));
-        }
-        String message = "Circular import with runtime dependency: " + cyclePath;
-        diagnostics.add(e2005Diagnostic(cycle, edgeSpans,
-            programSpansFor(cycle), message));
-        hasErrors = true;
-    }
-
-    /**
-     * The module program spans of the given cycle, for the E2005 program
-     * span fallback (D5).
-     */
-    private Map<String, Span> programSpansFor(List<String> cycle) {
-        Map<String, Span> spans = new HashMap<>();
-        for (String sourcePath : cycle) {
-            ModuleInfo info = modules.get(sourcePath);
-            if (info != null && info.rawAst != null
-                    && info.rawAst.span() != null) {
-                spans.put(sourcePath, info.rawAst.span());
-            }
-        }
-        return spans;
+        return ModuleDependencyGraph.initializationOrder(
+            new ArrayList<>(modules.keySet()), deps);
     }
 
     /**
      * Builds the E2005 runtime-cycle diagnostic with the D5 anchor chain
-     * (public static so the fallback chain is directly pinnable):
+     * (public static so the fallback chain is directly pinnable; the
+     * graph epic, ISSUE-0543, is the production owner of this helper —
+     * {@link ModuleDependencyGraph} builds the per-runtime-SCC E2005
+     * diagnostics with the per-edge notes through it):
      * <ul>
      *   <li>the import declaration span of the first cycle module that
      *       targets another cycle member,</li>
@@ -1451,300 +1656,6 @@ public final class CompilationOrchestrator {
             "missing anchor: IR dump path for module '" + sourcePath + "'");
     }
 
-    /**
-     * Finds a cycle in the given set of modules. Returns the cycle nodes
-     * (with duplicates removed via LinkedHashSet), or an empty list if
-     * no cycle is found.
-     */
-    private List<String> findCycleInSet(Map<String, Set<String>> deps,
-                                         Set<String> candidates) {
-        if (candidates.isEmpty()) return null;
-
-        for (String start : candidates) {
-            List<String> cycle = new ArrayList<>();
-            Set<String> visited = new HashSet<>();
-            Deque<String> stack = new ArrayDeque<>();
-            if (findCycleRestricted(deps, start, candidates, visited, stack, cycle)) {
-                List<String> unique = new ArrayList<>();
-                Set<String> seen = new HashSet<>();
-                for (String s : cycle) {
-                    if (seen.add(s)) {
-                        unique.add(s);
-                    }
-                }
-                return unique;
-            }
-        }
-        return new ArrayList<>();
-    }
-
-    private boolean findCycleRestricted(Map<String, Set<String>> deps,
-                                         String current, Set<String> allowed,
-                                         Set<String> visited, Deque<String> stack,
-                                         List<String> cycle) {
-        if (stack.contains(current)) {
-            boolean found = false;
-            for (String s : stack) {
-                if (s.equals(current)) found = true;
-                if (found) cycle.add(s);
-            }
-            cycle.add(current);
-            return true;
-        }
-        if (visited.contains(current)) return false;
-
-        visited.add(current);
-        stack.addLast(current);
-
-        Set<String> imports = deps.get(current);
-        if (imports != null) {
-            for (String imp : imports) {
-                if (!allowed.contains(imp)) continue;
-                if (findCycleRestricted(deps, imp, allowed, visited, stack, cycle))
-                    return true;
-            }
-        }
-
-        stack.removeLast();
-        return false;
-    }
-
-
-    private boolean isDeclarationOnlyCycle(List<String> cycle,
-                                            Map<String, Set<String>> deps) {
-        Set<String> cycleSet = new LinkedHashSet<>(cycle);
-
-        for (String modulePath : cycle) {
-            ModuleInfo info = modules.get(modulePath);
-            if (info == null || info.rawAst == null) continue;
-
-            for (StatementNode stmt : info.rawAst.statements()) {
-                if (stmt instanceof ImportDeclaration imp) {
-                    String resolved = resolveImportPath(imp.modulePath(),
-                        Path.of(modulePath), imp.span());
-                    if (resolved != null && cycleSet.contains(resolved)) {
-                        if (usesImportAtRuntime(info.rawAst, imp.alias())) {
-                            return false;
-                        }
-                    }
-                }
-            }
-        }
-        return true;
-    }
-
-    /**
-     * Checks whether a module uses a given import alias at runtime
-     * (i.e., in top-level executable statements, not just in type positions).
-     *
-     * <p><b>Known limitation (v0.6):</b> Indirect runtime dependencies are not
-     * detected.  If a module defines a function that uses the cyclic import and
-     * then calls that function at the top level, the cycle will be incorrectly
-     * classified as declaration-only:
-     * <pre>{@code
-     *   import * as B from "./b"
-     *   function helper(): int { return B.getValue(); }
-     *   let x: int = helper();  // indirect runtime use of B — not detected
-     * }</pre>
-     * A full fix requires data-flow analysis, planned for a future release.
-     */
-    private boolean usesImportAtRuntime(ProgramNode program, String alias) {
-        for (StatementNode stmt : program.statements()) {
-            if (hasRuntimeImportUsage(stmt, alias)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private boolean hasRuntimeImportUsage(StatementNode stmt, String alias) {
-        return switch (stmt) {
-            case VariableDeclaration vd -> {
-                if (vd.initializer() != null
-                        && exprReferencesImport(vd.initializer(), alias)) {
-                    yield true;
-                }
-                yield false;
-            }
-            case ExpressionStatement es -> {
-                yield exprReferencesImport(es.expr(), alias);
-            }
-            case ReturnStatement rs -> {
-                if (rs.expr().isPresent()
-                        && exprReferencesImport(rs.expr().get(), alias)) {
-                    yield true;
-                }
-                yield false;
-            }
-            case IfStatement is -> {
-                if (exprReferencesImport(is.condition(), alias)) yield true;
-                if (hasRuntimeImportUsage(is.thenBlock(), alias)) yield true;
-                if (is.elseBranch().isPresent()) {
-                    Either<IfStatement, Block> eb = is.elseBranch().get();
-                    if (eb instanceof Either.Left<IfStatement, Block> left) {
-                        if (hasRuntimeImportUsage(left.value(), alias)) yield true;
-                    } else if (eb instanceof Either.Right<IfStatement, Block> right) {
-                        if (hasRuntimeImportUsage(right.value(), alias)) yield true;
-                    }
-                }
-                yield false;
-            }
-            case WhileStatement ws -> {
-                if (exprReferencesImport(ws.condition(), alias)) yield true;
-                if (hasRuntimeImportUsage(ws.body(), alias)) yield true;
-                yield false;
-            }
-            case ForStatement fs -> {
-                if (fs.init().isPresent()) {
-                    ForInit init = fs.init().get();
-                    if (init instanceof ForInit.VarDecl vd) {
-                        if (exprReferencesImport(vd.decl().initializer(), alias)) yield true;
-                    } else if (init instanceof ForInit.AssignExpr ie) {
-                        AssignmentExpr ae = ie.expr();
-                        if (exprReferencesImport(ae.target(), alias)) yield true;
-                        if (exprReferencesImport(ae.value(), alias)) yield true;
-                    }
-                }
-                if (fs.condition().isPresent()
-                        && exprReferencesImport(fs.condition().get(), alias)) yield true;
-                if (fs.update().isPresent()
-                        && exprReferencesImport(fs.update().get(), alias)) yield true;
-                if (hasRuntimeImportUsage(fs.body(), alias)) yield true;
-                yield false;
-            }
-            case Block b -> {
-                for (StatementNode s : b.statements()) {
-                    if (hasRuntimeImportUsage(s, alias)) yield true;
-                }
-                yield false;
-            }
-            case TryStatement ts -> {
-                if (hasRuntimeImportUsage(ts.tryBlock(), alias)) yield true;
-                if (ts.catchBlock() != null
-                        && hasRuntimeImportUsage(ts.catchBlock(), alias)) yield true;
-                yield false;
-            }
-            case ThrowStatement th -> {
-                yield exprReferencesImport(th.expr(), alias);
-            }
-            case ExportDeclaration ed -> {
-                yield hasRuntimeImportUsage(ed.declaration(), alias);
-            }
-            case FunctionDeclaration fd -> false;
-            case ClassDeclaration cd -> {
-                // DEAL v1.2: class field defaults evaluate at module
-                // initialization, so a default referencing a cyclic import
-                // creates a runtime dependency (top-level executable
-                // statements no longer exist).
-                for (ClassField field : cd.fields()) {
-                    if (field.defaultExpr().isPresent()
-                            && exprReferencesImport(field.defaultExpr().get(), alias)) {
-                        yield true;
-                    }
-                }
-                yield false;
-            }
-            case ImportDeclaration id -> false;
-            case DeleteStatement ds -> false;
-            case BreakStatement bs -> false;
-            case ContinueStatement cs -> false;
-            case ForOfStatement fos -> {
-                if (exprReferencesImport(fos.iterable(), alias)) yield true;
-                if (hasRuntimeImportUsage(fos.body(), alias)) yield true;
-                yield false;
-            }
-        };
-    }
-
-    private boolean exprReferencesImport(ExpressionNode expr, String alias) {
-        return switch (expr) {
-            case IdentifierExpr id -> id.name().equals(alias);
-            case MemberAccessExpr ma -> {
-                if (exprReferencesImport(ma.object(), alias)) yield true;
-                yield false;
-            }
-            case CallExpr ce -> {
-                if (exprReferencesImport(ce.callee(), alias)) yield true;
-                for (ExpressionNode arg : ce.args()) {
-                    if (exprReferencesImport(arg, alias)) yield true;
-                }
-                yield false;
-            }
-            case BinaryExpr be -> {
-                if (exprReferencesImport(be.left(), alias)) yield true;
-                if (exprReferencesImport(be.right(), alias)) yield true;
-                yield false;
-            }
-            case UnaryExpr ue -> {
-                yield exprReferencesImport(ue.expr(), alias);
-            }
-            case IndexExpr ie -> {
-                if (exprReferencesImport(ie.array(), alias)) yield true;
-                if (exprReferencesImport(ie.index(), alias)) yield true;
-                yield false;
-            }
-            case ArrayLiteralExpr al -> {
-                for (ExpressionNode e : al.elements()) {
-                    if (exprReferencesImport(e, alias)) yield true;
-                }
-                yield false;
-            }
-            case ObjectLiteralExpr ol -> {
-                for (Property p : ol.properties()) {
-                    if (exprReferencesImport(p.value(), alias)) yield true;
-                }
-                yield false;
-            }
-            case AssignmentExpr ae -> {
-                if (exprReferencesImport(ae.target(), alias)) yield true;
-                if (exprReferencesImport(ae.value(), alias)) yield true;
-                yield false;
-            }
-            case HasExpr he -> {
-                yield exprReferencesImport(he.object(), alias);
-            }
-            case FunctionExpr fe -> false;
-            case LiteralExpr le -> false;
-            case AwaitExpression await -> {
-                yield exprReferencesImport(await.callee(), alias);
-            }
-            case TemplateLiteralExpr tl -> {
-                for (ExpressionNode part : tl.parts()) {
-                    if (exprReferencesImport(part, alias)) yield true;
-                }
-                yield false;
-            }
-        };
-    }
-
-    private boolean findCycle(Map<String, Set<String>> deps, String current,
-                               Set<String> visited, Deque<String> stack,
-                               List<String> cycle) {
-        if (stack.contains(current)) {
-            boolean found = false;
-            for (String s : stack) {
-                if (s.equals(current)) found = true;
-                if (found) cycle.add(s);
-            }
-            cycle.add(current);
-            return true;
-        }
-        if (visited.contains(current)) return false;
-
-        visited.add(current);
-        stack.addLast(current);
-
-        Set<String> imports = deps.get(current);
-        if (imports != null) {
-            for (String imp : imports) {
-                if (findCycle(deps, imp, visited, stack, cycle)) return true;
-            }
-        }
-
-        stack.removeLast();
-        return false;
-    }
-
     // =========================================================================
     // Phase 3.5: Checked project and interface index (foundation, ISSUE-0288)
     // =========================================================================
@@ -1805,15 +1716,21 @@ public final class CompilationOrchestrator {
             log("  Requirement manifest computation failed: " + result.diagnostics());
         }
     }
-
     /**
      * Runs the route-plan foundation after the manifests (ISSUE-0290):
      * hands the checked project, the interface index, the manifests, the
-     * release capability registry, and the compile's target to
-     * {@link MigrationPlanner} — one deterministic plan per target over
-     * the closed routing rules (F4). Public builds stay all-LEGACY while
-     * the release state is {@code PRE_ACTIVATION}; planner E6005
-     * diagnostics merge into {@link #diagnostics()} and fail the
+     * capability registry the invocation recorded, and the compile's
+     * target to {@link MigrationPlanner} — one deterministic plan per
+     * target over the closed routing rules (F4). The planner's F1/F7
+     * guard requires the registry digest to equal the invocation's
+     * recorded digest, so the registry is resolved from the invocation:
+     * the promoted release registry (E12's committed derivation — the
+     * production route set, F4 rule 4 eligible for promoted
+     * capability × target pairs) or the all-{@code SHADOW} release
+     * default (the internal harnesses' recorded registry — F4 rule 4
+     * ineligible, all-LEGACY); any other digest fails the planner guard
+     * (a producer-defect wiring defect, never an E6005 class). Planner
+     * E6005 diagnostics merge into {@link #diagnostics()} and fail the
      * compile. The JS backend skips the phase: the closed route-plan
      * target axis is {@code LUAJIT|JVM} (foundation F4/F5), and no
      * closed target exists for JS in this epic.
@@ -1835,7 +1752,7 @@ public final class CompilationOrchestrator {
             return; // JS: no closed route-plan target in this epic
         }
         RoutePlanResult result = MigrationPlanner.planRoutes(
-            invocation, ReleaseConfiguration.releaseCapabilityRegistry(),
+            invocation, registryForInvocation(invocation),
             checked.input(), checked.index(),
             this.requirementManifests.manifests(), target, Set.of());
         this.routePlan = result;
@@ -1845,6 +1762,611 @@ public final class CompilationOrchestrator {
             log("  Route planning failed: " + result.diagnostics());
         }
     }
+
+    /**
+     * Resolves the capability registry the invocation recorded (F1/F7
+     * discipline): the promoted release registry when the invocation
+     * records its digest (the production path — {@code Main} and
+     * {@link #defaultInvocation()}), or the all-{@code SHADOW} release
+     * default when the invocation records that digest (the internal
+     * harnesses' explicit invocations — lanes, conformance seam,
+     * regression purposes). Any other digest leaves the invocation's own
+     * mismatch for the planner's defensive guard, which rejects it as a
+     * producer-defect wiring error.
+     */
+    private static CapabilityRegistry registryForInvocation(
+            CompilerInvocation invocation) {
+        String recorded = invocation.capabilityRegistryHash();
+        CapabilityRegistry release = ReleaseConfiguration.releaseCapabilityRegistry();
+        if (release.capabilityRegistryHash().equals(recorded)) {
+            return release;
+        }
+        CapabilityRegistry releaseDefault = CapabilityRegistry.releaseRegistry();
+        if (releaseDefault.capabilityRegistryHash().equals(recorded)) {
+            return releaseDefault;
+        }
+        return release;
+    }
+
+    // =========================================================================
+    // Phase 3.8: C FFI declaration validation and metadata (ISSUE-0162)
+    // =========================================================================
+
+    /**
+     * The read-only view of the validated extern-C metadata: dotted
+     * module path &rarr; generated module inputs (descriptor, cdef
+     * bundle, retained plans, forward bindings). Populated only for the
+     * LuaJIT backend after successful validation; empty for JVM/JS and
+     * on any validation failure.
+     *
+     * @return the generated FFI modules (unmodifiable)
+     */
+    public Map<String, FfiGeneratedModule> ffiGenerations() {
+        return Collections.unmodifiableMap(ffiGenerations);
+    }
+
+    /**
+     * The extern-C metadata phase: runs after semantic/graph success
+     * (phases 0–3.7) and before any artifact write (phase 4).
+     *
+     * <p>Per extern-C declaration module in the graph:</p>
+     * <ol>
+     *   <li>validate the declaration policy (E7002: sync functions,
+     *       export/C names, ABI parameter/return allowlists, same-file
+     *       class references, required/defaulted source-order struct
+     *       fields, pointer emptiness/non-constructibility) — never
+     *       evaluating defaults;</li>
+     *   <li>on an incapable backend (JVM) emit E6006 containing
+     *       {@code FFI_UNSUPPORTED_BACKEND} at the {@code @extern-c}
+     *       directive range after validation and before artifacts;</li>
+     *   <li>on LuaJIT publish the validated immutable descriptor plus
+     *       the generated cdef bundle, retained plans, and forward
+     *       bindings for later runtime loading.</li>
+     * </ol>
+     *
+     * <p>A failed validation or an incapable backend publishes no
+     * metadata and no partial artifact (the compile stops before phase
+     * 4). The JS backend keeps its pinned import-site E6006 arm
+     * (ISSUE-0169 skeleton) and does not run this phase.</p>
+     */
+    // =========================================================================
+    // Phase 3.8: Default planning and declaration default analysis (ISSUE-0541)
+    // =========================================================================
+
+    /**
+     * Runs the shared default planning pipeline over every plan-bearing
+     * module in dependency order: implementation modules through
+     * {@link DefaultSemanticPlanner}, extern-C declaration modules
+     * through {@link DeclarationSemanticAnalyzer}. Host-declared
+     * (non-extern-C declaration) classes are exempt and produce no
+     * plan. Error-level diagnostics fail the compile and publish no
+     * plan; success stores the plans and their provisional occurrence
+     * data in {@link #plannedDefaultClasses()} only — nothing is
+     * published to lowerers, the FFI descriptor stage, or artifacts
+     * (the graph epic owns publication), no digest is computed, no
+     * evaluator is invoked, and no library is loaded.
+     */
+    private void planDefaultClasses() {
+        // The planning epics require public class identity for every
+        // plan-bearing class and the canonical descriptor encoder
+        // resolves class atoms through the assembly index: register the
+        // intrinsic Error projection and every class declaration of
+        // every implementation module (phase 1 registered the
+        // top-level classes; nested classes join idempotently here)
+        // before any entry encodes a descriptor.
+        identityAssembly.intrinsicErrorIdentity();
+        for (ModuleInfo info : modules.values()) {
+            if (info.isDeclarationFile || info.checkResult == null) {
+                continue;
+            }
+            for (Map.Entry<ClassDeclaration, SymbolTable> entry
+                    : info.checkResult.classScopes().entrySet()) {
+                ModuleIdentityAssembly.ClassIdentityResult required =
+                    identityAssembly.requireClassIdentity(info.location,
+                        entry.getKey().name(), entry.getKey().span());
+                if (required
+                        instanceof ModuleIdentityAssembly.ClassIdentityResult
+                            .Failure f) {
+                    diagnostics.add(f.diagnostic());
+                    hasErrors = true;
+                }
+            }
+        }
+        if (hasErrors) {
+            return;
+        }
+
+        CanonicalRuntimeTypeDescriptor descriptors =
+            new CanonicalRuntimeTypeDescriptor(identityAssembly.index());
+        Map<String, CanonicalModuleIdentity> classification =
+            modulePathClassification();
+        ModuleResolverImpl moduleResolver = new ModuleResolverImpl(modules,
+            diagnostics);
+
+        for (String sourcePath : dependencyOrder) {
+            ModuleInfo info = modules.get(sourcePath);
+            if (info == null || info.rawAst == null
+                    || info.location == null) {
+                continue;
+            }
+            Map<String, DefaultPlanImport> imports =
+                defaultPlanImportsOf(info);
+            if (info.isDeclarationFile) {
+                if (!isExternCModuleInfo(info)) {
+                    // Host-declared classes are exempt from the plan
+                    // gates and produce no plan (the host supplies
+                    // <C>_defaults at load).
+                    continue;
+                }
+                DefaultDeclarationModuleInput input =
+                    new DefaultDeclarationModuleInput(
+                        info.sourcePath, info.modulePath, info.rawAst,
+                        info.location, imports, descriptors,
+                        moduleResolver, classification);
+                DeclarationSemanticAnalyzer.Result result =
+                    DeclarationSemanticAnalyzer.analyze(input,
+                        identityAssembly);
+                diagnostics.addAll(result.diagnostics());
+                if (result.hasErrors()) {
+                    hasErrors = true;
+                } else {
+                    plannedDefaultClasses.put(info.sourcePath,
+                        result.plannedClasses());
+                }
+                continue;
+            }
+            if (info.checkResult == null || info.nameResolver == null) {
+                continue; // defensive: checked facts always exist here
+            }
+            DefaultPlanModuleInput input = new DefaultPlanModuleInput(
+                info.sourcePath, info.modulePath, info.rawAst,
+                info.location, info.checkResult, info.nameResolver,
+                imports, descriptors, classification);
+            DefaultSemanticPlanner.Result result =
+                DefaultSemanticPlanner.plan(input, identityAssembly);
+            diagnostics.addAll(result.diagnostics());
+            if (result.hasErrors()) {
+                hasErrors = true;
+            } else {
+                plannedDefaultClasses.put(info.sourcePath,
+                    result.plannedClasses());
+            }
+        }
+    }
+
+    /**
+     * The import surface of one module: import alias &rarr; the
+     * provider's read-only planning snapshot (source path, dotted
+     * module path, parsed program, resolved location, extracted export
+     * map, symbol table when available, and the declaration/extern-C
+     * flags), insertion-ordered by the module's import declarations.
+     */
+    private Map<String, DefaultPlanImport> defaultPlanImportsOf(
+            ModuleInfo info) {
+        Map<String, DefaultPlanImport> imports = new LinkedHashMap<>();
+        if (info.rawAst == null) {
+            return imports;
+        }
+        for (StatementNode stmt : info.rawAst.statements()) {
+            if (!(stmt instanceof ImportDeclaration imp)) {
+                continue;
+            }
+            String resolvedSource = resolveImportPath(imp.modulePath(),
+                Path.of(info.sourcePath), imp.span());
+            if (resolvedSource == null) {
+                continue; // the E2003/E2009 was already reported
+            }
+            ModuleInfo imported = modules.get(resolvedSource);
+            if (imported == null || imported.rawAst == null
+                    || imported.location == null) {
+                continue;
+            }
+            imports.put(imp.alias(), new DefaultPlanImport(
+                imported.sourcePath, imported.modulePath, imported.rawAst,
+                imported.location,
+                imported.exports != null ? imported.exports : Map.of(),
+                imported.symbolTable, imported.isDeclarationFile,
+                isExternCModuleInfo(imported)));
+        }
+        return imports;
+    }
+
+    /**
+     * The planning result of the current compile: module source path
+     * &rarr; the planned classes with their provisional occurrence
+     * data, in planning order. Read-only; empty before the planning
+     * phase runs, when a preceding phase failed, when planning
+     * produced error-level diagnostics, or when the dependency graph
+     * rejected the compilation (E2005 publishes no plan — the
+     * provisional plans are discarded).
+     */
+    public Map<String, List<PlannedDefaultClass>> plannedDefaultClasses() {
+        return Collections.unmodifiableMap(plannedDefaultClasses);
+    }
+
+    /**
+     * The dependency graph's published completed plans of this compile
+     * (ISSUE-0543): module source path &rarr; the planned classes with
+     * every plan's {@code runtimeDependencies} completed with the final
+     * digest-bearing records and the serializer-completed entry content
+     * preserved, in planning order. Read-only; empty before the graph
+     * phase runs, when a preceding phase failed, or when the graph
+     * rejected the compilation (E2005 publishes no plan).
+     */
+    public Map<String, List<PlannedDefaultClass>> completedDefaultPlans() {
+        return Collections.unmodifiableMap(completedDefaultPlans);
+    }
+
+    /**
+     * The LuaJIT codegen results keyed by module source path (the
+     * {@link #jvmGeneratedResults()} accessor's Lua mirror, ISSUE-0544):
+     * each entry carries the backend's realized runtime default plans
+     * for the module. Read-only; empty before the LuaJIT codegen phase.
+     */
+    public Map<String, LuaBackend.GenerationResult>
+            luaGeneratedResults() {
+        return Collections.unmodifiableMap(luaGeneratedResults);
+    }
+
+    /**
+     * The JS codegen results keyed by module source path (the
+     * {@link #jvmGeneratedResults()} accessor's JS mirror, ISSUE-0544):
+     * each entry carries the backend's realized runtime default plans
+     * for the module. Read-only; empty before the JS codegen phase.
+     */
+    public Map<String, JsBackend.JsCodegenResult> jsGeneratedResults() {
+        return Collections.unmodifiableMap(jsGeneratedResults);
+    }
+
+    /**
+     * The completed default plans of this compile keyed by module path
+     * (ISSUE-0544, the lowering epic's backend seam): module path
+     * &rarr; the module's completed {@link PlannedDefaultClass} list in
+     * planning order. Built from {@link #completedDefaultPlans()} (keyed
+     * by module source path) so the three backends consume one uniform
+     * plan surface — each backend keys its own module's plans by its
+     * module path and the JVM backend additionally resolves imported
+     * providers' plans through the imported module paths. Empty before
+     * the graph phase succeeds or when it published no plan.
+     */
+    public Map<String, List<PlannedDefaultClass>>
+            completedPlansByModulePath() {
+        Map<String, List<PlannedDefaultClass>> byModulePath =
+            new LinkedHashMap<>();
+        for (ModuleInfo info : modules.values()) {
+            List<PlannedDefaultClass> plans =
+                completedDefaultPlans.get(info.sourcePath);
+            if (plans != null && !plans.isEmpty()) {
+                byModulePath.put(info.modulePath, plans);
+            }
+        }
+        return Collections.unmodifiableMap(byModulePath);
+    }
+
+    /**
+     * The merged final digest-bearing runtime dependency records of
+     * this compile (ISSUE-0543): ordinary {@code RUNTIME_USE} records
+     * in first-occurrence order followed by the per-plan
+     * {@code DEFERRED_DEFAULT_BINDING} records, structurally
+     * deduplicated. Read-only; empty before the graph phase runs or
+     * when the graph rejected the compilation.
+     */
+    public List<RuntimeImportDependency> runtimeDependencies() {
+        return List.copyOf(runtimeDependencies);
+    }
+
+    /**
+     * The initialization order of this compile (ISSUE-0543): module
+     * source paths in dependency order preserving first-import
+     * declaration order — the one shared ordering algorithm of
+     * {@link ModuleDependencyGraph#initializationOrder} (the phase-2
+     * check order derives from it, and the graph phase republishes the
+     * identical order after success). Read-only; empty before phase 2.
+     */
+    public List<String> dependencyOrder() {
+        return List.copyOf(dependencyOrder);
+    }
+
+    /**
+     * The canonical serializer input surface of this compile
+     * (ISSUE-0542): module source path &rarr; the read-only per-module
+     * facts {@link DefaultSemanticSerializer} consumes alongside
+     * {@link #plannedDefaultClasses()} — checked facts and the name
+     * resolver for implementation modules, the module resolver and the
+     * export map for declaration modules, the import surface, the
+     * canonical descriptor encoder, and the module-identity
+     * classification. Read-only; a data seam only — this epic wires
+     * no serializer phase: the graph epic (ISSUE-0543) owns the
+     * orchestrator phase that invokes the serializer after its
+     * digest-free SCC pass. No digest is computed, no graph runs, and
+     * nothing is published here.
+     */
+    public Map<String, DefaultSerializerModuleInput>
+            defaultSerializerModuleInputs() {
+        Map<String, DefaultSerializerModuleInput> inputs =
+            new LinkedHashMap<>();
+        if (identityAssembly == null) {
+            return Collections.unmodifiableMap(inputs);
+        }
+        CanonicalRuntimeTypeDescriptor descriptors =
+            new CanonicalRuntimeTypeDescriptor(identityAssembly.index());
+        Map<String, CanonicalModuleIdentity> classification =
+            modulePathClassification();
+        ModuleResolverImpl moduleResolver = new ModuleResolverImpl(modules,
+            diagnostics);
+        for (ModuleInfo info : modules.values()) {
+            if (info.rawAst == null || info.location == null) {
+                continue;
+            }
+            // Defensive: the serializer is only invoked after a
+            // successful planning phase, so modules whose checked
+            // facts never completed (a failed compile) stay outside
+            // the seam — the serializer input contract requires the
+            // exact declaration/implementation fact split.
+            if (!info.isDeclarationFile
+                    && (info.checkResult == null
+                        || info.nameResolver == null)) {
+                continue;
+            }
+            inputs.put(info.sourcePath, new DefaultSerializerModuleInput(
+                info.sourcePath, info.modulePath, info.rawAst,
+                info.location,
+                info.isDeclarationFile ? null : info.checkResult,
+                info.isDeclarationFile ? null : info.nameResolver,
+                defaultPlanImportsOf(info),
+                info.exports != null ? info.exports : Map.of(),
+                descriptors, classification,
+                info.isDeclarationFile ? moduleResolver : null,
+                info.isDeclarationFile, isExternCModuleInfo(info)));
+        }
+        return Collections.unmodifiableMap(inputs);
+    }
+
+    /**
+     * Phase 3.85 (ISSUE-0543, design source
+     * {@code provider-versioned-default-plans} D1/D7/D8): the runtime
+     * dependency graph and plan publication — the digest-free SCC
+     * pass merges the ordinary runtime-use edges ({@code RUNTIME_USE},
+     * the complete typed evaluator IR walk of every function body)
+     * with the planner's default edges
+     * ({@code DEFERRED_DEFAULT_BINDING}) over the one
+     * {@link RuntimeImportDependency} carrier; a strongly connected
+     * component containing at least one runtime edge reports E2005
+     * with a note per runtime edge carrying
+     * {@code (reason, from &rarr; to, sourceRange)} and publishes no
+     * plan, FFI metadata, or artifact (the provisional plans are
+     * discarded). Only an acyclic pass requests the provider digests —
+     * the serializer completes every default's {@code runtimeResources}
+     * and additionally demands the ordinary occurrences' provider
+     * digests — publishes the final digest-bearing dependency records
+     * and the completed plans, and fixes the initialization order. No
+     * evaluator is invoked and no library is loaded.
+     */
+    private void evaluateDependencyGraph() {
+        Map<String, ModuleDependencyGraph.ModuleInput> inputs =
+            new LinkedHashMap<>();
+        for (Map.Entry<String, ModuleInfo> entry : modules.entrySet()) {
+            String sourcePath = entry.getKey();
+            ModuleInfo info = entry.getValue();
+            if (info.rawAst == null || info.location == null) {
+                continue;
+            }
+            if (!info.isDeclarationFile
+                    && (info.checkResult == null
+                        || info.nameResolver == null)) {
+                continue;
+            }
+            inputs.put(sourcePath, new ModuleDependencyGraph.ModuleInput(
+                info.sourcePath, info.modulePath, info.rawAst,
+                info.location,
+                info.isDeclarationFile ? null : info.checkResult,
+                info.isDeclarationFile ? null : info.nameResolver,
+                defaultPlanImportsOf(info), modulePathClassification(),
+                info.isDeclarationFile));
+        }
+        // The E2005 anchor chain inputs: each module's import-edge
+        // spans and program span.
+        Map<String, Map<String, Span>> edgeSpans = new LinkedHashMap<>();
+        Map<String, Span> programSpans = new LinkedHashMap<>();
+        for (Map.Entry<String, ModuleInfo> entry : modules.entrySet()) {
+            String sourcePath = entry.getKey();
+            ModuleInfo info = entry.getValue();
+            Map<String, Span> spans = new LinkedHashMap<>();
+            if (info.rawAst != null) {
+                for (StatementNode stmt : info.rawAst.statements()) {
+                    if (stmt instanceof ImportDeclaration imp) {
+                        String resolved = resolveImportPath(
+                            imp.modulePath(), Path.of(sourcePath),
+                            imp.span());
+                        if (resolved != null
+                                && modules.containsKey(resolved)) {
+                            spans.put(resolved, imp.span());
+                        }
+                    }
+                }
+                if (info.rawAst.span() != null) {
+                    programSpans.put(sourcePath, info.rawAst.span());
+                }
+            }
+            edgeSpans.put(sourcePath, spans);
+        }
+
+        ModuleDependencyGraph.DigestFreeResult free =
+            ModuleDependencyGraph.digestFreePass(inputs,
+                plannedDefaultClasses, edgeSpans, programSpans);
+        if (free.failed()) {
+            // E2005: a runtime SCC — publish no plan, no FFI metadata,
+            // and no artifact; the provisional plans are discarded.
+            diagnostics.addAll(free.diagnostics());
+            hasErrors = true;
+            plannedDefaultClasses.clear();
+            runtimeDependencies = List.of();
+            return;
+        }
+        // Acyclic: request the provider digests now — the serializer
+        // completes every default's runtimeResources and additionally
+        // demands the ordinary occurrences' provider digests.
+        DefaultSemanticSerializer.Result serialized =
+            DefaultSemanticSerializer.serialize(
+                defaultSerializerModuleInputs(), plannedDefaultClasses,
+                free.ordinaryOccurrences());
+        diagnostics.addAll(serialized.diagnostics());
+        if (serialized.hasErrors()) {
+            hasErrors = true;
+            plannedDefaultClasses.clear();
+            runtimeDependencies = List.of();
+            return;
+        }
+        ModuleDependencyGraph.PublishedGraph published =
+            ModuleDependencyGraph.finalizeGraph(free,
+                plannedDefaultClasses, serialized.serializedClasses(),
+                serialized.providerDigests());
+        completedDefaultPlans.putAll(published.completedPlans());
+        runtimeDependencies = published.runtimeDependencies();
+        dependencyOrder = free.initializationOrder();
+        log("  Runtime graph: " + runtimeDependencies.size()
+            + " dependency edge(s); initialization order "
+            + dependencyOrder.size() + " module(s)");
+    }
+
+    private void validateCffiDeclarations() {
+        if (backend == Backend.JS) {
+            return;
+        }
+        // The validator keys graph-order lookups by dotted module path
+        // (the import-surface key space), while {@code dependencyOrder}
+        // is the phase-2 check order of absolute source paths: translate
+        // the order into the validator's key space so every imported
+        // reference receives its real dependency-order position instead
+        // of a degenerate constant.
+        List<String> ffiDependencyOrder = dependencyOrder.stream()
+            .map(modules::get)
+            .filter(Objects::nonNull)
+            .map(info -> info.modulePath)
+            .toList();
+        CanonicalRuntimeTypeDescriptor descriptorEncoder =
+            new CanonicalRuntimeTypeDescriptor(identityAssembly.index());
+        for (ModuleInfo info : modules.values()) {
+            if (!isExternCModuleInfo(info)) {
+                continue;
+            }
+            String canonicalExternalIdentity = canonicalExternalIdentityOf(info);
+            if (canonicalExternalIdentity == null) {
+                // Defensive: an extern-C module that is not
+                // externals-listed has no native library and no public
+                // module identity — the E2010 library/manifest policy
+                // belongs to the config epic (ISSUE-0111); this phase
+                // publishes no metadata for it.
+                continue;
+            }
+            NativeLibraryRef nativeLibrary = nativeLibraryOf(info);
+            FfiDeclarationValidator.Result result =
+                FfiDeclarationValidator.validate(
+                    info.rawAst, info.modulePath, info.location,
+                    canonicalExternalIdentity, identityAssembly,
+                    descriptorEncoder,
+                    nativeLibrary == null ? null
+                        : nativeLibrary.kind().name(),
+                    nativeLibrary == null ? null
+                        : nativeLibrary.loaderText(),
+                    ffiDependencyOrder, importTargetsOf(info));
+            diagnostics.addAll(result.diagnostics());
+            if (result.hasErrors()) {
+                hasErrors = true;
+                continue;
+            }
+            if (backend == Backend.JVM) {
+                // Backend capability rejection (D8): after semantic/
+                // declaration validation, before any artifact write.
+                deal.diagnostics.DiagnosticRange externCRange =
+                    info.rawAst.fileDirectives().externCRange();
+                diagnostics.add(CompilerDiagnostic.error(
+                    DiagnosticCode.E6006,
+                    "JVM backend: C FFI (@extern-c) declarations are not"
+                        + " supported (FFI_UNSUPPORTED_BACKEND)",
+                    externCRange != null ? externCRange
+                        : deal.diagnostics.DiagnosticRange.synthetic(
+                            info.sourcePath)));
+                hasErrors = true;
+                continue;
+            }
+            // LuaJIT: the validated descriptor is accepted for later
+            // runtime loading; the generator produces the loader inputs
+            // (cells before any plan content; imported references in
+            // graph order; no evaluator ever invoked).
+            LuaFfiBindingGenerator.GeneratedBindings generated =
+                LuaFfiBindingGenerator.generate(result.descriptor(),
+                    result.importedFunctions(), result.importedClassPlans());
+            ffiGenerations.put(info.modulePath, new FfiGeneratedModule(
+                info.modulePath, result.descriptor(),
+                generated.cdefBundle(), generated.plans(),
+                generated.bindings()));
+        }
+    }
+
+    /** True for a parsed extern-C declaration module. */
+    private static boolean isExternCModuleInfo(ModuleInfo info) {
+        return info.isDeclarationFile && info.rawAst != null
+            && info.rawAst.fileDirectives().externC();
+    }
+
+    /**
+     * The canonical external module identity text of an externals-listed
+     * module ({@code @$external/&lt;rawImportSpecifier&gt;}), or null
+     * when the module has no external classification.
+     */
+    private String canonicalExternalIdentityOf(ModuleInfo info) {
+        CanonicalModuleIdentity identity = classifyModuleIdentity(info);
+        if (identity instanceof CanonicalModuleIdentity.ExternalModule ext) {
+            return "@$external/" + ext.rawImportSpecifier();
+        }
+        return null;
+    }
+
+    /** The externals entry's classified native library, or null. */
+    private NativeLibraryRef nativeLibraryOf(ModuleInfo info) {
+        CanonicalModuleIdentity identity = classifyModuleIdentity(info);
+        if (identity instanceof CanonicalModuleIdentity.ExternalModule ext) {
+            ExternalEntry entry = context.externals().get(
+                ext.rawImportSpecifier());
+            return entry == null ? null : entry.nativeLibrary();
+        }
+        return null;
+    }
+
+    /**
+     * The resolved import surface of one module: import alias &rarr;
+     * the provider's dotted module path and extracted export map (the
+     * extern-C metadata phase resolves default-expression provider
+     * references through it).
+     */
+    private Map<String, FfiDeclarationValidator.ImportTarget> importTargetsOf(
+            ModuleInfo info) {
+        Map<String, FfiDeclarationValidator.ImportTarget> targets =
+            new LinkedHashMap<>();
+        if (info.rawAst == null) {
+            return targets;
+        }
+        for (StatementNode stmt : info.rawAst.statements()) {
+            if (!(stmt instanceof ImportDeclaration imp)) {
+                continue;
+            }
+            String resolvedSource = resolveImportPath(imp.modulePath(),
+                Path.of(info.sourcePath), imp.span());
+            if (resolvedSource == null) {
+                continue;
+            }
+            ModuleInfo imported = modules.get(resolvedSource);
+            if (imported == null) {
+                continue;
+            }
+            targets.put(imp.alias(), new FfiDeclarationValidator.ImportTarget(
+                imported.modulePath,
+                imported.exports != null ? imported.exports : Map.of()));
+        }
+        return targets;
+    }
+
 
     /**
      * Packages one orchestrator module's read-only facts for the builder:
@@ -2012,38 +2534,349 @@ public final class CompilationOrchestrator {
 
     private void codegenAll() throws IOException {
         long phaseStart = System.currentTimeMillis();
-        Files.createDirectories(outputRoot);
-
-        if (backend == Backend.JVM) {
-            // JVM use site (ISSUE-0091): emit one .java module class per
-            // module. Import resolution and the Lua runtime copies are
-            // LuaJIT-specific and skipped here.
-            codegenAllJvm();
-        } else if (backend == Backend.JS) {
-            // JS use site (ISSUE-0247 core slice, js-backend-emitter D3):
-            // codegenAllJs() replaces the ISSUE-0189 staging guard with the
-            // two-pass emitter plus the runtime/stdlib deployment copies.
-            codegenAllJs();
-        } else {
-            // Lua use site (emitter page D1): the LuaJIT emitter consumes
-            // the same per-compilation canonical identity surface the JS
-            // arm builds — one identity index over the module-path
-            // classification plus the intrinsic builtin Error module.
-            // Every descriptor the Lua emitter writes resolves through
-            // it; the local legacy dialect producer is retired.
-            ModuleIdentityResolver.IdentityIndex identityIndex =
-                buildCanonicalIdentitySurface();
-            for (ModuleInfo info : modules.values()) {
-                if (info.isDeclarationFile) continue;
-                codegenLuaModule(info, identityIndex);
+        try {
+            if (backend == Backend.JVM) {
+                // JVM use site (ISSUE-0091): emit one .java module class per
+                // module. Import resolution and the Lua runtime copies are
+                // LuaJIT-specific and skipped here.
+                codegenAllJvm();
+            } else if (backend == Backend.JS) {
+                // JS use site (ISSUE-0247 core slice, js-backend-emitter D3):
+                // codegenAllJs() replaces the ISSUE-0189 staging guard with the
+                // two-pass emitter plus the runtime/stdlib deployment copies.
+                codegenAllJs();
+            } else {
+                // Lua use site (emitter page D1): the LuaJIT emitter consumes
+                // the same per-compilation canonical identity surface the JS
+                // arm builds — one identity index over the module-path
+                // classification plus the intrinsic builtin Error module.
+                // Every descriptor the Lua emitter writes resolves through
+                // it; the local legacy dialect producer is retired.
+                ModuleIdentityResolver.IdentityIndex identityIndex =
+                    buildCanonicalIdentitySurface();
+                // ISSUE-0239 E10 dispatch: the ModuleRoutePlan selects the
+                // emitter per module — SHARED-routed modules lower to
+                // validated semantic IR and emit through the shared
+                // emitter; LEGACY-routed modules keep the retained
+                // backend. No within-run fallback exists: a shared
+                // lowering/emission failure fails the compile and
+                // publishes nothing.
+                for (CheckedModuleInput checked : sharedModulesInDependencyOrder()) {
+                    emitSharedLuaModule(checked);
+                }
+                for (ModuleInfo info : modules.values()) {
+                    if (info.isDeclarationFile) continue;
+                    if (routeOf(info) == ModuleRoute.SHARED) continue;
+                    codegenLuaModule(info, identityIndex);
+                    retainedEmissionCount++;
+                }
+                copyRuntimeLibrary();
+                copyStdlibModules();
+                validateMixedEdges();
             }
-            copyRuntimeLibrary();
-            copyStdlibModules();
+        } catch (IOException stagingFailure) {
+            // A staging write failure (D4): nothing is published, the
+            // stage tree is removed by compile(), the diagnostics report
+            // is unchanged, and the pinned deterministic compiler I/O
+            // diagnostic is printed with exit 1.
+            stageFailure(stagingFailure);
         }
 
         long phaseElapsed = System.currentTimeMillis() - phaseStart;
         if (verbose) {
             System.out.println("  Phase 4 total: " + phaseElapsed + "ms");
+        }
+    }
+
+    /**
+     * Records the first staging write failure of the compile (D4): it
+     * sets the error state so the compile stops at the next phase
+     * boundary, and {@link #compile()} renders the pinned deterministic
+     * compiler I/O diagnostic.
+     */
+    private void stageFailure(IOException failure) {
+        if (pendingStageFailure == null) {
+            pendingStageFailure = failure;
+        }
+        hasErrors = true;
+    }
+
+    // =========================================================================
+    // Phase 4 shared-route emission (ISSUE-0239 E10): the ModuleRoutePlan
+    // selects semantic or retained emission per module with no within-run
+    // fallback
+    // =========================================================================
+
+    /**
+     * The production route of one implementation module (ISSUE-0239
+     * E10): the plan's entry for the module, or {@code LEGACY} when the
+     * compile's backend has no closed route-plan target (JS), the plan
+     * phase did not produce, or the module is absent from the plan — a
+     * defensive LEGACY selection over incomplete plan facts only, never
+     * a within-run reroute of a SHARED plan entry.
+     *
+     * @param info the implementation module; non-null
+     * @return the planned route ({@code LEGACY} when no SHARED entry exists)
+     */
+    private ModuleRoute routeOf(ModuleInfo info) {
+        if (routePlan == null || routePlan.hasErrors() || routePlan.plan() == null) {
+            return ModuleRoute.LEGACY;
+        }
+        ModuleRoute route = routePlan.plan().entries().get(new ModuleId(info.modulePath));
+        return route == null ? ModuleRoute.LEGACY : route;
+    }
+
+    /**
+     * The SHARED-routed implementation modules in the checked project's
+     * dependency order (ISSUE-0239 E10) — the lowering/emission order of
+     * the shared route (never the discovery-map insertion order, which
+     * is entry-first).
+     *
+     * @return the shared modules in dependency order
+     */
+    private List<CheckedModuleInput> sharedModulesInDependencyOrder() {
+        List<CheckedModuleInput> shared = new ArrayList<>();
+        if (checkedProjectBuild == null || checkedProjectBuild.hasErrors()
+                || checkedProjectBuild.input() == null) {
+            return shared;
+        }
+        for (CheckedModuleInput checked : checkedProjectBuild.input().modules()) {
+            if (routePlan == null || routePlan.hasErrors() || routePlan.plan() == null) {
+                continue;
+            }
+            if (routePlan.plan().entries().get(checked.moduleId()) == ModuleRoute.SHARED) {
+                shared.add(checked);
+            }
+        }
+        return shared;
+    }
+
+    /** The requirement manifest of one implementation module (E10). */
+    private SemanticRequirementManifest manifestOf(ModuleId moduleId) {
+        if (requirementManifests == null || requirementManifests.hasErrors()
+                || requirementManifests.manifests() == null) {
+            return null;
+        }
+        for (SemanticRequirementManifest manifest : requirementManifests.manifests()) {
+            if (manifest.moduleId().equals(moduleId)) {
+                return manifest;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Lowers one SHARED-routed module through the full-program E7 walk
+     * (ISSUE-0239 E10): the dependency-ordered project allocator, the
+     * already-lowered callees' recorded {@code EXTERNAL_ENTRY} op ids,
+     * and the plan's route facts. The unit is validated by the lowerer;
+     * a failure is the returned E6005 — never a reroute.
+     */
+    private SemanticLowerer.FullProgramE7Result lowerSharedModule(
+            CheckedModuleInput module) {
+        if (sharedAllocator == null) {
+            List<ModuleId> order = checkedProjectBuild.input().modules().stream()
+                .map(CheckedModuleInput::moduleId).toList();
+            sharedAllocator = SemanticIdAllocator.over(order);
+        }
+        SemanticRequirementManifest manifest = manifestOf(module.moduleId());
+        if (manifest == null) {
+            throw new IllegalStateException("shared module '" + module.moduleId()
+                + "' has no requirement manifest (producer defect)");
+        }
+        return SemanticLowerer.lowerModuleFullProgramE7(
+            module, invocation.semanticProfile(), manifest.constructCoverage(),
+            checkedProjectBuild.index().interfaceIndexDigest(),
+            invocation.capabilityRegistryHash(), sharedAllocator,
+            routePlan.plan().entries(), sharedCalleeEntries, Set.of());
+    }
+
+    /** True iff the module's source path is the selected entry file. */
+    private boolean isEntryModule(CheckedModuleInput checked) {
+        for (Map.Entry<String, ModuleInfo> entry : modules.entrySet()) {
+            if (entry.getValue().modulePath.equals(checked.moduleId().path())) {
+                return Path.of(entry.getValue().sourcePath).toAbsolutePath()
+                    .normalize().equals(entryFile.toAbsolutePath().normalize());
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Emits one SHARED-routed module through the shared LuaJIT emitter
+     * into the staging tree (ISSUE-0239 E10) and records its emitted ABI
+     * manifest. A lowering/emission failure merges E6005 and fails the
+     * compile — no artifact stages for the module and nothing publishes.
+     */
+    private void emitSharedLuaModule(CheckedModuleInput checked) throws IOException {
+        SemanticLowerer.FullProgramE7Result lowered = lowerSharedModule(checked);
+        if (lowered.lowering().hasErrors()) {
+            diagnostics.addAll(lowered.lowering().diagnostics());
+            hasErrors = true;
+            log("  Shared lowering failed for " + checked.moduleId() + ": "
+                + lowered.lowering().diagnostics());
+            return;
+        }
+        sharedCalleeEntries.put(checked.moduleId(), lowered.externalEntries());
+        String artifactPath = checked.moduleId().path().replace('.', '/') + ".lua";
+        String source;
+        try {
+            source = LuaSemanticEmitter.emitProductionModule(
+                lowered.lowering().unit(), lowered.lowering().table(),
+                isEntryModule(checked));
+        } catch (IllegalStateException emitterGap) {
+            failSharedEmission(checked.moduleId().path(), emitterGap);
+            return;
+        }
+        Path stageOutputPath = stager.stagePath(artifactPath);
+        Files.writeString(stageOutputPath, source, StandardCharsets.UTF_8);
+        recordSharedAbi(checked.moduleId(), lowered, artifactPath, "exports");
+        semanticEmissionCount++;
+        log("  Generated (shared semantic IR): " + outputRoot.resolve(artifactPath));
+    }
+
+    /**
+     * Emits one SHARED-routed module through the shared JVM emitter into
+     * the staging tree (ISSUE-0239 E10) under the retained layout's
+     * class name, and records its emitted ABI manifest. A
+     * lowering/emission failure merges E6005 and fails the compile.
+     */
+    private void emitSharedJvmModule(CheckedModuleInput checked) throws IOException {
+        SemanticLowerer.FullProgramE7Result lowered = lowerSharedModule(checked);
+        if (lowered.lowering().hasErrors()) {
+            diagnostics.addAll(lowered.lowering().diagnostics());
+            hasErrors = true;
+            log("  Shared lowering failed for " + checked.moduleId() + ": "
+                + lowered.lowering().diagnostics());
+            return;
+        }
+        sharedCalleeEntries.put(checked.moduleId(), lowered.externalEntries());
+        String className = JvmBackend.classNameFor(checked.moduleId().path());
+        JvmSemanticEmitter.EmissionResult emission;
+        try {
+            emission = JvmSemanticEmitter.emitProductionModule(
+                lowered.lowering().unit(), lowered.lowering().table(),
+                isEntryModule(checked), className);
+        } catch (IllegalStateException emitterGap) {
+            failSharedEmission(checked.moduleId().path(), emitterGap);
+            return;
+        }
+        Path stageOutputPath = stager.stagePath(className + ".java");
+        Files.writeString(stageOutputPath, emission.source(), StandardCharsets.UTF_8);
+        recordSharedAbi(checked.moduleId(), lowered, className + ".java", "main");
+        semanticEmissionCount++;
+        log("  Generated (shared semantic IR): "
+            + outputRoot.resolve(className + ".java"));
+    }
+
+    /**
+     * The fail-closed emitter-coverage gate (ISSUE-0239 E10): an op kind
+     * outside the shared emitters' closed production set is E6005 —
+     * never a crash, never a within-run reroute, and the failed module
+     * stages no artifact (the publication transaction then preserves
+     * the prior set).
+     */
+    private void failSharedEmission(String modulePath, IllegalStateException gap) {
+        diagnostics.add(deal.semantic.ir.FailureContractRegistry.e6005(
+            new deal.semantic.ir.LoweringFailureDetail(modulePath,
+                deal.semantic.ir.SemanticCapability.MODULES,
+                "SHARED_EMITTER_COVERAGE",
+                invocation.semanticProfile(),
+                deal.semantic.ir.LoweredModuleUnit.FORMAT_VERSION,
+                "CompilationOrchestrator SHARED_EMITTER_COVERAGE ("
+                    + gap.getMessage() + ")")));
+        hasErrors = true;
+        log("  Shared emission failed for " + modulePath + ": " + gap.getMessage());
+    }
+
+    /**
+     * Records the emitted SHARED-owner ABI manifest of one module
+     * (ISSUE-0239 E10): the planner-owned class facts copied from the
+     * index, the exported descriptors from the unit's
+     * {@code EXPORT_PUBLISH} payloads, one sync-invocation entry per
+     * export (the recorded {@code EXTERNAL_ENTRY} op id, or the entry
+     * delegation's wrapper name for {@code main}), one wrapper ABI per
+     * function export, and the staged load key/initialization entry.
+     */
+    private void recordSharedAbi(ModuleId moduleId,
+                                 SemanticLowerer.FullProgramE7Result lowered,
+                                 String loadKey, String initializationEntry) {
+        ExternalModuleInterface indexEntry =
+            checkedProjectBuild.index().modules().get(moduleId);
+        if (indexEntry == null) {
+            throw new IllegalStateException("shared module '" + moduleId
+                + "' has no interface index entry (producer defect)");
+        }
+        Map<String, RuntimeDescriptor> descriptors = new LinkedHashMap<>();
+        Map<String, SyncInvocationEntry> syncEntries = new LinkedHashMap<>();
+        Map<String, FunctionSignatureAbi> wrappers = new LinkedHashMap<>();
+        Map<String, OpId> entries = lowered.externalEntries();
+        for (SemanticOp op : lowered.lowering().unit().ops()) {
+            if (op.kind() != SemanticOpKind.EXPORT_PUBLISH) {
+                continue;
+            }
+            KindPayload.ExportPublishPayload payload =
+                (KindPayload.ExportPublishPayload) op.payload();
+            descriptors.put(payload.name(), payload.descriptor());
+            OpId entryOpId = entries.get(payload.name());
+            if (entryOpId != null) {
+                syncEntries.put(payload.name(),
+                    new SyncInvocationEntry.ExternalEntry(entryOpId));
+            } else {
+                // main: the ENTRY_INVOKE delegation owns its invocation
+                // shape; the retained-layout wrapper name stands in.
+                syncEntries.put(payload.name(),
+                    new SyncInvocationEntry.AbiWrapper(payload.name()));
+            }
+            if (payload.descriptor() instanceof RuntimeDescriptor.Func func) {
+                wrappers.put(payload.name(), new FunctionSignatureAbi(
+                    payload.name(), func.canonicalSpecText()));
+            }
+        }
+        Map<ClassId, ClassFactoryId> factoryAbi = new LinkedHashMap<>();
+        Map<ClassId, List<FieldInterface>> layoutAbi = new LinkedHashMap<>();
+        for (ClassInterface classEntry : indexEntry.classes()) {
+            factoryAbi.put(classEntry.classId(), classEntry.constructionEntry());
+            layoutAbi.put(classEntry.classId(), classEntry.fields());
+        }
+        Target target = backend == Backend.JVM ? Target.JVM : Target.LUAJIT;
+        emittedSharedAbis.add(new TargetModuleAbi(moduleId, target,
+            ArtifactOwner.SHARED, invocation.semanticProfile(), factoryAbi,
+            layoutAbi, descriptors, loadKey, initializationEntry, wrappers,
+            syncEntries, List.of()));
+    }
+
+    /**
+     * Stage-time mixed-edge validation (ISSUE-0239 E10): every emitted
+     * SHARED ABI manifest and the plan's plan-time retained records are
+     * validated against the staged set and the interface index before
+     * publication. A failure is E6005 — nothing publishes and the prior
+     * live set stays untouched (the publication transaction owns the
+     * all-or-nothing swap).
+     */
+    private void validateMixedEdges() throws IOException {
+        if (emittedSharedAbis.isEmpty()) {
+            return;
+        }
+        if (routePlan == null || routePlan.hasErrors() || routePlan.plan() == null) {
+            throw new IllegalStateException("shared ABI manifests exist without a "
+                + "route plan (producer defect)");
+        }
+        List<StagedArtifact> staged = new ArrayList<>();
+        for (deal.publication.Artifact artifact : stager.stagedSet().artifacts()) {
+            staged.add(new StagedArtifact(artifact.relativePath(),
+                artifact.content()));
+        }
+        StagedArtifactSet stagedSet = new StagedArtifactSet(staged);
+        List<TargetModuleAbi> abiEdges = new ArrayList<>(routePlan.plan().abiEdges());
+        abiEdges.addAll(emittedSharedAbis);
+        Optional<CompilerDiagnostic> failure = TargetAbiValidator.validate(
+            stagedSet, routePlan.plan(), abiEdges,
+            checkedProjectBuild.index(), invocation.semanticProfile());
+        if (failure.isPresent()) {
+            diagnostics.add(failure.get());
+            hasErrors = true;
+            log("  Mixed-edge validation failed: " + failure.get());
         }
     }
 
@@ -2060,6 +2893,12 @@ public final class CompilationOrchestrator {
 
         Map<String, String> importResolutions = new HashMap<>();
         Map<String, Map<String, Type>> hostModules = new HashMap<>();
+        // Extern-C imports (emitter page D6): raw import path -> the
+        // metadata phase's generated module (descriptor, cdef bundle,
+        // retained plans, forward bindings); the emitted import routes
+        // through __rt.load_ffi and never through load_host or a raw
+        // require.
+        Map<String, FfiGeneratedModule> ffiModules = new HashMap<>();
         for (StatementNode stmt : info.rawAst.statements()) {
             if (stmt instanceof ImportDeclaration imp) {
                 String resolvedSource = resolveImportPath(imp.modulePath(),
@@ -2073,20 +2912,39 @@ public final class CompilationOrchestrator {
                         // declaration files that are not spec stdlib
                         // modules load through __rt.load_host with the
                         // raw import path verbatim as the require key.
+                        // An effective extern-C declaration with published
+                        // FFI metadata is an FFI module instead (emitter
+                        // page D6): it loads through __rt.load_ffi and is
+                        // never a host module.
                         if (imported.isDeclarationFile
                                 && !isSpecStdlibModuleInfo(imported)) {
-                            hostModules.put(imp.modulePath(),
-                                imported.exports != null
-                                    ? imported.exports : Map.of());
+                            FfiGeneratedModule ffi =
+                                ffiGenerations.get(imported.modulePath);
+                            if (imported.rawAst != null
+                                    && imported.rawAst.fileDirectives()
+                                        .externC()
+                                    && ffi != null) {
+                                ffiModules.put(imp.modulePath(), ffi);
+                            } else {
+                                hostModules.put(imp.modulePath(),
+                                    imported.exports != null
+                                        ? imported.exports : Map.of());
+                            }
                         }
                     }
                 }
             }
         }
 
+        // The staging sink (whole-project-artifact-publication D1/D5):
+        // the same module-relative path, resolved inside the staging
+        // tree. The backend writes the artifact and its sidecar there;
+        // the live publication paths are passed only for the sidecar's
+        // path-string computation, so the per-invocation stage-tree
+        // nonce (on-disk names only) never enters artifact content.
         String filePath = info.modulePath.replace('.', '/') + ".lua";
-        Path outputPath = outputRoot.resolve(filePath);
-        Files.createDirectories(outputPath.getParent());
+        Path liveOutputPath = outputRoot.resolve(filePath);
+        Path stageOutputPath = stager.stagePath(filePath);
 
         // v1.2 entry contract: the selected entry module must export a
         // non-async main(): null and the backend invokes main() from that
@@ -2108,8 +2966,11 @@ public final class CompilationOrchestrator {
         // (runtime-class-identity D2(0)).
         LuaBackend.GenerationResult gen = LuaBackend.generateToFile(
             info.rawAst, info.checkResult, info.sourcePath, info.modulePath,
-            outputRoot, outputPath, sourceMap, importResolutions, hostModules,
-            isEntry, identityIndex, invocation.semanticProfile());
+            stager.stageTree(), stageOutputPath, outputRoot, liveOutputPath,
+            sourceMap, importResolutions, hostModules, ffiModules,
+            context.manifestDirectory(),
+            isEntry, identityIndex, invocation.semanticProfile(),
+            completedPlansByModulePath());
         // Native ranged backend list (T12): the backend emits
         // CompilerDiagnostic entries directly, so the orchestrator merge
         // needs no boundary conversion — real spans keep their exact
@@ -2124,9 +2985,10 @@ public final class CompilationOrchestrator {
                 + gen.diagnostics());
             return;
         }
+        luaGeneratedResults.put(info.sourcePath, gen);
 
         long modElapsed = System.currentTimeMillis() - modStart;
-        log("  Generated: " + outputPath + " (" + modElapsed + "ms)");
+        log("  Generated: " + liveOutputPath + " (" + modElapsed + "ms)");
     }
 
     /**
@@ -2146,6 +3008,81 @@ public final class CompilationOrchestrator {
      * two modules mapping to the same class name (e.g. a case-only
      * difference) is an E6000 error — never a silent artifact overwrite.
      */
+
+    /** Per-module JVM import context (ISSUE-0096/ISSUE-0100/ISSUE-0109):
+     * import resolutions, imported class declarations, and host-module
+     * declarations for one module — the same discovery the JVM use site
+     * builds. Shared by the ISSUE-0301 shape-collection pre-pass and the
+     * per-module codegen pass. */
+    private record JvmImportContext(
+            Map<String, String> importResolutions,
+            Map<String, Map<String, ClassDeclaration>> importedClasses,
+            Map<String, Map<String, Type>> hostModules,
+            Map<String, Map<String, List<HostModuleDeclarations.HostField>>>
+                hostClassDeclarations) {}
+
+    /** Builds the per-module JVM import context for {@code info}. */
+    private JvmImportContext jvmImportContextOf(ModuleInfo info) {
+        // Import resolutions (ISSUE-0096): raw import path → module
+        // path of the imported COMPILED module. Declaration files
+        // become host modules (ISSUE-0100). ISSUE-0109: the same
+        // discovery pass collects each imported module's class
+        // declarations (module path → name → declaration).
+        Map<String, String> importResolutions = new HashMap<>();
+        Map<String, Map<String, ClassDeclaration>> importedClasses =
+            new HashMap<>();
+        Map<String, Map<String, Type>> hostModules = new HashMap<>();
+        // Host-class declarations (ISSUE-0303, jvm-v12-host-abi-completion
+        // D4): the declared class exports' field records with their
+        // orchestrator-resolved types — the JVM backend synthesizes the
+        // shared $DealRt record classes from them.
+        Map<String, Map<String, List<HostModuleDeclarations.HostField>>>
+            hostClassDeclarations = new HashMap<>();
+        for (StatementNode stmt : info.rawAst.statements()) {
+            if (stmt instanceof ImportDeclaration imp) {
+                String resolvedSource = resolveImportPath(imp.modulePath(),
+                    Path.of(info.sourcePath), imp.span());
+                if (resolvedSource != null) {
+                    ModuleInfo imported = modules.get(resolvedSource);
+                    if (imported == null) {
+                        continue;
+                    }
+                    if (imported.isDeclarationFile) {
+                        if (!isSpecStdlibModuleInfo(imported)) {
+                            HostModuleDeclarations declared =
+                                hostDeclarationsOf(imported);
+                            hostModules.put(imp.modulePath(),
+                                declared.exports());
+                            hostClassDeclarations.put(imp.modulePath(),
+                                declared.classFields());
+                        }
+                    } else {
+                        importResolutions.put(imp.modulePath(),
+                            imported.modulePath);
+                        Map<String, ClassDeclaration> classes =
+                            new LinkedHashMap<>();
+                        for (StatementNode importedStmt
+                                : imported.rawAst.statements()) {
+                            ClassDeclaration cd = null;
+                            if (importedStmt instanceof ClassDeclaration c) {
+                                cd = c;
+                            } else if (importedStmt instanceof ExportDeclaration ed
+                                    && ed.declaration() instanceof ClassDeclaration c) {
+                                cd = c;
+                            }
+                            if (cd != null) {
+                                classes.putIfAbsent(cd.name(), cd);
+                            }
+                        }
+                        importedClasses.put(imported.modulePath, classes);
+                    }
+                }
+            }
+        }
+        return new JvmImportContext(importResolutions, importedClasses,
+            hostModules, hostClassDeclarations);
+    }
+
     private void codegenAllJvm() throws IOException {
         if (sourceMapExplicit) {
             // Source-map sidecars (.deal.map.json) are produced only by the
@@ -2158,67 +3095,123 @@ public final class CompilationOrchestrator {
                 + "sidecars with the JVM backend (source maps are "
                 + "LuaJIT-only)");
         }
+        // Canonical identity surface (canonical identity carriage,
+        // descriptor-identity-propagation D1/D2): the ONE
+        // per-compilation identity index over the module-path
+        // classification — the same surface the checker consumed — so
+        // every class descriptor the JVM backend emits resolves through
+        // {@code index.descriptorTextFor(identity)} byte-for-byte from
+        // the classified identities (no second Type-to-text producer
+        // exists).
+        ModuleIdentityResolver.IdentityIndex identityIndex =
+            buildCanonicalIdentitySurface();
+        // Compilation-wide class-declaration identity surface (ISSUE-0301
+        // D4 shared-scope emission): canonical class identity → declaring
+        // module path for every class of every checked project module.
+        // The entry module's shared-scope wrapper pre-registration
+        // resolves a collected shape's class reference through this map
+        // when the declaring module is one the entry does not import
+        // directly (its own importAliases/importedClasses maps cannot
+        // name it), so the wrapper's invoke signature always references
+        // the real declaring module's emitted class. Deterministic:
+        // module order, then source order per module; the first
+        // declaration of an identity wins. Host declarations are
+        // excluded (their class exports resolve to the shared
+        // $DealRt synthesized records — jvm-v12-host-abi-completion
+        // D4 — collected in the projectHostClasses union below, never
+        // through a module-emitted class).
+        Map<CanonicalClassIdentity, String> classDeclaringModules =
+            new LinkedHashMap<>();
+        for (ModuleInfo info : modules.values()) {
+            if (info.isDeclarationFile) continue;
+            CanonicalModuleIdentity moduleIdentity =
+                classifyModuleIdentity(info);
+            if (moduleIdentity == null) continue;
+            for (StatementNode stmt : info.rawAst.statements()) {
+                ClassDeclaration cd = null;
+                if (stmt instanceof ClassDeclaration c) {
+                    cd = c;
+                } else if (stmt instanceof ExportDeclaration ed
+                        && ed.declaration() instanceof ClassDeclaration c) {
+                    cd = c;
+                }
+                if (cd != null) {
+                    classDeclaringModules.putIfAbsent(
+                        new CanonicalClassIdentity(moduleIdentity,
+                            cd.name()),
+                        info.modulePath);
+                }
+            }
+        }
+        // Pre-codegen collection pass (ISSUE-0301 D4, the shared
+        // runtime value surface): walk every checked module's types and
+        // collect the closed project-wide shape set — function-signature
+        // shapes, nested/function/bytes array element shapes — so the
+        // selected entry module's shared $DealRt scope carries every
+        // shape any module references. Deterministic: module dependency
+        // order (the modules map), then source order per module.
+        //
+        // ISSUE-0303 (jvm-v12-host-abi-completion D4): host-class-typed
+        // shapes join the union — the declared host classes emit their
+        // synthesized record classes in the shared $DealRt scope (the
+        // project-wide host-class union collected right below), so a
+        // wrapper may reference a host-class record exactly like any
+        // other shared carrier.
+        List<Type> sharedShapes = new ArrayList<>();
+        Set<Type> seenShapes = new LinkedHashSet<>();
+        for (ModuleInfo info : modules.values()) {
+            if (info.isDeclarationFile) continue;
+            JvmImportContext ctx = jvmImportContextOf(info);
+            for (Type shape : JvmBackend.collectShapes(info.rawAst,
+                    info.checkResult, info.sourcePath, info.modulePath,
+                    ctx.importResolutions, ctx.importedClasses,
+                    ctx.hostModules, ctx.hostClassDeclarations,
+                    invocation.semanticProfile(),
+                    identityIndex, identityIndex.moduleIdentityLookup())) {
+                if (seenShapes.add(shape)) {
+                    sharedShapes.add(shape);
+                }
+            }
+        }
+        List<Type> projectShapes = List.copyOf(sharedShapes);
+
+        // Project-wide host-class declaration union (ISSUE-0303,
+        // jvm-v12-host-abi-completion D4): raw import specifier → class
+        // name → declared field records, deterministic (module order,
+        // then per-module import order, then declaration order). The
+        // entry module's shared $DealRt scope emits one synthesized
+        // record class per declared host class — the single emission
+        // point, keyed by the specifier + class name, never by a hash
+        // iteration.
+        Map<String, Map<String, List<HostModuleDeclarations.HostField>>>
+            projectHostClasses = new LinkedHashMap<>();
+        for (ModuleInfo info : modules.values()) {
+            if (info.isDeclarationFile) continue;
+            JvmImportContext ctx = jvmImportContextOf(info);
+            for (Map.Entry<String,
+                    Map<String, List<HostModuleDeclarations.HostField>>> e
+                    : ctx.hostClassDeclarations.entrySet()) {
+                Map<String, List<HostModuleDeclarations.HostField>>
+                    classes = projectHostClasses.computeIfAbsent(
+                        e.getKey(), k -> new LinkedHashMap<>());
+                for (Map.Entry<String,
+                        List<HostModuleDeclarations.HostField>> c
+                        : e.getValue().entrySet()) {
+                    classes.putIfAbsent(c.getKey(), c.getValue());
+                }
+            }
+        }
+
         // Pass 1: generate every module and merge diagnostics. Rejected
         // modules write no artifact.
         List<ModuleInfo> cleanModules = new ArrayList<>();
         Map<ModuleInfo, JvmBackend.JvmCodegenResult> results = new LinkedHashMap<>();
         for (ModuleInfo info : modules.values()) {
             if (info.isDeclarationFile) continue;
-            // Import resolutions (ISSUE-0096): raw import path → module
-            // path of the imported COMPILED module. Declaration files
-            // become host modules (ISSUE-0100) — see the hostModules
-            // construction below — instead of the pre-slice E6000.
-            // ISSUE-0109: the same discovery pass collects each imported
-            // module's class declarations (module path → name →
-            // declaration) so the backend can emit imported-class types,
-            // construction, and nominal checks against the declaring
-            // module's generated nested classes.
-            Map<String, String> importResolutions = new HashMap<>();
-            Map<String, Map<String, ClassDeclaration>> importedClasses =
-                new HashMap<>();
-            // ISSUE-0100 host ABI slice: imports of declaration files that
-            // are not spec stdlib modules are host modules — the same
-            // classification the LuaJIT use site builds (host-module-abi
-            // D5) — and their declared export map flows into JvmBackend.
-            Map<String, Map<String, Type>> hostModules = new HashMap<>();
-            for (StatementNode stmt : info.rawAst.statements()) {
-                if (stmt instanceof ImportDeclaration imp) {
-                    String resolvedSource = resolveImportPath(imp.modulePath(),
-                        Path.of(info.sourcePath), imp.span());
-                    if (resolvedSource != null) {
-                        ModuleInfo imported = modules.get(resolvedSource);
-                        if (imported == null) {
-                            continue;
-                        }
-                        if (imported.isDeclarationFile) {
-                            if (!isSpecStdlibModuleInfo(imported)) {
-                                hostModules.put(imp.modulePath(),
-                                    imported.exports != null
-                                        ? imported.exports : Map.of());
-                            }
-                        } else {
-                            importResolutions.put(imp.modulePath(),
-                                imported.modulePath);
-                            Map<String, ClassDeclaration> classes =
-                                new LinkedHashMap<>();
-                            for (StatementNode importedStmt
-                                    : imported.rawAst.statements()) {
-                                ClassDeclaration cd = null;
-                                if (importedStmt instanceof ClassDeclaration c) {
-                                    cd = c;
-                                } else if (importedStmt instanceof ExportDeclaration ed
-                                        && ed.declaration() instanceof ClassDeclaration c) {
-                                    cd = c;
-                                }
-                                if (cd != null) {
-                                    classes.putIfAbsent(cd.name(), cd);
-                                }
-                            }
-                            importedClasses.put(imported.modulePath, classes);
-                        }
-                    }
-                }
+            if (routeOf(info) == ModuleRoute.SHARED) {
+                continue; // ISSUE-0239 E10: emitted by the shared emitter
             }
+            JvmImportContext ctx = jvmImportContextOf(info);
             boolean isEntry = info.sourcePath.equals(entryFile.toString());
             // ISSUE-0374 profile plumb: the backend derives its
             // backend-wide int mode from the invocation's project-wide
@@ -2228,13 +3221,15 @@ public final class CompilationOrchestrator {
             // D1/D2): the compilation's identity index and module-path
             // classification flow in; every class descriptor the backend
             // emits resolves through index.descriptorTextFor(identity).
-            ModuleIdentityResolver.IdentityIndex identityIndex =
-                buildCanonicalIdentitySurface();
             JvmBackend.JvmCodegenResult res = JvmBackend.generate(
                 info.rawAst, info.checkResult, info.sourcePath, info.modulePath,
-                importResolutions, importedClasses, hostModules, isEntry,
-                isEntry, identityIndex, identityIndex.moduleIdentityLookup(),
-                invocation.semanticProfile());
+                ctx.importResolutions, ctx.importedClasses, ctx.hostModules,
+                ctx.hostClassDeclarations,
+                isEntry, isEntry, identityIndex,
+                identityIndex.moduleIdentityLookup(),
+                invocation.semanticProfile(), projectShapes,
+                classDeclaringModules, projectHostClasses,
+                completedPlansByModulePath());
             for (CompilerDiagnostic d : res.diagnostics()) {
                 diagnostics.add(d);
                 hasErrors = true;
@@ -2270,11 +3265,22 @@ public final class CompilationOrchestrator {
                         + "' (class '" + className + "')");
                 continue;
             }
-            Path outputPath = outputRoot.resolve(className + ".java");
-            Files.createDirectories(outputPath.getParent());
-            Files.writeString(outputPath, res.source());
-            log("  Generated: " + outputPath);
+            // The staging sink (whole-project-artifact-publication
+            // D1/D5): the same module-relative path inside the staging
+            // tree; the live root is written only by the publish step.
+            Path stageOutputPath = stager.stagePath(className + ".java");
+            Files.writeString(stageOutputPath, res.source());
+            retainedEmissionCount++;
+            log("  Generated: " + outputRoot.resolve(className + ".java"));
         }
+        // ISSUE-0239 E10: SHARED-routed modules lower to validated
+        // semantic IR and emit through the shared JVM emitter — no
+        // within-run fallback: a shared lowering/emission failure fails
+        // the compile and publishes nothing.
+        for (CheckedModuleInput checked : sharedModulesInDependencyOrder()) {
+            emitSharedJvmModule(checked);
+        }
+        validateMixedEdges();
     }
 
     /**
@@ -2325,7 +3331,7 @@ public final class CompilationOrchestrator {
      * module is a project import, a resolved declaration file that is not
      * a spec stdlib module is a host module. Backend diagnostics (E6004
      * for an invalid entry module main at this slice; later slices add
-     * the E6000/E6003 rejection table) fail the compilation with the
+     * the E6000/E6006 rejection table) fail the compilation with the
      * standard report; no artifact is written for a rejected module. The
      * dot→slash artifact mapping is injective over the module-path
      * domain, so no class-name-collision gate is needed (unlike
@@ -2366,7 +3372,7 @@ public final class CompilationOrchestrator {
             // Extern-C imports (fixed-name-directive-events D9): raw
             // import paths whose resolved module is a declaration file
             // with effective FileDirectives.externC — the re-keyed JS
-            // E6003 FFI_UNSUPPORTED_BACKEND arm keys on this set at the
+            // E6006 FFI_UNSUPPORTED_BACKEND arm keys on this set at the
             // import statement.
             Set<String> externCImports = new HashSet<>();
             if (info.rawAst != null) {
@@ -2417,7 +3423,8 @@ public final class CompilationOrchestrator {
                 importResolutions, hostModules, externCImports, isEntry,
                 identityIndex, identityIndex.moduleIdentityLookup(),
                 sourceMap ? new SourceMapGenerator() : null,
-                invocation.semanticProfile());
+                invocation.semanticProfile(),
+                completedPlansByModulePath());
             // Native ranged backend list (T12): the backend emits
             // CompilerDiagnostic entries directly, so the orchestrator
             // merge needs no boundary conversion — real spans keep their
@@ -2435,6 +3442,7 @@ public final class CompilationOrchestrator {
             }
             cleanModules.add(info);
             results.put(info, res);
+            jsGeneratedResults.put(info.sourcePath, res);
         }
 
         // Pass 2: write artifacts for clean modules only. With the
@@ -2451,21 +3459,28 @@ public final class CompilationOrchestrator {
         // and no sidecar (the two-pass no-partial-artifact contract).
         for (ModuleInfo info : cleanModules) {
             JsBackend.JsCodegenResult res = results.get(info);
-            Path outputPath = outputRoot.resolve(
-                res.modulePath().replace('.', '/') + ".js");
-            Files.createDirectories(outputPath.getParent());
-            Files.writeString(outputPath, res.source());
-            log("  Generated: " + outputPath);
+            // The staging sink (whole-project-artifact-publication
+            // D1/D5): the same module-relative paths inside the staging
+            // tree; the live publication path feeds only the sidecar's
+            // path-string computation, so the per-invocation stage-tree
+            // nonce (on-disk names only) never enters artifact content.
+            String artifactRel = res.modulePath().replace('.', '/') + ".js";
+            Path liveArtifactPath = outputRoot.resolve(artifactRel);
+            Path stageOutputPath = stager.stagePath(artifactRel);
+            Files.writeString(stageOutputPath, res.source());
+            log("  Generated: " + liveArtifactPath);
 
             if (sourceMap && res.sourceMap() != null) {
                 String[] paths = sourceMapSidecarPaths(info.sourcePath,
-                    outputRoot, outputPath);
+                    outputRoot, liveArtifactPath);
                 String mapJson = res.sourceMap().toJson(paths[0], paths[1]);
-                Path mapPath = outputRoot.resolve(
+                Path stageMapPath = stager.stagePath(
                     res.modulePath().replace('.', '/')
                         + ".deal.map.json");
-                Files.writeString(mapPath, mapJson);
-                log("  Source map: " + mapPath);
+                Files.writeString(stageMapPath, mapJson);
+                log("  Source map: " + outputRoot.resolve(
+                    res.modulePath().replace('.', '/')
+                        + ".deal.map.json"));
             }
         }
 
@@ -2510,8 +3525,15 @@ public final class CompilationOrchestrator {
                 }
             }
         }
+        // v1.2 identity carriage (ISSUE-0303 D4): the extractor is
+        // seeded with the compilation's module-path classification, so
+        // the host-class field types carry the canonical externals
+        // identity (ExternalModule(rawImportSpecifier) — the manifest
+        // key as written), never the standalone dotted-path default.
+        // The JVM synthesized record emission keys on the externals
+        // projection, exactly like the checker's host-class symbols.
         ExportExtractor extractor = new ExportExtractor(
-            imported.modulePath, true);
+            imported.modulePath, true, modulePathClassification()::get);
         extractor.setImportModulePaths(importAliasMap);
         extractor.extract(imported.rawAst);
         for (StatementNode stmt : imported.rawAst.statements()) {
@@ -2591,24 +3613,19 @@ public final class CompilationOrchestrator {
     }
 
     private void copyRuntimeLibrary() throws IOException {
-        Path runtimeDest = outputRoot.resolve("deal/runtime.lua");
-        if (Files.exists(runtimeDest)) return;
-
-        Files.createDirectories(runtimeDest.getParent());
-
-        InputStream runtimeStream = getClass().getClassLoader()
-            .getResourceAsStream("deal/runtime.lua");
-        if (runtimeStream != null) {
-            Files.copy(runtimeStream, runtimeDest);
-            runtimeStream.close();
-            log("  Copied runtime: " + runtimeDest);
-            return;
-        }
-
-        Path runtimeSrc = Path.of("deal/runtime.lua");
-        if (Files.exists(runtimeSrc)) {
-            Files.copy(runtimeSrc, runtimeDest);
-            log("  Copied runtime: " + runtimeDest);
+        // Whole-set semantics (whole-project-artifact-publication D3/D6):
+        // the runtime copy always stages fresh from the resolved
+        // distribution surface — the pinned three-tier order
+        // (ISSUE-0457, D3): classpath resources, then the DEAL_HOME
+        // filesystem layout, then the checkout CWD dev fallback
+        // (no project-local location is pinned for the runtime) — and
+        // the whole-set swap replaces any earlier bytes; no skip of an
+        // existing destination remains.
+        Optional<DistributionHome.ResolvedSource> runtime =
+            stager.stageRuntimeCopy("deal/runtime.lua", distributionHome);
+        if (runtime.isPresent()) {
+            log("  Copied runtime: " + outputRoot.resolve("deal/runtime.lua")
+                + " (" + runtime.get().tier() + ")");
             return;
         }
 
@@ -2620,70 +3637,55 @@ public final class CompilationOrchestrator {
     }
 
     /**
-     * Copies the spec-listed stdlib .lua implementation files to the output.
-     * The module list is derived from the 6 spec-listed stdlib modules.
+     * Copies the spec-listed stdlib .lua implementation files to the
+     * output. The module list is derived from the 6 spec-listed stdlib
+     * modules. Each copy source resolves through {@link
+     * DistributionHome} in the pinned three-tier order (ISSUE-0457,
+     * {@code release-distribution-packaging-and-discovery} D3) —
+     * project-local surface first, then the language distribution
+     * (classpath resources, then the {@code DEAL_HOME} filesystem
+     * layout), then the checkout CWD dev fallback — so a v1.2 project
+     * shipping a local {@code std/} override stages its own bytes and
+     * an out-of-checkout compile stages the distribution's bytes. A
+     * module absent at every tier is skipped silently (unchanged).
      */
     private void copyStdlibModules() throws IOException {
         for (String stdlibModule : StdlibModuleResolver.SPEC_STDLIB_MODULES) {
-            Path destFile = outputRoot.resolve(stdlibModule + ".lua");
-            if (Files.exists(destFile)) continue;
-
-            // The pinned stdlib surface is the std directory itself
-            // (ISSUE-0269: the legacy stdlibDir heuristic moved into
-            // ProjectLocator step 6 / the synthesized context), so the
-            // implementation file is <surface>/<name>.lua for the
-            // module std/<name>.
-            String surface = context.stdlibSurfacePath();
-            if (surface != null) {
-                Path srcFile = Path.of(surface).resolve(
-                    stdlibModule.substring("std/".length()) + ".lua");
-                if (Files.exists(srcFile)) {
-                    Files.createDirectories(destFile.getParent());
-                    Files.copy(srcFile, destFile);
-                    log("  Copied stdlib: " + stdlibModule);
-                    continue;
-                }
+            // Whole-set semantics (whole-project-artifact-publication
+            // D3/D6): each stdlib copy stages fresh from the resolved
+            // distribution surface — project-local surface first, then
+            // the language distribution, then the checkout CWD dev
+            // fallback — so a project-local std/ override stages its
+            // own bytes and no skip of an existing destination remains.
+            String name = stdlibModule.substring("std/".length());
+            Optional<DistributionHome.ResolvedSource> source =
+                stager.stageStdlibCopy(name, "lua", distributionHome);
+            if (source.isEmpty()) {
+                continue;
             }
-
-            // Fallback: try classpath resource for bundled stdlib .lua files
-            String resourcePath = "std/" + stdlibModule.substring(4) + ".lua";
-            InputStream stream = getClass().getClassLoader()
-                .getResourceAsStream(resourcePath);
-            if (stream != null) {
-                Files.createDirectories(destFile.getParent());
-                Files.copy(stream, destFile);
-                stream.close();
-                log("  Copied stdlib: " + stdlibModule);
-            }
+            log("  Copied stdlib: " + stdlibModule + " ("
+                + source.get().tier() + ")");
         }
     }
 
     /**
      * JS deployment copy (js-backend-emitter D10): copies deal/runtime.js
-     * to <output>/deal/runtime.js — classpath resource first, then the
-     * repo-root file, else E6000 — and skips an existing destination
-     * (idempotent). The mirror of copyRuntimeLibrary with the .js
+     * to <output>/deal/runtime.js — the resolved distribution surface,
+     * else E6000 — staged fresh every compile (whole-set semantics; no
+     * destination skip). The mirror of copyRuntimeLibrary with the .js
      * spelling.
      */
     private void copyJsRuntimeLibrary() throws IOException {
-        Path runtimeDest = outputRoot.resolve("deal/runtime.js");
-        if (Files.exists(runtimeDest)) return;
-
-        Files.createDirectories(runtimeDest.getParent());
-
-        InputStream runtimeStream = getClass().getClassLoader()
-            .getResourceAsStream("deal/runtime.js");
-        if (runtimeStream != null) {
-            Files.copy(runtimeStream, runtimeDest);
-            runtimeStream.close();
-            log("  Copied runtime: " + runtimeDest);
-            return;
-        }
-
-        Path runtimeSrc = Path.of("deal/runtime.js");
-        if (Files.exists(runtimeSrc)) {
-            Files.copy(runtimeSrc, runtimeDest);
-            log("  Copied runtime: " + runtimeDest);
+        // Whole-set semantics (whole-project-artifact-publication D3/D6):
+        // the runtime copy always stages fresh from the resolved
+        // distribution surface — the pinned three-tier order
+        // (ISSUE-0457, D3) — and the whole-set swap replaces any
+        // earlier bytes; no skip of an existing destination remains.
+        Optional<DistributionHome.ResolvedSource> runtime =
+            stager.stageRuntimeCopy("deal/runtime.js", distributionHome);
+        if (runtime.isPresent()) {
+            log("  Copied runtime: " + outputRoot.resolve("deal/runtime.js")
+                + " (" + runtime.get().tier() + ")");
             return;
         }
 
@@ -2697,41 +3699,30 @@ public final class CompilationOrchestrator {
     /**
      * Copies the spec-listed stdlib .js implementation files to the
      * output (the module list is derived from the 6 spec-listed stdlib
-     * modules). Stdlib-directory source first, classpath resource
-     * fallback, a missing source for a module skipped silently;
-     * idempotent. The mirror of copyStdlibModules with the .js spelling
-     * (js-backend-emitter D10).
+     * modules). Each copy source resolves through {@link
+     * DistributionHome} in the pinned three-tier order (ISSUE-0457) —
+     * project-local surface first, then the language distribution
+     * (classpath resources, then the {@code DEAL_HOME} filesystem
+     * layout), then the checkout CWD dev fallback; a missing source for
+     * a module is skipped silently. Staged fresh every compile
+     * (whole-set semantics). The mirror of copyStdlibModules with the
+     * .js spelling (js-backend-emitter D10).
      */
     private void copyStdlibJsModules() throws IOException {
         for (String stdlibModule : StdlibModuleResolver.SPEC_STDLIB_MODULES) {
-            Path destFile = outputRoot.resolve(stdlibModule + ".js");
-            if (Files.exists(destFile)) continue;
-
-            // The pinned stdlib surface is the source of the .js
-            // implementations (ISSUE-0269 migration; see
-            // copyStdlibModules).
-            String surface = context.stdlibSurfacePath();
-            if (surface != null) {
-                Path srcFile = Path.of(surface).resolve(
-                    stdlibModule.substring("std/".length()) + ".js");
-                if (Files.exists(srcFile)) {
-                    Files.createDirectories(destFile.getParent());
-                    Files.copy(srcFile, destFile);
-                    log("  Copied stdlib: " + stdlibModule);
-                    continue;
-                }
+            // Whole-set semantics (whole-project-artifact-publication
+            // D3/D6): each stdlib copy stages fresh from the resolved
+            // distribution surface — project-local surface first, then
+            // the language distribution, then the checkout CWD dev
+            // fallback — and no skip of an existing destination remains.
+            String name = stdlibModule.substring("std/".length());
+            Optional<DistributionHome.ResolvedSource> source =
+                stager.stageStdlibCopy(name, "js", distributionHome);
+            if (source.isEmpty()) {
+                continue;
             }
-
-            // Fallback: try classpath resource for bundled stdlib .js files
-            String resourcePath = "std/" + stdlibModule.substring(4) + ".js";
-            InputStream stream = getClass().getClassLoader()
-                .getResourceAsStream(resourcePath);
-            if (stream != null) {
-                Files.createDirectories(destFile.getParent());
-                Files.copy(stream, destFile);
-                stream.close();
-                log("  Copied stdlib: " + stdlibModule);
-            }
+            log("  Copied stdlib: " + stdlibModule + " ("
+                + source.get().tier() + ")");
         }
     }
 
@@ -2740,15 +3731,27 @@ public final class CompilationOrchestrator {
     // =========================================================================
 
     /**
-     * Writes an IR dump string to the output directory.
-     * The file is placed at {@code <outputRoot>/<module-path>.ir.txt}.
+     * Stages an IR dump string into the publication staging tree (D1/D5):
+     * the file is placed at {@code <outputRoot>/<module-path>.ir.txt}
+     * after a successful publish, and appears atomically with the set —
+     * dumps of a failed compilation are discarded with the stage tree
+     * and never reach the live root (today's phases 1/3 dumps wrote the
+     * live root directly). A staging write failure records the pinned
+     * publish diagnostic (D4); the {@link IrDumper} failure diagnostic
+     * (E6001) stays with the callers' exception handling.
      */
-    private void writeIrDump(String modulePath, String irText) throws IOException {
+    private void writeIrDump(String modulePath, String irText) {
+        if (pendingStageFailure != null) {
+            return; // a staging failure already recorded: nothing more stages
+        }
         String filePath = modulePath.replace('.', '/') + ".ir.txt";
-        Path outputPath = outputRoot.resolve(filePath);
-        Files.createDirectories(outputPath.getParent());
-        Files.writeString(outputPath, irText);
-        log("  IR dumped: " + outputPath);
+        try {
+            stager.stage(filePath, irText.getBytes(StandardCharsets.UTF_8));
+        } catch (IOException stagingFailure) {
+            stageFailure(stagingFailure);
+            return;
+        }
+        log("  IR dumped: " + outputRoot.resolve(filePath));
     }
 
     // =========================================================================
@@ -2870,11 +3873,14 @@ public final class CompilationOrchestrator {
     }
 
     /**
-     * Delegates printing to the canonical formatter (D8); the
-     * error/warning summary counts are unchanged.
+     * Delegates printing to the canonical formatter (D8) over the D1
+     * canonical report order (deterministic-diagnostics): the stderr
+     * diagnostic blocks appear in the canonical total order while the
+     * internal collection order is unchanged; the error/warning summary
+     * counts are computed over the internal list exactly as before.
      */
     private void printDiagnostics() {
-        for (CompilerDiagnostic d : diagnostics) {
+        for (CompilerDiagnostic d : DiagnosticOrder.canonical(diagnostics)) {
             System.err.println(DiagnosticFormatter.format(d));
         }
         long errorCount = diagnostics.stream()
@@ -2914,14 +3920,15 @@ public final class CompilationOrchestrator {
         public Map<String, Type> resolveModule(String modulePath,
                                                 String importingModule,
                                                 Set<String> modulesInProgress)
-                throws ModuleNotFoundException {
+                throws ModuleNotFoundException,
+                    CffiImportWithoutNativeLibraryException {
             // Direct internal-name match first: the checker passes dotted
             // module paths carried by Type.Class values (e.g. an
             // externals module's "host.x\y"), which are internal names,
             // never import specifiers.
             for (ModuleInfo info : modules.values()) {
                 if (info.modulePath.equals(modulePath)) {
-                    return info.exports != null ? info.exports : Map.of();
+                    return cffiManifestCheckedExports(info, modulePath);
                 }
             }
             // Otherwise modulePath is the import specifier exactly as
@@ -2945,10 +3952,77 @@ public final class CompilationOrchestrator {
                 ModuleInfo target = modules.get(
                     r.location().normalizedSourcePath());
                 if (target != null) {
-                    return target.exports != null ? target.exports : Map.of();
+                    return cffiManifestCheckedExports(target, modulePath);
                 }
             }
             throw new ModuleNotFoundException("Module not found: " + modulePath);
+        }
+
+        /**
+         * The v1.2 C FFI manifest policy (docs/spec-v1.2.md:1891): a C
+         * FFI declaration file — a {@code .d.deal} file whose effective
+         * {@link FileDirectives#externC()} holds — may only be imported
+         * through a {@code deal.json} externals entry that declares the
+         * file with a classified {@code nativeLibrary}. The resolved
+         * target's module classification is
+         * {@code ExternalModule(rawImportSpecifier)} exactly when an
+         * externals entry declares the file (file-keyed,
+         * {@code ModuleIdentityResolver} D6 rule (2)); no entry at all
+         * is always the invalid-manifest-policy rejection, and a
+         * manifest-authored entry without {@code nativeLibrary} is the
+         * rejection too (the test-only isolated-phase constructors
+         * synthesize their entries from the harness's declarations map,
+         * which cannot carry {@code nativeLibrary}, and their entries
+         * count as backed — see {@link #cffiManifestBacked(ModuleInfo)}).
+         * The checker maps the exception to E2010 at the import span
+         * ({@code deal/checker/NameResolver.java},
+         * {@code processImport}) — the production emission site behind
+         * the promoted conformance pin.
+         */
+        private Map<String, Type> cffiManifestCheckedExports(
+                ModuleInfo target, String importSpecifier)
+                throws CffiImportWithoutNativeLibraryException {
+            if (target.isDeclarationFile && target.rawAst != null
+                    && target.rawAst.fileDirectives().externC()
+                    && !cffiManifestBacked(target)) {
+                throw new CffiImportWithoutNativeLibraryException(
+                    importSpecifier);
+            }
+            return target.exports != null ? target.exports : Map.of();
+        }
+
+        /**
+         * True when the externals entry that declares the target
+         * (file-keyed classification) satisfies the v1.2 C FFI manifest
+         * policy; false when no entry declares the file, or when a
+         * manifest-authored entry omits {@code nativeLibrary}.
+         *
+         * <p>The {@code nativeLibrary} authoring rule
+         * (docs/spec-v1.2.md:1891 — "a C FFI entry must include
+         * nativeLibrary") applies to manifest-authored contexts: the
+         * production locator path parses the entry's classified
+         * {@code nativeLibrary}, and an entry that omits it is the
+         * E2010 invalid-manifest-policy rejection. The test-only
+         * isolated-phase constructors synthesize their externals
+         * entries from the harness's declarations map, which cannot
+         * carry {@code nativeLibrary}; there the harness's explicit
+         * entry is the authority channel and counts as backed.</p>
+         */
+        private boolean cffiManifestBacked(ModuleInfo target) {
+            CanonicalModuleIdentity classification = target.location == null
+                ? null : target.location.moduleClassification();
+            if (!(classification
+                    instanceof CanonicalModuleIdentity.ExternalModule ext)) {
+                return false;
+            }
+            ExternalEntry entry = context.externals().get(
+                ext.rawImportSpecifier());
+            if (entry == null) {
+                return false;
+            }
+            return manifestAuthoredContext
+                ? entry.nativeLibrary() != null
+                : true;
         }
 
         /**

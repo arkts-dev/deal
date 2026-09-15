@@ -1,0 +1,7 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: A supplementary Unicode scalar survives a host string parameter and return
+// @expected: runtime-ok
+// @features: host-abi, string, unicode, outbound-boundary, inbound-boundary
+
+import * as host from "host/boundary";
+export function main(): null { let value: string = host.echoString("A😀B"); if (value !== "A😀B") { throw { code: "TEST_FAIL", message: "host Unicode string mapping" }; } return null; }

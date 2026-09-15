@@ -1,0 +1,7 @@
+// ISSUE-0165 BYTES_CORE index-bounds row: a read at index
+// b.length raises the declared E8012 on both backends.
+export function main(): null {
+  let b: bytes = bytes(4);
+  let out: int = b[4];
+  return null;
+}

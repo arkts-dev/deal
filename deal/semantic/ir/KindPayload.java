@@ -91,8 +91,13 @@ public sealed interface KindPayload
         ClosedSelector selector();
     }
 
-    /** The closed callee reference of {@code CALL}/{@code ASYNC_START} (parent D13). */
-    sealed interface CallCallee permits CallCallee.Static, CallCallee.Indirect {
+    /**
+     * The closed callee reference of {@code CALL}/{@code ASYNC_START}
+     * (parent D13). Exactly the three variants below; no other callee
+     * shape exists.
+     */
+    sealed interface CallCallee
+        permits CallCallee.Static, CallCallee.Indirect, CallCallee.Dynamic {
 
         /**
          * A static callee: the {@link FunctionExecutionBinding} is recorded
@@ -105,12 +110,90 @@ public sealed interface KindPayload
             }
         }
 
-        /** An indirect callee: the binding resolves from the {@code ValueId} at execution. */
+        /**
+         * An indirect callee whose binding is statically registered: the
+         * callee {@code ValueId} names an allocation identity whose
+         * {@link FunctionExecutionBinding} is recorded in this unit's
+         * {@code functionBindings}, so the validator resolves it and
+         * derives the exact boundary cells; execution re-resolves the
+         * same registration.
+         */
         record Indirect(ValueId callee) implements CallCallee {
 
             public Indirect {
                 Objects.requireNonNull(callee, "callee must not be null");
             }
+        }
+
+        /**
+         * A dynamically resolved callee whose binding kind is unknown
+         * until execution: the callee {@code ValueId}'s allocation
+         * identity has no statically resolvable registration in this
+         * unit (its producing allocation lives outside the unit — a
+         * callback-delivered or host-response-materialized function
+         * value, or a foreign-unit function identity flowing in), so the
+         * runtime resolves the identity against the project registry at
+         * execution and selects the execution shape — DEAL body, host,
+         * external ({@code RETAINED_ABI}), or {@code SHARED_BODY} — with
+         * its return-boundary kind and owner per the closed selection
+         * ({@link DynamicReturnBoundaryProtocol}). A
+         * {@code CALL} with a {@code Dynamic} callee records its return
+         * boundary per runtime resolution class through
+         * {@link CallPayload#dynamicReturnBoundary()} — never through
+         * the single {@code returnBoundaryOpId} — and an
+         * {@code ASYNC_START} records the single
+         * {@code FUNCTION_RETURN} task cell of the {@code DEAL_BODY}
+         * resolution (host/external/adapter resolutions execute zero
+         * caller-side return boundaries).
+         */
+        record Dynamic(ValueId callee) implements CallCallee {
+
+            public Dynamic {
+                Objects.requireNonNull(callee, "callee must not be null");
+            }
+        }
+    }
+
+    /**
+     * The return-boundary cells of a {@code CALL} whose callee is
+     * {@link CallCallee.Dynamic}: exactly one recorded {@code BOUNDARY}
+     * op id per runtime resolution class that executes a caller-side
+     * return boundary, selected at execution by
+     * {@link DynamicReturnBoundaryProtocol}.
+     *
+     * <ul>
+     *   <li>{@code dealBodyBoundaryOpId} — the {@code FUNCTION_RETURN}
+     *       cell of the DEAL-body resolution ({@code LoweredBody} and
+     *       DEAL-body-source adapter bindings); executed by the callee's
+     *       source {@code RETURN}.</li>
+     *   <li>{@code hostBoundaryOpId} — the {@code HOST_TO_DEAL} +
+     *       {@code HOST_SYNC_RETURN} cell of the host resolution
+     *       ({@code HostFunction}, {@code HostFunctionValue}, and
+     *       host-source adapter bindings); executed by the call op.</li>
+     *   <li>{@code externalBoundaryOpId} — the {@code EXTERNAL_RETURN}
+     *       cell of the retained-ABI external resolution
+     *       ({@code ExternalFunction} with {@code RETAINED_ABI} and
+     *       retained-ABI-source adapter bindings); executed by the call
+     *       op.</li>
+     * </ul>
+     *
+     * <p>A {@code SHARED_BODY} external resolution records no entry by
+     * construction: it executes zero caller-side return boundaries — the
+     * callee's {@code RETURN} under its {@code EXTERNAL_ENTRY} runs the
+     * single {@code EXTERNAL_RETURN} in the callee unit and the CALL
+     * terminal records the checked value without re-checking. The
+     * three recorded cells carry mutually distinct closed kinds, so the
+     * runtime selection is exactly one cell per resolution.</p>
+     */
+    record DynamicReturnBoundary(OpId dealBodyBoundaryOpId, OpId hostBoundaryOpId,
+                                 OpId externalBoundaryOpId) {
+
+        public DynamicReturnBoundary {
+            Objects.requireNonNull(dealBodyBoundaryOpId,
+                "dealBodyBoundaryOpId must not be null");
+            Objects.requireNonNull(hostBoundaryOpId, "hostBoundaryOpId must not be null");
+            Objects.requireNonNull(externalBoundaryOpId,
+                "externalBoundaryOpId must not be null");
         }
     }
 
@@ -498,25 +581,56 @@ public sealed interface KindPayload
     /**
      * {@code CALL} — closed call mode, callee reference, exact signature,
      * parameter boundary op ids in one-based order, return boundary op id
-     * (absent for EXTERNAL {@code SHARED_BODY}), body block (DIRECT), and
-     * external-entry ref (EXTERNAL {@code SHARED_BODY}). The D13 machine
-     * owns execution; parameter/return boundary kinds and policies come
-     * from the closed boundary-assignment table.
+     * (absent for EXTERNAL {@code SHARED_BODY}), the dynamic return
+     * boundary set (exactly for a {@link CallCallee.Dynamic} callee),
+     * body block (DIRECT), and external-entry ref (EXTERNAL
+     * {@code SHARED_BODY}). The D13 machine owns execution;
+     * parameter/return boundary kinds and policies come from the closed
+     * boundary-assignment table.
+     *
+     * <p>Closed exclusivity (construction-checked): a {@code Dynamic}
+     * callee is admissible only under {@link CallMode#INDIRECT}, records
+     * exactly {@code dynamicReturnBoundary} (never the single
+     * {@code returnBoundaryOpId} — the runtime selects the cell of the
+     * resolved execution class); a {@code Static}/{@code Indirect} callee
+     * records exactly the single {@code returnBoundaryOpId} (never
+     * {@code dynamicReturnBoundary}). The validator repeats the same
+     * exclusivity on the text surface.</p>
      */
     record CallPayload(CallMode mode, CallCallee callee, RuntimeDescriptor.Func signature,
                        List<OpId> parameterBoundaryOpIds, OpId returnBoundaryOpId,
+                       DynamicReturnBoundary dynamicReturnBoundary,
                        BlockId bodyBlock, OpId externalEntryRef) implements KindPayload {
 
         public CallPayload(CallMode mode, CallCallee callee, RuntimeDescriptor.Func signature,
                            List<OpId> parameterBoundaryOpIds, OpId returnBoundaryOpId,
+                           DynamicReturnBoundary dynamicReturnBoundary,
                            BlockId bodyBlock, OpId externalEntryRef) {
             this.mode = Objects.requireNonNull(mode, "mode must not be null");
             this.callee = Objects.requireNonNull(callee, "callee must not be null");
             this.signature = Objects.requireNonNull(signature, "signature must not be null");
             this.parameterBoundaryOpIds = List.copyOf(parameterBoundaryOpIds);
             this.returnBoundaryOpId = returnBoundaryOpId;
+            this.dynamicReturnBoundary = dynamicReturnBoundary;
             this.bodyBlock = bodyBlock;
             this.externalEntryRef = externalEntryRef;
+            boolean dynamic = callee instanceof CallCallee.Dynamic;
+            if (dynamic && mode != CallMode.INDIRECT) {
+                throw new IllegalArgumentException("a Dynamic callee is admissible only under "
+                    + "CallMode INDIRECT, got " + mode);
+            }
+            if (dynamic && dynamicReturnBoundary == null) {
+                throw new IllegalArgumentException("a Dynamic callee must record its dynamic "
+                    + "return-boundary set");
+            }
+            if (dynamic && returnBoundaryOpId != null) {
+                throw new IllegalArgumentException("a Dynamic callee records no single "
+                    + "returnBoundaryOpId (the dynamic return-boundary set replaces it)");
+            }
+            if (!dynamic && dynamicReturnBoundary != null) {
+                throw new IllegalArgumentException("only a Dynamic callee records the dynamic "
+                    + "return-boundary set");
+            }
         }
     }
 
@@ -608,6 +722,18 @@ public sealed interface KindPayload
      * async-linkage record (EXTERNAL). {@code ELIDED_BY_ADAPTER} is
      * admissible only on the nested source op of an adapter-over-async
      * task (validator R-ELIDED-PLACEMENT).
+     *
+     * <p>Closed projection of a {@link CallCallee.Dynamic} callee
+     * (construction-checked): the recorded {@code source} is
+     * {@link AsyncStartSource#DEAL_BODY} — the only resolution whose
+     * caller-recorded return boundary executes — and the recorded
+     * {@code returnBoundaryOpId} is that resolution's single
+     * {@code FUNCTION_RETURN} task cell; the runtime derives the
+     * effective source from the resolved binding exactly like
+     * {@code CALL(INDIRECT)}, and HOST/EXTERNAL/adapter-over-async
+     * resolutions execute zero caller-side return boundaries
+     * (their runtime linkage — operation label or
+     * {@link ExternalAsyncLink} — binds at execution).</p>
      */
     record AsyncStartPayload(CallCallee callee, AsyncStartSource source,
                              ParameterBoundaryMode parameterBoundaryMode,
@@ -629,6 +755,12 @@ public sealed interface KindPayload
             this.returnBoundaryOpId = returnBoundaryOpId;
             this.hostOperationLabel = hostOperationLabel;
             this.externalAsyncLink = externalAsyncLink;
+            if (callee instanceof CallCallee.Dynamic && source != AsyncStartSource.DEAL_BODY) {
+                throw new IllegalArgumentException("a Dynamic ASYNC_START records source "
+                    + "DEAL_BODY (the only resolution whose caller-recorded return boundary "
+                    + "executes); the runtime derives the effective source from the resolved "
+                    + "binding");
+            }
         }
     }
 

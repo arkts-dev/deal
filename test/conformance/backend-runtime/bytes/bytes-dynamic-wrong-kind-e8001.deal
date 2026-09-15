@@ -1,0 +1,14 @@
+// @spec: Runtime execution model — Runtime type descriptor format
+// @description: A string crossing the dynamic `bytes` row raises E8001 "expected bytes" with expected "bytes" and actual "string" — the row accepts only the shared bytes carrier (ISSUE-0550).
+// @expected: runtime-error E8001
+// @features: descriptors, bytes, dynamic-boundaries
+
+export function test_bytes_dynamic_wrong_kind(): int {
+  let holder: table = { b: "not-bytes" };
+  let b: bytes = holder.b;
+  return b[0];
+}
+
+export function main(): null {
+  return null;
+}

@@ -1,0 +1,15 @@
+// ISSUE-0165 BYTES_CORE support-only helper (no sidecar of its own;
+// reachable through the root's source graph).
+export function zeroFill(length: int): bytes {
+  return bytes(length);
+}
+
+export function byteSum(buffer: bytes): int {
+  let sum: int = 0;
+  let i: int = 0;
+  while (i < buffer.length) {
+    sum = sum + buffer[i];
+    i = i + 1;
+  }
+  return sum;
+}

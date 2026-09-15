@@ -139,6 +139,39 @@ public final class CanonicalJson {
     // =========================================================================
 
     /** The canonical JSON {@code null} value. */
+    /**
+     * The unique canonical hex-float spelling of an IEEE-754 number
+     * ({@code Double.toHexString}; the single renderer of hex floats in
+     * deal/semantic).
+     */
+    public static String numberHex(double value) {
+        return Double.toHexString(value);
+    }
+
+    /**
+     * The single decimal-number decode surface of {@code deal/semantic}
+     * (schema S2): the nearest IEEE-754 double of a decimal numeral text
+     * — the RFC-8259 integer/fraction/exponent forms the
+     * {@code SharedStdlibSemantics} JSON parser validates. Grammar
+     * ownership stays split: the stdlib parser owns the RFC-8259 numeral
+     * grammar, this facility owns the decimal-to-IEEE conversion, and no
+     * other semantic production component calls the JDK decimal
+     * converter directly (the structural single-implementation
+     * assertion). A magnitude beyond the IEEE range yields ±Infinity —
+     * the parser's later consumers decide the projection.
+     *
+     * @param text the validated decimal numeral text; non-null
+     * @return the nearest IEEE-754 double of {@code text}
+     * @throws NullPointerException if {@code text} is null
+     * @throws NumberFormatException if {@code text} is not a decimal
+     *                               numeral (a producer defect — the
+     *                               caller validates the grammar first)
+     */
+    public static double decodeDecimal(String text) {
+        Objects.requireNonNull(text, "text must not be null");
+        return Double.parseDouble(text);
+    }
+
     public static Null nullValue() {
         return Null.INSTANCE;
     }
@@ -215,7 +248,7 @@ public final class CanonicalJson {
             case Null ignored -> sb.append("null");
             case Bool b -> sb.append(b.value() ? "true" : "false");
             case Int i -> sb.append(Integer.toString(i.value()));
-            case Num n -> sb.append(Double.toHexString(n.value()));
+            case Num n -> sb.append(numberHex(n.value()));
             case Str s -> appendString(sb, s.value());
             case Arr a -> {
                 sb.append('[');

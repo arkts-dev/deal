@@ -1,0 +1,4 @@
+
+import * as Util from "pkg/util";
+export function probe(): int { return Util.value(); }
+export function main(): null { return null; }

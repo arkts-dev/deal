@@ -102,7 +102,8 @@ public record RawUnit(
                     host.exportName(), null, null, host.descriptor().canonicalSpecText(), null);
             case FunctionExecutionBinding.HostFunctionValue hostValue ->
                 new RawBinding(allocationId, "hostFunctionValue", hostValue.hostModuleId().path(),
-                    null, null, null, hostValue.descriptor().canonicalSpecText(), null);
+                    null, null, null, hostValue.descriptor().canonicalSpecText(), null,
+                    hostValue.materializingBoundaryOpId());
             case FunctionExecutionBinding.ExternalFunction external ->
                 new RawBinding(allocationId, "externalFunction", external.moduleId().path(),
                     external.exportName(), external.executionOwner().name(), null,

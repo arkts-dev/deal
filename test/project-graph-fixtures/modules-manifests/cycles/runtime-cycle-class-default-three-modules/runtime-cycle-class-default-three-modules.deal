@@ -1,0 +1,4 @@
+
+import * as A from "./support/runtime_three_a";
+export function probe(x: A.A): A.A { return x; }
+export function main(): null { return null; }

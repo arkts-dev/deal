@@ -1,5 +1,6 @@
 package deal.checker;
 
+import deal.ast.ClassDeclaration;
 import deal.ast.ExpressionNode;
 import deal.ast.StatementNode;
 import deal.diagnostics.CompilerDiagnostic;
@@ -21,23 +22,30 @@ import java.util.Map;
  *                    in nested scopes without retaining any
  *                    {@code NameResolver} instance (D4)
  * @param diagnostics type errors (and name-resolution errors) produced
+ * @param classScopes the lexical scope in which each class declaration
+ *                    was checked, in checker walk order (the
+ *                    default-planning seam of ISSUE-0541: the planner
+ *                    resolves every class default against exactly the
+ *                    scope the checker used — the declaring lexical
+ *                    context — without re-running resolution)
  */
 public record CheckResult(
     Map<ExpressionNode, Type> typeMap,
     SymbolTable symbolTable,
     Map<StatementNode, SymbolTable> scopeMap,
-    List<CompilerDiagnostic> diagnostics
+    List<CompilerDiagnostic> diagnostics,
+    Map<ClassDeclaration, SymbolTable> classScopes
 ) {
 
     /**
      * Convenience constructor for callers without a pass-1 scope map
      * (synthetic checked facts, retained test harnesses): the scope map
-     * is empty and declared-type resolution falls back to the root
-     * symbol table.
+     * and the class-declaration scope map are empty and declared-type
+     * resolution falls back to the root symbol table.
      */
     public CheckResult(Map<ExpressionNode, Type> typeMap, SymbolTable symbolTable,
                        List<CompilerDiagnostic> diagnostics) {
-        this(typeMap, symbolTable, Map.of(), diagnostics);
+        this(typeMap, symbolTable, Map.of(), diagnostics, Map.of());
     }
 
     public CheckResult {
@@ -45,6 +53,7 @@ public record CheckResult(
         if (symbolTable == null) throw new IllegalArgumentException("symbolTable must not be null");
         if (scopeMap == null) throw new IllegalArgumentException("scopeMap must not be null");
         if (diagnostics == null) throw new IllegalArgumentException("diagnostics must not be null");
+        if (classScopes == null) throw new IllegalArgumentException("classScopes must not be null");
     }
 
     /** Returns true if any error-level diagnostics were produced. */

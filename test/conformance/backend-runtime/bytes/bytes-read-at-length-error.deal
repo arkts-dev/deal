@@ -1,0 +1,10 @@
+// @spec: Bytes
+// @description: A byte read at index equal to length is rejected at runtime.
+// @expected: runtime-error E8012
+// @features: bytes, reads, bounds
+
+export function main(): null {
+  let b: bytes = bytes(1);
+  let value: int = b[1];
+  return null;
+}

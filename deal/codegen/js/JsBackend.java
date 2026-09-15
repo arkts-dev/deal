@@ -53,6 +53,7 @@ import deal.ast.WhileStatement;
 import deal.checker.CheckResult;
 import deal.checker.Symbol;
 import deal.checker.SymbolTable;
+import deal.codegen.HostModuleDeclarations;
 import deal.codegen.SourceMapGenerator;
 import deal.descriptors.CanonicalRuntimeTypeDescriptor;
 import deal.diagnostics.CompilerDiagnostic;
@@ -61,6 +62,12 @@ import deal.identity.CanonicalClassIdentity;
 import deal.identity.CanonicalClassIdentityIndex;
 import deal.identity.CanonicalModuleIdentity;
 import deal.identity.ProjectModuleIdentity;
+import deal.module.CompilerClassDefaultEntry;
+import deal.module.CompilerClassDefaultPlan;
+import deal.module.PlannedDefaultClass;
+import deal.module.RuntimeClassDefaultPlan;
+import deal.module.RuntimeDefaultEvaluator;
+import deal.module.RuntimeDefaultPlanLowering;
 import deal.module.ModuleIdentityResolver;
 import deal.module.StdlibModuleResolver;
 import deal.semantic.ir.SemanticProfile;
@@ -198,7 +205,7 @@ import java.util.TreeMap;
  *
  * <p>ISSUE-0252 rejection pass: the D8 rejection table with exact
  * error-severity diagnostics at their documented sites — an import of
- * an extern-C declaration module is E6003 containing
+ * an extern-C declaration module is E6006 containing
  * {@code FFI_UNSUPPORTED_BACKEND} at the import statement, keyed on
  * the orchestrator-built extern-C import set
  * (fixed-name-directive-events D9;
@@ -237,7 +244,7 @@ import java.util.TreeMap;
  * read materializing a host-call argument never pre-raises its own
  * E8001; the runtime host wrapper's boundary raises E8010 (D4
  * read-site deferral). Let/assignment/return-boundary typed reads
- * keep their pinned read-site checks. The E6003 {@code @extern-c} arm
+ * keep their pinned read-site checks. The E6006 {@code @extern-c} arm
  * precedes any host handling.
  *
  * <p>ISSUE-0318 nested-class slice: the former D6 nested-class E6000
@@ -279,11 +286,23 @@ public final class JsBackend {
      */
     public record JsCodegenResult(String modulePath, String source,
                                   List<CompilerDiagnostic> diagnostics,
-                                  SourceMapGenerator sourceMap) {
+                                  SourceMapGenerator sourceMap,
+                                  List<RuntimeClassDefaultPlan> runtimePlans) {
+
+        /** Backward-compatible four-component constructor: the runtime
+         * plan realization list is empty (no published plan consumed —
+         * the standalone entry points). */
+        public JsCodegenResult(String modulePath, String source,
+                               List<CompilerDiagnostic> diagnostics,
+                               SourceMapGenerator sourceMap) {
+            this(modulePath, source, diagnostics, sourceMap, List.of());
+        }
+
         public JsCodegenResult {
             java.util.Objects.requireNonNull(modulePath, "modulePath must not be null");
             java.util.Objects.requireNonNull(source, "source must not be null");
             diagnostics = List.copyOf(diagnostics);
+            runtimePlans = List.copyOf(runtimePlans);
         }
 
         /** True when at least one error-level diagnostic was recorded. */
@@ -380,7 +399,7 @@ public final class JsBackend {
     private final Map<String, HostModuleDeclarations> hostModules;
     /**
      * Raw import paths whose resolved module is an extern-C declaration
-     * file (fixed-name-directive-events D9): the re-keyed E6003
+     * file (fixed-name-directive-events D9): the re-keyed E6006
      * {@code FFI_UNSUPPORTED_BACKEND} arm keys on this set.
      */
     private final Set<String> externCImports;
@@ -503,6 +522,27 @@ public final class JsBackend {
      */
     private final Deque<Set<String>> hoistedFunctionNames =
         new ArrayDeque<>();
+
+    // ISSUE-0544 (the lowering epic): module path → the module's
+    // completed PlannedDefaultClass list (the graph-published plans),
+    // passed by the orchestrator. The emitter consumes the published
+    // CompilerClassDefaultPlan of every class declaration for the
+    // per-construction defaults-thunk projection (entry order,
+    // canonical descriptors, optional flags, evaluators only on
+    // required-present entries) plus the labelled per-entry evaluator
+    // expressions. Empty on the standalone entry points (the
+    // synthesized fallback path stays).
+    private Map<String, List<PlannedDefaultClass>> plansByModulePath =
+        Map.of();
+
+    // ISSUE-0544: the realized RuntimeClassDefaultPlans of this module,
+    // in class source order — the carrier-side realization data (the
+    // evaluator invocation seams execute inside the generated artifact,
+    // never in-process; see artifactInvocationSeam). Attached to the
+    // JsCodegenResult for the compiler-to-lowerer verification battery
+    // and the later FFI identity consumption.
+    private final List<RuntimeClassDefaultPlan> runtimePlans =
+        new ArrayList<>();
 
     private JsBackend(Map<ExpressionNode, Type> typeMap, SymbolTable symbols,
                       String sourcePath, String modulePath,
@@ -687,7 +727,7 @@ public final class JsBackend {
      * @param externCImports   raw import paths whose resolved module is
      *                         an extern-C declaration file
      *                         (fixed-name-directive-events D9) — the
-     *                         re-keyed E6003 arm keys on this set
+     *                         re-keyed E6006 arm keys on this set
      * @param sourceMap        the mapping recorder (or {@code null})
      * @param semanticProfile  the project-wide semantic profile
      */
@@ -713,12 +753,59 @@ public final class JsBackend {
             "identityIndex must not be null");
         java.util.Objects.requireNonNull(moduleIdentities,
             "moduleIdentities must not be null");
+        return generate(program, result, sourcePath, modulePath,
+            importResolutions, hostModules, externCImports, isEntry,
+            identityIndex, moduleIdentities, sourceMap, semanticProfile,
+            Map.of());
+    }
+
+    /**
+     * Plan-carrying production seam (ISSUE-0544): the same contract as
+     * the overload above with the compilation's completed default plans
+     * keyed by module path
+     * ({@code CompilationOrchestrator#completedPlansByModulePath}) —
+     * the published-plan consumption surface of the lowering epic. The
+     * emitter consumes this module's plans for the per-construction
+     * defaults-thunk projection (js-backend-runtime D5: the thunk is
+     * created at load, never invoked there, and {@code $rt.makeClass}/
+     * {@code $jsonFromDocument} invoke it once per construction) plus
+     * the labelled per-entry evaluator expressions. The standalone
+     * entry points pass {@code Map.of()} and keep the synthesized
+     * fallback emission.
+     */
+    public static JsCodegenResult generate(ProgramNode program, CheckResult result,
+                                           String sourcePath, String modulePath,
+                                           Map<String, String> importResolutions,
+                                           Map<String, HostModuleDeclarations> hostModules,
+                                           Set<String> externCImports,
+                                           boolean isEntry,
+                                           CanonicalClassIdentityIndex identityIndex,
+                                           Function<String, CanonicalModuleIdentity> moduleIdentities,
+                                           SourceMapGenerator sourceMap,
+                                           SemanticProfile semanticProfile,
+                                           Map<String, List<PlannedDefaultClass>>
+                                               plansByModulePath) {
+        java.util.Objects.requireNonNull(program, "program must not be null");
+        java.util.Objects.requireNonNull(result, "result must not be null");
+        java.util.Objects.requireNonNull(importResolutions,
+            "importResolutions must not be null");
+        java.util.Objects.requireNonNull(hostModules,
+            "hostModules must not be null");
+        java.util.Objects.requireNonNull(externCImports,
+            "externCImports must not be null");
+        java.util.Objects.requireNonNull(identityIndex,
+            "identityIndex must not be null");
+        java.util.Objects.requireNonNull(moduleIdentities,
+            "moduleIdentities must not be null");
         java.util.Objects.requireNonNull(semanticProfile,
             "semanticProfile must not be null");
+        java.util.Objects.requireNonNull(plansByModulePath,
+            "plansByModulePath must not be null");
         JsBackend backend = new JsBackend(result.typeMap(), result.symbolTable(),
             sourcePath, modulePath, importResolutions, hostModules,
             externCImports, isEntry,
             identityIndex, moduleIdentities, sourceMap, semanticProfile);
+        backend.plansByModulePath = Map.copyOf(plansByModulePath);
         return backend.generateProgram(program);
     }
 
@@ -739,12 +826,18 @@ public final class JsBackend {
         for (StatementNode stmt : program.statements()) {
             switch (stmt) {
                 case ClassDeclaration cd -> predeclares.add(
-                    "let " + cd.name() + "$new; let " + cd.name() + "$meta;");
+                    "let " + cd.name() + "$new; let " + cd.name() + "$meta;"
+                        + (publishedPlanFor(cd) != null
+                            ? " let " + cd.name() + "$plan;"
+                            : ""));
                 case ExportDeclaration ed -> {
                     switch (ed.declaration()) {
                         case ClassDeclaration cd -> predeclares.add(
                             "let " + cd.name() + "$new; let "
                                 + cd.name() + "$meta;"
+                                + (publishedPlanFor(cd) != null
+                                    ? " let " + cd.name() + "$plan;"
+                                    : "")
                                 + (cd.isJsonable()
                                     ? " let " + cd.name() + "$fromJson; let "
                                         + cd.name() + "$toJson; let "
@@ -768,9 +861,9 @@ public final class JsBackend {
         // spec-stdlib raw path emits <relpath>/std/<name>, an
         // importResolutions entry a project-module relative require,
         // and a hostModules entry the loadHost binding (D1 below). The
-        // rejection pass runs first: an extern-C import (E6003)
+        // rejection pass runs first: an extern-C import (E6006)
         // emits its diagnostic and no binding — a rejected import never
-        // reaches the require path (js-backend-emitter D8). The E6003
+        // reaches the require path (js-backend-emitter D8). The E6006
         // arm precedes any host handling, so an extern-C host
         // path rejects before the loadHost binding is consulted.
         List<String> importBindings = new ArrayList<>();
@@ -811,7 +904,7 @@ public final class JsBackend {
         }
 
         return new JsCodegenResult(modulePath, out.toString(), diagnostics,
-            sourceMapGenerator);
+            sourceMapGenerator, List.copyOf(runtimePlans));
     }
 
     // =========================================================================
@@ -1051,7 +1144,7 @@ public final class JsBackend {
      * map instead (the host branch precedes this method in the import
      * loop), and no raw require of a declaration file can ever resolve.
      * An unresolved path returns {@code null}: no binding is emitted.
-     * The {@code @extern-c} E6003 diagnostic fires earlier in
+     * The {@code @extern-c} E6006 diagnostic fires earlier in
      * {@link #rejectUnsupportedImport}, before this method is
      * consulted; the host check here stays as the defensive guard for
      * classification-driven emission (a {@code @extern-c}-marked
@@ -1168,21 +1261,21 @@ public final class JsBackend {
      * fixed-name-directive-events D9). An import whose raw path is
      * marked in the orchestrator-built extern-C import set — the
      * resolved module is a declaration file with effective
-     * {@code FileDirectives.externC} — is E6003 containing
+     * {@code FileDirectives.externC} — is E6006 containing
      * {@code FFI_UNSUPPORTED_BACKEND} at the import statement
      * (deal-v1.2-directives-and-c-ffi-declarations D8: an incapable
      * backend rejects {@code @extern-c} before any artifact write).
      * The former host-ABI E6000 arm retired with ISSUE-0328: a
      * non-stdlib declaration-file import (a {@code hostModules} entry)
      * now emits the {@code $rt.loadHost} binding with the declared map
-     * (js-v12-host-abi-completion D1). The E6003 arm precedes any host
+     * (js-v12-host-abi-completion D1). The E6006 arm precedes any host
      * handling, so an extern-C host path rejects before the loadHost
      * binding is consulted. Spec-stdlib raw paths and
      * {@code importResolutions} entries are never rejected here.
      */
     private boolean rejectUnsupportedImport(ImportDeclaration imp) {
         if (externCImports.contains(imp.modulePath())) {
-            diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E6003,
+            diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E6006,
                 "JavaScript backend: @extern-c imports are not supported "
                     + "(FFI_UNSUPPORTED_BACKEND, ISSUE-0169 skeleton)",
                 imp.span()));
@@ -1394,7 +1487,7 @@ public final class JsBackend {
         switch (stmt) {
             case ImportDeclaration imp -> {
                 // Shape step 5 emitted the binding in the header (a
-                // rejected @extern-c E6003 import was already diagnosed
+                // rejected @extern-c E6006 import was already diagnosed
                 // there and emitted no binding); the walk itself emits
                 // no statement.
             }
@@ -1714,18 +1807,76 @@ public final class JsBackend {
      * cannot see a nested site's scope-local bindings).
      */
     private void visit(ClassDeclaration cd) {
+        // The pinned evaluator labels (ISSUE-0544, runtime page D2):
+        // one (classIdentity, fieldName, semanticDigest) triple per
+        // required-present entry, as JS comments directly above the
+        // construction closure — the artifact carries the label of
+        // every evaluator it creates.
+        for (String label : defaultEvaluatorLabels(cd)) {
+            line("// default evaluator " + label);
+        }
+        // The class comment lands BEFORE the plan/thunk text is
+        // assembled: the captured expression mappings rebase against
+        // the already-appended comment line, exactly like the pre-plan
+        // emission (js-v12-source-maps D2 exactness).
         out.append("// Class: ").append(cd.name())
-            .append(" — construction closure, defaults thunk, and metadata.\n");
-        line(cd.name() + "$new = (provided, $file, $line, $column) => "
-            + "$rt.makeClass(" + jsStringLiteral(cd.name()) + ", "
-            + jsStringLiteral(qualifiedClassName(cd.name())) + ", "
-            + classDefaultsThunk(cd) + ", provided, $file, $line, $column);");
-        line(cd.name() + "$meta = { $kind: \"class\", $classname: "
-            + jsStringLiteral(qualifiedClassName(cd.name())) + " };");
-        if (cd.isJsonable() && statementDepth == 0) {
-            emitJsonableArtifacts(cd);
+            .append(" — construction closure, defaults plan, and metadata.\n");
+        String identity = qualifiedClassName(cd.name());
+        CompilerClassDefaultPlan plan = publishedPlanFor(cd);
+        if (plan != null) {
+            // ISSUE-0545 (the construction-consumption epic, runtime
+            // page D4/D6): a plan-bearing class constructs through
+            // $rt.classPlan over its published runtime plan list — the
+            // per-entry shape {name, descriptor, optional, evaluator}
+            // with labelled zero-argument evaluator closures created at
+            // load and never invoked there. $rt.classPlan realizes the
+            // four pinned phases: extra-key E8007 before any default,
+            // omitted required defaults exactly once per attempt in
+            // plan order, per-field canonical validation, tag/publish.
+            String planList = publishedPlanList(plan);
+            line(cd.name() + "$plan = " + planList + ";");
+            line(cd.name() + "$new = (provided, $file, $line, $column) => "
+                + "$rt.classPlan(" + jsStringLiteral(identity) + ", "
+                + cd.name() + "$plan, provided, $file, $line, $column);");
+            line(cd.name() + "$meta = { $kind: \"class\", $classname: "
+                + jsStringLiteral(identity) + " };");
+            if (cd.isJsonable() && statementDepth == 0) {
+                emitJsonableArtifacts(cd, plan);
+            }
+        } else {
+            String thunk = classDefaultsThunk(cd);
+            line(cd.name() + "$new = (provided, $file, $line, $column) => "
+                + "$rt.makeClass(" + jsStringLiteral(cd.name()) + ", "
+                + jsStringLiteral(identity) + ", "
+                + thunk + ", provided, $file, $line, $column);");
+            line(cd.name() + "$meta = { $kind: \"class\", $classname: "
+                + jsStringLiteral(identity) + " };");
+            if (cd.isJsonable() && statementDepth == 0) {
+                emitJsonableArtifacts(cd, thunk);
+            }
         }
         out.append("\n");
+    }
+
+    /**
+     * The ordered evaluator labels of this class's published plan —
+     * empty when no plan was published (host declarations and the
+     * standalone entry points).
+     */
+    private List<String> defaultEvaluatorLabels(ClassDeclaration cd) {
+        CompilerClassDefaultPlan plan = publishedPlanFor(cd);
+        if (plan == null) {
+            return List.of();
+        }
+        List<String> labels = new ArrayList<>();
+        for (CompilerClassDefaultEntry entry : plan.orderedFields()) {
+            if (!entry.optional()) {
+                labels.add(RuntimeDefaultPlanLowering.labelOf(
+                    identityText(plan.classIdentity()), entry.name(),
+                    entry.defaultExpression().semanticDigest()));
+            }
+        }
+        return labels;
     }
 
     /**
@@ -1743,7 +1894,7 @@ public final class JsBackend {
      * extra checks. The {@code $} sigil makes every generated name
      * collision-free (user DEAL identifiers cannot contain {@code $}).
      */
-    private void emitJsonableArtifacts(ClassDeclaration cd) {
+    private void emitJsonableArtifacts(ClassDeclaration cd, String thunk) {
         String identity = qualifiedClassName(cd.name());
         out.append("// Jsonable: ").append(cd.name())
             .append(" — C$fromJson/C$toJson wrappers and the hidden")
@@ -1752,13 +1903,44 @@ public final class JsBackend {
             + jsStringLiteral("(string)->?" + identity) + ", "
             + "(s, $file, $line, $column) => $rt.jsonFromJson("
             + jsStringLiteral(identity) + ", " + cd.name() + "$fields, "
-            + classDefaultsThunk(cd) + ", s, $file, $line, $column));");
+            + thunk + ", s, $file, $line, $column));");
         line(cd.name() + "$toJson = $rt.function("
             + jsStringLiteral("(" + identity + ")->string") + ", "
             + "(v, $file, $line, $column) => $rt.jsonToJson("
             + jsStringLiteral(identity) + ", v, " + cd.name() + "$fields, "
             + "$file, $line, $column));");
-        line(cd.name() + "$fields = " + jsonFieldsArray(cd.fields()) + ";");
+        line(cd.name() + "$fields = "
+            + jsonFieldsArray(cd.fields(), null, null) + ";");
+    }
+
+    /**
+     * The plan-bearing JSONable variant (ISSUE-0545, runtime page D5):
+     * the {@code C$fromJson} wrapper passes the published plan's
+     * per-entry evaluator carriers through the descriptor array (the
+     * walker consumes exactly the omitted required entries, once per
+     * attempt — no thunk, so no eager default evaluation) while the
+     * {@code C$toJson} wrapper and the exported descriptor shape stay
+     * byte-identical to the thunk form.
+     */
+    private void emitJsonableArtifacts(ClassDeclaration cd,
+                                       CompilerClassDefaultPlan plan) {
+        String identity = qualifiedClassName(cd.name());
+        out.append("// Jsonable: ").append(cd.name())
+            .append(" — C$fromJson/C$toJson wrappers and the hidden")
+            .append(" C$fields descriptor export.\n");
+        line(cd.name() + "$fromJson = $rt.function("
+            + jsStringLiteral("(string)->?" + identity) + ", "
+            + "(s, $file, $line, $column) => $rt.jsonFromJson("
+            + jsStringLiteral(identity) + ", " + cd.name() + "$fields, "
+            + "null, s, $file, $line, $column));");
+        line(cd.name() + "$toJson = $rt.function("
+            + jsStringLiteral("(" + identity + ")->string") + ", "
+            + "(v, $file, $line, $column) => $rt.jsonToJson("
+            + jsStringLiteral(identity) + ", v, " + cd.name() + "$fields, "
+            + "$file, $line, $column));");
+        line(cd.name() + "$fields = "
+            + jsonFieldsArray(cd.fields(), plan,
+                cd.name() + "$plan") + ";");
     }
 
     /**
@@ -1769,11 +1951,17 @@ public final class JsBackend {
      * declaration flags {@code optional}/{@code nullable}/
      * {@code hasDefault}.
      */
-    private String jsonFieldsArray(List<ClassField> fields) {
+    private String jsonFieldsArray(List<ClassField> fields,
+                                   CompilerClassDefaultPlan plan,
+                                   String planBinding) {
         StringBuilder sb = new StringBuilder("[");
         for (int i = 0; i < fields.size(); i++) {
             if (i > 0) sb.append(", ");
-            sb.append(jsonFieldEntry(fields.get(i)));
+            CompilerClassDefaultEntry planEntry = plan == null
+                ? null : plan.orderedFields().get(i);
+            sb.append(jsonFieldEntry(fields.get(i), planEntry,
+                planBinding, i, plan == null ? null
+                    : identityText(plan.classIdentity())));
         }
         return sb.append("]").toString();
     }
@@ -1786,8 +1974,20 @@ public final class JsBackend {
      * pair carries the canonical identity text and the nested
      * descriptor array for class-typed fields, and {@code element}
      * carries the element entry for array-typed fields.
+     *
+     * <p>Plan-bearing entries additionally carry the published plan's
+     * labelled zero-argument evaluator closure under {@code evaluator}
+     * — a reference to the class's module-local {@code <C>$plan[i]}
+     * entry, created at load and never invoked there (ISSUE-0545,
+     * runtime page D1/D5): {@code $jsonFromDocument} invokes exactly
+     * the omitted required entries once per attempt, in descriptor
+     * order. Optional entries carry no evaluator key (a declared
+     * default on an optional field never evaluates).</p>
      */
-    private String jsonFieldEntry(ClassField cf) {
+    private String jsonFieldEntry(ClassField cf,
+                                  CompilerClassDefaultEntry planEntry,
+                                  String planBinding, int planIndex,
+                                  String planIdentityText) {
         TypeNode base = cf.type();
         if (base instanceof NullableType nt) {
             base = nt.innerType();
@@ -1800,6 +2000,14 @@ public final class JsBackend {
         sb.append(", optional: ").append(cf.optional())
             .append(", nullable: ").append(cf.nullable())
             .append(", hasDefault: ").append(cf.defaultExpr().isPresent());
+        if (planEntry != null && !planEntry.optional()) {
+            String label = RuntimeDefaultPlanLowering.labelOf(
+                planIdentityText, cf.name(),
+                planEntry.defaultExpression().semanticDigest());
+            sb.append(", evaluator: /* default evaluator ")
+                .append(label).append(" */ ").append(planBinding)
+                .append("[").append(planIndex).append("].evaluator");
+        }
         return sb.append(" }").toString();
     }
 
@@ -1901,7 +2109,7 @@ public final class JsBackend {
         if (isIntrinsicError(cls) || isDeclaredInThisModule(cls)) {
             Symbol sym = symbols.resolve(cls.name());
             if (sym instanceof Symbol.ClassSymbol cs) {
-                return jsonFieldsArray(cs.fields());
+                return jsonFieldsArray(cs.fields(), null, null);
             }
             return "[]";
         }
@@ -1985,7 +2193,11 @@ public final class JsBackend {
      * {@code $rt.MISSING}; default expressions evaluate fresh on every
      * construction (spec §Construction); the remaining required fields
      * carry their zero-value placeholders (dead entries — the checker's
-     * E4001 requires every literal to provide them).
+     * E4001 requires every literal to provide them). Reached only when
+     * the graph published no plan for the visited declaration (the
+     * standalone entry points and checker-error programs): plan-bearing
+     * classes construct through {@code $rt.classPlan} over the
+     * published plan list instead (ISSUE-0545, {@link #visit(ClassDeclaration)}).
      */
     private String classDefaultsThunk(ClassDeclaration cd) {
         StringBuilder sb = new StringBuilder("() => ({");
@@ -2001,6 +2213,126 @@ public final class JsBackend {
     }
 
     /**
+     * The published plan's runtime plan-list projection (ISSUE-0545,
+     * runtime page D1/D2/D6): one entry per plan entry in class source
+     * order with the pinned entry shape
+     * {@code {name, descriptor, optional, evaluator?}} — the declared-
+     * name set and the canonical descriptors {@code $rt.classPlan}
+     * validates against. A required-present entry carries its labelled
+     * zero-argument evaluator closure — created here at load, closing
+     * over the declaring module's scope, never invoked during lowering
+     * or load; {@code $rt.classPlan} invokes it exactly once per
+     * omitted required entry per construction attempt (fresh mutable
+     * literals, re-executed calls, function results retained by
+     * reference). An optional entry carries no evaluator and NEVER
+     * evaluates (a declared default on an optional field is
+     * checker-validated metadata only, D1). Each evaluator label is a
+     * JS block comment directly before the closure. The realized
+     * {@link RuntimeClassDefaultPlan} carrier (digests, labels,
+     * presence) is appended exactly once here; the @jsonable wrappers
+     * reference the same per-entry closures through the descriptor
+     * array's {@code evaluator} keys.
+     */
+    private String publishedPlanList(CompilerClassDefaultPlan plan) {
+        String identityText = identityText(plan.classIdentity());
+        List<RuntimeDefaultPlanLowering.EvaluatorRealization>
+            realizations = new ArrayList<>();
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < plan.orderedFields().size(); i++) {
+            CompilerClassDefaultEntry entry = plan.orderedFields().get(i);
+            if (i > 0) {
+                sb.append(",");
+            }
+            sb.append("{ name: ").append(jsStringLiteral(entry.name()))
+                .append(", descriptor: ")
+                .append(jsStringLiteral(entry.runtimeTypeDescriptor()))
+                .append(", optional: ").append(entry.optional());
+            if (!entry.optional()) {
+                String label = RuntimeDefaultPlanLowering.labelOf(
+                    identityText, entry.name(),
+                    entry.defaultExpression().semanticDigest());
+                String evaluator = "() => " + emitExpression(
+                    entry.defaultExpression().expressionAst());
+                sb.append(", evaluator: /* default evaluator ")
+                    .append(label).append(" */ ").append(evaluator);
+                realizations.add(new RuntimeDefaultPlanLowering
+                    .EvaluatorRealization(label, evaluator,
+                        artifactInvocationSeam(label)));
+            }
+            sb.append(" }");
+        }
+        sb.append("]");
+        runtimePlans.add(RuntimeDefaultPlanLowering.realize(plan,
+            identityText, realizations).plan());
+        return sb.toString();
+    }
+
+    /**
+     * The carrier-side zero-argument invocation seam of a generated JS
+     * evaluator (ISSUE-0544/0545): the real evaluator is the generated
+     * plan-entry closure — it executes inside the artifact exactly once
+     * per omitted required entry per construction attempt — so an
+     * in-process {@code invoke()} is a lowering-contract misuse and
+     * raises. Nothing in the production pipeline invokes the seam
+     * in-process; it carries the label so the misuse names its
+     * evaluator.
+     */
+    private RuntimeDefaultEvaluator.Invocation artifactInvocationSeam(
+            String label) {
+        return () -> {
+            throw new UnsupportedOperationException(
+                "the JavaScript default evaluator " + label
+                    + " executes inside the generated artifact; the"
+                    + " carrier-side invocation seam is never invoked"
+                    + " in-process");
+        };
+    }
+
+    /**
+     * The published compiler plan of this exact class declaration, or
+     * {@code null} when the graph published no plan for it (host
+     * declarations live outside plan space; the standalone entry points
+     * pass no plan surface). Reference identity first — the planner
+     * consumed the same AST the emitter walks — with the name/position
+     * pair as the defensive fallback.
+     */
+    private CompilerClassDefaultPlan publishedPlanFor(
+            ClassDeclaration cd) {
+        List<PlannedDefaultClass> plans = plansByModulePath.get(modulePath);
+        if (plans == null) {
+            return null;
+        }
+        for (PlannedDefaultClass planned : plans) {
+            ClassDeclaration declaration = planned.declaration();
+            if (declaration == cd
+                    || (declaration.name().equals(cd.name())
+                        && declaration.span().startLine()
+                            == cd.span().startLine()
+                        && declaration.span().startColumn()
+                            == cd.span().startColumn())) {
+                return planned.plan();
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The canonical descriptor text of a published plan's class
+     * identity, through the compilation's one descriptor service.
+     * Defensive: the planner only publishes plans for identities the
+     * index registered.
+     */
+    private String identityText(CanonicalClassIdentity identity) {
+        String text = identityIndex.descriptorTextFor(identity);
+        if (text == null) {
+            throw new IllegalStateException(
+                "published default plan has no canonical identity text: "
+                    + identity);
+        }
+        return text;
+    }
+
+    /**
      * One field's defaults-thunk entry (the
      * {@code LuaBackend.visit(ClassDeclaration)} order,
      * deal/codegen/lua/LuaBackend.java:1076-1096): absent optional →
@@ -2010,7 +2342,12 @@ public final class JsBackend {
      * {@code null}; otherwise the type-node zero value.
      */
     private String fieldDefault(ClassField field) {
-        if (field.optional() && field.defaultExpr().isEmpty()) {
+        // A declared default on an optional field is checker-validated
+        // metadata that NEVER evaluates (provider-versioned-default-plans
+        // D2, runtime page D1): an omitted optional field stays absent,
+        // so every optional entry stores $rt.MISSING — declared default
+        // or not.
+        if (field.optional()) {
             return "$rt.MISSING";
         }
         if (field.defaultExpr().isPresent()) {
@@ -2499,6 +2836,8 @@ public final class JsBackend {
         Set<String> hoisted = new LinkedHashSet<>();
         Set<String> hoistedClasses = new LinkedHashSet<>();
         Map<String, String> firstKind = new LinkedHashMap<>();
+        Map<String, ClassDeclaration> classDeclarations =
+            new LinkedHashMap<>();
         for (StatementNode stmt : statements) {
             switch (stmt) {
                 case FunctionDeclaration fd -> {
@@ -2508,6 +2847,7 @@ public final class JsBackend {
                 case ClassDeclaration cd -> {
                     hoistedClasses.add(cd.name());
                     firstKind.putIfAbsent(cd.name(), "class");
+                    classDeclarations.putIfAbsent(cd.name(), cd);
                 }
                 case ExportDeclaration ed -> {
                     switch (ed.declaration()) {
@@ -2518,6 +2858,7 @@ public final class JsBackend {
                         case ClassDeclaration cd -> {
                             hoistedClasses.add(cd.name());
                             firstKind.putIfAbsent(cd.name(), "class");
+                            classDeclarations.putIfAbsent(cd.name(), cd);
                         }
                         default -> {
                             // Unreachable: ExportDeclaration wraps only
@@ -2537,7 +2878,15 @@ public final class JsBackend {
             }
         }
         for (String name : hoistedClasses) {
-            line("let " + name + "$new; let " + name + "$meta;");
+            // A plan-bearing class additionally predeclares its
+            // scope-local plan binding (ISSUE-0545): the declaration
+            // site assigns the plan list, and $rt.classPlan construction
+            // sites in the same list resolve through the hoisted
+            // binding, exactly like the $new/$meta pair.
+            line("let " + name + "$new; let " + name + "$meta;"
+                + (publishedPlanFor(classDeclarations.get(name)) != null
+                    ? " let " + name + "$plan;"
+                    : ""));
             if ("class".equals(firstKind.get(name))) {
                 declareLocalClass(name);
             }

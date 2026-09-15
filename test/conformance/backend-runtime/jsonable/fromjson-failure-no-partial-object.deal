@@ -1,0 +1,55 @@
+// @spec: Classes — JSON serialization (@jsonable)
+// @description: Nested malformed JSON returns null atomically and does not poison a later valid decode; the nullable Batch result is narrowed inside `if (x !== null) {}` true-branches before every field access and comparison (the corpus nullable-narrowing form)
+// @expected: runtime-ok
+// @features: jsonable, classes, arrays, nullable, optional, errors
+
+// @jsonable
+export class Item {
+  id: int = 0;
+  note?: string | null;
+}
+
+// @jsonable
+export class Batch {
+  name: string = "";
+  items: Item[] = [];
+}
+
+export function main(): null {
+  let badType: Batch | null = Batch$fromJson("{\"name\":\"bad\",\"items\":[{\"id\":1},{\"id\":\"x\"}]}");
+  if (badType !== null) {
+    throw { code: "TEST_FAIL", message: "nested malformed element accepted" };
+  }
+  let extraKey: Batch | null = Batch$fromJson("{\"name\":\"extra\",\"items\":[{\"id\":1,\"unknown\":true}]}");
+  if (extraKey !== null) {
+    throw { code: "TEST_FAIL", message: "nested extra key accepted" };
+  }
+  let valid: Batch | null = Batch$fromJson("{\"name\":\"ok\",\"items\":[{\"id\":1},{\"id\":2,\"note\":null},{\"id\":3,\"note\":\"n\"}]}");
+  if (valid !== null) {
+    if (valid.name !== "ok" || valid.items.length !== 3) {
+      throw { code: "TEST_FAIL", message: "valid decode failed after rejected inputs" };
+    }
+    if (has(valid.items[0].note)) {
+      throw { code: "TEST_FAIL", message: "missing optional state lost" };
+    }
+    if (!has(valid.items[1].note)) {
+      throw { code: "TEST_FAIL", message: "explicit-null state lost" };
+    }
+    let explicitNote: string | null = valid.items[1].note;
+    if (explicitNote !== null) {
+      throw { code: "TEST_FAIL", message: "explicit-null state lost" };
+    }
+    if (!has(valid.items[2].note)) {
+      throw { code: "TEST_FAIL", message: "present optional state lost" };
+    }
+    let note: string | null = valid.items[2].note;
+    if (note !== null) {
+      if (note !== "n") {
+        throw { code: "TEST_FAIL", message: "present optional value changed" };
+      }
+      return null;
+    }
+    throw { code: "TEST_FAIL", message: "present optional value is null" };
+  }
+  throw { code: "TEST_FAIL", message: "valid decode rejected" };
+}

@@ -1,0 +1,7 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: A nullable primitive null parameter and return preserve null across the host boundary
+// @expected: runtime-ok
+// @features: host-abi, nullable, primitive, null
+
+import * as host from "host/boundary";
+export function main(): null { let value: int | null = host.nullableInt(null); if (value !== null) { throw { code: "TEST_FAIL", message: "host nullable primitive null" }; } return null; }

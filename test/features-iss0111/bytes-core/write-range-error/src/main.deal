@@ -1,0 +1,7 @@
+// ISSUE-0165 BYTES_CORE write-range row: a write with a value outside
+// 0..255 raises the declared E8013 on both backends.
+export function main(): null {
+  let b: bytes = bytes(1);
+  b[0] = 256;
+  return null;
+}

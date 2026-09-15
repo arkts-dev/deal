@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "backends": ["luajit", "jvm", "js"],
+  "expected": {
+    "mode": "runtime-error",
+    "transcript": {
+      "stdout": "DEAL_ERROR_CODE: E8005\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8005\",\"message\":\"integer division by zero\",\"sourceFile\":\"backend-runtime/source-location/037-runtime-source-div-zero.deal\",\"line\":8,\"column\":20}\n",
+      "stderr": ""
+    },
+    "exitCode": 1,
+    "error": {
+      "code": "E8005",
+      "message": "integer division by zero",
+      "sourceFile": "backend-runtime/source-location/037-runtime-source-div-zero.deal",
+      "line": 8,
+      "column": 20
+    }
+  }
+}

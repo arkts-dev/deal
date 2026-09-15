@@ -1,0 +1,9 @@
+// @spec: Type system
+// @description: Equality between int and number is rejected
+// @expected: compile-error E3006
+// @features: type-system, equality, invariance, diagnostics, v1.2
+
+export function main(): null {
+  let equal: boolean = 1 === 1.0;
+  return null;
+}

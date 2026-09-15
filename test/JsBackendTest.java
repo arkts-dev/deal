@@ -11,7 +11,7 @@ import deal.checker.NameResolver;
 import deal.checker.SymbolTable;
 import deal.checker.TypeChecker;
 import deal.codegen.Backend;
-import deal.codegen.js.HostModuleDeclarations;
+import deal.codegen.HostModuleDeclarations;
 import deal.codegen.js.JsBackend;
 import deal.descriptors.CanonicalRuntimeTypeDescriptor;
 import deal.diagnostics.CompilerDiagnostic;
@@ -69,7 +69,7 @@ import java.util.stream.Stream;
  * pattern); the bounded node semantic cases execute the real
  * frontend → {@link JsBackend} → node chain through the deployed
  * {@code deal/runtime.js} and {@code std/*.js} artifacts with the
- * conformance runner ({@link BackendConformanceTest#buildJsRunner}),
+ * generated-artifact runner ({@link StubModuleResolver#buildJsRunner}),
  * which auto-invokes zero-arity exports in declaration order, prints
  * non-null results, awaits thenables, and maps uncaught errors to the
  * shared {@code DEAL_ERROR_CODE: <code>} stderr + exit-1 contract.
@@ -233,7 +233,7 @@ public class JsBackendTest {
      */
     private static Frontend compileFrontend(String source, String filename) {
         return compileFrontend(source, filename, "Main",
-            new BackendConformanceTest.StubModuleResolver());
+            new StubModuleResolver());
     }
 
     /** Frontend compile with an explicit module resolver (module probes). */
@@ -264,7 +264,7 @@ public class JsBackendTest {
     private static Frontend compileFrontendUnshaped(String source,
                                                     String filename) {
         return compileFrontend(source, filename, "Main",
-            new BackendConformanceTest.StubModuleResolver(), false);
+            new StubModuleResolver(), false);
     }
 
     @SuppressWarnings("deprecation")
@@ -364,7 +364,7 @@ public class JsBackendTest {
      * The adapter-shape generation call with an explicit extern-C import
      * set (fixed-name-directive-events D9): routes through the
      * production seam with a standalone identity surface, exactly as the
-     * host-ABI class fixture does — the E6003 re-key pin passes the raw
+     * host-ABI class fixture does — the E6006 re-key pin passes the raw
      * import path here.
      */
     private static JsBackend.JsCodegenResult generateWithExternC(
@@ -408,13 +408,13 @@ public class JsBackendTest {
     /**
      * Deploys one generated artifact plus the runtime/stdlib support set
      * into a fresh temp dir (the conformance adapter's deployment shape:
-     * {@link BackendConformanceTest#deployJsSupport}).
+     * {@link StubModuleResolver#deployJsSupport}).
      */
     private static Path deployArtifacts(JsBackend.JsCodegenResult res,
                                         String artifactName) throws IOException {
         Path dir = Files.createTempDirectory("jstest_run_");
         Files.writeString(dir.resolve(artifactName), res.source());
-        BackendConformanceTest.deployJsSupport(dir);
+        StubModuleResolver.deployJsSupport(dir);
         return dir;
     }
 
@@ -474,7 +474,7 @@ public class JsBackendTest {
         }
         Path dir = deployArtifacts(res, "Main.js");
         Files.writeString(dir.resolve("JsConformanceRunner.js"),
-            BackendConformanceTest.buildJsRunner(f.program()));
+            StubModuleResolver.buildJsRunner(f.program()));
         NodeResult result = runNodeScript(dir, "JsConformanceRunner.js");
         deleteDir(dir);
         return result;
@@ -497,7 +497,7 @@ public class JsBackendTest {
     private static NodeResult runRuntimeProbe(String name, String script)
             throws Exception {
         Path dir = Files.createTempDirectory("jstest_probe_");
-        BackendConformanceTest.deployJsSupport(dir);
+        StubModuleResolver.deployJsSupport(dir);
         Files.writeString(dir.resolve("probe.js"), script);
         NodeResult result = runNodeScript(dir, "probe.js");
         deleteDir(dir);
@@ -1296,12 +1296,15 @@ public class JsBackendTest {
                 + "$classname: \"@Main/Inner\" };"),
             "the inline META pair carries the canonical identity text");
 
-        // A scope-local default function is captured by the thunk.
+        // A scope-local default function is captured by the thunk
+        // (the required-present field carries the evaluator; an optional
+        // field's declared default is checker-validated metadata that
+        // never evaluates — D1).
         JsBackend.JsCodegenResult func = generate("""
             export function test(): int {
               let seed: int = 40;
               function next(): int { return seed + 2; }
-              class Inner { v?: int = next(); }
+              class Inner { v: int = next(); }
               return 1;
             }
             """, "nestedclass-func");
@@ -1393,32 +1396,23 @@ public class JsBackendTest {
         System.out.println("-- Node: nested-class defaults scope and per-construction evaluation --");
         if (!nodeAvailable) { skipNode("nested-class defaults scope"); return; }
 
-        // A block-level class whose optional default calls a scope-local
-        // function: two constructions observe independent evaluations of
-        // the capturing default (40 + 2 then 100 + 2).
+        // A block-level class whose required default calls a
+        // scope-local function: two constructions observe independent
+        // evaluations of the capturing default (40 + 2 then 100 + 2).
+        // (An optional field's declared default never evaluates — D1 —
+        // so the required-present form pins the capture.)
         NodeResult run = runDealNode("""
             export function test(): int {
               let seed: int = 40;
               function next(): int { return seed + 2; }
               class Inner {
-                v?: int = next();
+                v: int = next();
               }
               let a: Inner = { };
               seed = 100;
               let b: Inner = { };
-              if (!has(a.v) || !has(b.v)) { return 0; }
-              let av: int | null = a.v;
-              if (av !== null) {
-                if (av !== 42) { return 0; }
-              } else {
-                return 0;
-              }
-              let bv: int | null = b.v;
-              if (bv !== null) {
-                if (bv !== 102) { return 0; }
-              } else {
-                return 0;
-              }
+              if (a.v !== 42) { return 0; }
+              if (b.v !== 102) { return 0; }
               return 1;
             }
             """, "nestedclass-node");
@@ -1475,15 +1469,9 @@ public class JsBackendTest {
         NodeResult shadow = runDealNode("""
             class Shadowed { v: int = 1; }
             export function test(): int {
-              class Shadowed { w?: int = 2; }
+              class Shadowed { w: int = 2; }
               let s: Shadowed = { };
-              if (!has(s.w)) { return 0; }
-              let w: int | null = s.w;
-              if (w !== null) {
-                if (w !== 2) { return 0; }
-              } else {
-                return 0;
-              }
+              if (s.w !== 2) { return 0; }
               return 1;
             }
             """, "nestedclass-shadow");
@@ -1796,7 +1784,7 @@ public class JsBackendTest {
     // =========================================================================
 
     private static void testUnsupportedConstructsRejected() {
-        System.out.println("-- Unsupported constructs → E6000/E6003 --");
+        System.out.println("-- Unsupported constructs → E6000/E6006 --");
 
         // @jsonable emission retired the E6000 arm
         // (js-v12-jsonable-completion D1): the passing emission pins
@@ -1810,15 +1798,15 @@ public class JsBackendTest {
         // emission and runtime pins live in
         // testHostAbiEmissionPins/testHostAbiOrchestratorNode.
 
-        // @extern-c import: E6003 with the EXACT current detail text
+        // @extern-c import: E6006 with the EXACT current detail text
         // (the JSON-slice-corpus rejection-detail pin migrated here,
         // ISSUE-0359; v12-three-backend-conformance-corpus C1/C6:
         // backend-internal rejection detail texts are never corpus
-        // fields). ISSUE-0277 migrates the production emission to E6006
-        // and must update this pin together with that change — this unit
-        // test pins the CURRENT emission (E6003 + the current text at
-        // deal/codegen/js/JsBackend.java:799) and must not pin E6006
-        // before the backend epic lands it.
+        // fields). ISSUE-0507 (FFI candidate fixture conformance)
+        // landed the E6006 FFI_UNSUPPORTED_BACKEND registration and
+        // migrated this arm from its former E6003 reuse — this unit
+        // test pins the CURRENT emission (E6006 + the current text at
+        // deal/codegen/js/JsBackend.java).
         String externDetailText = "JavaScript backend: @extern-c imports "
             + "are not supported (FFI_UNSUPPORTED_BACKEND, "
             + "ISSUE-0169 skeleton)";
@@ -1835,11 +1823,11 @@ public class JsBackendTest {
         check(extern != null && extern.hasErrors(), "@extern-c import rejected");
         if (extern != null) {
             check(extern.diagnostics().stream().anyMatch(d ->
-                    "E6003".equals(d.code())
+                    "E6006".equals(d.code())
                         && "error".equals(d.severity())
                         && externDetailText.equals(d.message())
                         && d.range().startLine() == 1),
-                "@extern-c rejection is E6003 with the exact current detail "
+                "@extern-c rejection is E6006 with the exact current detail "
                     + "text at the import statement: " + extern.diagnostics());
         }
 
@@ -1999,7 +1987,7 @@ public class JsBackendTest {
                         + "  return x + 1;\n"
                         + "} };\n");
                     Files.writeString(dir.resolve("JsConformanceRunner.js"),
-                        BackendConformanceTest.buildJsRunner(
+                        StubModuleResolver.buildJsRunner(
                             compileFrontend("""
                             import * as h from "./hostmod"
                             export function test(): int {
@@ -2233,11 +2221,12 @@ public class JsBackendTest {
         if (nodeAvailable) {
             writeFile("hostjs_proj/build/js/host/cfg.js", """
                 "use strict";
+                const $rt = require("../deal/runtime");
                 module.exports = {
                   Endpoint: { $kind: "class", $classname: "@$external/host/cfg/Endpoint" },
                   Endpoint_defaults: { path: "/" },
                   ServerConfig: { $kind: "class", $classname: "@$external/host/cfg/ServerConfig" },
-                  ServerConfig_defaults: { port: 8080 },
+                  ServerConfig_defaults: { port: 8080, endpoint: $rt.MISSING, tags: $rt.MISSING, note: $rt.MISSING },
                   describe: function (s) { return s.endpoint.path + ":" + s.port; },
                 };
                 """);
@@ -2493,19 +2482,50 @@ public class JsBackendTest {
             }
         }
 
-        // The default invocation stays PRE_ACTIVATION → LEGACY_SAFE_INT
-        // and plumbs the legacy mode: no selector in any module.
-        Path legacyOutputDir = tmpDir.resolve("js_int32_proj/build/js_legacy");
-        CompilationOrchestrator legacy = new CompilationOrchestrator(
-            entryFile, legacyOutputDir, false, false, false, Backend.JS,
+        // The default invocation is now the committed V1_2_ACTIVE public
+        // build: it plumbs the int32 mode (the selector appears exactly
+        // once per emitted module).
+        Path defaultOutputDir = tmpDir.resolve("js_int32_proj/build/js_default");
+        CompilationOrchestrator defaultOrchestrator = new CompilationOrchestrator(
+            entryFile, defaultOutputDir, false, false, false, Backend.JS,
             (Map<String, String>) null, roots,
             Path.of(".").toAbsolutePath().normalize());
+        boolean defaultOk = defaultOrchestrator.compile();
+        check(defaultOk, "default JS orchestrator compile succeeds: "
+            + defaultOrchestrator.diagnostics());
+        check(defaultOrchestrator.invocation().semanticProfile()
+                == SemanticProfile.DEAL_V1_2_INT32,
+            "the orchestrator default invocation derives DEAL_V1_2_INT32 "
+                + "under the committed V1_2_ACTIVE release state");
+        if (defaultOk) {
+            for (String artifactName : List.of("app/main.js", "app/lib.js")) {
+                Path artifact = defaultOutputDir.resolve(artifactName);
+                check(Files.exists(artifact),
+                    "default orchestrator wrote " + artifactName);
+                if (Files.exists(artifact)) {
+                    check(Files.readString(artifact).contains("setInt32Mode"),
+                        artifactName + " emits the int32 selector under the "
+                            + "default post-flip invocation");
+                }
+            }
+        }
+
+        // The explicit PRE_ACTIVATION invocation keeps LEGACY_SAFE_INT
+        // (the internal matrix row) and plumbs the legacy mode: no
+        // selector in any module.
+        Path legacyOutputDir = tmpDir.resolve("js_int32_proj/build/js_legacy");
+        CompilationOrchestrator legacy = new CompilationOrchestrator(
+            entryFile, legacyOutputDir, false, false, false, false, Backend.JS,
+            (Map<String, String>) null, roots,
+            Path.of(".").toAbsolutePath().normalize(), null,
+            CompilerProfileProvider.resolve(ReleaseState.PRE_ACTIVATION,
+                CapabilityRegistry.releaseRegistry()));
         boolean legacyOk = legacy.compile();
-        check(legacyOk, "default JS orchestrator compile succeeds: "
+        check(legacyOk, "legacy JS orchestrator compile succeeds: "
             + legacy.diagnostics());
         check(legacy.invocation().semanticProfile()
                 == SemanticProfile.LEGACY_SAFE_INT,
-            "the orchestrator default invocation stays "
+            "the explicit PRE_ACTIVATION invocation keeps "
                 + "PRE_ACTIVATION → LEGACY_SAFE_INT");
         if (legacyOk) {
             for (String artifactName : List.of("app/main.js", "app/lib.js")) {
@@ -2520,6 +2540,7 @@ public class JsBackendTest {
             }
         }
     }
+
 
     private static void testInt32MatrixNode() throws Exception {
         System.out.println("-- Node: signed-int32 matrix under DEAL_V1_2_INT32 --");
@@ -2537,7 +2558,6 @@ public class JsBackendTest {
             "int32-min-ok", SemanticProfile.DEAL_V1_2_INT32);
         check(minOk.exitCode() == 0 && minOk.output().equals("-2147483648"),
             "-2147483648 is the accepted int32 minimum: " + minOk.output());
-
         // Overflow on every producing site: E8004 with the pinned
         // "int out of safe range" message, exit 1.
         NodeResult addOver = runDealNodeProfile(
@@ -2566,13 +2586,14 @@ public class JsBackendTest {
             "MIN_VALUE / -1 → E8004 (the truncated quotient leaves the "
                 + "int32 range), exit 1: " + divOver.output());
 
-        NodeResult modOver = runDealNodeProfile(
+        NodeResult modMinNegOne = runDealNodeProfile(
             "export function test(): int { return -2147483648 % -1; }",
-            "int32-mod-over", SemanticProfile.DEAL_V1_2_INT32);
-        check(modOver.exitCode() == 1
-                && modOver.output().contains("DEAL_ERROR_CODE: E8004"),
-            "MIN_VALUE % -1 → E8004 (the reference's truncating-quotient "
-                + "gate), exit 1: " + modOver.output());
+            "int32-mod-min-neg-one", SemanticProfile.DEAL_V1_2_INT32);
+        check(modMinNegOne.exitCode() == 0
+                && modMinNegOne.output().equals("0"),
+            "MIN_VALUE % -1 → 0 (the v1.2 remainder rule gates the "
+                + "truncated remainder only — only / overflows on "
+                + "MIN_VALUE / -1), exit 0: " + modMinNegOne.output());
 
         NodeResult negOver = runDealNodeProfile(
             "export function test(): int { return -(-2147483648); }",
@@ -3368,10 +3389,10 @@ public class JsBackendTest {
      * pinned depth (negative case), and the mutated buffer stays
      * observable through the parallel non-null view. The nullable
      * shapes are flow-only in checker-accepted source: the
-     * {@code === null} test that would unpack them is the
-     * checker-owned E3019 bytes-comparison gate
-     * (binary-comparison-selectors B-D7, ISSUE-0111/ISSUE-0158) — a
-     * frontend gate, never a backend rejection.
+     * {@code === null} test that would unpack them is checker-admitted
+     * since the ISSUE-0158 E3019 gate lift (bytes identity equality —
+     * binary-comparison-selectors B-D7 assigned the lift to
+     * ISSUE-0111/ISSUE-0158), never a backend rejection.
      */
     private static void testBytesClosureDeepCompositionsNode() throws Exception {
         System.out.println("-- Node: arbitrary-depth Array/Nullable bytes compositions through boundaries --");
@@ -3574,12 +3595,13 @@ public class JsBackendTest {
      * The no-E6000 pins: every closure program generates with zero
      * diagnostics and no E6000 for bytes nesting or function shape
      * alone, the canonical descriptor texts appear byte-exact at the
-     * emitted boundary sites, and the only closure-position rejection
-     * is the checker-owned E3019 bytes-comparison gate
-     * (binary-comparison-selectors B-D7 — frontend, ISSUE-0111/
-     * ISSUE-0158), never a backend rejection.
+     * emitted boundary sites, and bytes identity equality is
+     * checker-admitted since the ISSUE-0158 E3019 gate lift
+     * (binary-comparison-selectors B-D7 — the frontend admission rule
+     * with native identity comparison emission), never a backend
+     * rejection.
      */
-    private static void testBytesClosureNoE6000Pins() {
+    private static void testBytesClosureNoE6000Pins() throws Exception {
         System.out.println("-- Bytes closure: no-E6000 generation pins and canonical descriptor texts --");
 
         String[] closurePrograms = {
@@ -3685,26 +3707,66 @@ public class JsBackendTest {
                     + "[[bytes]] inner descriptor byte-exact");
         }
 
-        // The legal-equality boundary: bytes identity equality stays
-        // the checker-owned E3019 gate (binary-comparison-selectors
-        // B-D7, owned by ISSUE-0111/ISSUE-0158) — the frontend
-        // admission rule, never a backend E6000 rejection. Equality
-        // inside closure programs runs on byte reads (int equality),
-        // which every node case above asserts.
+        // The legal-equality boundary: bytes identity equality is
+        // checker-admitted since the ISSUE-0158 E3019 gate lift
+        // (binary-comparison-selectors B-D7 assigned the lift to
+        // ISSUE-0111/ISSUE-0158) and emits native identity comparison
+        // ($rt carriers are Uint8Array objects, so `===` is reference
+        // identity) — never a backend E6000 rejection.
         Frontend eq = compileFrontend("""
             export function test(): int {
               let a: bytes = bytes(1);
               let b: bytes = a;
-              if (a === b) { return 0; }
-              return 1;
+              let c: bytes = bytes(1);
+              if (!(a === b)) { return 0; }
+              if (a === c) { return 0; }
+              if (a !== c) { return 1; }
+              return 0;
             }
             """, "jstest-bytes-closure-eq.deal");
-        check(eq.errors().stream().anyMatch(d -> "E3019".equals(d.code())),
-            "bytes identity equality stays the checker-owned E3019 gate "
-                + "(frontend, ISSUE-0111/ISSUE-0158): " + eq.errors());
-        check(eq.errors().stream().noneMatch(d -> "E6000".equals(d.code())),
-            "the equality closure position is never a backend E6000 "
-                + "rejection: " + eq.errors());
+        check(eq.errors().isEmpty(),
+            "bytes identity equality is checker-admitted with zero "
+                + "diagnostics (frontend, ISSUE-0158 lift): " + eq.errors());
+        if (eq.errors().isEmpty()) {
+            JsBackend.JsCodegenResult eqRes = generate(
+                """
+            export function test(): int {
+              let a: bytes = bytes(1);
+              let b: bytes = a;
+              let c: bytes = bytes(1);
+              if (!(a === b)) { return 0; }
+              if (a === c) { return 0; }
+              if (a !== c) { return 1; }
+              return 0;
+            }
+            """, "jstest-bytes-closure-eq.deal");
+            check(eqRes != null && !eqRes.hasErrors(),
+                "the equality closure position generates with zero "
+                    + "diagnostics: " + (eqRes == null ? "<null>"
+                        : eqRes.diagnostics()));
+            if (eqRes != null && !eqRes.hasErrors()) {
+                check(eqRes.source().contains("(a === b)")
+                        && eqRes.source().contains("(a !== c)"),
+                    "bytes equality emits native identity comparison");
+            }
+        }
+        if (nodeAvailable) {
+            NodeResult eqRun = runDealNode("""
+                export function test(): int {
+                  let a: bytes = bytes(1);
+                  let b: bytes = a;
+                  let c: bytes = bytes(1);
+                  if (!(a === b)) { return 0; }
+                  if (a === c) { return 0; }
+                  if (a !== c) { return 1; }
+                  return 0;
+                }
+                """, "bytes-closure-eq-node");
+            check(eqRun.exitCode() == 0 && eqRun.output().equals("1"),
+                "bytes identity equality executes real reference identity "
+                    + "on Node (alias true, distinct buffers false; "
+                    + "returns 1): " + eqRun.output());
+        }
     }
 
     private static void testNumModFloored() throws Exception {
@@ -4894,23 +4956,32 @@ public class JsBackendTest {
         // The retired @jsonable rejection (js-v12-jsonable-completion
         // D1), the retired nested-class rejection (ISSUE-0318), and the
         // retired host-ABI E6000 (ISSUE-0328 — the passing model lives
-        // in testHostAbiOrchestratorNode) no longer drive this two-pass
-        // pin; the still-live @extern-c E6003 arm keeps the
-        // no-partial-artifact rejection model covered — the rejected
-        // lib writes no artifact while the clean sibling entry still
-        // writes its own (the single-module model lives in
-        // testNoPartialArtifactOnRejection). ISSUE-0273 D9 re-key: the
-        // E6003 trigger is an import of an extern-C declaration module —
-        // the @extern-c file directive lives on ffi.d.deal, never on the
-        // importing implementation file (where it is E1046).
+        // in testHostAbiOrchestratorNode) no longer drive this pin; the
+        // still-live @extern-c E6006 arm keeps the
+        // no-partial-artifact rejection model covered — a rejected
+        // module fails the whole compilation and nothing is published
+        // (the transactional whole-set contract,
+        // whole-project-artifact-publication D3/D4; the single-module
+        // model lives in testNoPartialArtifactOnRejection).
+        // ISSUE-0273 D9 re-key: the E6006 trigger is an import of an
+        // extern-C declaration module — the @extern-c file directive
+        // lives on ffi.d.deal, never on the importing implementation
+        // file (where it is E1046). The import is manifest-backed (an
+        // externals entry with nativeLibrary) — an unbacked extern-C
+        // import is the frontend E2010 invalid-manifest-policy
+        // rejection (docs/spec-v1.2.md:1891), which the production
+        // pipeline emits before codegen (ISSUE-0477 remediation).
         writeFile("rej_proj/deal.json",
-            "{\"languageVersion\": \"1.2\", \"backend\": \"js\"}");
+            "{\"languageVersion\": \"1.2\", \"backend\": \"js\","
+                + " \"moduleRoots\": [\"src\"], \"externals\": {"
+                + " \"ffi\": {\"declaration\": \"src/ffi.d.deal\","
+                + " \"nativeLibrary\": \"libhost\"}}}");
         writeFile("rej_proj/src/ffi.d.deal", """
             // @extern-c
             export function cFn(x: int): int;
             """);
         writeFile("rej_proj/src/lib.deal", """
-            import * as ffi from "./ffi"
+            import * as ffi from "ffi"
             export function use(): int { return ffi.cFn(1); }
             """);
         writeFile("rej_proj/src/rej_main.deal", """
@@ -4920,23 +4991,44 @@ public class JsBackendTest {
             """);
 
         Path entryFile = tmpDir.resolve("rej_proj/src/rej_main.deal").toAbsolutePath();
-        Path outputDir = tmpDir.resolve("rej_proj/build/js");
-        List<Path> roots = List.of(tmpDir.resolve("rej_proj/src").toAbsolutePath());
-        // Test-only isolated-phase Backend.JS path (the production
-        // manifest/CLI path is pinned separately).
-        CompilationOrchestrator orchestrator = new CompilationOrchestrator(
-            entryFile, outputDir, false, false, false, Backend.JS,
-            (Map<String, String>) null, roots,
-            Path.of(".").toAbsolutePath().normalize());
+        // The production locator path (ISSUE-0169 remediation,
+        // ISSUE-0471): the manifest-selected Backend.JS compile
+        // rejects the manifest-backed @extern-c import with E6006.
+        ProjectLocator.LocateResult located = ProjectLocator.locate(
+            entryFile.toString(), null);
+        check(located.context() != null && located.e2010() == null
+                && located.cliDiagnostic() == null,
+            "rejection manifest locates a context: "
+                + (located.e2010() != null
+                    ? located.e2010() : located.cliDiagnostic()));
+        if (located.context() == null) {
+            return;
+        }
+        CompilerInvocation invocation = CompilerProfileProvider.resolve(
+            ReleaseConfiguration.CURRENT_RELEASE_STATE,
+            ReleaseConfiguration.releaseCapabilityRegistry());
+        CompilationOrchestrator orchestrator =
+            new CompilationOrchestrator(located.context(), entryFile,
+                false, false, false, false, null, invocation);
+        Path outputDir = Path.of(located.context().outputPath()
+            .absoluteNormalizedPath());
         boolean success = orchestrator.compile();
         check(!success, "the @extern-c project fails the compilation");
         check(orchestrator.diagnostics().stream().anyMatch(d ->
-                "E6003".equals(d.code())),
-            "the orchestrator reports E6003: " + orchestrator.diagnostics());
+                "E6006".equals(d.code())),
+            "the orchestrator reports E6006: " + orchestrator.diagnostics());
         check(!Files.exists(outputDir.resolve("lib.js")),
             "the rejected module writes no artifact");
-        check(Files.exists(outputDir.resolve("rej_main.js")),
-            "the clean sibling entry still writes its artifact (two-pass model)");
+        // Transactional publication (whole-project-artifact-publication
+        // D3/D4): a rejected module fails the whole compilation, so
+        // nothing is published — the clean sibling's staged artifact is
+        // discarded with the stage tree and never reaches the live
+        // root.
+        check(!Files.exists(outputDir.resolve("rej_main.js")),
+            "no clean-sibling artifact is published (whole-set failure "
+                + "contract)");
+        check(!Files.exists(outputDir),
+            "the failed compilation publishes no live root at all");
     }
 
     // =========================================================================
@@ -5146,7 +5238,7 @@ public class JsBackendTest {
 
     /**
      * No-partial-artifact: an {@code @extern-c} import (the retained
-     * E6003 rejection) fails the compilation and the rejected module
+     * E6006 rejection) fails the compilation and the rejected module
      * writes no artifact — the rejection model the retired host-ABI
      * E6000 arm used to cover (ISSUE-0328 retired that arm; the
      * host-ABI passing model lives in testHostAbiOrchestratorNode).
@@ -5157,18 +5249,24 @@ public class JsBackendTest {
             projectDir = Files.createTempDirectory("deal_js_reject_test_");
             Files.writeString(projectDir.resolve("deal.json"),
                 "{\n  \"languageVersion\": \"1.2\",\n  \"backend\": \"js\",\n"
-                    + "  \"moduleRoots\": [\".\"]\n}\n",
+                    + "  \"moduleRoots\": [\".\"],\n"
+                    + "  \"externals\": {\"ffi\": {\"declaration\":"
+                    + " \"ffi.d.deal\", \"nativeLibrary\": \"libhost\"}}\n}\n",
                 StandardCharsets.UTF_8);
-            // ISSUE-0273 D9 re-key: the E6003 trigger is an import of an
+            // ISSUE-0273 D9 re-key: the E6006 trigger is an import of an
             // extern-C declaration module — the @extern-c file directive
             // lives on ffi.d.deal (on an implementation file it is
-            // E1046).
+            // E1046). The import is manifest-backed (an externals entry
+            // with nativeLibrary) — an unbacked extern-C import is the
+            // frontend E2010 invalid-manifest-policy rejection
+            // (docs/spec-v1.2.md:1891), emitted before codegen
+            // (ISSUE-0477 remediation).
             Files.writeString(projectDir.resolve("ffi.d.deal"),
                 "// @extern-c\nexport function cFn(x: int): int;\n",
                 StandardCharsets.UTF_8);
             Path entry = projectDir.resolve("main.deal");
             Files.writeString(entry,
-                "import * as ffi from \"./ffi\";\n\n"
+                "import * as ffi from \"ffi\";\n\n"
                     + "export function main(): null {\n"
                     + "  let v: int = ffi.cFn(1);\n"
                     + "  return null;\n"
@@ -5176,7 +5274,7 @@ public class JsBackendTest {
                 StandardCharsets.UTF_8);
             // The production locator path (ISSUE-0169 remediation,
             // ISSUE-0471): the manifest-selected Backend.JS compile
-            // rejects the @extern-c import with E6003 and writes no
+            // rejects the @extern-c import with E6006 and writes no
             // artifact for the rejected module.
             ProjectLocator.LocateResult located = ProjectLocator.locate(
                 entry.toString(), null);
@@ -5199,8 +5297,8 @@ public class JsBackendTest {
             boolean ok = orchestrator.compile();
             check(!ok, "an @extern-c import fails the JS compilation");
             check(orchestrator.diagnostics().stream()
-                    .anyMatch(d -> "E6003".equals(d.code())),
-                "the rejection is E6003: " + orchestrator.diagnostics());
+                    .anyMatch(d -> "E6006".equals(d.code())),
+                "the rejection is E6006: " + orchestrator.diagnostics());
             check(!Files.exists(outputRoot.resolve("main.js")),
                 "no entry artifact is written for the rejected module");
             check(!Files.exists(outputRoot.resolve("ffi.js")),

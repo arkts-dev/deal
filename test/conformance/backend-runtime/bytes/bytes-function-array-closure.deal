@@ -1,0 +1,43 @@
+// @spec: Functions — bytes-bearing signatures in arrays
+// @description: ((bytes)->bytes)[] and [?(bytes)->bytes] hold first-class sync bytes-bearing function values; elements are stored, read, and invoked end to end with the canonical (bytes)->bytes descriptor (v1.2)
+// @expected: runtime-ok
+// @features: bytes, functions, arrays
+
+function bump(b: bytes, v: int): bytes {
+  b[0] = b[0] + v;
+  return b;
+}
+
+function id(b: bytes): bytes {
+  return b;
+}
+
+export function test_bytes_function_array_closure(): int {
+  let fs: ((b: bytes, v: int) => bytes)[] = [bump, bump];
+  fs[fs.length] = bump;
+  let r: bytes = fs[0](bytes(2), 5);
+  if (r[0] !== 5) {
+    throw { code: "TEST_FAIL", message: "two-param function array invoke failed" };
+  }
+  let gs: ((b: bytes) => bytes)[] = [id, id];
+  gs[1] = id;
+  let out: bytes = gs[0](bytes(1));
+  if (out.length !== 1) {
+    throw { code: "TEST_FAIL", message: "single-param function array invoke failed" };
+  }
+  let ns: (((b: bytes) => bytes) | null)[] = [];
+  ns[ns.length] = id;
+  ns[ns.length] = null;
+  let first: ((b: bytes) => bytes) | null = ns[0];
+  if (first !== null) {
+    let via: bytes = first(bytes(3));
+    if (via.length !== 3) {
+      throw { code: "TEST_FAIL", message: "nullable function array invoke failed" };
+    }
+  }
+  return 0;
+}
+
+export function main(): null {
+  return null;
+}

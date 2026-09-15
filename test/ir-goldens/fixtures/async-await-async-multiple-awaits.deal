@@ -1,5 +1,5 @@
 // IR golden fixture: async-await-async-multiple-awaits
-// Migrated IR-containment pins from test/conformance/fixtures/async-await.json case 'async-multiple-awaits' (ISSUE-0358).
+// Migrated IR-containment pin for legacy case 'async-multiple-awaits' (ISSUE-0358).
 
 async function a(): int { return 1; }
 async function b(): int { return 2; }

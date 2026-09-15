@@ -1,0 +1,8 @@
+// ISSUE-0165 SIGNED_INT32: integer division by zero must raise E8005 on
+// both backends.
+export function main(): null {
+  let dividend: int = 5;
+  let divisor: int = 0;
+  let x: int = dividend / divisor;
+  return null;
+}

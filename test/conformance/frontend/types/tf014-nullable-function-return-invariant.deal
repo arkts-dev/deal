@@ -1,0 +1,13 @@
+// @spec: Functions
+// @description: Function return types do not widen from int to int or null
+// @expected: compile-error E3001
+// @features: type-system, functions, nullable, invariance, diagnostics, v1.2
+
+function exactValue(): int {
+  return 1;
+}
+
+export function main(): null {
+  let nullableValue: () => int | null = exactValue;
+  return null;
+}

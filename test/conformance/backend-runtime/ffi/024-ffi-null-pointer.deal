@@ -1,0 +1,10 @@
+// @spec: Modules, declarations, standard library, and host ABI — C FFI externals entries
+// @description: A NULL opaque pointer return raises FFI_NULL_POINTER at the call site (the c-pointer ABI conversion rejects NULL).
+// @expected: runtime-error FFI_NULL_POINTER
+// @features: c-ffi, abi, c-pointer, runtime-errors
+
+import * as native from "candidate/native";
+export function main(): null {
+  let value: native.Handle = native.ffi_null_handle();
+  return null;
+}

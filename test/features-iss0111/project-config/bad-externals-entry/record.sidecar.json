@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "feature": "project-config",
+  "spec": "Strict externals schema — the legacy string entry form is E2010",
+  "description": "an externals value that is not an entry object fails the strict duplicate-safe manifest schema with E2010 at the entry value range",
+  "expected": { "compile-error": "E2010" },
+  "backends": ["luajit", "jvm"],
+  "invocation": "compile-only",
+  "manifestPolicy": "inject",
+  "manifestErrorFragment": "externals entry 'native/math' must be an object with a 'declaration' string",
+  "support": []
+}

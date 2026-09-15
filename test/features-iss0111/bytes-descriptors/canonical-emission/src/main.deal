@@ -1,0 +1,31 @@
+// ISSUE-0165 BYTES_DESCRIPTORS canonical-emission row (int32/bytes page
+// D7): the fixture carries bytes through the nullable, array, and nested
+// array boundaries, so every backend's emitted artifact set must carry
+// the canonical recursive descriptor spellings and no legacy spelling —
+// the gate-owned artifactScan pin (requiredText/forbiddenText) enforces
+// this over the pure emitted artifact set before runtime execution.
+function passNullable(b: bytes | null): bytes | null {
+  return b;
+}
+
+export function main(): null {
+  let b: bytes = bytes(2);
+  b[1] = 128;
+  let through: bytes | null = passNullable(b);
+  if (through === null) {
+    throw { code: "TEST_FAIL", message: "nullable bytes boundary lost the value" };
+  }
+  let arr: bytes[] = [b, bytes(1)];
+  if (arr[0][1] !== 128 || arr[1].length !== 1) {
+    throw { code: "TEST_FAIL", message: "bytes array element mismatch" };
+  }
+  let rows: bytes[][] = [[b], [arr[1]]];
+  if (rows[0][0][1] !== 128 || rows[1][0][0] !== 0) {
+    throw { code: "TEST_FAIL", message: "nested bytes array mismatch" };
+  }
+  let nothing: bytes | null = passNullable(null);
+  if (nothing !== null) {
+    throw { code: "TEST_FAIL", message: "nullable null boundary mismatch" };
+  }
+  return null;
+}

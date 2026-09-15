@@ -1,0 +1,17 @@
+// ISSUE-0165 BYTES_DEFAULTS cycle row (int32/bytes page D5, declarations
+// page D3): each class default calls an imported provider, so the
+// main <-> b import cycle carries runtime edges and the module
+// dependency graph rejects it with E2005 before plans/artifacts.
+import * as B from "./b"
+
+class A {
+  v: bytes = B.mk();
+}
+
+export function markerBytes(): bytes {
+  return bytes(2);
+}
+
+export function main(): null {
+  return null;
+}

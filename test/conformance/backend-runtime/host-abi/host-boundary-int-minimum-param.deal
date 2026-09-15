@@ -1,0 +1,7 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: Narrow or unsigned-convert -2147483648 on outbound host call
+// @expected: runtime-ok
+// @features: host-abi, boundary-checks
+
+import * as host from "host/boundary";
+export function main(): null { let value: int = host.echoInt(-2147483648); if (value !== -2147483648) { throw { code: "TEST_FAIL", message: "host int minimum" }; } return null; }

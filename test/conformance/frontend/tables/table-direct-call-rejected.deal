@@ -1,0 +1,12 @@
+// @spec: Tables
+// @description: Calling a function-valued table field directly is rejected.
+// @expected: compile-error E3008
+// @features: tables, functions, diagnostics
+
+function plusOne(value: int): int { return value + 1; }
+
+export function main(): null {
+  let t: table = { fn: plusOne };
+  let value: int = t.fn(1);
+  return null;
+}

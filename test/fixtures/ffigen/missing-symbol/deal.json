@@ -1,0 +1,10 @@
+{
+  "languageVersion": "1.2",
+  "moduleRoots": ["src"],
+  "externals": {
+    "ffi/missing_symbol": {
+      "declaration": "ffi.d.deal",
+      "nativeLibrary": "../../../../build/ffigen-integration-fixture.so"
+    }
+  }
+}

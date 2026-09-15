@@ -1,0 +1,12 @@
+// @spec: Lexical elements
+// @description: Number division by positive zero produces positive Infinity without an error
+// @expected: runtime-ok
+// @features: arithmetic, number, infinity
+
+export function test_number_positive_infinity(): null {
+  let value: number = 1.0 / 0.0;
+  if (value !== 1e999 || value <= 0.0) { throw { code: "TEST_FAIL", message: "number division by zero did not produce positive Infinity" }; }
+  return null;
+}
+
+export function main(): null { return test_number_positive_infinity(); }

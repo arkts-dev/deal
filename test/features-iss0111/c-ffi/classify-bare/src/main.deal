@@ -1,0 +1,13 @@
+// ISSUE-0165 C_FFI bare-name classification row: the manifest pins
+// nativeLibrary "v12-bare-loader-name.so" — no '/' — so the production
+// classifier selects BARE_NAME and the resolver dlopens the unchanged
+// bare loader text through the loader search path (never the process
+// CWD). The name is absent, so the load raises the cached
+// FFI_LIBRARY_LOAD (runtime page D3: valid but absent values become
+// cached FFI_LIBRARY_LOAD — a declared DEAL runtime error).
+
+import * as bare from "native/bare"
+
+export function main(): null {
+  return null;
+}

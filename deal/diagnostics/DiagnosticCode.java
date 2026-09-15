@@ -223,15 +223,15 @@ public enum DiagnosticCode {
     E3017(Phase.FRONTEND, "Array length is read-only"),
     /** Table index write/delete key must have static type string. */
     E3018(Phase.FRONTEND, "Table index key must have static type string"),
-    /** Bytes comparison is not supported (binary-comparison-selectors
-     *  B-D7: the closed BinarySelector set has no bytes selector and
-     *  RuntimeDescriptor has no bytes member; bytes equality is
-     *  spec-pinned as reference identity and its value semantics belong
-     *  to ISSUE-0111/ISSUE-0158, which own lifting this gate).
-     *  E3018 (the table-index-key checker gate of the assignment/delete
-     *  address-chain slice) sits directly before this code, so the gate
-     *  is registered immediately after E3018. */
-    E3019(Phase.FRONTEND, "Bytes comparison is not supported"),
+
+    /**
+     * 'await' at evaluator scope in a class default (defaults are
+     * synchronous per-construction evaluators; the planner's sync gate,
+     * {@code provider-versioned-default-plans} D2 — the registration
+     * joins the E3xxx family after E3018 in this tree, the position the
+     * design pins as "after E3019" in its planned-state citation).
+     */
+    E3020(Phase.FRONTEND, "'await' in class default"),
 
     // =========================================================================
     // E4xxx — class shape validation (FRONTEND)
@@ -286,6 +286,15 @@ public enum DiagnosticCode {
 
     /** Common semantic lowering contract violation (ISSUE-0230 foundation, parent D11). */
     E6005(Phase.BACKEND_LOWERING, "Common semantic lowering failed"),
+
+    /**
+     * A backend without C FFI support rejects an {@code @extern-c}
+     * import or declaration (the corpus C6 sanctioned rejection —
+     * {@code FFI_UNSUPPORTED_BACKEND}; ISSUE-0507 FFI candidate fixture
+     * conformance). The JVM pipeline emits it at the extern-C
+     * declaration; the JavaScript backend emits it at the import site.
+     */
+    E6006(Phase.BACKEND_LOWERING, "C FFI (@extern-c) is not supported by this backend"),
 
     // =========================================================================
     // E7xxx — declaration-file errors (FRONTEND)

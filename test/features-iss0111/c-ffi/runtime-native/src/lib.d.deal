@@ -1,0 +1,54 @@
+// @extern-c
+
+// @c-pointer
+export class Handle {}
+
+// @c-struct
+export class Pair {
+  x: int = 0;
+  y: number = 0.0;
+}
+
+// C-keyword DEAL field names stay behind the generated ordinal
+// members deal_fN (the private cdef never sees the DEAL names).
+// @c-struct
+export class Kw {
+  register: int = 0;
+  unsigned: int = 0;
+  volatile: int = 0;
+}
+
+// @c-struct
+export class PtrBox {
+  p: Handle = fixture_static_pointer();
+}
+
+export function fixture_count_call(): null;
+export function fixture_call_count(): int;
+export function fixture_reset_counter(): null;
+export function fixture_add_int(a: int, b: int): int;
+export function fixture_add_number(a: number, b: number): number;
+export function fixture_not(b: boolean): boolean;
+export function fixture_echo_string(s: string): string;
+export function fixture_bytes_sum(b: bytes): int;
+export function fixture_null_string(): string;
+export function fixture_bad_utf8(): string;
+export function fixture_null_pointer(): Handle;
+export function fixture_static_pointer(): Handle;
+export function fixture_identity_int(v: int): int;
+export function fixture_extreme_int(which: int): int;
+export function fixture_number_special(which: int): number;
+export function fixture_nonzero_bool(): boolean;
+export function fixture_zero_bool(): boolean;
+export function fixture_long_string(): string;
+export function fixture_echo_long(s: string): string;
+export function fixture_echo_len(s: string): int;
+export function fixture_bytes_sum2(a: bytes, b: bytes): int;
+export function fixture_make_pair(x: int, y: number): Pair;
+export function fixture_echo_pair(p: Pair): Pair;
+export function fixture_bump_pair(p: Pair): Pair;
+export function fixture_sum_pair(p: Pair): int;
+export function fixture_make_kw(a: int, b: int, c: int): Kw;
+export function fixture_make_ptr_box(p: Handle): PtrBox;
+export function fixture_make_null_ptr_box(): PtrBox;
+export function fixture_ptrbox_nonnull(b: PtrBox): boolean;

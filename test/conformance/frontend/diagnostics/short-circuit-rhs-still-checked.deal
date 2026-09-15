@@ -1,0 +1,12 @@
+// @spec: Diagnostics — Operational semantics summary
+// @description: Runtime short-circuiting does not exempt the right operand from static checking
+// @expected: compile-error E2001
+// @features: diagnostics, evaluation-order, short-circuit, name-resolution, v1.2
+
+export function probe(): boolean {
+  return false && missingFlag;
+}
+
+export function main(): null {
+  return null;
+}

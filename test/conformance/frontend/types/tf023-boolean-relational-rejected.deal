@@ -1,0 +1,9 @@
+// @spec: Type system
+// @description: Relational comparison is rejected for boolean operands
+// @expected: compile-error E3007
+// @features: type-system, comparison, diagnostics, v1.2
+
+export function main(): null {
+  let ordered: boolean = true < false;
+  return null;
+}

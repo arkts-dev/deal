@@ -1,0 +1,15 @@
+// @spec: Lexical elements — Comment semantics
+// @description: Whitespace and blank lines do not terminate a declaration directive block
+// @expected: compile-error E4007
+// @features: lexer, directives, attachment, jsonable, bytes, diagnostics, v1.2
+
+// @jsonable
+
+
+export class Packet {
+  payload: bytes = bytes(0);
+}
+
+export function main(): null {
+  return null;
+}

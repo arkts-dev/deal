@@ -1,0 +1,12 @@
+// ISSUE-0165 C_FFI unloadable row: the declaration validates and
+// compiles; the manifest pins a valid absolute nativeLibrary path that
+// does not exist, so the production load_ffi call fails with the
+// cached FFI_LIBRARY_LOAD (runtime page D3: valid but absent values
+// become cached FFI_LIBRARY_LOAD — a declared DEAL runtime error, not
+// an infrastructure failure).
+
+import * as math from "native/math"
+
+export function main(): null {
+  return null;
+}

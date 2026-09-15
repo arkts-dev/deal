@@ -1,0 +1,13 @@
+{
+  "languageVersion": "1.2",
+  "output": "build/lua",
+  "backend": "luajit",
+  "externals": {
+    "decl_two_a": {
+      "declaration": "support/decl_two_a.d.deal"
+    },
+    "decl_two_b": {
+      "declaration": "support/decl_two_b.d.deal"
+    }
+  }
+}

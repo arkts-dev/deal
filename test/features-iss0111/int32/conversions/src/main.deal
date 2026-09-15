@@ -1,0 +1,16 @@
+// ISSUE-0165 SIGNED_INT32: int()/number() conversion boundaries preserve
+// the signed32 range on both backends (int() requires integer-valued
+// numbers; number() converts any int).
+export function main(): null {
+  let a: int = int(42.0);
+  if (a !== 42) { throw { code: "TEST_FAIL", message: "int(42.0)" }; }
+  let b: number = number(7);
+  if (b !== 7.0) { throw { code: "TEST_FAIL", message: "number(7)" }; }
+  let c: int = int(-3.0);
+  if (c !== -3) { throw { code: "TEST_FAIL", message: "int(-3.0)" }; }
+  let d: number = number(-2147483648);
+  if (d !== -2147483648.0) { throw { code: "TEST_FAIL", message: "number(min)" }; }
+  let e: int = int(number(2147483647));
+  if (e !== 2147483647) { throw { code: "TEST_FAIL", message: "roundtrip" }; }
+  return null;
+}

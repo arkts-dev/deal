@@ -88,7 +88,7 @@ import java.util.concurrent.TimeUnit;
  *       escaping, UTF-8 — with a stored golden document recomputed in a
  *       fresh JVM invocation (cross-process determinism).</li>
  *   <li>Parser round-trips: every serializer golden, all 55 payload
- *       shapes, the 40-selector digest matrix, and the
+ *       shapes, the 42-selector digest matrix, and the
  *       {@link RuntimeDescriptor} canonical spellings parse and
  *       re-serialize byte-exactly; a replaced reserved/open enum name
  *       survives the parse as a raw string (no enum conversion).</li>
@@ -101,7 +101,7 @@ import java.util.concurrent.TimeUnit;
  *       the digest; opId/origin-only changes leave it unchanged.</li>
  *   <li>{@code loweringContextHash} golden and the legacy/v1.2 profile
  *       confusion guard (T1's closed {@link SemanticProfile} enum).</li>
- *   <li>Combined T1/T2 integration: the 40-selector matrix, descriptor
+ *   <li>Combined T1/T2 integration: the 42-selector matrix, descriptor
  *       spellings, and every {@link SemanticOpKind} payload shape produce
  *       valid digests; a T1/T2 fault is detectable through the pinned
  *       constants.</li>
@@ -152,7 +152,7 @@ public class CanonicalJsonTest {
 
     /** Stored golden: SHA-256 of the canonical JSON of {@link #pinnedSnapshot()}. */
     private static final String PINNED_SNAPSHOT_DIGEST_GOLDEN =
-        "572e2212c4933641f6e74026983e1f1e90b647f8c6b19ca43e35e767d793a92b";
+        "810fcc608b7e27fa3dd23ec391e0d38aee56bf5e4ad0f7ef2f32fb91538545fb";
 
     /** Stored golden: {@code LoweringContextHash.of(DEAL_V1_2_INT32, REGISTRY_HASH)}. */
     private static final String PINNED_LOWERING_CONTEXT_GOLDEN =
@@ -208,6 +208,7 @@ public class CanonicalJsonTest {
                 LIB, "add", intInt, ExternalExecutionOwner.SHARED_BODY)),
             intInt,
             List.of(new OpId(APP, 10), new OpId(APP, 11)),
+            null,
             null,
             null,
             new OpId(LIB, 3));
@@ -443,7 +444,7 @@ public class CanonicalJsonTest {
             testRoundTripSnapshot(snapshot, kind + " payload round-trips byte-exactly");
         }
 
-        // The 40-selector digest matrix round-trips.
+        // The 42-selector digest matrix round-trips.
         for (BinarySelector selector : BinarySelector.values()) {
             OperationContractSnapshot snapshot = binaryMatrixSnapshot(selector);
             testRoundTripSnapshot(snapshot,
@@ -787,14 +788,14 @@ public class CanonicalJsonTest {
         KindPayload.CallPayload direct = new KindPayload.CallPayload(CallMode.DIRECT,
             new KindPayload.CallCallee.Static(new FunctionExecutionBinding.LoweredBody(
                 new FunctionId(0), new BlockId(0))),
-            sig1, List.of(), null, new BlockId(0), null);
+            sig1, List.of(), null, null, new BlockId(0), null);
         String callDigest = digest(snapshotFor(direct, SemanticOpKind.CALL,
             RuntimeDescriptor.Int.INSTANCE, List.of(), FailurePolicyId.NO_DEAL_FAILURE,
             PLACEHOLDER_DIGEST));
         KindPayload.CallPayload external = new KindPayload.CallPayload(CallMode.EXTERNAL,
             new KindPayload.CallCallee.Static(new FunctionExecutionBinding.LoweredBody(
                 new FunctionId(0), new BlockId(0))),
-            sig1, List.of(), null, new BlockId(0), null);
+            sig1, List.of(), null, null, new BlockId(0), null);
         check(!callDigest.equals(digest(snapshotFor(external, SemanticOpKind.CALL,
                 RuntimeDescriptor.Int.INSTANCE, List.of(), FailurePolicyId.NO_DEAL_FAILURE,
                 PLACEHOLDER_DIGEST))),
@@ -802,7 +803,7 @@ public class CanonicalJsonTest {
         KindPayload.CallPayload wider = new KindPayload.CallPayload(CallMode.DIRECT,
             new KindPayload.CallCallee.Static(new FunctionExecutionBinding.LoweredBody(
                 new FunctionId(0), new BlockId(0))),
-            sig2, List.of(), null, new BlockId(0), null);
+            sig2, List.of(), null, null, new BlockId(0), null);
         check(!callDigest.equals(digest(snapshotFor(wider, SemanticOpKind.CALL,
                 RuntimeDescriptor.Int.INSTANCE, List.of(), FailurePolicyId.NO_DEAL_FAILURE,
                 PLACEHOLDER_DIGEST))),
@@ -906,8 +907,8 @@ public class CanonicalJsonTest {
             "T2's snapshot version is pinned to 1");
         check(SemanticOpKind.BINARY.payloadClass() == KindPayload.BinaryPayload.class,
             "T2's BINARY payload shape is pinned");
-        check(BinarySelector.values().length == 40,
-            "T2's BinarySelector has exactly 40 values; got " + BinarySelector.values().length);
+        check(BinarySelector.values().length == 42,
+            "T2's BinarySelector has exactly 42 values; got " + BinarySelector.values().length);
 
         // T2's RuntimeDescriptor canonical text renders in the JSON.
         String text = ContractSnapshotCanonicalizer.serializeText(pinnedSnapshot());
@@ -921,7 +922,7 @@ public class CanonicalJsonTest {
         check(unaryText.contains("\"selector\":\"INT32_NEG\""),
             "the closed unary selector renders as its name");
 
-        // The 40-selector digest matrix: valid distinct digests, one per
+        // The 42-selector digest matrix: valid distinct digests, one per
         // BinarySelector value.
         Set<String> digests = new LinkedHashSet<>();
         for (BinarySelector selector : BinarySelector.values()) {
@@ -933,8 +934,8 @@ public class CanonicalJsonTest {
                     .contains("\"selector\":\"" + selector.name() + "\""),
                 selector + " renders its exact selector name");
         }
-        check(digests.size() == 40,
-            "all 40 selector digests are distinct; got " + digests.size());
+        check(digests.size() == 42,
+            "all 42 selector digests are distinct; got " + digests.size());
 
         // Every SemanticOpKind payload shape canonicalizes and digests.
         for (SemanticOpKind kind : SemanticOpKind.values()) {
@@ -1143,7 +1144,7 @@ public class CanonicalJsonTest {
             case CALL -> new KindPayload.CallPayload(CallMode.DIRECT,
                 new KindPayload.CallCallee.Static(
                     new FunctionExecutionBinding.LoweredBody(new FunctionId(0), b0)),
-                SIG, List.of(), null, b0, null);
+                SIG, List.of(), null, null, b0, null);
             case EXTERNAL_ENTRY -> new KindPayload.ExternalEntryPayload(
                 "export", new FunctionId(0), SIG, false, o0, null);
             case CALLBACK_INVOKE -> new KindPayload.CallbackInvokePayload(

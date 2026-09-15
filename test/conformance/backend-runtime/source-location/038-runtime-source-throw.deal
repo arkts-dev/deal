@@ -1,0 +1,8 @@
+// @spec: Diagnostics
+// @description: An escaping user Error preserves its code and throw-statement location
+// @expected: runtime-error PINNED_THROW
+// @features: diagnostics, runtime-location, throw
+
+export function main(): null {
+  throw { code: "PINNED_THROW", message: "location" };
+}

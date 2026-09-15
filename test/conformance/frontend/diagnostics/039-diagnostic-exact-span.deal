@@ -1,0 +1,9 @@
+// @spec: Diagnostics
+// @description: An incompatible initializer diagnostic preserves the exact token span
+// @expected: compile-error E3001
+// @features: diagnostics, source-span, type-checking
+
+export function main(): null {
+  let value: int = 1.5;
+  return null;
+}

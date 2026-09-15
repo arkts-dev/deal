@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "feature": "directives",
+  "spec": "Ordered anchor transition — a directly-attached valid @jsonable emits no warning",
+  "description": "whitespace preserves the pending declaration run and the @jsonable anchors to the next class declaration: the valid attachment applies with no E1043 (the negative control for the break case)",
+  "expected": "compile-ok",
+  "backends": ["luajit", "jvm"],
+  "invocation": "compile-only",
+  "support": []
+}

@@ -1,0 +1,29 @@
+// D12 async-export record shape (BYTES_ASYNC_FUNCTION, LuaJIT lane):
+// one canonical async()->null oracle that invokes and awaits a
+// first-class bytes-bearing async function value, plus the valid
+// non-async main(): null the async-export invocation mode requires.
+// The record executes through the production LuaJitAsyncExportInvoker
+// with the byte-exact canonical return descriptor "null".
+export async function oracle(): null {
+  let b: bytes = bytes(3);
+  b[0] = 65;
+  b[1] = 66;
+  let echo: async (x: bytes) => bytes = async function(x: bytes): bytes {
+    let out: bytes = bytes(x.length);
+    out[0] = x[0];
+    out[1] = x[1];
+    return out;
+  };
+  let echoed: bytes = await echo(b);
+  if (echoed.length !== 3) {
+    throw { code: "TEST_FAIL", message: "bytes async roundtrip length mismatch" };
+  }
+  if (echoed[0] !== 65 || echoed[1] !== 66 || echoed[2] !== 0) {
+    throw { code: "TEST_FAIL", message: "bytes async roundtrip content mismatch" };
+  }
+  return null;
+}
+
+export function main(): null {
+  return null;
+}

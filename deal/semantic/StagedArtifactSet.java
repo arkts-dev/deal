@@ -14,9 +14,9 @@ import java.util.Set;
  * its staging tree (foundation F6): the validator-side view of the
  * on-disk tree, keyed by artifact name.
  *
- * <p>The set is the exact write record of {@link ProjectArtifactStager}:
- * every artifact the stager wrote into the staging tree is present under
- * its final relative path, in write (module, then artifact) order.
+ * <p>The set is the validator-side projection of the active publication
+ * staging tree: every staged artifact is present under its final relative
+ * path, in write order.
  * {@code TargetAbiValidator} resolves each {@code TargetModuleAbi}
  * {@code loadKey} against this set — a {@code loadKey} that does not name
  * a staged artifact is the incomplete-record class

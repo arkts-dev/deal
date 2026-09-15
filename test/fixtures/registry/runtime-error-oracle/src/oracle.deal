@@ -1,0 +1,12 @@
+// D12 runtime-error record shape: the oracle raises E8004 from the
+// pinned int32 overflow site (line 7, column 10); only that exact DEAL
+// code satisfies the record's runtime-error expectation — a host or
+// infrastructure failure never does.
+export async function oracle(): int {
+  let x: int = 2147483647;
+  return x + 1;
+}
+
+export function main(): null {
+  return null;
+}

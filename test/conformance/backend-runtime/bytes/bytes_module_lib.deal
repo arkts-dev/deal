@@ -1,0 +1,21 @@
+// @expected: companion
+// @spec: Bytes — Modules
+// @description: Classified support module for the bytes-module-identity conformance fixture: a shared-buffer closure factory, a reference echo, and a bytes-transform function-value factory crossing the module boundary.
+
+export function makeShared(): () => bytes {
+  let shared: bytes = bytes(3);
+  return function(): bytes {
+    return shared;
+  };
+}
+
+export function echo(b: bytes): bytes {
+  return b;
+}
+
+export function makeTransform(): (x: bytes) => bytes {
+  return function(x: bytes): bytes {
+    x[0] = x[0] + 1;
+    return x;
+  };
+}

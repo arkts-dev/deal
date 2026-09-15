@@ -72,11 +72,12 @@ import java.util.Objects;
  * The recorded E4 retirement hand-off is
  * {@link #E4_RETIREMENT_HANDOFF}.</p>
  *
- * <p><b>Fail closed (D2).</b> {@link Type.Bytes} and {@link Type.Error}
- * — at any depth of a supported variant — have no descriptor member in
- * {@code deal.semantic-ir/1} and must never be represented. Both
- * derivations never invent a descriptor and never crash: they raise
- * {@link Defect} (internal control flow), and
+ * <p><b>Fail closed (D2).</b> {@link Type.Error}
+ * — at any depth of a supported variant — has no descriptor member in
+ * {@code deal.semantic-ir/1} and must never be represented
+ * ({@link Type.Bytes} maps to {@link RuntimeDescriptor.Bytes} since
+ * ISSUE-0158). Both derivations never invent a descriptor and never
+ * crash: they raise {@link Defect} (internal control flow), and
  * {@link #loweringFailureDetail(ModuleId, Defect)} produces the named
  * {@code DESCRIPTOR_UNREPRESENTABLE} failure carrying the exact
  * {@link LoweringFailureDetail} fields — {@code module}, {@code
@@ -96,7 +97,8 @@ public final class ContainerPayloadDescriptors {
     /**
      * The fact-defect identifier carried in the {@code validatorRule}
      * field of the E6005 diagnostic for an unrepresentable type
-     * ({@link Type.Bytes}/{@link Type.Error}).
+     * ({@link Type.Error}; {@link Type.Bytes} is representable since
+     * ISSUE-0158's bytes descriptor member).
      */
     public static final String DESCRIPTOR_UNREPRESENTABLE = "DESCRIPTOR_UNREPRESENTABLE";
 
@@ -121,9 +123,9 @@ public final class ContainerPayloadDescriptors {
 
     /**
      * A descriptor-production fact defect of the E3 payload bridge:
-     * {@link Type.Bytes} or {@link Type.Error} — at any depth of a
-     * supported variant — reached an E3 descriptor-payload position. The
-     * unit-production seam owns the conversion into E6005
+     * {@link Type.Error} — at any depth of a supported variant —
+     * reached an E3 descriptor-payload position. The unit-production
+     * seam owns the conversion into E6005
      * ({@code DESCRIPTOR_UNREPRESENTABLE} via
      * {@link #loweringFailureDetail(ModuleId, Defect)}); this exception
      * is internal control flow, never a crash and never an invented
@@ -141,17 +143,16 @@ public final class ContainerPayloadDescriptors {
     /**
      * Derives the array-element descriptor of an {@code ARRAY_NEW}
      * payload position (D1/D2): the verbatim D2 table over the element
-     * type, recursively. Deterministic and total over the ten supported
-     * variants; {@link Type.Bytes} and {@link Type.Error} — at any
-     * depth — raise {@link Defect} (fail closed, never an invented
-     * descriptor).
+     * type, recursively. Deterministic and total over the eleven
+     * supported variants; {@link Type.Error} — at any depth —
+     * raises {@link Defect} (fail closed, never an invented descriptor).
      *
      * @param elementType the checked array element type; non-null
      * @return the mapped {@code RuntimeDescriptor} (D2 table); its
      *         {@link RuntimeDescriptor#canonicalSpecText()} is the
      *         schema-owned canonical text
      * @throws Defect when {@code elementType} is, or contains,
-     *         {@link Type.Bytes} or {@link Type.Error}
+     *         {@link Type.Error}
      */
     public static RuntimeDescriptor elementDescriptorOf(Type elementType) {
         Objects.requireNonNull(elementType, "elementType must not be null");
@@ -168,7 +169,7 @@ public final class ContainerPayloadDescriptors {
      * the fixed {@code string}/{@code int}/{@code table} result types
      * (D1/D2): the verbatim D2 table over the result type, recursively.
      * Deterministic and total over the ten supported variants;
-     * {@link Type.Bytes} and {@link Type.Error} — at any depth — raise
+     * {@link Type.Error} — at any depth — raises
      * {@link Defect} (fail closed, never an invented descriptor).
      *
      * @param resultType the checked result type; non-null
@@ -176,7 +177,7 @@ public final class ContainerPayloadDescriptors {
      *         {@link RuntimeDescriptor#canonicalSpecText()} is the
      *         schema-owned canonical text
      * @throws Defect when {@code resultType} is, or contains,
-     *         {@link Type.Bytes} or {@link Type.Error}
+     *         {@link Type.Error}
      */
     public static RuntimeDescriptor resultDescriptorOf(Type resultType) {
         Objects.requireNonNull(resultType, "resultType must not be null");

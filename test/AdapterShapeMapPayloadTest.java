@@ -1139,7 +1139,7 @@ public class AdapterShapeMapPayloadTest {
         SemanticOp call = irValueOp(new OpId(MODULE, 8201L), SemanticOpKind.CALL,
             new KindPayload.CallPayload(deal.semantic.ir.CallMode.INDIRECT,
                 new KindPayload.CallCallee.Indirect(calleeValue), INT_TO_NULL,
-                List.of(), null, null, null),
+                List.of(), null, null, null, null),
             callResult, INT_TO_NULL, List.of(calleeValue), List.of(INT_TO_NULL));
         AdaptSourceRef.Thunk thunk = AdapterThunkConstruction.buildThunk(thunkBlock,
             List.of(call), List.of(capture));

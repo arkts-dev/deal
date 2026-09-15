@@ -25,20 +25,26 @@ import java.util.Objects;
  * <p>Exactly two axes exist: capability × target. Per-consumer promotion
  * evidence — the conformance harness's {@code capabilityEvidence} map —
  * belongs to the conformance harness, never the production registry, and
- * no consumer axis or consumer-typed member exists here. Every entry is
- * {@link State#SHADOW} in this epic: nothing can be {@code PROMOTED}
- * before the construct epics' conformance gates, and promotion
- * transitions are ISSUE-0241's — the registry carries no promotion
- * transition logic. The registry is release-owned, closed, and
- * immutable: the only instance is {@link #releaseRegistry()}, and no
- * mutator exists.</p>
+ * no consumer axis or consumer-typed member exists here. The release
+ * default {@link #releaseRegistry()} keeps every entry
+ * {@link State#SHADOW}: nothing is {@code PROMOTED} until a release
+ * action applies the promotion transitions. The registry is
+ * release-owned, closed, and immutable — the only release-owned default
+ * is {@link #releaseRegistry()}, no mutator exists, and
+ * {@link #withState(SemanticCapability, Target, State)} is the single
+ * release-owned state-transition surface (ISSUE-0241 R1, the D3
+ * boundary contract): a pure, total, immutable-producing derivation with
+ * no gate policy inside — promotion/demotion policy lives in the release
+ * action, never here.</p>
  */
 public final class CapabilityRegistry {
 
     /**
      * The capability state axis: exactly {@code SHADOW | PROMOTED}
      * (foundation F7). {@code SHADOW} permits testing but never changes
-     * a production route; {@code PROMOTED} is unreachable in this epic.
+     * a production route; {@code PROMOTED} is carried by registries
+     * derived through {@link #withState(SemanticCapability, Target,
+     * State)} (the ISSUE-0241 release action's promotion transition).
      */
     public enum State {
 
@@ -148,6 +154,53 @@ public final class CapabilityRegistry {
     }
 
     /**
+     * The single release-owned state-transition surface (ISSUE-0241 R1,
+     * the D3 boundary contract): a pure, total, immutable-producing
+     * derivation over the closed capability × target × state axes.
+     * Applying {@link State#PROMOTED} is promotion; applying
+     * {@link State#SHADOW} is demotion — one surface, with no gate
+     * policy inside (promotion-gate enforcement lives in the release
+     * action, never in the state derivation).
+     *
+     * <p>Pinned invariants: any (capability × target × state) over the
+     * closed enums is accepted; null components are rejected with the
+     * registry's null policy ({@code Objects.requireNonNull}, matching
+     * {@link Entry}); the source instance (including
+     * {@link #releaseRegistry()}) is never mutated; the result is a
+     * fresh registry whose entries equal the source's except the single
+     * (capability × target) entry carrying the requested state; the
+     * result passes the existing closed cross-product validation and
+     * pinned ordering (24 entries, S4 capability order, {@code LUAJIT}
+     * before {@code JVM}) — the rebuild reuses the private
+     * constructor/validation path; the result's
+     * {@link #capabilityRegistryHash()} is the existing canonical JSON
+     * digest over the result's own entries, never hand-rolled; and a
+     * no-op transition yields byte-identical entries and an equal
+     * digest.</p>
+     *
+     * @param capability the closed capability; non-null
+     * @param target     the closed target; non-null
+     * @param state      the requested state over the closed axis; non-null
+     * @return a new immutable registry carrying exactly the single
+     *         requested transition
+     */
+    public CapabilityRegistry withState(
+            SemanticCapability capability, Target target, State state) {
+        Objects.requireNonNull(capability, "capability must not be null");
+        Objects.requireNonNull(target, "target must not be null");
+        Objects.requireNonNull(state, "state must not be null");
+        List<Entry> next = new ArrayList<>(ENTRY_COUNT);
+        for (Entry entry : entries) {
+            if (entry.capability() == capability && entry.target() == target) {
+                next.add(new Entry(capability, target, state));
+            } else {
+                next.add(entry);
+            }
+        }
+        return new CapabilityRegistry(next);
+    }
+
+    /**
      * The 24 ordered entries: the S4 capability order, {@code LUAJIT}
      * before {@code JVM} within each capability. The list is immutable.
      *
@@ -163,7 +216,7 @@ public final class CapabilityRegistry {
      *
      * @param capability the closed capability; non-null
      * @param target     the closed target; non-null
-     * @return the entry's state (always {@link State#SHADOW} in this epic)
+     * @return the entry's state
      */
     public State state(SemanticCapability capability, Target target) {
         Objects.requireNonNull(capability, "capability must not be null");

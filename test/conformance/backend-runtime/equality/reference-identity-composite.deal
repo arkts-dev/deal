@@ -1,0 +1,43 @@
+// @spec: Runtime execution model — Equality semantics
+// @description: Mutable and callable values compare by reference identity and aliases observe mutation
+// @expected: runtime-ok
+// @features: equality, arrays, tables, classes, functions, aliasing
+
+class Cell {
+  value: int = 0;
+}
+
+function id(x: int): int {
+  return x;
+}
+
+export function main(): null {
+  let a1: int[] = [1];
+  let a2: int[] = [1];
+  let aa: int[] = a1;
+  let t1: table = { value: 1 };
+  let t2: table = { value: 1 };
+  let ta: table = t1;
+  let c1: Cell = { value: 1 };
+  let c2: Cell = { value: 1 };
+  let ca: Cell = c1;
+  let f1: (x: int) => int = id;
+  let fa: (x: int) => int = f1;
+  let f2: (x: int) => int = function(x: int): int { return x; };
+
+  if (a1 === a2 || a1 !== aa || t1 === t2 || t1 !== ta) {
+    throw { code: "TEST_FAIL", message: "array or table identity mismatch" };
+  }
+  if (c1 === c2 || c1 !== ca || f1 !== fa || f1 === f2) {
+    throw { code: "TEST_FAIL", message: "class or function identity mismatch" };
+  }
+
+  aa[0] = 9;
+  ta.value = 8;
+  ca.value = 7;
+  let tableValue: int = t1.value;
+  if (a1[0] !== 9 || tableValue !== 8 || c1.value !== 7) {
+    throw { code: "TEST_FAIL", message: "alias mutation not visible" };
+  }
+  return null;
+}

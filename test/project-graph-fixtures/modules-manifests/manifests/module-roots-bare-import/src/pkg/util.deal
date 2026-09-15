@@ -1,0 +1,2 @@
+
+export function value(): int { return 9; }

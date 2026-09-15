@@ -2,7 +2,6 @@ import * as c from "std/console";
 import * as str from "std/string";
 import * as math from "std/math";
 import * as json from "std/json";
-import * as time from "std/time";
 
 class Item {
   name: string = "";
@@ -32,8 +31,12 @@ export function main(): null {
   let printer: (x: string) => null = c.log;
   printer("console as a value line");
 
-  let now: int = time.nowMillis();
-  if (now > 0) { c.log("time structural invariant ok"); } else { throw { code: "TEST_FAIL", message: "nowMillis must be positive" }; }
+  // std/time.nowMillis is deliberately absent from the e2e sample:
+  // under the committed post-flip default the retained path surfaces the
+  // signed32 E8004 (the locked STDLIB_TIME_CONFLICT migration artifact),
+  // and that artifact is pinned by the corpus fixture
+  // backend-runtime/stdlib-edge/time-now-millis-positive.deal
+  // (runtime-error E8004), never by this end-to-end sample.
 
   if (json.stringify(json.parse("null")) !== "null") { throw { code: "TEST_FAIL", message: "top-level null roundtrip" }; }
   if (json.stringify(json.parse("[1,2]")) !== "[1,2]") { throw { code: "TEST_FAIL", message: "top-level array roundtrip" }; }

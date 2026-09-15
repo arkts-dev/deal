@@ -1,0 +1,10 @@
+// D12 HostInvocationFailure record shape: a descriptor-mismatched async
+// export requested with the byte-exact descriptor "int" must map to
+// HostInvocationFailure, never to a DEAL error code.
+export async function oracle(): string {
+  return "x";
+}
+
+export function main(): null {
+  return null;
+}

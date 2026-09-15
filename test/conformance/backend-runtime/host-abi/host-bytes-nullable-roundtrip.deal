@@ -1,0 +1,31 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: A declared nullable bytes host parameter/return round-trips both the DEAL null and a real buffer; the returned value keeps its reference identity and content across the nullable boundary.
+// @expected: runtime-ok
+// @features: modules, host-abi, bytes, nullable
+
+import * as host from "host/bytes_roundtrip"
+
+export function test_host_bytes_nullable_roundtrip(): string {
+  let none: bytes | null = host.nullableBytes(null);
+  if (none !== null) {
+    throw { code: "TEST_FAIL", message: "nullable bytes null roundtrip mismatch" };
+  }
+  let b: bytes = bytes(2);
+  b[1] = 7;
+  let some: bytes | null = host.nullableBytes(b);
+  if (some !== null) {
+    if (!(some === b)) {
+      throw { code: "TEST_FAIL", message: "nullable bytes value roundtrip lost reference identity" };
+    }
+    if (some[1] !== 7) {
+      throw { code: "TEST_FAIL", message: "nullable bytes value roundtrip content mismatch" };
+    }
+  } else {
+    throw { code: "TEST_FAIL", message: "nullable bytes value roundtrip returned null" };
+  }
+  return "host-bytes-nullable-ok";
+}
+
+export function main(): null {
+  return null;
+}

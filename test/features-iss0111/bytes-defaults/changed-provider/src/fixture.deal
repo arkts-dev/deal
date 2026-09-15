@@ -1,0 +1,16 @@
+// ISSUE-0165 BYTES_DEFAULTS changed-provider-identity row (int32/bytes
+// page D5-D6): the fixture below is unchanged between the two
+// compilations; only the resolved ../shared provider's content differs.
+// Each compilation runs the typed synthetic entry pinned to that
+// variant's oracle result, so the changed provider's behavior/identity
+// must flow through the production compilation.
+import * as P from "../shared/provider"
+
+class Box {
+  v: int = P.marker();
+}
+
+export function defaultsOracle(): int {
+  let b: Box = {};
+  return b.v;
+}

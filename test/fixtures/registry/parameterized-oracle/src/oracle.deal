@@ -1,0 +1,10 @@
+// D12 HostInvocationFailure record shape: a parameterized async export
+// requested as async()->int must map to HostInvocationFailure, never to
+// a DEAL error code.
+export async function takes(x: int): int {
+  return x;
+}
+
+export function main(): null {
+  return null;
+}

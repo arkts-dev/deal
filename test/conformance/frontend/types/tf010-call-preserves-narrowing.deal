@@ -1,0 +1,17 @@
+// @spec: Type system
+// @description: Passing a narrowed local does not invalidate its narrowed type
+// @expected: compile-ok
+// @features: type-system, nullable, narrowing, functions, v1.2
+
+function consume(value: int): null {
+  return null;
+}
+
+export function main(): null {
+  let value: int | null = 1;
+  if (value !== null) {
+    consume(value);
+    let stillPresent: int = value;
+  }
+  return null;
+}

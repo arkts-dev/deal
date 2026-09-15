@@ -1,0 +1,14 @@
+// @spec: Lexical elements
+// @description: Multiplicative operators associate to the left
+// @expected: runtime-ok
+// @features: parser, precedence, multiplicative, associativity, v1.2
+
+export function test_multiplicative_left_associative(): null {
+  let value: int = 20 / 5 * 2;
+  if (value !== 8) {
+    throw { code: "TEST_FAIL", message: "multiplicative operators did not associate to the left" };
+  }
+  return null;
+}
+
+export function main(): null { return test_multiplicative_left_associative(); }

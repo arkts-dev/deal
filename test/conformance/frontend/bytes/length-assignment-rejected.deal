@@ -1,0 +1,14 @@
+// @spec: Bytes — indexing and length
+// @description: bytes.length is read-only
+// @expected: compile-error E3017
+// @features: bytes, length, assignment, diagnostics, v1.2
+
+export function mutate(): null {
+  let b: bytes = bytes(2);
+  b.length = 3;
+  return null;
+}
+
+export function main(): null {
+  return null;
+}

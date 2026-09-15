@@ -76,13 +76,32 @@ public class LuaBackendIntegrationTest {
         }
 
         String lua = LuaBackend.generate(parse.program(), result, filename);
+        String runner = """
+            local mod = (function()
+            %s
+            end)()
+            if type(mod) == 'table' then
+              for _, value in pairs(mod) do
+                if type(value) == 'table' and value.__kind == 'function' then
+                  value.f()
+                end
+              end
+            end
+            """.formatted(lua);
 
         Path tmpDir = Files.createTempDirectory("deal_integration_");
         Path luaFile = tmpDir.resolve("test_main.lua");
-        Files.writeString(luaFile, lua);
+        Files.writeString(luaFile, runner);
         Path runtimeDir = tmpDir.resolve("deal");
         Files.createDirectories(runtimeDir);
         Files.copy(Path.of("deal/runtime.lua"), runtimeDir.resolve("runtime.lua"));
+        Path stdDir = tmpDir.resolve("std");
+        Files.createDirectories(stdDir);
+        try (var stream = Files.list(Path.of("std"))) {
+            for (Path source : stream.filter(path -> path.toString().endsWith(".lua")).toList()) {
+                Files.copy(source, stdDir.resolve(source.getFileName()));
+            }
+        }
 
         ProcessBuilder pb = new ProcessBuilder("luajit", luaFile.toString());
         pb.directory(tmpDir.toFile());
@@ -129,6 +148,7 @@ public class LuaBackendIntegrationTest {
         testTryCatchRuntimeTypeError();
         testClassOptionalField();
         testClassOptionalFieldAfterDelete();
+        testArrayElementDelete();
         testForLoopSimple();
         testForLoopClosureBinding();
         testForLoopClosureNested();
@@ -520,6 +540,26 @@ public class LuaBackendIntegrationTest {
 
         check(exit == 0, "class optional delete: luajit exit 0 (got: " + output + ")");
         check(output.equals("null_after_delete"), "class optional delete: returns null_after_delete, got: " + output);
+    }
+
+    static void testArrayElementDelete() throws Exception {
+        System.out.println("-- Array Element Delete --");
+        String source = """
+            import * as console from "std/console"
+            export function test(): null {
+              let xs: int[] = [1, 2, 3];
+              delete xs[1];
+              let n: int = 0;
+              for (let x: int of xs) { n = n + 1; }
+              if (xs.length === 1 && xs[0] === 1 && n === 1) {
+                console.log("array-delete-ok");
+              }
+            }
+            """;
+        String output = compileAndRun(source, "array-delete.deal");
+        check("array-delete-ok".equals(output),
+            "array delete clears the slot and preserves LuaJIT length/iteration behavior: "
+                + output);
     }
 
     // =========================================================================

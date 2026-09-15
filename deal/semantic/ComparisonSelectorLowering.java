@@ -51,13 +51,16 @@ import java.util.Objects;
  * array/table/class/function equal types
  *                            -> REFERENCE_EQ/NE with the shared checked
  *                               descriptor
+ * bytes vs bytes             -> BYTES_EQ/NE with the shared checked
+ *                               descriptor (RuntimeDescriptor.Bytes —
+ *                               ISSUE-0158)
  * }</pre>
  *
  * <p><b>Payload rules (B-D3).</b> {@code BinaryPayload.innerDescriptor}
- * carries the shared checked descriptor for {@code REFERENCE_*} and the
- * inner descriptor for {@code NULLABLE_*}/{@code NULLABLE_NULL_*};
- * {@code side} is carried only for the nullable selectors
- * ({@code LEFT}/{@code RIGHT} for {@code NULLABLE_NULL_*},
+ * carries the shared checked descriptor for {@code REFERENCE_*}/{@code
+ * BYTES_*} and the inner descriptor for {@code NULLABLE_*}/{@code
+ * NULLABLE_NULL_*}; {@code side} is carried only for the nullable
+ * selectors ({@code LEFT}/{@code RIGHT} for {@code NULLABLE_NULL_*},
  * {@code BOTH} for equal nullable pairs) and is {@code null} otherwise.
  * Equal nullable types never use a reference selector — null is not a
  * reference. Inner/shared descriptors are derived through
@@ -69,20 +72,23 @@ import java.util.Objects;
  * {@code BINARY} (they lower to selector-bearing {@code BRANCH} — the
  * control-flow lowering slice); this producer never handles them. Any
  * operator outside the six comparison operators, any pair outside the
- * map, and any bytes-involving or {@code Type.Error} pair raise
- * {@link Defect} — a producer defect, never a guessed selector.</p>
+ * map, and any {@code Type.Error} pair raise {@link Defect} — a producer
+ * defect, never a guessed selector.</p>
  *
- * <p><b>Totality and the E3019 gate (B-D3/B-D7).</b> The checker admits
- * exactly the map's pairs for descriptor-representable operand types: it
- * rejects non-admitted pairs (E3006 mixed, E3007 relationals) and — since
- * this epic's frontend gate — every admitted bytes-involving pair
- * (E3019 {@code Bytes comparison is not supported} in {@code checkBinary},
- * phase 3, before lowering on every route purpose). The map is therefore
- * total over lowering-reachable comparisons: every checker-admitted pair
- * has a row, and a pair reaching this producer without a row is the
- * unreachable E6005 {@code COMPARISON_SELECTOR} producer-defect layer
- * only (B-D7). Arithmetic selectors (INT32/NUMBER arithmetic) are
- * the signed-int32/containers epics' producers, never this one.</p>
+ * <p><b>Totality (B-D3/B-D7).</b> The checker admits exactly the map's
+ * pairs for descriptor-representable operand types: it rejects
+ * non-admitted pairs (E3006 mixed, E3007 relationals). ISSUE-0158 lifted
+ * the former B-D7 E3019 frontend gate and added the bytes selector and
+ * descriptor row ({@code BYTES_EQ}/{@code BYTES_NE} over
+ * {@link RuntimeDescriptor.Bytes}), so every checker-admitted
+ * bytes-involving equality pair — equal bytes-containing types, nullable
+ * bytes-vs-null, equal nullable bytes pairs — now has a map row. The map
+ * is therefore total over lowering-reachable comparisons: every
+ * checker-admitted pair has a row, and a pair reaching this producer
+ * without a row is the unreachable E6005 {@code COMPARISON_SELECTOR}
+ * producer-defect layer only (B-D7's defensive guard). Arithmetic
+ * selectors (INT32/NUMBER arithmetic) are the signed-int32/containers
+ * epics' producers, never this one.</p>
  *
  * <p><b>Produced op.</b> {@link #produce} builds exactly one
  * {@code BINARY} op per source comparison: operands in source order
@@ -117,9 +123,9 @@ public final class ComparisonSelectorLowering {
      * field of the E6005 diagnostic for a checked type pair with no
      * closed comparison selector row (B-D3/B-D7): a producer defect,
      * provably unreachable for user programs — the checker rejects every
-     * non-admitted pair (E3006/E3007) and the E3019 bytes-comparison
-     * gate rejects the only admitted pairs the map cannot cover, all in
-     * phase 3 before lowering on every route purpose.
+     * non-admitted pair (E3006/E3007) in phase 3 before lowering, and
+     * every admitted pair (bytes rows included since the ISSUE-0158 lift)
+     * has a map row.
      */
     public static final String COMPARISON_SELECTOR = "COMPARISON_SELECTOR";
 
@@ -130,14 +136,13 @@ public final class ComparisonSelectorLowering {
     /**
      * A comparison-production fact defect: a checked operand pair without
      * a closed B-D3 selector row reached the comparison producer — a
-     * bytes-involving or {@code Type.Error} pair, a mixed pair, a
-     * relational over a non-orderable type, or an operator outside the
-     * six comparison operators ({@code &&}/{@code ||}, arithmetic). The
-     * unit-production seam owns the conversion into E6005
-     * ({@code COMPARISON_SELECTOR} via
-     * {@link #loweringFailureDetail(ModuleId, Defect)}); this exception
-     * is internal control flow, never a crash and never a guessed
-     * selector.
+     * {@code Type.Error} pair, a mixed pair, a relational over a
+     * non-orderable type, or an operator outside the six comparison
+     * operators ({@code &&}/{@code ||}, arithmetic). The unit-production
+     * seam owns the conversion into E6005 ({@code COMPARISON_SELECTOR}
+     * via {@link #loweringFailureDetail(ModuleId, Defect)}); this
+     * exception is internal control flow, never a crash and never a
+     * guessed selector.
      */
     public static final class Defect extends RuntimeException {
 
@@ -160,18 +165,17 @@ public final class ComparisonSelectorLowering {
      * Selects exactly one closed comparison selector from the checked
      * operand types and the operator (B-D3), producing the exact
      * {@code BinaryPayload}: {@code innerDescriptor} carries the shared
-     * checked descriptor for {@code REFERENCE_*} and the inner descriptor
-     * for {@code NULLABLE_*}/{@code NULLABLE_NULL_*}; {@code side} is
-     * carried only for the nullable selectors and is {@code null} for
-     * every other selector.
+     * checked descriptor for {@code REFERENCE_*} and {@code BYTES_*} and
+     * the inner descriptor for {@code NULLABLE_*}/{@code
+     * NULLABLE_NULL_*}; {@code side} is carried only for the nullable
+     * selectors and is {@code null} for every other selector.
      *
      * <p>Deterministic and total over lowering-reachable comparisons
-     * (B-D3/B-D7). Every pair outside the map — a bytes-involving pair
-     * (at any depth), a {@code Type.Error} pair, a mixed pair, a
-     * relational over a non-orderable type, or an operator outside
-     * {@code EQ}/{@code NEQ}/{@code LT}/{@code LTE}/{@code GT}/
-     * {@code GTE} — raises {@link Defect} (fail closed, never an
-     * invented selector).</p>
+     * (B-D3/B-D7). Every pair outside the map — a {@code Type.Error}
+     * pair, a mixed pair, a relational over a non-orderable type, or an
+     * operator outside {@code EQ}/{@code NEQ}/{@code LT}/{@code LTE}/
+     * {@code GT}/{@code GTE} — raises {@link Defect} (fail closed, never
+     * an invented selector).</p>
      *
      * @param op        the source comparison operator; non-null
      * @param leftType  the checked left operand type; non-null
@@ -186,18 +190,9 @@ public final class ComparisonSelectorLowering {
         Objects.requireNonNull(leftType, "leftType must not be null");
         Objects.requireNonNull(rightType, "rightType must not be null");
 
-        // The E3019 frontend gate removes every admitted bytes-involving
-        // pair before lowering (B-D7); a bytes-involving pair reaching
-        // this producer is therefore a producer defect — there is no
-        // bytes selector and no bytes descriptor in deal.semantic-ir/1.
         if (leftType == Type.Error.INSTANCE || rightType == Type.Error.INSTANCE) {
             throw new Defect("a comparison operand's checked type is the internal Error sentinel: "
                 + "no closed comparison selector row exists (COMPARISON_SELECTOR)");
-        }
-        if (Types.containsBytes(leftType) || Types.containsBytes(rightType)) {
-            throw new Defect("a bytes-involving comparison pair reached the comparison producer: "
-                + "the E3019 frontend gate rejects it in phase 3 before lowering and the closed "
-                + "BinarySelector set has no bytes selector (COMPARISON_SELECTOR)");
         }
 
         switch (op) {
@@ -267,9 +262,8 @@ public final class ComparisonSelectorLowering {
                     negated ? BinarySelector.REFERENCE_NE : BinarySelector.REFERENCE_EQ;
                 case Type.Func f ->
                     negated ? BinarySelector.REFERENCE_NE : BinarySelector.REFERENCE_EQ;
-                case Type.Bytes b ->
-                    throw new Defect("unreachable: bytes pairs are rejected before "
-                        + "the selector map");
+                case Type.Bytes b -> negated ? BinarySelector.BYTES_NE
+                    : BinarySelector.BYTES_EQ;
                 case Type.Error e ->
                     throw new Defect("unreachable: Error pairs are rejected before "
                         + "the selector map");
@@ -321,9 +315,9 @@ public final class ComparisonSelectorLowering {
     /**
      * Assembles the exact {@code BinaryPayload} of the selected row:
      * {@code innerDescriptor} carries the shared checked descriptor for
-     * {@code REFERENCE_*} (the equal checked type — same structural
-     * descriptor on both sides) and the inner descriptor for
-     * {@code NULLABLE_*} (side {@code BOTH}) and {@code NULLABLE_NULL_*}
+     * {@code REFERENCE_*} and {@code BYTES_*} (the equal checked type —
+     * same structural descriptor on both sides) and the inner descriptor
+     * for {@code NULLABLE_*} (side {@code BOTH}) and {@code NULLABLE_NULL_*}
      * (side {@code LEFT}/{@code RIGHT}); {@code side} and
      * {@code innerDescriptor} are {@code null} for every other selector.
      */
@@ -345,7 +339,7 @@ public final class ComparisonSelectorLowering {
                 innerDescriptor = describeInner(inner);
                 effectiveSide = side;
             }
-            case REFERENCE_EQ, REFERENCE_NE -> {
+            case REFERENCE_EQ, REFERENCE_NE, BYTES_EQ, BYTES_NE -> {
                 // One equal checked descriptor (B-D3): the shared
                 // structural descriptor of the equal checked types.
                 innerDescriptor = describeShared(leftType);
@@ -368,12 +362,12 @@ public final class ComparisonSelectorLowering {
         }
     }
 
-    /** Derives the shared checked descriptor of a {@code REFERENCE_*} row. */
+    /** Derives the shared checked descriptor of a {@code REFERENCE_*}/{@code BYTES_*} row. */
     private static RuntimeDescriptor describeShared(Type shared) {
         try {
             return DescriptorService.describe(shared);
         } catch (DescriptorService.Defect defect) {
-            throw new Defect("the REFERENCE_* checked type is not descriptor-representable: "
+            throw new Defect("the REFERENCE_*/BYTES_* checked type is not descriptor-representable: "
                 + defect.getMessage(), defect);
         }
     }

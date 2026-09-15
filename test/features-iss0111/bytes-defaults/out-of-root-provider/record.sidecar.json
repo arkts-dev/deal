@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "feature": "bytes-defaults",
+  "spec": "spec-v1.2.md §Name resolution",
+  "description": "a class default calls an out-of-root class-free provider through importer-relative resolution and publishes the runtime edge on both backends",
+  "expected": "runtime-ok",
+  "backends": ["luajit", "jvm"],
+  "invocation": "synthetic-main",
+  "oracle": { "exportName": "defaultsOracle", "functionDescriptor": "()->int" },
+  "support": []
+}

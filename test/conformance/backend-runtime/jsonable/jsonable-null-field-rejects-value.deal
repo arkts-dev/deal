@@ -1,0 +1,13 @@
+// @spec: Classes
+// @description: fromJson rejects a non-null JSON value for a null-typed field.
+// @expected: runtime-ok
+// @features: jsonable, null, validation
+
+// @jsonable
+export class Marker { value: null = null; }
+
+export function main(): null {
+  let m: Marker | null = Marker$fromJson("{\"value\":0}");
+  if (m !== null) { throw { code: "TEST_FAIL", message: "non-null value accepted" }; }
+  return null;
+}

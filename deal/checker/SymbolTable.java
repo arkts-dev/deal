@@ -1,6 +1,6 @@
 package deal.checker;
 
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
@@ -13,7 +13,15 @@ import java.util.Map;
 public final class SymbolTable {
 
     private final SymbolTable parent;
-    private final Map<String, Symbol> symbols = new HashMap<>();
+    // The storage field itself is insertion-ordered
+    // (deterministic-diagnostics D2): iteration order is the define()
+    // insertion order, never a JDK hash-bucket order.  First-match
+    // selection over symbols() — e.g. LuaBackend.findImportAliasForClass —
+    // is therefore deterministic over definition order across JVM
+    // restarts and JDK versions.  The field type is the cross-JDK
+    // guarantee: copying a HashMap into a LinkedHashMap preserves the
+    // HashMap's hash-bucket order, not insertion order.
+    private final Map<String, Symbol> symbols = new LinkedHashMap<>();
 
     public SymbolTable() {
         this.parent = null;
@@ -95,8 +103,24 @@ public final class SymbolTable {
 
     /**
      * Returns all symbols defined in this scope (for exports, etc.).
+     *
+     * <p>The returned map is a defensive insertion-ordered copy of the
+     * insertion-ordered storage field: its iteration order is the
+     * {@code define()} insertion order (earliest-defined first).  This
+     * is the contractual order (deterministic-diagnostics D2), so a
+     * first-match selection over the returned entries — e.g.
+     * {@code LuaBackend.findImportAliasForClass}, which returns the
+     * first module alias whose export carries a given class identity —
+     * resolves to the earliest-defined alias.  Hash-bucket order is a
+     * JDK implementation artifact, not a resolution model; the
+     * insertion-ordered storage type makes that selection deterministic
+     * across JVM restarts and JDK versions.</p>
+     *
+     * <p>Mutations of the returned map never affect this table.</p>
+     *
+     * @return a defensive insertion-ordered copy of this scope's symbols
      */
     public Map<String, Symbol> symbols() {
-        return new HashMap<>(symbols);
+        return new LinkedHashMap<>(symbols);
     }
 }

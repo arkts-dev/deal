@@ -134,7 +134,15 @@ public enum ConstructKind {
     TRY_CATCH_THROW("TRY_CATCH, THROW",
         List.of(SemanticOpKind.TRY_CATCH, SemanticOpKind.THROW)),
 
-    /** Required common form: layout, defaults, factory, and export metadata. */
+    /** Required common form: layout, defaults, factory, and export metadata.
+     * The ISSUE-0231..0239 row-extension authority admits the layout-only
+     * production of this row: a class layout is unit data
+     * ({@code unit.classLayouts}), never an op, so a no-default
+     * non-exported class produces no op of the mapped kinds and the row's
+     * R-COVERAGE obligation is satisfied by the produced layout record —
+     * the op-bearing shapes (defaulted/exported classes) evidence the row
+     * through the produced {@code CLASS_DEFAULT}/{@code CLASS_FACTORY}
+     * ops, and no vacuous op is invented. */
     CLASS_DECLARATION("layout, defaults, factory, and export metadata",
         List.of(SemanticOpKind.CLASS_DEFAULT, SemanticOpKind.CLASS_FACTORY,
             SemanticOpKind.EXPORT_PUBLISH)),

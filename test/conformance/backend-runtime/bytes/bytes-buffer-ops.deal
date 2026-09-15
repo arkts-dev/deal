@@ -1,5 +1,5 @@
 // @spec: Bytes — Byte indexing and buffer semantics
-// @description: bytes(length) allocates a zero-filled buffer; index writes require int 0..255; reads yield int 0..255; b.length is int; assignment copies the reference (v1.2)
+// @description: bytes(length) allocates a zero-filled buffer; index writes require int 0..255; reads yield int 0..255; b.length is int; assignment copies the reference (v1.2); bytes equality is reference identity (alias true, distinct buffers false, nullable-vs-null pinned)
 // @expected: runtime-ok
 // @features: bytes, runtime, v1.2
 
@@ -22,6 +22,32 @@ export function main(): null {
   alias[2] = 7;
   if (b[2] !== 7) {
     throw { code: "TEST_FAIL", message: "bytes: reference copy mismatch" };
+  }
+  // Reference identity: the alias is the same allocation.
+  if (!(b === alias)) {
+    throw { code: "TEST_FAIL", message: "bytes: alias identity mismatch" };
+  }
+  let fresh: bytes = bytes(4);
+  if (b === fresh) {
+    throw { code: "TEST_FAIL", message: "bytes: distinct buffers compare equal" };
+  }
+  if (!(b !== fresh)) {
+    throw { code: "TEST_FAIL", message: "bytes: distinct buffers neq mismatch" };
+  }
+  // Nullable-vs-null equality in both directions.
+  let nothing: bytes | null = null;
+  if (!(nothing === null)) {
+    throw { code: "TEST_FAIL", message: "bytes: nullable null equality mismatch" };
+  }
+  if (nothing !== null) {
+    throw { code: "TEST_FAIL", message: "bytes: nullable null neq mismatch" };
+  }
+  let some: bytes | null = b;
+  if (some === null) {
+    throw { code: "TEST_FAIL", message: "bytes: nullable value equality mismatch" };
+  }
+  if (!(null === nothing)) {
+    throw { code: "TEST_FAIL", message: "bytes: null-nullable equality mismatch" };
   }
   return null;
 }

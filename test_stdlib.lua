@@ -836,8 +836,15 @@ test("json.stringify rejects invalid UTF-8 keys with E8001", function()
 end)
 
 test("json.parse rejects raw invalid UTF-8 input with E8001 (entry gate)", function()
+  -- The entry gate is __rt.check_string: a UTF-16 surrogate code point
+  -- now gets the specific boundary message (ISSUE-0598, the
+  -- host-surrogate-utf8-e8010 convergence); every other malformed
+  -- encoding keeps the general message.
   local surrogate_bytes = string.char(0xED, 0xA0, 0x80)
   assert_json_error(function() json.parse.f('"' .. surrogate_bytes .. '"') end,
+    "expected string, got UTF-16 surrogate code point")
+  local stray_bytes = string.char(0x61, 0x80, 0x62)
+  assert_json_error(function() json.parse.f('"' .. stray_bytes .. '"') end,
     "expected string, got invalid UTF-8 encoding")
 end)
 

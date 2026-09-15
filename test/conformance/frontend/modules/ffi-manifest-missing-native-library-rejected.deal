@@ -1,7 +1,6 @@
 // @spec: C FFI declaration files — C FFI externals entries
-// @description: a C FFI externals entry without nativeLibrary must be rejected with E2010; the rejection has no production emission site yet, so this tracked pin claims exactly the code's absence and self-promotes the moment the owning FFI frontend validation lands
-// @expected: known-fail compile-error E2010
-// @issue: ISSUE-0111
+// @description: importing a C FFI declaration file (@extern-c) without a deal.json externals entry specifying nativeLibrary is rejected with E2010 at the import — the v1.2 C FFI manifest policy
+// @expected: compile-error E2010
 // @features: c-ffi, modules, v1.2
 
 import * as ffi from "./ffi_math";

@@ -1,0 +1,8 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: An imported function call is checked for too many arguments
+// @expected: compile-error E3009
+// @features: modules, imports, typing, diagnostics, v1.2
+
+import * as Lib from "./support/int_parameter_lib";
+export function probe(): int { return Lib.id(1, 2); }
+export function main(): null { return null; }

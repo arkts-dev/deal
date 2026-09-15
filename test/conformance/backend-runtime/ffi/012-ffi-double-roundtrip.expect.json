@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "backends": {
+    "luajit": {
+      "mode": "runtime-ok",
+      "transcript": { "stdout": "", "stderr": "" },
+      "exitCode": 0
+    },
+    "jvm": { "mode": "compile-reject", "diagnostic": { "code": "E6006" } },
+    "js": { "mode": "compile-reject", "diagnostic": { "code": "E6006" } }
+  }
+}

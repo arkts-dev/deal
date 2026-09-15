@@ -1,0 +1,11 @@
+{
+  "languageVersion": "1.2",
+  "moduleRoots": ["."],
+  "backend": "luajit",
+  "externals": {
+    "candidate/invalid-async": {
+      "declaration": "support/invalid-async.d.deal",
+      "nativeLibrary": "support/libcandidate_native.so"
+    }
+  }
+}

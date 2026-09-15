@@ -1,0 +1,18 @@
+// @spec: Runtime execution model — Runtime type descriptor format
+// @description: A sync wrapper crossing the async(bytes)->bytes row raises E8010 with the exact canonical descriptor texts — the async marker is part of the byte-equal comparison (ISSUE-0550).
+// @expected: runtime-error E8010
+// @features: descriptors, bytes, dynamic-boundaries
+
+function asInt(x: int): int {
+  return x;
+}
+
+export function test_bytes_dynamic_async_function_mismatch(): int {
+  let holder: table = { f: asInt };
+  let f: async (b: bytes) => bytes = holder.f;
+  return 0;
+}
+
+export function main(): null {
+  return null;
+}

@@ -1,0 +1,3 @@
+// @extern-c
+
+export function fixture_add_int(a: int, b: int): int;

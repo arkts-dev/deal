@@ -1,5 +1,5 @@
 // IR golden fixture: jvm-classes-slice-jvm-class-default-null-typed-call
-// Migrated IR-containment pins from test/conformance/fixtures/jvm-classes-slice.json case 'jvm-class-default-null-typed-call' (ISSUE-0358).
+// Migrated IR-containment pin for legacy case 'jvm-class-default-null-typed-call' (ISSUE-0358).
 
 function noise(): null { return; }
 function wrap(x: null): string { return "w"; }

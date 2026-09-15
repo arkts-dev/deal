@@ -10,17 +10,20 @@ import java.util.Objects;
  *
  * <p>Closed hierarchy — exactly the variants below and no others:
  * {@code null}, {@code boolean}, signed32 {@code int}, {@code number},
- * {@code string}, {@code table}, {@code class(ClassId)}, {@code array},
- * {@code nullable}, and sync/async {@code function}. Structural equality is
- * authoritative. {@code int} is signed 32-bit: no safe-range (±2^53−1)
- * representation exists anywhere in the schema. Descriptor
+ * {@code string}, {@code table}, {@code bytes}, {@code class(ClassId)},
+ * {@code array}, {@code nullable}, and sync/async {@code function}.
+ * Structural equality is authoritative. {@code int} is signed 32-bit: no
+ * safe-range (±2^53−1) representation exists anywhere in the schema.
+ * {@code bytes} is the v1.2 mutable reference type (ISSUE-0158 added the
+ * member with the bytes comparison row): identity-compared, non-jsonable,
+ * copied by reference, descriptor text {@code "bytes"}. Descriptor
  * <em>production</em> from checked {@code Type}s is the
  * {@code DescriptorService}'s (ISSUE-0233) and is excluded here; this
  * hierarchy is the sealed data type the service produces into.</p>
  *
  * <p>Canonical spec text (parent D6, {@code docs/spec-v1.2.md:2231-2283}):
  * {@code null}, {@code boolean}, {@code int}, {@code number},
- * {@code string}, {@code table}; {@code ClassDescriptor} =
+ * {@code string}, {@code table}, {@code bytes}; {@code ClassDescriptor} =
  * {@code @modulePath/ClassName} (target class names never appear);
  * {@code ArrayDescriptor} = {@code "[" RuntimeTypeDescriptor "]"};
  * {@code NullableDescriptor} = {@code "?" RuntimeTypeDescriptor} with
@@ -29,7 +32,8 @@ import java.util.Objects;
  * ")" "->" RuntimeTypeDescriptor} with {@code ","}-joined parameter texts
  * and no spaces. Examples: {@code [int]}, {@code ?string},
  * {@code ?[@src/app/User]}, {@code (int,string)->boolean},
- * {@code ()->null}, {@code async(int)->string}.</p>
+ * {@code ()->null}, {@code async(int)->string}, {@code [bytes]},
+ * {@code ?bytes}.</p>
  *
  * <p>{@link #parseCanonicalText(String)} is the exact inverse of
  * {@code canonicalSpecText()}: it decodes pinned descriptor text back into
@@ -46,6 +50,7 @@ public sealed interface RuntimeDescriptor extends OpResultType
             RuntimeDescriptor.Number,
             RuntimeDescriptor.String,
             RuntimeDescriptor.Table,
+            RuntimeDescriptor.Bytes,
             RuntimeDescriptor.Class,
             RuntimeDescriptor.Array,
             RuntimeDescriptor.Nullable,
@@ -59,7 +64,7 @@ public sealed interface RuntimeDescriptor extends OpResultType
      * variants — the exact inverse of {@link #canonicalSpecText()}. The
      * whole text must be consumed: {@code null}, {@code boolean},
      * {@code int}, {@code number}, {@code string}, {@code table},
-     * {@code @modulePath/ClassName}, {@code [element]},
+     * {@code bytes}, {@code @modulePath/ClassName}, {@code [element]},
      * {@code ?inner}, {@code (p1,p2)->r}, {@code async(p1,p2)->r}.
      *
      * @param text the canonical descriptor text; non-null
@@ -143,9 +148,10 @@ public sealed interface RuntimeDescriptor extends OpResultType
             return parseFunc(text, pos, false);
         }
         // Fixed scalar spellings.
-        java.lang.String[] fixed = {"null", "boolean", "int", "number", "string", "table"};
+        java.lang.String[] fixed = {"null", "boolean", "int", "number", "string", "bytes",
+            "table"};
         RuntimeDescriptor[] mapped = {Null.INSTANCE, Boolean.INSTANCE, Int.INSTANCE,
-            Number.INSTANCE, String.INSTANCE, Table.INSTANCE};
+            Number.INSTANCE, String.INSTANCE, Bytes.INSTANCE, Table.INSTANCE};
         for (int i = 0; i < fixed.length; i++) {
             if (text.startsWith(fixed[i], pos[0])) {
                 int end = pos[0] + fixed[i].length();
@@ -253,6 +259,26 @@ public sealed interface RuntimeDescriptor extends OpResultType
         @Override
         public java.lang.String canonicalSpecText() {
             return "table";
+        }
+    }
+
+    /**
+     * The v1.2 {@code bytes} descriptor; canonical text {@code "bytes"}
+     * (ISSUE-0158 added the member together with the
+     * {@code BYTES_EQ}/{@code BYTES_NE} comparison row).
+     *
+     * <p>Bytes values are mutable reference-typed buffers with a
+     * signed-int32 logical length: reference identity comparison, no
+     * JSON representation, copied by reference. The descriptor carries no
+     * payload — the identity of a bytes value is the allocation identity
+     * of its runtime carrier, never descriptor text.</p>
+     */
+    enum Bytes implements RuntimeDescriptor {
+        INSTANCE;
+
+        @Override
+        public java.lang.String canonicalSpecText() {
+            return "bytes";
         }
     }
 

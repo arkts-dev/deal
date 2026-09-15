@@ -18,7 +18,7 @@ import deal.diagnostics.DiagnosticCode;
  * null narrowing, contextual typing for table reads, and class construction
  * checking.
  *
- * <p>Errors produced: E3001–E3019, E4001–E4008, E5001–E5004.</p>
+ * <p>Errors produced: E3001–E3018, E4001–E4008, E5001–E5004.</p>
  */
 public final class TypeChecker {
 
@@ -58,6 +58,13 @@ public final class TypeChecker {
     //    treated as a write target (no contextual typing required) --
     private boolean assignmentTargetMode = false;
 
+    // -- Class declaration lexical scopes (the default-planning seam of
+    //    ISSUE-0541): every class the checker visits, in walk order, with
+    //    the exact scope its declaration was checked in — the declaring
+    //    lexical context the default planner resolves defaults against.
+    private final Map<ClassDeclaration, SymbolTable> classDeclarationScopes =
+        new LinkedHashMap<>();
+
     // -- Jsonable cycle detection (D3) --
     // Maps @jsonable class name → same-module @jsonable dependency names
     private final Map<String, Set<String>> jsonableClassDeps = new LinkedHashMap<>();
@@ -92,7 +99,8 @@ public final class TypeChecker {
             Map.copyOf(checker.typeMap),
             checker.rootTable,
             Map.copyOf(scopeMap),
-            List.copyOf(checker.diagnostics)
+            List.copyOf(checker.diagnostics),
+            Map.copyOf(checker.classDeclarationScopes)
         );
     }
 
@@ -172,6 +180,11 @@ public final class TypeChecker {
     // =======================================================================
 
     private void checkClassDeclaration(ClassDeclaration cd) {
+        // The default-planning seam (ISSUE-0541): record the exact scope
+        // this declaration is checked in — the scope the planner resolves
+        // the class's defaults against.
+        classDeclarationScopes.put(cd, currentScope);
+
         // ISSUE-0095 rework: every class-field default expression runs
         // through checkExpression here — the class declaration site, the
         // point where LuaJIT evaluates the defaults table — so the
@@ -976,25 +989,15 @@ public final class TypeChecker {
             boolean nullableVsNull = isNullableOf(leftType, rightType)
                 || isNullableOf(rightType, leftType);
             if (equalTypes || nullableVsNull) {
-                // E3019 bytes-comparison gate (binary-comparison-selectors
-                // B-D7): every equality pair admitted by the equality
-                // rules whose checked operand type contains bytes — at any
-                // depth — is rejected at the comparison site in phase 3,
-                // before lowering, on every route purpose. The closed
-                // BinarySelector set has no bytes selector and
-                // RuntimeDescriptor has no bytes member; bytes equality is
-                // spec-pinned as reference identity and its value
-                // semantics belong to ISSUE-0111/ISSUE-0158, which own
-                // lifting this gate. The gate fires before the equality
-                // admission returns and covers equal bytes-containing
-                // types (bytes, bytes[], bytes|null, functions/classes
-                // containing bytes) and nullable-bytes vs null in both
-                // directions.
-                if (Types.containsBytes(leftType) || Types.containsBytes(rightType)) {
-                    error(DiagnosticCode.E3019, "Bytes comparison is not supported",
-                        bin.span());
-                    return Type.Error.INSTANCE;
-                }
+                // Bytes equality admission (ISSUE-0158, the
+                // binary-comparison-selectors B-D7 gate lift): equal
+                // bytes-containing types (bytes, bytes[], bytes|null,
+                // functions/classes containing bytes) and
+                // nullable-bytes-vs-null in both directions are admitted
+                // as boolean — bytes compare by reference identity
+                // (spec-v1.2 equality semantics; the closed
+                // BYTES_EQ/BYTES_NE comparison row and the bytes
+                // descriptor carry the pair through lowering).
                 return Type.Boolean.INSTANCE;
             }
             error(DiagnosticCode.E3006,
@@ -1837,7 +1840,7 @@ public final class TypeChecker {
      * Returns a human-readable name for a type for use in diagnostic messages.
      * Returns {@code "<error>"} for the internal error sentinel.
      */
-    static String typeName(Type t) {
+    public static String typeName(Type t) {
         if (t == null) return "null";
         return switch (t) {
             case Type.Null ignored -> "null";

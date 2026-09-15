@@ -1,0 +1,4 @@
+// Determinism artifact module (deterministic-diagnostics D3/D2): the
+// same class-exporting module the entry imports under two aliases.
+// Exports class C with no required fields.
+export class C { }

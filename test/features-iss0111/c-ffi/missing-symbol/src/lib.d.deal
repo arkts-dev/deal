@@ -1,0 +1,6 @@
+// @extern-c
+
+// The declaration is valid, but the compiled fixture deliberately does
+// not export fixture_missing_add — the handle-scoped symbol resolution
+// must raise FFI_SYMBOL_MISSING.
+export function fixture_missing_add(a: int, b: int): int;

@@ -1,0 +1,6 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: A default export is rejected because DEAL has no default export form
+// @expected: compile-error E1024
+// @features: modules, exports, diagnostics, v1.2
+
+export default function value(): int { return 1; }

@@ -25,6 +25,7 @@ import java.util.Set;
  *   moduleId,
  *   capabilities: Set<SemanticCapability>,                    // closed set, exactly the S4 capability order when iterated
  *   constructCoverage: Map<ConstructKind, [SemanticOpKind]>,  // enum-keyed; recorded over the module's reachable constructs
+ *   bytesBearing: boolean,                                    // plan-time routing marker; exactly scan.bytesInContainer || scan.bytesValue
  * }
  * }</pre>
  *
@@ -36,7 +37,18 @@ import java.util.Set;
  * module claims it), and {@code STDLIB_TIME_CONFLICT} is claimed whenever
  * the closed four-part trigger fires — a routing marker only (parent D8:
  * such a module is never common-lowerable in any purpose). The
- * {@code constructCoverage} rows are recorded over the module's
+ * {@code bytesBearing} marker is the step-1 bytes guard (ISSUE-0574,
+ * parent S1b): a fixed per-module boolean set by
+ * {@link LoweringSupport} exactly from {@code scan.bytesInContainer ||
+ * scan.bytesValue} (the same triggers as the unchanged
+ * {@code CONTAINERS_AND_STRINGS} claim arm — the claim stays the
+ * construct-ownership fact, the marker is the plan-time routing fact
+ * planner rule 2b consumes), serialized as the {@code bytesBearing}
+ * key of the canonical JSON. A bytes-bearing module routes
+ * {@code LEGACY} in every purpose and is never common-lowerable — no
+ * capability, registry entry, registry hash, or
+ * {@code deal.semantic-ir/1} schema member changes.
+ * The {@code constructCoverage} rows are recorded over the module's
  * reachable constructs from the closed construct→op detector table (S4):
  * each row's op-kind list is exactly {@link ConstructKind#mappedOpKinds()}
  * verbatim — enforced at construction, never reinterpreted — and the
@@ -59,11 +71,15 @@ import java.util.Set;
  * @param capabilities      the closed capability claims; non-null,
  *                          non-empty, contains {@code FOUNDATION_VALUES}
  * @param constructCoverage the enum-keyed reachable-construct rows; non-null
+ * @param bytesBearing      the plan-time bytes-bearing marker (ISSUE-0574
+ *                          rule 2b): exactly the module scan's
+ *                          {@code bytesInContainer || bytesValue}
  */
 public record SemanticRequirementManifest(
     ModuleId moduleId,
     Set<SemanticCapability> capabilities,
-    Map<ConstructKind, List<SemanticOpKind>> constructCoverage
+    Map<ConstructKind, List<SemanticOpKind>> constructCoverage,
+    boolean bytesBearing
 ) {
 
     public SemanticRequirementManifest {
@@ -127,6 +143,7 @@ public record SemanticRequirementManifest(
                 CanonicalJson.arr(kinds)));
         }
         return CanonicalJson.obj(
+            CanonicalJson.e("bytesBearing", CanonicalJson.bool(bytesBearing)),
             CanonicalJson.e("capabilities", CanonicalJson.arr(caps)),
             CanonicalJson.e("constructCoverage", CanonicalJson.obj(coverageEntries)),
             CanonicalJson.e("moduleId",

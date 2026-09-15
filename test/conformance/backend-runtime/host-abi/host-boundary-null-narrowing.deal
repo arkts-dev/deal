@@ -1,0 +1,7 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: An empty string crosses both directions at the host boundary without becoming null
+// @expected: runtime-ok
+// @features: host-abi, string, empty-value, boundary-checks
+
+import * as host from "host/boundary";
+export function main(): null { let value: string = host.echoString(""); if (value !== "") { throw { code: "TEST_FAIL", message: "host empty string mapping" }; } return null; }

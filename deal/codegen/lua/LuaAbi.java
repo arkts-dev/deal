@@ -21,11 +21,11 @@ import java.util.Set;
  * future backend supplies its own target keyword set through the same
  * functions — there is no silent Lua-set binding for non-Lua targets.</p>
  *
- * <p>The Lua text composers ({@link #stringKeyLiteral}, {@link #memberAccess},
- * {@link #hasCheck}, {@link #tableField}, {@link #exportAssignment},
- * {@link #generatedRef}, {@link #helperRef}, {@link #namespaceAssignment})
- * are thin Lua-literal wrappers that evaluate the parameterized predicates
- * with {@code RESERVED}.</p>
+ * <p>The Lua text composers ({@link #stringKeyLiteral}, {@link #stringLiteral},
+ * {@link #memberAccess}, {@link #hasCheck}, {@link #tableField},
+ * {@link #exportAssignment}, {@link #generatedRef}, {@link #helperRef},
+ * {@link #namespaceAssignment}) are thin Lua-literal wrappers that evaluate
+ * the parameterized predicates with {@code RESERVED}.</p>
  *
  * <p>This class is stateless and depends only on the JDK; it never depends
  * on {@code deal.ast}, {@code deal.checker}, or {@code deal.module}.</p>
@@ -133,10 +133,25 @@ public final class LuaAbi {
      * {@code ["<escaped key>"]}.
      */
     public static String stringKeyLiteral(String key) {
-        StringBuilder sb = new StringBuilder();
-        sb.append("[\"");
-        for (int i = 0; i < key.length(); i++) {
-            char c = key.charAt(i);
+        return "[" + stringLiteral(key) + "]";
+    }
+
+    /**
+     * Returns a plain double-quoted Lua-5.1 string literal
+     * ({@code "<escaped text>"}) with the pinned escape set: the
+     * standard escapes ({@code \\}, {@code \"}, {@code \n},
+     * {@code \r}, {@code \t}), the Lua named escapes for bell,
+     * backspace, form feed, and vertical tab ({@code \a}, {@code \b},
+     * {@code \f}, {@code \v}), and decimal {@code \ddd} escapes for
+     * every other control byte. String-typed generated content
+     * (descriptors, keys, cdef texts, loader texts, plan contents)
+     * routes through this composer so every literal site shares one
+     * escaping policy.
+     */
+    public static String stringLiteral(String text) {
+        StringBuilder sb = new StringBuilder("\"");
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
             switch (c) {
                 case '\\' -> sb.append("\\\\");
                 case '"' -> sb.append("\\\"");
@@ -150,15 +165,15 @@ public final class LuaAbi {
                 default -> {
                     if (c < 0x20 || c == 0x7f) {
                         appendDecimalEscape(sb, c,
-                            i + 1 < key.length()
-                                && isDecimalDigit(key.charAt(i + 1)));
+                            i + 1 < text.length()
+                                && isDecimalDigit(text.charAt(i + 1)));
                     } else {
                         sb.append(c);
                     }
                 }
             }
         }
-        sb.append("\"]");
+        sb.append("\"");
         return sb.toString();
     }
 

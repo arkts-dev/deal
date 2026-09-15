@@ -2,16 +2,16 @@
  * DEALPG4 probe/selftest surface.
  *
  * Probe mode is implemented here (ISSUE-0203): the byte-stable three-part
- * report — exactly one identity line ("DEALPG4 4 linux-x86_64 CAPS 31",
+ * report — exactly one identity line ("DEALPG4 4 linux-x86_64 CAPS 63",
  * every advertised capability bit backed by a passing battery in this
  * artifact), exactly one 12-field LIMITS line printed from the embedded
  * limits records only after the mode-entry limits validation passed, and
  * one "OK <battery>" line per passing battery in the canonical order
- * monotonic-timer, subreaper, parent-death, negative-pgid, bounded-drain
- * — plus the five kernel-mechanism capability batteries, the probe bound
- * (one monotonic context armed from probe entry), and the named failure
- * tokens (CAPABILITY_MISSING <battery>, PROBE_TIMEOUT). Exit 0 iff every
- * battery passes; no skip, no retry.
+ * monotonic-timer, subreaper, parent-death, negative-pgid, bounded-drain,
+ * outer-registry-broker — plus the six kernel-mechanism capability
+ * batteries, the probe bound (one monotonic context armed from probe
+ * entry), and the named failure tokens (CAPABILITY_MISSING <battery>,
+ * PROBE_TIMEOUT). Exit 0 iff every battery passes; no skip, no retry.
  *
  * Selftest mode surface (ISSUE-0204): the mode-level monotonic bound
  * armed from selftest entry with the same timerfd machinery as every
@@ -24,7 +24,7 @@
  * and changes no embedded constant, probe report, or manifest. The
  * selftest entry forks one selftest child which inherits the bound
  * context and runs an explicit additive battery list: at this stage the
- * five probe batteries, printing the same five "OK <battery>" lines as
+ * six probe batteries, printing the same six "OK <battery>" lines as
  * probe in the same order (identity/LIMITS lines are probe-only); the
  * fault-injection battery (excluded, ISSUE-0184) appends to the same
  * list, child, and bound machinery, with every future scenario
@@ -70,31 +70,38 @@
  * Bit semantics (dealpg4-probe-selftest-foundation D2): 1 subreaper,
  * 2 monotonic timer, 4 negative-PGID signaling, 8 parent-death signal,
  * 16 bounded drains, 32 outer registry/broker. Invariant: every
- * advertised bit has a passing battery in the same artifact. This stage
- * verifies 1|2|4|8|16 and advertises exactly that (CAPS 31); bit 32 is
- * advertised by the outer child with its selftest coverage (-> 63, digest
- * re-pinned under the atomic rule).
+ * advertised bit has a passing battery in the same artifact. The
+ * atomic CAPS flip (ISSUE-0524, the ISSUE-0184 battery contract in
+ * tools/src/outer.h): bit 32 joined the advertised set together with
+ * the outer-registry-broker micro-battery — the artifact advertises
+ * 1|2|4|8|16|32 = CAPS 63, every bit battery-backed, and the digest
+ * was re-pinned in the same change.
  */
 #define DEALPG4_CAP_SUBREAPER        1
 #define DEALPG4_CAP_MONOTONIC_TIMER  2
 #define DEALPG4_CAP_NEGATIVE_PGID    4
 #define DEALPG4_CAP_PARENT_DEATH     8
 #define DEALPG4_CAP_BOUNDED_DRAIN   16
+#define DEALPG4_CAP_OUTER_REGISTRY_BROKER 32
 
 #define DEALPG4_PROBE_CAPS \
     (DEALPG4_CAP_SUBREAPER | DEALPG4_CAP_MONOTONIC_TIMER \
      | DEALPG4_CAP_NEGATIVE_PGID | DEALPG4_CAP_PARENT_DEATH \
-     | DEALPG4_CAP_BOUNDED_DRAIN) /* 31 at this stage */
+     | DEALPG4_CAP_BOUNDED_DRAIN | DEALPG4_CAP_OUTER_REGISTRY_BROKER) \
+    /* 63: every advertised bit is battery-backed */
 
 /* === Canonical battery names ===========================================
  * Fixed order, byte-stable report (dealpg4-probe-selftest-foundation D1):
- * monotonic-timer, subreaper, parent-death, negative-pgid, bounded-drain.
+ * monotonic-timer, subreaper, parent-death, negative-pgid, bounded-drain,
+ * outer-registry-broker (appended after bounded-drain by the atomic CAPS
+ * flip, ISSUE-0524 — the tools/src/outer.h engine D7 battery contract).
  */
 #define DEALPG4_PROBE_BATTERY_MONOTONIC_TIMER "monotonic-timer"
 #define DEALPG4_PROBE_BATTERY_SUBREAPER       "subreaper"
 #define DEALPG4_PROBE_BATTERY_PARENT_DEATH    "parent-death"
 #define DEALPG4_PROBE_BATTERY_NEGATIVE_PGID   "negative-pgid"
 #define DEALPG4_PROBE_BATTERY_BOUNDED_DRAIN   "bounded-drain"
+#define DEALPG4_PROBE_BATTERY_OUTER_REGISTRY_BROKER "outer-registry-broker"
 
 /* === Exit statuses =====================================================
  * The mode entries own their own statuses. These are the

@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "feature": "project-config",
+  "spec": "Exact ancestor manifest discovery — zero manifests is E2010",
+  "description": "no deal.json among the entry ancestors produces the zero-manifest discovery E2010 (synthetic range, v1.2 note) — the locator never guesses a manifest and never adds an implicit root",
+  "expected": { "compile-error": "E2010" },
+  "backends": ["luajit", "jvm"],
+  "invocation": "compile-only",
+  "manifestPolicy": "missing",
+  "manifestErrorFragment": "no deal.json project manifest found among the ancestor directories of entry file",
+  "support": []
+}

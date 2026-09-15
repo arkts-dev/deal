@@ -1,0 +1,48 @@
+// @spec: Async/Await — completion, resumption, and error propagation
+// @description: Effects around awaits remain ordered and an awaited error reaches the nearest catch
+// @expected: runtime-ok
+// @features: async, await, errors, tables, evaluation-order
+
+async function value(state: table, tag: string, n: int): int {
+  let before: string = state.trace;
+  state.trace = before + tag;
+  return n;
+}
+
+async function fail(state: table): int {
+  let before: string = state.trace;
+  state.trace = before + "F";
+  throw { code: "ASYNC_ORDER", message: "expected" };
+}
+
+export async function test_async_effect_order(): null {
+  let state: table = { trace: "" };
+  let a: int = await value(state, "A", 1);
+  let afterA: string = state.trace;
+  state.trace = afterA + "a";
+  let b: int = await value(state, "B", 2);
+  let afterB: string = state.trace;
+  state.trace = afterB + "b";
+
+  try {
+    let unused: int = await fail(state);
+    let unreachable: string = state.trace;
+    state.trace = unreachable + "X";
+  } catch (e) {
+    let caught: string = state.trace;
+    state.trace = caught + "C";
+    if (e.code !== "ASYNC_ORDER") {
+      throw { code: "TEST_FAIL", message: "awaited error code changed" };
+    }
+  }
+
+  let trace: string = state.trace;
+  if (a !== 1 || b !== 2 || trace !== "AaBbFC") {
+    throw { code: "TEST_FAIL", message: "async effect order: " + trace };
+  }
+  return null;
+}
+
+export function main(): null {
+  return null;
+}

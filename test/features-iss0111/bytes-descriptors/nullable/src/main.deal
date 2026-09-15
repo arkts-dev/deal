@@ -1,0 +1,20 @@
+// ISSUE-0165 BYTES_DESCRIPTORS nullable row (int32/bytes page D7): the
+// canonical ?bytes descriptor is checked byte-for-byte by the runtime
+// matcher at the parameter and return boundaries of passNullable, for a
+// real bytes value and for null — on both backends.
+function passNullable(b: bytes | null): bytes | null {
+  return b;
+}
+
+export function main(): null {
+  let b: bytes = bytes(2);
+  let through: bytes | null = passNullable(b);
+  if (through === null) {
+    throw { code: "TEST_FAIL", message: "nullable bytes boundary lost the value" };
+  }
+  let nothing: bytes | null = passNullable(null);
+  if (nothing !== null) {
+    throw { code: "TEST_FAIL", message: "nullable null boundary mismatch" };
+  }
+  return null;
+}

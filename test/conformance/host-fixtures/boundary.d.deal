@@ -1,0 +1,17 @@
+// @expected: host-fixture
+// @description: Host-module declaration fixture (host-module-abi D6) —
+// resolved on demand by the host-fixture registry; the discovery walk
+// skips test/conformance/host-fixtures/ entirely.
+// Host fixture declaration for the eight host-boundary-<claim>
+// conformance tests (v12-gap-suite-integration D9). The declared
+// surface is exactly the six exports the eight fixtures invoke — the
+// primitive/string/nullable-int host ABI shapes; the function-typed
+// `apply` export of the gap support declaration is deliberately not
+// declared (no fixture invokes it).
+
+export function echoBoolean(value: boolean): boolean;
+export function echoInt(value: int): int;
+export function echoNumber(value: number): number;
+export function echoString(value: string): string;
+export function nextValue(): int;
+export function nullableInt(value: int | null): int | null;

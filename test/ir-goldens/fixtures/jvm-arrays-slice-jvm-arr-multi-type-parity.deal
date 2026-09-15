@@ -1,5 +1,5 @@
 // IR golden fixture: jvm-arrays-slice-jvm-arr-multi-type-parity
-// Migrated IR-containment pins from test/conformance/fixtures/jvm-arrays-slice.json case 'jvm-arr-multi-type-parity' (ISSUE-0358).
+// Migrated IR-containment pin for legacy case 'jvm-arr-multi-type-parity' (ISSUE-0358).
 
 import * as console from "std/console"
 export function test(): null {

@@ -1,0 +1,112 @@
+// @spec: Bytes
+// @description: ISSUE-0552 integrated verification: bytes-bearing class fields/defaults through the production plan machinery — nested bytes[] and bytes[][] defaults, sync/async first-class function defaults, once-per-attempt evaluation with zero load-time runs, fresh isolated mutable buffers, retained identity of a host-returned bytes default, no partial instance on default-evaluation or provided-value validation failure (no defaults run after the failure), and json.stringify rejection.
+// @expected: runtime-ok
+// @features: bytes, classes, defaults, arrays, functions, async-await, host-abi, json
+
+import * as host from "host/bytes_roundtrip"
+import * as json from "std/json"
+
+function identity(b: bytes): bytes { return b; }
+
+async function echoAsync(b: bytes): bytes { return b; }
+
+function badBytes(): bytes {
+  let holder: table = { b: "not-bytes" };
+  return holder.b;
+}
+
+class PlanBox {
+  buf: bytes = bytes(2);
+  nested: bytes[] = [bytes(1)];
+  deep: bytes[][] = [[bytes(1)]];
+  made: bytes = host.makeBytes(2);
+  shared: bytes = host.sharedBytes();
+  syncFn: (b: bytes) => bytes = identity;
+  asyncFn: async (b: bytes) => bytes = echoAsync;
+}
+
+class BadBox {
+  payload: bytes = badBytes();
+}
+
+export async function test_bytes_class_default_integration(): int {
+  if (host.callCount() !== 0) {
+    throw { code: "TEST_FAIL", message: "default ran at module load" };
+  }
+  let a: PlanBox = {};
+  let b: PlanBox = {};
+  if (host.callCount() !== 2) {
+    throw { code: "TEST_FAIL", message: "defaults did not run once per attempt" };
+  }
+  a.buf[0] = 200;
+  if (b.buf[0] !== 0) {
+    throw { code: "TEST_FAIL", message: "buf default shared across instances" };
+  }
+  a.nested[0][0] = 9;
+  if (b.nested[0][0] !== 0) {
+    throw { code: "TEST_FAIL", message: "nested default shared across instances" };
+  }
+  a.deep[0][0][0] = 7;
+  if (b.deep[0][0][0] !== 0) {
+    throw { code: "TEST_FAIL", message: "deep default shared across instances" };
+  }
+  a.shared[0] = 55;
+  if (b.shared[0] !== 55) {
+    throw { code: "TEST_FAIL", message: "host-returned default was deep-copied" };
+  }
+  let viaSync: bytes = a.syncFn(bytes(1));
+  if (viaSync.length !== 1) {
+    throw { code: "TEST_FAIL", message: "sync fn default failed" };
+  }
+  let viaAsync: bytes = await a.asyncFn(bytes(2));
+  if (viaAsync.length !== 2) {
+    throw { code: "TEST_FAIL", message: "async fn default failed" };
+  }
+  let caught: boolean = false;
+  try {
+    let bad: BadBox = {};
+  } catch (e) {
+    caught = e.code === "E8001";
+  }
+  if (!caught) {
+    throw { code: "TEST_FAIL", message: "validation failure did not raise E8001" };
+  }
+  // A provided-value validation failure (a dynamic string crossing the
+  // bytes field boundary at phase 3) raises E8001 and publishes no
+  // instance; the D5 phase order still ran the omitted defaults once
+  // (the count moves 2 -> 3), and the clean attempt after it runs them
+  // once more (3 -> 4).
+  let holderBad: table = { b: "not-bytes" };
+  let providedCaught: boolean = false;
+  try {
+    let c: PlanBox = { buf: holderBad.b };
+  } catch (e) {
+    providedCaught = e.code === "E8001";
+  }
+  if (!providedCaught) {
+    throw { code: "TEST_FAIL", message: "provided-value validation failure did not raise E8001" };
+  }
+  if (host.callCount() !== 3) {
+    throw { code: "TEST_FAIL", message: "phase-3 validation did not follow the once-per-attempt defaults" };
+  }
+  // A clean attempt after the failures still constructs correctly.
+  let c2: PlanBox = {};
+  if (c2.buf.length !== 2 || host.callCount() !== 4) {
+    throw { code: "TEST_FAIL", message: "post-failure attempt did not construct cleanly" };
+  }
+  let holder2: table = { box: a.buf };
+  let rejected: boolean = false;
+  try {
+    json.stringify(holder2);
+  } catch (e) {
+    rejected = e.code === "E8001";
+  }
+  if (!rejected) {
+    throw { code: "TEST_FAIL", message: "json.stringify did not reject bytes" };
+  }
+  return 0;
+}
+
+export function main(): null {
+  return null;
+}

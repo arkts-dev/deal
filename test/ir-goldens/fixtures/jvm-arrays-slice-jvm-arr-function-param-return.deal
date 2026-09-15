@@ -1,5 +1,5 @@
 // IR golden fixture: jvm-arrays-slice-jvm-arr-function-param-return
-// Migrated IR-containment pins from test/conformance/fixtures/jvm-arrays-slice.json case 'jvm-arr-function-param-return' (ISSUE-0358).
+// Migrated IR-containment pin for legacy case 'jvm-arr-function-param-return' (ISSUE-0358).
 
 function fill(xs: int[], v: int): int[] {
   xs[0] = v;

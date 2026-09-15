@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "feature": "bytes-defaults",
+  "spec": "spec-v1.2.md §Classes / Construction / JSON serialization",
+  "description": "C$fromJson phase order on both backends: provided fields publish without default evaluation, omitted required defaults run in class source order, provided-value failures return null with no default side effects, and extra-key/non-object inputs reject with null",
+  "expected": "runtime-ok",
+  "backends": ["luajit", "jvm"],
+  "invocation": "synthetic-main",
+  "oracle": { "exportName": "jsonPhaseOracle", "functionDescriptor": "()->int" },
+  "support": []
+}

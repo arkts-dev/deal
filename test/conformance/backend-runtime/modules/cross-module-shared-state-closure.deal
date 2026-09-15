@@ -1,0 +1,27 @@
+// @spec: Modules, declarations, standard library, and host ABI — Module values and typed boundaries
+// @description: Imported closures preserve shared class and table references and exact call order
+// @expected: runtime-ok
+// @features: modules, classes, functions, closures, tables, aliasing
+
+import * as State from "./integration_state_lib";
+
+export function main(): null {
+  let counter: State.Counter = State.makeCounter(40);
+  let alias: State.Counter = counter;
+  let audit: table = { calls: 0 };
+  let step: () => int = State.makeStep(counter, audit);
+  let first: int = step();
+  let second: int = step();
+  let calls: int = audit.calls;
+
+  if (first !== 41 || second !== 42) {
+    throw { code: "TEST_FAIL", message: "imported closure call order mismatch" };
+  }
+  if (counter !== alias || alias.value !== 42) {
+    throw { code: "TEST_FAIL", message: "cross-module class identity mismatch" };
+  }
+  if (calls !== 2) {
+    throw { code: "TEST_FAIL", message: "cross-module table mutation mismatch" };
+  }
+  return null;
+}

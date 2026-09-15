@@ -1,0 +1,14 @@
+// @spec: Type system — Type algebra (canonical forms)
+// @description: Nullable array and array of nullable elements are distinct invariant types
+// @expected: compile-error E3001
+// @features: type-system, arrays, nullable, type-identity, diagnostics, v1.2
+
+export function probe(): null {
+  let nullableArray: int[] | null = [1, 2];
+  let nullableElements: (int | null)[] = nullableArray;
+  return null;
+}
+
+export function main(): null {
+  return null;
+}

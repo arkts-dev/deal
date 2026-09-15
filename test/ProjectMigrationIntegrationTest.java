@@ -520,7 +520,11 @@ public class ProjectMigrationIntegrationTest {
 
             // A not-yet-existing output whose parent is a non-writable
             // filesystem location: the conversion succeeds (existence is
-            // never required) and the write phase fails.
+            // never required) and the write phase fails. Under the
+            // transactional publication contract
+            // (whole-project-artifact-publication D4) the write-phase
+            // failure is a staging failure, reported as the pinned
+            // deterministic compiler I/O diagnostic.
             Path procOut = Path.of("/proc").resolve(
                 "deal_mig_out_" + ProcessHandle.current().pid());
             if (!Files.isDirectory(Path.of("/proc"))) {
@@ -531,9 +535,9 @@ public class ProjectMigrationIntegrationTest {
             String[] run = runCliCapturingErr(new String[]{
                 "compile", entry.toString(), "--output", procOut.toString()});
             check("1".equals(run[0]), "the write failure exits 1");
-            check(run[1].contains("deal: cannot write output"),
-                "the write failure is a deterministic compiler I/O diagnostic: "
-                    + run[1]);
+            check(run[1].contains("deal: cannot publish artifacts to '"),
+                "the write failure is the pinned deterministic compiler "
+                    + "I/O diagnostic (staging failure, D4): " + run[1]);
             check(!run[1].contains("E2010"),
                 "the write failure is never an E2010: " + run[1]);
             check(!run[1].contains("Exception") && !run[1].contains("\tat "),

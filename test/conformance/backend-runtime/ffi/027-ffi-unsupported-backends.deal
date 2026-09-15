@@ -1,0 +1,9 @@
+// @spec: Modules, declarations, standard library, and host ABI — C FFI externals entries
+// @description: The sanctioned three-backend FFI divergence: LuaJIT executes the extern-c import through the production load_ffi path while the JVM and JavaScript backends reject it with the exact E6006 FFI_UNSUPPORTED_BACKEND diagnostic (corpus C6).
+// @expected: runtime-ok
+// @features: c-ffi, unsupported-backend, backend-lowering
+
+import * as native from "candidate/native";
+export function main(): null {
+  return null;
+}

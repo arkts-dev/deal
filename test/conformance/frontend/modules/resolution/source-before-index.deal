@@ -1,0 +1,8 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: S.deal takes precedence over S/index.deal
+// @expected: compile-ok
+// @features: modules, resolution, precedence, v1.2
+
+import * as Lib from "./support/source_vs_index";
+export function probe(): int { return Lib.sourceOnly(); }
+export function main(): null { return null; }

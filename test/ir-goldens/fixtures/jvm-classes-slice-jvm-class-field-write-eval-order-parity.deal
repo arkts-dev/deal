@@ -1,5 +1,5 @@
 // IR golden fixture: jvm-classes-slice-jvm-class-field-write-eval-order-parity
-// Migrated IR-containment pins from test/conformance/fixtures/jvm-classes-slice.json case 'jvm-class-field-write-eval-order-parity' (ISSUE-0358).
+// Migrated IR-containment pin for legacy case 'jvm-class-field-write-eval-order-parity' (ISSUE-0358).
 
 import * as console from "std/console"
 class Box { x: int = 0; }

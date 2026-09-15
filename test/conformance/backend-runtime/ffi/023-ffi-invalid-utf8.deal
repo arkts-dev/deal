@@ -1,0 +1,10 @@
+// @spec: Modules, declarations, standard library, and host ABI — C FFI externals entries
+// @description: A borrowed C string return that is not valid UTF-8 raises FFI_INVALID_UTF8 at the call site (the load_ffi conversion gate).
+// @expected: runtime-error FFI_INVALID_UTF8
+// @features: c-ffi, abi, runtime-errors
+
+import * as native from "candidate/native";
+export function main(): null {
+  let value: string = native.ffi_invalid_utf8();
+  return null;
+}

@@ -1,0 +1,3 @@
+
+import * as C from "./runtime_three_c";
+export function get(value: int): int { return C.get(value); }

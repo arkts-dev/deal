@@ -1,0 +1,18 @@
+// @extern-c
+
+// @c-struct
+export class Probe {
+  count: int = fixture_count_call_int();
+}
+
+export function fixture_count_call(): null;
+export function fixture_count_call_int(): int;
+export function fixture_call_count(): int;
+export function fixture_reset_counter(): null;
+export function fixture_add_int(a: int, b: int): int;
+export function fixture_sub_int(a: int, b: int): int;
+export function fixture_add_number(a: number, b: number): number;
+export function fixture_not(b: int): boolean;
+export function fixture_echo_string(s: string): string;
+export function fixture_bytes_sum(p: bytes): int;
+export function fixture_null_string(): string;

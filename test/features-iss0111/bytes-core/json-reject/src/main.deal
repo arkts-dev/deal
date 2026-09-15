@@ -1,0 +1,11 @@
+// ISSUE-0165 BYTES_CORE JSON-rejection row (int32/bytes page D3):
+// bytes is not jsonable, so a bytes-typed @jsonable field is E4007
+// before any artifact on both pipelines.
+// @jsonable
+export class BadPayload {
+  data: bytes = bytes(2);
+}
+
+export function main(): null {
+  return null;
+}

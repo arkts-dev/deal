@@ -1,0 +1,6 @@
+// Class-free out-of-root provider (int32 page D6): valid because no
+// class identity is required; reachable only through the importer's
+// relative resolution (this directory is outside the configured roots).
+export function answer(): int {
+  return 42;
+}

@@ -1,0 +1,15 @@
+// ISSUE-0165 DIRECTIVES: the ordered anchor transition
+// (anchor-before-clear-before-token-emission). The ordinary comment
+// below breaks the pending declaration run WITHOUT anchoring it, so
+// the @jsonable never attaches to the class — the unattached directive
+// warns E1043 and applies no metadata while compilation continues.
+
+// @jsonable
+// an ordinary comment breaks the pending run without anchoring
+export class NeverAttached {
+  x: int = 1;
+}
+
+export function main(): null {
+  return null;
+}

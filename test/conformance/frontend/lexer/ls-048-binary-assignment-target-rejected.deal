@@ -1,0 +1,11 @@
+// @spec: Lexical elements
+// @description: A binary expression is not a valid assignment target
+// @expected: compile-error E1033
+// @features: parser, assignment-target, binary-expression, negative, v1.2
+
+export function main(): null {
+  let left: int = 1;
+  let right: int = 2;
+  (left + right) = 3;
+  return null;
+}

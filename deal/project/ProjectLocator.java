@@ -5,6 +5,11 @@ import deal.diagnostics.DiagnosticCode;
 import deal.diagnostics.DiagnosticNote;
 import deal.diagnostics.DiagnosticRange;
 import deal.diagnostics.RangeOrigin;
+import deal.distribution.DistributionHome;
+import deal.lexer.CompilerDirective;
+import deal.lexer.DirectiveName;
+import deal.lexer.LexResult;
+import deal.lexer.Lexer;
 import deal.source.ScalarSourceCursor;
 import deal.source.SourceScalarRange;
 
@@ -93,26 +98,43 @@ import java.util.Set;
  *       stdlib declaration files under the pinned stdlib surface is E2010
  *       at the declaration value range with a note naming the stdlib
  *       module (stdlib-overlap rejection — standard library modules are
- *       language-distribution modules, not project externals). Both
- *       per-entry checks run in member order; two entries whose
- *       declaration files resolve to the same canonical path are E2010 at
- *       the second entry's declaration value range, checked after the
- *       per-entry checks.</li>
+ *       language-distribution modules, not project externals). An entry
+ *       whose declaration file lexes with an {@code @extern-c} directive
+ *       event (the production Lexer's structured events — never a
+ *       textual scan) and whose {@code nativeLibrary} member is absent
+ *       is E2010 at the entry object's value range (the extern-C
+ *       nativeLibrary policy, spec {@code docs/spec-v1.2.md:1891}; a
+ *       present-but-invalid nativeLibrary is already the
+ *       {@link StrictManifestParser}/{@link ProjectConfigValidator}
+ *       E2010, and a present nativeLibrary never fires the check — the
+ *       scan is best-effort and backend-independent). All per-entry
+ *       checks run in member order; two entries whose declaration files
+ *       resolve to the same canonical path are E2010 at the second
+ *       entry's declaration value range, checked after the per-entry
+ *       checks.</li>
  *   <li><b>Output and backend</b> — the effective backend follows the D3
  *       backend-selection rule, then output classification/conversion is
  *       delegated to {@link OutputConfigResolver}. A MANIFEST-source
  *       output failure is E2010; a CLI-source failure is
  *       {@link CliDiagnostic}. No directory is created during locate and
  *       the conversion never requires the path to exist.</li>
- *   <li><b>Stdlib surface</b> — {@code <manifestDirectory>/std} when it
- *       exists as a directory, else {@code <processCWD>/std} when that
- *       exists as a directory, else absent (absence is not an error).
- *       The six spec-listed files under the surface are canonicalized
- *       once (fully symlink-resolved; only existing regular resolvable
- *       files contribute) and published as the context's
- *       {@code stdlibDeclarationFiles}; the same canonical paths supply
- *       step 4(b)'s stdlib-overlap check (a symlinked spec-listed file
- *       keeps its pinned identity for its resolved target).</li>
+ *   <li><b>Stdlib surface</b> — the pinned three-tier resolution of
+ *       {@link DistributionHome}
+ *       ({@code release-distribution-packaging-and-discovery} D3):
+ *       {@code <manifestDirectory>/std} when it exists as a directory
+ *       (the pinned v1.2 project-local override surface), else the
+ *       language distribution (the classpath-resource {@code std/}
+ *       directory when a pinned declaration resource materializes,
+ *       then the {@code DEAL_HOME}/{@code deal.home} filesystem
+ *       {@code std/} directory), else {@code <processCWD>/std} when
+ *       that exists as a directory, else absent (absence is not an
+ *       error). The six spec-listed files under the surface are
+ *       canonicalized once (fully symlink-resolved; only existing
+ *       regular resolvable files contribute) and published as the
+ *       context's {@code stdlibDeclarationFiles}; the same canonical
+ *       paths supply step 4(b)'s stdlib-overlap check (a symlinked
+ *       spec-listed file keeps its pinned identity for its resolved
+ *       target).</li>
  *   <li><b>Deployment identity</b> — {@link ProjectDeploymentIdentity}
  *       per D4: the symlink-resolved {@code file:} URI via
  *       {@link ProtectedPathOps#toFileUri(Path)} after protected
@@ -128,7 +150,8 @@ import java.util.Set;
  * scan-order → T2 post-walk canonical order → step 4 (root conversion
  * order, normalized-root duplicates, externals declaration
  * existence/readability in member order, per-entry stdlib-overlap in
- * member order, cross-entry duplicate declarations) → step 5 output
+ * member order, per-entry extern-C nativeLibrary policy in member
+ * order, cross-entry duplicate declarations) → step 5 output
  * conversion → later steps. Failure classification is pinned: E2010 for
  * manifest discovery, byte-level decode, schema, duplicates, roots,
  * externals declarations (including stdlib-overlap), and manifest
@@ -142,8 +165,11 @@ import java.util.Set;
  * anchorless sites).</p>
  *
  * <p>This class depends only on the JDK, {@code deal.source} (the
- * {@link ScalarSourceCursor} position arithmetic), and
- * {@code deal.diagnostics} (the range carrier). No raw path, encoding,
+ * {@link ScalarSourceCursor} position arithmetic),
+ * {@code deal.diagnostics} (the range carrier), and {@code deal.lexer}
+ * (the single directive-recognition authority for the step 4(b)
+ * extern-C scan; the lexer imports nothing from
+ * {@code deal.project}). No raw path, encoding,
  * JSON, or I/O exception escapes {@link #locate(String, CliOverrides)}:
  * every failure is a structured result.</p>
  */
@@ -380,6 +406,15 @@ public final class ProjectLocator {
                         + " than as a project external host module"
                         + " (docs/spec-v1.2.md:1890)", null)));
             }
+            if (spec.nativeLibrary() == null
+                    && declaresExternC(declarationPathText)) {
+                return e2010("deal.json: externals entry '" + spec.rawImportSpecifier()
+                        + "': declaration '" + declarationText
+                        + "' is an extern-C declaration without a nativeLibrary:"
+                        + " a C FFI entry must include nativeLibrary"
+                        + " (docs/spec-v1.2.md:1891)",
+                    sourceRange(manifestPathText, spec.sourceRange()), null);
+            }
             completedExternals.add(new ExternalEntry(spec.rawImportSpecifier(),
                 new NormalizedDeclarationPath(declarationPathText,
                     spec.declaration().sourceRange()),
@@ -609,21 +644,29 @@ public final class ProjectLocator {
     // =========================================================================
 
     /**
-     * The pure stdlib-surface probe (step 6): the project-local
-     * {@code <manifestDirectory>/std} directory first, else the
-     * language-distribution {@code <processCWD>/std} directory, else
-     * absent ({@code null}). Absence is a plain value, never a failure;
-     * the returned path is fully symlink-resolved when present.
+     * The stdlib-surface probe (step 6), resolved through the pinned
+     * three-tier {@link DistributionHome} order
+     * ({@code release-distribution-packaging-and-discovery} D3): the
+     * project-local {@code <manifestDirectory>/std} directory first
+     * (the pinned v1.2 override surface), then the language
+     * distribution (the materialized classpath-resource {@code std/}
+     * directory, then the {@code DEAL_HOME}/{@code deal.home}
+     * filesystem {@code std/} directory), then the checkout
+     * {@code <processCWD>/std} dev fallback, else absent
+     * ({@code null}). Absence is a plain value, never a failure; the
+     * returned path is fully symlink-resolved when present (the pinned
+     * step-6 shape).
      */
     private static String probeStdlibSurface(String manifestDirectoryText) {
-        Optional<Path> projectLocal = ProtectedPathOps.probeDirectory(
-            Path.of(manifestDirectoryText).resolve("std"));
-        if (projectLocal.isPresent()) {
-            return projectLocal.get().toString();
+        Optional<DistributionHome.ResolvedSurface> surface =
+            DistributionHome.forManifestDirectory(manifestDirectoryText)
+                .resolveStdlibSurface();
+        if (surface.isEmpty()) {
+            return null;
         }
-        Optional<Path> distribution = ProtectedPathOps.probeDirectory(
-            Path.of("").toAbsolutePath().resolve("std"));
-        return distribution.map(Path::toString).orElse(null);
+        Optional<Path> resolved = ProtectedPathOps.probeDirectory(
+            Path.of(surface.get().pathText()));
+        return resolved.map(Path::toString).orElse(null);
     }
 
     /**
@@ -687,6 +730,44 @@ public final class ProjectLocator {
             }
         }
         return null;
+    }
+
+    /**
+     * The best-effort extern-C classification scan (the extern-C
+     * nativeLibrary policy, design source
+     * {@code production-project-graph-fixtures} D6/D7): reads and
+     * strictly decodes the declaration file and runs the production
+     * Lexer; any read, decode, or lex failure yields no extern-C signal
+     * and no locate failure from this check — locate stays config-only
+     * and the compile phase owns the file's own diagnostics. The scan
+     * uses the Lexer's structured directive events (the single
+     * directive-recognition authority), never a textual scan, and is
+     * stateless: one scan per externals entry, no caching, no retries.
+     *
+     * @param declarationPathText the fully symlink-resolved declaration
+     *                            path (existence/readability already
+     *                            verified by the step 4(b) loop)
+     * @return true iff the declaration lexes with at least one
+     *         {@code EXTERN_C} directive event
+     */
+    private static boolean declaresExternC(String declarationPathText) {
+        byte[] bytes;
+        try {
+            bytes = Files.readAllBytes(Path.of(declarationPathText));
+        } catch (IOException readFailure) {
+            return false;
+        }
+        StrictDecode decode = strictUtf8Decode(bytes);
+        if (decode.malformedOffset() >= 0) {
+            return false;
+        }
+        LexResult lexed = new Lexer(decode.text(), declarationPathText).tokenize();
+        for (CompilerDirective event : lexed.directiveEvents()) {
+            if (event.name() == DirectiveName.EXTERN_C) {
+                return true;
+            }
+        }
+        return false;
     }
 
     // =========================================================================

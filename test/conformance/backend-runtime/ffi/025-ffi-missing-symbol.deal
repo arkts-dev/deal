@@ -1,0 +1,10 @@
+// @spec: Modules, declarations, standard library, and host ABI — C FFI externals entries
+// @description: A declared C symbol absent from the loaded library raises FFI_SYMBOL_MISSING at the import site while the FFI module initializes (the load_ffi symbol-resolution gate).
+// @expected: runtime-error FFI_SYMBOL_MISSING
+// @features: c-ffi, abi, library-load, module-initialization, runtime-errors
+
+import * as native from "candidate/native-missing-symbol";
+export function main(): null {
+  let value: int = native.ffi_missing_symbol();
+  return null;
+}

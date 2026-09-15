@@ -1,0 +1,9 @@
+// @spec: Type system
+// @description: String addition does not implicitly convert an int operand
+// @expected: compile-error E3010
+// @features: type-system, expression-types, strings, diagnostics, v1.2
+
+export function main(): null {
+  let text: string = "a" + 1;
+  return null;
+}

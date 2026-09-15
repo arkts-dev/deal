@@ -1,0 +1,20 @@
+// @expected: companion
+// @spec: Modules, declarations, standard library, and host ABI — Module values and typed boundaries
+// @description: Companion for cross-module class, function, and table integration
+
+export class Counter {
+  value: int = 0;
+}
+
+export function makeCounter(start: int): Counter {
+  return { value: start };
+}
+
+export function makeStep(counter: Counter, audit: table): () => int {
+  return function(): int {
+    counter.value = counter.value + 1;
+    let calls: int = audit.calls;
+    audit.calls = calls + 1;
+    return counter.value;
+  };
+}

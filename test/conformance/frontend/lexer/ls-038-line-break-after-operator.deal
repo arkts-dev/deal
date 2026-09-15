@@ -1,0 +1,10 @@
+// @spec: Lexical elements
+// @description: A line break after a binary operator does not terminate the expression
+// @expected: compile-ok
+// @features: parser, semicolon, line-break, operator, v1.2
+
+export function main(): null {
+  let value: int = 1 +
+    2;
+  return null;
+}

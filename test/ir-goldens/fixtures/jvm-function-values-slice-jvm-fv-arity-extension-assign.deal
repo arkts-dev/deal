@@ -1,5 +1,5 @@
 // IR golden fixture: jvm-function-values-slice-jvm-fv-arity-extension-assign
-// Migrated IR-containment pins from test/conformance/fixtures/jvm-function-values-slice.json case 'jvm-fv-arity-extension-assign' (ISSUE-0358).
+// Migrated IR-containment pin for legacy case 'jvm-fv-arity-extension-assign' (ISSUE-0358).
 
 function inc(x: int): int { return x + 1; }
 export function test(): int {
