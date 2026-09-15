@@ -1557,13 +1557,44 @@ public final class JvmSemanticEmitter {
             if (boundary != null) {
                 KindPayload.BoundaryPayload boundaryPayload =
                     (KindPayload.BoundaryPayload) boundary.payload();
-                emitBoundaryStart(boundary, target, boundaryPayload.descriptor(), indent);
-                out.append(indent(indent)).append("Object __mr_").append(boundary.opId().id())
-                    .append(" = JvmRuntime.bcheck(")
+                if (trace) {
+                    // Custom boundary START: the input atom renders the
+                    // actual value kind (the oracle's atomOf — a
+                    // wrong-kind present value atomizes as its own kind).
+                    out.append(indent(indent)).append("JvmRuntime.ev(MODULE, ")
+                        .append(javaString(opKey(boundary.opId())))
+                        .append(", \"START\", \"BOUNDARY\", ")
+                        .append(javaString(boundary.contract().canonicalDigest()))
+                        .append(", ")
+                        .append(javaString(parentKey(boundary.origin().parentOpId())))
+                        .append(", List.of(JvmRuntime.rawAtom(")
+                        .append(target).append(", ")
+                        .append(javaString(staticKind(boundaryPayload.descriptor())))
+                        .append(")), null, null);\n");
+                }
+                out.append(indent(indent)).append("  Object __mr_")
+                    .append(boundary.opId().id()).append(";\n");
+                out.append(indent(indent)).append("  try {\n");
+                out.append(indent(indent)).append("    __mr_")
+                    .append(boundary.opId().id()).append(" = JvmRuntime.bcheck(")
                     .append(javaString(descriptorText(boundaryPayload.descriptor())))
                     .append(", ")
                     .append(javaString(staticKind(boundaryPayload.descriptor())))
                     .append(", ").append(target).append(");\n");
+                out.append(indent(indent)).append("  } catch (JvmRuntime.DealError __be) {\n");
+                out.append(indent(indent))
+                    .append("    JvmRuntime.DealError __bre = new JvmRuntime.DealError("
+                        + "__be.code, __be.msg, ")
+                    .append(javaString(originOf(boundary)))
+                    .append(", __be.expected, __be.actual, __be.frames, null);\n");
+                if (trace) {
+                    emitFailureEvent(boundary.opId(), "BOUNDARY", boundary,
+                        "JvmRuntime.errtext(__bre)", indent + 1);
+                    emitFailureEvent(op.opId(), op.kind().name(), op,
+                        "JvmRuntime.errtext(__bre)", indent + 1);
+                }
+                out.append(indent(indent)).append("    throw __bre;\n");
+                out.append(indent(indent)).append("  }\n");
                 out.append(indent(indent)).append(target).append(" = __mr_")
                     .append(boundary.opId().id()).append(";\n");
                 emitBoundarySuccess(boundary, target, boundaryPayload.descriptor(), indent);
@@ -2964,23 +2995,78 @@ public final class JvmSemanticEmitter {
         private void emitStdlib(SemanticOp op, int indent) {
             KindPayload.StdlibCallPayload payload =
                 (KindPayload.StdlibCallPayload) op.payload();
-            emitStart(op, indent);
+            if (trace) {
+                // The custom START: the operand atoms render the actual
+                // value kind (the oracle's atomOf — a dynamic argument at
+                // a declared boundary atomizes as its own kind), never the
+                // declared kind.
+                StringBuilder inputs = new StringBuilder();
+                for (int i = 0; i < payload.args().size(); i++) {
+                    if (i > 0) {
+                        inputs.append(", ");
+                    }
+                    inputs.append("JvmRuntime.rawAtom(")
+                        .append(slot(payload.args().get(i))).append(", ")
+                        .append(javaString(staticKind(op.operandTypes().get(i))))
+                        .append(")");
+                }
+                out.append(indent(indent)).append("JvmRuntime.ev(MODULE, ")
+                    .append(javaString(opKey(op.opId()))).append(", \"START\", ")
+                    .append("\"STDLIB_CALL\", ")
+                    .append(javaString(op.contract().canonicalDigest())).append(", ")
+                    .append(javaString(parentKey(op.origin().parentOpId())))
+                    .append(", List.of(").append(inputs).append("), null, null);\n");
+            }
+            // The closed STDLIB_PARAMETER boundaries in one-based declared
+            // order: a failing boundary publishes the boundary FAILURE and
+            // the op FAILURE events with the boundary origin, then rethrows
+            // (the exact oracle event sequence — never a silent terminal).
             List<SemanticOp> paramBoundaries = stdlibParamBoundaries(op);
             for (SemanticOp boundary : paramBoundaries) {
                 KindPayload.BoundaryPayload boundaryPayload =
                     (KindPayload.BoundaryPayload) boundary.payload();
-                emitBoundaryStart(boundary, slot(boundaryPayload.input()),
-                    boundaryPayload.descriptor(), indent);
-                out.append(indent(indent)).append("Object __sb_").append(boundary.opId().id())
-                    .append(" = JvmRuntime.bcheck(")
+                if (trace) {
+                    // Custom boundary START: the input atom renders the
+                    // actual value kind (the oracle's atomOf).
+                    out.append(indent(indent)).append("JvmRuntime.ev(MODULE, ")
+                        .append(javaString(opKey(boundary.opId())))
+                        .append(", \"START\", \"BOUNDARY\", ")
+                        .append(javaString(boundary.contract().canonicalDigest()))
+                        .append(", ")
+                        .append(javaString(parentKey(boundary.origin().parentOpId())))
+                        .append(", List.of(JvmRuntime.rawAtom(")
+                        .append(slot(boundaryPayload.input())).append(", ")
+                        .append(javaString(staticKind(boundaryPayload.descriptor())))
+                        .append(")), null, null);\n");
+                }
+                out.append(indent(indent)).append("  Object __sb_")
+                    .append(boundary.opId().id()).append(";\n");
+                out.append(indent(indent)).append("  try {\n");
+                out.append(indent(indent)).append("    __sb_")
+                    .append(boundary.opId().id()).append(" = JvmRuntime.bcheck(")
                     .append(javaString(descriptorText(boundaryPayload.descriptor())))
                     .append(", ")
                     .append(javaString(staticKind(boundaryPayload.descriptor())))
                     .append(", ").append(slot(boundaryPayload.input())).append(");\n");
+                out.append(indent(indent)).append("  } catch (JvmRuntime.DealError __be) {\n");
+                out.append(indent(indent))
+                    .append("    JvmRuntime.DealError __bre = new JvmRuntime.DealError("
+                        + "__be.code, __be.msg, ")
+                    .append(javaString(originOf(boundary)))
+                    .append(", __be.expected, __be.actual, __be.frames, null);\n");
+                if (trace) {
+                    emitFailureEvent(boundary.opId(), "BOUNDARY", boundary,
+                        "JvmRuntime.errtext(__bre)", indent + 1);
+                    emitFailureEvent(op.opId(), op.kind().name(), op,
+                        "JvmRuntime.errtext(__bre)", indent + 1);
+                }
+                out.append(indent(indent)).append("    throw __bre;\n");
+                out.append(indent(indent)).append("  }\n");
                 emitBoundarySuccess(boundary, "__sb_" + boundary.opId().id(),
                     boundaryPayload.descriptor(), indent);
             }
             SemanticOp returnBoundary = stdlibReturnBoundary(op);
+            String target = slot((ValueId) op.result());
             if (payload.function() == deal.semantic.ir.StdlibFunctionId.CONSOLE_LOG
                     || payload.function() == deal.semantic.ir.StdlibFunctionId.CONSOLE_ERROR) {
                 StringBuilder textExpr = new StringBuilder();
@@ -2994,28 +3080,80 @@ public final class JvmSemanticEmitter {
                 if (textExpr.length() == 0) {
                     textExpr.append("\"\"");
                 }
-                out.append(indent(indent)).append("JvmRuntime.console(").append(textExpr)
-                    .append(");\n");
+                if (payload.function() == deal.semantic.ir.StdlibFunctionId.CONSOLE_LOG) {
+                    out.append(indent(indent)).append("JvmRuntime.console(")
+                        .append(textExpr).append(");\n");
+                } else {
+                    out.append(indent(indent)).append("JvmRuntime.consoleError(")
+                        .append(textExpr).append(");\n");
+                }
+                out.append(indent(indent)).append(target).append(" = null;\n");
+            } else {
+                // The in-target stdlib algorithm over the
+                // boundary-admitted carriers: an algorithm failure
+                // publishes the op FAILURE event and raises the exact
+                // closed projection at the call origin (JvmRuntime.stdlib
+                // converts it through the raise surface).
+                out.append(indent(indent)).append(target).append(" = JvmRuntime.stdlib(")
+                    .append(javaString(payload.function().name())).append(", ")
+                    .append(javaString(opKey(op.opId()))).append(", ")
+                    .append(javaString(op.contract().canonicalDigest())).append(", ")
+                    .append(javaString(parentKey(op.origin().parentOpId()))).append(", ")
+                    .append(javaString(originOf(op))).append(", new Object[]{");
+                for (int i = 0; i < payload.args().size(); i++) {
+                    if (i > 0) {
+                        out.append(", ");
+                    }
+                    out.append(slot(payload.args().get(i)));
+                }
+                out.append("});\n");
             }
-            String target = slot((ValueId) op.result());
-            out.append(indent(indent)).append(target).append(" = null;\n");
             if (returnBoundary != null) {
                 KindPayload.BoundaryPayload boundaryPayload =
                     (KindPayload.BoundaryPayload) returnBoundary.payload();
-                emitBoundaryStart(returnBoundary, target, boundaryPayload.descriptor(),
-                    indent);
-                out.append(indent(indent)).append("Object __rbc_")
-                    .append(returnBoundary.opId().id()).append(" = JvmRuntime.bcheck(")
+                if (trace) {
+                    // Custom boundary START: the result atom renders the
+                    // actual value kind (the oracle's atomOf).
+                    out.append(indent(indent)).append("JvmRuntime.ev(MODULE, ")
+                        .append(javaString(opKey(returnBoundary.opId())))
+                        .append(", \"START\", \"BOUNDARY\", ")
+                        .append(javaString(returnBoundary.contract().canonicalDigest()))
+                        .append(", ")
+                        .append(javaString(
+                            parentKey(returnBoundary.origin().parentOpId())))
+                        .append(", List.of(JvmRuntime.rawAtom(")
+                        .append(target).append(", ")
+                        .append(javaString(staticKind(boundaryPayload.descriptor())))
+                        .append(")), null, null);\n");
+                }
+                out.append(indent(indent)).append("  try {\n");
+                out.append(indent(indent)).append("    ").append(target)
+                    .append(" = JvmRuntime.bcheck(")
                     .append(javaString(descriptorText(boundaryPayload.descriptor())))
-                    .append(", \"null\", ").append(target).append(");\n");
-                out.append(indent(indent)).append(target).append(" = __rbc_")
-                    .append(returnBoundary.opId().id()).append(";\n");
+                    .append(", ")
+                    .append(javaString(staticKind(boundaryPayload.descriptor())))
+                    .append(", ").append(target).append(");\n");
+                out.append(indent(indent)).append("  } catch (JvmRuntime.DealError __be) {\n");
+                out.append(indent(indent))
+                    .append("    JvmRuntime.DealError __bre = new JvmRuntime.DealError("
+                        + "__be.code, __be.msg, ")
+                    .append(javaString(originOf(returnBoundary)))
+                    .append(", __be.expected, __be.actual, __be.frames, null);\n");
+                if (trace) {
+                    emitFailureEvent(returnBoundary.opId(), "BOUNDARY", returnBoundary,
+                        "JvmRuntime.errtext(__bre)", indent + 1);
+                    emitFailureEvent(op.opId(), op.kind().name(), op,
+                        "JvmRuntime.errtext(__bre)", indent + 1);
+                }
+                out.append(indent(indent)).append("    throw __bre;\n");
+                out.append(indent(indent)).append("  }\n");
                 emitBoundarySuccess(returnBoundary, target, boundaryPayload.descriptor(),
                     indent);
             }
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType(), indent);
         }
 
+        /** The STDLIB_PARAMETER children in one-based declared order. */
         private List<SemanticOp> stdlibParamBoundaries(SemanticOp op) {
             List<SemanticOp> result = new ArrayList<>();
             for (SemanticOp candidate : opsById.values()) {
@@ -3026,6 +3164,8 @@ public final class JvmSemanticEmitter {
                     result.add(candidate);
                 }
             }
+            result.sort(java.util.Comparator.comparingLong(candidate ->
+                candidate.opId().id()));
             return result;
         }
 

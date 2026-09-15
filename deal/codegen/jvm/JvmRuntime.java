@@ -461,6 +461,23 @@ public final class JvmRuntime {
         }
         PrintStream err = new PrintStream(System.err, true, StandardCharsets.UTF_8);
         err.println("F|CONSOLE_WRITE|" + esc(text));
+        err.flush();
+    }
+
+    /**
+     * Records one console error effect (real stderr bytes + the protocol
+     * record): {@code CONSOLE_ERROR} appends the exact scalar bytes plus
+     * one {@code \n} to {@code STDERR} — the channel identity is part of
+     * the closed one-effect contract.
+     */
+    public static void consoleError(String text) {
+        PrintStream err = new PrintStream(System.err, true, StandardCharsets.UTF_8);
+        err.println(text);
+        if (!traceEnabled) {
+            return;
+        }
+        err.println("F|CONSOLE_WRITE|" + esc(text));
+        err.flush();
     }
 
     // =========================================================================
@@ -1271,6 +1288,833 @@ public final class JvmRuntime {
         ev(currentModule(), opKey, "FAILURE", kind, digest, parent, List.of(), null,
             errtext(e));
         throw e;
+    }
+
+    // =========================================================================
+    // The closed stdlib algorithms (STDLIB_CALL realization)
+    // =========================================================================
+
+    /**
+     * An internal stdlib algorithm failure: the exact registry-row
+     * projection facts, converted by {@link #stdlib} into the op FAILURE
+     * event plus the {@link DealError} at the call origin (the same
+     * conversion the arithmetic helpers perform).
+     */
+    private static final class StdlibFailure extends RuntimeException {
+
+        private static final long serialVersionUID = 1L;
+
+        final String code;
+        final String msg;
+        final String expected;
+        final String actual;
+
+        StdlibFailure(String code, String msg, String expected, String actual) {
+            super(msg);
+            this.code = code;
+            this.msg = msg;
+            this.expected = expected;
+            this.actual = actual;
+        }
+    }
+
+    /**
+     * The single in-target realization of the closed 20-operation stdlib
+     * table: the parameter boundaries already ran (the emitter emits the
+     * {@code STDLIB_PARAMETER} children), so the algorithm receives the
+     * boundary-admitted carriers — a string parameter is a valid scalar
+     * {@link String}, an int parameter is a {@link Long} or an in-range
+     * integral {@link Double}, a number parameter is a {@link Double} or
+     * a {@link Long}, and a table parameter is a {@link Table}. A
+     * failure raises the op FAILURE event and the {@link DealError}
+     * through {@link #raise} with the exact closed projections —
+     * {@code INT32_RESULT} E8004 {@code int out of range},
+     * {@code SQRT_NEGATIVE} E8001 {@code sqrt of negative number} (actual
+     * = the canonical hex float), {@code JSON_PARSE_SYNTAX} E8001
+     * {@code JSON parse error at position {oneBasedByteOffset}:
+     * {reason}}, and {@code JSON_TO_ERROR} E8001
+     * {@code value at {fieldPath} is not JSON serializable: {actual}} —
+     * at the {@code STDLIB_CALL} call origin with the active frames.
+     * Console ids are emitted inline by the emitters (the byte-exact
+     * one-effect contract), never through this surface.
+     */
+    public static Object stdlib(String fn, String opKey, String digest, String parent,
+                                String origin, Object[] args) {
+        try {
+            switch (fn) {
+                case "STRING_LENGTH" -> {
+                    String text = (String) args[0];
+                    long count = text.codePointCount(0, text.length());
+                    if (count > Integer.MAX_VALUE) {
+                        throw new StdlibFailure("E8004", "int out of range", null, null);
+                    }
+                    return Long.valueOf(count);
+                }
+                case "STRING_SUBSTRING" -> {
+                    int[] codePoints = ((String) args[0]).codePoints().toArray();
+                    long start = longOf(args[1]);
+                    long end = longOf(args[2]);
+                    int lo = (int) Math.max(0, start);
+                    int hi = (int) Math.min(Math.max(0, end), codePoints.length);
+                    if (lo >= hi) {
+                        return "";
+                    }
+                    return new String(codePoints, lo, hi - lo);
+                }
+                case "STRING_CONTAINS" -> {
+                    return indexOfSubsequence(codePointsOf((String) args[0]),
+                        codePointsOf((String) args[1]), 0) >= 0;
+                }
+                case "STRING_STARTS_WITH" -> {
+                    int[] input = codePointsOf((String) args[0]);
+                    int[] part = codePointsOf((String) args[1]);
+                    return part.length <= input.length && matchAt(input, part, 0);
+                }
+                case "STRING_ENDS_WITH" -> {
+                    int[] input = codePointsOf((String) args[0]);
+                    int[] part = codePointsOf((String) args[1]);
+                    return part.length <= input.length
+                        && matchAt(input, part, input.length - part.length);
+                }
+                case "STRING_REPLACE" -> {
+                    int[] input = codePointsOf((String) args[0]);
+                    int[] from = codePointsOf((String) args[1]);
+                    int[] to = codePointsOf((String) args[2]);
+                    if (from.length == 0) {
+                        return args[0];
+                    }
+                    StringBuilder result = new StringBuilder();
+                    int cursor = 0;
+                    while (cursor <= input.length - from.length) {
+                        if (matchAt(input, from, cursor)) {
+                            appendCodePoints(result, to);
+                            cursor += from.length;
+                        } else {
+                            result.appendCodePoint(input[cursor]);
+                            cursor++;
+                        }
+                    }
+                    for (int i = cursor; i < input.length; i++) {
+                        result.appendCodePoint(input[i]);
+                    }
+                    return result.toString();
+                }
+                case "STRING_SPLIT" -> {
+                    int[] input = codePointsOf((String) args[0]);
+                    int[] separator = codePointsOf((String) args[1]);
+                    if (input.length == 0) {
+                        return new Array(0);
+                    }
+                    if (separator.length == 0) {
+                        Array singles = new Array(input.length);
+                        for (int codePoint : input) {
+                            singles.elements.add(new String(
+                                new int[] {codePoint}, 0, 1));
+                        }
+                        return singles;
+                    }
+                    Array parts = new Array(0);
+                    int cursor = 0;
+                    int occurrence;
+                    while ((occurrence = indexOfSubsequence(input, separator, cursor))
+                            >= 0) {
+                        parts.elements.add(new String(input, cursor, occurrence - cursor));
+                        parts.length++;
+                        cursor = occurrence + separator.length;
+                    }
+                    parts.elements.add(new String(input, cursor, input.length - cursor));
+                    parts.length++;
+                    return parts;
+                }
+                case "STRING_TRIM" -> {
+                    int[] codePoints = codePointsOf((String) args[0]);
+                    int first = 0;
+                    while (first < codePoints.length && isTrimScalar(codePoints[first])) {
+                        first++;
+                    }
+                    int last = codePoints.length;
+                    while (last > first && isTrimScalar(codePoints[last - 1])) {
+                        last--;
+                    }
+                    return new String(codePoints, first, last - first);
+                }
+                case "TABLE_KEYS" -> {
+                    Table table = (Table) args[0];
+                    Array keys = new Array(table.entries.size());
+                    for (String key : table.entries.keySet()) {
+                        keys.elements.add(key);
+                    }
+                    return keys;
+                }
+                case "JSON_PARSE" -> {
+                    return jsonParse((String) args[0]);
+                }
+                case "JSON_STRINGIFY" -> {
+                    Table root = (Table) args[0];
+                    StringBuilder out = new StringBuilder();
+                    java.util.Set<Object> path =
+                        java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+                    stringifyTable(out, root, "", path);
+                    return out.toString();
+                }
+                case "MATH_FLOOR" -> {
+                    return Math.floor(numberOf(args[0]));
+                }
+                case "MATH_CEIL" -> {
+                    return Math.ceil(numberOf(args[0]));
+                }
+                case "MATH_SQRT" -> {
+                    double value = numberOf(args[0]);
+                    if (value < 0) {
+                        throw new StdlibFailure("E8001", "sqrt of negative number", null,
+                            Double.toHexString(value));
+                    }
+                    return Math.sqrt(value);
+                }
+                case "MATH_ABS_INT" -> {
+                    long value = longOf(args[0]);
+                    long absolute = value < 0 ? -value : value;
+                    if (absolute > Integer.MAX_VALUE) {
+                        throw new StdlibFailure("E8004", "int out of range", null, null);
+                    }
+                    return Long.valueOf(absolute);
+                }
+                case "MATH_ABS_NUMBER" -> {
+                    return Math.abs(numberOf(args[0]));
+                }
+                case "MATH_MIN_INT" -> {
+                    return Long.valueOf(Math.min(longOf(args[0]), longOf(args[1])));
+                }
+                case "MATH_MAX_INT" -> {
+                    return Long.valueOf(Math.max(longOf(args[0]), longOf(args[1])));
+                }
+                default -> throw new StdlibFailure("E8001",
+                    "unknown stdlib call " + fn, null, null);
+            }
+        } catch (StdlibFailure failure) {
+            raise(opKey, digest, parent, origin, "STDLIB_CALL", failure.code, failure.msg,
+                failure.expected, failure.actual);
+            return null; // unreachable: raise throws
+        }
+    }
+
+    /** An int parameter carrier: a Long or an in-range integral Double (unchanged). */
+    private static long longOf(Object value) {
+        if (value instanceof Long longValue) {
+            return longValue.longValue();
+        }
+        return ((Double) value).longValue();
+    }
+
+    /** A number parameter carrier: a Double or a Long (int → double is exact). */
+    private static double numberOf(Object value) {
+        return ((Number) value).doubleValue();
+    }
+
+    /** The closed trim set: U+0009-U+000D and U+0020, exactly. */
+    private static boolean isTrimScalar(int codePoint) {
+        return (codePoint >= 0x09 && codePoint <= 0x0D) || codePoint == 0x20;
+    }
+
+    /** The code points of a scalar-valid string in scalar order. */
+    private static int[] codePointsOf(String text) {
+        return text.codePoints().toArray();
+    }
+
+    /** True iff {@code needle} occurs at {@code offset} of {@code haystack}. */
+    private static boolean matchAt(int[] haystack, int[] needle, int offset) {
+        for (int i = 0; i < needle.length; i++) {
+            if (haystack[offset + i] != needle[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * The first occurrence of {@code needle} in {@code haystack} at or
+     * after {@code fromIndex}, or {@code -1} — a literal scalar
+     * subsequence search.
+     */
+    private static int indexOfSubsequence(int[] haystack, int[] needle, int fromIndex) {
+        if (needle.length == 0) {
+            return fromIndex <= haystack.length ? fromIndex : -1;
+        }
+        for (int i = Math.max(0, fromIndex); i + needle.length <= haystack.length; i++) {
+            if (matchAt(haystack, needle, i)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /** Appends code points to the builder in order. */
+    private static void appendCodePoints(StringBuilder builder, int[] codePoints) {
+        for (int codePoint : codePoints) {
+            builder.appendCodePoint(codePoint);
+        }
+    }
+
+    // =========================================================================
+    // The RFC-8259 JSON reader (JSON_PARSE realization)
+    // =========================================================================
+
+    /** The stable parse defect classifications ({reason} texts). */
+    private static final String REASON_UNEXPECTED_CHARACTER = "unexpected character";
+    private static final String REASON_UNTERMINATED_STRING = "unterminated string";
+    private static final String REASON_UNTERMINATED_OBJECT = "unterminated object";
+    private static final String REASON_UNTERMINATED_ARRAY = "unterminated array";
+    private static final String REASON_INVALID_ESCAPE = "invalid escape";
+    private static final String REASON_UNPAIRED_SURROGATE_ESCAPE = "unpaired surrogate escape";
+    private static final String REASON_INVALID_NUMBER = "invalid number";
+    private static final String REASON_LEADING_ZERO = "leading zero";
+    private static final String REASON_MISSING_KEY = "missing key";
+    private static final String REASON_MISSING_COLON = "missing colon";
+    private static final String REASON_MISSING_COMMA = "missing comma";
+    private static final String REASON_TRAILING_CONTENT = "trailing content";
+    private static final String REASON_UNEXPECTED_END = "unexpected end of input";
+
+    /** The internal parse failure: the defect class and its 1-based UTF-8 byte offset. */
+    private static final class JsonParseFailure extends RuntimeException {
+
+        private static final long serialVersionUID = 1L;
+
+        final String reason;
+        final long oneBasedByteOffset;
+
+        JsonParseFailure(String reason, long oneBasedByteOffset) {
+            super(reason + " at byte " + oneBasedByteOffset);
+            this.reason = reason;
+            this.oneBasedByteOffset = oneBasedByteOffset;
+        }
+    }
+
+    /**
+     * The RFC-8259 recursive-descent reader over the input's code points,
+     * tracking the 1-based UTF-8 byte offset of the current scan position:
+     * object order follows text, duplicate keys keep the last value and
+     * the first position, a signed32 integer lexical form becomes a
+     * {@link Long} ({@code -0} normalized to {@code 0}) and every other
+     * numeric form becomes a {@link Double}.
+     */
+    private static final class JsonReader {
+
+        private final int[] codePoints;
+        private int position;
+        private long bytesConsumed;
+
+        JsonReader(int[] codePoints) {
+            this.codePoints = codePoints;
+        }
+
+        boolean atEnd() {
+            return position >= codePoints.length;
+        }
+
+        int peek() {
+            return position < codePoints.length ? codePoints[position] : -1;
+        }
+
+        void advance() {
+            bytesConsumed += utf8Length(codePoints[position]);
+            position++;
+        }
+
+        long offsetOfCurrent() {
+            return bytesConsumed + 1;
+        }
+
+        JsonParseFailure failure(String reason) {
+            return new JsonParseFailure(reason, offsetOfCurrent());
+        }
+
+        void skipWs() {
+            while (!atEnd() && isWs(peek())) {
+                advance();
+            }
+        }
+
+        Object parseValue() {
+            if (atEnd()) {
+                throw failure(REASON_UNEXPECTED_END);
+            }
+            int c = peek();
+            switch (c) {
+                case '{' -> {
+                    return parseObject();
+                }
+                case '[' -> {
+                    return parseArray();
+                }
+                case '"' -> {
+                    return parseString();
+                }
+                case 't' -> {
+                    return parseLiteral("true", Boolean.TRUE);
+                }
+                case 'f' -> {
+                    return parseLiteral("false", Boolean.FALSE);
+                }
+                case 'n' -> {
+                    return parseLiteral("null", null);
+                }
+                default -> {
+                    if (c == '-' || (c >= '0' && c <= '9')) {
+                        return parseNumber();
+                    }
+                    throw failure(REASON_UNEXPECTED_CHARACTER);
+                }
+            }
+        }
+
+        Object parseLiteral(String word, Object value) {
+            for (int i = 0; i < word.length(); i++) {
+                if (atEnd()) {
+                    throw failure(REASON_UNEXPECTED_END);
+                }
+                if (peek() != word.codePointAt(i)) {
+                    throw failure(REASON_UNEXPECTED_CHARACTER);
+                }
+                advance();
+            }
+            return value;
+        }
+
+        Table parseObject() {
+            advance(); // '{'
+            Table table = new Table();
+            skipWs();
+            if (!atEnd() && peek() == '}') {
+                advance();
+                return table;
+            }
+            while (true) {
+                skipWs();
+                if (atEnd()) {
+                    throw failure(REASON_UNEXPECTED_END);
+                }
+                if (peek() != '"') {
+                    throw failure(REASON_MISSING_KEY);
+                }
+                String key = parseString();
+                skipWs();
+                if (atEnd() || peek() != ':') {
+                    throw failure(REASON_MISSING_COLON);
+                }
+                advance(); // ':'
+                skipWs();
+                Object value = parseValue();
+                // Duplicate keys keep the last value and the first
+                // position: LinkedHashMap.put replaces in place and
+                // appends only new keys (the Table order contract).
+                table.write(key, value);
+                skipWs();
+                if (atEnd()) {
+                    throw failure(REASON_UNTERMINATED_OBJECT);
+                }
+                int c = peek();
+                if (c == ',') {
+                    advance();
+                    continue;
+                }
+                if (c == '}') {
+                    advance();
+                    return table;
+                }
+                throw failure(REASON_MISSING_COMMA);
+            }
+        }
+
+        Array parseArray() {
+            advance(); // '['
+            Array array = new Array(0);
+            skipWs();
+            if (!atEnd() && peek() == ']') {
+                advance();
+                return array;
+            }
+            while (true) {
+                skipWs();
+                if (atEnd()) {
+                    throw failure(REASON_UNEXPECTED_END);
+                }
+                array.elements.add(parseValue());
+                array.length++;
+                skipWs();
+                if (atEnd()) {
+                    throw failure(REASON_UNTERMINATED_ARRAY);
+                }
+                int c = peek();
+                if (c == ',') {
+                    advance();
+                    continue;
+                }
+                if (c == ']') {
+                    advance();
+                    return array;
+                }
+                throw failure(REASON_MISSING_COMMA);
+            }
+        }
+
+        String parseString() {
+            advance(); // '"'
+            StringBuilder result = new StringBuilder();
+            while (true) {
+                if (atEnd()) {
+                    throw failure(REASON_UNTERMINATED_STRING);
+                }
+                int c = peek();
+                if (c == '"') {
+                    advance();
+                    return result.toString();
+                }
+                if (c == '\\') {
+                    advance(); // backslash
+                    if (atEnd()) {
+                        throw failure(REASON_UNTERMINATED_STRING);
+                    }
+                    int escaped = peek();
+                    switch (escaped) {
+                        case '"' -> {
+                            advance();
+                            result.append('"');
+                        }
+                        case '\\' -> {
+                            advance();
+                            result.append('\\');
+                        }
+                        case '/' -> {
+                            advance();
+                            result.append('/');
+                        }
+                        case 'b' -> {
+                            advance();
+                            result.append('\b');
+                        }
+                        case 'f' -> {
+                            advance();
+                            result.append('\f');
+                        }
+                        case 'n' -> {
+                            advance();
+                            result.append('\n');
+                        }
+                        case 'r' -> {
+                            advance();
+                            result.append('\r');
+                        }
+                        case 't' -> {
+                            advance();
+                            result.append('\t');
+                        }
+                        case 'u' -> {
+                            advance(); // 'u'
+                            int codePoint = parseHex4();
+                            if (Character.isHighSurrogate((char) codePoint)) {
+                                // A high surrogate must pair with a
+                                // following a four-hex-digit low surrogate escape.
+                                if (atEnd() || peek() != '\\') {
+                                    throw failure(REASON_UNPAIRED_SURROGATE_ESCAPE);
+                                }
+                                advance(); // backslash
+                                if (atEnd() || peek() != 'u') {
+                                    throw failure(REASON_UNPAIRED_SURROGATE_ESCAPE);
+                                }
+                                advance(); // 'u'
+                                int low = parseHex4();
+                                if (!Character.isLowSurrogate((char) low)) {
+                                    throw failure(REASON_UNPAIRED_SURROGATE_ESCAPE);
+                                }
+                                result.appendCodePoint(
+                                    Character.toCodePoint((char) codePoint, (char) low));
+                            } else if (Character.isLowSurrogate((char) codePoint)) {
+                                throw failure(REASON_UNPAIRED_SURROGATE_ESCAPE);
+                            } else {
+                                result.appendCodePoint(codePoint);
+                            }
+                        }
+                        default -> throw failure(REASON_INVALID_ESCAPE);
+                    }
+                } else if (c < 0x20) {
+                    // A raw control character is never allowed unescaped.
+                    throw failure(REASON_UNEXPECTED_CHARACTER);
+                } else {
+                    advance();
+                    result.appendCodePoint(c);
+                }
+            }
+        }
+
+        /** Exactly four hex digits; a non-hex digit or end of input is an invalid escape. */
+        int parseHex4() {
+            int value = 0;
+            for (int i = 0; i < 4; i++) {
+                if (atEnd()) {
+                    throw failure(REASON_INVALID_ESCAPE);
+                }
+                int digit = hexDigit(peek());
+                if (digit < 0) {
+                    throw failure(REASON_INVALID_ESCAPE);
+                }
+                advance();
+                value = value * 16 + digit;
+            }
+            return value;
+        }
+
+        Object parseNumber() {
+            int start = position;
+            boolean negative = false;
+            if (peek() == '-') {
+                negative = true;
+                advance();
+            }
+            if (atEnd()) {
+                throw failure(REASON_INVALID_NUMBER);
+            }
+            int c = peek();
+            if (c < '0' || c > '9') {
+                throw failure(REASON_INVALID_NUMBER);
+            }
+            boolean integerForm = true;
+            if (c == '0') {
+                advance();
+                if (!atEnd() && isDigit(peek())) {
+                    throw failure(REASON_LEADING_ZERO);
+                }
+            } else {
+                advance();
+                while (!atEnd() && isDigit(peek())) {
+                    advance();
+                }
+            }
+            if (!atEnd() && peek() == '.') {
+                integerForm = false;
+                advance();
+                if (atEnd() || !isDigit(peek())) {
+                    throw failure(REASON_INVALID_NUMBER);
+                }
+                while (!atEnd() && isDigit(peek())) {
+                    advance();
+                }
+            }
+            if (!atEnd() && (peek() == 'e' || peek() == 'E')) {
+                integerForm = false;
+                advance();
+                if (!atEnd() && (peek() == '+' || peek() == '-')) {
+                    advance();
+                }
+                if (atEnd() || !isDigit(peek())) {
+                    throw failure(REASON_INVALID_NUMBER);
+                }
+                while (!atEnd() && isDigit(peek())) {
+                    advance();
+                }
+            }
+            String text = new String(codePoints, start, position - start);
+            if (integerForm) {
+                int digitsStart = start + (negative ? 1 : 0);
+                int significantStart = digitsStart;
+                while (significantStart < position && codePoints[significantStart] == '0') {
+                    significantStart++;
+                }
+                int significantLength = Math.max(1, position - significantStart);
+                boolean outOfRange;
+                if (significantLength > 10) {
+                    outOfRange = true;
+                } else if (significantLength == 10) {
+                    long significant = 0L;
+                    for (int i = significantStart; i < significantStart + 10; i++) {
+                        significant = significant * 10 + (codePoints[i] - '0');
+                    }
+                    long limit = negative ? 2147483648L : 2147483647L;
+                    outOfRange = significant > limit;
+                } else {
+                    outOfRange = false;
+                }
+                if (!outOfRange) {
+                    long value = 0L;
+                    for (int i = digitsStart; i < position; i++) {
+                        value = value * 10 + (codePoints[i] - '0');
+                    }
+                    if (negative) {
+                        value = -value;
+                    }
+                    return Long.valueOf(value);
+                }
+            }
+            return Double.valueOf(Double.parseDouble(text));
+        }
+    }
+
+    private static boolean isWs(int codePoint) {
+        return codePoint == 0x20 || codePoint == 0x09
+            || codePoint == 0x0A || codePoint == 0x0D;
+    }
+
+    private static boolean isDigit(int codePoint) {
+        return codePoint >= '0' && codePoint <= '9';
+    }
+
+    private static int hexDigit(int codePoint) {
+        if (codePoint >= '0' && codePoint <= '9') {
+            return codePoint - '0';
+        }
+        if (codePoint >= 'a' && codePoint <= 'f') {
+            return codePoint - 'a' + 10;
+        }
+        if (codePoint >= 'A' && codePoint <= 'F') {
+            return codePoint - 'A' + 10;
+        }
+        return -1;
+    }
+
+    /** The UTF-8 byte length of one Unicode scalar value. */
+    private static int utf8Length(int codePoint) {
+        return codePoint < 0x80 ? 1 : codePoint < 0x800 ? 2 : codePoint < 0x10000 ? 3 : 4;
+    }
+
+    /** {@code JSON_PARSE}: the parse entry with the pinned trailing-content check. */
+    private static Object jsonParse(String text) {
+        JsonReader reader = new JsonReader(text.codePoints().toArray());
+        try {
+            reader.skipWs();
+            Object value = reader.parseValue();
+            reader.skipWs();
+            if (!reader.atEnd()) {
+                throw reader.failure(REASON_TRAILING_CONTENT);
+            }
+            return value;
+        } catch (JsonParseFailure parseFailure) {
+            throw new StdlibFailure("E8001",
+                "JSON parse error at position " + parseFailure.oneBasedByteOffset
+                    + ": " + parseFailure.reason,
+                null, null);
+        }
+    }
+
+    // =========================================================================
+    // The RFC-8259 serializer (JSON_STRINGIFY realization)
+    // =========================================================================
+
+    /** Serializes one table (object) with cycle detection and first-insertion order. */
+    private static void stringifyTable(StringBuilder out, Table table, String fieldPath,
+                                       java.util.Set<Object> path) {
+        if (!path.add(table)) {
+            throw new StdlibFailure("E8001",
+                "value at " + fieldPath + " is not JSON serializable: table", null,
+                null);
+        }
+        out.append('{');
+        List<String> keys = new ArrayList<>(table.entries.keySet());
+        for (int i = 0; i < keys.size(); i++) {
+            String key = keys.get(i);
+            if (i > 0) {
+                out.append(',');
+            }
+            appendJsonString(out, key);
+            out.append(':');
+            stringifyValue(out, table.entries.get(key),
+                fieldPath.isEmpty() ? key : fieldPath + "." + key, path);
+        }
+        out.append('}');
+        path.remove(table);
+    }
+
+    /** Serializes one array with cycle detection and index order. */
+    private static void stringifyArray(StringBuilder out, Array array, String fieldPath,
+                                       java.util.Set<Object> path) {
+        if (!path.add(array)) {
+            throw new StdlibFailure("E8001",
+                "value at " + fieldPath + " is not JSON serializable: array", null,
+                null);
+        }
+        out.append('[');
+        for (int i = 0; i < array.elements.size(); i++) {
+            if (i > 0) {
+                out.append(',');
+            }
+            stringifyValue(out, array.elements.get(i),
+                fieldPath.isEmpty() ? Integer.toString(i) : fieldPath + "." + i, path);
+        }
+        out.append(']');
+        path.remove(array);
+    }
+
+    /** Serializes one value: the first declaration-order failure wins (pre-order). */
+    private static void stringifyValue(StringBuilder out, Object value, String fieldPath,
+                                       java.util.Set<Object> path) {
+        if (value == null) {
+            out.append("null");
+        } else if (value instanceof Boolean bool) {
+            out.append(bool ? "true" : "false");
+        } else if (value instanceof Long longValue) {
+            out.append(Long.toString(longValue));
+        } else if (value instanceof Double doubleValue) {
+            double d = doubleValue.doubleValue();
+            if (!Double.isFinite(d)) {
+                throw new StdlibFailure("E8001",
+                    "value at " + fieldPath + " is not JSON serializable: number", null,
+                    null);
+            }
+            out.append(Double.toString(d));
+        } else if (value instanceof String string) {
+            appendJsonString(out, string);
+        } else if (value instanceof Table table) {
+            stringifyTable(out, table, fieldPath, path);
+        } else if (value instanceof Array array) {
+            stringifyArray(out, array, fieldPath, path);
+        } else if (value == MISSING) {
+            throw new StdlibFailure("E8001",
+                "value at " + fieldPath + " is not JSON serializable: missing", null,
+                null);
+        } else if (value instanceof FunctionValue || value instanceof Intrinsic
+                || value instanceof AdapterValue) {
+            throw new StdlibFailure("E8001",
+                "value at " + fieldPath + " is not JSON serializable: function", null,
+                null);
+        } else if (value instanceof ErrorValue) {
+            throw new StdlibFailure("E8001",
+                "value at " + fieldPath
+                    + " is not JSON serializable: class:@builtin/Error", null,
+                null);
+        } else {
+            throw new StdlibFailure("E8001",
+                "value at " + fieldPath + " is not JSON serializable: table", null,
+                null);
+        }
+    }
+
+    /**
+     * RFC-8259 string escaping: quote and backslash escaped; the named
+     * short escapes \b \f \n \r \t; every other control scalar
+     * (U+0000-U+001F) as the lowercase four-hex-digit escape; every other scalar —
+     * surrogate pairs included — emitted as raw scalar UTF-8.
+     */
+    private static void appendJsonString(StringBuilder out, String carrier) {
+        out.append('"');
+        for (int i = 0; i < carrier.length();) {
+            int codePoint = carrier.codePointAt(i);
+            i += Character.charCount(codePoint);
+            switch (codePoint) {
+                case '"' -> out.append("\\\"");
+                case '\\' -> out.append("\\\\");
+                case '\b' -> out.append("\\b");
+                case '\f' -> out.append("\\f");
+                case '\n' -> out.append("\\n");
+                case '\r' -> out.append("\\r");
+                case '\t' -> out.append("\\t");
+                default -> {
+                    if (codePoint < 0x20) {
+                        out.append(String.format("\\u%04x", codePoint));
+                    } else {
+                        out.appendCodePoint(codePoint);
+                    }
+                }
+            }
+        }
+        out.append('"');
     }
 
     // =========================================================================

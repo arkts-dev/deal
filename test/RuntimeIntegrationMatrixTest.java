@@ -1411,6 +1411,451 @@ public class RuntimeIntegrationMatrixTest {
     }
 
     // =========================================================================
+    // 7. The stdlib matrix (the step-7 cutover): the closed STDLIB_CALL
+    //    realization — cataloged calls and failure projections through
+    //    the semantic oracle and both shared emitters' real artifacts
+    // =========================================================================
+
+    private static final String STR = "import * as str from \"std/string\"\n";
+    private static final String TBL = "import * as tbl from \"std/table\"\n";
+    private static final String JSON = "import * as json from \"std/json\"\n";
+    private static final String MATH = "import * as math from \"std/math\"\n";
+
+    static void testStdlibMatrix() {
+        System.out.println("-- Stdlib matrix: the closed STDLIB_CALL realization — "
+            + "string/table/json/math families, failure projections --");
+
+        // (a) STRING_LENGTH: the Unicode scalar count (a surrogate pair
+        // is one scalar) — 5 and 3 scalars, never the UTF-8 byte counts.
+        {
+            String source = CONSOLE + STR
+                + "function main(): null {\n"
+                + "  let n: int = str.length(\"aé中😀b\")\n"
+                + "  let m: int = str.length(\"a😀b\")\n"
+                + "  let z: int = str.length(\"\")\n"
+                + "  if (n === 5 && m === 3 && z === 0) { console.log(\"len-ok\") } "
+                + "else { console.log(\"bad\") }\n"
+                + "}\n";
+            runMatrix(source, "STRING_LENGTH scalar counts (astral + empty)",
+                List.of("len-ok"), SUCCESS);
+        }
+
+        // (b) STRING_SUBSTRING: scalar indices with the closed clamping.
+        {
+            String source = CONSOLE + STR
+                + "function main(): null {\n"
+                + "  let a: string = str.substring(\"abcdef\", 1, 4)\n"
+                + "  let b: string = str.substring(\"abc\", -5, 99)\n"
+                + "  let c: string = str.substring(\"abc\", 2, 2)\n"
+                + "  let d: string = str.substring(\"a😀b\", 1, 2)\n"
+                + "  if (a === \"bcd\" && b === \"abc\" && c === \"\" "
+                + "&& d === \"😀\") { console.log(\"sub-ok\") } else { console.log(\"bad\") }\n"
+                + "}\n";
+            runMatrix(source, "STRING_SUBSTRING scalar slice + clamping",
+                List.of("sub-ok"), SUCCESS);
+        }
+
+        // (c) The search family: contains/startsWith/endsWith — literal
+        // scalar subsequences, an empty part contained/prefix/suffix.
+        {
+            String source = CONSOLE + STR
+                + "function main(): null {\n"
+                + "  let c1: boolean = str.contains(\"hello\", \"ell\")\n"
+                + "  let c2: boolean = str.contains(\"hello\", \"\")\n"
+                + "  let c3: boolean = str.contains(\"hello\", \"x\")\n"
+                + "  let s1: boolean = str.startsWith(\"hello\", \"he\")\n"
+                + "  let s2: boolean = str.startsWith(\"hello\", \"\")\n"
+                + "  let e1: boolean = str.endsWith(\"hello\", \"lo\")\n"
+                + "  let e2: boolean = str.endsWith(\"hello\", \"\")\n"
+                + "  if (c1 && c2 && !c3 && s1 && s2 && e1 && e2) { console.log(\"find-ok\") } "
+                + "else { console.log(\"bad\") }\n"
+                + "}\n";
+            runMatrix(source, "STRING_CONTAINS/STARTS_WITH/ENDS_WITH scalar search",
+                List.of("find-ok"), SUCCESS);
+        }
+
+        // (d) STRING_REPLACE: non-overlapping left-to-right replacement;
+        // an empty search text returns the input unchanged.
+        {
+            String source = CONSOLE + STR
+                + "function main(): null {\n"
+                + "  let r1: string = str.replace(\"a-b-c\", \"-\", \"+\")\n"
+                + "  let r2: string = str.replace(\"aaa\", \"aa\", \"b\")\n"
+                + "  let r3: string = str.replace(\"abc\", \"\", \"x\")\n"
+                + "  if (r1 === \"a+b+c\" && r2 === \"ba\" && r3 === \"abc\") "
+                + "{ console.log(\"repl-ok\") } else { console.log(\"bad\") }\n"
+                + "}\n";
+            runMatrix(source, "STRING_REPLACE non-overlapping + empty-from",
+                List.of("repl-ok"), SUCCESS);
+        }
+
+        // (e) STRING_SPLIT: empty input → [], empty separator → per-scalar
+        // singles, and leading/internal/trailing empty parts preserved.
+        {
+            String source = CONSOLE + STR
+                + "function main(): null {\n"
+                + "  let parts: string[] = str.split(\"a,b\", \",\")\n"
+                + "  let empty: string[] = str.split(\"\", \",\")\n"
+                + "  let singles: string[] = str.split(\"ab\", \"\")\n"
+                + "  let holes: string[] = str.split(\"a,,b\", \",\")\n"
+                + "  if (parts.length === 2 && parts[0] === \"a\" && parts[1] === \"b\" "
+                + "&& empty.length === 0 && singles.length === 2 "
+                + "&& singles[0] === \"a\" && singles[1] === \"b\" "
+                + "&& holes.length === 3 && holes[0] === \"a\" && holes[1] === \"\" "
+                + "&& holes[2] === \"b\") { console.log(\"split-ok\") } else { console.log(\"bad\") }\n"
+                + "}\n";
+            runMatrix(source, "STRING_SPLIT parts + empty separators",
+                List.of("split-ok"), SUCCESS);
+        }
+
+        // (f) STRING_TRIM: the closed trim set (U+0009-U+000D and
+        // U+0020); U+00A0 is never trimmed.
+        {
+            String source = CONSOLE + STR
+                + "function main(): null {\n"
+                + "  let t1: string = str.trim(\"  x  \")\n"
+                + "  let t2: string = str.trim(\"x \")\n"
+                + "  let t3: string = str.trim(\"x\u00A0\")\n"
+                + "  if (t1 === \"x\" && t2 === \"x\" && t3 === \"x\u00A0\") "
+                + "{ console.log(\"trim-ok\") } else { console.log(\"bad\") }\n"
+                + "}\n";
+            runMatrix(source, "STRING_TRIM closed set + non-breaking space",
+                List.of("trim-ok"), SUCCESS);
+        }
+
+        // (g) TABLE_KEYS: first-insertion order; delete removes the
+        // order slot and reinsertion appends it.
+        {
+            String source = CONSOLE + TBL
+                + "function main(): null {\n"
+                + "  let t: table = { zero: 0, one: 1, two: 2, filler: 3 }\n"
+                + "  delete t.filler\n"
+                + "  let ks: string[] = tbl.keys(t)\n"
+                + "  let u: table = { a: 1, b: 2 }\n"
+                + "  delete u.a\n"
+                + "  u.a = 3\n"
+                + "  let us: string[] = tbl.keys(u)\n"
+                + "  if (ks.length === 3 && ks[0] === \"zero\" && ks[1] === \"one\" "
+                + "&& ks[2] === \"two\" && us.length === 2 && us[0] === \"b\" "
+                + "&& us[1] === \"a\") { console.log(\"keys-ok\") } else { console.log(\"bad\") }\n"
+                + "}\n";
+            runMatrix(source, "TABLE_KEYS first-insertion order + delete/reinsert",
+                List.of("keys-ok"), SUCCESS);
+        }
+
+        // (h) JSON_PARSE: nested data with typed reads (int/string/
+        // null/number), missing keys pre-map to null, duplicate keys keep
+        // the last value, and the int/number lexical split round-trips
+        // (parsed arrays flow through the stringify walker).
+        {
+            String source = CONSOLE + JSON
+                + "function main(): null {\n"
+                + "  let d: table = json.parse(\"{\\\"a\\\": 1, \\\"b\\\": \\\"x\\\", "
+                + "\\\"c\\\": [true, null], \\\"x\\\": {\\\"e\\\": 1.5}, \\\"n\\\": null}\")\n"
+                + "  let a: int = d.a\n"
+                + "  let b: string = d.b\n"
+                + "  let x: table = d.x\n"
+                + "  let e: number = x.e\n"
+                + "  let n: int | null = d.n\n"
+                + "  let m: int | null = d.missing\n"
+                + "  let dup: table = json.parse(\"{\\\"a\\\": 1, \\\"a\\\": 2}\")\n"
+                + "  let da: int = dup.a\n"
+                + "  let rt: string = json.stringify(json.parse(\"{\\\"a\\\":1,\\\"n\\\":100.0,\\\"xs\\\":[1,2]}\"))\n"
+                + "  if (a === 1 && b === \"x\" && e === 1.5 && n === null "
+                + "&& m === null && da === 2 "
+                + "&& rt === \"{\\\"a\\\":1,\\\"n\\\":100.0,\\\"xs\\\":[1,2]}\") "
+                + "{ console.log(\"parse-ok\") } else { console.log(\"bad\") }\n"
+                + "}\n";
+            runMatrix(source, "JSON_PARSE nested read + duplicate keys + round-trip",
+                List.of("parse-ok"), SUCCESS);
+        }
+
+        // (i) JSON_STRINGIFY: deterministic first-insertion-order text,
+        // RFC-8259 escaping, nested arrays/objects, and the exact
+        // int/number spellings.
+        {
+            String source = CONSOLE + JSON
+                + "function main(): null {\n"
+                + "  let doc: table = { count: 42, ratio: 2.5, flag: true, "
+                + "nothing: null, name: \"Ada\" }\n"
+                + "  let encoded: string = json.stringify(doc)\n"
+                + "  let esc: table = { s: \"a\\\"b\" }\n"
+                + "  let nested: table = { xs: [1, 2], g: { h: 2 } }\n"
+                + "  let ne: string = json.stringify(nested)\n"
+                + "  if (encoded === \"{\\\"count\\\":42,\\\"ratio\\\":2.5,\\\"flag\\\":true,"
+                + "\\\"nothing\\\":null,\\\"name\\\":\\\"Ada\\\"}\" "
+                + "&& json.stringify(esc) === \"{\\\"s\\\":\\\"a\\\\\\\"b\\\"}\" "
+                + "&& ne === \"{\\\"xs\\\":[1,2],\\\"g\\\":{\\\"h\\\":2}}\") "
+                + "{ console.log(\"stringify-ok\") } else { console.log(\"bad\") }\n"
+                + "}\n";
+            runMatrix(source, "JSON_STRINGIFY order + escaping + nesting",
+                List.of("stringify-ok"), SUCCESS);
+        }
+
+        // (j) The math family: IEEE floor/ceil/sqrt, signed32 abs, and
+        // the min/max selectors.
+        {
+            String source = CONSOLE + MATH
+                + "function main(): null {\n"
+                + "  let f: number = math.floor(1.7)\n"
+                + "  let c: number = math.ceil(1.2)\n"
+                + "  let s: number = math.sqrt(16.0)\n"
+                + "  let a: int = math.absInt(-5)\n"
+                + "  let n: number = math.absNumber(-2.5)\n"
+                + "  let mn: int = math.minInt(3, 5)\n"
+                + "  let mx: int = math.maxInt(3, 5)\n"
+                + "  if (f === 1.0 && c === 2.0 && s === 4.0 && a === 5 "
+                + "&& n === 2.5 && mn === 3 && mx === 5) { console.log(\"math-ok\") } "
+                + "else { console.log(\"bad\") }\n"
+                + "}\n";
+            runMatrix(source, "MATH_FLOOR/CEIL/SQRT/ABS/MIN/MAX results",
+                List.of("math-ok"), SUCCESS);
+        }
+
+        // (k) STDLIB_PARAMETER failure projection: a dynamic non-string
+        // argument fails the string boundary (E8001 at the boundary
+        // origin) before any algorithm runs.
+        {
+            String source = CONSOLE
+                + "function main(): null {\n"
+                + "  let t: table = { value: 1 }\n"
+                + "  console.log(t.value)\n"
+                + "  console.log(\"after\")\n"
+                + "}\n";
+            runMatrix(source, "CONSOLE_LOG dynamic non-string (E8001 boundary)",
+                List.of(), E8001);
+        }
+
+        // (l) INT32_RESULT projection: absInt(-2147483648) fails E8004
+        // at the call origin (the exact long intermediate; the argument
+        // is composed through INT32_SUB so no int literal sits outside
+        // the signed32 gate).
+        {
+            String source = CONSOLE + MATH
+                + "function main(): null {\n"
+                + "  let x: int = math.absInt(-2147483647 - 1)\n"
+                + "  console.log(\"after\")\n"
+                + "}\n";
+            runMatrix(source, "MATH_ABS_INT int32 minimum (E8004)", List.of(),
+                new SemanticDifferentialHarness.TerminalExpectation.FailureWith(
+                    "E8004", null));
+        }
+
+        // (m) SQRT_NEGATIVE projection: sqrt(-1.0) fails E8001 with the
+        // canonical hex-float actual.
+        {
+            String source = CONSOLE + MATH
+                + "function main(): null {\n"
+                + "  let x: number = math.sqrt(-1.0)\n"
+                + "  console.log(\"after\")\n"
+                + "}\n";
+            runMatrix(source, "MATH_SQRT negative (E8001 hex-float actual)",
+                List.of(), E8001);
+        }
+
+        // (n) JSON_PARSE_SYNTAX projections: the defect-classification
+        // texts and the 1-based UTF-8 byte offsets (a multi-byte scalar
+        // counts its full UTF-8 length).
+        {
+            String source = CONSOLE + JSON
+                + "function main(): null {\n"
+                + "  let d: table = json.parse(\"{bad\")\n"
+                + "  console.log(\"after\")\n"
+                + "}\n";
+            runMatrix(source, "JSON_PARSE missing key (E8001 parse position)",
+                List.of(), E8001);
+        }
+        {
+            String source = CONSOLE + JSON
+                + "function main(): null {\n"
+                + "  let d: table = json.parse(\"\")\n"
+                + "  console.log(\"after\")\n"
+                + "}\n";
+            runMatrix(source, "JSON_PARSE empty input (E8001 unexpected end)",
+                List.of(), E8001);
+        }
+        {
+            String source = CONSOLE + JSON
+                + "function main(): null {\n"
+                + "  let d: table = json.parse(\"{\\\"é\\\": }\")\n"
+                + "  console.log(\"after\")\n"
+                + "}\n";
+            runMatrix(source, "JSON_PARSE byte offset after a multi-byte scalar",
+                List.of(), E8001);
+        }
+
+        // (o) STDLIB_RETURN boundary: a successful parse whose top-level
+        // value is not a table fails the declared return boundary
+        // (E8001 at the boundary origin — the call machine's, never the
+        // primitive's).
+        {
+            String source = CONSOLE + JSON
+                + "function main(): null {\n"
+                + "  let d: table = json.parse(\"\\\"x\\\"\")\n"
+                + "  console.log(\"after\")\n"
+                + "}\n";
+            runMatrix(source, "JSON_PARSE non-table top level (E8001 return boundary)",
+                List.of(), E8001);
+        }
+
+        // (p) JSON_TO_ERROR projection: the first declaration-order
+        // unsupported value wins with its field path and actual token —
+        // a nonfinite number at field n.
+        {
+            String source = CONSOLE + JSON
+                + "function main(): null {\n"
+                + "  let t: table = { n: 0.0 / 0.0 }\n"
+                + "  let s: string = json.stringify(t)\n"
+                + "  console.log(\"after\")\n"
+                + "}\n";
+            runMatrix(source, "JSON_STRINGIFY nonfinite number (E8001 field path)",
+                List.of(), E8001);
+        }
+
+        // (q) Production-mode realization (no trace-only arm): the same
+        // stdlib unit emitted through the production surfaces runs under
+        // the real toolchains — the cataloged results land on stdout, and
+        // a projection failure publishes the retained DEAL_ERROR_CODE
+        // terminal on stdout with exit 1.
+        {
+            String source = CONSOLE + STR + MATH
+                + "function main(): null {\n"
+                + "  let n: int = str.length(\"a😀b\")\n"
+                + "  let a: int = math.absInt(-5)\n"
+                + "  if (n === 3 && a === 5) { console.log(\"stdlib-prod-ok\") } "
+                + "else { console.log(\"stdlib-prod-bad\") }\n"
+                + "}\n";
+            CheckedSlice slice = checkSlice(source,
+                "production-mode stdlib emission");
+            LoweredSlice lowered = lowerFull(slice,
+                "production-mode stdlib emission");
+            if (lowered != null) {
+                try {
+                    String lua = deal.codegen.lua.LuaSemanticEmitter
+                        .emitProductionModule(lowered.unit(), lowered.table(), true);
+                    Path script = WORKSPACE.resolve("stdlib-prod.lua");
+                    Files.writeString(script, lua);
+                    Process luaRun = new ProcessBuilder("luajit",
+                        script.toAbsolutePath().toString())
+                        .redirectErrorStream(true).start();
+                    String luaOutput = new String(
+                        luaRun.getInputStream().readAllBytes());
+                    int luaExit = luaRun.waitFor();
+                    check(luaExit == 0 && luaOutput.contains("stdlib-prod-ok"),
+                        "the production shared-LuaJIT stdlib artifact runs the "
+                            + "cataloged calls (exit " + luaExit + ", output "
+                            + luaOutput.trim() + ")");
+
+                    deal.codegen.jvm.JvmSemanticEmitter.EmissionResult emission =
+                        deal.codegen.jvm.JvmSemanticEmitter.emitProductionModule(
+                            lowered.unit(), lowered.table(), true, "StdlibProdMain");
+                    Path sourceFile = WORKSPACE.resolve("StdlibProdMain.java");
+                    Files.writeString(sourceFile, emission.source());
+                    Path classes = WORKSPACE.resolve("stdlib-prod-classes");
+                    Files.createDirectories(classes);
+                    String classpath = System.getProperty("java.class.path", "");
+                    Process compile = new ProcessBuilder("javac", "--release", "25",
+                        "-proc:none", "-cp", classpath, "-d", classes.toString(),
+                        sourceFile.toAbsolutePath().toString())
+                        .redirectErrorStream(true).start();
+                    String compileOutput = new String(
+                        compile.getInputStream().readAllBytes());
+                    int compileExit = compile.waitFor();
+                    check(compileExit == 0, "the production shared-JVM stdlib "
+                        + "artifact compiles (exit " + compileExit + ": "
+                        + compileOutput.trim() + ")");
+                    if (compileExit == 0) {
+                        Process javaRun = new ProcessBuilder("java", "-cp",
+                            classpath + java.io.File.pathSeparator + classes,
+                            "StdlibProdMain").redirectErrorStream(true).start();
+                        String javaOutput = new String(
+                            javaRun.getInputStream().readAllBytes());
+                        int javaExit = javaRun.waitFor();
+                        check(javaExit == 0 && javaOutput.contains("stdlib-prod-ok"),
+                            "the production shared-JVM stdlib artifact runs the "
+                                + "cataloged calls (exit " + javaExit + ", output "
+                                + javaOutput.trim() + ")");
+                    }
+                } catch (java.io.IOException | InterruptedException exception) {
+                    fail("production-mode stdlib emission: infrastructure failure: "
+                        + exception.getMessage());
+                }
+            }
+        }
+        {
+            // The production failure projection: the shared artifact exits 1
+            // with the retained DEAL_ERROR_CODE terminal on stdout (never a
+            // trace suppression that swallows the projection).
+            String source = CONSOLE + MATH
+                + "function main(): null {\n"
+                + "  let x: number = math.sqrt(-1.0)\n"
+                + "  console.log(\"after\")\n"
+                + "}\n";
+            CheckedSlice slice = checkSlice(source,
+                "production-mode stdlib failure projection");
+            LoweredSlice lowered = lowerFull(slice,
+                "production-mode stdlib failure projection");
+            if (lowered != null) {
+                try {
+                    String lua = deal.codegen.lua.LuaSemanticEmitter
+                        .emitProductionModule(lowered.unit(), lowered.table(), true);
+                    Path script = WORKSPACE.resolve("stdlib-prod-fail.lua");
+                    Files.writeString(script, lua);
+                    Process luaRun = new ProcessBuilder("luajit",
+                        script.toAbsolutePath().toString())
+                        .redirectErrorStream(true).start();
+                    String luaOutput = new String(
+                        luaRun.getInputStream().readAllBytes());
+                    int luaExit = luaRun.waitFor();
+                    check(luaExit == 1
+                            && luaOutput.contains("DEAL_ERROR_CODE: E8001")
+                            && !luaOutput.contains("after"),
+                        "the production shared-LuaJIT stdlib artifact publishes the "
+                            + "retained DEAL_ERROR_CODE terminal (exit " + luaExit
+                            + ", output " + luaOutput.trim() + ")");
+
+                    deal.codegen.jvm.JvmSemanticEmitter.EmissionResult emission =
+                        deal.codegen.jvm.JvmSemanticEmitter.emitProductionModule(
+                            lowered.unit(), lowered.table(), true,
+                            "StdlibProdFailMain");
+                    Path sourceFile = WORKSPACE.resolve("StdlibProdFailMain.java");
+                    Files.writeString(sourceFile, emission.source());
+                    Path classes = WORKSPACE.resolve("stdlib-prod-fail-classes");
+                    Files.createDirectories(classes);
+                    String classpath = System.getProperty("java.class.path", "");
+                    Process compile = new ProcessBuilder("javac", "--release", "25",
+                        "-proc:none", "-cp", classpath, "-d", classes.toString(),
+                        sourceFile.toAbsolutePath().toString())
+                        .redirectErrorStream(true).start();
+                    String compileOutput = new String(
+                        compile.getInputStream().readAllBytes());
+                    int compileExit = compile.waitFor();
+                    check(compileExit == 0, "the production shared-JVM stdlib "
+                        + "failure artifact compiles (exit " + compileExit + ": "
+                        + compileOutput.trim() + ")");
+                    if (compileExit == 0) {
+                        Process javaRun = new ProcessBuilder("java", "-cp",
+                            classpath + java.io.File.pathSeparator + classes,
+                            "StdlibProdFailMain").redirectErrorStream(true).start();
+                        String javaOutput = new String(
+                            javaRun.getInputStream().readAllBytes());
+                        int javaExit = javaRun.waitFor();
+                        check(javaExit == 1
+                                && javaOutput.contains("DEAL_ERROR_CODE: E8001")
+                                && !javaOutput.contains("after"),
+                            "the production shared-JVM stdlib artifact publishes the "
+                                + "retained DEAL_ERROR_CODE terminal (exit " + javaExit
+                                + ", output " + javaOutput.trim() + ")");
+                    }
+                } catch (java.io.IOException | InterruptedException exception) {
+                    fail("production-mode stdlib failure projection: "
+                        + "infrastructure failure: " + exception.getMessage());
+                }
+            }
+        }
+    }
+
+    // =========================================================================
     // Helpers
     // =========================================================================
 
@@ -1514,6 +1959,7 @@ public class RuntimeIntegrationMatrixTest {
         testHasFieldPresenceMatrix();
         testRecursiveGroupMatrix();
         testRecursiveGroupProductionEmission();
+        testStdlibMatrix();
         testPinnedIrFacts();
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);

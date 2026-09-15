@@ -16,6 +16,7 @@ import deal.semantic.ContainerClaimingSeam.SeamResult;
 import deal.semantic.LoweringSupport;
 import deal.semantic.MigrationPlanner;
 import deal.semantic.ModuleRoute;
+import deal.semantic.ReleaseConfiguration;
 import deal.semantic.RequirementManifestResult;
 import deal.semantic.RoutePlanResult;
 import deal.semantic.SemanticLowerer;
@@ -1372,6 +1373,60 @@ public class StdlibClaimingTimeLockTest {
                     "rule 4 routes the stdlib module SHARED once every manifest "
                         + "capability (STDLIB_SEMANTICS + MODULES + CALLS) is "
                         + "promoted for the target: "
+                        + (planned == null ? "null" : planned.diagnostics()));
+            }
+
+            // Step-7 (ISSUE-0585): the release registry now carries the
+            // STDLIB_SEMANTICS x LUAJIT/JVM promotion (composed through
+            // withState with a recomputed digest); the stdlib module's
+            // remaining MODULES/CALLS claims keep it LEGACY under the
+            // release registry, and composing the release registry with
+            // those claims' promotions routes it SHARED — the plan-time
+            // promotion gate covers the stdlib module in the release
+            // configuration exactly as in the synthetic registry (SHARED
+            // only where every claim allows, never a silent flip).
+            CapabilityRegistry released = ReleaseConfiguration
+                .releaseCapabilityRegistry();
+            check(released.state(
+                    deal.semantic.ir.SemanticCapability.STDLIB_SEMANTICS,
+                    Target.LUAJIT) == CapabilityRegistry.State.PROMOTED
+                    && released.state(
+                        deal.semantic.ir.SemanticCapability.STDLIB_SEMANTICS,
+                        Target.JVM) == CapabilityRegistry.State.PROMOTED
+                    && released.state(
+                        deal.semantic.ir.SemanticCapability.STDLIB_TIME_CONFLICT,
+                        Target.LUAJIT) == CapabilityRegistry.State.SHADOW
+                    && released.state(
+                        deal.semantic.ir.SemanticCapability.STDLIB_TIME_CONFLICT,
+                        Target.JVM) == CapabilityRegistry.State.SHADOW,
+                "the release registry promotes STDLIB_SEMANTICS for both targets "
+                    + "and keeps the locked STDLIB_TIME_CONFLICT SHADOW (step 7, "
+                    + "ISSUE-0585)");
+            {
+                RoutePlanResult planned = MigrationPlanner.planRoutes(
+                    publicV12Active(released), released, checked.input(),
+                    checked.index(), manifests.manifests(), Target.LUAJIT, Set.of());
+                check(planned != null && !planned.hasErrors() && planned.plan() != null
+                        && planned.plan().entries().get(libId) == ModuleRoute.LEGACY,
+                    "rule 4 with the step-7 release registry keeps the stdlib module "
+                        + "LEGACY (its MODULES/CALLS claims stay SHADOW — SHARED "
+                        + "only where every claim allows): "
+                        + (planned == null ? "null" : planned.diagnostics()));
+            }
+            {
+                CapabilityRegistry releasedFull = released
+                    .withState(deal.semantic.ir.SemanticCapability.MODULES,
+                        Target.LUAJIT, CapabilityRegistry.State.PROMOTED)
+                    .withState(deal.semantic.ir.SemanticCapability.CALLS,
+                        Target.LUAJIT, CapabilityRegistry.State.PROMOTED);
+                RoutePlanResult planned = MigrationPlanner.planRoutes(
+                    publicV12Active(releasedFull), releasedFull, checked.input(),
+                    checked.index(), manifests.manifests(), Target.LUAJIT, Set.of());
+                check(planned != null && !planned.hasErrors() && planned.plan() != null
+                        && planned.plan().entries().get(libId) == ModuleRoute.SHARED,
+                    "rule 4 routes the stdlib module SHARED once every manifest "
+                        + "capability is promoted, derived from the release registry "
+                        + "through withState (never a hand-built list): "
                         + (planned == null ? "null" : planned.diagnostics()));
             }
         } finally {

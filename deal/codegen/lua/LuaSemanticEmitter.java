@@ -1230,12 +1230,12 @@ public final class LuaSemanticEmitter {
             KindPayload.TableNewPayload payload = (KindPayload.TableNewPayload) op.payload();
             emitStart(op);
             String target = slot((ValueId) op.result());
-            out.append(target).append(" = {__t = true, __keys = {}}\n");
+            out.append(target).append(" = {__t = true, __keys = {}, __order = {}}\n");
             for (KindPayload.TableEntry entry : payload.entries()) {
                 out.append(target).append("[").append(luaString(entry.key()))
                     .append("] = ").append(slot(entry.value())).append("\n");
-                out.append(target).append(".__keys[").append(luaString(entry.key()))
-                    .append("] = true\n");
+                out.append("__orderAdd(").append(target).append(", ")
+                    .append(luaString(entry.key())).append(")\n");
             }
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
         }
@@ -1260,12 +1260,32 @@ public final class LuaSemanticEmitter {
             if (boundary != null) {
                 KindPayload.BoundaryPayload boundaryPayload =
                     (KindPayload.BoundaryPayload) boundary.payload();
-                emitBoundaryStart(boundary, target, boundaryPayload.descriptor());
-                out.append("__chk = __bcheck(")
+                // Custom boundary START: the input atom renders the actual
+                // value kind (the oracle's atomOf — a wrong-kind present
+                // value atomizes as its own kind).
+                out.append("__ev(").append(luaString(opKey(boundary.opId())))
+                    .append(", \"START\", \"BOUNDARY\", ")
+                    .append(luaString(boundary.contract().canonicalDigest()))
+                    .append(", ")
+                    .append(luaString(parentKey(boundary.origin().parentOpId())))
+                    .append(", {__rawArgAtom(")
+                    .append(luaString(staticKind(boundaryPayload.descriptor())))
+                    .append(", ").append(target).append(")}, nil, nil)\n");
+                out.append("__okB, __chkB = pcall(__bcheck, ")
                     .append(luaString(descriptorText(boundaryPayload.descriptor())))
-                    .append(", ").append(luaString(staticKind(boundaryPayload.descriptor())))
+                    .append(", ")
+                    .append(luaString(staticKind(boundaryPayload.descriptor())))
                     .append(", ").append(target).append(")\n");
-                out.append(target).append(" = __chk\n");
+                out.append("if not __okB then\n");
+                out.append("  __chkB.o = ").append(luaString(originOf(boundary)))
+                    .append("\n");
+                emitFailureEvent(boundary.opId(), "BOUNDARY", boundary,
+                    "__errtext(__chkB)");
+                emitFailureEvent(op.opId(), op.kind().name(), op,
+                    "__errtext(__chkB)");
+                out.append("  error(__chkB, 0)\n");
+                out.append("end\n");
+                out.append(target).append(" = __chkB\n");
                 emitBoundarySuccess(boundary, target, boundaryPayload.descriptor());
                 emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
                 return;
@@ -1549,8 +1569,8 @@ public final class LuaSemanticEmitter {
             out.append(slot(payload.table())).append("[")
                 .append(luaString(payload.key())).append("] = ")
                 .append(slot(payload.value())).append("\n");
-            out.append(slot(payload.table())).append(".__keys[")
-                .append(luaString(payload.key())).append("] = true\n");
+            out.append("__orderAdd(").append(slot(payload.table())).append(", ")
+                .append(luaString(payload.key())).append(")\n");
             emitPlainSuccess(op);
         }
 
@@ -1560,8 +1580,8 @@ public final class LuaSemanticEmitter {
             emitStart(op);
             out.append(slot(payload.table())).append("[")
                 .append(luaString(payload.key())).append("] = nil\n");
-            out.append(slot(payload.table())).append(".__keys[")
-                .append(luaString(payload.key())).append("] = nil\n");
+            out.append("__orderRemove(").append(slot(payload.table())).append(", ")
+                .append(luaString(payload.key())).append(")\n");
             emitPlainSuccess(op);
         }
 
@@ -1634,8 +1654,8 @@ public final class LuaSemanticEmitter {
             out.append("else\n");
             out.append("  ").append(container).append("[").append(slotName)
                 .append(".k] = ").append(value).append("\n");
-            out.append("  ").append(container).append(".__keys[").append(slotName)
-                .append(".k] = true\n");
+            out.append("  __orderAdd(").append(container).append(", ").append(slotName)
+                .append(".k)\n");
             out.append("end\n");
             emitPlainSuccess(op);
         }
@@ -1655,8 +1675,8 @@ public final class LuaSemanticEmitter {
             out.append("else\n");
             out.append("  ").append(container).append("[").append(slotName)
                 .append(".k] = nil\n");
-            out.append("  ").append(container).append(".__keys[").append(slotName)
-                .append(".k] = nil\n");
+            out.append("  __orderRemove(").append(container).append(", ")
+                .append(slotName).append(".k)\n");
             out.append("end\n");
             emitPlainSuccess(op);
         }
@@ -2207,21 +2227,59 @@ public final class LuaSemanticEmitter {
         private void emitStdlib(SemanticOp op) {
             KindPayload.StdlibCallPayload payload =
                 (KindPayload.StdlibCallPayload) op.payload();
-            emitStart(op);
+            // The custom START: the operand atoms render the actual value
+            // kind (the oracle's atomOf — a dynamic argument at a declared
+            // boundary atomizes as its own kind), never the declared kind.
+            out.append("__ev(").append(luaString(opKey(op.opId())))
+                .append(", \"START\", \"STDLIB_CALL\", ")
+                .append(luaString(op.contract().canonicalDigest())).append(", ")
+                .append(luaString(parentKey(op.origin().parentOpId()))).append(", {");
+            for (int i = 0; i < payload.args().size(); i++) {
+                if (i > 0) {
+                    out.append(", ");
+                }
+                out.append("__rawArgAtom(")
+                    .append(luaString(staticKind(op.operandTypes().get(i))))
+                    .append(", ").append(slot(payload.args().get(i))).append(")");
+            }
+            out.append("}, nil, nil)\n");
+            // The closed STDLIB_PARAMETER boundaries in one-based declared
+            // order: a failing boundary publishes the boundary FAILURE and
+            // the op FAILURE events with the boundary origin, then rethrows
+            // (the exact oracle event sequence — never a silent terminal).
             List<SemanticOp> paramBoundaries = stdlibParamBoundaries(op);
             for (SemanticOp boundary : paramBoundaries) {
                 KindPayload.BoundaryPayload boundaryPayload =
                     (KindPayload.BoundaryPayload) boundary.payload();
-                emitBoundaryStart(boundary, slot(boundaryPayload.input()),
-                    boundaryPayload.descriptor());
-                out.append("__chk = __bcheck(")
+                // Custom boundary START: the input atom renders the actual
+                // value kind (the oracle's atomOf).
+                out.append("__ev(").append(luaString(opKey(boundary.opId())))
+                    .append(", \"START\", \"BOUNDARY\", ")
+                    .append(luaString(boundary.contract().canonicalDigest()))
+                    .append(", ")
+                    .append(luaString(parentKey(boundary.origin().parentOpId())))
+                    .append(", {__rawArgAtom(")
+                    .append(luaString(staticKind(boundaryPayload.descriptor())))
+                    .append(", ").append(slot(boundaryPayload.input()))
+                    .append(")}, nil, nil)\n");
+                out.append("__okB, __chkB = pcall(__bcheck, ")
                     .append(luaString(descriptorText(boundaryPayload.descriptor())))
                     .append(", ")
                     .append(luaString(staticKind(boundaryPayload.descriptor())))
                     .append(", ").append(slot(boundaryPayload.input())).append(")\n");
-                emitBoundarySuccess(boundary, "__chk", boundaryPayload.descriptor());
+                out.append("if not __okB then\n");
+                out.append("  __chkB.o = ").append(luaString(originOf(boundary)))
+                    .append("\n");
+                emitFailureEvent(boundary.opId(), "BOUNDARY", boundary,
+                    "__errtext(__chkB)");
+                emitFailureEvent(op.opId(), op.kind().name(), op,
+                    "__errtext(__chkB)");
+                out.append("  error(__chkB, 0)\n");
+                out.append("end\n");
+                emitBoundarySuccess(boundary, "__chkB", boundaryPayload.descriptor());
             }
             SemanticOp returnBoundary = stdlibReturnBoundary(op);
+            String target = slot((ValueId) op.result());
             if (payload.function() == deal.semantic.ir.StdlibFunctionId.CONSOLE_LOG
                     || payload.function() == deal.semantic.ir.StdlibFunctionId.CONSOLE_ERROR) {
                 StringBuilder textExpr = new StringBuilder();
@@ -2234,25 +2292,66 @@ public final class LuaSemanticEmitter {
                 if (textExpr.length() == 0) {
                     textExpr.append("\"\"");
                 }
-                out.append("io.write(").append(textExpr).append("..\"\\n\")\n");
-                out.append("io.stdout:flush()\n");
+                if (payload.function() == deal.semantic.ir.StdlibFunctionId.CONSOLE_LOG) {
+                    out.append("io.write(").append(textExpr).append("..\"\\n\")\n");
+                    out.append("io.stdout:flush()\n");
+                } else {
+                    out.append("io.stderr:write(").append(textExpr)
+                        .append("..\"\\n\")\n");
+                    out.append("io.stderr:flush()\n");
+                }
                 if (trace) {
                     out.append("io.stderr:write(\"F|CONSOLE_WRITE|\"..__esc(")
                         .append(textExpr).append(")..\"\\n\")\n");
                     out.append("io.stderr:flush()\n");
                 }
+                out.append(target).append(" = nil\n");
+            } else {
+                // The in-target stdlib algorithm over the
+                // boundary-admitted carriers: an algorithm failure
+                // publishes the op FAILURE event and raises the exact
+                // closed projection at the call origin (the __stdlib
+                // helper converts it through the fail-closed pattern).
+                out.append(target).append(" = __stdlib(")
+                    .append(luaString(payload.function().name())).append(", ")
+                    .append(luaString(opKey(op.opId()))).append(", ")
+                    .append(luaString(op.contract().canonicalDigest())).append(", ")
+                    .append(luaString(parentKey(op.origin().parentOpId()))).append(", ")
+                    .append(luaString(originOf(op)));
+                for (ValueId arg : payload.args()) {
+                    out.append(", ").append(slot(arg));
+                }
+                out.append(")\n");
             }
-            String target = slot((ValueId) op.result());
-            out.append(target).append(" = nil\n");
             if (returnBoundary != null) {
                 KindPayload.BoundaryPayload boundaryPayload =
                     (KindPayload.BoundaryPayload) returnBoundary.payload();
-                emitBoundaryStart(returnBoundary, target, boundaryPayload.descriptor());
-                out.append("__chk = __bcheck(")
+                // Custom boundary START: the result atom renders the
+                // actual value kind (the oracle's atomOf).
+                out.append("__ev(").append(luaString(opKey(returnBoundary.opId())))
+                    .append(", \"START\", \"BOUNDARY\", ")
+                    .append(luaString(returnBoundary.contract().canonicalDigest()))
+                    .append(", ")
+                    .append(luaString(parentKey(returnBoundary.origin().parentOpId())))
+                    .append(", {__rawArgAtom(")
+                    .append(luaString(staticKind(boundaryPayload.descriptor())))
+                    .append(", ").append(target)
+                    .append(")}, nil, nil)\n");
+                out.append("__okB, __chkB = pcall(__bcheck, ")
                     .append(luaString(descriptorText(boundaryPayload.descriptor())))
-                    .append(", ").append(luaString("null")).append(", ").append(target)
-                    .append(")\n");
-                out.append(target).append(" = __chk\n");
+                    .append(", ")
+                    .append(luaString(staticKind(boundaryPayload.descriptor())))
+                    .append(", ").append(target).append(")\n");
+                out.append("if not __okB then\n");
+                out.append("  __chkB.o = ").append(luaString(originOf(returnBoundary)))
+                    .append("\n");
+                emitFailureEvent(returnBoundary.opId(), "BOUNDARY", returnBoundary,
+                    "__errtext(__chkB)");
+                emitFailureEvent(op.opId(), op.kind().name(), op,
+                    "__errtext(__chkB)");
+                out.append("  error(__chkB, 0)\n");
+                out.append("end\n");
+                out.append(target).append(" = __chkB\n");
                 emitBoundarySuccess(returnBoundary, target, boundaryPayload.descriptor());
             }
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
@@ -2578,6 +2677,7 @@ public final class LuaSemanticEmitter {
             return null;
         }
 
+        /** The STDLIB_PARAMETER children in one-based declared order. */
         private List<SemanticOp> stdlibParamBoundaries(SemanticOp op) {
             List<SemanticOp> result = new ArrayList<>();
             for (SemanticOp candidate : opsById.values()) {
@@ -2588,6 +2688,8 @@ public final class LuaSemanticEmitter {
                     result.add(candidate);
                 }
             }
+            result.sort(java.util.Comparator.comparingLong(candidate ->
+                candidate.opId().id()));
             return result;
         }
 
@@ -4548,12 +4650,18 @@ end
 local function __actualOf(staticKind, v)
   if v == __MISSING then return "missing" end
   if v == nil then return "null" end
+  if type(v) == "table" and v.__jn then return v.k end
   local t = type(v)
   if t == "boolean" then return "boolean" end
   if t == "number" then
     local inner = staticKind
     if string.sub(staticKind, 1, 9) == "nullable:" then inner = string.sub(staticKind, 10) end
     if inner == "int" then return "int" end
+    if inner == "number" then return "number" end
+    -- A number at a non-number declared kind (a dynamic read): integral
+    -- values carry the int kind (int-typed positions), the rest the
+    -- number kind.
+    if v % 1 == 0 then return "int" end
     return "number"
   end
   if t == "string" then return "string" end
@@ -4576,6 +4684,10 @@ end
 local function __rawAtom(kind, v)
   if v == __MISSING then return "missing" end
   if v == nil then return "null" end
+  if type(v) == "table" and v.__jn then
+    if v.k == "int" then return "int:"..tostring(v.d) end
+    return __atom("number", v.d)
+  end
   if type(v) == "boolean" then return "bool:"..tostring(v) end
   if type(v) == "number" then
     local inner = kind
@@ -4608,15 +4720,53 @@ local function __bcheck(desc, staticKind, v)
     if type(v) == "boolean" then return v end
     return fail("boolean")
   elseif desc == "int" then
-    if type(v) == "number" and v % 1 == 0 then
-      if v ~= v then return fail("int") end
-      if v == math.huge or v == -math.huge then return fail("int") end
-      if v >= -2147483648 and v <= 2147483647 then return v end
-      return error(__failExpr("E8004", "int out of range", "-", "int", actual), 0)
+    -- The parsed-number tag of JSON_PARSE: an int carrier passes its
+    -- integral value; a number carrier runs the pinned int ladder
+    -- (NaN → infinity → non-integer → E8004 range) with the exact
+    -- actual tokens.
+    if type(v) == "table" and v.__jn then
+      if v.k == "int" then return v.d end
+      if v.d ~= v.d then
+        return error(__failExpr("E8001", "expected int, got NaN", "-", "int",
+          "NaN"), 0)
+      end
+      if v.d == math.huge or v.d == -math.huge then
+        return error(__failExpr("E8001", "expected int, got infinity", "-", "int",
+          "infinity"), 0)
+      end
+      if v.d % 1 ~= 0 then
+        return error(__failExpr("E8001", "expected int, got non-integer number", "-",
+          "int", "non-integer number"), 0)
+      end
+      if v.d < -2147483648 or v.d > 2147483647 then
+        return error(__failExpr("E8004", "int out of range", "-", "int",
+          "number"), 0)
+      end
+      return v.d
+    end
+    if type(v) == "number" then
+      if v ~= v then
+        return error(__failExpr("E8001", "expected int, got NaN", "-", "int",
+          "NaN"), 0)
+      end
+      if v == math.huge or v == -math.huge then
+        return error(__failExpr("E8001", "expected int, got infinity", "-", "int",
+          "infinity"), 0)
+      end
+      if v % 1 ~= 0 then
+        return error(__failExpr("E8001", "expected int, got non-integer number", "-",
+          "int", "non-integer number"), 0)
+      end
+      if v < -2147483648 or v > 2147483647 then
+        return error(__failExpr("E8004", "int out of range", "-", "int",
+          "number"), 0)
+      end
+      return v
     end
     return fail("int")
   elseif desc == "number" then
     if type(v) == "number" then return v end
+    if type(v) == "table" and v.__jn then return v.d end
     return fail("number")
   elseif desc == "string" then
     if type(v) == "string" then return v end
@@ -5040,6 +5190,614 @@ local function __asyncDrain()
     i = i + 1
   end
   __ready = {}
+end
+-- The first-insertion order discipline of the shared table carrier
+-- (the SemanticTable order contract): TABLE_NEW / MEMBER_WRITE /
+-- INDEX_WRITE append a key on first insertion, MEMBER_DELETE /
+-- INDEX_DELETE remove the order slot, and a reinsertion appends it.
+-- TABLE_KEYS and JSON_STRINGIFY consume exactly this order.
+local function __orderAdd(t, k)
+  if not t.__keys[k] then
+    t.__order[#t.__order + 1] = k
+  end
+  t.__keys[k] = true
+end
+local function __orderRemove(t, k)
+  t.__keys[k] = nil
+  for i = 1, #t.__order do
+    if t.__order[i] == k then
+      table.remove(t.__order, i)
+      return
+    end
+  end
+end
+-- ==== stdlib realization (the closed 20-operation table) ====
+local function __u8next(s, i)
+  local b = string.byte(s, i)
+  if b == nil then return nil, nil end
+  if b < 128 then return b, i + 1 end
+  local n = 2
+  if b >= 224 then n = 3 end
+  if b >= 240 then n = 4 end
+  local cp = b % (2 ^ (8 - n))
+  for k = 1, n - 1 do
+    cp = cp * 64 + (string.byte(s, i + k) % 64)
+  end
+  return cp, i + n
+end
+local function __u8len(cp)
+  if cp < 128 then return 1 end
+  if cp < 2048 then return 2 end
+  if cp < 65536 then return 3 end
+  return 4
+end
+local function __cps(s)
+  local out = {}
+  local pos = 1
+  while true do
+    local cp, np = __u8next(s, pos)
+    if cp == nil then return out end
+    out[#out + 1] = cp
+    pos = np
+  end
+end
+local function __u8enc(cp)
+  if cp < 128 then return string.char(cp) end
+  if cp < 2048 then
+    return string.char(192 + math.floor(cp / 64), 128 + cp % 64)
+  end
+  if cp < 65536 then
+    return string.char(224 + math.floor(cp / 4096),
+      128 + math.floor(cp / 64) % 64, 128 + cp % 64)
+  end
+  return string.char(240 + math.floor(cp / 262144),
+    128 + math.floor(cp / 4096) % 64, 128 + math.floor(cp / 64) % 64,
+    128 + cp % 64)
+end
+-- The canonical hex-float spelling (Double.toHexString parity; the
+-- single renderer of the SQRT_NEGATIVE actual).
+local function __numHex(v)
+  if v ~= v then return "NaN" end
+  if v == 0 and 1 / v < 0 then return "-0x0.0p0" end
+  local hex = string.format("%a", v)
+  hex = string.gsub(hex, "p(%+)(%d)", "p%2")
+  if not string.find(hex, ".", 1, true) then
+    hex = string.gsub(hex, "^(%-?0x[0-9a-f]+)p", "%1.0p")
+  end
+  return hex
+end
+-- The raw argument/result atom of the STDLIB_CALL surfaces (the op
+-- START and the STDLIB_PARAMETER/STDLIB_RETURN boundary STARTs): the
+-- value's actual kind, exactly the oracle's atomOf — a dynamic argument
+-- at a declared boundary atomizes as its own kind (an int-typed number
+-- renders the int atom, a number-typed value the hex float, a wrong-kind
+-- value its own kind) instead of crashing on the declared-kind
+-- rendering.
+local function __rawArgAtom(kind, v)
+  if v == __MISSING then return "missing" end
+  if v == nil then return "null" end
+  local t = type(v)
+  if t == "boolean" then return "bool:"..tostring(v) end
+  if t == "number" then
+    local inner = kind
+    if string.sub(kind, 1, 9) == "nullable:" then inner = string.sub(kind, 10) end
+    if inner == "int" then return "int:"..tostring(v) end
+    if inner == "number" then return __atom("number", v) end
+    if v % 1 == 0 then return "int:"..tostring(v) end
+    return __atom("number", v)
+  end
+  if t == "string" then return "str:"..__esc(v) end
+  if t == "table" then
+    if v.__jn then
+      if v.k == "int" then return "int:"..tostring(v.d) end
+      return __atom("number", v.d)
+    end
+    if v.__d then return "err:"..v.code..":"..__esc(v.m or "") end
+    return "ref:"..__allocId(v)
+  end
+  if t == "function" then return "ref:"..__allocId(v) end
+  return __atom(kind, v)
+end
+-- The Java Double.toString notation of one finite nonzero double: the
+-- shortest round-trippable digit string, plain notation when the
+-- decimal exponent is in [-3, 6], scientific d.dddEx otherwise, and a
+-- pinned ".0" suffix on integral plain forms.
+local function __jsonNumText(v)
+  local neg = false
+  if v < 0 or (v == 0 and 1 / v < 0) then neg = true; v = -v end
+  if v == 0 then return neg and "-0.0" or "0.0" end
+  local rep = nil
+  for p = 1, 17 do
+    local s = string.format("%."..p.."g", v)
+    if tonumber(s) == v then rep = s; break end
+  end
+  if rep == nil then rep = string.format("%.17g", v) end
+  local mant = rep
+  local epos0 = string.find(rep, "e", 1, true)
+  if epos0 then mant = string.sub(rep, 1, epos0 - 1) end
+  local digits = {}
+  for c in string.gmatch(mant, "%d") do digits[#digits + 1] = c end
+  while digits[1] == "0" do table.remove(digits, 1) end
+  while #digits > 1 and digits[#digits] == "0" do table.remove(digits, #digits) end
+  local es = string.format("%.17e", v)
+  local epos = string.find(es, "e", 1, true)
+  local k = tonumber(string.sub(es, epos + 1))
+  local ds = table.concat(digits)
+  local text
+  if k >= -3 and k <= 6 then
+    if k >= 0 then
+      if #ds <= k + 1 then
+        text = ds..string.rep("0", k + 1 - #ds)..".0"
+      else
+        text = string.sub(ds, 1, k + 1).."."..string.sub(ds, k + 2)
+      end
+    else
+      text = "0."..string.rep("0", -k - 1)..ds
+    end
+  else
+    local mant = string.sub(ds, 1, 1)
+    if #ds > 1 then mant = mant.."."..string.sub(ds, 2) else mant = mant..".0" end
+    text = mant.."E"..tostring(k)
+  end
+  if neg then text = "-"..text end
+  return text
+end
+-- RFC-8259 string escaping: quote/backslash escaped, the named short
+-- escapes, every other control scalar as the lowercase four-hex-digit
+-- escape, every other byte (surrogate pairs included) raw — built
+-- through string.char, so the emitted prelude carries no escape
+-- ambiguity.
+local function __jsonEscape(s)
+  local out = { string.char(34) }
+  for i = 1, #s do
+    local b = string.byte(s, i)
+    if b == 34 then out[#out + 1] = string.char(92, 34)
+    elseif b == 92 then out[#out + 1] = string.char(92, 92)
+    elseif b == 8 then out[#out + 1] = string.char(92, 98)
+    elseif b == 12 then out[#out + 1] = string.char(92, 102)
+    elseif b == 10 then out[#out + 1] = string.char(92, 110)
+    elseif b == 13 then out[#out + 1] = string.char(92, 114)
+    elseif b == 9 then out[#out + 1] = string.char(92, 116)
+    elseif b < 32 then
+      out[#out + 1] = string.char(92, 117)
+      out[#out + 1] = string.format("%04x", b)
+    else out[#out + 1] = string.sub(s, i, i) end
+  end
+  out[#out + 1] = string.char(34)
+  return table.concat(out)
+end
+local function __subseqIndexOf(hay, needle, from)
+  if #needle == 0 then
+    if from <= #hay then return from end
+    return -1
+  end
+  local limit = #hay - #needle + 1
+  for i = math.max(0, from) + 1, limit do
+    local ok = true
+    for j = 1, #needle do
+      if hay[i + j - 1] ~= needle[j] then ok = false; break end
+    end
+    if ok then return i - 1 end
+  end
+  return -1
+end
+-- The in-target realization of the closed stdlib table: the parameter
+-- boundaries already ran, so the carriers are boundary-admitted (valid
+-- scalar strings, integral numbers, tables). An algorithm failure
+-- publishes the op FAILURE event and raises the exact closed projection
+-- at the call origin with the active frames.
+local function __stdlib(fn, opKey, digest, parent, origin, ...)
+  local __args = {...}
+  local function __sfail(code, msg, expected, actual)
+    local e = __failExpr(code, msg, origin, expected, actual)
+    __ev(opKey, "FAILURE", "STDLIB_CALL", digest, parent, {}, nil, __errtext(e))
+    error(e, 0)
+  end
+  local function __int32Gate(value)
+    if value < -2147483648 or value > 2147483647 then
+      __sfail("E8004", "int out of range", nil, nil)
+    end
+    return value
+  end
+  if fn == "STRING_LENGTH" then
+    return __int32Gate(#__cps(__args[1]))
+  elseif fn == "STRING_SUBSTRING" then
+    local cps = __cps(__args[1])
+    local lo = math.max(0, __args[2])
+    local hi = math.min(math.max(0, __args[3]), #cps)
+    if lo >= hi then return "" end
+    local out = {}
+    for i = lo + 1, hi do out[#out + 1] = __u8enc(cps[i]) end
+    return table.concat(out)
+  elseif fn == "STRING_CONTAINS" then
+    return __subseqIndexOf(__cps(__args[1]), __cps(__args[2]), 0) >= 0
+  elseif fn == "STRING_STARTS_WITH" then
+    local input = __cps(__args[1])
+    local part = __cps(__args[2])
+    if #part > #input then return false end
+    for i = 1, #part do
+      if input[i] ~= part[i] then return false end
+    end
+    return true
+  elseif fn == "STRING_ENDS_WITH" then
+    local input = __cps(__args[1])
+    local part = __cps(__args[2])
+    if #part > #input then return false end
+    for i = 1, #part do
+      if input[#input - #part + i] ~= part[i] then return false end
+    end
+    return true
+  elseif fn == "STRING_REPLACE" then
+    local input = __cps(__args[1])
+    local from = __cps(__args[2])
+    local to = __cps(__args[3])
+    if #from == 0 then return __args[1] end
+    local out = {}
+    local cursor = 1
+    while cursor <= #input - #from + 1 do
+      local ok = true
+      for j = 1, #from do
+        if input[cursor + j - 1] ~= from[j] then ok = false; break end
+      end
+      if ok then
+        for j = 1, #to do out[#out + 1] = __u8enc(to[j]) end
+        cursor = cursor + #from
+      else
+        out[#out + 1] = __u8enc(input[cursor])
+        cursor = cursor + 1
+      end
+    end
+    for i = cursor, #input do out[#out + 1] = __u8enc(input[i]) end
+    return table.concat(out)
+  elseif fn == "STRING_SPLIT" then
+    local input = __cps(__args[1])
+    local sep = __cps(__args[2])
+    if #input == 0 then return {__a = true, __n = 0} end
+    if #sep == 0 then
+      local singles = {__a = true, __n = #input}
+      for i = 1, #input do singles[i] = __u8enc(input[i]) end
+      return singles
+    end
+    local parts = {__a = true, __n = 0}
+    local cursor = 1
+    while true do
+      local occ = __subseqIndexOf(input, sep, cursor - 1)
+      if occ < 0 then break end
+      local piece = {}
+      for i = cursor, occ do piece[#piece + 1] = __u8enc(input[i]) end
+      parts.__n = parts.__n + 1
+      parts[parts.__n] = table.concat(piece)
+      cursor = occ + 1 + #sep
+    end
+    local tail = {}
+    for i = cursor, #input do tail[#tail + 1] = __u8enc(input[i]) end
+    parts.__n = parts.__n + 1
+    parts[parts.__n] = table.concat(tail)
+    return parts
+  elseif fn == "STRING_TRIM" then
+    local cps = __cps(__args[1])
+    local function isTrim(cp) return (cp >= 9 and cp <= 13) or cp == 32 end
+    local first = 1
+    while first <= #cps and isTrim(cps[first]) do first = first + 1 end
+    local last = #cps
+    while last >= first and isTrim(cps[last]) do last = last - 1 end
+    local out = {}
+    for i = first, last do out[#out + 1] = __u8enc(cps[i]) end
+    return table.concat(out)
+  elseif fn == "TABLE_KEYS" then
+    local t = __args[1]
+    local keys = {__a = true, __n = #t.__order}
+    for i = 1, #t.__order do keys[i] = t.__order[i] end
+    return keys
+  elseif fn == "JSON_PARSE" then
+    local s = __args[1]
+    local pos = 1
+    local consumed = 0
+    local function atEnd() return pos > #s end
+    local function peek()
+      local cp = __u8next(s, pos)
+      if cp == nil then return -1 end
+      return cp
+    end
+    local function advance()
+      local cp = __u8next(s, pos)
+      pos = pos + __u8len(cp)
+      consumed = consumed + __u8len(cp)
+      return cp
+    end
+    local function parseFail(reason)
+      __sfail("E8001",
+        "JSON parse error at position "..(consumed + 1)..": "..reason, nil, nil)
+    end
+    local function skipWs()
+      while not atEnd() do
+        local c = peek()
+        if c ~= 32 and c ~= 9 and c ~= 10 and c ~= 13 then return end
+        advance()
+      end
+    end
+    local function hexDigit(c)
+      if c >= 48 and c <= 57 then return c - 48 end
+      if c >= 97 and c <= 102 then return c - 87 end
+      if c >= 65 and c <= 70 then return c - 55 end
+      return -1
+    end
+    local parseValue
+    local function parseHex4()
+      local value = 0
+      for i = 1, 4 do
+        if atEnd() then parseFail("invalid escape") end
+        local d = hexDigit(peek())
+        if d < 0 then parseFail("invalid escape") end
+        advance()
+        value = value * 16 + d
+      end
+      return value
+    end
+    local function parseString()
+      advance()
+      local out = {}
+      while true do
+        if atEnd() then parseFail("unterminated string") end
+        local c = peek()
+        if c == 34 then advance(); return table.concat(out) end
+        if c == 92 then
+          advance()
+          if atEnd() then parseFail("unterminated string") end
+          local esc = peek()
+          if esc == 34 then advance(); out[#out + 1] = string.char(34)
+          elseif esc == 92 then advance(); out[#out + 1] = string.char(92)
+          elseif esc == 47 then advance(); out[#out + 1] = string.char(47)
+          elseif esc == 98 then advance(); out[#out + 1] = string.char(8)
+          elseif esc == 102 then advance(); out[#out + 1] = string.char(12)
+          elseif esc == 110 then advance(); out[#out + 1] = string.char(10)
+          elseif esc == 114 then advance(); out[#out + 1] = string.char(13)
+          elseif esc == 116 then advance(); out[#out + 1] = string.char(9)
+          elseif esc == 117 then
+            advance()
+            local cp = parseHex4()
+            if cp >= 55296 and cp <= 56319 then
+              if atEnd() or peek() ~= 92 then parseFail("unpaired surrogate escape") end
+              advance()
+              if atEnd() or peek() ~= 117 then parseFail("unpaired surrogate escape") end
+              advance()
+              local lo = parseHex4()
+              if lo < 56320 or lo > 57343 then parseFail("unpaired surrogate escape") end
+              cp = 65536 + (cp - 55296) * 1024 + (lo - 56320)
+            elseif cp >= 56320 and cp <= 57343 then
+              parseFail("unpaired surrogate escape")
+            end
+            out[#out + 1] = __u8enc(cp)
+          else
+            parseFail("invalid escape")
+          end
+        elseif c < 32 then
+          parseFail("unexpected character")
+        else
+          out[#out + 1] = __u8enc(advance())
+        end
+      end
+    end
+    local function parseLiteral(word, value)
+      for i = 1, #word do
+        if atEnd() then parseFail("unexpected end of input") end
+        if peek() ~= string.byte(word, i) then parseFail("unexpected character") end
+        advance()
+      end
+      return value
+    end
+    local function parseObject()
+      advance()
+      local t = {__t = true, __keys = {}, __order = {}}
+      skipWs()
+      if not atEnd() and peek() == 125 then advance(); return t end
+      while true do
+        skipWs()
+        if atEnd() then parseFail("unexpected end of input") end
+        if peek() ~= 34 then parseFail("missing key") end
+        local key = parseString()
+        skipWs()
+        if atEnd() or peek() ~= 58 then parseFail("missing colon") end
+        advance()
+        skipWs()
+        local value = parseValue()
+        t[key] = value
+        __orderAdd(t, key)
+        skipWs()
+        if atEnd() then parseFail("unterminated object") end
+        local c = peek()
+        if c == 44 then advance()
+        elseif c == 125 then advance(); return t
+        else parseFail("missing comma") end
+      end
+    end
+    local function parseArray()
+      advance()
+      local a = {__a = true, __n = 0}
+      skipWs()
+      if not atEnd() and peek() == 93 then advance(); return a end
+      while true do
+        skipWs()
+        if atEnd() then parseFail("unexpected end of input") end
+        local value = parseValue()
+        a.__n = a.__n + 1
+        if value == nil then a[a.__n] = __NULL else a[a.__n] = value end
+        skipWs()
+        if atEnd() then parseFail("unterminated array") end
+        local c = peek()
+        if c == 44 then advance()
+        elseif c == 93 then advance(); return a
+        else parseFail("missing comma") end
+      end
+    end
+    local function parseNumber()
+      local startPos = pos
+      local neg = false
+      if peek() == 45 then neg = true; advance() end
+      if atEnd() then parseFail("invalid number") end
+      local c = peek()
+      if c < 48 or c > 57 then parseFail("invalid number") end
+      local integerForm = true
+      if c == 48 then
+        advance()
+        if not atEnd() and peek() >= 48 and peek() <= 57 then
+          parseFail("leading zero")
+        end
+      else
+        advance()
+        while not atEnd() and peek() >= 48 and peek() <= 57 do advance() end
+      end
+      if not atEnd() and peek() == 46 then
+        integerForm = false
+        advance()
+        if atEnd() or peek() < 48 or peek() > 57 then parseFail("invalid number") end
+        while not atEnd() and peek() >= 48 and peek() <= 57 do advance() end
+      end
+      if not atEnd() and (peek() == 101 or peek() == 69) then
+        integerForm = false
+        advance()
+        if not atEnd() and (peek() == 43 or peek() == 45) then advance() end
+        if atEnd() or peek() < 48 or peek() > 57 then parseFail("invalid number") end
+        while not atEnd() and peek() >= 48 and peek() <= 57 do advance() end
+      end
+      local text = string.sub(s, startPos, pos - 1)
+      if integerForm then
+        local ds = text
+        if neg then ds = string.sub(text, 2) end
+        local sig = ds
+        while #sig > 1 and string.sub(sig, 1, 1) == "0" do
+          sig = string.sub(sig, 2)
+        end
+        local outOfRange = false
+        if #sig > 10 then
+          outOfRange = true
+        elseif #sig == 10 then
+          local limit = neg and "2147483648" or "2147483647"
+          outOfRange = sig > limit
+        end
+        if not outOfRange then
+          local value = tonumber(text)
+          if value == 0 then value = 0 end
+          return {__jn = true, k = "int", d = value}
+        end
+      end
+      return {__jn = true, k = "number", d = tonumber(text)}
+    end
+    parseValue = function()
+      if atEnd() then parseFail("unexpected end of input") end
+      local c = peek()
+      if c == 123 then return parseObject() end
+      if c == 91 then return parseArray() end
+      if c == 34 then return parseString() end
+      if c == 116 then return parseLiteral("true", true) end
+      if c == 102 then return parseLiteral("false", false) end
+      if c == 110 then return parseLiteral("null", nil) end
+      if c == 45 or (c >= 48 and c <= 57) then return parseNumber() end
+      parseFail("unexpected character")
+    end
+    skipWs()
+    local value = parseValue()
+    skipWs()
+    if not atEnd() then parseFail("trailing content") end
+    return value
+  elseif fn == "JSON_STRINGIFY" then
+    local out = {}
+    local path = {}
+    local function sfFail(actual, fieldPath)
+      __sfail("E8001",
+        "value at "..fieldPath.." is not JSON serializable: "..actual, nil, nil)
+    end
+    local sfValue
+    sfValue = function(v, fieldPath)
+      if v == nil then out[#out + 1] = "null"; return end
+      if v == __MISSING then sfFail("missing", fieldPath); return end
+      local t = type(v)
+      if t == "boolean" then
+        out[#out + 1] = (v and "true" or "false")
+        return
+      end
+      if t == "number" then
+        if v ~= v or v == math.huge or v == -math.huge then
+          sfFail("number", fieldPath)
+        end
+        if v % 1 == 0 then out[#out + 1] = tostring(v)
+        else out[#out + 1] = __jsonNumText(v) end
+        return
+      end
+      if t == "string" then out[#out + 1] = __jsonEscape(v); return end
+      if t == "table" then
+        if v.__jn then
+          if v.k == "int" then out[#out + 1] = tostring(v.d)
+          else
+            if v.d ~= v.d or v.d == math.huge or v.d == -math.huge then
+              sfFail("number", fieldPath)
+            end
+            out[#out + 1] = __jsonNumText(v.d)
+          end
+          return
+        end
+        if v.__a then
+          if path[v] then sfFail("array", fieldPath); return end
+          path[v] = true
+          out[#out + 1] = "["
+          for i = 1, v.__n do
+            if i > 1 then out[#out + 1] = "," end
+            local elem = v[i]
+            if elem == __NULL then elem = nil end
+            sfValue(elem, fieldPath == "" and tostring(i - 1)
+              or fieldPath.."."..tostring(i - 1))
+          end
+          out[#out + 1] = "]"
+          path[v] = nil
+          return
+        end
+        if v.__t then
+          if path[v] then sfFail("table", fieldPath); return end
+          path[v] = true
+          out[#out + 1] = "{"
+          for i = 1, #v.__order do
+            if i > 1 then out[#out + 1] = "," end
+            local k = v.__order[i]
+            out[#out + 1] = __jsonEscape(k)
+            out[#out + 1] = ":"
+            sfValue(v[k], fieldPath == "" and k or fieldPath.."."..k)
+          end
+          out[#out + 1] = "}"
+          path[v] = nil
+          return
+        end
+        if v.__fn ~= nil or v.__f then sfFail("function", fieldPath); return end
+        if v.__d then sfFail("class:@builtin/Error", fieldPath); return end
+        sfFail("table", fieldPath)
+        return
+      end
+      if t == "function" then sfFail("function", fieldPath); return end
+      sfFail("table", fieldPath)
+    end
+    sfValue(__args[1], "")
+    return table.concat(out)
+  elseif fn == "MATH_FLOOR" then
+    return math.floor(__args[1])
+  elseif fn == "MATH_CEIL" then
+    return math.ceil(__args[1])
+  elseif fn == "MATH_SQRT" then
+    if __args[1] < 0 then
+      __sfail("E8001", "sqrt of negative number", nil, __numHex(__args[1]))
+    end
+    return math.sqrt(__args[1])
+  elseif fn == "MATH_ABS_INT" then
+    local v = __args[1]
+    return __int32Gate(v < 0 and -v or v)
+  elseif fn == "MATH_ABS_NUMBER" then
+    local v = __args[1]
+    if v == 0 then return 0 end
+    return math.abs(v)
+  elseif fn == "MATH_MIN_INT" then
+    return math.min(__args[1], __args[2])
+  elseif fn == "MATH_MAX_INT" then
+    return math.max(__args[1], __args[2])
+  end
+  __sfail("E8001", "unknown stdlib call "..tostring(fn), nil, nil)
 end
 """;
 }
