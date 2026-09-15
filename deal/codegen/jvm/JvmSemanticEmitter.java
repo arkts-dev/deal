@@ -1,17 +1,21 @@
 package deal.codegen.jvm;
 
 import deal.semantic.ir.AdaptSourceRef;
+import deal.semantic.ir.AsyncTokenId;
+import deal.semantic.ir.AsyncTokenOwner;
 import deal.semantic.ir.BindingCellKind;
 import deal.semantic.ir.BindingId;
 import deal.semantic.ir.BlockId;
 import deal.semantic.ir.BoundaryKind;
 import deal.semantic.ir.ChainOperandCompletion;
+import deal.semantic.ir.ExternalAsyncLink;
 import deal.semantic.ir.FunctionExecutionBinding;
 import deal.semantic.ir.FunctionId;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredFunction;
 import deal.semantic.ir.LoweredModuleUnit;
 import deal.semantic.ir.OpId;
+import deal.semantic.ir.ParameterBoundaryMode;
 import deal.semantic.ir.RuntimeDescriptor;
 import deal.semantic.ir.ScalarValue;
 import deal.semantic.ir.SemanticOp;
@@ -143,12 +147,7 @@ public final class JvmSemanticEmitter {
             if (className != null) {
                 this.className = className;
             } else {
-                String path = unit.moduleId().path();
-                StringBuilder name = new StringBuilder("SharedM");
-                for (char c : path.toCharArray()) {
-                    name.append(Character.isJavaIdentifierPart(c) ? c : '_');
-                }
-                this.className = name.toString();
+                this.className = sharedClassName(unit.moduleId().path());
             }
             for (SemanticOp op : unit.ops()) {
                 opsById.put(op.opId(), op);
@@ -174,6 +173,19 @@ public final class JvmSemanticEmitter {
             ownedChildren.addAll(structuralOwned);
             ChainOperandCompletion.registerChainOperandOwners(unit, structuralOwned,
                 ownedChildren);
+            // The nested source ASYNC_START of an adapter-over-async task
+            // executes under its outer op's arm, never at its flat
+            // block-list position (the oracle's UnitState rule).
+            for (SemanticOp op : unit.ops()) {
+                if (op.kind() == SemanticOpKind.ASYNC_START) {
+                    for (SemanticOp candidate : unit.ops()) {
+                        if (candidate.kind() == SemanticOpKind.ASYNC_START
+                                && op.opId().equals(candidate.origin().parentOpId())) {
+                            ownedChildren.add(candidate.opId());
+                        }
+                    }
+                }
+            }
             if (!entryModule) {
                 // A non-entry module never runs its ENTRY_INVOKE delegation
                 // (the retained emitter invokes main() only from the entry
@@ -190,6 +202,15 @@ public final class JvmSemanticEmitter {
                     }
                 }
             }
+        }
+
+        /** The shared conformance class name of a module path (cross-module ABI). */
+        static String sharedClassName(String modulePath) {
+            StringBuilder name = new StringBuilder("SharedM");
+            for (char c : modulePath.toCharArray()) {
+                name.append(Character.isJavaIdentifierPart(c) ? c : '_');
+            }
+            return name.toString();
         }
 
         // -- naming ---------------------------------------------------------------
@@ -372,13 +393,20 @@ public final class JvmSemanticEmitter {
                     emitThunkMethod(op, thunk.blockId());
                 }
             }
-            // main.
-            out.append("  public static void main(String[] args) {\n");
+            // The module-init walk, exposed as the deferred-main entry (the
+            // scenario host drives it explicitly for an async-entry
+            // invocation or a multi-module drive): setup plus the walk;
+            // main publishes the retained terminal contract around it.
+            out.append("  public static void dealMain() {\n");
             out.append("    JvmRuntime.setModule(MODULE);\n");
             out.append("    JvmRuntime.setTraceEnabled(").append(trace).append(");\n");
+            emitBlockOps(unit.moduleInit().initBlock(), 2);
+            out.append("  }\n");
+            // main.
+            out.append("  public static void main(String[] args) {\n");
             if (trace) {
                 out.append("    try {\n");
-                emitBlockOps(unit.moduleInit().initBlock(), 3);
+                out.append("      dealMain();\n");
                 out.append("      System.err.println(\"R|success|null\");\n");
                 out.append("      System.err.flush();\n");
                 out.append("    } catch (JvmRuntime.DealError e) {\n");
@@ -389,7 +417,7 @@ public final class JvmSemanticEmitter {
                 // Production terminal: a DEAL failure publishes the
                 // retained DEAL_ERROR_CODE line on stdout and exits 1.
                 out.append("    try {\n");
-                emitBlockOps(unit.moduleInit().initBlock(), 3);
+                out.append("      dealMain();\n");
                 out.append("    } catch (JvmRuntime.DealError e) {\n");
                 out.append("      System.out.println(\"DEAL_ERROR_CODE: \" + e.code);\n");
                 out.append("      System.out.flush();\n");
@@ -405,6 +433,20 @@ public final class JvmSemanticEmitter {
             for (SemanticOp op : unit.ops()) {
                 if (op.kind() == SemanticOpKind.CALLBACK_INVOKE) {
                     emitCallbackInvoke(op, 1);
+                }
+            }
+            // The host-driven async-entry dispatch entries (async
+            // EXTERNAL_ENTRY): one per-unit static entry per recorded
+            // async export — the scenario host adapter's invocation
+            // surface (the E6 dispatch-entry pattern). The entry creates
+            // the callee's canonical task; the drive flag makes the
+            // top-level scenario invocation drain it and return the
+            // completion, while a cross-module caller passes the drive
+            // flag false (its AWAIT drains).
+            for (SemanticOp op : unit.ops()) {
+                if (op.kind() == SemanticOpKind.EXTERNAL_ENTRY
+                        && ((KindPayload.ExternalEntryPayload) op.payload()).async()) {
+                    emitAsyncEntry(op, 1);
                 }
             }
             out.append("}\n");
@@ -561,6 +603,8 @@ public final class JvmSemanticEmitter {
                 case RECURSIVE_GROUP_INIT -> emitRecursiveGroupInit(op, indent);
                 case FUNCTION_ADAPT -> emitFunctionAdapt(op, indent);
                 case CALLBACK_INVOKE -> emitCallbackInvoke(op, indent);
+                case ASYNC_START -> emitAsyncStart(op, indent);
+                case AWAIT -> emitAwait(op, indent);
                 case ASSIGN -> emitAssign(op, indent);
                 case DELETE -> emitDelete(op, indent);
                 case CALL -> emitCall(op, indent);
@@ -2501,6 +2545,352 @@ public final class JvmSemanticEmitter {
                     .append("), null);\n");
             }
             out.append(indent(indent)).append("  return __res;\n");
+            out.append(indent(indent)).append("}\n");
+        }
+
+        // -- async (E4, D13) ----------------------------------------------------------
+
+        /** The canonical referent token identity (alias chains resolve transitively). */
+        private long canonicalReferent(AsyncTokenId token) {
+            AsyncTokenId current = token;
+            while (current instanceof AsyncTokenId.Alias alias) {
+                current = alias.referent();
+            }
+            return current.tokenId();
+        }
+
+        /** The canonical referent's closed owner (statically resolved). */
+        private AsyncTokenOwner canonicalOwnerOf(AsyncTokenId token) {
+            AsyncTokenId current = token;
+            while (current instanceof AsyncTokenId.Alias alias) {
+                current = alias.referent();
+            }
+            return ((AsyncTokenId.Canonical) current).owner();
+        }
+
+        /** The canonical token atom of an ASYNC_START/EXTERNAL_ENTRY SUCCESS. */
+        private String tokenAtom(AsyncTokenId token) {
+            return switch (token) {
+                case AsyncTokenId.Canonical canonical -> "tok:" + canonical.tokenId()
+                    + ":" + canonical.owner().name();
+                case AsyncTokenId.Alias alias -> "alias:" + alias.tokenId() + "->"
+                    + canonicalReferent(alias.referent());
+            };
+        }
+
+        /** SUCCESS with a raw output atom expression (token atoms). */
+        private void emitTokenSuccess(SemanticOp op, String atomExpr, int indent) {
+            if (!trace) {
+                return;
+            }
+            out.append(indent(indent)).append("JvmRuntime.ev(MODULE, ")
+                .append(javaString(opKey(op.opId()))).append(", \"SUCCESS\", ")
+                .append(javaString(op.kind().name())).append(", ")
+                .append(javaString(op.contract().canonicalDigest())).append(", ")
+                .append(javaString(parentKey(op.origin().parentOpId())))
+                .append(", List.of(), ").append(atomExpr).append(", null);\n");
+        }
+
+        /** A boundary START event with a raw input atom expression. */
+        private void emitBoundaryStartAtom(SemanticOp boundary, String atomExpr,
+                                           int indent) {
+            if (!trace) {
+                return;
+            }
+            out.append(indent(indent)).append("JvmRuntime.ev(MODULE, ")
+                .append(javaString(opKey(boundary.opId()))).append(", \"START\", ")
+                .append("\"BOUNDARY\", ")
+                .append(javaString(boundary.contract().canonicalDigest())).append(", ")
+                .append(javaString(parentKey(boundary.origin().parentOpId())))
+                .append(", List.of(").append(atomExpr).append("), null, null);\n");
+        }
+
+        /** The nested source ASYNC_START parented to an adapter-over-async op. */
+        private SemanticOp nestedAsyncStartOf(SemanticOp outer) {
+            for (SemanticOp candidate : opsById.values()) {
+                if (candidate.kind() == SemanticOpKind.ASYNC_START
+                        && outer.opId().equals(candidate.origin().parentOpId())) {
+                    return candidate;
+                }
+            }
+            throw new IllegalStateException("the adapter-over-async task has no nested "
+                + "source ASYNC_START (producer defect)");
+        }
+
+        /**
+         * ASYNC_START (E4, D13 task creation): the parameter boundaries
+         * (the complete xN set under RUN — zero under
+         * ELIDED_BY_ADAPTER), then exactly one task record per call. A
+         * DEAL body task is a {@code CompletableFuture} completed by the
+         * module's run-local single-thread serial executor (never the JDK
+         * common pool); an adapter-over-async task resolves the D15
+         * source, checks the source signature, and executes the nested
+         * source op; a host operation starts through the artifact's
+         * host-seam entry (bad handle → the op's own E8010
+         * {@code ASYNC_OPERATION_HANDLE}); an external operation starts
+         * through the callee artifact's async-entry dispatch entry. The
+         * op's terminal publishes the canonical/alias token atom.
+         */
+        private void emitAsyncStart(SemanticOp op, int indent) {
+            KindPayload.AsyncStartPayload payload =
+                (KindPayload.AsyncStartPayload) op.payload();
+            AsyncTokenId token = (AsyncTokenId) op.result();
+            emitStart(op, indent);
+            // The argument expressions per position: the boundary-checked
+            // values (RUN) or the raw operand slots (ELIDED_BY_ADAPTER).
+            List<String> args = new ArrayList<>();
+            if (payload.parameterBoundaryMode() == ParameterBoundaryMode.RUN) {
+                for (OpId boundaryId : payload.parameterBoundaryOpIds()) {
+                    SemanticOp boundary = opsById.get(boundaryId);
+                    KindPayload.BoundaryPayload boundaryPayload =
+                        (KindPayload.BoundaryPayload) boundary.payload();
+                    emitBoundaryStart(boundary, slot(boundaryPayload.input()),
+                        boundaryPayload.descriptor(), indent);
+                    String checked = "__sa_" + boundary.opId().id();
+                    out.append(indent(indent)).append("Object ").append(checked)
+                        .append(" = JvmRuntime.bcheck(")
+                        .append(javaString(descriptorText(boundaryPayload.descriptor())))
+                        .append(", ")
+                        .append(javaString(staticKind(boundaryPayload.descriptor())))
+                        .append(", ").append(slot(boundaryPayload.input()))
+                        .append(");\n");
+                    emitBoundarySuccess(boundary, checked,
+                        boundaryPayload.descriptor(), indent);
+                    args.add(checked);
+                }
+            } else {
+                for (ValueId operand : op.operands()) {
+                    args.add(slot(operand));
+                }
+            }
+            FunctionExecutionBinding binding = switch (payload.callee()) {
+                case KindPayload.CallCallee.Static staticCallee -> staticCallee.binding();
+                default -> throw new IllegalStateException("ASYNC_START " + op.opId()
+                    + " resolves a callee outside the statically-resolved slice: "
+                    + payload.callee());
+            };
+            switch (binding) {
+                case FunctionExecutionBinding.LoweredBody body -> {
+                    LoweredFunction function = unit.functions().get(body.functionId());
+                    List<BindingId> captures = function == null
+                        ? List.of() : function.captures();
+                    StringBuilder caps = new StringBuilder();
+                    for (BindingId captureId : captures) {
+                        if (caps.length() > 0) {
+                            caps.append(", ");
+                        }
+                        caps.append(cell(captureId, 0));
+                    }
+                    out.append(indent(indent)).append("JvmRuntime.startBodyTask(")
+                        .append(token.tokenId()).append(", \"DEAL_BODY_TASK\", () -> {\n");
+                    out.append(indent(indent + 1)).append("String __prevM = "
+                        + "JvmRuntime.currentModule();\n");
+                    out.append(indent(indent + 1)).append("JvmRuntime.setModule(MODULE);\n");
+                    out.append(indent(indent + 1)).append("JvmRuntime.pushFrame(")
+                        .append(javaString(String.valueOf(body.functionId().id())))
+                        .append(");\n");
+                    out.append(indent(indent + 1)).append("try {\n");
+                    out.append(indent(indent + 2)).append("return ")
+                        .append(fnFactory(body.functionId())).append("(").append(caps)
+                        .append(").fn.invoke(new Object[]{")
+                        .append(String.join(", ", args)).append("});\n");
+                    out.append(indent(indent + 1)).append("} finally {\n");
+                    out.append(indent(indent + 2)).append("JvmRuntime.popFrame();\n");
+                    out.append(indent(indent + 2)).append("JvmRuntime.setModule(__prevM);\n");
+                    out.append(indent(indent + 1)).append("}\n");
+                    out.append(indent(indent)).append("});\n");
+                }
+                case FunctionExecutionBinding.AdapterBinding adapter -> {
+                    // The outer adapter-over-async task (zero return
+                    // boundaries of its own): the D15 source resolution
+                    // and source-signature check, then the nested source
+                    // op's full emission (its task queues under the FIFO
+                    // drain — the outer task completes after it).
+                    SemanticOp nested = nestedAsyncStartOf(op);
+                    out.append(indent(indent)).append("JvmRuntime.startBodyTask(")
+                        .append(token.tokenId()).append(", \"DEAL_BODY_TASK\", () -> {\n");
+                    out.append(indent(indent + 1)).append("Object __src = "
+                        + "JvmRuntime.adapterSource((JvmRuntime.AdapterValue) ")
+                        .append(slot((ValueId) opsById.get(adapter.adaptOpId()).result()))
+                        .append(");\n");
+                    out.append(indent(indent + 1)).append("JvmRuntime.fnCheck(__src, ")
+                        .append(javaString(adapter.sourceSignature().canonicalSpecText()))
+                        .append(", ").append(javaString(originOf(op))).append(");\n");
+                    emitAsyncStart(nested, indent + 1);
+                    out.append(indent(indent + 1)).append("return null;\n");
+                    out.append(indent(indent)).append("});\n");
+                }
+                case FunctionExecutionBinding.HostFunction host ->
+                    emitAsyncHostStart(op, indent, token, host.hostModuleId().path(),
+                        host.exportName(), args);
+                case FunctionExecutionBinding.HostFunctionValue hostValue ->
+                    emitAsyncHostStart(op, indent, token, hostValue.hostModuleId().path(),
+                        "@value#" + hostValue.materializingBoundaryOpId().id(), args);
+                case FunctionExecutionBinding.ExternalFunction external ->
+                    emitAsyncExternalStart(op, indent, token, payload.externalAsyncLink(),
+                        args);
+            }
+            emitTokenSuccess(op, javaString(tokenAtom(token)), indent);
+        }
+
+        /** The ASYNC_START(HOST) terminal: the seam start + the bad-handle check. */
+        private void emitAsyncHostStart(SemanticOp op, int indent, AsyncTokenId token,
+                                        String module, String export, List<String> args) {
+            KindPayload.AsyncStartPayload payload =
+                (KindPayload.AsyncStartPayload) op.payload();
+            String label = payload.hostOperationLabel();
+            out.append(indent(indent)).append("JvmRuntime.effect(\"ASYNC_START_OP\", ")
+                .append(javaString(label)).append(");\n");
+            out.append(indent(indent)).append("if (JvmRuntime.HOST_ASYNC == null) {\n");
+            out.append(indent(indent + 1))
+                .append("throw new IllegalStateException(\"an async host start has no "
+                    + "deterministic host seam (the scenario host drives it)\");\n");
+            out.append(indent(indent)).append("}\n");
+            out.append(indent(indent)).append("String __bound = "
+                + "JvmRuntime.HOST_ASYNC.startAsync(")
+                .append(javaString(module)).append(", ").append(javaString(export))
+                .append(", ").append(javaString(label)).append(", new Object[]{")
+                .append(String.join(", ", args)).append("});\n");
+            out.append(indent(indent)).append("if (__bound == null) {\n");
+            out.append(indent(indent + 1)).append("JvmRuntime.DealError __e = "
+                + "JvmRuntime.fail(\"E8010\", \"async operation mismatch: expected "
+                + "async-operation, got nothing\", ")
+                .append(javaString(originOf(op)))
+                .append(", \"async-operation\", \"nothing\");\n");
+            emitFailureEvent(op.opId(), op.kind().name(), op, "JvmRuntime.errtext(__e)",
+                indent + 1);
+            out.append(indent(indent + 1)).append("throw __e;\n");
+            out.append(indent(indent)).append("}\n");
+            out.append(indent(indent)).append("JvmRuntime.startHostTask(")
+                .append(token.tokenId()).append(", ").append(javaString(label))
+                .append(");\n");
+        }
+
+        /** The ASYNC_START(EXTERNAL) terminal: the callee artifact's async-entry dispatch. */
+        private void emitAsyncExternalStart(SemanticOp op, int indent, AsyncTokenId token,
+                                            ExternalAsyncLink link, List<String> args) {
+            if (link == null) {
+                throw new IllegalStateException("ASYNC_START(EXTERNAL) without "
+                    + "its ExternalAsyncLink (producer defect)");
+            }
+            out.append(indent(indent)).append(sharedClassName(link.calleeModuleId().path()))
+                .append(".ae").append(link.calleeTokenId().tokenId()).append("(")
+                .append(javaString(opKey(op.opId()))).append(", false, new Object[]{")
+                .append(String.join(", ", args)).append("});\n");
+        }
+
+        /**
+         * AWAIT — the completion position (D13 step 6): the deterministic
+         * FIFO drain first (the serial executor's join), then the
+         * canonical referent's completion. A pending host operation
+         * completes through the host seam (the ordered ASYNC_COMPLETE_*
+         * effects); a failed operation publishes the identical error —
+         * never a re-check or a synthesized copy — and a completed value
+         * crosses the single {@code ASYNC_COMPLETION} boundary at the
+         * await site.
+         */
+        private void emitAwait(SemanticOp op, int indent) {
+            KindPayload.AwaitPayload payload = (KindPayload.AwaitPayload) op.payload();
+            long canonicalId = canonicalReferent(payload.token());
+            SemanticOp boundary = opsById.get(payload.completionBoundaryOpId());
+            KindPayload.BoundaryPayload boundaryPayload =
+                (KindPayload.BoundaryPayload) boundary.payload();
+            emitStart(op, indent);
+            out.append(indent(indent)).append("try {\n");
+            out.append(indent(indent + 1)).append("Object __av = JvmRuntime.awaitTask(")
+                .append(canonicalId).append(", ").append(javaString(originOf(op)))
+                .append(");\n");
+            // The single ASYNC_COMPLETION boundary at the await site: a
+            // host-scripted completion atomizes by its runtime carrier; a
+            // DEAL body value atomizes by the declared descriptor.
+            if (canonicalOwnerOf(payload.token()) == AsyncTokenOwner.HOST_OPERATION) {
+                emitBoundaryStartAtom(boundary, "JvmRuntime.hostAtom(__av)", indent + 1);
+            } else {
+                emitBoundaryStart(boundary, "__av", boundaryPayload.descriptor(),
+                    indent + 1);
+            }
+            out.append(indent(indent + 1)).append("Object __avc = JvmRuntime.bcheck(")
+                .append(javaString(descriptorText(boundaryPayload.descriptor())))
+                .append(", ")
+                .append(javaString(staticKind(boundaryPayload.descriptor())))
+                .append(", __av);\n");
+            emitBoundarySuccess(boundary, "__avc", boundaryPayload.descriptor(),
+                indent + 1);
+            out.append(indent(indent + 1)).append(slot((ValueId) op.result()))
+                .append(" = __avc;\n");
+            emitResultSuccess(op, slot((ValueId) op.result()),
+                (RuntimeDescriptor) op.resultType(), indent + 1);
+            out.append(indent(indent)).append("} catch (JvmRuntime.DealError __e) {\n");
+            emitFailureEvent(op.opId(), op.kind().name(), op, "JvmRuntime.errtext(__e)",
+                indent + 1);
+            out.append(indent(indent + 1)).append("throw __e;\n");
+            out.append(indent(indent)).append("}\n");
+        }
+
+        /**
+         * The async EXTERNAL_ENTRY dispatch entry (the E6 dispatch-entry
+         * pattern): the scenario host adapter invokes it top-level with
+         * scripted arguments (drive flag on — the entry drains and
+         * returns the completion), and a cross-module caller invokes it
+         * with the drive flag off (its AWAIT drains). The entry emits the
+         * callee record's START/SUCCESS under the passed parent key and
+         * creates exactly one canonical task wrapping the entry function's
+         * body-task future.
+         */
+        private void emitAsyncEntry(SemanticOp op, int indent) {
+            KindPayload.ExternalEntryPayload payload =
+                (KindPayload.ExternalEntryPayload) op.payload();
+            LoweredFunction function = unit.functions().get(payload.function());
+            List<BindingId> captures = function == null
+                ? List.of() : function.captures();
+            StringBuilder caps = new StringBuilder();
+            for (BindingId captureId : captures) {
+                if (caps.length() > 0) {
+                    caps.append(", ");
+                }
+                caps.append(cell(captureId, 0));
+            }
+            out.append(indent(indent)).append("public static Object ae")
+                .append(op.opId().id())
+                .append("(String __parent, boolean __drive, Object[] __args) {\n");
+            if (trace) {
+                out.append(indent(indent + 1)).append("JvmRuntime.ev(MODULE, ")
+                    .append(javaString(opKey(op.opId()))).append(", \"START\", ")
+                    .append(javaString(op.kind().name())).append(", ")
+                    .append(javaString(op.contract().canonicalDigest()))
+                    .append(", __parent, List.of(), null, null);\n");
+            }
+            out.append(indent(indent + 1)).append("JvmRuntime.startBodyTask(")
+                .append(op.opId().id()).append(", \"DEAL_BODY_TASK\", () -> {\n");
+            out.append(indent(indent + 2)).append("String __prevM = "
+                + "JvmRuntime.currentModule();\n");
+            out.append(indent(indent + 2)).append("JvmRuntime.setModule(MODULE);\n");
+            out.append(indent(indent + 2)).append("JvmRuntime.pushFrame(")
+                .append(javaString(String.valueOf(payload.function().id())))
+                .append(");\n");
+            out.append(indent(indent + 2)).append("try {\n");
+            out.append(indent(indent + 3)).append("return ")
+                .append(fnFactory(payload.function())).append("(").append(caps)
+                .append(").fn.invoke(__args);\n");
+            out.append(indent(indent + 2)).append("} finally {\n");
+            out.append(indent(indent + 3)).append("JvmRuntime.popFrame();\n");
+            out.append(indent(indent + 3)).append("JvmRuntime.setModule(__prevM);\n");
+            out.append(indent(indent + 2)).append("}\n");
+            out.append(indent(indent + 1)).append("});\n");
+            if (trace) {
+                out.append(indent(indent + 1)).append("JvmRuntime.ev(MODULE, ")
+                    .append(javaString(opKey(op.opId()))).append(", \"SUCCESS\", ")
+                    .append(javaString(op.kind().name())).append(", ")
+                    .append(javaString(op.contract().canonicalDigest()))
+                    .append(", __parent, List.of(), \"tok:").append(op.opId().id())
+                    .append(":DEAL_BODY_TASK\", null);\n");
+            }
+            out.append(indent(indent + 1)).append("if (__drive) {\n");
+            out.append(indent(indent + 2)).append("return JvmRuntime.awaitTask(")
+                .append(op.opId().id()).append(", ")
+                .append(javaString(originOf(op))).append(");\n");
+            out.append(indent(indent + 1)).append("}\n");
+            out.append(indent(indent + 1)).append("return null;\n");
             out.append(indent(indent)).append("}\n");
         }
 
