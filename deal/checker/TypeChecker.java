@@ -931,7 +931,21 @@ public final class TypeChecker {
     private Type checkIdentifier(IdentifierExpr id) {
         Symbol sym = currentScope.resolve(id.name());
         if (sym == null) {
-            error(DiagnosticCode.E2001, "Undeclared identifier '" + id.name() + "'", id.span());
+            var diagnostic = CompilerDiagnostic.error(DiagnosticCode.E2001, "Undeclared identifier '" + id.name() + "'", id.span());
+            var visible = new java.util.TreeMap<String, String>();
+            var shadowed = new java.util.HashSet<String>();
+            for (SymbolTable scope = currentScope; scope != null; scope = scope.parent()) {
+                for (var entry : scope.symbols().entrySet()) {
+                    if (shadowed.add(entry.getKey()) && entry.getValue() instanceof Symbol.VariableSymbol variable)
+                        visible.put(entry.getKey(), typeName(variable.type()));
+                }
+            }
+            var notes = new java.util.ArrayList<>(diagnostic.notes());
+            notes.add(new deal.diagnostics.DiagnosticNote("Visible variables and parameters: "
+                    + (visible.isEmpty() ? "none" : visible.entrySet().stream().map(e -> e.getKey() + ": " + e.getValue())
+                            .collect(java.util.stream.Collectors.joining(", "))), null));
+            diagnostics.add(new CompilerDiagnostic(diagnostic.code(), diagnostic.severity(), diagnostic.message(),
+                    diagnostic.range(), notes, diagnostic.diagnosticCode(), diagnostic.missingSymbols()));
             return Type.Error.INSTANCE;
         }
 
