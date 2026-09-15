@@ -69,6 +69,24 @@ fi
 # TEST_MAINS (today's run phase, verbatim). See gate-manifest-authority.
 source tools/gate-manifest.sh
 
+# Linux distributions commonly install these jars under /usr/share/java, while
+# macOS development environments normally resolve them from Maven's local cache.
+# Callers may always provide an explicit classpath.
+if [ -n "${DEAL_JUNIT_CP:-}" ]; then
+  JUNIT_CP="$DEAL_JUNIT_CP"
+elif [ -f /usr/share/java/junit4.jar ] && [ -f /usr/share/java/hamcrest-core.jar ]; then
+  JUNIT_CP="/usr/share/java/junit4.jar:/usr/share/java/hamcrest-core.jar"
+else
+  JUNIT_CP="${HOME}/.m2/repository/junit/junit/4.13.2/junit-4.13.2.jar:${HOME}/.m2/repository/org/hamcrest/hamcrest-core/1.3/hamcrest-core-1.3.jar"
+fi
+if [ ! -f "${JUNIT_CP%%:*}" ] || [ ! -f "${JUNIT_CP##*:}" ]; then
+  echo "JUnit 4 and Hamcrest are required; set DEAL_JUNIT_CP to their jar classpath." >&2
+  exit 1
+fi
+for index in "${!TEST_MAINS[@]}"; do
+  TEST_MAINS[$index]="${TEST_MAINS[$index]//\/usr\/share\/java\/junit4.jar:\/usr\/share\/java\/hamcrest-core.jar/$JUNIT_CP}"
+done
+
 # =========================================================================
 # DEALPG4 fail-closed toolchain preflight (ISSUE-0183,
 # fail-closed-toolchain-preflight D1/D2/D5): one ordered, fail-closed
@@ -89,7 +107,7 @@ source tools/preflight-lib.sh
 # identical expanded file list javac has always received).
 DEALPG4_PREFLIGHT_JAVAC_ARGS=(
   javac --release 25 -proc:none -d build \
-  -cp /usr/share/java/junit4.jar:/usr/share/java/hamcrest-core.jar \
+  -cp "$JUNIT_CP" \
   # shellcheck disable=SC2206
   ${PROD_SOURCES[@]} "${TEST_SOURCES[@]}"
 )

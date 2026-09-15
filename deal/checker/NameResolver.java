@@ -956,7 +956,8 @@ public final class NameResolver {
                 if (sym instanceof Symbol.ClassSymbol cs) {
                     yield Types.classType(cs.name(), cs.identity());
                 }
-                error(DiagnosticCode.E3004, "Unknown type '" + name + "'", nt.span());
+                diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E3004, "Unknown type '" + name + "'", nt.span())
+                        .withMissingSymbol("TYPE", name, modulePath, List.of("class")));
                 yield Type.Error.INSTANCE;
             }
         };

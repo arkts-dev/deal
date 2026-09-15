@@ -586,7 +586,14 @@ public final class Parser {
     // -- VariableDeclaration --
     private StatementNode parseVariableDeclaration() {
         Token letToken = advance();
-        Token nameToken = expect(TokenType.IDENTIFIER, DiagnosticCode.E1007, "Expected variable name after 'let'");
+        Token candidate = peek();
+        String expectedNameMessage = "Expected variable name after 'let'";
+        if (candidate.type() != TokenType.IDENTIFIER
+                && candidate.lexeme().matches("[A-Za-z_][A-Za-z0-9_]*")) {
+            expectedNameMessage += "; '" + candidate.lexeme()
+                    + "' is a reserved keyword and cannot be used as an identifier";
+        }
+        Token nameToken = expect(TokenType.IDENTIFIER, DiagnosticCode.E1007, expectedNameMessage);
         if (nameToken == null) { synchronize(); return null; }
 
         Optional<TypeNode> typeAnnotation = Optional.empty();
@@ -2216,7 +2223,23 @@ public final class Parser {
         if (peek().type() == type) {
             return advance();
         }
-        error(code, message, peek());
+        Token found = peek();
+        var diagnostic = fromTokenAnchor(code, "error", message, found);
+        var notes = new ArrayList<>(diagnostic.notes());
+        String lexeme = found.lexeme();
+        if (lexeme.codePointCount(0, lexeme.length()) > 80) {
+            lexeme = lexeme.substring(0, lexeme.offsetByCodePoints(0, 80)) + "...";
+        }
+        notes.add(new deal.diagnostics.DiagnosticNote(
+                "Expected token " + type + "; found " + found.type() + " '" + lexeme + "'",
+                diagnostic.range()));
+        if (found.type() == TokenType.EQ || found.type() == TokenType.NEQ) {
+            notes.add(new deal.diagnostics.DiagnosticNote(
+                    "DEAL equality operators are === and !==; == and != are not supported."
+                            + " For boolean negation use !expression.", diagnostic.range()));
+        }
+        diagnostics.add(new CompilerDiagnostic(diagnostic.code(), diagnostic.severity(),
+                diagnostic.message(), diagnostic.range(), notes, diagnostic.diagnosticCode()));
         return null;
     }
 
