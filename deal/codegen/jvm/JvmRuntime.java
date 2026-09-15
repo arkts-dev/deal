@@ -118,13 +118,51 @@ public final class JvmRuntime {
         Object invoke(Object[] args);
     }
 
-    public static final class FunctionValue {
+    public static class FunctionValue {
         public final Fn fn;
         public final String signature;
+        /** The canonical spec text (E8010 projections); null when unknown. */
+        public final String spec;
+        /** The source function id text for frame pushes; null when absent. */
+        public final String fid;
 
         public FunctionValue(Fn fn, String signature) {
+            this(fn, signature, null, null);
+        }
+
+        public FunctionValue(Fn fn, String signature, String spec, String fid) {
             this.fn = fn;
             this.signature = signature;
+            this.spec = spec;
+            this.fid = fid;
+        }
+    }
+
+    /**
+     * A {@code FUNCTION_ADAPT} adapter value (D15): the closed capture
+     * mode state ({@code VALUE}: the retained source identity;
+     * {@code SHARED_CELL}: the generation cell re-read per invocation;
+     * {@code REEVALUATE_THUNK}: the thunk re-executor), the source
+     * arity/spec, and the target signature carried for boundary checks.
+     */
+    public static final class AdapterValue extends FunctionValue {
+        /** 0 = VALUE, 1 = SHARED_CELL, 2 = REEVALUATE_THUNK. */
+        public final int mode;
+        public final Object value;
+        public final Object[] cell;
+        public final Fn thunk;
+        public final int arity;
+        public final String sourceSpec;
+
+        public AdapterValue(Fn fn, String signature, String spec, int mode, Object value,
+                            Object[] cell, Fn thunk, int arity, String sourceSpec) {
+            super(fn, signature, spec, null);
+            this.mode = mode;
+            this.value = value;
+            this.cell = cell;
+            this.thunk = thunk;
+            this.arity = arity;
+            this.sourceSpec = sourceSpec;
         }
     }
 
@@ -535,6 +573,92 @@ public final class JvmRuntime {
                 actual);
         }
         return v;
+    }
+
+    // =========================================================================
+    // The D15 adapter invocation protocol (FUNCTION_ADAPT / CALLBACK_INVOKE)
+    // =========================================================================
+
+    /**
+     * The adapter's source-signature check (D15): the resolved source
+     * value's carried canonical spec text must equal the adapter's
+     * recorded source signature; a mismatch is E8010
+     * {@code FUNCTION_SIGNATURE} at the invoking op's origin with the
+     * active frames (the check runs before any source-frame push).
+     */
+    public static Object fnCheck(Object v, String expected, String origin) {
+        String carried = "";
+        if (v instanceof FunctionValue function && function.spec != null) {
+            carried = function.spec;
+        }
+        if (expected.equals(carried)) {
+            return v;
+        }
+        throw fail("E8010", "function signature mismatch: expected " + expected
+            + ", got " + carried, origin, expected, carried);
+    }
+
+    /**
+     * The D15 adapter invocation: resolve the source per the closed
+     * capture mode (VALUE retains, SHARED_CELL re-reads the generation
+     * cell, REEVALUATE_THUNK re-executes the thunk), the source-signature
+     * check, then the source invocation with the leading M arguments
+     * only. A DEAL-body source pushes its function id onto the active
+     * frames for the invocation (popped on every path); the identical
+     * completion error propagates unchanged.
+     */
+    public static Object invokeAdapter(AdapterValue adapter, String origin, Object[] args) {
+        Object source;
+        if (adapter.mode == 0) {
+            source = adapter.value;
+        } else if (adapter.mode == 1) {
+            source = adapter.cell[0];
+        } else {
+            source = adapter.thunk.invoke(new Object[0]);
+        }
+        fnCheck(source, adapter.sourceSpec, origin);
+        Object[] leading = new Object[adapter.arity];
+        System.arraycopy(args, 0, leading, 0, adapter.arity);
+        FunctionValue function = (FunctionValue) source;
+        boolean pushed = function.fid != null;
+        if (pushed) {
+            pushFrame(function.fid);
+        }
+        try {
+            return function.fn.invoke(leading);
+        } finally {
+            if (pushed) {
+                popFrame();
+            }
+        }
+    }
+
+    /**
+     * The actual-kind atom of one host-supplied argument (the callback
+     * dispatch surface): null/boolean/int/number/string by the runtime
+     * carrier — identical to the semantic oracle's scripted-argument
+     * atomization.
+     */
+    public static String hostAtom(Object v) {
+        if (v == null) {
+            return "null";
+        }
+        if (v instanceof Boolean bool) {
+            return "bool:" + bool;
+        }
+        if (v instanceof Long longValue) {
+            return "int:" + longValue;
+        }
+        if (v instanceof Integer intValue) {
+            return "int:" + intValue;
+        }
+        if (v instanceof Double doubleValue) {
+            return atom(doubleValue, "number");
+        }
+        if (v instanceof String string) {
+            return "str:" + esc(string);
+        }
+        return "ref:" + allocId(v);
     }
 
     // =========================================================================

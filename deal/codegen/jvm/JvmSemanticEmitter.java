@@ -1,10 +1,12 @@
 package deal.codegen.jvm;
 
+import deal.semantic.ir.AdaptSourceRef;
 import deal.semantic.ir.BindingCellKind;
 import deal.semantic.ir.BindingId;
 import deal.semantic.ir.BlockId;
 import deal.semantic.ir.BoundaryKind;
 import deal.semantic.ir.ChainOperandCompletion;
+import deal.semantic.ir.FunctionExecutionBinding;
 import deal.semantic.ir.FunctionId;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredFunction;
@@ -355,6 +357,21 @@ public final class JvmSemanticEmitter {
             for (LoweredFunction function : unit.functions().values()) {
                 emitFunctionFactory(function);
             }
+            // The REEVALUATE_THUNK re-executor methods: one detached
+            // thunk method per FUNCTION_ADAPT op with a thunk source.
+            // The thunk ops are members only of the detached thunk block
+            // (the lowerer's single-membership rule), so the module walk
+            // never executes them; each invocation re-executes them here.
+            for (SemanticOp op : unit.ops()) {
+                if (op.kind() != SemanticOpKind.FUNCTION_ADAPT) {
+                    continue;
+                }
+                KindPayload.FunctionAdaptPayload payload =
+                    (KindPayload.FunctionAdaptPayload) op.payload();
+                if (payload.source() instanceof AdaptSourceRef.Thunk thunk) {
+                    emitThunkMethod(op, thunk.blockId());
+                }
+            }
             // main.
             out.append("  public static void main(String[] args) {\n");
             out.append("    JvmRuntime.setModule(MODULE);\n");
@@ -380,8 +397,59 @@ public final class JvmSemanticEmitter {
                 out.append("    }\n");
             }
             out.append("  }\n");
+            // The host-driven callback dispatch entries (CALLBACK_INVOKE):
+            // one per-unit static entry per recorded invocation. The
+            // scenario host invokes the entry top-level with scripted
+            // arguments; the module-init walk never runs the unattached
+            // records themselves.
+            for (SemanticOp op : unit.ops()) {
+                if (op.kind() == SemanticOpKind.CALLBACK_INVOKE) {
+                    emitCallbackInvoke(op, 1);
+                }
+            }
             out.append("}\n");
             return new EmissionResult(className, out.toString());
+        }
+
+        /** One thunk re-executor method name of an adapter op. */
+        private String thunkFn(OpId adaptOp) {
+            return "thunk" + adaptOp.id();
+        }
+
+        /**
+         * Emits one detached thunk re-executor for a FUNCTION_ADAPT op
+         * with a REEVALUATE_THUNK source: the thunk block's ops run in
+         * order (payload-owned children included through their owner
+         * arms) and the method returns the final producing op's result —
+         * the source value the invocation consumes.
+         */
+        private void emitThunkMethod(SemanticOp adaptOp, BlockId block) {
+            List<OpId> ops = table.blockOps().get(block);
+            if (ops == null) {
+                throw new IllegalStateException("the adapter thunk block " + block
+                    + " has no membership row (producer defect)");
+            }
+            out.append("  private static Object ").append(thunkFn(adaptOp.opId()))
+                .append("() {\n");
+            emitBlockOps(block, 2);
+            ValueId produced = null;
+            for (int i = ops.size() - 1; i >= 0; i--) {
+                OpId opId = ops.get(i);
+                if (ownedChildren.contains(opId)) {
+                    continue;
+                }
+                SemanticOp op = opsById.get(opId);
+                if (op != null && op.result() instanceof ValueId valueId) {
+                    produced = valueId;
+                }
+                break;
+            }
+            if (produced == null) {
+                throw new IllegalStateException("the adapter thunk block " + block
+                    + " has no final producing value (producer defect)");
+            }
+            out.append("    return ").append(slot(produced)).append(";\n");
+            out.append("  }\n");
         }
 
         /** Emits one function factory: a FunctionValue over the passed capture cells. */
@@ -439,7 +507,12 @@ public final class JvmSemanticEmitter {
                 out.append("      return null;\n");
             }
             out.append("    }, ")
-                .append(javaString(descriptorText(function.descriptor()))).append(");\n");
+                .append(javaString(descriptorText(function.descriptor())))
+                .append(", ")
+                .append(javaString(function.descriptor().canonicalSpecText()))
+                .append(", ")
+                .append(javaString(String.valueOf(functionId.id())))
+                .append(");\n");
             out.append("  }\n");
         }
 
@@ -486,6 +559,8 @@ public final class JvmSemanticEmitter {
                 case BINDING_STORE -> emitBindingStore(op, indent);
                 case CLOSURE_NEW -> emitClosureNew(op, indent);
                 case RECURSIVE_GROUP_INIT -> emitRecursiveGroupInit(op, indent);
+                case FUNCTION_ADAPT -> emitFunctionAdapt(op, indent);
+                case CALLBACK_INVOKE -> emitCallbackInvoke(op, indent);
                 case ASSIGN -> emitAssign(op, indent);
                 case DELETE -> emitDelete(op, indent);
                 case CALL -> emitCall(op, indent);
@@ -1318,6 +1393,57 @@ public final class JvmSemanticEmitter {
         }
 
         /**
+         * FUNCTION_ADAPT (E6, D15 creation): a generated adapter object
+         * carrying the closed capture mode — VALUE retains the
+         * creation-time source identity; SHARED_CELL records the
+         * generation cell re-read per invocation (live reassignment
+         * observed); REEVALUATE_THUNK records the detached thunk
+         * re-executor method. Creation evaluates no thunk and reads no
+         * binding (VALUE's single operand already completed); every
+         * invocation runs the D15 sequence through
+         * {@code JvmRuntime.invokeAdapter} with the invoking op's
+         * origin.
+         */
+        private void emitFunctionAdapt(SemanticOp op, int indent) {
+            KindPayload.FunctionAdaptPayload payload =
+                (KindPayload.FunctionAdaptPayload) op.payload();
+            emitStart(op, indent);
+            String target = slot((ValueId) op.result());
+            out.append(indent(indent)).append(target)
+                .append(" = new JvmRuntime.AdapterValue(__a -> { throw new "
+                    + "IllegalStateException(\"an adapter executes only under its "
+                    + "invoking op's D15 protocol\"); }, ")
+                .append(javaString(descriptorText(payload.targetSignature())))
+                .append(", ")
+                .append(javaString(payload.targetSignature().canonicalSpecText()))
+                .append(", ");
+            switch (payload.mode()) {
+                case VALUE -> out.append("0");
+                case SHARED_CELL -> out.append("1");
+                case REEVALUATE_THUNK -> out.append("2");
+            }
+            switch (payload.source()) {
+                case AdaptSourceRef.Value value ->
+                    out.append(", ")
+                        .append(hasProducer(value.value()) ? slot(value.value())
+                            : "new JvmRuntime.Intrinsic()")
+                        .append(", null, null");
+                case AdaptSourceRef.SharedCell cell ->
+                    out.append(", null, (Object[]) ")
+                        .append(cell(cell.binding(), cell.generation()))
+                        .append(", null");
+                case AdaptSourceRef.Thunk thunk ->
+                    out.append(", null, null, __t -> ")
+                        .append(thunkFn(op.opId())).append("()");
+            }
+            out.append(", ").append(payload.sourceSignature().paramTypes().size())
+                .append(", ")
+                .append(javaString(payload.sourceSignature().canonicalSpecText()))
+                .append(");\n");
+            emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType(), indent);
+        }
+
+        /**
          * RECURSIVE_GROUP_INIT (E8, atomic publication): phase 1
          * allocates every member's SHARED_CELL (a fresh one-element
          * array per execution); phase 2 allocates every member identity
@@ -1567,8 +1693,7 @@ public final class JvmSemanticEmitter {
 
         private void emitCall(SemanticOp op, int indent) {
             KindPayload.CallPayload payload = (KindPayload.CallPayload) op.payload();
-            FunctionId callee = ((deal.semantic.ir.FunctionExecutionBinding.LoweredBody)
-                ((KindPayload.CallCallee.Static) payload.callee()).binding()).functionId();
+            FunctionExecutionBinding binding = callBinding(payload);
             emitStart(op, indent);
             for (OpId boundaryId : payload.parameterBoundaryOpIds()) {
                 SemanticOp boundary = opsById.get(boundaryId);
@@ -1585,38 +1710,106 @@ public final class JvmSemanticEmitter {
                 emitBoundarySuccess(boundary, "__pb_" + boundary.opId().id(),
                     boundaryPayload.descriptor(), indent);
             }
-            out.append(indent(indent)).append("JvmRuntime.pushFrame(")
-                .append(javaString(String.valueOf(callee.id()))).append(");\n");
-            out.append(indent(indent)).append("try {\n");
-            out.append(indent(indent)).append("  ").append(slot((ValueId) op.result()))
-                .append(" = ").append(fnFactory(callee)).append("(");
-            deal.semantic.ir.LoweredFunction calleeFunction = unit.functions().get(callee);
-            List<deal.semantic.ir.BindingId> captures = calleeFunction == null
-                ? List.of() : calleeFunction.captures();
-            for (int i = 0; i < captures.size(); i++) {
-                if (i > 0) {
-                    out.append(", ");
+            switch (binding) {
+                case FunctionExecutionBinding.LoweredBody body -> {
+                    FunctionId callee = body.functionId();
+                    out.append(indent(indent)).append("JvmRuntime.pushFrame(")
+                        .append(javaString(String.valueOf(callee.id()))).append(");\n");
+                    out.append(indent(indent)).append("try {\n");
+                    out.append(indent(indent)).append("  ")
+                        .append(slot((ValueId) op.result()))
+                        .append(" = ").append(fnFactory(callee)).append("(");
+                    deal.semantic.ir.LoweredFunction calleeFunction =
+                        unit.functions().get(callee);
+                    List<deal.semantic.ir.BindingId> captures = calleeFunction == null
+                        ? List.of() : calleeFunction.captures();
+                    for (int i = 0; i < captures.size(); i++) {
+                        if (i > 0) {
+                            out.append(", ");
+                        }
+                        out.append(cell(captures.get(i), 0));
+                    }
+                    out.append(").fn.invoke(new Object[]{");
+                    for (int i = 0; i < payload.parameterBoundaryOpIds().size(); i++) {
+                        if (i > 0) {
+                            out.append(", ");
+                        }
+                        SemanticOp boundary =
+                            opsById.get(payload.parameterBoundaryOpIds().get(i));
+                        out.append(slot(((KindPayload.BoundaryPayload) boundary.payload())
+                            .input()));
+                    }
+                    out.append("});\n");
+                    out.append(indent(indent)).append("} catch (JvmRuntime.DealError __e) {\n");
+                    emitFailureEvent(op.opId(), op.kind().name(), op,
+                        "JvmRuntime.errtext(__e)", indent + 1);
+                    out.append(indent(indent)).append("  throw __e;\n");
+                    out.append(indent(indent)).append("} finally {\n");
+                    out.append(indent(indent)).append("  JvmRuntime.popFrame();\n");
+                    out.append(indent(indent)).append("}\n");
                 }
-                out.append(cell(captures.get(i), 0));
-            }
-            out.append(").fn.invoke(new Object[]{");
-            for (int i = 0; i < payload.parameterBoundaryOpIds().size(); i++) {
-                if (i > 0) {
-                    out.append(", ");
+                case FunctionExecutionBinding.AdapterBinding adapter -> {
+                    // The D15 invocation protocol: resolve the source per
+                    // the recorded capture mode, the source-signature
+                    // check (E8010 at this CALL's origin), then the
+                    // source invocation with the leading M arguments
+                    // only — every N target-signature parameter boundary
+                    // already ran above. The adapter protocol pushes the
+                    // source body's frame itself; the identical
+                    // completion error propagates unchanged.
+                    String adapterSlot =
+                        slot((ValueId) opsById.get(adapter.adaptOpId()).result());
+                    StringBuilder args = new StringBuilder();
+                    for (OpId boundaryId : payload.parameterBoundaryOpIds()) {
+                        if (args.length() > 0) {
+                            args.append(", ");
+                        }
+                        SemanticOp boundary = opsById.get(boundaryId);
+                        args.append(slot(((KindPayload.BoundaryPayload) boundary.payload())
+                            .input()));
+                    }
+                    out.append(indent(indent)).append("try {\n");
+                    out.append(indent(indent)).append("  ")
+                        .append(slot((ValueId) op.result()))
+                        .append(" = JvmRuntime.invokeAdapter((JvmRuntime.AdapterValue) ")
+                        .append(adapterSlot).append(", ")
+                        .append(javaString(originOf(op))).append(", new Object[]{")
+                        .append(args).append("});\n");
+                    out.append(indent(indent)).append("} catch (JvmRuntime.DealError __e) {\n");
+                    emitFailureEvent(op.opId(), op.kind().name(), op,
+                        "JvmRuntime.errtext(__e)", indent + 1);
+                    out.append(indent(indent)).append("  throw __e;\n");
+                    out.append(indent(indent)).append("}\n");
                 }
-                SemanticOp boundary = opsById.get(payload.parameterBoundaryOpIds().get(i));
-                out.append(slot(((KindPayload.BoundaryPayload) boundary.payload()).input()));
+                default -> throw new IllegalStateException("CALL " + op.opId()
+                    + " resolves a binding outside the statically-resolved slice: "
+                    + binding);
             }
-            out.append("});\n");
-            out.append(indent(indent)).append("} catch (JvmRuntime.DealError __e) {\n");
-            emitFailureEvent(op.opId(), op.kind().name(), op, "JvmRuntime.errtext(__e)",
-                indent + 1);
-            out.append(indent(indent)).append("  throw __e;\n");
-            out.append(indent(indent)).append("} finally {\n");
-            out.append(indent(indent)).append("  JvmRuntime.popFrame();\n");
-            out.append(indent(indent)).append("}\n");
             emitResultSuccess(op, slot((ValueId) op.result()),
                 (RuntimeDescriptor) op.resultType(), indent);
+        }
+
+        /**
+         * The statically resolved execution binding of one CALL: the
+         * inline Static binding or the unit's registered binding of an
+         * Indirect callee identity (the same registration the semantic
+         * oracle re-resolves at execution). A Dynamic callee is the
+         * runtime-resolution slice (ISSUE-0531) and fails closed here.
+         */
+        private FunctionExecutionBinding callBinding(KindPayload.CallPayload payload) {
+            FunctionExecutionBinding binding = switch (payload.callee()) {
+                case KindPayload.CallCallee.Static staticCallee -> staticCallee.binding();
+                case KindPayload.CallCallee.Indirect indirect ->
+                    unit.functionBindings().get(
+                        new deal.semantic.ir.FunctionAllocationIdentity(
+                            indirect.callee().id()));
+                case KindPayload.CallCallee.Dynamic ignored -> null;
+            };
+            if (binding == null) {
+                throw new IllegalStateException("CALL " + payload
+                    + " resolves no FunctionExecutionBinding (producer defect)");
+            }
+            return binding;
         }
 
         private void emitIntrinsic(SemanticOp op, int indent) {
@@ -2107,7 +2300,19 @@ public final class JvmSemanticEmitter {
             for (SemanticOp candidate : opsById.values()) {
                 if (candidate.kind() == SemanticOpKind.BOUNDARY
                         && op.opId().equals(candidate.origin().parentOpId())) {
-                    emitFreeBoundary(candidate, indent + 1);
+                    KindPayload.BoundaryPayload boundaryPayload =
+                        (KindPayload.BoundaryPayload) candidate.payload();
+                    emitBoundaryStart(candidate, slot(boundaryPayload.input()),
+                        boundaryPayload.descriptor(), indent + 1);
+                    out.append(indent(indent + 1)).append("Object __ep_")
+                        .append(candidate.opId().id()).append(" = JvmRuntime.bcheck(")
+                        .append(javaString(descriptorText(boundaryPayload.descriptor())))
+                        .append(", ")
+                        .append(javaString(staticKind(boundaryPayload.descriptor())))
+                        .append(", ").append(slot(boundaryPayload.input()))
+                        .append(");\n");
+                    emitBoundarySuccess(candidate, "__ep_" + candidate.opId().id(),
+                        boundaryPayload.descriptor(), indent + 1);
                 }
             }
             emitPlainSuccess(op, indent);
@@ -2122,6 +2327,181 @@ public final class JvmSemanticEmitter {
         private void emitExternalEntryRecord(SemanticOp op, int indent) {
             emitStart(op, indent);
             emitPlainSuccess(op, indent);
+        }
+
+        /**
+         * CALLBACK_INVOKE (E6, D13 host-driven dispatch): one per-unit
+         * static entry method the scenario host invokes top-level with
+         * scripted arguments. The entry emits its own START (the scripted
+         * argument inputs, no parentOpId — the scenario step triggers
+         * it), runs the {@code HOST_TO_DEAL} parameter boundaries in
+         * one-based order, executes the bound
+         * {@link FunctionExecutionBinding} (a DEAL body, or the D15
+         * adapter protocol with the leading-M projection), and closes
+         * with the op's terminal (SUCCESS with the checked value, or
+         * FAILURE with the propagated error). The single
+         * {@code DEAL_TO_HOST} return boundary runs by the executed
+         * body's {@code RETURN} (its payload names this op as the
+         * enclosing invocation). The block walk never runs the entry.
+         */
+        private void emitCallbackInvoke(SemanticOp op, int indent) {
+            KindPayload.CallbackInvokePayload payload =
+                (KindPayload.CallbackInvokePayload) op.payload();
+            FunctionExecutionBinding binding = unit.functionBindings().get(
+                new deal.semantic.ir.FunctionAllocationIdentity(
+                    payload.function().id()));
+            if (binding == null) {
+                throw new IllegalStateException("CALLBACK_INVOKE " + op.opId()
+                    + " resolves no FunctionExecutionBinding (producer defect)");
+            }
+            String entry = "cb" + op.opId().id();
+            out.append(indent(indent)).append("public static Object ").append(entry)
+                .append("(Object[] __args) {\n");
+            if (trace) {
+                StringBuilder inputs = new StringBuilder();
+                for (int i = 0; i < payload.parameterBoundaryOpIds().size(); i++) {
+                    if (i > 0) {
+                        inputs.append(", ");
+                    }
+                    inputs.append("JvmRuntime.hostAtom(__args[").append(i).append("])");
+                }
+                out.append(indent(indent)).append("  JvmRuntime.ev(MODULE, ")
+                    .append(javaString(opKey(op.opId()))).append(", \"START\", ")
+                    .append(javaString(op.kind().name())).append(", ")
+                    .append(javaString(op.contract().canonicalDigest()))
+                    .append(", \"-\", List.of(").append(inputs)
+                    .append("), null, null);\n");
+            }
+            for (int i = 0; i < payload.parameterBoundaryOpIds().size(); i++) {
+                SemanticOp boundary = opsById.get(payload.parameterBoundaryOpIds().get(i));
+                KindPayload.BoundaryPayload boundaryPayload =
+                    (KindPayload.BoundaryPayload) boundary.payload();
+                String checked = "__cb_" + boundary.opId().id();
+                if (trace) {
+                    out.append(indent(indent)).append("  JvmRuntime.ev(MODULE, ")
+                        .append(javaString(opKey(boundary.opId())))
+                        .append(", \"START\", \"BOUNDARY\", ")
+                        .append(javaString(boundary.contract().canonicalDigest()))
+                        .append(", ")
+                        .append(javaString(parentKey(boundary.origin().parentOpId())))
+                        .append(", List.of(JvmRuntime.hostAtom(__args[")
+                        .append(i).append("])), null, null);\n");
+                }
+                out.append(indent(indent)).append("  Object ").append(checked)
+                    .append(";\n");
+                out.append(indent(indent)).append("  try {\n");
+                out.append(indent(indent)).append("    ").append(checked)
+                    .append(" = JvmRuntime.bcheck(")
+                    .append(javaString(descriptorText(boundaryPayload.descriptor())))
+                    .append(", ")
+                    .append(javaString(staticKind(boundaryPayload.descriptor())))
+                    .append(", __args[").append(i).append("]);\n");
+                out.append(indent(indent)).append("  } catch (JvmRuntime.DealError __be) {\n");
+                out.append(indent(indent))
+                    .append("    JvmRuntime.DealError __bre = new JvmRuntime.DealError("
+                        + "__be.code, __be.msg, ")
+                    .append(javaString(originOf(boundary)))
+                    .append(", __be.expected, __be.actual, __be.frames, null);\n");
+                if (trace) {
+                    emitFailureEvent(boundary.opId(), "BOUNDARY", boundary,
+                        "JvmRuntime.errtext(__bre)", indent + 1);
+                    emitFailureEvent(op.opId(), op.kind().name(), op,
+                        "JvmRuntime.errtext(__bre)", indent + 1);
+                }
+                out.append(indent(indent)).append("    throw __bre;\n");
+                out.append(indent(indent)).append("  }\n");
+                if (trace) {
+                    out.append(indent(indent)).append("  JvmRuntime.ev(MODULE, ")
+                        .append(javaString(opKey(boundary.opId())))
+                        .append(", \"SUCCESS\", \"BOUNDARY\", ")
+                        .append(javaString(boundary.contract().canonicalDigest()))
+                        .append(", ")
+                        .append(javaString(parentKey(boundary.origin().parentOpId())))
+                        .append(", List.of(), JvmRuntime.atom(")
+                        .append(checked).append(", ")
+                        .append(javaString(staticKind(boundaryPayload.descriptor())))
+                        .append("), null);\n");
+                }
+            }
+            out.append(indent(indent)).append("  Object __res;\n");
+            switch (binding) {
+                case FunctionExecutionBinding.LoweredBody body -> {
+                    LoweredFunction function = unit.functions().get(body.functionId());
+                    List<BindingId> captures = function == null
+                        ? List.of() : function.captures();
+                    StringBuilder caps = new StringBuilder();
+                    for (BindingId captureId : captures) {
+                        if (caps.length() > 0) {
+                            caps.append(", ");
+                        }
+                        caps.append(cell(captureId, 0));
+                    }
+                    out.append(indent(indent)).append("  JvmRuntime.pushFrame(")
+                        .append(javaString(String.valueOf(body.functionId().id())))
+                        .append(");\n");
+                    out.append(indent(indent)).append("  try {\n");
+                    out.append(indent(indent)).append("    __res = ")
+                        .append(fnFactory(body.functionId())).append("(")
+                        .append(caps).append(").fn.invoke(new Object[]{");
+                    for (int i = 0; i < payload.parameterBoundaryOpIds().size(); i++) {
+                        if (i > 0) {
+                            out.append(", ");
+                        }
+                        SemanticOp boundary =
+                            opsById.get(payload.parameterBoundaryOpIds().get(i));
+                        out.append("__cb_").append(boundary.opId().id());
+                    }
+                    out.append("});\n");
+                    out.append(indent(indent)).append("  } catch (JvmRuntime.DealError __e) {\n");
+                    if (trace) {
+                        emitFailureEvent(op.opId(), op.kind().name(), op,
+                            "JvmRuntime.errtext(__e)", indent + 1);
+                    }
+                    out.append(indent(indent)).append("    throw __e;\n");
+                    out.append(indent(indent)).append("  } finally {\n");
+                    out.append(indent(indent)).append("    JvmRuntime.popFrame();\n");
+                    out.append(indent(indent)).append("  }\n");
+                }
+                case FunctionExecutionBinding.AdapterBinding adapter -> {
+                    String adapterSlot =
+                        slot((ValueId) opsById.get(adapter.adaptOpId()).result());
+                    out.append(indent(indent)).append("  try {\n");
+                    out.append(indent(indent))
+                        .append("    __res = JvmRuntime.invokeAdapter((JvmRuntime.AdapterValue) ")
+                        .append(adapterSlot).append(", ")
+                        .append(javaString(originOf(op))).append(", new Object[]{");
+                    for (int i = 0; i < payload.parameterBoundaryOpIds().size(); i++) {
+                        if (i > 0) {
+                            out.append(", ");
+                        }
+                        SemanticOp boundary =
+                            opsById.get(payload.parameterBoundaryOpIds().get(i));
+                        out.append("__cb_").append(boundary.opId().id());
+                    }
+                    out.append("});\n");
+                    out.append(indent(indent)).append("  } catch (JvmRuntime.DealError __e) {\n");
+                    if (trace) {
+                        emitFailureEvent(op.opId(), op.kind().name(), op,
+                            "JvmRuntime.errtext(__e)", indent + 1);
+                    }
+                    out.append(indent(indent)).append("    throw __e;\n");
+                    out.append(indent(indent)).append("  }\n");
+                }
+                default -> throw new IllegalStateException("CALLBACK_INVOKE "
+                    + op.opId() + " resolves a binding outside the statically-resolved "
+                    + "slice: " + binding);
+            }
+            if (trace) {
+                out.append(indent(indent)).append("  JvmRuntime.ev(MODULE, ")
+                    .append(javaString(opKey(op.opId()))).append(", \"SUCCESS\", ")
+                    .append(javaString(op.kind().name())).append(", ")
+                    .append(javaString(op.contract().canonicalDigest()))
+                    .append(", \"-\", List.of(), JvmRuntime.atom(__res, ")
+                    .append(javaString(staticKind(payload.descriptor().returnType())))
+                    .append("), null);\n");
+            }
+            out.append(indent(indent)).append("  return __res;\n");
+            out.append(indent(indent)).append("}\n");
         }
 
         /**

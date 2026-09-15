@@ -1,11 +1,14 @@
 package deal.codegen.lua;
 
+import deal.semantic.ir.AdaptSourceRef;
 import deal.semantic.ir.BindingCellKind;
 import deal.semantic.ir.BindingId;
 import deal.semantic.ir.BlockId;
 import deal.semantic.ir.BoundaryKind;
 import deal.semantic.ir.ChainOperandCompletion;
 import deal.semantic.ir.FailurePolicyId;
+import deal.semantic.ir.FunctionAllocationIdentity;
+import deal.semantic.ir.FunctionExecutionBinding;
 import deal.semantic.ir.FunctionId;
 import deal.semantic.ir.IntrinsicKind;
 import deal.semantic.ir.IterationMode;
@@ -362,11 +365,14 @@ public final class LuaSemanticEmitter {
             // trace-mode session over such a unit must emit valid Lua too
             // (production-only is the `return __exports` terminal, not the
             // declaration).
-            out.append("local function __unfn(v)\n"
-                + "  if type(v) == \"table\" and v.__fn ~= nil then return v.__fn end\n"
-                + "  return v\n"
-                + "end\n");
             out.append("local __exports = {}\n");
+            // The host-driven callback dispatch table (CALLBACK_INVOKE):
+            // a chunk-global in both modes — the per-unit dispatch entries
+            // and the two host-seam helpers are the scenario host's
+            // invocation surface.
+            out.append("__callbacks = {}\n");
+            out.append("__callbacks.__hostAtom = __hostAtom\n");
+            out.append("__callbacks.__errtext = __errtext\n");
             out.append("\n__module = ").append(luaString(unit.moduleId().path()))
                 .append("\n");
             // One env table carries every slot and cell (LuaJIT's upvalue
@@ -392,8 +398,31 @@ public final class LuaSemanticEmitter {
                 emitFunctionFactory(function);
             }
 
+            // The REEVALUATE_THUNK re-executors: one detached thunk
+            // function per FUNCTION_ADAPT op with a thunk source. The
+            // thunk ops are members only of the detached thunk block (the
+            // lowerer's single-membership rule), so the module walk never
+            // executes them; each invocation re-executes them here.
+            for (SemanticOp op : unit.ops()) {
+                if (op.kind() != SemanticOpKind.FUNCTION_ADAPT) {
+                    continue;
+                }
+                KindPayload.FunctionAdaptPayload payload =
+                    (KindPayload.FunctionAdaptPayload) op.payload();
+                if (payload.source() instanceof AdaptSourceRef.Thunk thunk) {
+                    emitThunkFunction(op, thunk.blockId());
+                }
+            }
+
             // The module-init block (ends with the entry delegation) inside a
             // pcall wrapper so uncaught DEAL failures publish R|failure.
+            // The conformance artifact skips the module-init walk under the
+            // callback-only drive flag (the scenario host executes exactly
+            // the callback dispatch entries — the semantic oracle's
+            // invokeCallback surface never runs the module-init block).
+            if (trace) {
+                out.append("if os.getenv(\"DEAL_CALLBACK_ONLY\") ~= \"1\" then\n");
+            }
             out.append("local __mainOk, __mainErr = pcall(function()\n");
             emitBlockOps(unit.moduleInit().initBlock());
             out.append("end)\n");
@@ -404,6 +433,7 @@ public final class LuaSemanticEmitter {
                 out.append("  io.stderr:write(\"R|failure|\"..__errtext(__mainErr)..\"\\n\")\n");
                 out.append("end\n");
                 out.append("io.stderr:flush()\n");
+                out.append("end\n");
             } else {
                 // Production terminal: a DEAL failure publishes the
                 // retained DEAL_ERROR_CODE line on stdout and exits 1; a
@@ -416,9 +446,61 @@ public final class LuaSemanticEmitter {
                 out.append("  end\n");
                 out.append("  os.exit(1)\n");
                 out.append("end\n");
+            }
+
+            // The host-driven callback dispatch entries (CALLBACK_INVOKE):
+            // one per-unit entry per recorded invocation, defined after the
+            // module-init walk in both modes (the block walk never runs the
+            // unattached records themselves).
+            for (SemanticOp op : unit.ops()) {
+                if (op.kind() == SemanticOpKind.CALLBACK_INVOKE) {
+                    emitCallbackInvoke(op);
+                }
+            }
+            if (!trace) {
                 out.append("return __exports\n");
             }
             return out.toString();
+        }
+
+        /**
+         * Emits one detached thunk re-executor for a FUNCTION_ADAPT op
+         * with a REEVALUATE_THUNK source: the thunk block's ops run in
+         * order (payload-owned children included through their owner
+         * arms) and the function returns the final producing op's result
+         * — the source value the invocation consumes.
+         */
+        private void emitThunkFunction(SemanticOp adaptOp, BlockId block) {
+            List<OpId> ops = table.blockOps().get(block);
+            if (ops == null) {
+                throw new IllegalStateException("the adapter thunk block " + block
+                    + " has no membership row (producer defect)");
+            }
+            out.append("local function ").append(thunkFn(adaptOp.opId())).append("()\n");
+            emitBlockOps(block);
+            ValueId produced = null;
+            for (int i = ops.size() - 1; i >= 0; i--) {
+                OpId opId = ops.get(i);
+                if (ownedChildren.contains(opId)) {
+                    continue;
+                }
+                SemanticOp op = opsById.get(opId);
+                if (op != null && op.result() instanceof ValueId valueId) {
+                    produced = valueId;
+                }
+                break;
+            }
+            if (produced == null) {
+                throw new IllegalStateException("the adapter thunk block " + block
+                    + " has no final producing value (producer defect)");
+            }
+            out.append("  return ").append(slot(produced)).append("\n");
+            out.append("end\n");
+        }
+
+        /** One thunk re-executor name of an adapter op. */
+        private String thunkFn(OpId adaptOp) {
+            return "T" + adaptOp.id();
         }
 
         /** Emits one function factory: a closure over the passed capture cells. */
@@ -519,6 +601,8 @@ public final class LuaSemanticEmitter {
                 case BINDING_STORE -> emitBindingStore(op);
                 case CLOSURE_NEW -> emitClosureNew(op);
                 case RECURSIVE_GROUP_INIT -> emitRecursiveGroupInit(op);
+                case FUNCTION_ADAPT -> emitFunctionAdapt(op);
+                case CALLBACK_INVOKE -> emitCallbackInvoke(op);
                 case ASSIGN -> emitAssign(op);
                 case DELETE -> emitDelete(op);
                 case CALL -> emitCall(op);
@@ -1161,10 +1245,17 @@ public final class LuaSemanticEmitter {
                 BindingCellKind.DIRECT);
             String valueExpr = hasProducer(payload.value())
                 ? slot(payload.value()) : "__intrinsicFn()";
-            out.append(cell(payload.binding(), payload.generation())).append(" = ")
-                .append(kind == BindingCellKind.SHARED_CELL
-                    ? "{" + valueExpr + "}" : valueExpr)
-                .append("\n");
+            if (kind == BindingCellKind.SHARED_CELL) {
+                // In-place publication: the cell table's identity is held
+                // by captures and adapters, so the commit writes the cell
+                // slot (never a replacement — the oracle's Cell.value
+                // mutation).
+                out.append(cell(payload.binding(), payload.generation()))
+                    .append("[1] = ").append(valueExpr).append("\n");
+            } else {
+                out.append(cell(payload.binding(), payload.generation()))
+                    .append(" = ").append(valueExpr).append("\n");
+            }
             emitPlainSuccess(op);
         }
 
@@ -1198,10 +1289,16 @@ public final class LuaSemanticEmitter {
             emitStart(op);
             BindingCellKind kind = cellKinds.getOrDefault(payload.binding(),
                 BindingCellKind.DIRECT);
-            out.append(cell(payload.binding(), payload.generation())).append(" = ")
-                .append(kind == BindingCellKind.SHARED_CELL
-                    ? "{" + slot(payload.value()) + "}" : slot(payload.value()))
-                .append("\n");
+            if (kind == BindingCellKind.SHARED_CELL) {
+                // In-place publication: captures and adapters hold the
+                // cell table by identity (the oracle's Cell.value
+                // mutation — never a replacement).
+                out.append(cell(payload.binding(), payload.generation()))
+                    .append("[1] = ").append(slot(payload.value())).append("\n");
+            } else {
+                out.append(cell(payload.binding(), payload.generation()))
+                    .append(" = ").append(slot(payload.value())).append("\n");
+            }
             emitPlainSuccess(op);
         }
 
@@ -1219,7 +1316,57 @@ public final class LuaSemanticEmitter {
             }
             out.append(target).append(" = {__fn = ").append(fnFactory(payload.function()))
                 .append("(").append(args).append("), __sig = ")
-                .append(luaString(descriptorText(payload.signature()))).append("}\n");
+                .append(luaString(descriptorText(payload.signature())))
+                .append(", __csig = ")
+                .append(luaString(payload.signature().canonicalSpecText()))
+                .append(", __fid = ")
+                .append(payload.function().id()).append("}\n");
+            emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
+        }
+
+        /**
+         * FUNCTION_ADAPT (E6, D15 creation): a wrapper function value
+         * carrying the closed capture mode — VALUE retains the
+         * creation-time source identity; SHARED_CELL records the
+         * generation cell re-read per invocation (live reassignment
+         * observed); REEVALUATE_THUNK records the detached thunk
+         * re-executor. Creation evaluates no thunk and reads no binding
+         * (VALUE's single operand already completed); the wrapper's
+         * invocation (the {@code __fn} protocol) runs the D15 sequence at
+         * every call site with the invoking op's origin.
+         */
+        private void emitFunctionAdapt(SemanticOp op) {
+            KindPayload.FunctionAdaptPayload payload =
+                (KindPayload.FunctionAdaptPayload) op.payload();
+            emitStart(op);
+            String target = slot((ValueId) op.result());
+            out.append(target).append(" = {__mode = ");
+            switch (payload.mode()) {
+                case VALUE -> out.append("0");
+                case SHARED_CELL -> out.append("1");
+                case REEVALUATE_THUNK -> out.append("2");
+            }
+            out.append(", __m = ").append(payload.sourceSignature().paramTypes().size())
+                .append(", __csrc = ")
+                .append(luaString(payload.sourceSignature().canonicalSpecText()))
+                .append(", __sig = ")
+                .append(luaString(descriptorText(payload.targetSignature())))
+                .append(", __csig = ")
+                .append(luaString(payload.targetSignature().canonicalSpecText()))
+                .append(", __fid = nil");
+            switch (payload.source()) {
+                case AdaptSourceRef.Value value ->
+                    out.append(", __value = ")
+                        .append(hasProducer(value.value()) ? slot(value.value())
+                            : "__intrinsicFn()");
+                case AdaptSourceRef.SharedCell cell ->
+                    out.append(", __cell = ")
+                        .append(cell(cell.binding(), cell.generation()));
+                case AdaptSourceRef.Thunk thunk ->
+                    out.append(", __thunk = ").append(thunkFn(op.opId()));
+            }
+            out.append("}\n");
+            out.append(target).append(".__fn = __adaptInvoke\n");
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
         }
 
@@ -1262,7 +1409,10 @@ public final class LuaSemanticEmitter {
                     .append(fnFactory(functionId)).append("(").append(args)
                     .append("), __sig = ")
                     .append(luaString(descriptorText(function.descriptor())))
-                    .append("}\n");
+                    .append(", __csig = ")
+                    .append(luaString(function.descriptor().canonicalSpecText()))
+                    .append(", __fid = ")
+                    .append(functionId.id()).append("}\n");
             }
             for (int i = 0; i < payload.bindings().size(); i++) {
                 out.append(cell(payload.bindings().get(i), 0)).append("[1] = ")
@@ -1461,8 +1611,7 @@ public final class LuaSemanticEmitter {
 
         private void emitCall(SemanticOp op) {
             KindPayload.CallPayload payload = (KindPayload.CallPayload) op.payload();
-            FunctionId callee = ((deal.semantic.ir.FunctionExecutionBinding.LoweredBody)
-                ((KindPayload.CallCallee.Static) payload.callee()).binding()).functionId();
+            FunctionExecutionBinding binding = callBinding(payload);
             emitStart(op);
             for (OpId boundaryId : payload.parameterBoundaryOpIds()) {
                 SemanticOp boundary = opsById.get(boundaryId);
@@ -1477,34 +1626,100 @@ public final class LuaSemanticEmitter {
                     .append(", ").append(slot(boundaryPayload.input())).append(")\n");
                 emitBoundarySuccess(boundary, "__chk", boundaryPayload.descriptor());
             }
-            out.append("table.insert(__frames, 1, ")
-                .append(luaString(String.valueOf(callee.id()))).append(")\n");
-            out.append("__okT, __resT = pcall(").append(fnFactory(callee))
-                .append("(");
-            LoweredFunction calleeFunction = unit.functions().get(callee);
-            List<BindingId> captures = calleeFunction == null
-                ? List.of() : calleeFunction.captures();
-            for (int i = 0; i < captures.size(); i++) {
-                if (i > 0) {
-                    out.append(", ");
+            switch (binding) {
+                case FunctionExecutionBinding.LoweredBody body -> {
+                    FunctionId callee = body.functionId();
+                    out.append("table.insert(__frames, 1, ")
+                        .append(luaString(String.valueOf(callee.id()))).append(")\n");
+                    out.append("__okT, __resT = pcall(").append(fnFactory(callee))
+                        .append("(");
+                    LoweredFunction calleeFunction = unit.functions().get(callee);
+                    List<BindingId> captures = calleeFunction == null
+                        ? List.of() : calleeFunction.captures();
+                    for (int i = 0; i < captures.size(); i++) {
+                        if (i > 0) {
+                            out.append(", ");
+                        }
+                        out.append(cell(captures.get(i), 0));
+                    }
+                    out.append(")");
+                    for (int i = 0; i < payload.parameterBoundaryOpIds().size(); i++) {
+                        out.append(", ");
+                        SemanticOp boundary =
+                            opsById.get(payload.parameterBoundaryOpIds().get(i));
+                        out.append(slot(((KindPayload.BoundaryPayload) boundary.payload())
+                            .input()));
+                    }
+                    out.append(")\n");
+                    out.append("table.remove(__frames, 1)\n");
+                    out.append("if not __okT then\n");
+                    emitFailureEvent(op.opId(), op.kind().name(), op,
+                        "__errtext(__resT)");
+                    out.append("  error(__resT, 0)\n");
+                    out.append("end\n");
                 }
-                out.append(cell(captures.get(i), 0));
+                case FunctionExecutionBinding.AdapterBinding adapter -> {
+                    // The D15 invocation protocol: resolve the source per
+                    // the recorded capture mode, the source-signature
+                    // check (E8010 at this CALL's origin), then the
+                    // source invocation with the leading M arguments
+                    // only — every N target-signature parameter boundary
+                    // already ran above. The adapter protocol pushes the
+                    // source body's frame itself; the identical
+                    // completion error propagates unchanged.
+                    String adapterSlot =
+                        slot((ValueId) opsById.get(adapter.adaptOpId()).result());
+                    StringBuilder args = new StringBuilder();
+                    for (OpId boundaryId : payload.parameterBoundaryOpIds()) {
+                        if (args.length() > 0) {
+                            args.append(", ");
+                        }
+                        SemanticOp boundary = opsById.get(boundaryId);
+                        args.append(slot(((KindPayload.BoundaryPayload) boundary.payload())
+                            .input()));
+                    }
+                    out.append("__okT, __resT = pcall(").append(adapterSlot)
+                        .append(".__fn, ").append(adapterSlot).append(", ")
+                        .append(luaString(originOf(op)));
+                    if (args.length() > 0) {
+                        out.append(", ").append(args);
+                    }
+                    out.append(")\n");
+                    out.append("if not __okT then\n");
+                    emitFailureEvent(op.opId(), op.kind().name(), op,
+                        "__errtext(__resT)");
+                    out.append("  error(__resT, 0)\n");
+                    out.append("end\n");
+                }
+                default -> throw new IllegalStateException("CALL " + op.opId()
+                    + " resolves a binding outside the statically-resolved slice: "
+                    + binding);
             }
-            out.append(")");
-            for (int i = 0; i < payload.parameterBoundaryOpIds().size(); i++) {
-                out.append(", ");
-                SemanticOp boundary = opsById.get(payload.parameterBoundaryOpIds().get(i));
-                out.append(slot(((KindPayload.BoundaryPayload) boundary.payload()).input()));
-            }
-            out.append(")\n");
-            out.append("table.remove(__frames, 1)\n");
-            out.append("if not __okT then\n");
-            emitFailureEvent(op.opId(), op.kind().name(), op, "__errtext(__resT)");
-            out.append("  error(__resT, 0)\n");
-            out.append("end\n");
             out.append(slot((ValueId) op.result())).append(" = __resT\n");
             emitResultSuccess(op, slot((ValueId) op.result()),
                 (RuntimeDescriptor) op.resultType());
+        }
+
+        /**
+         * The statically resolved execution binding of one CALL: the
+         * inline Static binding or the unit's registered binding of an
+         * Indirect callee identity (the same registration the semantic
+         * oracle re-resolves at execution). A Dynamic callee is the
+         * runtime-resolution slice (ISSUE-0531) and fails closed here.
+         */
+        private FunctionExecutionBinding callBinding(KindPayload.CallPayload payload) {
+            FunctionExecutionBinding binding = switch (payload.callee()) {
+                case KindPayload.CallCallee.Static staticCallee -> staticCallee.binding();
+                case KindPayload.CallCallee.Indirect indirect ->
+                    unit.functionBindings().get(
+                        new FunctionAllocationIdentity(indirect.callee().id()));
+                case KindPayload.CallCallee.Dynamic ignored -> null;
+            };
+            if (binding == null) {
+                throw new IllegalStateException("CALL " + payload
+                    + " resolves no FunctionExecutionBinding (producer defect)");
+            }
+            return binding;
         }
 
         private void emitIntrinsic(SemanticOp op) {
@@ -2019,6 +2234,155 @@ public final class LuaSemanticEmitter {
         }
 
         /**
+         * CALLBACK_INVOKE (E6, D13 host-driven dispatch): one per-unit
+         * entry function the scenario host invokes top-level with
+         * scripted arguments. The entry emits its own START (the
+         * scripted argument inputs, no parentOpId — the scenario step
+         * triggers it), runs the {@code HOST_TO_DEAL} parameter
+         * boundaries in one-based order, executes the bound
+         * {@link FunctionExecutionBinding} (a DEAL body, or the D15
+         * adapter protocol with the leading-M projection), and closes
+         * with the op's terminal (SUCCESS with the checked value, or
+         * FAILURE with the propagated error). The single
+         * {@code DEAL_TO_HOST} return boundary runs by the executed
+         * body's {@code RETURN} (its payload names this op as the
+         * enclosing invocation). The block walk never runs the entry.
+         */
+        private void emitCallbackInvoke(SemanticOp op) {
+            KindPayload.CallbackInvokePayload payload =
+                (KindPayload.CallbackInvokePayload) op.payload();
+            FunctionExecutionBinding binding = unit.functionBindings().get(
+                new FunctionAllocationIdentity(payload.function().id()));
+            if (binding == null) {
+                throw new IllegalStateException("CALLBACK_INVOKE " + op.opId()
+                    + " resolves no FunctionExecutionBinding (producer defect)");
+            }
+            String entry = "cb" + op.opId().id();
+            out.append("__callbacks[").append(luaString(entry))
+                .append("] = function(...)\n");
+            out.append("  local __cargs = {...}\n");
+            if (trace) {
+                StringBuilder inputs = new StringBuilder();
+                for (int i = 0; i < payload.parameterBoundaryOpIds().size(); i++) {
+                    if (i > 0) {
+                        inputs.append(", ");
+                    }
+                    inputs.append("__hostAtom(__cargs[").append(i + 1).append("])");
+                }
+                out.append("  __ev(").append(luaString(opKey(op.opId())))
+                    .append(", \"START\", ")
+                    .append(luaString(op.kind().name())).append(", ")
+                    .append(luaString(op.contract().canonicalDigest()))
+                    .append(", \"-\", {").append(inputs).append("}, nil, nil)\n");
+            }
+            for (int i = 0; i < payload.parameterBoundaryOpIds().size(); i++) {
+                SemanticOp boundary = opsById.get(payload.parameterBoundaryOpIds().get(i));
+                KindPayload.BoundaryPayload boundaryPayload =
+                    (KindPayload.BoundaryPayload) boundary.payload();
+                if (trace) {
+                    out.append("  __ev(").append(luaString(opKey(boundary.opId())))
+                        .append(", \"START\", \"BOUNDARY\", ")
+                        .append(luaString(boundary.contract().canonicalDigest()))
+                        .append(", ")
+                        .append(luaString(parentKey(boundary.origin().parentOpId())))
+                        .append(", {__hostAtom(__cargs[").append(i + 1)
+                        .append("])}, nil, nil)\n");
+                }
+                out.append("  __okB, __chkB = pcall(__bcheck, ")
+                    .append(luaString(descriptorText(boundaryPayload.descriptor())))
+                    .append(", ")
+                    .append(luaString(staticKind(boundaryPayload.descriptor())))
+                    .append(", __cargs[").append(i + 1).append("])\n");
+                out.append("  if not __okB then\n");
+                out.append("    __chkB.o = ")
+                    .append(luaString(originOf(boundary))).append("\n");
+                if (trace) {
+                    emitFailureEvent(boundary.opId(), "BOUNDARY", boundary,
+                        "__errtext(__chkB)");
+                    emitFailureEvent(op.opId(), op.kind().name(), op,
+                        "__errtext(__chkB)");
+                }
+                out.append("    error(__chkB, 0)\n");
+                out.append("  end\n");
+                if (trace) {
+                    out.append("  __ev(").append(luaString(opKey(boundary.opId())))
+                        .append(", \"SUCCESS\", \"BOUNDARY\", ")
+                        .append(luaString(boundary.contract().canonicalDigest()))
+                        .append(", ")
+                        .append(luaString(parentKey(boundary.origin().parentOpId())))
+                        .append(", {}, __atom(")
+                        .append(luaString(staticKind(boundaryPayload.descriptor())))
+                        .append(", __chkB), nil)\n");
+                }
+                out.append("  __cargs[").append(i + 1).append("] = __chkB\n");
+            }
+            switch (binding) {
+                case FunctionExecutionBinding.LoweredBody body -> {
+                    LoweredFunction function = unit.functions().get(body.functionId());
+                    List<BindingId> captures = function == null
+                        ? List.of() : function.captures();
+                    StringBuilder caps = new StringBuilder();
+                    for (BindingId captureId : captures) {
+                        if (caps.length() > 0) {
+                            caps.append(", ");
+                        }
+                        caps.append(cell(captureId, 0));
+                    }
+                    out.append("  table.insert(__frames, 1, ")
+                        .append(luaString(String.valueOf(body.functionId().id())))
+                        .append(")\n");
+                    out.append("  __okT, __resT = pcall(")
+                        .append(fnFactory(body.functionId())).append("(")
+                        .append(caps).append(")");
+                    for (int i = 0; i < payload.parameterBoundaryOpIds().size(); i++) {
+                        out.append(", __cargs[").append(i + 1).append("]");
+                    }
+                    out.append(")\n");
+                    out.append("  table.remove(__frames, 1)\n");
+                    out.append("  if not __okT then\n");
+                    if (trace) {
+                        emitFailureEvent(op.opId(), op.kind().name(), op,
+                            "__errtext(__resT)");
+                    }
+                    out.append("    error(__resT, 0)\n");
+                    out.append("  end\n");
+                }
+                case FunctionExecutionBinding.AdapterBinding adapter -> {
+                    String adapterSlot =
+                        slot((ValueId) opsById.get(adapter.adaptOpId()).result());
+                    out.append("  __okT, __resT = pcall(").append(adapterSlot)
+                        .append(".__fn, ").append(adapterSlot).append(", ")
+                        .append(luaString(originOf(op)));
+                    for (int i = 0; i < payload.parameterBoundaryOpIds().size(); i++) {
+                        out.append(", __cargs[").append(i + 1).append("]");
+                    }
+                    out.append(")\n");
+                    out.append("  if not __okT then\n");
+                    if (trace) {
+                        emitFailureEvent(op.opId(), op.kind().name(), op,
+                            "__errtext(__resT)");
+                    }
+                    out.append("    error(__resT, 0)\n");
+                    out.append("  end\n");
+                }
+                default -> throw new IllegalStateException("CALLBACK_INVOKE "
+                    + op.opId() + " resolves a binding outside the statically-resolved "
+                    + "slice: " + binding);
+            }
+            if (trace) {
+                out.append("  __ev(").append(luaString(opKey(op.opId())))
+                    .append(", \"SUCCESS\", ")
+                    .append(luaString(op.kind().name())).append(", ")
+                    .append(luaString(op.contract().canonicalDigest()))
+                    .append(", \"-\", {}, __atom(")
+                    .append(luaString(staticKind(payload.descriptor().returnType())))
+                    .append(", __resT), nil)\n");
+            }
+            out.append("  return __resT\n");
+            out.append("end\n");
+        }
+
+        /**
          * ENTRY_INVOKE — delegates exactly one CALL(DIRECT) to main
          * (its owned child) and exits after the terminal.
          */
@@ -2522,6 +2886,65 @@ local function __normalizeEvent(opKey, digest, parent, slotName)
 end
 local function __u8sub(s, i, j)
   return string.sub(s, i, j)
+end
+-- The wrapper unwrapper: a table carrying an __fn field exposes the
+-- underlying callable (the closure or the adapter protocol).
+local function __unfn(v)
+  if type(v) == "table" and v.__fn ~= nil then return v.__fn end
+  return v
+end
+-- The actual-kind atom of one host-supplied argument (the callback
+-- dispatch surface): null/boolean/int/number/string by the runtime
+-- carrier — identical to the semantic oracle's scripted-argument
+-- atomization.
+local function __hostAtom(v)
+  if v == nil then return "null" end
+  local t = type(v)
+  if t == "boolean" then return "bool:"..tostring(v) end
+  if t == "number" then
+    if v % 1 == 0 then return "int:"..tostring(v) end
+    return __atom("number", v)
+  end
+  if t == "string" then return "str:"..__esc(v) end
+  return "ref:"..__allocId(v)
+end
+-- The adapter's source-signature check (D15): the resolved source's
+-- carried canonical spec text must equal the recorded source signature;
+-- a mismatch is E8010 FUNCTION_SIGNATURE at the invoking op's origin
+-- with the active frames (the check runs before any source-frame push).
+local function __fncheck(v, expected, origin)
+  local carried = ""
+  if type(v) == "table" then carried = v.__csig or "" end
+  if type(v) == "function" then carried = v.__csig or "" end
+  if carried == expected then return v end
+  return error(__failExpr("E8010", "function signature mismatch: expected "..expected
+    ..", got "..carried, origin, expected, carried), 0)
+end
+-- The D15 adapter invocation protocol: resolve the source per the
+-- closed capture mode (0 VALUE, 1 SHARED_CELL, 2 REEVALUATE_THUNK),
+-- the source-signature check, then the source invocation with the
+-- leading M arguments only. A DEAL-body source pushes its function id
+-- onto the active frames for the invocation (popped on every path); the
+-- identical completion error propagates unchanged.
+local function __adaptInvoke(w, origin, ...)
+  local __cargs = {...}
+  local src
+  if w.__mode == 0 then src = w.__value
+  elseif w.__mode == 1 then src = w.__cell[1]
+  else src = w.__thunk() end
+  __fncheck(src, w.__csrc, origin)
+  local __fid = nil
+  if type(src) == "table" then __fid = src.__fid end
+  if type(src) == "function" then __fid = src.__fid end
+  local __pushed = false
+  if __fid ~= nil then
+    table.insert(__frames, 1, tostring(__fid))
+    __pushed = true
+  end
+  local __okA, __vA = pcall(__unfn(src), unpack(__cargs, 1, w.__m))
+  if __pushed then table.remove(__frames, 1) end
+  if not __okA then error(__vA, 0) end
+  return __vA
 end
 """;
 }

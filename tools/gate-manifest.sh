@@ -70,6 +70,14 @@ TEST_SOURCES=(
   'test/EvaluationOrderIntegrationTest.java'
   'test/SemanticDifferentialHarness.java'
   'test/RuntimeIntegrationMatrixTest.java'
+  # ISSUE-0582 registration: the CALLS family's FUNCTION_ADAPT/
+  # CALLBACK_INVOKE differential corpus — the production-chain adapter
+  # seeds (SHARED_CELL reassignment, VALUE retention, xN boundaries),
+  # the host-driven callback dispatch drives, the hand-built E8010/
+  # thunk-re-evaluation/body-failure controls, the validator and
+  # fail-closed negatives, the emitOp arm pins, and the production-mode
+  # realization on both targets (sequencing step 6 first half).
+  'test/CallAdapterCallbackIntegrationTest.java'
   'test/UnicodeScalarsTest.java'
   'test/FailureContractRegistryTest.java'
   'test/CanonicalJsonTest.java'
@@ -381,6 +389,9 @@ TEST_MAINS=(
   'fg|=== Running Control Flow Lowering Tests (ISSUE-0409 BRANCH/LOOP/FOR_EACH/TRY_CATCH/THROW/BREAK/CONTINUE/DISCARD) ===|java -ea -cp build deal.test.ControlFlowLoweringTest'
   'fg|=== Running Evaluation Order Integration Tests (ISSUE-0410, decomposition tail) ===|java -ea -cp build deal.test.EvaluationOrderIntegrationTest'
   'fg|=== Running the Runtime Integration Matrix (ISSUE-0410: semantic oracle + shared LuaJIT + shared JVM) ===|java -ea -cp build deal.test.RuntimeIntegrationMatrixTest'
+  # ISSUE-0582 registration: the CALLS family's FUNCTION_ADAPT/
+  # CALLBACK_INVOKE differential corpus (sequencing step 6 first half).
+  'fg|=== Running the Call Adapter / Callback Integration Matrix (ISSUE-0582: semantic oracle + shared LuaJIT + shared JVM) ===|java -ea -cp build deal.test.CallAdapterCallbackIntegrationTest'
   'fg|=== Running Unicode Scalars Tests (ISSUE-0382, ISSUE-0232 D5) ===|java -ea -cp build deal.test.UnicodeScalarsTest'
   'fg|=== Running Failure Contract Registry Tests (ISSUE-0285) ===|java -ea -cp build deal.test.FailureContractRegistryTest'
   'fg|=== Running Canonical JSON / Snapshot Digest Tests (ISSUE-0283) ===|java -ea -cp build deal.test.CanonicalJsonTest'

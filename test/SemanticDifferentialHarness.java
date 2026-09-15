@@ -6,11 +6,15 @@ import deal.semantic.SemanticOracle;
 import deal.semantic.SemanticTraceProtocol;
 import deal.semantic.SemanticRuntimeModel;
 
+import deal.semantic.ir.BoundaryKind;
+import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredModuleUnit;
 import deal.semantic.ir.OpId;
+import deal.semantic.ir.RuntimeDescriptor;
 import deal.semantic.ir.SemanticOp;
 import deal.semantic.ir.SemanticOpKind;
 import deal.semantic.ir.StructuredBodyTable;
+import deal.semantic.ir.ValueId;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -169,6 +173,356 @@ public final class SemanticDifferentialHarness {
                 + " of 3 consumers produced a run — the matrix is not a "
                 + "stubbed/partial run");
         }
+        return verdictFrom(unit, expectation, runs, failures, report);
+    }
+
+    // =========================================================================
+    // The host-driven callback surface (CALLBACK_INVOKE dispatch entries)
+    // =========================================================================
+
+    /** One scripted host argument of a callback invocation. */
+    public sealed interface CallbackArg
+        permits CallbackArg.Int, CallbackArg.Number, CallbackArg.Str, CallbackArg.Null {
+
+        /** An int32 argument (the closed int carrier). */
+        record Int(long value) implements CallbackArg {
+        }
+
+        /** A number argument. */
+        record Number(double value) implements CallbackArg {
+        }
+
+        /** A string argument. */
+        record Str(String value) implements CallbackArg {
+        }
+
+        /** A language-null argument. */
+        record Null() implements CallbackArg {
+        }
+    }
+
+    /**
+     * Runs the three-consumer callback matrix: the semantic oracle's
+     * {@code invokeCallback} surface, the shared LuaJIT artifact's
+     * dispatch entry driven by a real top-level host script (the module
+     * init walk suppressed under the callback-only drive flag), and the
+     * shared JVM artifact's static dispatch entry driven by a real host
+     * main — scripted arguments never synthesized traces.
+     *
+     * @param unit          the validated lowered module unit; non-null
+     * @param table         the unit's produced block-membership table; non-null
+     * @param functionValue the bound function value identity; non-null
+     * @param args          the scripted host arguments; non-null
+     * @param expectation   the seed's pinned expectation; non-null
+     * @param workspace     an isolated workspace directory; non-null
+     * @return the verdict with the per-consumer comparison report
+     */
+    public static Verdict runCallback(LoweredModuleUnit unit, StructuredBodyTable table,
+                                      ValueId functionValue, List<CallbackArg> args,
+                                      Expectation expectation, Path workspace) {
+        Objects.requireNonNull(unit, "unit must not be null");
+        Objects.requireNonNull(table, "table must not be null");
+        Objects.requireNonNull(functionValue, "functionValue must not be null");
+        Objects.requireNonNull(args, "args must not be null");
+        Objects.requireNonNull(expectation, "expectation must not be null");
+        Objects.requireNonNull(workspace, "workspace must not be null");
+        List<String> failures = new ArrayList<>();
+        List<SemanticRuntimeModel.ConsumerRun> runs = new ArrayList<>();
+        StringBuilder report = new StringBuilder();
+        report.append("== Differential callback matrix run: ")
+            .append(expectation.what()).append(" ==\n");
+
+        // 1. The semantic oracle (in-process, top-level invocation).
+        List<SemanticOracle.Value> oracleArgs = new ArrayList<>();
+        for (CallbackArg arg : args) {
+            oracleArgs.add(oracleValueOf(arg));
+        }
+        SemanticRuntimeModel.ConsumerRun oracle = SemanticOracle.invokeCallback(unit,
+            table, functionValue, oracleArgs);
+        runs.add(oracle);
+        report.append(oracle.comparisonReport()).append('\n');
+
+        // 2. The shared LuaJIT artifact's dispatch entry.
+        SemanticRuntimeModel.ConsumerRun lua = runLuaCallback(unit, table, functionValue,
+            args, workspace, failures);
+        if (lua != null) {
+            runs.add(lua);
+            report.append(lua.comparisonReport()).append('\n');
+        }
+
+        // 3. The shared JVM artifact's dispatch entry.
+        SemanticRuntimeModel.ConsumerRun jvm = runJvmCallback(unit, table, functionValue,
+            args, workspace, failures);
+        if (jvm != null) {
+            runs.add(jvm);
+            report.append(jvm.comparisonReport()).append('\n');
+        }
+
+        if (runs.size() != 3) {
+            failures.add("three-consumer gate: only " + runs.size()
+                + " of 3 consumers produced a run — the callback matrix is not a "
+                + "stubbed/partial run");
+        }
+        return verdictFrom(unit, expectation, runs, failures, report);
+    }
+
+    /** One scripted host argument as the semantic oracle's value. */
+    private static SemanticOracle.Value oracleValueOf(CallbackArg arg) {
+        return switch (arg) {
+            case CallbackArg.Int value -> new SemanticOracle.Value.IntValue(value.value());
+            case CallbackArg.Number value -> new SemanticOracle.Value.NumValue(value.value());
+            case CallbackArg.Str value -> new SemanticOracle.Value.StrValue(value.value());
+            case CallbackArg.Null ignored -> SemanticOracle.Value.NullValue.INSTANCE;
+        };
+    }
+
+    /** The dispatch entry name of one CALLBACK_INVOKE op (per-unit record). */
+    private static String callbackEntryName(OpId opId) {
+        return "cb" + opId.id();
+    }
+
+    /** The unit's CALLBACK_INVOKE op bound to the given function value. */
+    private static SemanticOp callbackOpOf(LoweredModuleUnit unit, ValueId functionValue) {
+        for (SemanticOp op : unit.ops()) {
+            if (op.kind() == SemanticOpKind.CALLBACK_INVOKE
+                    && ((KindPayload.CallbackInvokePayload) op.payload()).function()
+                        .equals(functionValue)) {
+                return op;
+            }
+        }
+        return null;
+    }
+
+    /** The Lua literal of one scripted host argument. */
+    private static String luaLiteralOf(CallbackArg arg) {
+        return switch (arg) {
+            case CallbackArg.Int value -> String.valueOf(value.value());
+            case CallbackArg.Number value -> Double.toString(value.value());
+            case CallbackArg.Str value -> quoteLua(value.value());
+            case CallbackArg.Null ignored -> "nil";
+        };
+    }
+
+    /** The JVM literal of one scripted host argument (the closed carriers). */
+    private static String jvmLiteralOf(CallbackArg arg) {
+        return switch (arg) {
+            case CallbackArg.Int value -> value.value() + "L";
+            case CallbackArg.Number value -> Double.toString(value.value()) + "d";
+            case CallbackArg.Str value -> "\"" + value.value()
+                .replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+            case CallbackArg.Null ignored -> "null";
+        };
+    }
+
+    /** One Lua string literal. */
+    private static String quoteLua(String text) {
+        StringBuilder sb = new StringBuilder("\"");
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            switch (c) {
+                case '"' -> sb.append("\\\"");
+                case '\\' -> sb.append("\\\\");
+                case '\n' -> sb.append("\\n");
+                default -> sb.append(c);
+            }
+        }
+        sb.append('"');
+        return sb.toString();
+    }
+
+    /** The shared LuaJIT artifact's callback dispatch entry, host-driven. */
+    private static SemanticRuntimeModel.ConsumerRun runLuaCallback(
+            LoweredModuleUnit unit, StructuredBodyTable table, ValueId functionValue,
+            List<CallbackArg> args, Path workspace, List<String> failures) {
+        SemanticOp callback = callbackOpOf(unit, functionValue);
+        if (callback == null) {
+            failures.add("shared LuaJIT callback drive: the unit records no "
+                + "CALLBACK_INVOKE for " + functionValue);
+            return null;
+        }
+        try {
+            Files.createDirectories(workspace);
+            String lua = LuaSemanticEmitter.emitModule(unit, table);
+            Path artifact = workspace.resolve(unit.moduleId().path().replace('/', '_')
+                + "-cb.lua");
+            Files.writeString(artifact, lua, StandardCharsets.UTF_8);
+            StringBuilder argsText = new StringBuilder();
+            for (CallbackArg arg : args) {
+                if (argsText.length() > 0) {
+                    argsText.append(", ");
+                }
+                argsText.append(luaLiteralOf(arg));
+            }
+            Path driver = workspace.resolve("lua-cb-driver.lua");
+            Files.writeString(driver,
+                "dofile(" + quoteLua(artifact.toAbsolutePath().toString()) + ")\n"
+                    + "local __ok, __res = pcall(__callbacks["
+                    + quoteLua(callbackEntryName(callback.opId())) + "], "
+                    + argsText + ")\n"
+                    + "if __ok then\n"
+                    + "  io.stderr:write(\"R|success|\"..__callbacks.__hostAtom(__res)"
+                    + "..\"\\n\")\n"
+                    + "else\n"
+                    + "  io.stderr:write(\"R|failure|\"..__callbacks.__errtext(__res)"
+                    + "..\"\\n\")\n"
+                    + "end\n"
+                    + "io.stderr:flush()\n",
+                StandardCharsets.UTF_8);
+            Path stdout = workspace.resolve("lua-cb-out.txt");
+            Path stderr = workspace.resolve("lua-cb-err.txt");
+            ProcessBuilder builder = new ProcessBuilder("luajit",
+                driver.toAbsolutePath().toString());
+            builder.environment().put("DEAL_CALLBACK_ONLY", "1");
+            builder.redirectOutput(stdout.toFile());
+            builder.redirectError(stderr.toFile());
+            Process process = builder.start();
+            int exit = process.waitFor();
+            List<String> stdoutLines = Files.readAllLines(stdout, StandardCharsets.UTF_8);
+            List<String> protocolLines = Files.readAllLines(stderr, StandardCharsets.UTF_8);
+            if (exit != 0) {
+                failures.add("shared LuaJIT callback drive exited " + exit + ": "
+                    + String.join(" / ", protocolLines));
+                return null;
+            }
+            SemanticRuntimeModel.ConsumerRun run =
+                decodeRun("shared-luajit", unit, protocolLines, failures);
+            crossCheckStdout(run, stdoutLines, "shared-luajit", failures);
+            return run;
+        } catch (IOException | InterruptedException exception) {
+            failures.add("shared LuaJIT callback infrastructure failure: "
+                + exception.getMessage());
+            return null;
+        }
+    }
+
+    /** The shared JVM artifact's callback dispatch entry, host-driven. */
+    private static SemanticRuntimeModel.ConsumerRun runJvmCallback(
+            LoweredModuleUnit unit, StructuredBodyTable table, ValueId functionValue,
+            List<CallbackArg> args, Path workspace, List<String> failures) {
+        SemanticOp callback = callbackOpOf(unit, functionValue);
+        if (callback == null) {
+            failures.add("shared JVM callback drive: the unit records no "
+                + "CALLBACK_INVOKE for " + functionValue);
+            return null;
+        }
+        try {
+            Files.createDirectories(workspace);
+            JvmSemanticEmitter.EmissionResult emission =
+                JvmSemanticEmitter.emitModule(unit, table);
+            Path source = workspace.resolve(emission.className() + ".java");
+            Files.writeString(source, emission.source(), StandardCharsets.UTF_8);
+            Path classes = workspace.resolve("jvm-cb-classes");
+            Files.createDirectories(classes);
+            String classpath = System.getProperty("java.class.path", "");
+            ProcessBuilder javac = new ProcessBuilder("javac", "--release", "25",
+                "-proc:none", "-cp", classpath, "-d", classes.toString(),
+                source.toAbsolutePath().toString());
+            javac.redirectErrorStream(true);
+            Process compile = javac.start();
+            String compileOut = new String(compile.getInputStream().readAllBytes(),
+                StandardCharsets.UTF_8);
+            int compileExit = compile.waitFor();
+            if (compileExit != 0) {
+                failures.add("shared JVM callback artifact compilation failed ("
+                    + compileExit + "): " + compileOut);
+                return null;
+            }
+            KindPayload.CallbackInvokePayload payload =
+                (KindPayload.CallbackInvokePayload) callback.payload();
+            String returnKind = staticKindOf(payload.descriptor().returnType());
+            StringBuilder argsText = new StringBuilder();
+            for (CallbackArg arg : args) {
+                if (argsText.length() > 0) {
+                    argsText.append(", ");
+                }
+                argsText.append(jvmLiteralOf(arg));
+            }
+            String driverClass = emission.className() + "CallbackDriver";
+            Path driver = workspace.resolve(driverClass + ".java");
+            Files.writeString(driver,
+                "public class " + driverClass + " {\n"
+                    + "  public static void main(String[] args) {\n"
+                    + "    try {\n"
+                    + "      Object r = " + emission.className() + "."
+                    + callbackEntryName(callback.opId()) + "(new Object[]{"
+                    + argsText + "});\n"
+                    + "      System.err.println(\"R|success|\" + "
+                    + "deal.codegen.jvm.JvmRuntime.atom(r, \"" + returnKind
+                    + "\"));\n"
+                    + "    } catch (deal.codegen.jvm.JvmRuntime.DealError e) {\n"
+                    + "      System.err.println(\"R|failure|\" + "
+                    + "deal.codegen.jvm.JvmRuntime.errtext(e));\n"
+                    + "    }\n"
+                    + "    System.err.flush();\n"
+                    + "  }\n"
+                    + "}\n",
+                StandardCharsets.UTF_8);
+            ProcessBuilder driverJavac = new ProcessBuilder("javac", "--release", "25",
+                "-proc:none", "-cp", classpath + java.io.File.pathSeparator + classes,
+                "-d", classes.toString(), driver.toAbsolutePath().toString());
+            driverJavac.redirectErrorStream(true);
+            Process driverCompile = driverJavac.start();
+            String driverOut = new String(driverCompile.getInputStream().readAllBytes(),
+                StandardCharsets.UTF_8);
+            int driverExit = driverCompile.waitFor();
+            if (driverExit != 0) {
+                failures.add("shared JVM callback driver compilation failed ("
+                    + driverExit + "): " + driverOut);
+                return null;
+            }
+            Path stdout = workspace.resolve("jvm-cb-out.txt");
+            Path stderr = workspace.resolve("jvm-cb-err.txt");
+            ProcessBuilder javaRun = new ProcessBuilder("java", "-cp",
+                classpath + java.io.File.pathSeparator + classes, driverClass);
+            javaRun.redirectOutput(stdout.toFile());
+            javaRun.redirectError(stderr.toFile());
+            Process run = javaRun.start();
+            int exit = run.waitFor();
+            List<String> stdoutLines = Files.readAllLines(stdout, StandardCharsets.UTF_8);
+            List<String> protocolLines = Files.readAllLines(stderr, StandardCharsets.UTF_8);
+            if (exit != 0) {
+                failures.add("shared JVM callback drive exited " + exit + ": "
+                    + String.join(" / ", protocolLines));
+                return null;
+            }
+            SemanticRuntimeModel.ConsumerRun consumerRun =
+                decodeRun("shared-jvm", unit, protocolLines, failures);
+            crossCheckStdout(consumerRun, stdoutLines, "shared-jvm", failures);
+            return consumerRun;
+        } catch (IOException | InterruptedException exception) {
+            failures.add("shared JVM callback infrastructure failure: "
+                + exception.getMessage());
+            return null;
+        }
+    }
+
+    /** The closed static runtime kind of a descriptor (the emitter's map). */
+    private static String staticKindOf(RuntimeDescriptor descriptor) {
+        if (descriptor instanceof RuntimeDescriptor.Null) {
+            return "null";
+        }
+        if (descriptor instanceof RuntimeDescriptor.Boolean) {
+            return "bool";
+        }
+        if (descriptor instanceof RuntimeDescriptor.Int) {
+            return "int";
+        }
+        if (descriptor instanceof RuntimeDescriptor.Number) {
+            return "number";
+        }
+        if (descriptor instanceof RuntimeDescriptor.String) {
+            return "string";
+        }
+        if (descriptor instanceof RuntimeDescriptor.Nullable nullable) {
+            return "nullable:" + staticKindOf(nullable.inner());
+        }
+        return "ref";
+    }
+
+    /** Applies the verdict gates shared by the module and callback matrices. */
+    private static Verdict verdictFrom(LoweredModuleUnit unit, Expectation expectation,
+                                       List<SemanticRuntimeModel.ConsumerRun> runs,
+                                       List<String> failures, StringBuilder report) {
         for (SemanticRuntimeModel.ConsumerRun run : runs) {
             if (run.trace().isEmpty()) {
                 failures.add(run.consumer() + " produced no events (a hollow run)");
