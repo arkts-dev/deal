@@ -515,9 +515,24 @@ public final class SemanticDifferentialHarness {
 
     /**
      * The scripted async host behavior of one seed: the bound operation
-     * label (null scripts the bad-handle terminal) and the completion.
+     * label (null scripts the bad-handle terminal), the expected host
+     * export cell (null: the seam keys on the operation label alone),
+     * and the completion. A non-null {@code expectedExport} makes the
+     * seam key on the export identity cell exactly like a scenario host
+     * adapter that keys its scripted async terminals on the documented
+     * export cell ({@code HostResponder.startAsync} {@code @param
+     * export}; {@code JvmRuntime.HostAsync.startAsync} {@code @param
+     * export}): a start whose export cell does not match scripts the
+     * bad-handle terminal, so the three-consumer parity of the
+     * {@code ASYNC_START(HOST)} export cell is gate-pinned.
      */
-    public record AsyncHostScript(String boundLabel, AsyncHostCompletion completion) {
+    public record AsyncHostScript(String boundLabel, String expectedExport,
+                                  AsyncHostCompletion completion) {
+
+        /** Scripts the seam keyed on the operation label alone (the export cell unchecked). */
+        public AsyncHostScript(String boundLabel, AsyncHostCompletion completion) {
+            this(boundLabel, null, completion);
+        }
 
         public AsyncHostScript {
             Objects.requireNonNull(completion, "completion must not be null");
@@ -571,6 +586,10 @@ public final class SemanticDifferentialHarness {
                 public String startAsync(deal.semantic.ir.ModuleId module, String export,
                         RuntimeDescriptor.Func descriptor, List<SemanticOracle.Value> args,
                         String operationLabel) {
+                    if (host.expectedExport() != null
+                            && !host.expectedExport().equals(export)) {
+                        return null; // a mismatched export cell is a bad handle
+                    }
                     return host.boundLabel();
                 }
 
@@ -676,6 +695,11 @@ public final class SemanticDifferentialHarness {
                 if (host.boundLabel() == null) {
                     drive.append("  return nil\n");
                 } else {
+                    if (host.expectedExport() != null) {
+                        drive.append("  if export ~= ")
+                            .append(quoteLua(host.expectedExport()))
+                            .append(" then return nil end\n");
+                    }
                     drive.append("  return ").append(quoteLua(host.boundLabel())).append("\n");
                 }
                 drive.append("end\n");
@@ -809,6 +833,11 @@ public final class SemanticDifferentialHarness {
                 if (host.boundLabel() == null) {
                     driverSource.append("        return null;\n");
                 } else {
+                    if (host.expectedExport() != null) {
+                        driverSource.append("        if (!")
+                            .append(javaStringLiteral(host.expectedExport()))
+                            .append(".equals(export)) return null;\n");
+                    }
                     driverSource.append("        return ")
                         .append(javaStringLiteral(host.boundLabel())).append(";\n");
                 }

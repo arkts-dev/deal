@@ -2615,7 +2615,7 @@ public final class LuaSemanticEmitter {
                         host.exportName());
                 case FunctionExecutionBinding.HostFunctionValue hostValue ->
                     emitAsyncHostStart(op, token, hostValue.hostModuleId().path(),
-                        "@value");
+                        "@value#" + hostValue.materializingBoundaryOpId().id());
                 case FunctionExecutionBinding.ExternalFunction external ->
                     emitAsyncExternalStart(op, token, payload.externalAsyncLink());
             }

@@ -523,6 +523,17 @@ public class AsyncStartAwaitIntegrationTest {
                 List.of(), deal.semantic.ir.InitializationMode.ONCE_AFTER_DEPENDENCIES)));
     }
 
+    /** The single-module project closure over a hand-built unit. */
+    private static ExecutableLoweredProject projectOf(LoweredModuleUnit unit) {
+        return new ExecutableLoweredProject(SemanticProfile.DEAL_V1_2_INT32,
+            new ProjectInterfaceIndex(ProjectInterfaceIndex.FORMAT_VERSION, Map.of(MODULE,
+                new deal.semantic.ir.ExternalModuleInterface(MODULE,
+                    deal.semantic.ir.ExternalModuleKind.IMPLEMENTATION, List.of(), List.of(),
+                    List.of(),
+                    deal.semantic.ir.InitializationMode.ONCE_AFTER_DEPENDENCIES))),
+            Map.of(MODULE, unit), MODULE);
+    }
+
     // =========================================================================
     // 2. The async host shape: value completion, bad handle, thrown completion
     // =========================================================================
@@ -637,6 +648,125 @@ public class AsyncStartAwaitIntegrationTest {
             new SemanticDifferentialHarness.TerminalExpectation.FailureWith("E9999",
                 originTextOf(await)),
             "async host thrown completion");
+    }
+
+    static void testAsyncHostFunctionValue() {
+        System.out.println("-- ASYNC_START(HOST) HostFunctionValue: the materializing-boundary "
+            + "export cell (@value#N) reaches the scripted host seam identically on all "
+            + "three consumers --");
+        // Hand-built over the closed schema (the lowerer's lowerAwaitCall
+        // HostFunctionValue arm shape — no DEAL source registers a
+        // HostFunctionValue binding today, so the corpus seed builds the
+        // exact IR the statically-resolved slice records: CallCallee.Static(
+        // HostFunctionValue {hostModuleId, materializingBoundaryOpId,
+        // descriptor}), AsyncStartSource.HOST, host operation label
+        // module.@value). The scripted host seam keys on the export cell
+        // (@value#<materializingBoundaryOpId>), so a consumer passing any
+        // other cell fails the differential verdict.
+        OpId entryOp = nextOpId();
+        OpId startOp = nextOpId();
+        OpId awaitOp = nextOpId();
+        OpId cb = nextOpId();
+        OpId rb = nextOpId();
+        OpId retOp = nextOpId();
+        OpId materializingBoundary = nextOpId();
+        ValueId awaitResult = nextValue();
+        BlockId body = nextBlock();
+        ModuleId hostModule = new ModuleId("host/ops");
+        RuntimeDescriptor.Func hostDescriptor =
+            new RuntimeDescriptor.Func(List.of(), RuntimeDescriptor.Int.INSTANCE, true);
+        List<SemanticOp> ops = new ArrayList<>();
+        ops.add(opWith(entryOp, SemanticOpKind.EXTERNAL_ENTRY,
+            new KindPayload.ExternalEntryPayload("test", new FunctionId(1),
+                hostDescriptor, true, rb, RuntimeDescriptor.Int.INSTANCE),
+            null, null, FailurePolicyId.NO_DEAL_FAILURE, null));
+        ops.add(opWith(startOp, SemanticOpKind.ASYNC_START,
+            new KindPayload.AsyncStartPayload(
+                new KindPayload.CallCallee.Static(
+                    new FunctionExecutionBinding.HostFunctionValue(hostModule,
+                        materializingBoundary, hostDescriptor)),
+                AsyncStartSource.HOST, ParameterBoundaryMode.RUN, List.of(),
+                RuntimeDescriptor.Int.INSTANCE, null, "host/ops.@value", null),
+            new AsyncTokenId.Canonical(601, AsyncTokenOwner.HOST_OPERATION),
+            InternalResultType.INTERNAL_ASYNC, FailurePolicyId.NO_DEAL_FAILURE, null));
+        ops.add(boundaryWithInput(cb, BoundaryKind.ASYNC_COMPLETION,
+            RuntimeDescriptor.Int.INSTANCE, FailurePolicyId.ASYNC_COMPLETION, awaitOp,
+            awaitResult));
+        ops.add(opWith(awaitOp, SemanticOpKind.AWAIT,
+            new KindPayload.AwaitPayload(
+                new AsyncTokenId.Canonical(601, AsyncTokenOwner.HOST_OPERATION),
+                RuntimeDescriptor.Int.INSTANCE, cb),
+            awaitResult, RuntimeDescriptor.Int.INSTANCE, FailurePolicyId.NO_DEAL_FAILURE,
+            null));
+        ops.add(boundaryWithInput(rb, BoundaryKind.FUNCTION_RETURN,
+            RuntimeDescriptor.Int.INSTANCE, FailurePolicyId.TYPE_DESCRIPTOR, retOp,
+            awaitResult));
+        ops.add(opWith(retOp, SemanticOpKind.RETURN,
+            new KindPayload.ReturnPayload(awaitResult, new FunctionId(1), entryOp, rb),
+            null, null, FailurePolicyId.NO_DEAL_FAILURE, null));
+        Map<FunctionId, LoweredFunction> functions = Map.of(
+            new FunctionId(1), new LoweredFunction(new FunctionId(1), hostDescriptor,
+                List.of(), body));
+        LoweredModuleUnit unit = unit(functions, new LinkedHashMap<>(), ops);
+        Map<BlockId, List<OpId>> blockOps = new LinkedHashMap<>();
+        blockOps.put(new BlockId(0), List.of());
+        blockOps.put(body, List.of(startOp, awaitOp, retOp));
+        Map<OpId, BlockId> opBlocks = new LinkedHashMap<>();
+        opBlocks.put(startOp, body);
+        opBlocks.put(awaitOp, body);
+        opBlocks.put(retOp, body);
+        StructuredBodyTable bodyTable = table(blockOps, opBlocks);
+        Optional<deal.diagnostics.CompilerDiagnostic> validation =
+            SemanticIrValidator.validate(unit, FACTS);
+        check(validation.isEmpty(), "the HostFunctionValue async host unit passes "
+            + "validation: " + validation);
+        if (validation.isPresent()) {
+            return;
+        }
+        List<SemanticOp> starts = ofKind(unit, SemanticOpKind.ASYNC_START);
+        check(starts.size() == 1, "the unit carries exactly one ASYNC_START(HOST)");
+        if (starts.size() == 1) {
+            KindPayload.AsyncStartPayload payload =
+                (KindPayload.AsyncStartPayload) starts.get(0).payload();
+            check(payload.source() == AsyncStartSource.HOST
+                    && "host/ops.@value".equals(payload.hostOperationLabel()),
+                "the async source is HOST with the module.@value operation label");
+            check(payload.callee() instanceof KindPayload.CallCallee.Static staticCallee
+                    && staticCallee.binding()
+                        instanceof FunctionExecutionBinding.HostFunctionValue hostValue
+                    && hostValue.materializingBoundaryOpId().equals(materializingBoundary),
+                "the callee is the HostFunctionValue binding naming its materializing "
+                    + "boundary");
+            check(starts.get(0).result() instanceof AsyncTokenId.Canonical canonical
+                    && canonical.owner() == AsyncTokenOwner.HOST_OPERATION,
+                "the published token is canonical, bound to the host operation");
+        }
+        ExecutableLoweredProject project = projectOf(unit);
+        // The scripted seam keys on the export cell: a start whose export
+        // cell is not @value#<materializingBoundary> scripts the bad-handle
+        // terminal, so the three consumers' export cells must match
+        // exactly (the oracle and the JVM emitter pass the boundary-
+        // qualified cell; the shared LuaJIT consumer must too).
+        SemanticDifferentialHarness.AsyncHostScript script =
+            new SemanticDifferentialHarness.AsyncHostScript("host/ops.@value",
+                "@value#" + materializingBoundary.id(),
+                new SemanticDifferentialHarness.AsyncHostCompletion.Returned(
+                    new SemanticDifferentialHarness.CallbackArg.Int(42)));
+        SemanticDifferentialHarness.Verdict verdict = runAsyncEntry(project,
+            Map.of(MODULE, bodyTable), "test", List.of(), script,
+            List.of("host/ops.@value", "host/ops.@value=int:42"),
+            new SemanticDifferentialHarness.TerminalExpectation.SuccessWith("int:42"),
+            "async host function value");
+        if (verdict != null) {
+            for (SemanticRuntimeModel.ConsumerRun run : verdict.runs()) {
+                check(run.effects().stream().anyMatch(e ->
+                        e.kind() == SemanticRuntimeModel.EffectEvent.Kind.ASYNC_START_OP),
+                    "the host-value start records the ordered AsyncStart effect");
+                check(run.effects().stream().anyMatch(e ->
+                        e.kind() == SemanticRuntimeModel.EffectEvent.Kind.ASYNC_COMPLETE_RETURN),
+                    "the host-value completion records the ordered completion effect");
+            }
+        }
     }
 
     /** The host-module slice lowering (HOST import + async host export). */
@@ -1574,6 +1704,7 @@ public class AsyncStartAwaitIntegrationTest {
         testAsyncHostCompletion();
         testAsyncHostBadHandle();
         testAsyncHostThrownCompletion();
+        testAsyncHostFunctionValue();
         testAdapterOverAsync();
         testAsyncExternal();
         testFifoDrain();
