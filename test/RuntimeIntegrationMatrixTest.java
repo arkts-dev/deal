@@ -1592,6 +1592,79 @@ public class RuntimeIntegrationMatrixTest {
                 List.of("stringify-ok"), SUCCESS);
         }
 
+        // (i2) JSON_STRINGIFY number spellings: the integral-number class
+        // — a number-typed value is never confused with an int carrier
+        // (Double.toString parity: 1.0, 100.0, -0.0, 1E20, the 4.0/2.0
+        // division result, a MATH_SQRT result), int positions keep the
+        // integer spelling, and the distinction survives nested objects,
+        // array literals, member writes, and index writes. A shared
+        // realization that spells an integral number-typed value with
+        // the Lua tostring integer form fails this seed.
+        {
+            String source = CONSOLE + JSON + MATH
+                + "function main(): null {\n"
+                + "  let half: number = 4.0 / 2.0\n"
+                + "  let root: number = math.sqrt(16.0)\n"
+                + "  let t: table = { a: 1.0, b: 100.0, c: -0.0, d: 1.0e20, "
+                + "e: 0.5, i: 42, j: -1 }\n"
+                + "  let s: string = json.stringify(t)\n"
+                + "  let u: table = { n: half, r: root, xs: [1.0, 2.5], "
+                + "g: { h: 100.0 } }\n"
+                + "  let us: string = json.stringify(u)\n"
+                + "  let xs: number[] = [1.0, 2.0]\n"
+                + "  xs[1] = 5.0\n"
+                + "  let v: table = { xs: xs }\n"
+                + "  let vs: string = json.stringify(v)\n"
+                + "  let w: table = { z: 1 }\n"
+                + "  w.k = 3.0\n"
+                + "  let ws: string = json.stringify(w)\n"
+                + "  w.k = 4\n"
+                + "  let ws2: string = json.stringify(w)\n"
+                + "  if (s === \"{\\\"a\\\":1.0,\\\"b\\\":100.0,\\\"c\\\":-0.0,"
+                + "\\\"d\\\":1.0E20,\\\"e\\\":0.5,\\\"i\\\":42,\\\"j\\\":-1}\" "
+                + "&& us === \"{\\\"n\\\":2.0,\\\"r\\\":4.0,\\\"xs\\\":[1.0,2.5],"
+                + "\\\"g\\\":{\\\"h\\\":100.0}}\" "
+                + "&& vs === \"{\\\"xs\\\":[1.0,5.0]}\" "
+                + "&& ws === \"{\\\"z\\\":1,\\\"k\\\":3.0}\" "
+                + "&& ws2 === \"{\\\"z\\\":1,\\\"k\\\":4}\") "
+                + "{ console.log(\"strnum-ok\") } else { console.log(\"bad\") }\n"
+                + "}\n";
+            runMatrix(source, "JSON_STRINGIFY number spellings (integral number "
+                + "class: 1.0/100.0/-0.0/1E20 + computed/array/member-write slots)",
+                List.of("strnum-ok"), SUCCESS);
+        }
+
+        // (i3) JSON_PARSE value carriers through the typed reads: an
+        // array element read, a for-of element used in arithmetic, the
+        // conversion intrinsics over raw parsed reads, and the numeric
+        // MATH parameters — the runtime-carried int/number values flow
+        // through every numeric consumer (the shared JVM runtime's
+        // Long/Double tolerance), and the parsed graph round-trips
+        // through the stringify walker with the parsed spellings.
+        {
+            String source = CONSOLE + JSON + MATH
+                + "function main(): null {\n"
+                + "  let d: table = json.parse(\"{\\\"xs\\\": [1.0, 2.0], "
+                + "\\\"i\\\": 2, \\\"n\\\": 1.0}\")\n"
+                + "  let xs: number[] = d.xs\n"
+                + "  let first: number = xs[0]\n"
+                + "  let sum: number = 0.0\n"
+                + "  for (let x: number of xs) { sum = sum + x }\n"
+                + "  let a: number = number(d.i)\n"
+                + "  let b: int = int(d.n)\n"
+                + "  let f: number = math.floor(d.n)\n"
+                + "  let mn: int = math.minInt(d.i, 5)\n"
+                + "  let rt: string = json.stringify(d)\n"
+                + "  if (first === 1.0 && sum === 3.0 && a === 2.0 && b === 1 "
+                + "&& f === 1.0 && mn === 2 "
+                + "&& rt === \"{\\\"xs\\\":[1.0,2.0],\\\"i\\\":2,\\\"n\\\":1.0}\") "
+                + "{ console.log(\"parse-read-ok\") } else { console.log(\"bad\") }\n"
+                + "}\n";
+            runMatrix(source, "JSON_PARSE typed reads (array element, for-of "
+                + "arithmetic, conversions, MATH args, round-trip)",
+                List.of("parse-read-ok"), SUCCESS);
+        }
+
         // (j) The math family: IEEE floor/ceil/sqrt, signed32 abs, and
         // the min/max selectors.
         {
@@ -1718,11 +1791,17 @@ public class RuntimeIntegrationMatrixTest {
         // a projection failure publishes the retained DEAL_ERROR_CODE
         // terminal on stdout with exit 1.
         {
-            String source = CONSOLE + STR + MATH
+            String source = CONSOLE + STR + MATH + JSON
                 + "function main(): null {\n"
                 + "  let n: int = str.length(\"a😀b\")\n"
                 + "  let a: int = math.absInt(-5)\n"
-                + "  if (n === 3 && a === 5) { console.log(\"stdlib-prod-ok\") } "
+                + "  let d: table = json.parse(\"{\\\"xs\\\": [1.0, 2.0]}\")\n"
+                + "  let xs: number[] = d.xs\n"
+                + "  let first: number = xs[0]\n"
+                + "  let text: string = json.stringify({ v: first })\n"
+                + "  if (n === 3 && a === 5 && first === 1.0 "
+                + "&& text === \"{\\\"v\\\":1.0}\") "
+                + "{ console.log(\"stdlib-prod-ok\") } "
                 + "else { console.log(\"stdlib-prod-bad\") }\n"
                 + "}\n";
             CheckedSlice slice = checkSlice(source,

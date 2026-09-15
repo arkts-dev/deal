@@ -1221,6 +1221,10 @@ public final class LuaSemanticEmitter {
                     .append(", ").append(slot(input)).append(")\n");
                 out.append(target).append("[").append(i + 1)
                     .append("] = __chk == nil and __NULL or __chk\n");
+                if (isNumberKind(producerKind(input))) {
+                    out.append("__numKey(").append(target).append(", ")
+                        .append(i + 1).append(", true)\n");
+                }
                 emitBoundarySuccess(boundary, "__chk", payload.elementDescriptor());
             }
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
@@ -1236,6 +1240,10 @@ public final class LuaSemanticEmitter {
                     .append("] = ").append(slot(entry.value())).append("\n");
                 out.append("__orderAdd(").append(target).append(", ")
                     .append(luaString(entry.key())).append(")\n");
+                if (isNumberKind(producerKind(entry.value()))) {
+                    out.append("__numKey(").append(target).append(", ")
+                        .append(luaString(entry.key())).append(", true)\n");
+                }
             }
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
         }
@@ -1571,6 +1579,10 @@ public final class LuaSemanticEmitter {
                 .append(slot(payload.value())).append("\n");
             out.append("__orderAdd(").append(slot(payload.table())).append(", ")
                 .append(luaString(payload.key())).append(")\n");
+            out.append("__numKey(").append(slot(payload.table())).append(", ")
+                .append(luaString(payload.key())).append(", ")
+                .append(isNumberKind(producerKind(payload.value())) ? "true" : "false")
+                .append(")\n");
             emitPlainSuccess(op);
         }
 
@@ -1642,6 +1654,8 @@ public final class LuaSemanticEmitter {
             String container = slot(payload.container());
             String slotName = slot(payload.slot());
             String value = slot(payload.value());
+            String numberWriteFlag = isNumberKind(producerKind(payload.value()))
+                ? "true" : "false";
             out.append("if ").append(slotName).append(".slot == \"a\" then\n");
             out.append("  if ").append(slotName).append(".i == ").append(slotName)
                 .append(".n then\n");
@@ -1651,11 +1665,15 @@ public final class LuaSemanticEmitter {
             out.append("  ").append(container).append("[").append(slotName)
                 .append(".i + 1] = ").append(value)
                 .append(" == nil and __NULL or ").append(value).append("\n");
+            out.append("  __numKey(").append(container).append(", ").append(slotName)
+                .append(".i + 1, ").append(numberWriteFlag).append(")\n");
             out.append("else\n");
             out.append("  ").append(container).append("[").append(slotName)
                 .append(".k] = ").append(value).append("\n");
             out.append("  __orderAdd(").append(container).append(", ").append(slotName)
                 .append(".k)\n");
+            out.append("  __numKey(").append(container).append(", ").append(slotName)
+                .append(".k, ").append(numberWriteFlag).append(")\n");
             out.append("end\n");
             emitPlainSuccess(op);
         }
@@ -1924,6 +1942,23 @@ public final class LuaSemanticEmitter {
             out.append("end\n");
             RuntimeDescriptor committedKind = producerResultType(op.result());
             emitResultSuccess(op, slot((ValueId) op.result()), committedKind);
+        }
+
+        /**
+         * The static kind of one written value: its producing op's result
+         * type (the same producer lookup {@link #producerResultType} uses,
+         * ASSIGN/DELETE republishes skipped) — the exact typing rule the
+         * oracle and the shared JVM runtime store for the value. Feeds the
+         * container's {@code __numKey} mark so the JSON_STRINGIFY walker
+         * spells a number-typed slot through the closed decimal spelling.
+         */
+        private String producerKind(ValueId value) {
+            return staticKind(producerResultType(value));
+        }
+
+        /** A number-typed static kind (a nullable number included). */
+        private static boolean isNumberKind(String kind) {
+            return "number".equals(kind) || "nullable:number".equals(kind);
         }
 
         /** The committed value's static kind: its producing op's result type. */
@@ -4594,8 +4629,21 @@ end
 local function __intrinsicFn()
   return {__f = true}
 end
+-- The numeric value view of one operand: a JSON_PARSE carrier (the
+-- int/number-typed value the parsed graph carries) unwraps to its
+-- number, a plain value passes through unchanged — the Lua value
+-- model's realization of the shared JVM runtime's numberOf/longOf
+-- tolerance, so every numeric consumer accepts either representation.
+local function __num(v)
+  if type(v) == "table" and v.__jn then return v.d end
+  return v
+end
 local function __atom(kind, v)
   if v == __MISSING then return "missing" end
+  if type(v) == "table" and v.__jn then
+    if v.k == "int" then return "int:"..tostring(v.d) end
+    return __atom("number", v.d)
+  end
   if kind == "null" then return "null" end
   if kind == "missing" then return "missing" end
   if kind == "bool" then return "bool:"..tostring(v) end
@@ -4841,6 +4889,10 @@ local function __cmp(selector, kindL, l, kindR, r, side)
     if string.sub(selector, -3) == "_NE" then return not both end
     return false
   end
+  if string.sub(selector, 1, 5) == "INT32" or string.sub(selector, 1, 6) == "NUMBER"
+      or string.sub(selector, 1, 8) == "NULLABLE" then
+    l = __num(l); r = __num(r)
+  end
   if selector == "INT32_EQ" then return l == r end
   if selector == "INT32_NE" then return l ~= r end
   if selector == "INT32_LT" then return l < r end
@@ -4871,6 +4923,7 @@ local function __cmp(selector, kindL, l, kindR, r, side)
 end
 local function __unary(selector, v, opKey, digest, parent, origin)
   if selector == "BOOL_NOT" then return not v end
+  v = __num(v)
   if selector == "INT32_NEG" then
     local r = -v
     if r < -2147483648 or r > 2147483647 then
@@ -4883,6 +4936,7 @@ local function __unary(selector, v, opKey, digest, parent, origin)
   return -v
 end
 local function __arith(selector, l, r, opKey, digest, parent, origin)
+  l = __num(l); r = __num(r)
   local function rng(v)
     if v < -2147483648 or v > 2147483647 then
       local e = __failExpr("E8004", "int out of range", origin, nil, nil)
@@ -4938,6 +4992,7 @@ local function __intConv(v, kind, opKey, digest, parent, origin)
     __ev(opKey, "FAILURE", "INTRINSIC_CALL", digest, parent, {}, nil, __errtext(e))
     error(e, 0)
   end
+  v = __num(v)
   if type(v) == "number" then
     if v ~= v then
       local e = __failExpr("E8001", "expected int, got NaN", origin, "int", "NaN")
@@ -4975,6 +5030,7 @@ local function __numConv(v, kind, opKey, digest, parent, origin)
     __ev(opKey, "FAILURE", "INTRINSIC_CALL", digest, parent, {}, nil, __errtext(e))
     error(e, 0)
   end
+  v = __num(v)
   if type(v) == "number" then return v end
   local e = __failExpr("E8001", "expected number, got "..__actualOf(kind, v), origin,
     "number", __actualOf(kind, v))
@@ -5211,6 +5267,26 @@ local function __orderRemove(t, k)
     end
   end
 end
+-- The number-typed slot mark of the shared JSON_STRINGIFY walker: the
+-- Lua value model carries no int/number distinction (both are plain
+-- numbers), so every container write records the written value's static
+-- kind — a number-typed slot serializes through the closed decimal
+-- spelling (__jsonNumText, Double.toString parity), an int-typed slot
+-- through the integer spelling. The mark is keyed exactly like the
+-- storage key (a table key or a 1-based element index) and is cleared
+-- by a non-number rewrite of the same slot, so the walker's decision
+-- always mirrors the stored value's producing op result type — the
+-- oracle's and the shared JVM runtime's own typing rule.
+local function __numKey(t, k, isNumber)
+  if isNumber then
+    local marks = t.__nK
+    if type(marks) ~= "table" then marks = {}; t.__nK = marks end
+    marks[k] = true
+  else
+    local marks = t.__nK
+    if type(marks) == "table" then marks[k] = nil end
+  end
+end
 -- ==== stdlib realization (the closed 20-operation table) ====
 local function __u8next(s, i)
   local b = string.byte(s, i)
@@ -5388,6 +5464,15 @@ end
 -- at the call origin with the active frames.
 local function __stdlib(fn, opKey, digest, parent, origin, ...)
   local __args = {...}
+  -- Every numeric parameter carrier unwraps to its number: the parameter
+  -- boundaries already admitted the value (a JSON_PARSE carrier passes
+  -- the number/int rows through the same __bcheck unwrapping), and the
+  -- shared JVM algorithm receives the Long/Double the carrier stands
+  -- for — the two representations never diverge inside an algorithm.
+  for __i = 1, select("#", ...) do
+    local __a = __args[__i]
+    if type(__a) == "table" and __a.__jn then __args[__i] = __a.d end
+  end
   local function __sfail(code, msg, expected, actual)
     local e = __failExpr(code, msg, origin, expected, actual)
     __ev(opKey, "FAILURE", "STDLIB_CALL", digest, parent, {}, nil, __errtext(e))
@@ -5708,7 +5793,13 @@ local function __stdlib(fn, opKey, digest, parent, origin, ...)
         "value at "..fieldPath.." is not JSON serializable: "..actual, nil, nil)
     end
     local sfValue
-    sfValue = function(v, fieldPath)
+    -- The number slot flag is the written slot's recorded static kind
+    -- (__numKey): a number-typed slot — integral values included —
+    -- serializes through the closed decimal spelling, an int-typed
+    -- slot through the integer spelling. Without the mark (a dynamic
+    -- position, a __jn carrier, or a slot no shared write path wrote)
+    -- the int spelling stands, exactly the JSON_PARSE carrier split.
+    sfValue = function(v, fieldPath, isNumber)
       if v == nil then out[#out + 1] = "null"; return end
       if v == __MISSING then sfFail("missing", fieldPath); return end
       local t = type(v)
@@ -5720,8 +5811,8 @@ local function __stdlib(fn, opKey, digest, parent, origin, ...)
         if v ~= v or v == math.huge or v == -math.huge then
           sfFail("number", fieldPath)
         end
-        if v % 1 == 0 then out[#out + 1] = tostring(v)
-        else out[#out + 1] = __jsonNumText(v) end
+        if isNumber then out[#out + 1] = __jsonNumText(v)
+        else out[#out + 1] = tostring(v) end
         return
       end
       if t == "string" then out[#out + 1] = __jsonEscape(v); return end
@@ -5740,12 +5831,15 @@ local function __stdlib(fn, opKey, digest, parent, origin, ...)
           if path[v] then sfFail("array", fieldPath); return end
           path[v] = true
           out[#out + 1] = "["
+          local marks = v.__nK
+          if type(marks) ~= "table" then marks = nil end
           for i = 1, v.__n do
             if i > 1 then out[#out + 1] = "," end
             local elem = v[i]
             if elem == __NULL then elem = nil end
             sfValue(elem, fieldPath == "" and tostring(i - 1)
-              or fieldPath.."."..tostring(i - 1))
+              or fieldPath.."."..tostring(i - 1),
+              marks ~= nil and marks[i] == true)
           end
           out[#out + 1] = "]"
           path[v] = nil
@@ -5755,12 +5849,15 @@ local function __stdlib(fn, opKey, digest, parent, origin, ...)
           if path[v] then sfFail("table", fieldPath); return end
           path[v] = true
           out[#out + 1] = "{"
+          local marks = v.__nK
+          if type(marks) ~= "table" then marks = nil end
           for i = 1, #v.__order do
             if i > 1 then out[#out + 1] = "," end
             local k = v.__order[i]
             out[#out + 1] = __jsonEscape(k)
             out[#out + 1] = ":"
-            sfValue(v[k], fieldPath == "" and k or fieldPath.."."..k)
+            sfValue(v[k], fieldPath == "" and k or fieldPath.."."..k,
+              marks ~= nil and marks[k] == true)
           end
           out[#out + 1] = "}"
           path[v] = nil
@@ -5774,7 +5871,7 @@ local function __stdlib(fn, opKey, digest, parent, origin, ...)
       if t == "function" then sfFail("function", fieldPath); return end
       sfFail("table", fieldPath)
     end
-    sfValue(__args[1], "")
+    sfValue(__args[1], "", false)
     return table.concat(out)
   elseif fn == "MATH_FLOOR" then
     return math.floor(__args[1])
