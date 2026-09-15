@@ -1346,7 +1346,10 @@ public final class DealCompilerWorkspace {
         rawDiagnostics.addAll(parsed.diagnostics());
         NameResolver names = new NameResolver(modulePath, resolver);
         SymbolTable symbols = names.resolve(parsed.program());
-        rawDiagnostics.addAll(names.diagnostics());
+        // Recovery ASTs can omit later declarations. Their unresolved names must not
+        // authorize adding dependencies until the syntax has been repaired.
+        if (rawDiagnostics.stream().noneMatch(value -> value.severity().equals("error")))
+            rawDiagnostics.addAll(names.diagnostics());
         if (rawDiagnostics.stream().noneMatch(value -> value.severity().equals("error"))) {
             CheckResult checked = TypeChecker.check(modulePath, symbols, names, parsed.program());
             // Field types can be resolved lazily by the checker; retain their owning diagnostics.

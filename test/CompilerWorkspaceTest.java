@@ -40,8 +40,28 @@ public final class CompilerWorkspaceTest {
         fullCandidateDiagnosticsOwnDependentRepairSlots();
         numericStringDiagnosticPublishesRepairContract();
         syntaxDiagnosticsCarryCandidateEvidence();
+        syntaxRecoveryCannotAuthorizeMissingDependencies();
         emptyArrayConstructorOperands();
         System.out.println("CompilerWorkspaceTest: all tests passed");
+    }
+
+    private static void syntaxRecoveryCannotAuthorizeMissingDependencies() {
+        String malformed = "export function initial(): Entry { return { text: \\\"bad\\\" }; }\n"
+                + "export class Entry { text: string = \"\"; }";
+        var rejected = DealCompilerWorkspace.inspect(malformed, "app.deal");
+        check(rejected.diagnostics().stream().anyMatch(d -> d.code().startsWith("E1")),
+                "malformed candidate must retain syntax diagnostics");
+        check(rejected.diagnostics().stream().allMatch(d -> d.missingSymbols().isEmpty()),
+                "recovery AST cannot establish that a declaration is missing");
+        var missing = DealCompilerWorkspace.inspect(
+                "export function initial(): Unknown { return {}; }", "app.deal");
+        check(missing.diagnostics().stream().anyMatch(d -> !d.missingSymbols().isEmpty()),
+                "a syntactically valid missing dependency still receives structured repair facts");
+        var repaired = DealCompilerWorkspace.inspect(
+                "export function initial(): Entry { return { text: \"good\" }; }\n"
+                        + "export class Entry { text: string = \"\"; }", "app.deal");
+        check(repaired.diagnostics().stream().noneMatch(d -> d.severity().equals("error")),
+                "ordinary resolution resumes after syntax repair");
     }
 
     private static void emptyArrayConstructorOperands() {
