@@ -8,12 +8,18 @@ import deal.semantic.ir.BindingId;
 import deal.semantic.ir.BlockId;
 import deal.semantic.ir.BoundaryKind;
 import deal.semantic.ir.ChainOperandCompletion;
+import deal.semantic.ir.ClassFactoryRegistry;
+import deal.semantic.ir.ClassId;
+import deal.semantic.ir.ClassLayout;
+import deal.semantic.ir.DefaultOwner;
+import deal.semantic.ir.ExecutableLoweredProject;
 import deal.semantic.ir.ExternalAsyncLink;
 import deal.semantic.ir.FunctionExecutionBinding;
 import deal.semantic.ir.FunctionId;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredFunction;
 import deal.semantic.ir.LoweredModuleUnit;
+import deal.semantic.ir.ModuleId;
 import deal.semantic.ir.OpId;
 import deal.semantic.ir.ParameterBoundaryMode;
 import deal.semantic.ir.RuntimeDescriptor;
@@ -26,6 +32,7 @@ import deal.semantic.ir.ValueId;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -84,6 +91,33 @@ public final class JvmSemanticEmitter {
     }
 
     /**
+     * Emits the combined trace artifact of a validated executable
+     * project (the cross-module CLASSES surface): one class carries
+     * every module's slots/cells, function factories, adapter thunks,
+     * detached class-default methods, and the generated class carriers,
+     * then runs each module's init walk in dependency order (each under
+     * its own {@code MODULE} tag). A caller's
+     * {@code CLASS_NEW(SHARED_FACTORY)} arm resolves the owner's factory
+     * op and default blocks through the closure, so the owner-side
+     * events carry the owner's module path and the factory's cross-unit
+     * parent. Single-unit sessions are the singleton closure of the same
+     * machinery.
+     *
+     * @param project    the validated executable closure; non-null
+     * @param tables     each module's block-membership table; non-null
+     * @param registries each module's class-factory registry; non-null
+     * @return the combined artifact
+     */
+    public static EmissionResult emitProject(ExecutableLoweredProject project,
+                                             Map<ModuleId, StructuredBodyTable> tables,
+                                             Map<ModuleId, ClassFactoryRegistry> registries) {
+        Objects.requireNonNull(project, "project must not be null");
+        Objects.requireNonNull(tables, "tables must not be null");
+        Objects.requireNonNull(registries, "registries must not be null");
+        return new Session(project, tables, registries, true).emit();
+    }
+
+    /**
      * Emits the production JVM module artifact for the validated unit
      * (ISSUE-0239 E10): the conformance trace protocol is suppressed, a
      * DEAL failure publishes the retained {@code DEAL_ERROR_CODE: <code>}
@@ -115,11 +149,28 @@ public final class JvmSemanticEmitter {
     private static final class Session {
         final LoweredModuleUnit unit;
         final StructuredBodyTable table;
+        /**
+         * The project-mode closure: every module's unit, table, and
+         * class-factory registry (the single-unit session carries one
+         * entry plus no registries). Ids are globally unique across the
+         * project, so the combined artifact shares one slot/cell
+         * namespace.
+         */
+        final Map<ModuleId, LoweredModuleUnit> units = new LinkedHashMap<>();
+        final Map<ModuleId, StructuredBodyTable> tables = new LinkedHashMap<>();
+        final Map<ModuleId, ClassFactoryRegistry> registries = new LinkedHashMap<>();
+        /** The union class-layout resolution context (K-D11). */
+        final Map<ClassId, ClassLayout> classLayouts = new LinkedHashMap<>();
+        /** Each block id → its owning unit's membership table. */
+        final Map<BlockId, StructuredBodyTable> blockTableOf = new LinkedHashMap<>();
         final Map<OpId, SemanticOp> opsById = new HashMap<>();
         final Map<BindingId, BindingCellKind> cellKinds = new HashMap<>();
         final java.util.Set<OpId> ownedChildren = new java.util.HashSet<>();
-        /** The payload-owned children only (closure computation excludes them). */
-        final java.util.Set<OpId> structuralOwned;
+        /**
+         * The payload-owned children only (closure computation excludes
+         * them): the union of every registered unit's structural owners.
+         */
+        final java.util.Set<OpId> structuralOwned = new java.util.HashSet<>();
         /** Production mode: no trace protocol, DEAL_ERROR_CODE terminal. */
         final boolean trace;
         /** The selected entry module runs the ENTRY_INVOKE delegation. */
@@ -149,7 +200,83 @@ public final class JvmSemanticEmitter {
             } else {
                 this.className = sharedClassName(unit.moduleId().path());
             }
-            for (SemanticOp op : unit.ops()) {
+            registerUnit(unit, table, new ClassFactoryRegistry(Map.of()));
+            if (!entryModule) {
+                // A non-entry module never runs its ENTRY_INVOKE delegation
+                // (the retained emitter invokes main() only from the entry
+                // module): skip the entry op and its delegated CALL.
+                for (SemanticOp op : unit.ops()) {
+                    if (op.kind() != SemanticOpKind.ENTRY_INVOKE) {
+                        continue;
+                    }
+                    skippedOps.add(op.opId());
+                    for (SemanticOp candidate : unit.ops()) {
+                        if (op.opId().equals(candidate.origin().parentOpId())) {
+                            skippedOps.add(candidate.opId());
+                        }
+                    }
+                }
+            }
+        }
+
+        /**
+         * The project-mode session (the cross-module factory surface):
+         * every module's unit, table, and class-factory registry in one
+         * combined artifact — the CLASS_NEW(SHARED_FACTORY) arm resolves
+         * the owner's factory op and default blocks through the closure.
+         */
+        Session(ExecutableLoweredProject project, Map<ModuleId, StructuredBodyTable> tables,
+                Map<ModuleId, ClassFactoryRegistry> registries, boolean trace) {
+            this.unit = project.modules().get(project.entryModule());
+            this.table = tables.get(project.entryModule());
+            if (this.unit == null || this.table == null) {
+                throw new IllegalArgumentException(
+                    "the entry module is not in the executable closure");
+            }
+            this.trace = trace;
+            this.entryModule = true;
+            String path = this.unit.moduleId().path();
+            StringBuilder name = new StringBuilder("SharedM");
+            for (char c : path.toCharArray()) {
+                name.append(Character.isJavaIdentifierPart(c) ? c : '_');
+            }
+            this.className = name.toString();
+            for (Map.Entry<ModuleId, LoweredModuleUnit> entry
+                    : project.modules().entrySet()) {
+                registerUnit(entry.getValue(), tables.get(entry.getKey()),
+                    registries.getOrDefault(entry.getKey(),
+                        new ClassFactoryRegistry(Map.of())));
+                if (!entry.getKey().equals(project.entryModule())) {
+                    // A non-entry module never runs its ENTRY_INVOKE
+                    // delegation: skip the entry op and its delegated
+                    // CALL in the combined walk.
+                    for (SemanticOp op : entry.getValue().ops()) {
+                        if (op.kind() != SemanticOpKind.ENTRY_INVOKE) {
+                            continue;
+                        }
+                        skippedOps.add(op.opId());
+                        for (SemanticOp candidate : entry.getValue().ops()) {
+                            if (op.opId().equals(candidate.origin().parentOpId())) {
+                                skippedOps.add(candidate.opId());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        /** Registers one module's unit/table/registry into the session closure. */
+        private void registerUnit(LoweredModuleUnit moduleUnit,
+                                  StructuredBodyTable moduleTable,
+                                  ClassFactoryRegistry registry) {
+            units.put(moduleUnit.moduleId(), moduleUnit);
+            tables.put(moduleUnit.moduleId(), moduleTable);
+            registries.put(moduleUnit.moduleId(), registry);
+            classLayouts.putAll(moduleUnit.classLayouts());
+            for (Map.Entry<BlockId, List<OpId>> entry : moduleTable.blockOps().entrySet()) {
+                blockTableOf.put(entry.getKey(), moduleTable);
+            }
+            for (SemanticOp op : moduleUnit.ops()) {
                 opsById.put(op.opId(), op);
                 if (op.kind() == SemanticOpKind.BINDING_ALLOC) {
                     KindPayload.BindingAllocPayload payload =
@@ -169,35 +296,24 @@ public final class JvmSemanticEmitter {
                     }
                 }
             }
-            structuralOwned = ChainOperandCompletion.structuralOwners(unit);
-            ownedChildren.addAll(structuralOwned);
-            ChainOperandCompletion.registerChainOperandOwners(unit, structuralOwned,
+            // Payload-owned children are emitted exactly once by their
+            // owner arms; the block walk skips them (a double emission
+            // would duplicate effects and events).
+            java.util.Set<OpId> structural =
+                ChainOperandCompletion.structuralOwners(moduleUnit);
+            structuralOwned.addAll(structural);
+            ownedChildren.addAll(structural);
+            ChainOperandCompletion.registerChainOperandOwners(moduleUnit, structural,
                 ownedChildren);
             // The nested source ASYNC_START of an adapter-over-async task
             // executes under its outer op's arm, never at its flat
             // block-list position (the oracle's UnitState rule).
-            for (SemanticOp op : unit.ops()) {
+            for (SemanticOp op : moduleUnit.ops()) {
                 if (op.kind() == SemanticOpKind.ASYNC_START) {
-                    for (SemanticOp candidate : unit.ops()) {
+                    for (SemanticOp candidate : moduleUnit.ops()) {
                         if (candidate.kind() == SemanticOpKind.ASYNC_START
                                 && op.opId().equals(candidate.origin().parentOpId())) {
                             ownedChildren.add(candidate.opId());
-                        }
-                    }
-                }
-            }
-            if (!entryModule) {
-                // A non-entry module never runs its ENTRY_INVOKE delegation
-                // (the retained emitter invokes main() only from the entry
-                // module): skip the entry op and its delegated CALL.
-                for (SemanticOp op : unit.ops()) {
-                    if (op.kind() != SemanticOpKind.ENTRY_INVOKE) {
-                        continue;
-                    }
-                    skippedOps.add(op.opId());
-                    for (SemanticOp candidate : unit.ops()) {
-                        if (op.opId().equals(candidate.origin().parentOpId())) {
-                            skippedOps.add(candidate.opId());
                         }
                     }
                 }
@@ -261,8 +377,11 @@ public final class JvmSemanticEmitter {
             if (descriptor instanceof RuntimeDescriptor.Func) {
                 return "function";
             }
-            if (descriptor instanceof RuntimeDescriptor.Class) {
-                return "err";
+            if (descriptor instanceof RuntimeDescriptor.Class cls) {
+                // The builtin Error class keeps the closed err atom
+                // ({code, message}); user classes carry the class
+                // identity tag (E5).
+                return ClassId.ERROR.equals(cls.classId()) ? "err" : "class";
             }
             if (descriptor instanceof RuntimeDescriptor.Nullable nullable) {
                 return "nullable:" + staticKind(nullable.inner());
@@ -289,6 +408,9 @@ public final class JvmSemanticEmitter {
             }
             if (descriptor instanceof RuntimeDescriptor.Table) {
                 return "table";
+            }
+            if (descriptor instanceof RuntimeDescriptor.Class cls) {
+                return cls.classId().text();
             }
             if (descriptor instanceof RuntimeDescriptor.Array array) {
                 return "array(" + descriptorText(array.element()) + ")";
@@ -341,58 +463,85 @@ public final class JvmSemanticEmitter {
             out.append("import deal.codegen.jvm.JvmRuntime;\n");
             out.append("import java.util.List;\n");
             out.append("\npublic final class ").append(className).append(" {\n");
-            out.append("  public static final String MODULE = ")
+            // Mutable so the combined walk and the cross-unit factory
+            // transfer can switch the current module per module walk
+            // (each event carries its op's module path).
+            out.append("  public static String MODULE = ")
                 .append(javaString(unit.moduleId().path())).append(";\n");
-            // Slots and cells.
+            // Slots and cells (every module; ids are globally unique).
             java.util.LinkedHashSet<String> fields = new java.util.LinkedHashSet<>();
-            for (SemanticOp op : unit.ops()) {
-                if (op.result() instanceof ValueId valueId) {
-                    fields.add(slot(valueId));
-                }
-                switch (op.payload()) {
-                    case KindPayload.BindingAllocPayload payload ->
-                        fields.add(cell(payload.binding(), payload.generation()));
-                    case KindPayload.BindingInitPayload payload ->
-                        fields.add(cell(payload.binding(), payload.generation()));
-                    case KindPayload.BindingLoadPayload payload ->
-                        fields.add(cell(payload.binding(), payload.generation()));
-                    case KindPayload.BindingStorePayload payload ->
-                        fields.add(cell(payload.binding(), payload.generation()));
-                    case KindPayload.RecursiveGroupInitPayload payload -> {
-                        for (BindingId binding : payload.bindings()) {
-                            fields.add(cell(binding, 0));
-                        }
+            for (LoweredModuleUnit moduleUnit : units.values()) {
+                for (SemanticOp op : moduleUnit.ops()) {
+                    if (op.result() instanceof ValueId valueId) {
+                        fields.add(slot(valueId));
                     }
-                    case KindPayload.ForEachPayload payload ->
-                        fields.add(cell(payload.binding(), payload.generation()));
-                    case KindPayload.TryCatchPayload payload ->
-                        fields.add(cell(payload.catchBinding(), 0));
-                    default -> {
+                    switch (op.payload()) {
+                        case KindPayload.BindingAllocPayload payload ->
+                            fields.add(cell(payload.binding(), payload.generation()));
+                        case KindPayload.BindingInitPayload payload ->
+                            fields.add(cell(payload.binding(), payload.generation()));
+                        case KindPayload.BindingLoadPayload payload ->
+                            fields.add(cell(payload.binding(), payload.generation()));
+                        case KindPayload.BindingStorePayload payload ->
+                            fields.add(cell(payload.binding(), payload.generation()));
+                        case KindPayload.RecursiveGroupInitPayload payload -> {
+                            for (BindingId binding : payload.bindings()) {
+                                fields.add(cell(binding, 0));
+                            }
+                        }
+                        case KindPayload.ForEachPayload payload ->
+                            fields.add(cell(payload.binding(), payload.generation()));
+                        case KindPayload.TryCatchPayload payload ->
+                            fields.add(cell(payload.catchBinding(), 0));
+                        default -> {
+                        }
                     }
                 }
             }
             for (String field : fields) {
                 out.append("  static Object ").append(field).append(";\n");
             }
-            // Function factories.
-            for (LoweredFunction function : unit.functions().values()) {
-                emitFunctionFactory(function);
+            // Function factories (every module).
+            for (LoweredModuleUnit moduleUnit : units.values()) {
+                for (LoweredFunction function : moduleUnit.functions().values()) {
+                    emitFunctionFactory(function);
+                }
             }
             // The REEVALUATE_THUNK re-executor methods: one detached
             // thunk method per FUNCTION_ADAPT op with a thunk source.
             // The thunk ops are members only of the detached thunk block
             // (the lowerer's single-membership rule), so the module walk
             // never executes them; each invocation re-executes them here.
-            for (SemanticOp op : unit.ops()) {
-                if (op.kind() != SemanticOpKind.FUNCTION_ADAPT) {
-                    continue;
-                }
-                KindPayload.FunctionAdaptPayload payload =
-                    (KindPayload.FunctionAdaptPayload) op.payload();
-                if (payload.source() instanceof AdaptSourceRef.Thunk thunk) {
-                    emitThunkMethod(op, thunk.blockId());
+            for (LoweredModuleUnit moduleUnit : units.values()) {
+                for (SemanticOp op : moduleUnit.ops()) {
+                    if (op.kind() != SemanticOpKind.FUNCTION_ADAPT) {
+                        continue;
+                    }
+                    KindPayload.FunctionAdaptPayload payload =
+                        (KindPayload.FunctionAdaptPayload) op.payload();
+                    if (payload.source() instanceof AdaptSourceRef.Thunk thunk) {
+                        emitThunkMethod(op, thunk.blockId());
+                    }
                 }
             }
+            // The detached class-default methods (E5): one per
+            // CLASS_DEFAULT op — the default block's ops (the default op
+            // itself skipped) re-execute per invocation, returning the
+            // block's final producing value (the op's result slot), so
+            // every triggering construction gets a fresh default
+            // (mutable defaults allocate freshly per attempt).
+            for (LoweredModuleUnit moduleUnit : units.values()) {
+                for (SemanticOp op : moduleUnit.ops()) {
+                    if (op.kind() == SemanticOpKind.CLASS_DEFAULT) {
+                        emitClassDefaultMethod(op);
+                    }
+                }
+            }
+            // The generated class carriers (E5): one static nested class
+            // per ClassId of the resolution context with per-field value
+            // slots plus boolean presence flags, tagged with the
+            // canonical class identity.
+            emitClassCarriers();
             // The module-init walk, exposed as the deferred-main entry (the
             // scenario host drives it explicitly for an async-entry
             // invocation or a multi-module drive): setup plus the walk;
@@ -400,7 +549,7 @@ public final class JvmSemanticEmitter {
             out.append("  public static void dealMain() {\n");
             out.append("    JvmRuntime.setModule(MODULE);\n");
             out.append("    JvmRuntime.setTraceEnabled(").append(trace).append(");\n");
-            emitBlockOps(unit.moduleInit().initBlock(), 2);
+            emitProjectWalk(2);
             out.append("  }\n");
             // main.
             out.append("  public static void main(String[] args) {\n");
@@ -430,9 +579,11 @@ public final class JvmSemanticEmitter {
             // scenario host invokes the entry top-level with scripted
             // arguments; the module-init walk never runs the unattached
             // records themselves.
-            for (SemanticOp op : unit.ops()) {
-                if (op.kind() == SemanticOpKind.CALLBACK_INVOKE) {
-                    emitCallbackInvoke(op, 1);
+            for (LoweredModuleUnit moduleUnit : units.values()) {
+                for (SemanticOp op : moduleUnit.ops()) {
+                    if (op.kind() == SemanticOpKind.CALLBACK_INVOKE) {
+                        emitCallbackInvoke(op, 1);
+                    }
                 }
             }
             // The host-driven async-entry dispatch entries (async
@@ -453,6 +604,125 @@ public final class JvmSemanticEmitter {
             return new EmissionResult(className, out.toString());
         }
 
+        /** The combined walk: each module's init block in dependency order. */
+        private void emitProjectWalk(int indent) {
+            for (LoweredModuleUnit moduleUnit : units.values()) {
+                out.append(indent(indent)).append("MODULE = ")
+                    .append(javaString(moduleUnit.moduleId().path())).append(";\n");
+                emitBlockOps(moduleUnit.moduleInit().initBlock(), indent);
+            }
+        }
+
+        /**
+         * Emits one detached class-default method: the default block's
+         * ops in order (the CLASS_DEFAULT op itself skipped — its own
+         * events are the triggering CLASS_NEW/CLASS_FACTORY arm's) and
+         * the final producing value returned.
+         */
+        private void emitClassDefaultMethod(SemanticOp defaultOp) {
+            KindPayload.ClassDefaultPayload payload =
+                (KindPayload.ClassDefaultPayload) defaultOp.payload();
+            StructuredBodyTable ownerTable = blockTableOf.get(payload.defaultBlock());
+            List<OpId> ops = ownerTable == null
+                ? null : ownerTable.blockOps().get(payload.defaultBlock());
+            if (ops == null) {
+                throw new IllegalStateException("the class-default block "
+                    + payload.defaultBlock() + " has no membership row (producer defect)");
+            }
+            if (!(defaultOp.result() instanceof ValueId resultId)) {
+                throw new IllegalStateException("CLASS_DEFAULT " + defaultOp.opId()
+                    + " publishes no ValueId result (producer defect)");
+            }
+            out.append("  private static Object ").append(defaultFn(defaultOp.opId()))
+                .append("() {\n");
+            for (OpId opId : ops) {
+                if (opId.equals(defaultOp.opId()) || ownedChildren.contains(opId)) {
+                    continue;
+                }
+                emitOp(opsById.get(opId), 2);
+            }
+            out.append("    return ").append(slot(resultId)).append(";\n");
+            out.append("  }\n");
+        }
+
+        /** One detached class-default method name of a CLASS_DEFAULT op. */
+        private String defaultFn(OpId defaultOp) {
+            return "default" + defaultOp.id();
+        }
+
+        /** The generated carrier class name of one ClassId. */
+        private String carrierName(ClassId classId) {
+            return "C" + Integer.toHexString(classId.name().hashCode() & 0x7fffffff)
+                + "x" + Integer.toHexString(classId.modulePath().hashCode() & 0x7fffffff);
+        }
+
+        /**
+         * Emits the generated class carriers (E5): one static nested
+         * class per ClassId of the union layout context, each with
+         * per-field value slots plus boolean presence flags, tagged with
+         * the canonical class identity. Present null is {@code f == null
+         * && p == true} — never conflated with a missing field.
+         */
+        private void emitClassCarriers() {
+            for (ClassLayout layout : classLayouts.values()) {
+                ClassId classId = layout.classId();
+                out.append("  static final class ").append(carrierName(classId))
+                    .append(" implements JvmRuntime.ClassInstance {\n");
+                out.append("    static final String ID = ")
+                    .append(javaString(classId.text())).append(";\n");
+                for (ClassLayout.FieldLayout field : layout.fields()) {
+                    String slotName = fieldSlot(field.name());
+                    out.append("    Object ").append(slotName).append(";\n");
+                    out.append("    boolean ").append(fieldFlag(field.name())).append(";\n");
+                }
+                out.append("    @Override public String classIdText() { return ID; }\n");
+                out.append("    @Override public boolean isPresent(String key) {\n");
+                for (ClassLayout.FieldLayout field : layout.fields()) {
+                    out.append("      if (")
+                        .append(javaString(field.name())).append(".equals(key)) return ")
+                        .append(fieldFlag(field.name())).append(";\n");
+                }
+                out.append("      return false;\n");
+                out.append("    }\n");
+                out.append("    @Override public Object read(String key) {\n");
+                for (ClassLayout.FieldLayout field : layout.fields()) {
+                    out.append("      if (").append(javaString(field.name()))
+                        .append(".equals(key)) { if (").append(fieldFlag(field.name()))
+                        .append(") return ").append(fieldSlot(field.name()))
+                        .append("; return JvmRuntime.MISSING; }\n");
+                }
+                out.append("      return JvmRuntime.MISSING;\n");
+                out.append("    }\n");
+                out.append("    @Override public void write(String key, Object v) {\n");
+                for (ClassLayout.FieldLayout field : layout.fields()) {
+                    out.append("      if (").append(javaString(field.name()))
+                        .append(".equals(key)) { ").append(fieldSlot(field.name()))
+                        .append(" = v; ").append(fieldFlag(field.name()))
+                        .append(" = true; }\n");
+                }
+                out.append("    }\n");
+                out.append("  }\n");
+            }
+        }
+
+        /** One generated carrier's per-field value-slot name. */
+        private String fieldSlot(String fieldName) {
+            StringBuilder name = new StringBuilder("f");
+            for (char c : fieldName.toCharArray()) {
+                name.append(Character.isJavaIdentifierPart(c) ? c : '_');
+            }
+            return name.toString();
+        }
+
+        /** One generated carrier's per-field presence-flag name. */
+        private String fieldFlag(String fieldName) {
+            StringBuilder name = new StringBuilder("p");
+            for (char c : fieldName.toCharArray()) {
+                name.append(Character.isJavaIdentifierPart(c) ? c : '_');
+            }
+            return name.toString();
+        }
+
         /** One thunk re-executor method name of an adapter op. */
         private String thunkFn(OpId adaptOp) {
             return "thunk" + adaptOp.id();
@@ -466,7 +736,8 @@ public final class JvmSemanticEmitter {
          * the source value the invocation consumes.
          */
         private void emitThunkMethod(SemanticOp adaptOp, BlockId block) {
-            List<OpId> ops = table.blockOps().get(block);
+            StructuredBodyTable ownerTable = blockTableOf.get(block);
+            List<OpId> ops = ownerTable == null ? null : ownerTable.blockOps().get(block);
             if (ops == null) {
                 throw new IllegalStateException("the adapter thunk block " + block
                     + " has no membership row (producer defect)");
@@ -508,7 +779,7 @@ public final class JvmSemanticEmitter {
             out.append("  static JvmRuntime.FunctionValue ").append(fnFactory(functionId))
                 .append('(').append(params).append(") {\n");
             out.append("    return new JvmRuntime.FunctionValue(args -> {\n");
-            List<OpId> bodyOps = table.blockOps().get(function.body());
+            List<OpId> bodyOps = tableOfFunction(function).blockOps().get(function.body());
             int paramCount = function.descriptor().paramTypes().size();
             for (int i = 0; i < paramCount && i < bodyOps.size(); i++) {
                 SemanticOp op = opsById.get(bodyOps.get(i));
@@ -559,7 +830,11 @@ public final class JvmSemanticEmitter {
         }
 
         private void emitBlockOps(BlockId block, int indent) {
-            for (OpId opId : table.blockOps().get(block)) {
+            StructuredBodyTable ownerTable = blockTableOf.get(block);
+            if (ownerTable == null) {
+                ownerTable = table;
+            }
+            for (OpId opId : ownerTable.blockOps().get(block)) {
                 if (ownedChildren.contains(opId)) {
                     continue;
                 }
@@ -568,6 +843,16 @@ public final class JvmSemanticEmitter {
                 }
                 emitOp(opsById.get(opId), indent);
             }
+        }
+
+        /** The membership table of the unit owning one lowered function. */
+        private StructuredBodyTable tableOfFunction(LoweredFunction function) {
+            for (LoweredModuleUnit moduleUnit : units.values()) {
+                if (moduleUnit.functions().containsKey(function.functionId())) {
+                    return tables.get(moduleUnit.moduleId());
+                }
+            }
+            return table;
         }
 
         private String indent(int level) {
@@ -624,6 +909,15 @@ public final class JvmSemanticEmitter {
                 case EXPORT_PUBLISH -> emitExportPublish(op, indent);
                 case EXTERNAL_ENTRY -> emitExternalEntryRecord(op, indent);
                 case ENTRY_INVOKE -> emitEntryInvoke(op, indent);
+                case CLASS_NEW -> emitClassNew(op, indent);
+                case CLASS_DEFAULT -> throw new IllegalStateException("a CLASS_DEFAULT "
+                    + "executes only under its triggering CLASS_NEW/CLASS_FACTORY "
+                    + "(the detached default block's ops are the class-default "
+                    + "method's; the block walk never runs the op itself)");
+                case CLASS_FACTORY -> throw new IllegalStateException("a CLASS_FACTORY "
+                    + "is a detached owner-module entry executed only under the "
+                    + "triggering caller's CLASS_NEW (cross-unit parent) — the "
+                    + "block walk never runs it)");
                 default -> throw new IllegalStateException("op kind " + op.kind()
                     + " has no shared-JVM emission in this decomposition-tail domain");
             }
@@ -1378,9 +1672,11 @@ public final class JvmSemanticEmitter {
 
         /** True iff the value slot is an op result in this unit. */
         private boolean hasProducer(ValueId valueId) {
-            for (SemanticOp op : unit.ops()) {
-                if (valueId.equals(op.result())) {
-                    return true;
+            for (LoweredModuleUnit moduleUnit : units.values()) {
+                for (SemanticOp op : moduleUnit.ops()) {
+                    if (valueId.equals(op.result())) {
+                        return true;
+                    }
                 }
             }
             return false;
@@ -1854,6 +2150,372 @@ public final class JvmSemanticEmitter {
                     + " resolves no FunctionExecutionBinding (producer defect)");
             }
             return binding;
+        }
+
+        /**
+         * CLASS_NEW (E5, D16 construction order): provided values
+         * completed before the op; default application in declaration
+         * order (LOCAL through the detached class-default methods, or the
+         * owner's CLASS_FACTORY transfer with the factory's events
+         * parented to this caller op — the cross-unit K-D12 parent);
+         * extra-key rejection first in provided-source order (E8007 at
+         * the op origin); provided-field application and field validation
+         * in declaration order through the boundary children; the
+         * instance is tagged with its canonical class identity last.
+         * Zero return boundaries; a failure publishes no partial
+         * instance.
+         */
+        private void emitClassNew(SemanticOp op, int indent) {
+            KindPayload.ClassNewPayload payload =
+                (KindPayload.ClassNewPayload) op.payload();
+            emitStart(op, indent);
+            ClassLayout layout = classLayouts.get(payload.classId());
+            if (layout == null) {
+                throw new IllegalStateException("CLASS_NEW " + op.opId() + " classId "
+                    + payload.classId() + " has no layout in the resolution context "
+                    + "(producer defect)");
+            }
+            java.util.Set<String> provided = new java.util.HashSet<>();
+            for (KindPayload.ProvidedField field : payload.providedFields()) {
+                provided.add(field.name());
+            }
+            switch (payload.defaultOwner()) {
+                case LOCAL -> emitClassNewLocalDefaults(op, payload, provided, indent);
+                case SHARED_FACTORY -> emitClassNewFactoryTransfer(op, payload, provided,
+                    indent);
+                default -> throw new IllegalStateException("CLASS_NEW " + op.opId()
+                    + " carries defaultOwner " + payload.defaultOwner()
+                    + " outside the emitted owners (producer defect)");
+            }
+            // K-D4 step 3: extra-key rejection first in provided-source
+            // order — after default application, before any provided-field
+            // application or field validation.
+            for (KindPayload.ProvidedField field : payload.providedFields()) {
+                if (fieldOf(layout, field.name()) == null) {
+                    String errName = "__ee_" + op.opId().id() + "_"
+                        + Integer.toHexString(field.name().hashCode() & 0x7fffffff);
+                    // The static extra-key check always fires at this
+                    // site (the emitter proves the name is outside the
+                    // layout); the constant guard keeps the trailing
+                    // instance build reachable for javac.
+                    out.append(indent(indent)).append("if (true) {\n");
+                    out.append(indent(indent)).append("  JvmRuntime.DealError ")
+                        .append(errName)
+                        .append(" = new JvmRuntime.DealError(")
+                        .append(javaString("E8007")).append(", ")
+                        .append(javaString("extra field '" + field.name()
+                            + "' in class '" + payload.classId().text() + "'"))
+                        .append(", ").append(javaString(originOf(op)))
+                        .append(", null, null, JvmRuntime.framesText(), null);\n");
+                    if (trace) {
+                        emitFailureEvent(op.opId(), op.kind().name(), op,
+                            "JvmRuntime.errtext(" + errName + ")", indent + 1);
+                    }
+                    out.append(indent(indent)).append("  throw ").append(errName)
+                        .append(";\n");
+                    out.append(indent(indent)).append("}\n");
+                }
+            }
+            // K-D4 steps 4-5: instance building plus field validation in
+            // declaration order; the tag and the publication come last
+            // (step 6).
+            String carrier = carrierName(payload.classId());
+            String instName = "__inst_" + op.opId().id();
+            out.append(indent(indent)).append(carrier).append(' ').append(instName)
+                .append(" = new ").append(carrier).append("();\n");
+            for (KindPayload.FieldBoundary entry : payload.fieldBoundaries()) {
+                SemanticOp boundary = opsById.get(entry.boundaryOpId());
+                if (boundary == null) {
+                    throw new IllegalStateException("CLASS_NEW " + op.opId()
+                        + " field boundary " + entry.boundaryOpId() + " does not "
+                        + "resolve (producer defect)");
+                }
+                KindPayload.BoundaryPayload boundaryPayload =
+                    (KindPayload.BoundaryPayload) boundary.payload();
+                String inputExpr;
+                if (entry.kind() == BoundaryKind.CLASS_DEFAULT_FIELD
+                        && payload.defaultOwner() == DefaultOwner.SHARED_FACTORY) {
+                    // The K-D4 extraction rule: the checked value is the
+                    // transferred instance's named field.
+                    SemanticOp factoryOp = opsById.get(factoryOpIdOf(op, payload));
+                    String extracted = "__ft_" + boundary.opId().id();
+                    out.append(indent(indent)).append("Object ").append(extracted)
+                        .append(" = ((").append("JvmRuntime.ClassInstance) ")
+                        .append(slot((ValueId) factoryOp.result())).append(").read(")
+                        .append(javaString(entry.field())).append(");\n");
+                    inputExpr = extracted;
+                } else {
+                    inputExpr = slot(boundaryPayload.input());
+                }
+                emitBoundaryStart(boundary, inputExpr, boundaryPayload.descriptor(), indent);
+                String checked = "__c_" + boundary.opId().id();
+                out.append(indent(indent)).append("Object ").append(checked)
+                    .append(";\n");
+                out.append(indent(indent)).append("try {\n");
+                out.append(indent(indent)).append("  ").append(checked)
+                    .append(" = JvmRuntime.bcheck(")
+                    .append(javaString(descriptorText(boundaryPayload.descriptor())))
+                    .append(", ")
+                    .append(javaString(staticKind(boundaryPayload.descriptor())))
+                    .append(", ").append(inputExpr).append(");\n");
+                out.append(indent(indent)).append("} catch (JvmRuntime.DealError __be) {\n");
+                out.append(indent(indent))
+                    .append("  JvmRuntime.DealError __bre = new JvmRuntime.DealError("
+                        + "__be.code, __be.msg, ")
+                    .append(javaString(originOf(boundary)))
+                    .append(", __be.expected, __be.actual, __be.frames, null);\n");
+                if (trace) {
+                    emitFailureEvent(boundary.opId(), "BOUNDARY", boundary,
+                        "JvmRuntime.errtext(__bre)", indent + 1);
+                    emitFailureEvent(op.opId(), op.kind().name(), op,
+                        "JvmRuntime.errtext(__bre)", indent + 1);
+                }
+                out.append(indent(indent)).append("  throw __bre;\n");
+                out.append(indent(indent)).append("}\n");
+                emitBoundarySuccess(boundary, checked, boundaryPayload.descriptor(), indent);
+                out.append(indent(indent)).append(instName).append('.')
+                    .append(fieldSlot(entry.field())).append(" = ").append(checked)
+                    .append(";\n");
+                out.append(indent(indent)).append(instName).append('.')
+                    .append(fieldFlag(entry.field())).append(" = true;\n");
+            }
+            // K-D4 step 6: the tag is the carrier's class identity (the
+            // generated class carries it by construction), then the
+            // publication.
+            out.append(indent(indent)).append(slot((ValueId) op.result()))
+                .append(" = ").append(instName).append(";\n");
+            emitResultSuccess(op, slot((ValueId) op.result()),
+                (RuntimeDescriptor) op.resultType(), indent);
+        }
+
+        /**
+         * K-D4 step 2, LOCAL: the default children run in declaration
+         * order through their detached class-default methods, skipping
+         * any child whose field is provided (a provided field's default
+         * never runs); each child emits its own START and terminal.
+         */
+        private void emitClassNewLocalDefaults(SemanticOp op,
+                KindPayload.ClassNewPayload payload, java.util.Set<String> provided,
+                int indent) {
+            for (OpId defaultOpId : payload.classDefaultOpIds()) {
+                SemanticOp defaultOp = opsById.get(defaultOpId);
+                if (defaultOp == null) {
+                    throw new IllegalStateException("CLASS_NEW " + op.opId()
+                        + " CLASS_DEFAULT child " + defaultOpId + " does not resolve "
+                        + "(producer defect)");
+                }
+                KindPayload.ClassDefaultPayload defaultPayload =
+                    (KindPayload.ClassDefaultPayload) defaultOp.payload();
+                if (provided.contains(defaultPayload.field())) {
+                    continue; // the skip-provided rule
+                }
+                emitClassDefaultCall(op, defaultOp, indent);
+            }
+        }
+
+        /** One CLASS_DEFAULT child execution (START, method, terminal). */
+        private void emitClassDefaultCall(SemanticOp op, SemanticOp defaultOp, int indent) {
+            if (trace) {
+                out.append(indent(indent)).append("JvmRuntime.ev(MODULE, ")
+                    .append(javaString(opKey(defaultOp.opId())))
+                    .append(", \"START\", \"CLASS_DEFAULT\", ")
+                    .append(javaString(defaultOp.contract().canonicalDigest()))
+                    .append(", \"-\", List.of(), null, null);\n");
+            }
+            out.append(indent(indent)).append("try {\n");
+            if (defaultOp.result() instanceof ValueId resultId) {
+                out.append(indent(indent)).append("  ").append(slot(resultId))
+                    .append(" = ").append(defaultFn(defaultOp.opId())).append("();\n");
+            } else {
+                out.append(indent(indent)).append("  ")
+                    .append(defaultFn(defaultOp.opId())).append("();\n");
+            }
+            out.append(indent(indent)).append("} catch (JvmRuntime.DealError __e) {\n");
+            if (trace) {
+                emitFailureEvent(defaultOp.opId(), "CLASS_DEFAULT", defaultOp,
+                    "JvmRuntime.errtext(__e)", indent + 1);
+                emitFailureEvent(op.opId(), op.kind().name(), op,
+                    "JvmRuntime.errtext(__e)", indent + 1);
+            }
+            out.append(indent(indent)).append("  throw __e;\n");
+            out.append(indent(indent)).append("}\n");
+            if (trace) {
+                out.append(indent(indent)).append("JvmRuntime.ev(MODULE, ")
+                    .append(javaString(opKey(defaultOp.opId())))
+                    .append(", \"SUCCESS\", \"CLASS_DEFAULT\", ")
+                    .append(javaString(defaultOp.contract().canonicalDigest()))
+                    .append(", \"-\", List.of(), JvmRuntime.atom(")
+                    .append(defaultOp.result() instanceof ValueId resultId
+                        ? slot(resultId) : "null")
+                    .append(", ")
+                    .append(javaString(staticKind(
+                        (RuntimeDescriptor) defaultOp.resultType())))
+                    .append("), null);\n");
+            }
+        }
+
+        /** The registered owner factory op of a SHARED_FACTORY CLASS_NEW. */
+        private OpId factoryOpIdOf(SemanticOp op, KindPayload.ClassNewPayload payload) {
+            ModuleId ownerModule = new ModuleId(payload.classId().modulePath());
+            ClassFactoryRegistry registry = registries.get(ownerModule);
+            if (registry == null) {
+                throw new IllegalStateException("CLASS_NEW " + op.opId()
+                    + " SHARED_FACTORY owner " + ownerModule
+                    + " has no ClassFactoryRegistry in the closure (producer defect)");
+            }
+            OpId factoryOpId = registry.factoryFor(payload.classFactoryRef());
+            if (factoryOpId == null) {
+                throw new IllegalStateException("CLASS_NEW " + op.opId()
+                    + " classFactoryRef " + payload.classFactoryRef()
+                    + " does not resolve in the owner's registry (producer defect)");
+            }
+            return factoryOpId;
+        }
+
+        /**
+         * K-D4 step 2, SHARED_FACTORY: the transfer to the owner's
+         * CLASS_FACTORY entry — the factory's events parent to this
+         * caller op (cross-unit) and carry the owner's module path; its
+         * CLASS_DEFAULT children evaluate in the declaring module's
+         * scope (skipping provided fields) and fill the untagged
+         * internal transfer instance, which the factory publishes as its
+         * result for the caller's CLASS_DEFAULT_FIELD extraction.
+         */
+        private void emitClassNewFactoryTransfer(SemanticOp op,
+                KindPayload.ClassNewPayload payload, java.util.Set<String> provided,
+                int indent) {
+            OpId factoryOpId = factoryOpIdOf(op, payload);
+            SemanticOp factoryOp = opsById.get(factoryOpId);
+            if (factoryOp == null || factoryOp.kind() != SemanticOpKind.CLASS_FACTORY) {
+                throw new IllegalStateException("CLASS_NEW " + op.opId()
+                    + " resolves factory op " + factoryOpId + " outside the pinned "
+                    + "kind (producer defect)");
+            }
+            KindPayload.ClassFactoryPayload factoryPayload =
+                (KindPayload.ClassFactoryPayload) factoryOp.payload();
+            if (!factoryPayload.classId().equals(payload.classId())) {
+                throw new IllegalStateException("CLASS_NEW " + op.opId()
+                    + " resolves a factory of " + factoryPayload.classId()
+                    + " (producer defect)");
+            }
+            if (!(factoryOp.result() instanceof ValueId factoryResult)) {
+                throw new IllegalStateException("CLASS_FACTORY " + factoryOp.opId()
+                    + " publishes no ValueId result (producer defect)");
+            }
+            String ownerPath = factoryOpId.module().path();
+            out.append(indent(indent)).append("String __prevMod_")
+                .append(op.opId().id()).append(" = MODULE;\n");
+            out.append(indent(indent)).append("MODULE = ")
+                .append(javaString(ownerPath)).append(";\n");
+            if (trace) {
+                out.append(indent(indent)).append("JvmRuntime.ev(MODULE, ")
+                    .append(javaString(opKey(factoryOp.opId())))
+                    .append(", \"START\", \"CLASS_FACTORY\", ")
+                    .append(javaString(factoryOp.contract().canonicalDigest()))
+                    .append(", ").append(javaString(opKey(op.opId())))
+                    .append(", List.of(), null, null);\n");
+            }
+            // The factory's default children in declaration order,
+            // skipping any child whose field the caller provides.
+            java.util.List<SemanticOp> filled = new ArrayList<>();
+            for (OpId defaultOpId : factoryPayload.classDefaultOpIds()) {
+                SemanticOp defaultOp = opsById.get(defaultOpId);
+                if (defaultOp == null) {
+                    throw new IllegalStateException("CLASS_FACTORY " + factoryOp.opId()
+                        + " CLASS_DEFAULT child " + defaultOpId + " does not resolve "
+                        + "(producer defect)");
+                }
+                KindPayload.ClassDefaultPayload defaultPayload =
+                    (KindPayload.ClassDefaultPayload) defaultOp.payload();
+                if (provided.contains(defaultPayload.field())) {
+                    continue; // the skip-provided rule (K-D5)
+                }
+                if (trace) {
+                    out.append(indent(indent)).append("JvmRuntime.ev(MODULE, ")
+                        .append(javaString(opKey(defaultOp.opId())))
+                        .append(", \"START\", \"CLASS_DEFAULT\", ")
+                        .append(javaString(defaultOp.contract().canonicalDigest()))
+                        .append(", \"-\", List.of(), null, null);\n");
+                }
+                out.append(indent(indent)).append("try {\n");
+                if (defaultOp.result() instanceof ValueId resultId) {
+                    out.append(indent(indent)).append("  ").append(slot(resultId))
+                        .append(" = ").append(defaultFn(defaultOp.opId())).append("();\n");
+                } else {
+                    out.append(indent(indent)).append("  ")
+                        .append(defaultFn(defaultOp.opId())).append("();\n");
+                }
+                out.append(indent(indent)).append("} catch (JvmRuntime.DealError __e) {\n");
+                if (trace) {
+                    emitFailureEvent(defaultOp.opId(), "CLASS_DEFAULT", defaultOp,
+                        "JvmRuntime.errtext(__e)", indent + 1);
+                    out.append(indent(indent)).append("  JvmRuntime.ev(MODULE, ")
+                        .append(javaString(opKey(factoryOp.opId())))
+                        .append(", \"FAILURE\", \"CLASS_FACTORY\", ")
+                        .append(javaString(factoryOp.contract().canonicalDigest()))
+                        .append(", ").append(javaString(opKey(op.opId())))
+                        .append(", List.of(), null, JvmRuntime.errtext(__e));\n");
+                    emitFailureEvent(op.opId(), op.kind().name(), op,
+                        "JvmRuntime.errtext(__e)", indent + 1);
+                }
+                out.append(indent(indent)).append("  MODULE = __prevMod_")
+                    .append(op.opId().id()).append(";\n");
+                out.append(indent(indent)).append("  throw __e;\n");
+                out.append(indent(indent)).append("}\n");
+                if (trace) {
+                    out.append(indent(indent)).append("JvmRuntime.ev(MODULE, ")
+                        .append(javaString(opKey(defaultOp.opId())))
+                        .append(", \"SUCCESS\", \"CLASS_DEFAULT\", ")
+                        .append(javaString(defaultOp.contract().canonicalDigest()))
+                        .append(", \"-\", List.of(), JvmRuntime.atom(")
+                        .append(defaultOp.result() instanceof ValueId resultId
+                            ? slot(resultId) : "null")
+                        .append(", ")
+                        .append(javaString(staticKind(
+                            (RuntimeDescriptor) defaultOp.resultType())))
+                        .append("), null);\n");
+                }
+                filled.add(defaultOp);
+            }
+            // The untagged internal transfer instance: the defaulted
+            // fields present (present null is f == null && p == true),
+            // every other field missing.
+            String carrier = carrierName(payload.classId());
+            String instName = "__tf_" + factoryOp.opId().id() + "_" + op.opId().id();
+            out.append(indent(indent)).append(carrier).append(' ').append(instName)
+                .append(" = new ").append(carrier).append("();\n");
+            for (SemanticOp defaultOp : filled) {
+                KindPayload.ClassDefaultPayload defaultPayload =
+                    (KindPayload.ClassDefaultPayload) defaultOp.payload();
+                out.append(indent(indent)).append(instName).append('.')
+                    .append(fieldSlot(defaultPayload.field())).append(" = ")
+                    .append(slot((ValueId) defaultOp.result())).append(";\n");
+                out.append(indent(indent)).append(instName).append('.')
+                    .append(fieldFlag(defaultPayload.field())).append(" = true;\n");
+            }
+            out.append(indent(indent)).append(slot(factoryResult)).append(" = ")
+                .append(instName).append(";\n");
+            if (trace) {
+                out.append(indent(indent)).append("JvmRuntime.ev(MODULE, ")
+                    .append(javaString(opKey(factoryOp.opId())))
+                    .append(", \"SUCCESS\", \"CLASS_FACTORY\", ")
+                    .append(javaString(factoryOp.contract().canonicalDigest()))
+                    .append(", ").append(javaString(opKey(op.opId())))
+                    .append(", List.of(), JvmRuntime.atom(").append(instName)
+                    .append(", \"class\"), null);\n");
+            }
+            out.append(indent(indent)).append("MODULE = __prevMod_")
+                .append(op.opId().id()).append(";\n");
+        }
+
+        /** The declared layout entry of one field name, or null. */
+        private ClassLayout.FieldLayout fieldOf(ClassLayout layout, String name) {
+            for (ClassLayout.FieldLayout field : layout.fields()) {
+                if (field.name().equals(name)) {
+                    return field;
+                }
+            }
+            return null;
         }
 
         private void emitIntrinsic(SemanticOp op, int indent) {

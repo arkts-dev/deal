@@ -932,6 +932,12 @@
    "cwd": "export"
   },
   {
+   "step": "deal.test.ClassConstructionDifferentialTest",
+   "tier": 1,
+   "budget": "embedded",
+   "cwd": "export"
+  },
+  {
    "step": "strict-coverage",
    "tier": 2,
    "budget": 1800,

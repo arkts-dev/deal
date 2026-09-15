@@ -8,6 +8,11 @@ import deal.semantic.ir.BindingId;
 import deal.semantic.ir.BlockId;
 import deal.semantic.ir.BoundaryKind;
 import deal.semantic.ir.ChainOperandCompletion;
+import deal.semantic.ir.ClassFactoryRegistry;
+import deal.semantic.ir.ClassId;
+import deal.semantic.ir.ClassLayout;
+import deal.semantic.ir.DefaultOwner;
+import deal.semantic.ir.ExecutableLoweredProject;
 import deal.semantic.ir.ExternalAsyncLink;
 import deal.semantic.ir.FailurePolicyId;
 import deal.semantic.ir.FunctionAllocationIdentity;
@@ -18,6 +23,7 @@ import deal.semantic.ir.IterationMode;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredFunction;
 import deal.semantic.ir.LoweredModuleUnit;
+import deal.semantic.ir.ModuleId;
 import deal.semantic.ir.OpId;
 import deal.semantic.ir.ParameterBoundaryMode;
 import deal.semantic.ir.RuntimeDescriptor;
@@ -30,6 +36,7 @@ import deal.semantic.ir.ValueId;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -89,6 +96,32 @@ public final class LuaSemanticEmitter {
     }
 
     /**
+     * Emits the combined trace artifact of a validated executable
+     * project (the cross-module CLASSES surface): one chunk carries the
+     * prelude once, every module's function factories, adapter thunks,
+     * and detached class-default functions, then each module's init walk
+     * in dependency order (each under its own {@code __module} tag). A
+     * caller's {@code CLASS_NEW(SHARED_FACTORY)} arm resolves the
+     * owner's factory op and default blocks through the closure, so the
+     * owner-side events carry the owner's module path and the factory's
+     * cross-unit parent. Single-unit sessions are the singleton closure
+     * of the same machinery.
+     *
+     * @param project    the validated executable closure; non-null
+     * @param tables     each module's block-membership table; non-null
+     * @param registries each module's class-factory registry; non-null
+     * @return the combined artifact source text
+     */
+    public static String emitProject(ExecutableLoweredProject project,
+                                     Map<ModuleId, StructuredBodyTable> tables,
+                                     Map<ModuleId, ClassFactoryRegistry> registries) {
+        Objects.requireNonNull(project, "project must not be null");
+        Objects.requireNonNull(tables, "tables must not be null");
+        Objects.requireNonNull(registries, "registries must not be null");
+        return new Session(project, tables, registries, true).emit();
+    }
+
+    /**
      * Emits the production LuaJIT module artifact for the validated unit
      * (ISSUE-0239 E10): the conformance trace protocol is suppressed, a
      * DEAL failure publishes the retained {@code DEAL_ERROR_CODE: <code>}
@@ -117,11 +150,28 @@ public final class LuaSemanticEmitter {
     private static final class Session {
         final LoweredModuleUnit unit;
         final StructuredBodyTable table;
+        /**
+         * The project-mode closure: every module's unit, table, and
+         * class-factory registry (the single-unit session carries one
+         * entry plus no registries). Ids are globally unique across the
+         * project, so the combined artifact shares one slot/cell
+         * namespace.
+         */
+        final Map<ModuleId, LoweredModuleUnit> units = new LinkedHashMap<>();
+        final Map<ModuleId, StructuredBodyTable> tables = new LinkedHashMap<>();
+        final Map<ModuleId, ClassFactoryRegistry> registries = new LinkedHashMap<>();
+        /** The union class-layout resolution context (K-D11). */
+        final Map<ClassId, ClassLayout> classLayouts = new LinkedHashMap<>();
+        /** Each block id → its owning unit's membership table. */
+        final Map<BlockId, StructuredBodyTable> blockTableOf = new LinkedHashMap<>();
         final Map<OpId, SemanticOp> opsById = new HashMap<>();
         final Map<BindingId, BindingCellKind> cellKinds = new HashMap<>();
         final java.util.Set<OpId> ownedChildren = new java.util.HashSet<>();
-        /** The payload-owned children only (closure computation excludes them). */
-        final java.util.Set<OpId> structuralOwned;
+        /**
+         * The payload-owned children only (closure computation excludes
+         * them): the union of every registered unit's structural owners.
+         */
+        final java.util.Set<OpId> structuralOwned = new java.util.HashSet<>();
         /** Production mode: no trace protocol, DEAL_ERROR_CODE terminal. */
         final boolean trace;
         /** The selected entry module runs the ENTRY_INVOKE delegation. */
@@ -150,7 +200,77 @@ public final class LuaSemanticEmitter {
             this.table = table;
             this.trace = trace;
             this.entryModule = entryModule;
-            for (SemanticOp op : unit.ops()) {
+            registerUnit(unit, table, new ClassFactoryRegistry(Map.of()));
+            if (!entryModule) {
+                // A non-entry module never runs its ENTRY_INVOKE delegation
+                // (the retained emitter invokes main() only from the entry
+                // module): skip the entry op and its delegated CALL.
+                for (SemanticOp op : unit.ops()) {
+                    if (op.kind() != SemanticOpKind.ENTRY_INVOKE) {
+                        continue;
+                    }
+                    skippedOps.add(op.opId());
+                    for (SemanticOp candidate : unit.ops()) {
+                        if (op.opId().equals(candidate.origin().parentOpId())) {
+                            skippedOps.add(candidate.opId());
+                        }
+                    }
+                }
+            }
+        }
+
+        /**
+         * The project-mode session (the cross-module factory surface):
+         * every module's unit, table, and class-factory registry in one
+         * combined artifact — the CLASS_NEW(SHARED_FACTORY) arm resolves
+         * the owner's factory op and default blocks through the closure.
+         */
+        Session(ExecutableLoweredProject project, Map<ModuleId, StructuredBodyTable> tables,
+                Map<ModuleId, ClassFactoryRegistry> registries, boolean trace) {
+            this.unit = project.modules().get(project.entryModule());
+            this.table = tables.get(project.entryModule());
+            if (this.unit == null || this.table == null) {
+                throw new IllegalArgumentException(
+                    "the entry module is not in the executable closure");
+            }
+            this.trace = trace;
+            this.entryModule = true;
+            for (Map.Entry<ModuleId, LoweredModuleUnit> entry
+                    : project.modules().entrySet()) {
+                registerUnit(entry.getValue(), tables.get(entry.getKey()),
+                    registries.getOrDefault(entry.getKey(),
+                        new ClassFactoryRegistry(Map.of())));
+                if (!entry.getKey().equals(project.entryModule())) {
+                    // A non-entry module never runs its ENTRY_INVOKE
+                    // delegation: skip the entry op and its delegated
+                    // CALL in the combined walk.
+                    for (SemanticOp op : entry.getValue().ops()) {
+                        if (op.kind() != SemanticOpKind.ENTRY_INVOKE) {
+                            continue;
+                        }
+                        skippedOps.add(op.opId());
+                        for (SemanticOp candidate : entry.getValue().ops()) {
+                            if (op.opId().equals(candidate.origin().parentOpId())) {
+                                skippedOps.add(candidate.opId());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        /** Registers one module's unit/table/registry into the session closure. */
+        private void registerUnit(LoweredModuleUnit moduleUnit,
+                                  StructuredBodyTable moduleTable,
+                                  ClassFactoryRegistry registry) {
+            units.put(moduleUnit.moduleId(), moduleUnit);
+            tables.put(moduleUnit.moduleId(), moduleTable);
+            registries.put(moduleUnit.moduleId(), registry);
+            classLayouts.putAll(moduleUnit.classLayouts());
+            for (Map.Entry<BlockId, List<OpId>> entry : moduleTable.blockOps().entrySet()) {
+                blockTableOf.put(entry.getKey(), moduleTable);
+            }
+            for (SemanticOp op : moduleUnit.ops()) {
                 opsById.put(op.opId(), op);
                 if (op.kind() == SemanticOpKind.BINDING_ALLOC) {
                     KindPayload.BindingAllocPayload payload =
@@ -170,38 +290,24 @@ public final class LuaSemanticEmitter {
                     }
                 }
             }
-            // Payload-owned children are emitted exactly once by their owner
-            // arms; the block walk skips them (a double emission would
-            // duplicate effects and events).
-            structuralOwned = ChainOperandCompletion.structuralOwners(unit);
-            ownedChildren.addAll(structuralOwned);
-            ChainOperandCompletion.registerChainOperandOwners(unit, structuralOwned,
+            // Payload-owned children are emitted exactly once by their
+            // owner arms; the block walk skips them (a double emission
+            // would duplicate effects and events).
+            java.util.Set<OpId> structural =
+                ChainOperandCompletion.structuralOwners(moduleUnit);
+            structuralOwned.addAll(structural);
+            ownedChildren.addAll(structural);
+            ChainOperandCompletion.registerChainOperandOwners(moduleUnit, structural,
                 ownedChildren);
             // The nested source ASYNC_START of an adapter-over-async task
             // executes under its outer op's arm, never at its flat
             // block-list position (the oracle's UnitState rule).
-            for (SemanticOp op : unit.ops()) {
+            for (SemanticOp op : moduleUnit.ops()) {
                 if (op.kind() == SemanticOpKind.ASYNC_START) {
-                    for (SemanticOp candidate : unit.ops()) {
+                    for (SemanticOp candidate : moduleUnit.ops()) {
                         if (candidate.kind() == SemanticOpKind.ASYNC_START
                                 && op.opId().equals(candidate.origin().parentOpId())) {
                             ownedChildren.add(candidate.opId());
-                        }
-                    }
-                }
-            }
-            if (!entryModule) {
-                // A non-entry module never runs its ENTRY_INVOKE delegation
-                // (the retained emitter invokes main() only from the entry
-                // module): skip the entry op and its delegated CALL.
-                for (SemanticOp op : unit.ops()) {
-                    if (op.kind() != SemanticOpKind.ENTRY_INVOKE) {
-                        continue;
-                    }
-                    skippedOps.add(op.opId());
-                    for (SemanticOp candidate : unit.ops()) {
-                        if (op.opId().equals(candidate.origin().parentOpId())) {
-                            skippedOps.add(candidate.opId());
                         }
                     }
                 }
@@ -244,7 +350,7 @@ public final class LuaSemanticEmitter {
          * The static runtime kind of a descriptor for atomization/checks:
          * {@code null}, {@code bool}, {@code int}, {@code number},
          * {@code string}, {@code table}, {@code array}, {@code function},
-         * {@code err}, or {@code nullable:&lt;inner&gt;}.
+         * {@code class}, {@code err}, or {@code nullable:&lt;inner&gt;}.
          */
         static String staticKind(RuntimeDescriptor descriptor) {
             if (descriptor == null) {
@@ -274,8 +380,11 @@ public final class LuaSemanticEmitter {
             if (descriptor instanceof RuntimeDescriptor.Func) {
                 return "function";
             }
-            if (descriptor instanceof RuntimeDescriptor.Class) {
-                return "err";
+            if (descriptor instanceof RuntimeDescriptor.Class cls) {
+                // The builtin Error class keeps the closed err atom
+                // ({code, message}); user classes carry the class
+                // identity tag (E5).
+                return ClassId.ERROR.equals(cls.classId()) ? "err" : "class";
             }
             if (descriptor instanceof RuntimeDescriptor.Nullable nullable) {
                 return "nullable:" + staticKind(nullable.inner());
@@ -302,6 +411,9 @@ public final class LuaSemanticEmitter {
             }
             if (descriptor instanceof RuntimeDescriptor.Table) {
                 return "table";
+            }
+            if (descriptor instanceof RuntimeDescriptor.Class cls) {
+                return cls.classId().text();
             }
             if (descriptor instanceof RuntimeDescriptor.Array array) {
                 return "array(" + descriptorText(array.element()) + ")";
@@ -423,21 +535,26 @@ public final class LuaSemanticEmitter {
             // Hoisted shared temps (goto can never jump into a local's
             // scope; every check/return temp is a top-level assignment).
             out.append("local __chk, __rvT, __rvcT, __okT, __resT, __terrT, "
-                + "__cerrT, __wrappedT, __itT, __itnT, __elemT, __okB, __chkB\n");
+                + "__cerrT, __wrappedT, __itT, __itnT, __elemT, __okB, __chkB, "
+                + "__instT, __fT, __prevModT, __eT\n");
 
             // Function factories first (capture cells are factory
             // arguments); the local names are pre-declared so bodies can
             // reference factories declared later in source order.
             List<String> factoryNames = new ArrayList<>();
-            for (LoweredFunction function : unit.functions().values()) {
-                factoryNames.add(fnFactory(function.functionId()));
+            for (LoweredModuleUnit moduleUnit : units.values()) {
+                for (LoweredFunction function : moduleUnit.functions().values()) {
+                    factoryNames.add(fnFactory(function.functionId()));
+                }
             }
             if (!factoryNames.isEmpty()) {
                 out.append("local ").append(String.join(", ", factoryNames))
                     .append("\n");
             }
-            for (LoweredFunction function : unit.functions().values()) {
-                emitFunctionFactory(function);
+            for (LoweredModuleUnit moduleUnit : units.values()) {
+                for (LoweredFunction function : moduleUnit.functions().values()) {
+                    emitFunctionFactory(function);
+                }
             }
 
             // The REEVALUATE_THUNK re-executors: one detached thunk
@@ -445,21 +562,38 @@ public final class LuaSemanticEmitter {
             // thunk ops are members only of the detached thunk block (the
             // lowerer's single-membership rule), so the module walk never
             // executes them; each invocation re-executes them here.
-            for (SemanticOp op : unit.ops()) {
-                if (op.kind() != SemanticOpKind.FUNCTION_ADAPT) {
-                    continue;
-                }
-                KindPayload.FunctionAdaptPayload payload =
-                    (KindPayload.FunctionAdaptPayload) op.payload();
-                if (payload.source() instanceof AdaptSourceRef.Thunk thunk) {
-                    emitThunkFunction(op, thunk.blockId());
+            for (LoweredModuleUnit moduleUnit : units.values()) {
+                for (SemanticOp op : moduleUnit.ops()) {
+                    if (op.kind() != SemanticOpKind.FUNCTION_ADAPT) {
+                        continue;
+                    }
+                    KindPayload.FunctionAdaptPayload payload =
+                        (KindPayload.FunctionAdaptPayload) op.payload();
+                    if (payload.source() instanceof AdaptSourceRef.Thunk thunk) {
+                        emitThunkFunction(op, thunk.blockId());
+                    }
                 }
             }
 
-            // The module-init block (ends with the entry delegation) inside a
-            // pcall wrapper so uncaught DEAL failures publish R|failure.
-            // The walk is exposed as the deferred-main entry (the scenario
-            // host drives it explicitly under the defer flag — module
+            // The detached class-default functions (E5): one per
+            // CLASS_DEFAULT op — the default block's ops (the default op
+            // itself skipped) re-execute per invocation, returning the
+            // block's final producing value (the op's result slot), so
+            // every triggering construction gets a fresh default
+            // (mutable defaults allocate freshly per attempt).
+            for (LoweredModuleUnit moduleUnit : units.values()) {
+                for (SemanticOp op : moduleUnit.ops()) {
+                    if (op.kind() == SemanticOpKind.CLASS_DEFAULT) {
+                        emitClassDefaultFunction(op);
+                    }
+                }
+            }
+
+            // The module-init blocks (the entry delegation included) in
+            // dependency order inside one deferred-main wrapper so uncaught
+            // DEAL failures publish the single R|failure terminal. The walk
+            // is exposed as the deferred-main entry (the scenario host
+            // drives it explicitly under the defer flag — module
             // initialization before an async-entry invocation, or the entry
             // module's walk in a multi-module drive); the conformance
             // artifact skips the walk under the callback-only drive flag
@@ -467,7 +601,11 @@ public final class LuaSemanticEmitter {
             // module-init block).
             out.append("__dealMain = function()\n");
             out.append("  local __mainOk, __mainErr = pcall(function()\n");
-            emitBlockOps(unit.moduleInit().initBlock());
+            for (LoweredModuleUnit moduleUnit : units.values()) {
+                out.append("  __module = ")
+                    .append(luaString(moduleUnit.moduleId().path())).append("\n");
+                emitBlockOps(moduleUnit.moduleInit().initBlock());
+            }
             out.append("  end)\n");
             out.append("  if __mainOk then return true, nil end\n");
             out.append("  return false, __mainErr\n");
@@ -501,9 +639,11 @@ public final class LuaSemanticEmitter {
             // one per-unit entry per recorded invocation, defined after the
             // module-init walk in both modes (the block walk never runs the
             // unattached records themselves).
-            for (SemanticOp op : unit.ops()) {
-                if (op.kind() == SemanticOpKind.CALLBACK_INVOKE) {
-                    emitCallbackInvoke(op);
+            for (LoweredModuleUnit moduleUnit : units.values()) {
+                for (SemanticOp op : moduleUnit.ops()) {
+                    if (op.kind() == SemanticOpKind.CALLBACK_INVOKE) {
+                        emitCallbackInvoke(op);
+                    }
                 }
             }
 
@@ -528,6 +668,42 @@ public final class LuaSemanticEmitter {
         }
 
         /**
+         * Emits one detached class-default function: the default block's
+         * ops in order (the CLASS_DEFAULT op itself skipped — its own
+         * events are the triggering CLASS_NEW/CLASS_FACTORY arm's) and
+         * the final producing value returned.
+         */
+        private void emitClassDefaultFunction(SemanticOp defaultOp) {
+            KindPayload.ClassDefaultPayload payload =
+                (KindPayload.ClassDefaultPayload) defaultOp.payload();
+            StructuredBodyTable ownerTable = blockTableOf.get(payload.defaultBlock());
+            List<OpId> ops = ownerTable == null
+                ? null : ownerTable.blockOps().get(payload.defaultBlock());
+            if (ops == null) {
+                throw new IllegalStateException("the class-default block "
+                    + payload.defaultBlock() + " has no membership row (producer defect)");
+            }
+            if (!(defaultOp.result() instanceof ValueId resultId)) {
+                throw new IllegalStateException("CLASS_DEFAULT " + defaultOp.opId()
+                    + " publishes no ValueId result (producer defect)");
+            }
+            out.append("local function ").append(defaultFn(defaultOp.opId())).append("()\n");
+            for (OpId opId : ops) {
+                if (opId.equals(defaultOp.opId()) || ownedChildren.contains(opId)) {
+                    continue;
+                }
+                emitOp(opsById.get(opId));
+            }
+            out.append("  return ").append(slot(resultId)).append("\n");
+            out.append("end\n");
+        }
+
+        /** One detached class-default function name of a CLASS_DEFAULT op. */
+        private String defaultFn(OpId defaultOp) {
+            return "D" + defaultOp.id();
+        }
+
+        /**
          * Emits one detached thunk re-executor for a FUNCTION_ADAPT op
          * with a REEVALUATE_THUNK source: the thunk block's ops run in
          * order (payload-owned children included through their owner
@@ -535,7 +711,8 @@ public final class LuaSemanticEmitter {
          * — the source value the invocation consumes.
          */
         private void emitThunkFunction(SemanticOp adaptOp, BlockId block) {
-            List<OpId> ops = table.blockOps().get(block);
+            StructuredBodyTable ownerTable = blockTableOf.get(block);
+            List<OpId> ops = ownerTable == null ? null : ownerTable.blockOps().get(block);
             if (ops == null) {
                 throw new IllegalStateException("the adapter thunk block " + block
                     + " has no membership row (producer defect)");
@@ -583,7 +760,7 @@ public final class LuaSemanticEmitter {
             out.append("  return function(...)\n");
             out.append("    local __args = {...}\n");
             int argIndex = 1;
-            List<OpId> bodyOps = table.blockOps().get(function.body());
+            List<OpId> bodyOps = tableOfFunction(function).blockOps().get(function.body());
             currentFunctionId = functionId;
             int paramCount = function.descriptor().paramTypes().size();
             for (int i = 0; i < paramCount && i < bodyOps.size(); i++) {
@@ -619,9 +796,23 @@ public final class LuaSemanticEmitter {
             currentFunctionId = null;
         }
 
+        /** The membership table of the unit owning one lowered function. */
+        private StructuredBodyTable tableOfFunction(LoweredFunction function) {
+            for (LoweredModuleUnit moduleUnit : units.values()) {
+                if (moduleUnit.functions().containsKey(function.functionId())) {
+                    return tables.get(moduleUnit.moduleId());
+                }
+            }
+            return table;
+        }
+
         /** Emits the ops of one block inline. */
         private void emitBlockOps(BlockId block) {
-            for (OpId opId : table.blockOps().get(block)) {
+            StructuredBodyTable ownerTable = blockTableOf.get(block);
+            if (ownerTable == null) {
+                ownerTable = table;
+            }
+            for (OpId opId : ownerTable.blockOps().get(block)) {
                 if (ownedChildren.contains(opId)) {
                     continue;
                 }
@@ -688,6 +879,15 @@ public final class LuaSemanticEmitter {
                 case EXPORT_PUBLISH -> emitExportPublish(op);
                 case EXTERNAL_ENTRY -> emitExternalEntryRecord(op);
                 case ENTRY_INVOKE -> emitEntryInvoke(op);
+                case CLASS_NEW -> emitClassNew(op);
+                case CLASS_DEFAULT -> throw new IllegalStateException("a CLASS_DEFAULT "
+                    + "executes only under its triggering CLASS_NEW/CLASS_FACTORY "
+                    + "(the detached default block's ops are the class-default "
+                    + "function's; the block walk never runs the op itself)");
+                case CLASS_FACTORY -> throw new IllegalStateException("a CLASS_FACTORY "
+                    + "is a detached owner-module entry executed only under the "
+                    + "triggering caller's CLASS_NEW (cross-unit parent) — the "
+                    + "block walk never runs it)");
                 default -> throw new IllegalStateException("op kind " + op.kind()
                     + " has no shared-LuaJIT emission in this decomposition-tail "
                     + "domain");
@@ -1327,9 +1527,11 @@ public final class LuaSemanticEmitter {
 
         /** True iff the value slot is an op result in this unit. */
         private boolean hasProducer(ValueId valueId) {
-            for (SemanticOp op : unit.ops()) {
-                if (valueId.equals(op.result())) {
-                    return true;
+            for (LoweredModuleUnit moduleUnit : units.values()) {
+                for (SemanticOp op : moduleUnit.ops()) {
+                    if (valueId.equals(op.result())) {
+                        return true;
+                    }
                 }
             }
             return false;
@@ -1865,6 +2067,301 @@ public final class LuaSemanticEmitter {
                 emitBoundarySuccess(returnBoundary, target, boundaryPayload.descriptor());
             }
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
+        }
+
+        /**
+         * CLASS_NEW (E5, D16 construction order): provided values
+         * completed before the op; default application in declaration
+         * order (LOCAL through the detached class-default functions, or
+         * the owner's CLASS_FACTORY transfer with the factory's events
+         * parented to this caller op — the cross-unit K-D12 parent);
+         * extra-key rejection first in provided-source order (E8007 at
+         * the op origin); provided-field application and field
+         * validation in declaration order through the boundary
+         * children; the instance is tagged with its canonical class
+         * identity last. Zero return boundaries; a failure publishes no
+         * partial instance.
+         */
+        private void emitClassNew(SemanticOp op) {
+            KindPayload.ClassNewPayload payload =
+                (KindPayload.ClassNewPayload) op.payload();
+            emitStart(op);
+            ClassLayout layout = classLayouts.get(payload.classId());
+            if (layout == null) {
+                throw new IllegalStateException("CLASS_NEW " + op.opId() + " classId "
+                    + payload.classId() + " has no layout in the resolution context "
+                    + "(producer defect)");
+            }
+            java.util.Set<String> provided = new java.util.HashSet<>();
+            for (KindPayload.ProvidedField field : payload.providedFields()) {
+                provided.add(field.name());
+            }
+            switch (payload.defaultOwner()) {
+                case LOCAL -> emitClassNewLocalDefaults(op, payload, provided);
+                case SHARED_FACTORY -> emitClassNewFactoryTransfer(op, payload, provided);
+                default -> throw new IllegalStateException("CLASS_NEW " + op.opId()
+                    + " carries defaultOwner " + payload.defaultOwner()
+                    + " outside the emitted owners (producer defect)");
+            }
+            // K-D4 step 3: extra-key rejection first in provided-source
+            // order — after default application, before any provided-field
+            // application or field validation.
+            for (KindPayload.ProvidedField field : payload.providedFields()) {
+                if (fieldOf(layout, field.name()) == null) {
+                    out.append("__eT = __failExpr(")
+                        .append(luaString("E8007")).append(", ")
+                        .append(luaString("extra field '" + field.name()
+                            + "' in class '" + payload.classId().text() + "'"))
+                        .append(", ").append(luaString(originOf(op)))
+                        .append(", nil, nil)\n");
+                    emitFailureEvent(op.opId(), op.kind().name(), op,
+                        "__errtext(__eT)");
+                    out.append("error(__eT, 0)\n");
+                }
+            }
+            // K-D4 steps 4-5: instance building plus field validation in
+            // declaration order; the tag and the publication come last
+            // (step 6).
+            out.append("__instT = {}\n");
+            out.append("__instT.__f = {}\n");
+            out.append("__instT.__p = {}\n");
+            for (KindPayload.FieldBoundary entry : payload.fieldBoundaries()) {
+                SemanticOp boundary = opsById.get(entry.boundaryOpId());
+                if (boundary == null) {
+                    throw new IllegalStateException("CLASS_NEW " + op.opId()
+                        + " field boundary " + entry.boundaryOpId() + " does not "
+                        + "resolve (producer defect)");
+                }
+                KindPayload.BoundaryPayload boundaryPayload =
+                    (KindPayload.BoundaryPayload) boundary.payload();
+                String inputExpr;
+                if (entry.kind() == BoundaryKind.CLASS_DEFAULT_FIELD
+                        && payload.defaultOwner() == DefaultOwner.SHARED_FACTORY) {
+                    // The K-D4 extraction rule: the checked value is the
+                    // transferred instance's named field.
+                    SemanticOp factoryOp = opsById.get(factoryOpIdOf(op, payload));
+                    inputExpr = "__fT";
+                    out.append("__fT = __member(")
+                        .append(slot((ValueId) factoryOp.result())).append(", ")
+                        .append(luaString(entry.field())).append(")\n");
+                } else {
+                    inputExpr = slot(boundaryPayload.input());
+                }
+                emitBoundaryStart(boundary, inputExpr, boundaryPayload.descriptor());
+                out.append("__okB, __chkB = pcall(__bcheck, ")
+                    .append(luaString(descriptorText(boundaryPayload.descriptor())))
+                    .append(", ")
+                    .append(luaString(staticKind(boundaryPayload.descriptor())))
+                    .append(", ").append(inputExpr).append(")\n");
+                out.append("if not __okB then\n");
+                out.append("  __chkB.o = ")
+                    .append(luaString(originOf(boundary))).append("\n");
+                emitFailureEvent(boundary.opId(), "BOUNDARY", boundary,
+                    "__errtext(__chkB)");
+                emitFailureEvent(op.opId(), op.kind().name(), op,
+                    "__errtext(__chkB)");
+                out.append("  error(__chkB, 0)\n");
+                out.append("end\n");
+                emitBoundarySuccess(boundary, "__chkB", boundaryPayload.descriptor());
+                out.append("__instT.__f[").append(luaString(entry.field()))
+                    .append("] = (__chkB == nil) and __NULL or __chkB\n");
+                out.append("__instT.__p[").append(luaString(entry.field()))
+                    .append("] = true\n");
+            }
+            // K-D4 step 6: the tag, then the publication.
+            out.append("__instT.__c = true\n");
+            out.append("__instT.__id = ")
+                .append(luaString(payload.classId().text())).append("\n");
+            out.append(slot((ValueId) op.result())).append(" = __instT\n");
+            emitResultSuccess(op, slot((ValueId) op.result()),
+                (RuntimeDescriptor) op.resultType());
+        }
+
+        /**
+         * K-D4 step 2, LOCAL: the default children run in declaration
+         * order through their detached class-default functions, skipping
+         * any child whose field is provided (a provided field's default
+         * never runs); each child emits its own START and terminal.
+         */
+        private void emitClassNewLocalDefaults(SemanticOp op,
+                KindPayload.ClassNewPayload payload, java.util.Set<String> provided) {
+            for (OpId defaultOpId : payload.classDefaultOpIds()) {
+                SemanticOp defaultOp = opsById.get(defaultOpId);
+                if (defaultOp == null) {
+                    throw new IllegalStateException("CLASS_NEW " + op.opId()
+                        + " CLASS_DEFAULT child " + defaultOpId + " does not resolve "
+                        + "(producer defect)");
+                }
+                KindPayload.ClassDefaultPayload defaultPayload =
+                    (KindPayload.ClassDefaultPayload) defaultOp.payload();
+                if (provided.contains(defaultPayload.field())) {
+                    continue; // the skip-provided rule
+                }
+                emitClassDefaultCall(op, defaultOp);
+            }
+        }
+
+        /** One CLASS_DEFAULT child execution (START, function, terminal). */
+        private void emitClassDefaultCall(SemanticOp op, SemanticOp defaultOp) {
+            out.append("__ev(").append(luaString(opKey(defaultOp.opId())))
+                .append(", \"START\", \"CLASS_DEFAULT\", ")
+                .append(luaString(defaultOp.contract().canonicalDigest()))
+                .append(", \"-\", {}, nil, nil)\n");
+            out.append("__okT, __resT = pcall(")
+                .append(defaultFn(defaultOp.opId())).append(")\n");
+            out.append("if not __okT then\n");
+            emitFailureEvent(defaultOp.opId(), "CLASS_DEFAULT", defaultOp,
+                "__errtext(__resT)");
+            emitFailureEvent(op.opId(), op.kind().name(), op, "__errtext(__resT)");
+            out.append("  error(__resT, 0)\n");
+            out.append("end\n");
+            if (defaultOp.result() instanceof ValueId resultId) {
+                out.append(slot(resultId)).append(" = __resT\n");
+            }
+            out.append("__ev(").append(luaString(opKey(defaultOp.opId())))
+                .append(", \"SUCCESS\", \"CLASS_DEFAULT\", ")
+                .append(luaString(defaultOp.contract().canonicalDigest()))
+                .append(", \"-\", {}, __atom(")
+                .append(luaString(staticKind((RuntimeDescriptor) defaultOp.resultType())))
+                .append(", __resT), nil)\n");
+        }
+
+        /** The registered owner factory op of a SHARED_FACTORY CLASS_NEW. */
+        private OpId factoryOpIdOf(SemanticOp op, KindPayload.ClassNewPayload payload) {
+            ModuleId ownerModule = new ModuleId(payload.classId().modulePath());
+            ClassFactoryRegistry registry = registries.get(ownerModule);
+            if (registry == null) {
+                throw new IllegalStateException("CLASS_NEW " + op.opId()
+                    + " SHARED_FACTORY owner " + ownerModule
+                    + " has no ClassFactoryRegistry in the closure (producer defect)");
+            }
+            OpId factoryOpId = registry.factoryFor(payload.classFactoryRef());
+            if (factoryOpId == null) {
+                throw new IllegalStateException("CLASS_NEW " + op.opId()
+                    + " classFactoryRef " + payload.classFactoryRef()
+                    + " does not resolve in the owner's registry (producer defect)");
+            }
+            return factoryOpId;
+        }
+
+        /**
+         * K-D4 step 2, SHARED_FACTORY: the transfer to the owner's
+         * CLASS_FACTORY entry — the factory's events parent to this
+         * caller op (cross-unit) and carry the owner's module path; its
+         * CLASS_DEFAULT children evaluate in the declaring module's
+         * scope (skipping provided fields) and fill the untagged
+         * internal transfer instance, which the factory publishes as its
+         * result for the caller's CLASS_DEFAULT_FIELD extraction.
+         */
+        private void emitClassNewFactoryTransfer(SemanticOp op,
+                KindPayload.ClassNewPayload payload, java.util.Set<String> provided) {
+            OpId factoryOpId = factoryOpIdOf(op, payload);
+            SemanticOp factoryOp = opsById.get(factoryOpId);
+            if (factoryOp == null || factoryOp.kind() != SemanticOpKind.CLASS_FACTORY) {
+                throw new IllegalStateException("CLASS_NEW " + op.opId()
+                    + " resolves factory op " + factoryOpId + " outside the pinned "
+                    + "kind (producer defect)");
+            }
+            KindPayload.ClassFactoryPayload factoryPayload =
+                (KindPayload.ClassFactoryPayload) factoryOp.payload();
+            if (!factoryPayload.classId().equals(payload.classId())) {
+                throw new IllegalStateException("CLASS_NEW " + op.opId()
+                    + " resolves a factory of " + factoryPayload.classId()
+                    + " (producer defect)");
+            }
+            if (!(factoryOp.result() instanceof ValueId factoryResult)) {
+                throw new IllegalStateException("CLASS_FACTORY " + factoryOp.opId()
+                    + " publishes no ValueId result (producer defect)");
+            }
+            String ownerPath = factoryOpId.module().path();
+            out.append("__prevModT = __module\n");
+            out.append("__module = ").append(luaString(ownerPath)).append("\n");
+            out.append("__ev(").append(luaString(opKey(factoryOp.opId())))
+                .append(", \"START\", \"CLASS_FACTORY\", ")
+                .append(luaString(factoryOp.contract().canonicalDigest()))
+                .append(", ").append(luaString(opKey(op.opId())))
+                .append(", {}, nil, nil)\n");
+            // The factory's default children in declaration order,
+            // skipping any child whose field the caller provides.
+            java.util.List<SemanticOp> filled = new ArrayList<>();
+            for (OpId defaultOpId : factoryPayload.classDefaultOpIds()) {
+                SemanticOp defaultOp = opsById.get(defaultOpId);
+                if (defaultOp == null) {
+                    throw new IllegalStateException("CLASS_FACTORY " + factoryOp.opId()
+                        + " CLASS_DEFAULT child " + defaultOpId + " does not resolve "
+                        + "(producer defect)");
+                }
+                KindPayload.ClassDefaultPayload defaultPayload =
+                    (KindPayload.ClassDefaultPayload) defaultOp.payload();
+                if (provided.contains(defaultPayload.field())) {
+                    continue; // the skip-provided rule (K-D5)
+                }
+                out.append("__ev(").append(luaString(opKey(defaultOp.opId())))
+                    .append(", \"START\", \"CLASS_DEFAULT\", ")
+                    .append(luaString(defaultOp.contract().canonicalDigest()))
+                    .append(", \"-\", {}, nil, nil)\n");
+                out.append("__okT, __resT = pcall(")
+                    .append(defaultFn(defaultOp.opId())).append(")\n");
+                out.append("if not __okT then\n");
+                emitFailureEvent(defaultOp.opId(), "CLASS_DEFAULT", defaultOp,
+                    "__errtext(__resT)");
+                out.append("__ev(").append(luaString(opKey(factoryOp.opId())))
+                    .append(", \"FAILURE\", \"CLASS_FACTORY\", ")
+                    .append(luaString(factoryOp.contract().canonicalDigest()))
+                    .append(", ").append(luaString(opKey(op.opId())))
+                    .append(", {}, nil, __errtext(__resT))\n");
+                emitFailureEvent(op.opId(), op.kind().name(), op,
+                    "__errtext(__resT)");
+                out.append("  __module = __prevModT\n");
+                out.append("  error(__resT, 0)\n");
+                out.append("end\n");
+                if (defaultOp.result() instanceof ValueId resultId) {
+                    out.append(slot(resultId)).append(" = __resT\n");
+                }
+                out.append("__ev(").append(luaString(opKey(defaultOp.opId())))
+                    .append(", \"SUCCESS\", \"CLASS_DEFAULT\", ")
+                    .append(luaString(defaultOp.contract().canonicalDigest()))
+                    .append(", \"-\", {}, __atom(")
+                    .append(luaString(staticKind((RuntimeDescriptor) defaultOp.resultType())))
+                    .append(", __resT), nil)\n");
+                filled.add(defaultOp);
+            }
+            // The untagged internal transfer instance: the defaulted
+            // fields present (present null via the __NULL sentinel),
+            // every other field missing.
+            out.append("__instT = {}\n");
+            out.append("__instT.__f = {}\n");
+            out.append("__instT.__p = {}\n");
+            for (SemanticOp defaultOp : filled) {
+                KindPayload.ClassDefaultPayload defaultPayload =
+                    (KindPayload.ClassDefaultPayload) defaultOp.payload();
+                out.append("__instT.__f[").append(luaString(defaultPayload.field()))
+                    .append("] = (").append(slot((ValueId) defaultOp.result()))
+                    .append(" == nil) and __NULL or ")
+                    .append(slot((ValueId) defaultOp.result())).append("\n");
+                out.append("__instT.__p[").append(luaString(defaultPayload.field()))
+                    .append("] = true\n");
+            }
+            out.append("__instT.__c = true\n");
+            out.append("__instT.__id = ")
+                .append(luaString(payload.classId().text())).append("\n");
+            out.append(slot(factoryResult)).append(" = __instT\n");
+            out.append("__ev(").append(luaString(opKey(factoryOp.opId())))
+                .append(", \"SUCCESS\", \"CLASS_FACTORY\", ")
+                .append(luaString(factoryOp.contract().canonicalDigest()))
+                .append(", ").append(luaString(opKey(op.opId())))
+                .append(", {}, __atom(\"class\", __instT), nil)\n");
+            out.append("__module = __prevModT\n");
+        }
+
+        /** The declared layout entry of one field name, or null. */
+        private ClassLayout.FieldLayout fieldOf(ClassLayout layout, String name) {
+            for (ClassLayout.FieldLayout field : layout.fields()) {
+                if (field.name().equals(name)) {
+                    return field;
+                }
+            }
+            return null;
         }
 
         private List<SemanticOp> stdlibParamBoundaries(SemanticOp op) {
@@ -2836,8 +3333,20 @@ local __NULL = setmetatable({}, {__tostring = function() return "null" end})
 -- table-read boundary decides null-vs-error identically on both
 -- targets. The __keys marker sub-table is the same one the TABLE_NEW /
 -- MEMBER_WRITE / MEMBER_DELETE / INDEX_WRITE / INDEX_DELETE paths
--- maintain, so read and write presence stay consistent.
+-- maintain, so read and write presence stay consistent. A class
+-- instance (E5: __c marker, __id tag, __p presence map, __f field
+-- values with the __NULL sentinel for a present null) reads through
+-- its presence map — present null yields nil and stays distinguishable
+-- from an absent key via the presence map (has()/FIELD_READ).
 local function __member(t, k)
+  if t.__c then
+    if t.__p[k] then
+      local v = t.__f[k]
+      if v == __NULL then return nil end
+      return v
+    end
+    return __MISSING
+  end
   if t.__keys[k] then return t[k] end
   return __MISSING
 end
@@ -2898,7 +3407,8 @@ local function __atom(kind, v)
   if kind == "err" then
     return "err:"..v.code..":"..__esc(v.m or "")
   end
-  if kind == "ref" or kind == "table" or kind == "array" or kind == "function" then
+  if kind == "ref" or kind == "table" or kind == "array" or kind == "function"
+      or kind == "class" then
     return "ref:"..__allocId(v)
   end
   if string.sub(kind, 1, 9) == "nullable:" then
@@ -2943,6 +3453,8 @@ local function __actualOf(staticKind, v)
     if staticKind == "err" then return "class:@builtin/Error" end
     if staticKind == "table" then return "table" end
     if staticKind == "array" then return "array" end
+    if v.__c then return "class:"..v.__id end
+    -- A plain table against a class boundary renders its own kind.
     return "table"
   end
   if t == "function" then return "function" end
@@ -3004,6 +3516,16 @@ local function __bcheck(desc, staticKind, v)
   elseif desc == "table" then
     if type(v) == "table" and v.__t then return v end
     return fail("table")
+  elseif desc == "@/Error" then
+    -- The builtin Error class (the err carrier): an Error table
+    -- passes unchanged.
+    if type(v) == "table" and v.__d then return v end
+    return fail(desc)
+  elseif string.sub(desc, 1, 1) == "@" then
+    -- A nominal class descriptor (E5): the canonical @module/Class
+    -- identity text — the instance must carry the identical tag.
+    if type(v) == "table" and v.__c and v.__id == desc then return v end
+    return fail(desc)
   elseif string.sub(desc, 1, 6) == "array(" then
     if type(v) == "table" and v.__a then
       local inner = string.sub(desc, 7, -2)

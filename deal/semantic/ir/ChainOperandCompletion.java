@@ -126,6 +126,20 @@ public final class ChainOperandCompletion {
                     addBoundaryChildren(unit, op, owned);
                 case KindPayload.EntryInvokePayload ignored ->
                     addEntryCallChildren(unit, op, owned);
+                // The CLASS_NEW field boundaries (step 8 of the
+                // shared-emission cutover): the construction's
+                // declaration-order {@code CLASS_LITERAL_FIELD}/
+                // {@code CLASS_DEFAULT_FIELD} boundary children are
+                // payload-owned — the CLASS_NEW arm executes each
+                // exactly once in payload order; the block walk skips
+                // them like every other payload-referenced boundary
+                // child (a double execution would duplicate events).
+                case KindPayload.ClassNewPayload classNew -> {
+                    for (KindPayload.FieldBoundary boundary
+                            : classNew.fieldBoundaries()) {
+                        owned.add(boundary.boundaryOpId());
+                    }
+                }
                 default -> {
                 }
             }

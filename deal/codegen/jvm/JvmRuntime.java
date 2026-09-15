@@ -75,22 +75,49 @@ public final class JvmRuntime {
     }
 
     /**
+     * A generated class instance (the CLASSES family's presence
+     * carrier, E5): the canonical class identity tag plus per-field
+     * value slots and boolean presence flags — present null is
+     * {@code value == null && present == true} and is never conflated
+     * with a missing field. The emitter generates one carrier class per
+     * {@code ClassId}; this interface is the runtime's closed surface
+     * over it (presence lookups, reads, writes).
+     */
+    public interface ClassInstance {
+
+        /** The canonical {@code @modulePath/ClassName} identity text. */
+        String classIdText();
+
+        /** Presence of one field: a present field (present null included) is present. */
+        boolean isPresent(String field);
+
+        /** The present field's value, or {@link #MISSING} for an absent field. */
+        Object read(String field);
+
+        /** Stores one field value and marks the field present. */
+        void write(String field, Object value);
+    }
+
+    /**
      * HAS_FIELD presence over one checked receiver key (the
      * CONTAINERS_AND_STRINGS extras): present — present null included —
      * → true, absent → false. The table-presence half realizes through
-     * the explicit key set; a class instance's presence flags are the
-     * CLASSES family's realization (no class carrier exists in the
-     * shared runtime yet — a receiver outside the realized carriers is a
-     * fail-closed producer defect, never a silent presence value).
+     * the explicit key set; the class-instance half realizes through the
+     * generated carrier's presence flags (the CLASSES family). A
+     * receiver outside the realized carriers is a fail-closed producer
+     * defect, never a silent presence value.
      */
     public static boolean hasField(Object receiver, String key) {
         if (receiver instanceof Table table) {
             return table.keys.contains(key);
         }
+        if (receiver instanceof ClassInstance instance) {
+            return instance.isPresent(key);
+        }
         throw new IllegalStateException("HAS_FIELD receiver " + receiver
             + " is not a supported presence carrier in this domain (the "
-            + "table-presence half admits keyed tables only; class-instance presence "
-            + "flags are the CLASSES family's realization)");
+            + "presence surface admits keyed tables and generated class "
+            + "instances only)");
     }
 
     /** A dense array with the shared slot-space length. */
@@ -307,7 +334,7 @@ public final class JvmRuntime {
                     return atom(v, kind.substring("nullable:".length()));
                 }
                 if (kind.equals("ref") || kind.equals("table") || kind.equals("array")
-                        || kind.equals("function")) {
+                        || kind.equals("function") || kind.equals("class")) {
                     return "ref:" + allocId(v);
                 }
                 return "missing";
@@ -354,7 +381,7 @@ public final class JvmRuntime {
             return "err:" + error.code + ":" + esc(error.message);
         }
         if (v instanceof Table || v instanceof Array || v instanceof FunctionValue
-                || v instanceof Intrinsic) {
+                || v instanceof Intrinsic || v instanceof ClassInstance) {
             return "ref:" + allocId(v);
         }
         return atom(v, kind);
@@ -475,6 +502,9 @@ public final class JvmRuntime {
         if (v instanceof ErrorValue) {
             return "class:@builtin/Error";
         }
+        if (v instanceof ClassInstance instance) {
+            return "class:" + instance.classIdText();
+        }
         return staticKind;
     }
 
@@ -540,6 +570,26 @@ public final class JvmRuntime {
                 return v;
             }
             throw fail("E8001", "expected table, got " + actual, "-", "table", actual);
+        }
+        if (desc.startsWith("@")) {
+            if ("@/Error".equals(desc)) {
+                // The builtin Error class (the err carrier): an Error
+                // value passes unchanged.
+                if (v instanceof ErrorValue) {
+                    return v;
+                }
+                throw fail("E8001", "expected " + desc + ", got " + actual, "-", desc,
+                    actual);
+            }
+            // A nominal class descriptor (E5): the canonical
+            // @modulePath/ClassName identity text — the instance must
+            // carry the identical tag.
+            if (v instanceof ClassInstance instance
+                    && desc.equals(instance.classIdText())) {
+                return v;
+            }
+            throw fail("E8001", "expected " + desc + ", got " + actual, "-", desc,
+                actual);
         }
         if (desc.startsWith("array(")) {
             if (v instanceof Array array) {

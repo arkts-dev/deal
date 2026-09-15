@@ -367,6 +367,9 @@ TEST_SOURCES=(
   'deal/test/feature/V12FeatureGate.java'
   'deal/test/feature/V12FeatureGateTest.java'
   'test/ClassConstructionIntegrationTailTest.java'
+  # ISSUE-0586: the CLASSES family's CLASS_DEFAULT/CLASS_NEW/CLASS_FACTORY
+  # differential corpus (sequencing step 8 first slice).
+  'test/ClassConstructionDifferentialTest.java'
 )
 
 # TEST_MAINS: ordered "<class>|<banner>|<command>" records reproducing
@@ -405,6 +408,10 @@ TEST_MAINS=(
   # ISSUE-0583 registration: the CALLS family's ASYNC_START/AWAIT
   # differential corpus (sequencing step 6 second half).
   'fg|=== Running the Async Start / Await Integration Matrix (ISSUE-0583: semantic oracle + shared LuaJIT + shared JVM) ===|java -ea -cp build deal.test.AsyncStartAwaitIntegrationTest'
+  # ISSUE-0586 registration: the CLASSES family's CLASS_DEFAULT/
+  # CLASS_NEW/CLASS_FACTORY differential corpus (sequencing step 8 first
+  # slice; semantic oracle + shared LuaJIT + shared JVM).
+  'fg|=== Running the Class Construction Differential Matrix (ISSUE-0586: semantic oracle + shared LuaJIT + shared JVM) ===|java -ea -cp build deal.test.ClassConstructionDifferentialTest'
   'fg|=== Running Unicode Scalars Tests (ISSUE-0382, ISSUE-0232 D5) ===|java -ea -cp build deal.test.UnicodeScalarsTest'
   'fg|=== Running Failure Contract Registry Tests (ISSUE-0285) ===|java -ea -cp build deal.test.FailureContractRegistryTest'
   'fg|=== Running Canonical JSON / Snapshot Digest Tests (ISSUE-0283) ===|java -ea -cp build deal.test.CanonicalJsonTest'

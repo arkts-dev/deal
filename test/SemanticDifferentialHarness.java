@@ -7,8 +7,11 @@ import deal.semantic.SemanticTraceProtocol;
 import deal.semantic.SemanticRuntimeModel;
 
 import deal.semantic.ir.BoundaryKind;
+import deal.semantic.ir.ClassFactoryRegistry;
+import deal.semantic.ir.ExecutableLoweredProject;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredModuleUnit;
+import deal.semantic.ir.ModuleId;
 import deal.semantic.ir.OpId;
 import deal.semantic.ir.RuntimeDescriptor;
 import deal.semantic.ir.SemanticOp;
@@ -20,6 +23,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -174,6 +178,257 @@ public final class SemanticDifferentialHarness {
                 + "stubbed/partial run");
         }
         return verdictFrom(unit, expectation, runs, failures, report);
+    }
+
+    // =========================================================================
+    // The project-level matrix (cross-module CLASSES surfaces)
+    // =========================================================================
+
+    /**
+     * Runs the three-consumer project matrix over the validated
+     * executable closure (the cross-module factory surface): the
+     * semantic oracle executes the closure in-process; the shared
+     * LuaJIT combined artifact and the shared JVM combined artifact are
+     * emitted, compiled, and executed by the real toolchains. A
+     * {@code CLASS_FACTORY} event's expected parent is the triggering
+     * caller's {@code CLASS_NEW} op (the cross-unit K-D12 parent),
+     * derived deterministically from the caller payloads and the owner
+     * registries.
+     *
+     * @param project    the validated executable closure; non-null
+     * @param tables     each module's block-membership table; non-null
+     * @param registries each module's class-factory registry; non-null
+     * @param expectation the seed's pinned expectation; non-null
+     * @param workspace  an isolated workspace directory; non-null
+     * @return the verdict with the per-consumer comparison report
+     */
+    public static Verdict runProject(ExecutableLoweredProject project,
+                                     Map<ModuleId, StructuredBodyTable> tables,
+                                     Map<ModuleId, ClassFactoryRegistry> registries,
+                                     Expectation expectation, Path workspace) {
+        Objects.requireNonNull(project, "project must not be null");
+        Objects.requireNonNull(tables, "tables must not be null");
+        Objects.requireNonNull(registries, "registries must not be null");
+        Objects.requireNonNull(expectation, "expectation must not be null");
+        Objects.requireNonNull(workspace, "workspace must not be null");
+        List<String> failures = new ArrayList<>();
+        List<SemanticRuntimeModel.ConsumerRun> runs = new ArrayList<>();
+        StringBuilder report = new StringBuilder();
+        report.append("== Differential project matrix run: ").append(expectation.what())
+            .append(" ==\n");
+
+        // 1. The semantic oracle (in-process, complete closure).
+        SemanticRuntimeModel.ConsumerRun oracle =
+            SemanticOracle.executeProjectInits(project, tables, registries, null);
+        runs.add(oracle);
+        report.append(oracle.comparisonReport()).append('\n');
+
+        // 2. The shared LuaJIT combined artifact.
+        SemanticRuntimeModel.ConsumerRun lua = runProjectLua(project, tables, registries,
+            workspace, failures);
+        if (lua != null) {
+            runs.add(lua);
+            report.append(lua.comparisonReport()).append('\n');
+        }
+
+        // 3. The shared JVM combined artifact.
+        SemanticRuntimeModel.ConsumerRun jvm = runProjectJvm(project, tables, registries,
+            workspace, failures);
+        if (jvm != null) {
+            runs.add(jvm);
+            report.append(jvm.comparisonReport()).append('\n');
+        }
+
+        if (runs.size() != 3) {
+            failures.add("three-consumer gate: only " + runs.size()
+                + " of 3 consumers produced a run — the matrix is not a "
+                + "stubbed/partial run");
+        }
+        return verdictFromProject(project, registries, expectation, runs, failures,
+            report);
+    }
+
+    /** The shared LuaJIT combined-artifact runner. */
+    private static SemanticRuntimeModel.ConsumerRun runProjectLua(
+            ExecutableLoweredProject project, Map<ModuleId, StructuredBodyTable> tables,
+            Map<ModuleId, ClassFactoryRegistry> registries, Path workspace,
+            List<String> failures) {
+        try {
+            Files.createDirectories(workspace);
+            String lua = LuaSemanticEmitter.emitProject(project, tables, registries);
+            LoweredModuleUnit entry = project.modules().get(project.entryModule());
+            Path script = workspace.resolve("project.lua");
+            Files.writeString(script, lua, StandardCharsets.UTF_8);
+            Path stdout = workspace.resolve("lua-proj-out.txt");
+            Path stderr = workspace.resolve("lua-proj-err.txt");
+            ProcessBuilder builder = new ProcessBuilder("luajit",
+                script.toAbsolutePath().toString());
+            builder.redirectOutput(stdout.toFile());
+            builder.redirectError(stderr.toFile());
+            Process process = builder.start();
+            int exit = process.waitFor();
+            List<String> stdoutLines = Files.readAllLines(stdout, StandardCharsets.UTF_8);
+            List<String> protocolLines = Files.readAllLines(stderr, StandardCharsets.UTF_8);
+            if (exit != 0) {
+                failures.add("shared LuaJIT project artifact exited " + exit + ": "
+                    + String.join(" / ", protocolLines));
+                return null;
+            }
+            SemanticRuntimeModel.ConsumerRun run =
+                decodeRun("shared-luajit", entry, protocolLines, failures);
+            crossCheckStdout(run, stdoutLines, "shared-luajit", failures);
+            return run;
+        } catch (IOException | InterruptedException exception) {
+            failures.add("shared LuaJIT project infrastructure failure: "
+                + exception.getMessage());
+            return null;
+        }
+    }
+
+    /** The shared JVM combined-artifact runner. */
+    private static SemanticRuntimeModel.ConsumerRun runProjectJvm(
+            ExecutableLoweredProject project, Map<ModuleId, StructuredBodyTable> tables,
+            Map<ModuleId, ClassFactoryRegistry> registries, Path workspace,
+            List<String> failures) {
+        try {
+            Files.createDirectories(workspace);
+            JvmSemanticEmitter.EmissionResult emission =
+                JvmSemanticEmitter.emitProject(project, tables, registries);
+            LoweredModuleUnit entry = project.modules().get(project.entryModule());
+            Path source = workspace.resolve(emission.className() + ".java");
+            Files.writeString(source, emission.source(), StandardCharsets.UTF_8);
+            Path classes = workspace.resolve("jvm-proj-classes");
+            Files.createDirectories(classes);
+            String classpath = System.getProperty("java.class.path", "");
+            ProcessBuilder javac = new ProcessBuilder("javac", "--release", "25",
+                "-proc:none", "-cp", classpath, "-d", classes.toString(),
+                source.toAbsolutePath().toString());
+            javac.redirectErrorStream(true);
+            Process compile = javac.start();
+            String compileOut = new String(compile.getInputStream().readAllBytes(),
+                StandardCharsets.UTF_8);
+            int compileExit = compile.waitFor();
+            if (compileExit != 0) {
+                failures.add("shared JVM project artifact compilation failed ("
+                    + compileExit + "): " + compileOut);
+                return null;
+            }
+            Path stdout = workspace.resolve("jvm-proj-out.txt");
+            Path stderr = workspace.resolve("jvm-proj-err.txt");
+            ProcessBuilder javaRun = new ProcessBuilder("java", "-cp",
+                classpath + java.io.File.pathSeparator + classes,
+                emission.className());
+            javaRun.redirectOutput(stdout.toFile());
+            javaRun.redirectError(stderr.toFile());
+            Process run = javaRun.start();
+            int exit = run.waitFor();
+            List<String> stdoutLines = Files.readAllLines(stdout, StandardCharsets.UTF_8);
+            List<String> protocolLines = Files.readAllLines(stderr, StandardCharsets.UTF_8);
+            if (exit != 0) {
+                failures.add("shared JVM project artifact exited " + exit + ": "
+                    + String.join(" / ", protocolLines));
+                return null;
+            }
+            SemanticRuntimeModel.ConsumerRun consumerRun =
+                decodeRun("shared-jvm", entry, protocolLines, failures);
+            crossCheckStdout(consumerRun, stdoutLines, "shared-jvm", failures);
+            return consumerRun;
+        } catch (IOException | InterruptedException exception) {
+            failures.add("shared JVM project infrastructure failure: "
+                + exception.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Applies the verdict gates shared by the module and callback
+     * matrices over the project closure: every event validates against
+     * its exact IR op across all units, with the cross-unit factory
+     * parent override (a CLASS_FACTORY event parents to the triggering
+     * caller CLASS_NEW).
+     */
+    private static Verdict verdictFromProject(ExecutableLoweredProject project,
+                                              Map<ModuleId, ClassFactoryRegistry> registries,
+                                              Expectation expectation,
+                                              List<SemanticRuntimeModel.ConsumerRun> runs,
+                                              List<String> failures,
+                                              StringBuilder report) {
+        for (SemanticRuntimeModel.ConsumerRun run : runs) {
+            if (run.trace().isEmpty()) {
+                failures.add(run.consumer() + " produced no events (a hollow run)");
+            }
+        }
+
+        // Gate 2: every event validates against the exact validated IR
+        // op of its owning unit.
+        Map<OpId, SemanticOp> opsById = new HashMap<>();
+        for (LoweredModuleUnit unit : project.modules().values()) {
+            for (SemanticOp op : unit.ops()) {
+                opsById.put(op.opId(), op);
+            }
+        }
+        Map<OpId, ArrayDeque<OpId>> factoryParents = factoryParentOverrides(project, registries);
+        for (SemanticRuntimeModel.ConsumerRun run : runs) {
+            // One fresh queue set per consumer: each run validates
+            // against the same trigger order independently.
+            Map<OpId, ArrayDeque<OpId>> consumerQueues = new HashMap<>();
+            for (Map.Entry<OpId, ArrayDeque<OpId>> entry : factoryParents.entrySet()) {
+                consumerQueues.put(entry.getKey(), new ArrayDeque<>(entry.getValue()));
+            }
+            Map<OpId, OpId> lastFactoryParents = new HashMap<>();
+            validateEvents(run, opsById, consumerQueues, lastFactoryParents, failures);
+        }
+
+        for (SemanticRuntimeModel.ConsumerRun run : runs) {
+            checkPairing(run, failures);
+        }
+        compareTraces(runs, failures);
+        compareEffects(runs, expectation, failures);
+        compareTerminals(runs, expectation, failures);
+
+        boolean pass = failures.isEmpty();
+        report.append("== Verdict: ").append(pass ? "PASS" : "FAIL").append(" ==\n");
+        for (String failure : failures) {
+            report.append("FAIL: ").append(failure).append('\n');
+        }
+        return new Verdict(pass, report.toString(), runs, failures);
+    }
+
+    /**
+     * The deterministic cross-unit factory-parent overrides: every
+     * caller {@code CLASS_NEW(SHARED_FACTORY)} resolves its owner
+     * factory through the owner's registry — that factory op's executed
+     * events parent to the caller op (K-D12). One factory may be
+     * triggered by several callers, so the expected parents queue in
+     * trigger order (unit order, then op order — the straight-line walk
+     * order of the corpus).
+     */
+    private static Map<OpId, ArrayDeque<OpId>> factoryParentOverrides(
+            ExecutableLoweredProject project, Map<ModuleId, ClassFactoryRegistry> registries) {
+        Map<OpId, ArrayDeque<OpId>> overrides = new HashMap<>();
+        for (LoweredModuleUnit unit : project.modules().values()) {
+            for (SemanticOp op : unit.ops()) {
+                if (op.kind() != SemanticOpKind.CLASS_NEW) {
+                    continue;
+                }
+                KindPayload.ClassNewPayload payload =
+                    (KindPayload.ClassNewPayload) op.payload();
+                if (payload.defaultOwner() != deal.semantic.ir.DefaultOwner.SHARED_FACTORY) {
+                    continue;
+                }
+                ClassFactoryRegistry registry =
+                    registries.get(new ModuleId(payload.classId().modulePath()));
+                if (registry == null) {
+                    continue;
+                }
+                OpId factoryOpId = registry.factoryFor(payload.classFactoryRef());
+                if (factoryOpId != null) {
+                    overrides.computeIfAbsent(factoryOpId, k -> new ArrayDeque<>())
+                        .add(op.opId());
+                }
+            }
+        }
+        return overrides;
     }
 
     // =========================================================================
@@ -988,7 +1243,7 @@ public final class SemanticDifferentialHarness {
 
         // Gate 2: every event validates against the exact validated IR op.
         for (SemanticRuntimeModel.ConsumerRun run : runs) {
-            validateEvents(run, opsById, failures);
+            validateEvents(run, opsById, Map.of(), Map.of(), failures);
         }
 
         // Gate 3: START/terminal pairing per op and three-way trace equality.
@@ -1163,6 +1418,8 @@ public final class SemanticDifferentialHarness {
     /** Gate 2: event validation against the exact validated IR op. */
     private static void validateEvents(SemanticRuntimeModel.ConsumerRun run,
                                        Map<OpId, SemanticOp> opsById,
+                                       Map<OpId, ArrayDeque<OpId>> parentOverrides,
+                                       Map<OpId, OpId> lastFactoryParents,
                                        List<String> failures) {
         for (SemanticRuntimeModel.TraceEvent event : run.trace()) {
             SemanticOp op = opsById.get(event.op());
@@ -1182,6 +1439,33 @@ public final class SemanticDifferentialHarness {
                     + op.contract().canonicalDigest());
             }
             OpId expectedParent = op.origin().parentOpId();
+            if (op.kind() == SemanticOpKind.CLASS_FACTORY) {
+                ArrayDeque<OpId> queue = parentOverrides.get(op.opId());
+                if (event.phase() == SemanticRuntimeModel.Phase.START) {
+                    // One recorded triggering caller per factory
+                    // execution: the START pops it; the terminal
+                    // reuses the same parent (the straight-line trigger
+                    // order of the corpus).
+                    if (queue == null || queue.isEmpty()) {
+                        failures.add(run.consumer() + " event " + event.sequence()
+                            + " executes CLASS_FACTORY " + op.opId()
+                            + " without a recorded triggering caller "
+                            + "(the cross-unit parent override queue is empty)");
+                        continue;
+                    }
+                    expectedParent = queue.poll();
+                    lastFactoryParents.put(op.opId(), expectedParent);
+                } else {
+                    expectedParent = lastFactoryParents.get(op.opId());
+                    if (expectedParent == null) {
+                        failures.add(run.consumer() + " event " + event.sequence()
+                            + " terminates CLASS_FACTORY " + op.opId()
+                            + " without a recorded triggering START "
+                            + "(the cross-unit parent override is unbound)");
+                        continue;
+                    }
+                }
+            }
             boolean parentOk;
             if (op.kind() == SemanticOpKind.EXTERNAL_ENTRY && expectedParent == null) {
                 // The cross-unit entry parent (semantic-lowering-
