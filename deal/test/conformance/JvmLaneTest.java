@@ -32,12 +32,13 @@ import java.util.Set;
  *       results; the host triplet {@code nullreturn_ok.java}; async
  *       exports awaited to completion) produce matching verdicts.</li>
  *   <li>Real runtime-error fixtures produce the honest non-fabricated
- *       outcome: the real JVM runtime error carries code/message plus a
- *       stack-trace file/line and no column/expected/actual/frames/cause
- *       (ISSUE-0276 owns the backend convergence), so the lane reports
- *       the incomplete capture as a process failure naming the captured
- *       code — the E8010/E8011 host-boundary fixtures carry the same
- *       codes the Lua lane pins.</li>
+ *       outcome: the real JVM DealError carries code/message with no
+ *       origin yet (the per-class origin literals land with the epic's
+ *       class leaves), so the lane reports the span-absent capture as a
+ *       process failure naming the captured code, message and the
+ *       missing span — the E8010/E8011 host-boundary fixtures carry the
+ *       same codes the Lua lane pins, and the sanctioned span-less time
+ *       fixture passes byte-exact.</li>
  *   <li>Invocation contract: declaration-order auto-invocation of the
  *       non-{@code $} zero-arity exports; return values discarded;
  *       {@code main} runs exactly once (the backend entry contract).</li>
@@ -46,8 +47,9 @@ import java.util.Set;
  *       snapshot-construction probes inject a complete captured error
  *       through the documented transport seam and prove the serializer
  *       reuse, the sidecar-authoritative field set, the suppression of
- *       unpinned optionals, and the {@code sourceFile} normalization
- *       from the temp project root to the corpus-relative form).</li>
+ *       unpinned optionals, the span-absent honest failure, and the
+ *       {@code sourceFile} normalization from the temp project root to
+ *       the corpus-relative form).</li>
  *   <li>Pre-flip skip tolerance (G2/G8): the absorbed 45-entry
  *       {@code JvmConformanceTest} registry validates cleanly against
  *       the real corpus; a registry-tracked failing outcome is reported
@@ -102,8 +104,8 @@ public class JvmLaneTest {
     // entries for the landed population: the five promoted
     // runtime-error gap bytes fixtures (JVM-GAP-BYTES — each raises
     // its pinned E8012/E8013 on the JVM lane, but the JVM
-    // DEALRuntimeError snapshot carries no column field (ISSUE-0276),
-    // so the lane cannot serialize the canonical error snapshot) and
+    // DealError carries no origin (file, line, column) yet (the per-class origin literals land with the epic class leaves),
+    // so the lane cannot satisfy the span-pinned sidecar) and
     // rtc-015-error-default-code under the new gap id
     // JVM-GAP-ERROR-LITERAL-DEFAULTS. The three promoted runtime-ok
     // gap bytes fixtures carry no entries (they pass the real
@@ -138,23 +140,25 @@ public class JvmLaneTest {
     // (JVM-GAP-DEFAULTS-PLANS retires with its only entry). The
     // host-async-shape-value entry stays tracked: the fixture now
     // compiles and raises its pinned E8010 through the per-export
-    // shared wrapper carrier, but the JVM DEALRuntimeError snapshot
-    // carries no column field (ISSUE-0276), so the lane cannot
-    // serialize the canonical error snapshot.
+    // shared wrapper carrier, but the JVM DealError carries no origin
+    // (file, line, column) yet (the per-class origin literals land
+    // with the epic's class leaves), so the span-pinned sidecar cannot
+    // be satisfied.
     // ISSUE-0550 (the dynamic boundary rows) then adds the four
     // tracked runtime-error entries for the landed dynamic
     // bytes-boundary fixtures (JVM-GAP-BYTES): each raises its
     // pinned E8001/E8003/E8010 on the JVM lane, but the JVM
-    // DEALRuntimeError snapshot carries no column field (ISSUE-0276),
-    // so the lane cannot serialize the canonical error snapshot. The
+    // DealError carries no origin (file, line, column) yet (the per-class origin literals land with the epic class leaves),
+    // so the span-pinned sidecar cannot be satisfied. The
     // two runtime-ok dynamic fixtures carry no entries (they pass the
     // real pipeline, verified this run). ISSUE-0551 (the host/module/
     // JSON bytes leaf) then adds the three tracked runtime-error
     // entries for the landed host-bytes boundary and nested JSON bytes
     // fixtures (JVM-GAP-BYTES): each raises its pinned E8010/E8001 on
-    // the JVM lane, but the JVM DEALRuntimeError snapshot carries no
-    // column field (ISSUE-0276), so the lane cannot serialize the
-    // canonical error snapshot. The four runtime-ok host/module
+    // the JVM lane, but the JVM DealError carries no origin (file,
+    // line, column) yet (the per-class origin literals land with the
+    // epic's class leaves), so the span-pinned sidecar cannot be
+    // satisfied. The four runtime-ok host/module
     // fixtures carry no entries (they pass the real pipeline,
     // verified this run).
     public static void main(String[] args) throws Exception {
@@ -166,6 +170,7 @@ public class JvmLaneTest {
         realRuntimeErrorHonestFailure();
         realCompanionThrowCapture();
         hostBoundaryCodeParity();
+        realTimeFixtureSpanlessConvergence();
         invocationDeclarationOrderProbe();
         discardedReturnValuesProbe();
         printReturnValueDivergenceProbe();
@@ -416,25 +421,28 @@ public class JvmLaneTest {
     }
 
     private static void realRuntimeErrorHonestFailure() throws Exception {
-        // The real JVM runtime error carries code/message plus the
-        // stack-trace file/line and no column: the lane reports the
-        // incomplete capture as a process failure naming the captured
-        // code — the non-converged backend is surfaced as a differential
-        // failure reported to ISSUE-0276, never a harness workaround.
+        // The real JVM DealError carries code/message and no span: the
+        // lane reports the span-absent capture as a process failure
+        // naming the captured code, message and the missing span — never
+        // a stack-frame file/line (the removed fallback fabricated a
+        // generated-Java location the raise site never carried).
         String corpusPath = "backend-runtime/runtime-errors/type-mismatch-e8001.deal";
         JvmLane lane = new JvmLane(CORPUS_ROOT);
         LaneCase laneCase = realLaneCase(corpusPath);
         LaneExecution execution = lane.execute(laneCase);
         check(execution instanceof LaneExecution.Infrastructure infra
                 && infra.clazz() == MismatchClass.PROCESS_FAILURE
-                && infra.detail().contains("no complete DEALRuntimeError")
+                && infra.detail().startsWith("the captured DEAL error "
+                    + "carries no span (file, line, column) where one is "
+                    + "required")
                 && infra.detail().contains("code=E8001")
-                && infra.detail().contains(
-                    "file=Type_mismatch_e8001.java")
-                && infra.detail().contains("column=null"),
-            "a real JVM runtime error yields the honest incomplete-capture "
-                + "process failure naming code E8001 and the stack-trace "
-                + "file, got: " + execution);
+                && infra.detail().contains("message=expected int")
+                && infra.detail().contains("file=null")
+                && !infra.detail().contains("Type_mismatch_e8001.java"),
+            "a real JVM runtime error yields the honest span-absent "
+                + "process failure naming code E8001 and message "
+                + "'expected int' (never a fabricated stack-frame file), "
+                + "got: " + execution);
         GateDispatcher.LaneOutcome outcome = dispatch(lane, laneCase);
         check(!outcome.passed() && outcome.mismatch().isPresent()
                 && outcome.mismatch().get().subject().equals("jvm"),
@@ -443,25 +451,33 @@ public class JvmLaneTest {
     }
 
     private static void realCompanionThrowCapture() throws Exception {
-        // The throwing companion's artifact name must reach the captured
-        // file (the deployment map maps it to the companion's corpus
-        // path when the capture completes — corpus C2).
+        // The throwing companion's error field surface reaches the
+        // capture (code MODULE_SOURCE_FAIL, message 'module fail'); no
+        // origin exists yet, so the companion's stack-frame file is
+        // never transported (the removed fallback fabricated it).
         String corpusPath =
             "backend-runtime/source-location/module-error-source.deal";
         JvmLane lane = new JvmLane(CORPUS_ROOT);
         LaneExecution execution = lane.execute(realLaneCase(corpusPath));
         check(execution instanceof LaneExecution.Infrastructure infra
+                && infra.clazz() == MismatchClass.PROCESS_FAILURE
+                && infra.detail().contains("no span (file, line, column) "
+                    + "where one is required")
                 && infra.detail().contains("code=MODULE_SOURCE_FAIL")
-                && infra.detail().contains("file=Source_module_lib.java"),
-            "the throwing companion's stack frame reaches the capture "
-                + "(file=Source_module_lib.java, code=MODULE_SOURCE_FAIL), "
-                + "got: " + execution);
+                && infra.detail().contains("message=module fail")
+                && infra.detail().contains("file=null")
+                && !infra.detail().contains("Source_module_lib.java"),
+            "the throwing companion's DealError fields reach the capture "
+                + "(code=MODULE_SOURCE_FAIL, message=module fail, "
+                + "file=null) with no fabricated stack-frame file, got: "
+                + execution);
     }
 
     private static void hostBoundaryCodeParity() throws Exception {
         // The E8010/E8011 host-boundary fixtures produce the same codes
         // the Lua lane pins, through the deployed bad_string.java /
-        // missing_export.java triplets.
+        // missing_export.java triplets; the span stays absent until the
+        // epic's host-boundary origin leaf lands.
         String[] cases = {
             "backend-runtime/host-abi/host-invalid-utf8-e8010.deal:E8010",
             "backend-runtime/host-abi/host-surrogate-utf8-e8010.deal:E8010",
@@ -473,10 +489,43 @@ public class JvmLaneTest {
             String code = entry.substring(entry.indexOf(':') + 1);
             LaneExecution execution = lane.execute(realLaneCase(corpusPath));
             check(execution instanceof LaneExecution.Infrastructure infra
-                    && infra.detail().contains("code=" + code),
+                    && infra.detail().contains("no span (file, line, column) "
+                        + "where one is required")
+                    && infra.detail().contains("code=" + code)
+                    && !infra.detail().contains(".java"),
                 "the host-boundary fixture " + corpusPath + " captures the "
-                    + "Lua-pinned code " + code + ", got: " + execution);
+                    + "Lua-pinned code " + code + " with no fabricated "
+                    + "stack-frame file, got: " + execution);
         }
+    }
+
+    private static void realTimeFixtureSpanlessConvergence()
+            throws Exception {
+        // The one sanctioned span-less runtime-error fixture passes the
+        // production lane byte-exact: the locked time selector's
+        // declared-int boundary raise turns out span-less (E8004,
+        // "int out of safe range" — today's emission unchanged) and the
+        // sidecar pins no span group, so the shared lane contract
+        // (code + message mandatory, span group all-or-nothing) emits
+        // the exact pinned framing.
+        String corpusPath =
+            "backend-runtime/stdlib-edge/time-now-millis-positive.deal";
+        JvmLane lane = new JvmLane(CORPUS_ROOT);
+        LaneCase laneCase = realLaneCase(corpusPath);
+        LaneExecution execution = lane.execute(laneCase);
+        String expectedFraming = "DEAL_ERROR_CODE: E8004\n"
+            + "DEAL_ERROR_SNAPSHOT: {\"code\":\"E8004\","
+            + "\"message\":\"int out of safe range\"}\n";
+        check(execution instanceof LaneExecution.Executed executed
+                && executed.exitCode() == 1
+                && new String(executed.stdout(), StandardCharsets.UTF_8)
+                    .equals(expectedFraming)
+                && executed.stderr().length == 0,
+            "the real time fixture emits the exact span-less framing "
+                + "(E8004 + today's message, no span) and exits 1, got: "
+                + execution);
+        assertPassed("the sanctioned span-less time fixture passes the "
+            + "differential verdict byte-exact", lane, laneCase);
     }
 
     // =========================================================================

@@ -78,9 +78,7 @@ import java.util.concurrent.TimeUnit;
  *       {@link MismatchClass#ARTIFACT_MISSING}, never a fabricated
  *       result. The in-process javac frontend runs with
  *       {@code -g:source,lines} (the absorbed options minus
- *       {@code -g:none}): the lane's error-file capture needs the
- *       {@code SourceFile} attribute of the emitted artifacts, which
- *       {@code -g:none} strips.</li>
+ *       {@code -g:none}).</li>
  *   <li>Deploys the {@code host-fixtures/&lt;name&gt;.java} triplet
  *       implementations beside the emitted default-package artifacts
  *       under their {@code classNameFor} names (corpus C5): a fixture
@@ -110,33 +108,39 @@ import java.util.concurrent.TimeUnit;
  *       success exits 0. The canonical snapshot serialization is the
  *       shared {@link ErrorSnapshot} serializer — the same helper the
  *       LuaJIT and JS lanes reuse verbatim, so the three lanes can
- *       never drift on serialization. The sidecar's Error Expectation
- *       is the authoritative field set: the lane emits the mandatory
- *       fields plus exactly the optional fields the sidecar pins
- *       ({@code expected}, {@code actual}, {@code frames},
- *       {@code cause}) and suppresses every unpinned optional — a
- *       pinned field the captured error does not carry is never
- *       fabricated, so the comparison fails honestly. The lane runner
- *       transports the raw captured error fields through a workspace
- *       payload file (code and message through the absorbed DealError
- *       reflection unwrap; {@code file}/{@code line} from the error's
- *       first emitted-artifact stack frame); the lane normalizes and
- *       frames them. The JVM runtime error carries no
- *       {@code column}/{@code expected}/{@code actual}/{@code frames}/
- *       {@code cause} fields today (the backend epic ISSUE-0276 owns
- *       the convergence): a captured error without the complete
- *       mandatory field set is reported as a process failure naming the
- *       missing field — never fabricated.</li>
+ *       never drift on serialization. Code and message are mandatory;
+ *       the span group ({@code file}/{@code line}/{@code column}) is
+ *       carried complete or absent, and the lane mirrors the Lua
+ *       lane's closed rules: a span-pinned sidecar against a span-less
+ *       capture is a {@code PROCESS_FAILURE} naming the missing span —
+ *       never fabricated — while the sanctioned span-less shape (the
+ *       locked time selector's declared-int boundary raise) pairs with
+ *       a sidecar that omits the whole group. The sidecar's Error
+ *       Expectation is the authoritative field set: the lane emits the
+ *       mandatory fields plus exactly the pinned span group and pinned
+ *       optional fields ({@code expected}, {@code actual},
+ *       {@code frames}, {@code cause}) and suppresses every unpinned
+ *       one — a pinned field the captured error does not carry is
+ *       never fabricated, so the comparison fails honestly. The lane
+ *       runner transports the DealError's OWN fields through a
+ *       workspace payload file (code, message, file, line, column,
+ *       expected, actual, frames, cause; absent fields omitted) — the
+ *       removed stack-frame fallback never transports generated-Java
+ *       coordinates, so a span-less raise transports no span.</li>
  *   <li>{@code sourceFile} normalization (corpus C2): the lane records
  *       its per-module deployment map at compile time (every deployed
  *       module's temp {@code src} path and its emitted artifact class
- *       file name ↔ its canonical corpus-relative path; the host
- *       triplet artifact names ↔ {@code host-fixtures/&lt;name&gt;.java}).
+ *       file name ↔ its canonical corpus-relative path plus the
+ *       stripped classification-header line delta; the host triplet
+ *       artifact names ↔ {@code host-fixtures/&lt;name&gt;.java}).
  *       A captured error {@code file} inside the temp project root is
  *       emitted as the canonical corpus-relative path — the fixture's
- *       path, or a throwing companion's path when the companion throws;
- *       an unmappable captured {@code file} value is emitted verbatim,
- *       so the byte comparison fails and surfaces the defect.</li>
+ *       path, or a throwing companion's path when the companion throws
+ *       — and the captured DEAL-source {@code line} is rebased onto
+ *       raw corpus-file coordinates by the module's stripped-header
+ *       delta (the Lua lane's seam); an unmappable captured
+ *       {@code file} value is emitted verbatim, so the byte comparison
+ *       fails and surfaces the defect.</li>
  *   <li>Compile-reject path (corpus C6): for a {@code compile-reject}
  *       expectation the lane reports the orchestrator's rejection as
  *       {@link LaneExecution.Rejected} when the first error diagnostic
@@ -174,7 +178,7 @@ import java.util.concurrent.TimeUnit;
  *
  * <p>The lane changes no production file: it reuses the real
  * {@link JvmBackend} as-is; any JVM divergence found is a differential
- * failure reported to ISSUE-0276, never a harness workaround.</p>
+ * failure, never a harness workaround.</p>
  */
 public class JvmLane implements Lane {
 
@@ -430,14 +434,13 @@ public class JvmLane implements Lane {
     /**
      * The per-module deployment entry of the lane's deployment map
      * (corpus C2): the canonical corpus-relative path of the module
-     * whose temp-project artifact the captured error {@code file}
-     * names. Unlike the Lua lane, the captured JVM error line is a
-     * generated-Java stack line, not a DEAL-source coordinate — no
-     * header-line rebase exists on this lane; the value is emitted
-     * verbatim so a non-converged location fails the comparison
-     * honestly (ISSUE-0276 owns the backend convergence).
+     * whose temp-project artifact the captured error {@code file} names,
+     * plus the stripped classification-header line count the Lua lane
+     * carries — the captured DEAL-source line is rebased onto raw
+     * corpus-file coordinates by adding this delta (mutation of the
+     * map never happens; entries are recorded at materialization).
      */
-    record DeploymentEntry(String corpusPath) {
+    record DeploymentEntry(String corpusPath, int headerLinesStripped) {
 
         DeploymentEntry {
             Objects.requireNonNull(corpusPath, "corpusPath must not be null");
@@ -499,7 +502,7 @@ public class JvmLane implements Lane {
         /** Records a host triplet artifact name in the deployment map. */
         void recordHostArtifact(String artifactName, String hostName) {
             deploymentMap.put(artifactName, new DeploymentEntry(
-                "host-fixtures/" + hostName + ".java"));
+                "host-fixtures/" + hostName + ".java", 0));
         }
 
         /**
@@ -560,9 +563,9 @@ public class JvmLane implements Lane {
                             "the corpus module " + module.corpusPath()
                                 + " does not exist on disk");
                     }
+                    String rawSource = Files.readString(corpusFile);
                     String stripped = ConformanceHarnessMetadata
-                        .stripClassificationHeaders(
-                            Files.readString(corpusFile));
+                        .stripClassificationHeaders(rawSource);
                     if (!stripped.equals(module.source())) {
                         return CompilationOutcome.failure(
                             "harness inconsistency: the stripped source of "
@@ -576,10 +579,19 @@ public class JvmLane implements Lane {
                         Files.createDirectories(target.getParent());
                     }
                     Files.writeString(target, module.source());
+                    // The stripped classification-header line delta (the
+                    // LuaLane rebase seam): the compiled temp copy carries
+                    // the module source with the header lines removed, so a
+                    // captured DEAL-source line is rebased onto raw
+                    // corpus-file coordinates by adding this delta.
+                    int headerLinesStripped = rawSource.split("\n", -1).length
+                        - module.source().split("\n", -1).length;
                     deploymentMap.put(target.toString(),
-                        new DeploymentEntry(module.corpusPath()));
+                        new DeploymentEntry(module.corpusPath(),
+                            headerLinesStripped));
                     deploymentMap.put(artifactNameFor(target),
-                        new DeploymentEntry(module.corpusPath()));
+                        new DeploymentEntry(module.corpusPath(),
+                            headerLinesStripped));
                 }
 
                 // Explicit-.deal alias copies (the absorbed
@@ -620,8 +632,12 @@ public class JvmLane implements Lane {
                         }
                         Files.writeString(aliasTarget,
                             companionModule.source());
+                        int companionHeaderLinesStripped = Files
+                            .readString(companion).split("\n", -1).length
+                            - companionModule.source().split("\n", -1).length;
                         deploymentMap.put(artifactNameFor(aliasTarget),
-                            new DeploymentEntry(companionCorpus));
+                            new DeploymentEntry(companionCorpus,
+                                companionHeaderLinesStripped));
                     }
                 }
 
@@ -1310,10 +1326,9 @@ public class JvmLane implements Lane {
             Objects.requireNonNull(cause, "cause must not be null");
         }
 
-        /** True when every mandatory snapshot field is present. */
-        boolean complete() {
-            return code != null && message != null && file != null
-                && line != null && column != null;
+        /** True when the captured error carries the full span group. */
+        boolean carriesSpan() {
+            return file != null && line != null && column != null;
         }
     }
 
@@ -1373,19 +1388,23 @@ public class JvmLane implements Lane {
 
     /**
      * Assembles the closed lane outcome from the subprocess run and the
-     * captured error: success passes the captured streams through
-     * untouched; an uncaught DEAL error appends the exact G4.6 framing
-     * built by the shared {@link ErrorSnapshot} canonical serializer with
-     * the sidecar as the authoritative field set (the lane emits the
-     * mandatory fields plus exactly the pinned optional fields and
+     * captured error, mirroring the Lua lane's sibling rules (D7):
+     * success passes the captured streams through untouched; an uncaught
+     * DEAL error appends the exact G4.6 framing built by the shared
+     * {@link ErrorSnapshot} canonical serializer with the sidecar as the
+     * authoritative field set (the lane emits the mandatory fields plus
+     * exactly the pinned span group and pinned optional fields and
      * suppresses every unpinned one; a pinned field the captured error
-     * does not carry is never fabricated — the comparison fails
-     * honestly). A captured error without the complete mandatory field
-     * set is a process failure naming the missing field (the JVM runtime
-     * error carries no {@code column} today — the backend epic
-     * ISSUE-0276 owns the convergence; the lane never fabricates a
-     * location). A non-zero exit without a DEAL error payload is a
-     * subprocess failure outside the DEAL outcome surface.
+     * does not carry is never fabricated — the lane fails honestly
+     * instead). Code and message are mandatory; the span group
+     * (file/line/column) is carried complete or absent, and when the
+     * sidecar pins it the captured file is normalized through the
+     * deployment map and the line rebased by the module's
+     * stripped-header delta. The sanctioned span-less shape — the locked
+     * time selector's declared-int boundary raise — pairs with a sidecar
+     * that omits the whole span group, so the lane emits the span-less
+     * snapshot exactly as captured. A non-zero exit without a DEAL error
+     * payload is a subprocess failure outside the DEAL outcome surface.
      */
     private LaneExecution assembleOutcome(
             SidecarExpectations.RuntimeExpectation.Executed expectation,
@@ -1403,41 +1422,58 @@ public class JvmLane implements Lane {
                     + "payload was captured); stderr: "
                     + boundedText(subprocess.stderr()));
         }
-        if (!captured.complete()) {
+        if (captured.code() == null || captured.message() == null) {
             return new LaneExecution.Infrastructure(MismatchClass.PROCESS_FAILURE,
-                "the captured DEAL error carries no complete DEALRuntimeError "
-                    + "field set (code, message, file, line, column are "
-                    + "mandatory) — the lane cannot serialize the canonical "
-                    + "snapshot; the JVM runtime error carries no column/"
-                    + "expected/actual/frames/cause fields yet (ISSUE-0276 "
-                    + "owns the backend convergence), and the lane never "
-                    + "fabricates them; captured fields: code="
+                "the captured DEAL error carries no complete code/message "
+                    + "pair — the lane cannot serialize the canonical "
+                    + "snapshot; captured fields: code="
+                    + boundedString(captured.code())
+                    + ", message=" + boundedString(captured.message()));
+        }
+
+        // The sidecar is the authoritative field set. The span group is
+        // emitted exactly when the sidecar pins it; the sanctioned
+        // span-less shape (the locked time selector's declared-int
+        // boundary raise carrying no span) pairs with a sidecar that
+        // omits the whole group.
+        SidecarExpectations.ErrorExpectation pinned = expectation.error();
+        boolean spanPinned = pinned == null || pinned.pinsSpan();
+        if (spanPinned && !captured.carriesSpan()) {
+            return new LaneExecution.Infrastructure(
+                MismatchClass.PROCESS_FAILURE,
+                "the captured DEAL error carries no span (file, line, "
+                    + "column) where one is required — the lane never "
+                    + "fabricates a pinned field; captured fields: code="
                     + boundedString(captured.code())
                     + ", message=" + boundedString(captured.message())
                     + ", file=" + boundedString(captured.file())
                     + ", line=" + captured.line() + ", column="
                     + captured.column());
         }
+        String sourceFile = null;
+        Integer line = null;
+        Integer column = null;
+        if (spanPinned && captured.carriesSpan()) {
+            // sourceFile normalization (corpus C2): map the captured file
+            // through the per-module deployment map and rebase the line
+            // onto raw corpus-file coordinates; an unmappable file is
+            // emitted verbatim so the byte comparison fails and surfaces
+            // the defect.
+            DeploymentEntry deployment = deploymentEntryFor(captured.file(),
+                compilation);
+            sourceFile = deployment != null
+                ? deployment.corpusPath()
+                : captured.file();
+            line = deployment != null
+                ? captured.line() + deployment.headerLinesStripped()
+                : captured.line();
+            column = captured.column();
+        }
 
-        // sourceFile normalization (corpus C2): map the captured file
-        // through the per-module deployment map; an unmappable file is
-        // emitted verbatim so the byte comparison fails and surfaces the
-        // defect. The captured line is a generated-Java stack line — it
-        // is emitted verbatim (no DEAL-coordinate rebase exists on this
-        // lane) so a non-converged location fails honestly.
-        DeploymentEntry deployment = deploymentEntryFor(captured.file(),
-            compilation);
-        String sourceFile = deployment != null
-            ? deployment.corpusPath()
-            : captured.file();
-
-        // The sidecar is the authoritative field set: emit exactly the
-        // pinned optional fields (no error expectation pins nothing).
-        SidecarExpectations.ErrorExpectation pinned = expectation.error();
         SidecarExpectations.ErrorExpectation snapshot =
             new SidecarExpectations.ErrorExpectation(
-                captured.code(), captured.message(), sourceFile,
-                captured.line(), captured.column(),
+                captured.code(), captured.message(), sourceFile, line,
+                column,
                 optionalField(pinned, "expected", captured.expected()),
                 optionalField(pinned, "actual", captured.actual()),
                 optionalField(pinned, "frames", captured.frames()),
@@ -1557,42 +1593,47 @@ public class JvmLane implements Lane {
         sb.append("    // instance of the entry module's DealError and no catch\n");
         sb.append("    // above names its type. Every emitted DealError is a\n");
         sb.append("    // RuntimeException whose simple name is \"DealError\" with\n");
-        sb.append("    // a package-private String `code` field; the reflection\n");
-        sb.append("    // unwrap reports the DEAL code and message uniformly (the\n");
-        sb.append("    // absorbed runner's reportError unwrap).\n");
+        sb.append("    // the complete DEALRuntimeError field surface, read here by\n");
+        sb.append("    // reflection (the absorbed runner's reportError unwrap). The\n");
+        sb.append("    // DealError's OWN fields are transported verbatim — code and\n");
+        sb.append("    // message plus the span group and the optional fields when\n");
+        sb.append("    // carried; absent fields are omitted, a span-less raise\n");
+        sb.append("    // transports no file/line/column, and generated-Java stack\n");
+        sb.append("    // frames are NEVER transported (the removed frame fallback\n");
+        sb.append("    // fabricated a location the raise site never carried). A\n");
+        sb.append("    // non-DEAL error transports nothing.\n");
         sb.append("    private static void transport(Throwable e) {\n");
         sb.append("        Throwable t = e;\n");
         sb.append("        while (t instanceof ExceptionInInitializerError\n");
         sb.append("                && t.getCause() != null) {\n");
         sb.append("            t = t.getCause();\n");
         sb.append("        }\n");
-        sb.append("        String code = null;\n");
-        sb.append("        if (\"DealError\".equals(t.getClass().getSimpleName())) {\n");
-        sb.append("            try {\n");
-        sb.append("                java.lang.reflect.Field f = t.getClass()\n");
-        sb.append("                    .getDeclaredField(\"code\");\n");
-        sb.append("                f.setAccessible(true);\n");
-        sb.append("                code = java.lang.String.valueOf(f.get(t));\n");
-        sb.append("            } catch (ReflectiveOperationException ignored) { }\n");
-        sb.append("        }\n");
-        sb.append("        if (code == null) {\n");
+        sb.append("        if (!\"DealError\".equals(t.getClass().getSimpleName())) {\n");
         sb.append("            return; // non-DEAL error: transport nothing\n");
         sb.append("        }\n");
-        sb.append("        String file = null;\n");
-        sb.append("        int line = -1;\n");
-        sb.append("        StackTraceElement[] frames = t.getStackTrace();\n");
-        sb.append("        for (StackTraceElement f : frames) {\n");
-        sb.append("            if (!\"").append(RUNNER_CLASS_NAME).append("\"")
-            .append(".equals(f.getClassName())) {\n");
-        sb.append("                file = f.getFileName();\n");
-        sb.append("                line = f.getLineNumber();\n");
-        sb.append("                break;\n");
-        sb.append("            }\n");
+        sb.append("        java.lang.String code;\n");
+        sb.append("        java.lang.String file;\n");
+        sb.append("        java.lang.String expected;\n");
+        sb.append("        java.lang.String actual;\n");
+        sb.append("        java.lang.String cause;\n");
+        sb.append("        int line;\n");
+        sb.append("        int column;\n");
+        sb.append("        java.lang.Integer boxedFrames;\n");
+        sb.append("        try {\n");
+        sb.append("            code = stringField(t, \"code\");\n");
+        sb.append("            file = stringField(t, \"file\");\n");
+        sb.append("            expected = stringField(t, \"expected\");\n");
+        sb.append("            actual = stringField(t, \"actual\");\n");
+        sb.append("            cause = stringField(t, \"cause\");\n");
+        sb.append("            line = intField(t, \"line\");\n");
+        sb.append("            column = intField(t, \"column\");\n");
+        sb.append("            boxedFrames = boxedIntField(t, \"frames\");\n");
+        sb.append("        } catch (ReflectiveOperationException unreadable) {\n");
+        sb.append("            return; // unreadable field: transport nothing\n");
         sb.append("        }\n");
-        sb.append("        // The JVM runtime error carries code/message plus the\n");
-        sb.append("        // stack-trace file/line only: column, expected, actual,\n");
-        sb.append("        // frames, and cause are never transported (the lane\n");
-        sb.append("        // reports the incomplete capture honestly).\n");
+        sb.append("        if (code == null) {\n");
+        sb.append("            return; // no DEAL code: transport nothing\n");
+        sb.append("        }\n");
         sb.append("        StringBuilder json = new StringBuilder(\"{\");\n");
         sb.append("        json.append(\"\\\"code\\\":\").append(js(code));\n");
         sb.append("        String message = t.getMessage();\n");
@@ -1605,12 +1646,47 @@ public class JvmLane implements Lane {
         sb.append("        if (line >= 0) {\n");
         sb.append("            json.append(\",\\\"line\\\":\").append(line);\n");
         sb.append("        }\n");
+        sb.append("        if (column >= 0) {\n");
+        sb.append("            json.append(\",\\\"column\\\":\").append(column);\n");
+        sb.append("        }\n");
+        sb.append("        if (expected != null) {\n");
+        sb.append("            json.append(\",\\\"expected\\\":\").append(js(expected));\n");
+        sb.append("        }\n");
+        sb.append("        if (actual != null) {\n");
+        sb.append("            json.append(\",\\\"actual\\\":\").append(js(actual));\n");
+        sb.append("        }\n");
+        sb.append("        if (boxedFrames != null) {\n");
+        sb.append("            json.append(\",\\\"frames\\\":\").append(boxedFrames.intValue());\n");
+        sb.append("        }\n");
+        sb.append("        if (cause != null) {\n");
+        sb.append("            json.append(\",\\\"cause\\\":\").append(js(cause));\n");
+        sb.append("        }\n");
         sb.append("        json.append(\"}\");\n");
         sb.append("        try {\n");
         sb.append("            java.nio.file.Files.writeString(\n");
         sb.append("                java.nio.file.Path.of(\"").append(TRANSPORT_FILE_NAME)
             .append("\"), json);\n");
         sb.append("        } catch (java.io.IOException ignored) { }\n");
+        sb.append("    }\n");
+        sb.append("    // One declared DealError field (a package-private String/Integer/int\n");
+        sb.append("    // of the per-module nested class); a field the class does not carry\n");
+        sb.append("    // is unreadable and the transport reports no payload.\n");
+        sb.append("    private static java.lang.String stringField(java.lang.Throwable t, java.lang.String name) throws ReflectiveOperationException {\n");
+        sb.append("        java.lang.reflect.Field f = t.getClass().getDeclaredField(name);\n");
+        sb.append("        f.setAccessible(true);\n");
+        sb.append("        java.lang.Object v = f.get(t);\n");
+        sb.append("        return v == null ? null : java.lang.String.valueOf(v);\n");
+        sb.append("    }\n");
+        sb.append("    private static int intField(java.lang.Throwable t, java.lang.String name) throws ReflectiveOperationException {\n");
+        sb.append("        java.lang.reflect.Field f = t.getClass().getDeclaredField(name);\n");
+        sb.append("        f.setAccessible(true);\n");
+        sb.append("        return f.getInt(t);\n");
+        sb.append("    }\n");
+        sb.append("    private static java.lang.Integer boxedIntField(java.lang.Throwable t, java.lang.String name) throws ReflectiveOperationException {\n");
+        sb.append("        java.lang.reflect.Field f = t.getClass().getDeclaredField(name);\n");
+        sb.append("        f.setAccessible(true);\n");
+        sb.append("        java.lang.Object v = f.get(t);\n");
+        sb.append("        return v instanceof java.lang.Integer i ? i : null;\n");
         sb.append("    }\n");
         sb.append("    // Minimal JSON string escaping (the lane re-serializes\n");
         sb.append("    // canonically through the shared serializer, so this\n");
@@ -1661,12 +1737,13 @@ public class JvmLane implements Lane {
      * {@code JvmConformanceTest.SKIPS}, diverging only where the
      * differential gate's canonical-snapshot requirement is stricter
      * than the code-only runner: the ISSUE-0302-promoted runtime-error
-     * fixtures raise the pinned E8001/E8003 on the JVM lane but the
-     * captured DEALRuntimeError carries no complete field set, so they
-     * stay tracked here with the ISSUE-0276 reason while
-     * JvmConformanceTest dropped the entries). Every entry must name an
-     * on-disk runtime-classified corpus test; the lane validates the
-     * registry against the corpus at construction and the gate
+     * fixtures raise the pinned E8001/E8003 on the JVM lane, but no
+     * raise site passes its origin yet (the per-class origin literals
+     * land with the epic's class leaves), so the captured DealError
+     * carries no span and the entries stay tracked with that reason
+     * while JvmConformanceTest dropped the entries). Every entry must
+     * name an on-disk runtime-classified corpus test; the lane validates
+     * the registry against the corpus at construction and the gate
      * cross-checks it against its own discovery, so a stale entry fails
      * the gate with a promotion instruction. */
     private static final Map<String, SkipEntry> SKIPS = new LinkedHashMap<>();
@@ -1680,69 +1757,70 @@ public class JvmLane implements Lane {
         // registry entries out. The ten runtime-error fixtures below
         // still fail the DIFFERENTIAL gate's canonical snapshot
         // requirement: the JVM lane raises the pinned E8001/E8003, but
-        // the captured DEALRuntimeError carries no complete field set
-        // (code, message, file, line, column) and the lane never
-        // fabricates one (ISSUE-0276 owns the backend convergence), so
-        // every entry stays tracked non-fatal with that reason.
+        // the captured DealError carries no origin (file, line, column)
+        // yet (the per-class origin literals land with the epic's class
+        // leaves), so the span-pinned sidecar cannot be satisfied — the
+        // lane never fabricates the span and every entry stays tracked
+        // non-fatal with that reason.
         skip("backend-runtime/class-runtime-errors/dynamic-bad-class-array-element-e8001.deal",
             "the fixture raises E8003 on the JVM lane, but the JVM "
-                + "DEALRuntimeError snapshot carries no column field "
-                + "(ISSUE-0276 owns the backend convergence), so the "
-                + "lane cannot serialize the canonical error snapshot.",
+                + "DealError carries no origin (file, line, column) yet "
+                + "(the per-class origin literals land with the epic class leaves), so the "
+                + "span-pinned sidecar cannot be satisfied.",
             "JVM-GAP-STDJSON");
         skip("backend-runtime/class-runtime-errors/dynamic-bad-class-param-e8001.deal",
             "the fixture raises E8001 on the JVM lane, but the JVM "
-                + "DEALRuntimeError snapshot carries no column field "
-                + "(ISSUE-0276 owns the backend convergence), so the "
-                + "lane cannot serialize the canonical error snapshot.",
+                + "DealError carries no origin (file, line, column) yet "
+                + "(the per-class origin literals land with the epic class leaves), so the "
+                + "span-pinned sidecar cannot be satisfied.",
             "JVM-GAP-STDJSON");
         skip("backend-runtime/class-runtime-errors/dynamic-bad-class-return-e8001.deal",
             "the fixture raises E8001 on the JVM lane, but the JVM "
-                + "DEALRuntimeError snapshot carries no column field "
-                + "(ISSUE-0276 owns the backend convergence), so the "
-                + "lane cannot serialize the canonical error snapshot.",
+                + "DealError carries no origin (file, line, column) yet "
+                + "(the per-class origin literals land with the epic class leaves), so the "
+                + "span-pinned sidecar cannot be satisfied.",
             "JVM-GAP-STDJSON");
         skip("backend-runtime/class-runtime-errors/dynamic-bad-imported-class-param-e8001.deal",
             "the fixture raises E8001 on the JVM lane, but the JVM "
-                + "DEALRuntimeError snapshot carries no column field "
-                + "(ISSUE-0276 owns the backend convergence), so the "
-                + "lane cannot serialize the canonical error snapshot.",
+                + "DealError carries no origin (file, line, column) yet "
+                + "(the per-class origin literals land with the epic class leaves), so the "
+                + "span-pinned sidecar cannot be satisfied.",
             "JVM-GAP-STDJSON");
         skip("backend-runtime/class-runtime-errors/dynamic-bad-nullable-class-e8001.deal",
             "the fixture raises E8001 on the JVM lane, but the JVM "
-                + "DEALRuntimeError snapshot carries no column field "
-                + "(ISSUE-0276 owns the backend convergence), so the "
-                + "lane cannot serialize the canonical error snapshot.",
+                + "DealError carries no origin (file, line, column) yet "
+                + "(the per-class origin literals land with the epic class leaves), so the "
+                + "span-pinned sidecar cannot be satisfied.",
             "JVM-GAP-STDJSON");
         skip("backend-runtime/runtime-errors/json-stringify-function-e8001.deal",
             "the fixture raises E8001 on the JVM lane, but the JVM "
-                + "DEALRuntimeError snapshot carries no column field "
-                + "(ISSUE-0276 owns the backend convergence), so the "
-                + "lane cannot serialize the canonical error snapshot.",
+                + "DealError carries no origin (file, line, column) yet "
+                + "(the per-class origin literals land with the epic class leaves), so the "
+                + "span-pinned sidecar cannot be satisfied.",
             "JVM-GAP-STDJSON");
         skip("backend-runtime/source-location/json-error-source.deal",
             "the fixture raises E8001 on the JVM lane, but the JVM "
-                + "DEALRuntimeError snapshot carries no column field "
-                + "(ISSUE-0276 owns the backend convergence), so the "
-                + "lane cannot serialize the canonical error snapshot.",
+                + "DealError carries no origin (file, line, column) yet "
+                + "(the per-class origin literals land with the epic class leaves), so the "
+                + "span-pinned sidecar cannot be satisfied.",
             "JVM-GAP-STDJSON");
         skip("backend-runtime/source-location-precision/class-param-error-source.deal",
             "the fixture raises E8001 on the JVM lane, but the JVM "
-                + "DEALRuntimeError snapshot carries no column field "
-                + "(ISSUE-0276 owns the backend convergence), so the "
-                + "lane cannot serialize the canonical error snapshot.",
+                + "DealError carries no origin (file, line, column) yet "
+                + "(the per-class origin literals land with the epic class leaves), so the "
+                + "span-pinned sidecar cannot be satisfied.",
             "JVM-GAP-STDJSON");
         skip("backend-runtime/type-system/dynamic-array-element-e8003.deal",
             "the fixture raises E8003 on the JVM lane, but the JVM "
-                + "DEALRuntimeError snapshot carries no column field "
-                + "(ISSUE-0276 owns the backend convergence), so the "
-                + "lane cannot serialize the canonical error snapshot.",
+                + "DealError carries no origin (file, line, column) yet "
+                + "(the per-class origin literals land with the epic class leaves), so the "
+                + "span-pinned sidecar cannot be satisfied.",
             "JVM-GAP-STDJSON");
         skip("backend-runtime/stdlib/json/json-stringify-bytes-error.deal",
             "the fixture raises E8001 on the JVM lane, but the JVM "
-                + "DEALRuntimeError snapshot carries no column field "
-                + "(ISSUE-0276 owns the backend convergence), so the "
-                + "lane cannot serialize the canonical error snapshot.",
+                + "DealError carries no origin (file, line, column) yet "
+                + "(the per-class origin literals land with the epic class leaves), so the "
+                + "span-pinned sidecar cannot be satisfied.",
             "JVM-GAP-STDJSON");
 
         // ---- JVM-GAP-DESCRIPTORS: retired with the canonical matcher
@@ -1772,36 +1850,37 @@ public class JvmLane implements Lane {
         // gate forced them out with the promotion. The remaining
         // entries stay tracked because their outcomes still cannot
         // satisfy the canonical lane snapshot: the E8012/E8013 error
-        // fixtures raise a real JVM DEALRuntimeError whose snapshot
-        // carries no column field (ISSUE-0276 owns the backend
-        // convergence) and the lane never fabricates it.
+        // fixtures raise a real JVM DealError which carries no origin
+        // (file, line, column) yet (the per-class origin literals land
+        // with the epic's class leaves) and the lane never fabricates
+        // one.
         // bytes-descriptor-boundary passed the lane after the
         // ISSUE-0160 recursive bytes-bearing array/nullable/function
         // wrapper closure landed, so its entry was removed with the
         // promotion.
         skip("backend-runtime/bytes/bytes-index-bounds.deal",
             "the fixture raises E8012 on the JVM lane, but the JVM "
-                + "DEALRuntimeError snapshot carries no column field "
-                + "(ISSUE-0276 owns the backend convergence), so the "
-                + "lane cannot serialize the canonical error snapshot.",
+                + "DealError carries no origin (file, line, column) yet "
+                + "(the per-class origin literals land with the epic class leaves), so the "
+                + "span-pinned sidecar cannot be satisfied.",
             "JVM-GAP-BYTES");
         skip("backend-runtime/bytes/bytes-write-range.deal",
             "the fixture raises E8013 on the JVM lane, but the JVM "
-                + "DEALRuntimeError snapshot carries no column field "
-                + "(ISSUE-0276 owns the backend convergence), so the "
-                + "lane cannot serialize the canonical error snapshot.",
+                + "DealError carries no origin (file, line, column) yet "
+                + "(the per-class origin literals land with the epic class leaves), so the "
+                + "span-pinned sidecar cannot be satisfied.",
             "JVM-GAP-BYTES");
         skip("backend-runtime/source-location/bytes-index-bounds-source.deal",
             "the fixture raises E8012 on the JVM lane, but the JVM "
-                + "DEALRuntimeError snapshot carries no column field "
-                + "(ISSUE-0276 owns the backend convergence), so the "
-                + "lane cannot serialize the canonical error snapshot.",
+                + "DealError carries no origin (file, line, column) yet "
+                + "(the per-class origin literals land with the epic class leaves), so the "
+                + "span-pinned sidecar cannot be satisfied.",
             "JVM-GAP-BYTES");
         skip("backend-runtime/source-location/bytes-write-range-source.deal",
             "the fixture raises E8013 on the JVM lane, but the JVM "
-                + "DEALRuntimeError snapshot carries no column field "
-                + "(ISSUE-0276 owns the backend convergence), so the "
-                + "lane cannot serialize the canonical error snapshot.",
+                + "DealError carries no origin (file, line, column) yet "
+                + "(the per-class origin literals land with the epic class leaves), so the "
+                + "span-pinned sidecar cannot be satisfied.",
             "JVM-GAP-BYTES");
 
         // ---- JVM-GAP-BYTES: the gap-suite runtime population
@@ -1814,39 +1893,39 @@ public class JvmLane implements Lane {
         // The five promoted runtime-error gap bytes fixtures stay
         // tracked: each raises its pinned E8012/E8013 on the JVM lane,
         // but the JVM DEALRuntimeError snapshot carries no column
-        // field (ISSUE-0276 owns the backend convergence), so the lane
+        // field (the per-class origin literals land with the epic class leaves), so the lane
         // cannot serialize the canonical error snapshot — the same
         // lane reason as the pre-existing bytes-index-bounds and
         // bytes-write-range entries.
         skip("backend-runtime/bytes/bytes-negative-length-error.deal",
             "the fixture raises E8012 on the JVM lane, but the JVM "
-                + "DEALRuntimeError snapshot carries no column field "
-                + "(ISSUE-0276 owns the backend convergence), so the "
-                + "lane cannot serialize the canonical error snapshot.",
+                + "DealError carries no origin (file, line, column) yet "
+                + "(the per-class origin literals land with the epic class leaves), so the "
+                + "span-pinned sidecar cannot be satisfied.",
             "JVM-GAP-BYTES");
         skip("backend-runtime/bytes/bytes-negative-read-error.deal",
             "the fixture raises E8012 on the JVM lane, but the JVM "
-                + "DEALRuntimeError snapshot carries no column field "
-                + "(ISSUE-0276 owns the backend convergence), so the "
-                + "lane cannot serialize the canonical error snapshot.",
+                + "DealError carries no origin (file, line, column) yet "
+                + "(the per-class origin literals land with the epic class leaves), so the "
+                + "span-pinned sidecar cannot be satisfied.",
             "JVM-GAP-BYTES");
         skip("backend-runtime/bytes/bytes-read-at-length-error.deal",
             "the fixture raises E8012 on the JVM lane, but the JVM "
-                + "DEALRuntimeError snapshot carries no column field "
-                + "(ISSUE-0276 owns the backend convergence), so the "
-                + "lane cannot serialize the canonical error snapshot.",
+                + "DealError carries no origin (file, line, column) yet "
+                + "(the per-class origin literals land with the epic class leaves), so the "
+                + "span-pinned sidecar cannot be satisfied.",
             "JVM-GAP-BYTES");
         skip("backend-runtime/bytes/bytes-write-at-length-error.deal",
             "the fixture raises E8012 on the JVM lane, but the JVM "
-                + "DEALRuntimeError snapshot carries no column field "
-                + "(ISSUE-0276 owns the backend convergence), so the "
-                + "lane cannot serialize the canonical error snapshot.",
+                + "DealError carries no origin (file, line, column) yet "
+                + "(the per-class origin literals land with the epic class leaves), so the "
+                + "span-pinned sidecar cannot be satisfied.",
             "JVM-GAP-BYTES");
         skip("backend-runtime/bytes/bytes-write-negative-error.deal",
             "the fixture raises E8013 on the JVM lane, but the JVM "
-                + "DEALRuntimeError snapshot carries no column field "
-                + "(ISSUE-0276 owns the backend convergence), so the "
-                + "lane cannot serialize the canonical error snapshot.",
+                + "DealError carries no origin (file, line, column) yet "
+                + "(the per-class origin literals land with the epic class leaves), so the "
+                + "span-pinned sidecar cannot be satisfied.",
             "JVM-GAP-BYTES");
 
         // ---- JVM-GAP-BYTES: the dynamic boundary rows (ISSUE-0550) ----
@@ -1857,33 +1936,34 @@ public class JvmLane implements Lane {
         // pipeline (JvmConformanceTest passes every new fixture, so no
         // entry lands in that registry). The four runtime-error fixtures
         // below stay tracked here for the differential gate's canonical
-        // snapshot requirement: the captured JVM DEALRuntimeError
-        // carries no column field (ISSUE-0276 owns the backend
-        // convergence), so the lane cannot serialize the canonical
-        // snapshot and never fabricates one.
+        // snapshot requirement: the captured JVM DealError
+        // carries no origin (file, line, column) yet (the per-class
+        // origin literals land with the epic's class leaves), so the
+        // span-pinned sidecar cannot be satisfied and the lane never
+        // fabricates one.
         skip("backend-runtime/bytes/bytes-dynamic-wrong-kind-e8001.deal",
             "the fixture raises E8001 on the JVM lane, but the JVM "
-                + "DEALRuntimeError snapshot carries no column field "
-                + "(ISSUE-0276 owns the backend convergence), so the "
-                + "lane cannot serialize the canonical error snapshot.",
+                + "DealError carries no origin (file, line, column) yet "
+                + "(the per-class origin literals land with the epic class leaves), so the "
+                + "span-pinned sidecar cannot be satisfied.",
             "JVM-GAP-BYTES");
         skip("backend-runtime/bytes/bytes-dynamic-nested-first-element-e8003.deal",
             "the fixture raises E8003 on the JVM lane, but the JVM "
-                + "DEALRuntimeError snapshot carries no column field "
-                + "(ISSUE-0276 owns the backend convergence), so the "
-                + "lane cannot serialize the canonical error snapshot.",
+                + "DealError carries no origin (file, line, column) yet "
+                + "(the per-class origin literals land with the epic class leaves), so the "
+                + "span-pinned sidecar cannot be satisfied.",
             "JVM-GAP-BYTES");
         skip("backend-runtime/bytes/bytes-dynamic-function-mismatch-e8010.deal",
             "the fixture raises E8010 on the JVM lane, but the JVM "
-                + "DEALRuntimeError snapshot carries no column field "
-                + "(ISSUE-0276 owns the backend convergence), so the "
-                + "lane cannot serialize the canonical error snapshot.",
+                + "DealError carries no origin (file, line, column) yet "
+                + "(the per-class origin literals land with the epic class leaves), so the "
+                + "span-pinned sidecar cannot be satisfied.",
             "JVM-GAP-BYTES");
         skip("backend-runtime/bytes/bytes-dynamic-async-function-mismatch-e8010.deal",
             "the fixture raises E8010 on the JVM lane, but the JVM "
-                + "DEALRuntimeError snapshot carries no column field "
-                + "(ISSUE-0276 owns the backend convergence), so the "
-                + "lane cannot serialize the canonical error snapshot.",
+                + "DealError carries no origin (file, line, column) yet "
+                + "(the per-class origin literals land with the epic class leaves), so the "
+                + "span-pinned sidecar cannot be satisfied.",
             "JVM-GAP-BYTES");
 
         // ---- JVM-GAP-BYTES: the host/module/JSON bytes leaf
@@ -1898,29 +1978,30 @@ public class JvmLane implements Lane {
         // lands in that registry. The three runtime-error fixtures
         // below stay tracked here for the differential gate's
         // canonical snapshot requirement: the captured JVM
-        // DEALRuntimeError carries no column field (ISSUE-0276 owns
-        // the backend convergence), so the lane cannot serialize the
-        // canonical snapshot and never fabricates one.
+        // DealError carries no origin (file, line, column) yet (the
+        // per-class origin literals land with the epic's class leaves),
+        // so the span-pinned sidecar cannot be satisfied and the lane
+        // never fabricates one.
         skip("backend-runtime/host-abi/host-bytes-param-mismatch-e8010.deal",
             "the fixture raises E8010 at the declared bytes host "
                 + "parameter boundary on the JVM lane, but the JVM "
-                + "DEALRuntimeError snapshot carries no column field "
-                + "(ISSUE-0276 owns the backend convergence), so the "
-                + "lane cannot serialize the canonical error snapshot.",
+                + "DealError carries no origin (file, line, column) yet "
+                + "(the per-class origin literals land with the epic class leaves), so the "
+                + "span-pinned sidecar cannot be satisfied.",
             "JVM-GAP-BYTES");
         skip("backend-runtime/host-abi/host-bytes-return-mismatch-e8010.deal",
             "the fixture raises E8010 at the declared bytes host "
                 + "return boundary on the JVM lane, but the JVM "
-                + "DEALRuntimeError snapshot carries no column field "
-                + "(ISSUE-0276 owns the backend convergence), so the "
-                + "lane cannot serialize the canonical error snapshot.",
+                + "DealError carries no origin (file, line, column) yet "
+                + "(the per-class origin literals land with the epic class leaves), so the "
+                + "span-pinned sidecar cannot be satisfied.",
             "JVM-GAP-BYTES");
         skip("backend-runtime/stdlib/json/json-stringify-nested-bytes-error.deal",
             "the fixture raises E8001 at the nested JSON bytes "
                 + "rejection on the JVM lane, but the JVM "
-                + "DEALRuntimeError snapshot carries no column field "
-                + "(ISSUE-0276 owns the backend convergence), so the "
-                + "lane cannot serialize the canonical error snapshot.",
+                + "DealError carries no origin (file, line, column) yet "
+                + "(the per-class origin literals land with the epic class leaves), so the "
+                + "span-pinned sidecar cannot be satisfied.",
             "JVM-GAP-BYTES");
 
         // ---- JVM-GAP-ERROR-LITERAL-DEFAULTS: RETIRED with the
@@ -1968,7 +2049,7 @@ public class JvmLane implements Lane {
         // first-class function value), which now compiles and raises
         // its pinned E8010 through the per-export shared wrapper
         // carrier (ISSUE-0307) — the entry stays only for the
-        // ISSUE-0276 snapshot-column reason.
+        // not-yet-threaded origin reason.
 
         // ---- JVM-GAP-DEFAULTS-PLANS: RETIRED with the completion gate
         // closure (ISSUE-0307) ----
@@ -1993,15 +2074,16 @@ public class JvmLane implements Lane {
         // removals. host-async-shape-value (a host export used as a
         // first-class function value) now COMPILES and raises its
         // pinned E8010 through the per-export shared wrapper carrier
-        // (ISSUE-0307), but the captured DEALRuntimeError snapshot
-        // carries no column field (ISSUE-0276 owns the backend
-        // convergence), so the lane cannot serialize the canonical
-        // error snapshot and the entry stays tracked with that reason.
+        // (ISSUE-0307), but the captured DealError carries no origin
+        // (file, line, column) yet (the per-class origin literals land
+        // with the epic's class leaves), so the span-pinned sidecar
+        // cannot be satisfied and the entry stays tracked with that
+        // reason.
         skip("backend-runtime/host-abi/host-async-shape-value.deal",
             "the fixture raises E8010 on the JVM lane, but the JVM "
-                + "DEALRuntimeError snapshot carries no column field "
-                + "(ISSUE-0276 owns the backend convergence), so the "
-                + "lane cannot serialize the canonical error snapshot.",
+                + "DealError carries no origin (file, line, column) yet "
+                + "(the per-class origin literals land with the epic class leaves), so the "
+                + "span-pinned sidecar cannot be satisfied.",
             "JVM-GAP-HOST-ABI-SHAPES");
 
         // ---- JVM-GAP-XMOD-ARRAY: retired with the shared runtime value

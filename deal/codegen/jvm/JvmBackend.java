@@ -943,6 +943,38 @@ public final class JvmBackend {
     private final Map<String, Map<String, ClassDeclaration>> importedClasses;
 
     /**
+     * Imported compiled module path → its declared-boundary surface
+     * (ISSUE-0603 D6, jvm-canonical-error-snapshot-convergence): the
+     * imported module's exported {@link FunctionDeclaration} nodes —
+     * whose parameter and return type annotations carry the spans the
+     * declared-boundary origins name — plus the imported module's
+     * source path, so the importing artifact can emit the callee's
+     * declared-boundary origin including imported companions. Supplied
+     * by {@code CompilationOrchestrator} phase 4 from the same import
+     * discovery pass that builds {@link #importedClasses}; empty for the
+     * single-module harness overloads, where no imported function can
+     * exist.
+     */
+    private final Map<String, ImportedModuleSurface> importedSurfaces;
+
+    /**
+     * One imported compiled module's declared-boundary surface (D6): the
+     * module's exported function declarations by name and the module's
+     * source path. The annotation spans ride the AST nodes
+     * ({@link Parameter#type()} and
+     * {@link FunctionDeclaration#returnType()}); the source path is the
+     * file literal the emitted declared-boundary origin carries.
+     */
+    public record ImportedModuleSurface(
+            Map<String, FunctionDeclaration> functions,
+            String sourcePath) {
+
+        public ImportedModuleSurface {
+            functions = functions == null ? Map.of() : Map.copyOf(functions);
+        }
+    }
+
+    /**
      * Raw import path → declared export map (export name → declared
      * {@link Type}) for every host module this module imports (ISSUE-0100).
      * Supplied by {@code CompilationOrchestrator} phase 4, exactly like the
@@ -1458,6 +1490,7 @@ public final class JvmBackend {
                        String sourcePath, String modulePath,
                        Map<String, String> importResolutions,
                        Map<String, Map<String, ClassDeclaration>> importedClasses,
+                       Map<String, ImportedModuleSurface> importedSurfaces,
                        Map<String, Map<String, Type>> hostModules,
                        Map<String, Map<String,
                            List<HostModuleDeclarations.HostField>>>
@@ -1486,6 +1519,8 @@ public final class JvmBackend {
             ? Map.of() : Map.copyOf(importResolutions);
         this.importedClasses = importedClasses == null
             ? Map.of() : Map.copyOf(importedClasses);
+        this.importedSurfaces = importedSurfaces == null
+            ? Map.of() : Map.copyOf(importedSurfaces);
         // The inner export maps keep the orchestrator's declaration
         // order (info.exports is a statement-ordered LinkedHashMap):
         // collectModuleShapes walks them in source order (deterministic
@@ -1606,7 +1641,7 @@ public final class JvmBackend {
             Function<String, CanonicalModuleIdentity> moduleIdentities) {
         JvmBackend collector = new JvmBackend(result.typeMap(),
             result.symbolTable(), sourcePath, modulePath,
-            importResolutions, importedClasses, hostModules,
+            importResolutions, importedClasses, Map.of(), hostModules,
             hostClassDeclarations, false, false,
             semanticProfile, null, identityIndex, moduleIdentities,
             Map.of(), Map.of());
@@ -2389,7 +2424,7 @@ public final class JvmBackend {
             importResolutions, importedClasses, hostModules,
             hostClassDeclarations, isEntry, emitSharedTable, identityIndex,
             moduleIdentities, semanticProfile, sharedShapes,
-            sharedClassDeclarations, sharedHostClasses, Map.of());
+            sharedClassDeclarations, sharedHostClasses, Map.of(), Map.of());
     }
 
     /**
@@ -2424,14 +2459,16 @@ public final class JvmBackend {
                                                 List<HostModuleDeclarations.HostField>>>
                                                 sharedHostClasses,
                                             Map<String, List<PlannedDefaultClass>>
-                                                plansByModulePath) {
+                                                plansByModulePath,
+                                            Map<String, ImportedModuleSurface>
+                                                importedSurfaces) {
         Objects.requireNonNull(semanticProfile,
             "semanticProfile must not be null");
         JvmBackend backend = new JvmBackend(result.typeMap(), result.symbolTable(),
             sourcePath, modulePath, importResolutions, importedClasses,
-            hostModules, hostClassDeclarations, isEntry, emitSharedTable,
-            semanticProfile, sharedShapes, identityIndex, moduleIdentities,
-            sharedClassDeclarations, sharedHostClasses);
+            importedSurfaces, hostModules, hostClassDeclarations, isEntry,
+            emitSharedTable, semanticProfile, sharedShapes, identityIndex,
+            moduleIdentities, sharedClassDeclarations, sharedHostClasses);
         backend.plansByModulePath = Map.copyOf(plansByModulePath);
         return backend.generateProgram(program);
     }
@@ -5180,12 +5217,46 @@ public final class JvmBackend {
         // non-reserved names through unchanged), and an unqualified
         // reference would bind to the user's field/local instead of
         // java.lang, producing an artifact javac rejects.
-        emitLine("/** DEAL runtime error: code per §Diagnostics (E8xxx). */");
+        // The complete DEALRuntimeError field surface (spec §Host error and
+        // debugging; jvm-canonical-error-snapshot-convergence D2): code and
+        // message are always present; the span group (file/line/column) is
+        // carried together or absent — the explicit absent sentinel is
+        // file=null, line=-1, column=-1 (the sanctioned span-less raise);
+        // expected/actual/frames/cause are populated only from real data,
+        // never fabricated. The two-argument constructor is the explicit
+        // absent-origin path every raise site whose per-site origin literal
+        // has not landed yet uses; the five-argument constructor threads an
+        // origin (file/line/column) into the emitted error object, and the
+        // nine-argument constructor adds the closed optional fields.
+        emitLine("/** DEAL runtime error: the complete DEALRuntimeError field surface. */");
         emitLine("static final class DealError extends java.lang.RuntimeException {");
         emitLine("    final java.lang.String code;");
+        emitLine("    final java.lang.String file;");
+        emitLine("    final int line;");
+        emitLine("    final int column;");
+        emitLine("    final java.lang.String expected;");
+        emitLine("    final java.lang.String actual;");
+        emitLine("    final java.lang.Integer frames;");
+        emitLine("    final java.lang.String cause;");
+        emitLine("    // The explicit absent-origin path: file=null, line=-1, column=-1.");
         emitLine("    DealError(java.lang.String code, java.lang.String message) {");
+        emitLine("        this(code, message, null, -1, -1, null, null, null, null);");
+        emitLine("    }");
+        emitLine("    // The origin-threading path: the span group rides together.");
+        emitLine("    DealError(java.lang.String code, java.lang.String message, java.lang.String oFile, int oLine, int oCol) {");
+        emitLine("        this(code, message, oFile, oLine, oCol, null, null, null, null);");
+        emitLine("    }");
+        emitLine("    // The complete-field path (the closed optional fields included).");
+        emitLine("    DealError(java.lang.String code, java.lang.String message, java.lang.String oFile, int oLine, int oCol, java.lang.String expected, java.lang.String actual, java.lang.Integer frames, java.lang.String cause) {");
         emitLine("        super(message);");
         emitLine("        this.code = code;");
+        emitLine("        this.file = oFile;");
+        emitLine("        this.line = oLine;");
+        emitLine("        this.column = oCol;");
+        emitLine("        this.expected = expected;");
+        emitLine("        this.actual = actual;");
+        emitLine("        this.frames = frames;");
+        emitLine("        this.cause = cause;");
         emitLine("    }");
         emitLine("}");
         if (int32Mode) {
@@ -5197,22 +5268,41 @@ public final class JvmBackend {
             emitLine("// DEAL int: signed 32-bit under DEAL_V1_2_INT32 (jvm-v12-int32-bytes D1).");
             emitLine("// checkInt gates every wider/boxed value crossing a declared int boundary on");
             emitLine("// [-2147483648, 2147483647] (E8004 before the narrowing, never silent).");
-            emitLine("static int checkInt(long v) { if (v > 2147483647L || v < -2147483648L) throw new DealError(\"E8004\", \"int out of safe range\"); return (int) v; }");
+            // D11 (closed table, re-derived against the on-disk sidecars):
+            // every checkInt route pins "int out of safe range" — the absInt
+            // result gate and the declared-int time boundary alike — so the
+            // literal is the helper-wide default, and the origin-threading
+            // overload carries the (today: absent) span group.
+            emitLine("static int checkInt(long v) { return checkInt(v, null, -1, -1); }");
+            emitLine("static int checkInt(long v, java.lang.String oFile, int oLine, int oCol) { if (v > 2147483647L || v < -2147483648L) throw new DealError(\"E8004\", \"int out of safe range\", oFile, oLine, oCol); return (int) v; }");
             emitLine("// int arithmetic: exact int32; E8004 overflow, E8005 division by zero, E8006 negative exponent.");
-            emitLine("static int intAdd(int a, int b) { try { return java.lang.Math.addExact(a, b); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }");
-            emitLine("static int intSub(int a, int b) { try { return java.lang.Math.subtractExact(a, b); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }");
-            emitLine("static int intMul(int a, int b) { try { return java.lang.Math.multiplyExact(a, b); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }");
+            // D11: intAdd's pinned text is uniform ("int out of safe range"
+            // at the return/operand positions and at the declared-int
+            // binding-initializer addition alike), so the origin-threading
+            // overload carries the span group only.
+            emitLine("static int intAdd(int a, int b) { return intAdd(a, b, null, -1, -1); }");
+            emitLine("static int intAdd(int a, int b, java.lang.String oFile, int oLine, int oCol) { try { return java.lang.Math.addExact(a, b); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\", oFile, oLine, oCol); } }");
+            emitLine("static int intSub(int a, int b) { return intSub(a, b, null, -1, -1); }");
+            emitLine("static int intSub(int a, int b, java.lang.String oFile, int oLine, int oCol) { try { return java.lang.Math.subtractExact(a, b); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\", oFile, oLine, oCol); } }");
+            emitLine("static int intMul(int a, int b) { return intMul(a, b, null, -1, -1); }");
+            emitLine("static int intMul(int a, int b, java.lang.String oFile, int oLine, int oCol) { try { return java.lang.Math.multiplyExact(a, b); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\", oFile, oLine, oCol); } }");
             // Truncating division/remainder: -2147483648 / -1 overflows the
             // signed32 range (E8004 via the pre-check); the truncated
             // remainder -2147483648 % -1 is the in-range 0 — the
             // spec-v1.2 remainder rule, identical to the retained LuaJIT
-            // math.modf reference shape (ISSUE-0394).
-            emitLine("static int intDiv(int a, int b) { if (b == 0) throw new DealError(\"E8005\", \"integer division by zero\"); if (a == java.lang.Integer.MIN_VALUE && b == -1) throw new DealError(\"E8004\", \"int out of safe range\"); return a / b; }");
-            emitLine("static int intMod(int a, int b) { if (b == 0) throw new DealError(\"E8005\", \"integer division by zero\"); return a % b; }");
+            // math.modf reference shape (ISSUE-0394). The E8004 route is
+            // unpinned and keeps today's text.
+            emitLine("static int intDiv(int a, int b) { return intDiv(a, b, null, -1, -1); }");
+            emitLine("static int intDiv(int a, int b, java.lang.String oFile, int oLine, int oCol) { if (b == 0) throw new DealError(\"E8005\", \"integer division by zero\", oFile, oLine, oCol); if (a == java.lang.Integer.MIN_VALUE && b == -1) throw new DealError(\"E8004\", \"int out of safe range\", oFile, oLine, oCol); return a / b; }");
+            emitLine("static int intMod(int a, int b) { return intMod(a, b, null, -1, -1); }");
+            emitLine("static int intMod(int a, int b, java.lang.String oFile, int oLine, int oCol) { if (b == 0) throw new DealError(\"E8005\", \"integer division by zero\", oFile, oLine, oCol); return a % b; }");
             // NaN/Infinity first (deal/runtime.lua check_int parity); only
-            // finite values outside the signed32 range report E8004.
-            emitLine("static int intPow(int a, int b) { if (b < 0) throw new DealError(\"E8006\", \"integer exponent must be non-negative\"); double p = java.lang.Math.pow((double) a, (double) b); if (java.lang.Double.isNaN(p)) throw new DealError(\"E8001\", \"expected int, got NaN\"); if (java.lang.Double.isInfinite(p)) throw new DealError(\"E8001\", \"expected int, got infinity\"); if (p > 2147483647.0 || p < -2147483648.0) throw new DealError(\"E8004\", \"int out of safe range\"); return (int) p; }");
-            emitLine("static int intNeg(int a) { try { return java.lang.Math.negateExact(a); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }");
+            // finite values outside the signed32 range report E8004 (the
+            // int32-pow-overflow pin keeps the "int out of safe range" text).
+            emitLine("static int intPow(int a, int b) { return intPow(a, b, null, -1, -1); }");
+            emitLine("static int intPow(int a, int b, java.lang.String oFile, int oLine, int oCol) { if (b < 0) throw new DealError(\"E8006\", \"integer exponent must be non-negative\", oFile, oLine, oCol); double p = java.lang.Math.pow((double) a, (double) b); if (java.lang.Double.isNaN(p)) throw new DealError(\"E8001\", \"expected int, got NaN\", oFile, oLine, oCol); if (java.lang.Double.isInfinite(p)) throw new DealError(\"E8001\", \"expected int, got infinity\", oFile, oLine, oCol); if (p > 2147483647.0 || p < -2147483648.0) throw new DealError(\"E8004\", \"int out of safe range\", oFile, oLine, oCol); return (int) p; }");
+            emitLine("static int intNeg(int a) { return intNeg(a, null, -1, -1); }");
+            emitLine("static int intNeg(int a, java.lang.String oFile, int oLine, int oCol) { try { return java.lang.Math.negateExact(a); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\", oFile, oLine, oCol); } }");
             emitLine("// number %: Lua-style floored modulo (a - floor(a/b)*b), unlike Java's truncated %.");
             emitLine("static double numMod(double a, double b) { return a - java.lang.Math.floor(a / b) * b; }");
             emitLine("// number **: IEEE-754 pow with the pinned v1.2 special-case table");
@@ -5220,29 +5310,46 @@ public final class JvmBackend {
             emitLine("// pow(±1.0, ±Infinity) = 1.0 — the two Java-vs-IEEE deviations — corrected before Math.pow.");
             emitLine("static double numPow(double a, double b) { if (a == 1.0 && java.lang.Double.isNaN(b)) return 1.0; if (java.lang.Math.abs(a) == 1.0 && java.lang.Double.isInfinite(b)) return 1.0; return java.lang.Math.pow(a, b); }");
             emitLine("// int(v) / number(v) conversion intrinsics (E8001 bad value, E8004 out of range).");
-            emitLine("static int intFromNumber(double v) { if (java.lang.Double.isNaN(v)) throw new DealError(\"E8001\", \"expected int, got NaN\"); if (java.lang.Double.isInfinite(v)) throw new DealError(\"E8001\", \"expected int, got infinity\"); if (v != java.lang.Math.floor(v)) throw new DealError(\"E8001\", \"expected int, got non-integer number\"); if (v > 2147483647.0 || v < -2147483648.0) throw new DealError(\"E8004\", \"int out of safe range\"); return (int) v; }");
+            // D11: the E8004 arm splits by profile — the signed-int32 profile
+            // pins "int out of safe range" (int-conversion-out-of-range)
+            // while the legacy-safe-int arm keeps "int out of range"
+            // (runtime/int-convert-range).
+            emitLine("static int intFromNumber(double v) { return intFromNumber(v, null, -1, -1); }");
+            emitLine("static int intFromNumber(double v, java.lang.String oFile, int oLine, int oCol) { if (java.lang.Double.isNaN(v)) throw new DealError(\"E8001\", \"expected int, got NaN\", oFile, oLine, oCol); if (java.lang.Double.isInfinite(v)) throw new DealError(\"E8001\", \"expected int, got infinity\", oFile, oLine, oCol); if (v != java.lang.Math.floor(v)) throw new DealError(\"E8001\", \"expected int, got non-integer number\", oFile, oLine, oCol); if (v > 2147483647.0 || v < -2147483648.0) throw new DealError(\"E8004\", \"int out of safe range\", oFile, oLine, oCol); return (int) v; }");
             emitLine("static double numberFromInt(int v) { return (double) v; }");
         } else {
             emitLine("// DEAL int safe range: ±(2^53-1), mirroring deal/runtime.lua's");
             emitLine("// check_int (v < -9007199254740991 or v > 9007199254740991 raises");
             emitLine("// E8004). Every int-producing operation checks its result, exactly");
             emitLine("// like LuaJIT's int_add = check_int(a + b) family.");
-            emitLine("static long checkInt(long v) { if (v > 9007199254740991L || v < -9007199254740991L) throw new DealError(\"E8004\", \"int out of safe range\"); return v; }");
+            emitLine("static long checkInt(long v) { return checkInt(v, null, -1, -1); }");
+            emitLine("static long checkInt(long v, java.lang.String oFile, int oLine, int oCol) { if (v > 9007199254740991L || v < -9007199254740991L) throw new DealError(\"E8004\", \"int out of safe range\", oFile, oLine, oCol); return v; }");
             emitLine("// int arithmetic: E8004 out of safe range, E8005 division by zero, E8006 negative exponent.");
-            emitLine("static long intAdd(long a, long b) { try { return checkInt(java.lang.Math.addExact(a, b)); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }");
-            emitLine("static long intSub(long a, long b) { try { return checkInt(java.lang.Math.subtractExact(a, b)); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }");
-            emitLine("static long intMul(long a, long b) { try { return checkInt(java.lang.Math.multiplyExact(a, b)); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }");
-            emitLine("static long intDiv(long a, long b) { if (b == 0L) throw new DealError(\"E8005\", \"integer division by zero\"); try { return checkInt(a / b); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }");
-            emitLine("static long intMod(long a, long b) { if (b == 0L) throw new DealError(\"E8005\", \"integer division by zero\"); try { return checkInt(a % b); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }");
+            emitLine("static long intAdd(long a, long b) { return intAdd(a, b, null, -1, -1); }");
+            emitLine("static long intAdd(long a, long b, java.lang.String oFile, int oLine, int oCol) { try { return checkInt(java.lang.Math.addExact(a, b), oFile, oLine, oCol); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\", oFile, oLine, oCol); } }");
+            emitLine("static long intSub(long a, long b) { return intSub(a, b, null, -1, -1); }");
+            emitLine("static long intSub(long a, long b, java.lang.String oFile, int oLine, int oCol) { try { return checkInt(java.lang.Math.subtractExact(a, b), oFile, oLine, oCol); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\", oFile, oLine, oCol); } }");
+            emitLine("static long intMul(long a, long b) { return intMul(a, b, null, -1, -1); }");
+            emitLine("static long intMul(long a, long b, java.lang.String oFile, int oLine, int oCol) { try { return checkInt(java.lang.Math.multiplyExact(a, b), oFile, oLine, oCol); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\", oFile, oLine, oCol); } }");
+            emitLine("static long intDiv(long a, long b) { return intDiv(a, b, null, -1, -1); }");
+            emitLine("static long intDiv(long a, long b, java.lang.String oFile, int oLine, int oCol) { if (b == 0L) throw new DealError(\"E8005\", \"integer division by zero\", oFile, oLine, oCol); try { return checkInt(a / b, oFile, oLine, oCol); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\", oFile, oLine, oCol); } }");
+            emitLine("static long intMod(long a, long b) { return intMod(a, b, null, -1, -1); }");
+            emitLine("static long intMod(long a, long b, java.lang.String oFile, int oLine, int oCol) { if (b == 0L) throw new DealError(\"E8005\", \"integer division by zero\", oFile, oLine, oCol); try { return checkInt(a % b, oFile, oLine, oCol); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\", oFile, oLine, oCol); } }");
             // NaN/Infinity first, matching deal/runtime.lua's check_int (LuaJIT
             // "expected int, got infinity" for e.g. `10 ** 400`); only finite
             // values outside the int safe range report E8004.
-            emitLine("static long intPow(long a, long b) { if (b < 0L) throw new DealError(\"E8006\", \"integer exponent must be non-negative\"); double p = java.lang.Math.pow((double) a, (double) b); if (java.lang.Double.isNaN(p)) throw new DealError(\"E8001\", \"expected int, got NaN\"); if (java.lang.Double.isInfinite(p)) throw new DealError(\"E8001\", \"expected int, got infinity\"); if (p > 9007199254740991.0 || p < -9007199254740991.0) throw new DealError(\"E8004\", \"int out of safe range\"); return (long) p; }");
-            emitLine("static long intNeg(long a) { try { return checkInt(java.lang.Math.negateExact(a)); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }");
+            emitLine("static long intPow(long a, long b) { return intPow(a, b, null, -1, -1); }");
+            emitLine("static long intPow(long a, long b, java.lang.String oFile, int oLine, int oCol) { if (b < 0L) throw new DealError(\"E8006\", \"integer exponent must be non-negative\", oFile, oLine, oCol); double p = java.lang.Math.pow((double) a, (double) b); if (java.lang.Double.isNaN(p)) throw new DealError(\"E8001\", \"expected int, got NaN\", oFile, oLine, oCol); if (java.lang.Double.isInfinite(p)) throw new DealError(\"E8001\", \"expected int, got infinity\", oFile, oLine, oCol); if (p > 9007199254740991.0 || p < -9007199254740991.0) throw new DealError(\"E8004\", \"int out of safe range\", oFile, oLine, oCol); return (long) p; }");
+            emitLine("static long intNeg(long a) { return intNeg(a, null, -1, -1); }");
+            emitLine("static long intNeg(long a, java.lang.String oFile, int oLine, int oCol) { try { return checkInt(java.lang.Math.negateExact(a), oFile, oLine, oCol); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\", oFile, oLine, oCol); } }");
             emitLine("// number %: Lua-style floored modulo (a - floor(a/b)*b), unlike Java's truncated %.");
             emitLine("static double numMod(double a, double b) { return a - java.lang.Math.floor(a / b) * b; }");
             emitLine("// int(v) / number(v) conversion intrinsics (E8001 bad value, E8004 out of range).");
-            emitLine("static long intFromNumber(double v) { if (java.lang.Double.isNaN(v)) throw new DealError(\"E8001\", \"expected int, got NaN\"); if (java.lang.Double.isInfinite(v)) throw new DealError(\"E8001\", \"expected int, got infinity\"); if (v != java.lang.Math.floor(v)) throw new DealError(\"E8001\", \"expected int, got non-integer number\"); if (v > 9007199254740991.0 || v < -9007199254740991.0) throw new DealError(\"E8004\", \"int out of safe range\"); return (long) v; }");
+            // D11: the legacy-safe-int intFromNumber E8004 arm pins
+            // "int out of range" (runtime/int-convert-range) — the one
+            // surviving split of the E8004 family.
+            emitLine("static long intFromNumber(double v) { return intFromNumber(v, null, -1, -1); }");
+            emitLine("static long intFromNumber(double v, java.lang.String oFile, int oLine, int oCol) { if (java.lang.Double.isNaN(v)) throw new DealError(\"E8001\", \"expected int, got NaN\", oFile, oLine, oCol); if (java.lang.Double.isInfinite(v)) throw new DealError(\"E8001\", \"expected int, got infinity\", oFile, oLine, oCol); if (v != java.lang.Math.floor(v)) throw new DealError(\"E8001\", \"expected int, got non-integer number\", oFile, oLine, oCol); if (v > 9007199254740991.0 || v < -9007199254740991.0) throw new DealError(\"E8004\", \"int out of range\", oFile, oLine, oCol); return (long) v; }");
             emitLine("static double numberFromInt(long v) { return (double) v; }");
         }
         emitLine("// ---- DEAL v1.2 bytes runtime (ISSUE-0158 int32-bytes lane) ----");
@@ -15038,6 +15145,11 @@ public final class JvmBackend {
             case "ceil" -> "java.lang.Math.ceil(" + a0 + ")";
             case "sqrt" -> "__mathSqrt(" + a0 + ")";
             case "absInt" -> int32Mode
+                // D11: the absInt result gate's E8004 arm pins “int out of
+                // safe range” (the stdlib/math/int-abs-min-overflow
+                // sidecar), the same literal as every other checkInt route
+                // — the absent-origin entry carries it, and the origin
+                // literals land with the class leaves.
                 ? "checkInt(java.lang.Math.abs((long) " + a0 + "))"
                 : "checkInt(java.lang.Math.abs(" + a0 + "))";
             case "absNumber" -> "java.lang.Math.abs(" + a0 + ")";

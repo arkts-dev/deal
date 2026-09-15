@@ -209,7 +209,6 @@ public class DifferentialGateLanesCorpusTest {
         "backend-runtime/stdlib-edge/console-log-dynamic-nonstring.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/stdlib-edge/string-length-dynamic-nonstring.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/stdlib-edge/table-keys-dynamic-nontable.deal | jvm | PROCESS_FAILURE",
-        "backend-runtime/stdlib-edge/time-now-millis-positive.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/stdlib/math/int-abs-min-overflow.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/stdlib/table/keys-nontable-error.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/tables/table-dynamic-read-runtime-error.deal | jvm | PROCESS_FAILURE",
@@ -222,15 +221,10 @@ public class DifferentialGateLanesCorpusTest {
     /** Representative pinned first-difference details (the gate's
      * bounded-context reports), asserted verbatim. */
     private static final String JVM_ADD_OVERFLOW_MISSING_COLUMN_PREFIX =
-        "the captured DEAL error carries no complete DEALRuntimeError "
-            + "field set (code, message, file, line, column are "
-            + "mandatory) — the lane cannot serialize the canonical "
-            + "snapshot; the JVM runtime error carries no "
-            + "column/expected/actual/frames/cause fields yet "
-            + "(ISSUE-0276 owns the backend convergence), and the lane "
-            + "never fabricates them; captured fields: code=E8004, "
-            + "message=int out of safe range, file=Int_add_overflow.java, "
-            + "line=20, column=null";
+        "the captured DEAL error carries no span (file, line, column) "
+            + "where one is required — the lane never fabricates a pinned "
+            + "field; captured fields: code=E8004, message=int out of safe "
+            + "range, file=null, line=null, column=null";
 
     public static void main(String[] args) throws Exception {
         System.out.println("=== Differential Gate Lanes Corpus Tests "
@@ -697,6 +691,20 @@ public class DifferentialGateLanesCorpusTest {
                 "the time fixture's js leg carries no mismatch, got: "
                     + timeJs.mismatch());
         }
+        GateDispatcher.LaneOutcome timeJvm = timeVerdict == null ? null
+            : timeVerdict.outcomes().stream()
+                .filter(o -> "jvm".equals(o.backend())).findFirst()
+                .orElse(null);
+        check(timeJvm != null && timeJvm.passed(),
+            "the time fixture's jvm leg passes byte-exact against the "
+                + "span-less sidecar under the code+message-mandatory "
+                + "span-all-or-nothing gate (an honest pass, never a "
+                + "skip), got: " + timeJvm);
+        if (timeJvm != null && timeJvm.passed()) {
+            check(timeJvm.mismatch().isEmpty(),
+                "the time fixture's jvm leg carries no mismatch, got: "
+                    + timeJvm.mismatch());
+        }
 
         // The shared int32 remainder fixture's js leg passes after
         // the js-v12-int32-bytes lane closure (ISSUE-0324): the JS
@@ -1123,13 +1131,9 @@ public class DifferentialGateLanesCorpusTest {
             + "\"line\": 7, \"column\": 3 }";
 
     private static final String JVM_FRAME_PROBE_GAP_PREFIX =
-        "the captured DEAL error carries no complete DEALRuntimeError "
-            + "field set (code, message, file, line, column are "
-            + "mandatory) — the lane cannot serialize the canonical "
-            + "snapshot; the JVM runtime error carries no "
-            + "column/expected/actual/frames/cause fields yet "
-            + "(ISSUE-0276 owns the backend convergence), and the lane "
-            + "never fabricates them";
+        "the captured DEAL error carries no span (file, line, column) "
+            + "where one is required — the lane never fabricates a pinned "
+            + "field";
 
     private static void perturbedErrorFieldProbe(int jobs)
             throws IOException {
@@ -1250,9 +1254,11 @@ public class DifferentialGateLanesCorpusTest {
         GateDispatcher.LaneOutcome jvm = outcomeOf(run, corpusPath, "jvm");
         check(jvm != null && !jvm.passed()
                 && jvm.mismatch().get().clazz()
-                    == MismatchClass.PROCESS_FAILURE,
-            "the jvm lane reports the documented pre-flip column gap, "
-                + "got: " + jvm);
+                    == MismatchClass.PROCESS_FAILURE
+                && jvm.mismatch().get().detail().startsWith(
+                    JVM_FRAME_PROBE_GAP_PREFIX),
+            "the jvm lane reports the documented span-absent capture "
+                + "honestly (never fabricates the span), got: " + jvm);
     }
 
     private static void serializationViolationProbe(int jobs)
@@ -1293,9 +1299,11 @@ public class DifferentialGateLanesCorpusTest {
         GateDispatcher.LaneOutcome jvm = outcomeOf(run, corpusPath, "jvm");
         check(jvm != null && !jvm.passed()
                 && jvm.mismatch().get().clazz()
-                    == MismatchClass.PROCESS_FAILURE,
-            "the jvm lane reports the documented pre-flip column gap, "
-                + "got: " + jvm);
+                    == MismatchClass.PROCESS_FAILURE
+                && jvm.mismatch().get().detail().startsWith(
+                    JVM_FRAME_PROBE_GAP_PREFIX),
+            "the jvm lane reports the documented span-absent capture "
+                + "honestly, got: " + jvm);
     }
 
     /** Executes the scratch frame probe on the production luajit lane

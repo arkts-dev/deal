@@ -3010,16 +3010,19 @@ public final class CompilationOrchestrator {
      */
 
     /** Per-module JVM import context (ISSUE-0096/ISSUE-0100/ISSUE-0109):
-     * import resolutions, imported class declarations, and host-module
-     * declarations for one module — the same discovery the JVM use site
-     * builds. Shared by the ISSUE-0301 shape-collection pre-pass and the
-     * per-module codegen pass. */
+     * import resolutions, imported class declarations, host-module
+     * declarations, and the imported modules' declared-boundary surfaces
+     * (ISSUE-0603 D6: the exported {@code FunctionDeclaration} nodes plus
+     * each imported module's source path) for one module — the same
+     * discovery the JVM use site builds. Shared by the ISSUE-0301
+     * shape-collection pre-pass and the per-module codegen pass. */
     private record JvmImportContext(
             Map<String, String> importResolutions,
             Map<String, Map<String, ClassDeclaration>> importedClasses,
             Map<String, Map<String, Type>> hostModules,
             Map<String, Map<String, List<HostModuleDeclarations.HostField>>>
-                hostClassDeclarations) {}
+                hostClassDeclarations,
+            Map<String, JvmBackend.ImportedModuleSurface> importedSurfaces) {}
 
     /** Builds the per-module JVM import context for {@code info}. */
     private JvmImportContext jvmImportContextOf(ModuleInfo info) {
@@ -3038,6 +3041,16 @@ public final class CompilationOrchestrator {
         // shared $DealRt record classes from them.
         Map<String, Map<String, List<HostModuleDeclarations.HostField>>>
             hostClassDeclarations = new HashMap<>();
+        // Declared-boundary surfaces (ISSUE-0603 D6,
+        // jvm-canonical-error-snapshot-convergence): every imported
+        // compiled module's exported FunctionDeclaration nodes — whose
+        // parameter/return type annotations carry the spans the
+        // declared-boundary origins name — plus the module's source
+        // path, so the importing artifact can emit the callee's declared
+        // parameter/return boundary origin, imported companions
+        // included.
+        Map<String, JvmBackend.ImportedModuleSurface> importedSurfaces =
+            new HashMap<>();
         for (StatementNode stmt : info.rawAst.statements()) {
             if (stmt instanceof ImportDeclaration imp) {
                 String resolvedSource = resolveImportPath(imp.modulePath(),
@@ -3075,12 +3088,33 @@ public final class CompilationOrchestrator {
                             }
                         }
                         importedClasses.put(imported.modulePath, classes);
+                        // D6: the imported module's exported function
+                        // declarations (the declared-boundary annotation
+                        // spans) plus its source path.
+                        Map<String, FunctionDeclaration> functions =
+                            new LinkedHashMap<>();
+                        for (StatementNode importedStmt
+                                : imported.rawAst.statements()) {
+                            FunctionDeclaration fd = null;
+                            if (importedStmt instanceof FunctionDeclaration f) {
+                                fd = f;
+                            } else if (importedStmt instanceof ExportDeclaration ed
+                                    && ed.declaration() instanceof FunctionDeclaration f) {
+                                fd = f;
+                            }
+                            if (fd != null) {
+                                functions.putIfAbsent(fd.name(), fd);
+                            }
+                        }
+                        importedSurfaces.put(imported.modulePath,
+                            new JvmBackend.ImportedModuleSurface(functions,
+                                imported.sourcePath));
                     }
                 }
             }
         }
         return new JvmImportContext(importResolutions, importedClasses,
-            hostModules, hostClassDeclarations);
+            hostModules, hostClassDeclarations, importedSurfaces);
     }
 
     private void codegenAllJvm() throws IOException {
@@ -3229,7 +3263,7 @@ public final class CompilationOrchestrator {
                 identityIndex.moduleIdentityLookup(),
                 invocation.semanticProfile(), projectShapes,
                 classDeclaringModules, projectHostClasses,
-                completedPlansByModulePath());
+                completedPlansByModulePath(), ctx.importedSurfaces);
             for (CompilerDiagnostic d : res.diagnostics()) {
                 diagnostics.add(d);
                 hasErrors = true;

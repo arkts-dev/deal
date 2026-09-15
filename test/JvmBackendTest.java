@@ -449,6 +449,8 @@ public class JvmBackendTest {
             new TestCase("testRunnerModuleErrorCodeWithExport", () -> testRunnerModuleErrorCodeWithExport()),
             new TestCase("testProfilePlumbIntMode", () -> testProfilePlumbIntMode()),
             new TestCase("testInt32TimeBoundary", () -> testInt32TimeBoundary()),
+            new TestCase("testEmissionSeamFieldSurfaceAndMessageSplit",
+                () -> testEmissionSeamFieldSurfaceAndMessageSplit()),
             new TestCase("testInt32BoundarySeamSites", () -> testInt32BoundarySeamSites()),
             new TestCase("testInt32DeclaredBoundaryMatrix", () -> testInt32DeclaredBoundaryMatrix()),
             new TestCase("testInt32EdgeMatrix", () -> testInt32EdgeMatrix()),
@@ -7539,7 +7541,8 @@ public class JvmBackendTest {
                     "checkInt helper emitted");
                 check(java.contains("9007199254740991L"),
                     "safe-range bound present");
-                check(java.contains("checkInt(java.lang.Math.addExact(a, b))"),
+                check(java.contains("checkInt(java.lang.Math.addExact(a, b), "
+                        + "oFile, oLine, oCol)"),
                     "intAdd checks its result against the safe range");
                 check(java.contains("p > 9007199254740991.0"),
                     "intPow enforces the safe range, not the long bound");
@@ -8535,8 +8538,11 @@ public class JvmBackendTest {
             "the plumbed int32 entry now emits the DEAL_V1_2_INT32 "
                 + "carrier surface (ISSUE-0375 switch)");
         check(int32.source().contains(
-                "static int checkInt(long v) { if (v > 2147483647L"),
-            "int32 artifact carries the signed32 checkInt gate");
+                "static int checkInt(long v, java.lang.String oFile, "
+                    + "int oLine, int oCol) "
+                    + "{ if (v > 2147483647L"),
+            "int32 artifact carries the signed32 checkInt gate (the "
+                + "origin-threading overload)");
         check(int32.source().contains("static int intAdd(int a, int b)"),
             "int32 artifact carries the primitive int carriers");
         check(!legacyExplicit.source().contains("static int intAdd(int a, int b)"),
@@ -8652,23 +8658,32 @@ public class JvmBackendTest {
 
 
     private static final String LEGACY_BASE_INT_HELPERS = String.join("\n",
-        "    // DEAL int safe range: \u00b1(2^53-1), mirroring deal/runtime.lua's",
+        "// DEAL int safe range: \u00b1(2^53-1), mirroring deal/runtime.lua's",
         "    // check_int (v < -9007199254740991 or v > 9007199254740991 raises",
         "    // E8004). Every int-producing operation checks its result, exactly",
         "    // like LuaJIT's int_add = check_int(a + b) family.",
-        "    static long checkInt(long v) { if (v > 9007199254740991L || v < -9007199254740991L) throw new DealError(\"E8004\", \"int out of safe range\"); return v; }",
+        "    static long checkInt(long v) { return checkInt(v, null, -1, -1); }",
+        "    static long checkInt(long v, java.lang.String oFile, int oLine, int oCol) { if (v > 9007199254740991L || v < -9007199254740991L) throw new DealError(\"E8004\", \"int out of safe range\", oFile, oLine, oCol); return v; }",
         "    // int arithmetic: E8004 out of safe range, E8005 division by zero, E8006 negative exponent.",
-        "    static long intAdd(long a, long b) { try { return checkInt(java.lang.Math.addExact(a, b)); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }",
-        "    static long intSub(long a, long b) { try { return checkInt(java.lang.Math.subtractExact(a, b)); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }",
-        "    static long intMul(long a, long b) { try { return checkInt(java.lang.Math.multiplyExact(a, b)); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }",
-        "    static long intDiv(long a, long b) { if (b == 0L) throw new DealError(\"E8005\", \"integer division by zero\"); try { return checkInt(a / b); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }",
-        "    static long intMod(long a, long b) { if (b == 0L) throw new DealError(\"E8005\", \"integer division by zero\"); try { return checkInt(a % b); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }",
-        "    static long intPow(long a, long b) { if (b < 0L) throw new DealError(\"E8006\", \"integer exponent must be non-negative\"); double p = java.lang.Math.pow((double) a, (double) b); if (java.lang.Double.isNaN(p)) throw new DealError(\"E8001\", \"expected int, got NaN\"); if (java.lang.Double.isInfinite(p)) throw new DealError(\"E8001\", \"expected int, got infinity\"); if (p > 9007199254740991.0 || p < -9007199254740991.0) throw new DealError(\"E8004\", \"int out of safe range\"); return (long) p; }",
-        "    static long intNeg(long a) { try { return checkInt(java.lang.Math.negateExact(a)); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\"); } }",
+        "    static long intAdd(long a, long b) { return intAdd(a, b, null, -1, -1); }",
+        "    static long intAdd(long a, long b, java.lang.String oFile, int oLine, int oCol) { try { return checkInt(java.lang.Math.addExact(a, b), oFile, oLine, oCol); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\", oFile, oLine, oCol); } }",
+        "    static long intSub(long a, long b) { return intSub(a, b, null, -1, -1); }",
+        "    static long intSub(long a, long b, java.lang.String oFile, int oLine, int oCol) { try { return checkInt(java.lang.Math.subtractExact(a, b), oFile, oLine, oCol); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\", oFile, oLine, oCol); } }",
+        "    static long intMul(long a, long b) { return intMul(a, b, null, -1, -1); }",
+        "    static long intMul(long a, long b, java.lang.String oFile, int oLine, int oCol) { try { return checkInt(java.lang.Math.multiplyExact(a, b), oFile, oLine, oCol); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\", oFile, oLine, oCol); } }",
+        "    static long intDiv(long a, long b) { return intDiv(a, b, null, -1, -1); }",
+        "    static long intDiv(long a, long b, java.lang.String oFile, int oLine, int oCol) { if (b == 0L) throw new DealError(\"E8005\", \"integer division by zero\", oFile, oLine, oCol); try { return checkInt(a / b, oFile, oLine, oCol); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\", oFile, oLine, oCol); } }",
+        "    static long intMod(long a, long b) { return intMod(a, b, null, -1, -1); }",
+        "    static long intMod(long a, long b, java.lang.String oFile, int oLine, int oCol) { if (b == 0L) throw new DealError(\"E8005\", \"integer division by zero\", oFile, oLine, oCol); try { return checkInt(a % b, oFile, oLine, oCol); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\", oFile, oLine, oCol); } }",
+        "    static long intPow(long a, long b) { return intPow(a, b, null, -1, -1); }",
+        "    static long intPow(long a, long b, java.lang.String oFile, int oLine, int oCol) { if (b < 0L) throw new DealError(\"E8006\", \"integer exponent must be non-negative\", oFile, oLine, oCol); double p = java.lang.Math.pow((double) a, (double) b); if (java.lang.Double.isNaN(p)) throw new DealError(\"E8001\", \"expected int, got NaN\", oFile, oLine, oCol); if (java.lang.Double.isInfinite(p)) throw new DealError(\"E8001\", \"expected int, got infinity\", oFile, oLine, oCol); if (p > 9007199254740991.0 || p < -9007199254740991.0) throw new DealError(\"E8004\", \"int out of safe range\", oFile, oLine, oCol); return (long) p; }",
+        "    static long intNeg(long a) { return intNeg(a, null, -1, -1); }",
+        "    static long intNeg(long a, java.lang.String oFile, int oLine, int oCol) { try { return checkInt(java.lang.Math.negateExact(a), oFile, oLine, oCol); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\", oFile, oLine, oCol); } }",
         "    // number %: Lua-style floored modulo (a - floor(a/b)*b), unlike Java's truncated %.",
         "    static double numMod(double a, double b) { return a - java.lang.Math.floor(a / b) * b; }",
         "    // int(v) / number(v) conversion intrinsics (E8001 bad value, E8004 out of range).",
-        "    static long intFromNumber(double v) { if (java.lang.Double.isNaN(v)) throw new DealError(\"E8001\", \"expected int, got NaN\"); if (java.lang.Double.isInfinite(v)) throw new DealError(\"E8001\", \"expected int, got infinity\"); if (v != java.lang.Math.floor(v)) throw new DealError(\"E8001\", \"expected int, got non-integer number\"); if (v > 9007199254740991.0 || v < -9007199254740991.0) throw new DealError(\"E8004\", \"int out of safe range\"); return (long) v; }",
+        "    static long intFromNumber(double v) { return intFromNumber(v, null, -1, -1); }",
+        "    static long intFromNumber(double v, java.lang.String oFile, int oLine, int oCol) { if (java.lang.Double.isNaN(v)) throw new DealError(\"E8001\", \"expected int, got NaN\", oFile, oLine, oCol); if (java.lang.Double.isInfinite(v)) throw new DealError(\"E8001\", \"expected int, got infinity\", oFile, oLine, oCol); if (v != java.lang.Math.floor(v)) throw new DealError(\"E8001\", \"expected int, got non-integer number\", oFile, oLine, oCol); if (v > 9007199254740991.0 || v < -9007199254740991.0) throw new DealError(\"E8004\", \"int out of range\", oFile, oLine, oCol); return (long) v; }",
         "    static double numberFromInt(long v) { return (double) v; }");
 
     /** The pre-tree base emission of {@code emitStdlibTimeMemberCall} —
@@ -8965,6 +8980,174 @@ public class JvmBackendTest {
             java.util.regex.Pattern.quote(needle), -1).length - 1;
     }
 
+    /**
+     * The emission seam's field surface and the closed D11 message
+     * table (ISSUE-0603 leaf 1; jvm-canonical-error-snapshot-convergence
+     * D2/D11), re-derived against the on-disk sidecars: the generated
+     * artifact carries the complete DEALRuntimeError field surface and
+     * the origin/message-threading helper signatures, and the closed
+     * per-site message literals are visible at the pinned raise sites —
+     * the intAdd declared-int binding-initializer addition and the
+     * return/operand positions both raise “int out of safe range” (the
+     * int32-overflow-source and int-add-overflow pins), the checkInt
+     * absInt gate raises “int out of safe range” (the
+     * stdlib/math/int-abs-min-overflow pin) while the declared-int time
+     * boundary keeps the same text and never fabricates a span, and the
+     * intFromNumber E8004 arm splits by profile: “int out of safe
+     * range” under signed-int32 (int-conversion-out-of-range) versus
+     * “int out of range” under legacy-safe-int
+     * (runtime/int-convert-range). The runs observe the messages
+     * through the real javac/java pipeline (anti-hollow).
+     */
+    private static void testEmissionSeamFieldSurfaceAndMessageSplit()
+            throws Exception {
+        System.out.println("-- Emission seam: DealError field surface + "
+            + "the closed D11 message table --");
+
+        String source = """
+            export function main(): null { return null; }
+            export function test(): int {
+              let max: int = 2147483647;
+              let one: int = 1;
+              let sum: int = max + one;
+              return sum;
+            }
+            """;
+        String java = int32Artifact(source, "emission_seam_field_surface");
+        check(java.contains("final java.lang.String code;")
+                && java.contains("final java.lang.String file;")
+                && java.contains("final int line;")
+                && java.contains("final int column;")
+                && java.contains("final java.lang.String expected;")
+                && java.contains("final java.lang.String actual;")
+                && java.contains("final java.lang.Integer frames;")
+                && java.contains("final java.lang.String cause;"),
+            "the emitted DealError carries the complete DEALRuntimeError "
+                + "field surface");
+        check(java.contains("DealError(java.lang.String code, "
+                + "java.lang.String message, java.lang.String oFile, "
+                + "int oLine, int oCol, java.lang.String expected, "
+                + "java.lang.String actual, java.lang.Integer frames, "
+                + "java.lang.String cause)"),
+            "the DealError full constructor threads the origin and the "
+                + "closed optional fields");
+        check(java.contains("DealError(java.lang.String code, "
+                + "java.lang.String message, java.lang.String oFile, "
+                + "int oLine, int oCol)"),
+            "the DealError origin constructor threads the span group");
+        check(java.contains("this(code, message, null, -1, -1, null, null, "
+                + "null, null);"),
+            "the two-argument constructor is the explicit absent-origin "
+                + "path (file=null, line=-1, column=-1)");
+
+        // The intAdd binding-initializer addition keeps the closed
+        // default site and raises the pinned "int out of safe range"
+        // text (the int32-overflow-source sidecar).
+        check(java.contains("intAdd(max, one)"),
+            "the declared-int binding-initializer addition emits the "
+                + "two-argument site: "
+                + java.lines().filter(l -> l.contains("intAdd("))
+                    .findFirst().orElse("<missing>"));
+        ExecResult initRun = runInt32Project(source, "emission_seam_init");
+        check(initRun.exitCode() == 1 && initRun.output().contains(
+                "DEAL_ERROR_CODE: E8004 int out of safe range"),
+            "the binding-initializer addition raises the pinned E8004 "
+                + "message: " + initRun.output());
+
+        String retSource = """
+            export function main(): null { return null; }
+            export function test(): int { return 2147483647 + 1; }
+            """;
+        String retJava = int32Artifact(retSource, "emission_seam_return");
+        check(retJava.contains("return intAdd(2147483647, 1);"),
+            "the return-position addition keeps the closed default site "
+                + "(the two-argument entry): "
+                + retJava.lines().filter(l -> l.contains("intAdd("))
+                    .findFirst().orElse("<missing>"));
+        ExecResult retRun = runInt32Project(retSource, "emission_seam_ret");
+        check(retRun.exitCode() == 1 && retRun.output().contains(
+                "DEAL_ERROR_CODE: E8004 int out of safe range"),
+            "the return-position addition raises the pinned E8004 "
+                + "message: " + retRun.output());
+
+        // The origin-threading helper overloads and the closed literals
+        // under the signed-int32 profile.
+        check(java.contains("static int intSub(int a, int b, "
+                + "java.lang.String oFile, int oLine, int oCol)")
+                && java.contains("throw new DealError(\"E8004\", "
+                    + "\"int out of safe range\", oFile, oLine, oCol)"),
+            "intSub threads the origin and raises \"int out of safe "
+                + "range\"");
+        check(java.contains("static int intMul(int a, int b, "
+                + "java.lang.String oFile, int oLine, int oCol)"),
+            "intMul threads the origin");
+        check(java.contains("static int intNeg(int a, "
+                + "java.lang.String oFile, int oLine, int oCol)"),
+            "intNeg threads the origin");
+        check(java.contains("static int intFromNumber(double v, "
+                + "java.lang.String oFile, int oLine, int oCol)"),
+            "intFromNumber threads the origin");
+        check(java.contains("static int intPow(int a, int b, "
+                + "java.lang.String oFile, int oLine, int oCol)")
+                && java.contains("if (p > 2147483647.0 || p < "
+                    + "-2147483648.0) throw new DealError(\"E8004\", "
+                    + "\"int out of safe range\""),
+            "intPow threads the origin and keeps \"int out of safe "
+                + "range\"");
+        check(java.contains("static int checkInt(long v, "
+                + "java.lang.String oFile, int oLine, int oCol)"),
+            "checkInt threads the origin");
+        check(java.contains("if (v > 2147483647.0 || v < "
+                + "-2147483648.0) throw new DealError(\"E8004\", "
+                + "\"int out of safe range\""),
+            "the signed-int32 intFromNumber E8004 arm pins \"int out of "
+                + "safe range\" (int-conversion-out-of-range)");
+
+        // The absInt result gate raises its pinned literal; the time
+        // boundary keeps the same closed "int out of safe range" text
+        // (pinned by testInt32TimeBoundary) and never fabricates a span.
+        String absSource = """
+            import * as math from "std/math";
+            export function main(): null { return null; }
+            export function test(): int { return math.absInt(-2147483648); }
+            """;
+        String absJava = int32Artifact(absSource, "emission_seam_absint");
+        check(absJava.contains(
+                "checkInt(java.lang.Math.abs((long) -2147483648L))")
+                || absJava.contains("checkInt(java.lang.Math.abs("),
+            "the absInt result gate routes through the absent-origin "
+                + "checkInt entry: "
+                + absJava.lines().filter(l -> l.contains("absInt("))
+                    .findFirst().orElse("<missing>"));
+        ExecResult absRun = runInt32Project(absSource,
+            "emission_seam_abs_run");
+        check(absRun.exitCode() == 1 && absRun.output().contains(
+                "DEAL_ERROR_CODE: E8004 int out of safe range"),
+            "the absInt result gate raises the pinned E8004 message: "
+                + absRun.output());
+
+        // The int32 E8004 conversion arm and the legacy regression
+        // profile (the surviving E8004 split): signed-int32 pins "int
+        // out of safe range", legacy-safe-int ~"int out of range~".
+        ExecResult int32IntFrom = runInt32Project("""
+            export function main(): null { return null; }
+            export function test(): int { return int(2147483648.0); }
+            """, "emission_seam_int32_intfrom");
+        check(int32IntFrom.exitCode() == 1
+                && int32IntFrom.output().contains(
+                    "DEAL_ERROR_CODE: E8004 int out of safe range"),
+            "the signed-int32 intFromNumber arm raises the pinned E8004 "
+                + "message: " + int32IntFrom.output());
+        ExecResult legacyIntFrom = compileAndRunJvm("""
+            export function test(): int { return int(9007199254740992.0); }
+            """, "emission-seam-legacy-intfrom");
+        check(legacyIntFrom.exitCode() == 1
+                && legacyIntFrom.output().contains(
+                    "DEAL_ERROR_CODE: E8004 int out of range"),
+            "the legacy intFromNumber arm raises the pinned E8004 "
+                + "message: " + legacyIntFrom.output());
+    }
+
     /** The DEAL time-boundary pins (ISSUE-0375 D4 / ISSUE-0377 time pin;
      * jvm-int32-gate-activation-tree D4, Verification 1): under
      * {@code DEAL_V1_2_INT32} a real compiled program calling
@@ -9033,9 +9216,10 @@ public class JvmBackendTest {
             "no bare (int) narrowing of the retained time expression "
                 + "(the narrowing lives inside checkInt, behind the "
                 + "signed32 gate)");
-        check(java.contains("static int checkInt(long v) { if (v > 2147483647L || v < -2147483648L) throw new DealError(\"E8004\", \"int out of safe range\"); return (int) v; }"),
+        check(java.contains("static int checkInt(long v, java.lang.String oFile, int oLine, int oCol) { if (v > 2147483647L || v < -2147483648L) throw new DealError(\"E8004\", \"int out of safe range\", oFile, oLine, oCol); return (int) v; }"),
             "int32 checkInt gate is [-2147483648, 2147483647] with E8004 "
-                + "and the pinned message");
+                + "and the threaded origin — the time-boundary raise "
+                + "stays span-less through the absent-origin entry");
 
         // The direct int return artifact wraps the same retained
         // expression at the return boundary.
