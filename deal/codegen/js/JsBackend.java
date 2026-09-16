@@ -544,6 +544,14 @@ public final class JsBackend {
     private final List<RuntimeClassDefaultPlan> runtimePlans =
         new ArrayList<>();
 
+    // ISSUE-0599: the completion span of the immediately awaited call —
+    // the await expression's own span, appended as the second trailing
+    // span triplet by the first emitCall after the call site's own
+    // triplet (cleared before nested argument emissions; restored by
+    // emitAwait), so the host async completion check reports the await
+    // site and every other check keeps the call site.
+    private Span awaitedCallSpanOverride;
+
     private JsBackend(Map<ExpressionNode, Type> typeMap, SymbolTable symbols,
                       String sourcePath, String modulePath,
                       Map<String, String> importResolutions,
@@ -827,17 +835,13 @@ public final class JsBackend {
             switch (stmt) {
                 case ClassDeclaration cd -> predeclares.add(
                     "let " + cd.name() + "$new; let " + cd.name() + "$meta;"
-                        + (publishedPlanFor(cd) != null
-                            ? " let " + cd.name() + "$plan;"
-                            : ""));
+                        + " let " + cd.name() + "$plan;");
                 case ExportDeclaration ed -> {
                     switch (ed.declaration()) {
                         case ClassDeclaration cd -> predeclares.add(
                             "let " + cd.name() + "$new; let "
                                 + cd.name() + "$meta;"
-                                + (publishedPlanFor(cd) != null
-                                    ? " let " + cd.name() + "$plan;"
-                                    : "")
+                                + " let " + cd.name() + "$plan;"
                                 + (cd.isJsonable()
                                     ? " let " + cd.name() + "$fromJson; let "
                                         + cd.name() + "$toJson; let "
@@ -875,12 +879,20 @@ public final class JsBackend {
                 HostModuleDeclarations hostDecls =
                     hostModules.get(imp.modulePath());
                 if (hostDecls != null) {
+                    // The raw import specifier byte-for-byte plus the
+                    // import statement's span (ISSUE-0599, the
+                    // reference's load_host call shape,
+                    // deal/codegen/lua/LuaBackend.java:2330-2363): every
+                    // E8011 load-time rejection reports the import site
+                    // and names the module (host-missing-export).
                     importBindings.add("const " + jsName(imp.alias())
                         + " = $rt.loadHost($require("
                         + jsStringLiteral(relativeSpecifier(
                             imp.modulePath()))
                         + "), "
-                        + renderHostDeclaredMap(hostDecls) + ");");
+                        + renderHostDeclaredMap(hostDecls) + ", "
+                        + jsStringLiteral(imp.modulePath()) + ", "
+                        + spanArgs(imp.span()) + ");");
                     continue;
                 }
                 String specifier = importRequireSpecifier(imp);
@@ -1707,11 +1719,13 @@ public final class JsBackend {
 
     /**
      * The shared wrapper body emission: entry parameter checks in
-     * parameter order against the declared parameter types with the
-     * forwarded {@code $file}/{@code $line}/{@code $column} span (so
-     * parameter errors report the call site, js-backend-runtime D6),
-     * the body statement walk inside an additional block scope with
-     * the parameters declared above it (mirroring the checker's
+     * parameter order against the declared parameter types with each
+     * parameter's own declared type span (the reference's parameter
+     * check form, LuaBackend.java:1878-1886 — a boundary error reports
+     * the parameter declaration site, so the three lanes agree on the
+     * pinned corpus span; the pre-flip forwarded-call-site form is
+     * retired), the body statement walk inside an additional block scope
+     * with the parameters declared above it (mirroring the checker's
      * function scope and body Block scope, so per-scope hoisted
      * {@code let}s legally shadow the parameter bindings), and — for a
      * function whose declared return type is {@code null} — the
@@ -1732,8 +1746,8 @@ public final class JsBackend {
     private void emitWrappedBody(List<Parameter> params, Block body,
                                  Type returnType, Span fallOffSpan) {
         // js-v12-source-maps D2: the wrapper's entry parameter-check
-        // group records its mapping at the emission site too (the first
-        // parameter's type span — the span the emitted checks forward) —
+        // group records its mapping at the emission site (the first
+        // parameter's type span — the span the emitted checks carry) —
         // wrapper, check, and entry-shim emissions record the same way.
         if (!params.isEmpty()) {
             recordMapping(params.get(0).type().span());
@@ -1742,8 +1756,8 @@ public final class JsBackend {
             Type paramType = resolveTypeNode(param.type());
             if (paramType != null && !(paramType instanceof Type.Error)
                     && !(paramType instanceof Type.Null)) {
-                line(emitCheckExprForwarded(jsName(param.name()), paramType)
-                    + ";");
+                line(emitCheckExpr(jsName(param.name()), paramType,
+                    param.type().span()) + ";");
             }
         }
         // The body statements emit inside an additional block scope:
@@ -1844,18 +1858,66 @@ public final class JsBackend {
                 emitJsonableArtifacts(cd, plan);
             }
         } else {
-            String thunk = classDefaultsThunk(cd);
+            // ISSUE-0599 (the JS lane convergence leaf): the plan-less
+            // path constructs through the same $rt.classPlan machinery
+            // over the synthesized AST plan list (the LuaBackend
+            // synthesizedPlan mirror) — the four pinned phases including
+            // the phase-3 provided-value validation and the E8007
+            // identity message. The former makeClass overlay ran no
+            // provided-value validation (the bytes-class-default-
+            // integration divergence). The @jsonable wrappers keep the
+            // synthesized defaults thunk (the walker consumes exactly
+            // the omitted required entries through it); it is built
+            // lazily so a non-jsonable class records no duplicate
+            // expression mappings.
+            line(cd.name() + "$plan = " + synthesizedPlanList(cd) + ";");
             line(cd.name() + "$new = (provided, $file, $line, $column) => "
-                + "$rt.makeClass(" + jsStringLiteral(cd.name()) + ", "
-                + jsStringLiteral(identity) + ", "
-                + thunk + ", provided, $file, $line, $column);");
+                + "$rt.classPlan(" + jsStringLiteral(identity) + ", "
+                + cd.name() + "$plan, provided, $file, $line, $column);");
             line(cd.name() + "$meta = { $kind: \"class\", $classname: "
                 + jsStringLiteral(identity) + " };");
             if (cd.isJsonable() && statementDepth == 0) {
-                emitJsonableArtifacts(cd, thunk);
+                emitJsonableArtifacts(cd, classDefaultsThunk(cd));
             }
         }
         out.append("\n");
+    }
+
+    /**
+     * The synthesized pre-plan fallback plan list (the
+     * {@code LuaBackend.synthesizedPlan} mirror,
+     * deal/codegen/lua/LuaBackend.java:1795-1817): one entry per declared
+     * field in class source order with the pinned
+     * {@code $rt.classPlan} shape {@code {name, descriptor, optional,
+     * evaluator?}}. Used only when the graph published no plan for the
+     * visited declaration — the standalone entry points and the
+     * conformance lane's per-module compilation — so the plan-less path
+     * still constructs through the real four-phase plan machinery. A
+     * required-present entry's evaluator is the same expression the
+     * defaults thunk carries (declared default, DEAL null for a required
+     * nullable, otherwise the type-node zero value); an optional entry
+     * carries no evaluator and never evaluates.
+     */
+    private String synthesizedPlanList(ClassDeclaration cd) {
+        StringBuilder sb = new StringBuilder("[");
+        boolean first = true;
+        for (ClassField field : cd.fields()) {
+            if (!first) sb.append(",");
+            first = false;
+            Type fieldType = resolveTypeNode(field.type());
+            String descriptor = (fieldType == null
+                || fieldType instanceof Type.Error)
+                ? jsStringLiteral("table")
+                : jsStringLiteral(descriptors.encode(fieldType));
+            sb.append("{ name: ").append(jsStringLiteral(field.name()))
+                .append(", descriptor: ").append(descriptor)
+                .append(", optional: ").append(field.optional());
+            if (!field.optional()) {
+                sb.append(", evaluator: () => ").append(fieldDefault(field));
+            }
+            sb.append(" }");
+        }
+        return sb.append("]").toString();
     }
 
     /**
@@ -2878,15 +2940,15 @@ public final class JsBackend {
             }
         }
         for (String name : hoistedClasses) {
-            // A plan-bearing class additionally predeclares its
-            // scope-local plan binding (ISSUE-0545): the declaration
-            // site assigns the plan list, and $rt.classPlan construction
-            // sites in the same list resolve through the hoisted
-            // binding, exactly like the $new/$meta pair.
+            // A class additionally predeclares its scope-local plan
+            // binding (ISSUE-0545/ISSUE-0599): the declaration site
+            // assigns the plan list — the published plan or the
+            // synthesized plan of the plan-less path — and
+            // $rt.classPlan construction sites in the same list resolve
+            // through the hoisted binding, exactly like the $new/$meta
+            // pair.
             line("let " + name + "$new; let " + name + "$meta;"
-                + (publishedPlanFor(classDeclarations.get(name)) != null
-                    ? " let " + name + "$plan;"
-                    : ""));
+                + " let " + name + "$plan;");
             if ("class".equals(firstKind.get(name))) {
                 declareLocalClass(name);
             }
@@ -3026,9 +3088,23 @@ public final class JsBackend {
      * evaluation before an await precedes evaluation after it — native
      * async semantics. The awaited value is not a source-language
      * value: the wrapper shape stays the only source-visible form.
+     *
+     * Span convergence (ISSUE-0599): the awaited call appends the
+     * {@code await} expression's own span as a second trailing triplet
+     * (see {@link #emitCall}), so the host async wrapper's completion
+     * check reports the pinned await site (host-async-bad) while its
+     * shape check keeps the call site (host-async-shape-bad/value) — the
+     * reference's split of the caller-side with the await span
+     * (LuaBackend.java:2676-2678) and the call-site host-wrapper checks.
      */
     private String emitAwait(AwaitExpression await) {
-        return "(await " + emitExpression(await.callee()) + ")";
+        Span saved = awaitedCallSpanOverride;
+        awaitedCallSpanOverride = await.span();
+        try {
+            return "(await " + emitExpression(await.callee()) + ")";
+        } finally {
+            awaitedCallSpanOverride = saved;
+        }
     }
 
     /**
@@ -3300,6 +3376,17 @@ public final class JsBackend {
      * arguments (js-backend-emitter D6).
      */
     private String emitCall(CallExpr call) {
+        // The awaited-call completion span (ISSUE-0599): the immediately
+        // awaited call appends a second span triplet — the await
+        // expression's own span — after its call-site triplet, so the
+        // host async wrapper's completion check (and only that check)
+        // reports the await site while its shape/arity/parameter checks
+        // keep reporting the call site (the reference's split,
+        // LuaBackend.java:2676-2678 caller check plus the call-site
+        // host-wrapper checks). Consumed before any nested emission so
+        // calls inside the arguments keep their own spans.
+        Span completionSpan = awaitedCallSpanOverride;
+        awaitedCallSpanOverride = null;
         Type calleeType = typeOf(call.callee());
         StringBuilder args = new StringBuilder();
         for (int i = 0; i < call.args().size(); i++) {
@@ -3309,13 +3396,17 @@ public final class JsBackend {
         // The span triple joins the user arguments with a separator only
         // when user arguments exist: a zero-argument call must emit
         // ".$f(<file>, <line>, <column>)" — never the invalid
-        // ".$f(, <file>, ...)" leading-comma form.
+        // ".$f(, <file>, ...)" leading-comma form. An awaited call
+        // appends the completion span triplet consumed above.
         StringBuilder callArgs = new StringBuilder();
         callArgs.append(args);
         if (args.length() > 0) {
             callArgs.append(", ");
         }
         callArgs.append(spanArgs(call.span()));
+        if (completionSpan != null) {
+            callArgs.append(", ").append(spanArgs(completionSpan));
+        }
         // v1.2 bytes intrinsic (js-v12-int32-bytes D3): bytes(n) lowers
         // to $rt.bytes(n, <file>, <line>, <column>) directly — not
         // through the header wrapper's .$f entry (the task pins the
@@ -4231,17 +4322,6 @@ public final class JsBackend {
     private String emitCheckExpr(String valueExpr, Type type, Span span) {
         if (type == null) return valueExpr;
         return emitCheckExprCore(valueExpr, type, spanArgs(span));
-    }
-
-    /**
-     * The wrapper-entry variant of the typed-boundary check: the span
-     * arguments are the forwarded {@code $file}/{@code $line}/
-     * {@code $column} parameters, so a parameter error reports the call
-     * site (js-backend-runtime D6).
-     */
-    private String emitCheckExprForwarded(String valueExpr, Type type) {
-        if (type == null) return valueExpr;
-        return emitCheckExprCore(valueExpr, type, "$file, $line, $column");
     }
 
     private String emitCheckExprCore(String valueExpr, Type type,

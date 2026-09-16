@@ -902,7 +902,9 @@ public class JsBackendTest {
         check(js.contains("static$"), "static$ references emit translated");
         check(js.contains("h.static"), "property position keeps the raw key");
         check(js.contains("[\"static\"]: 3"), "provided literal uses the raw computed key");
-        check(js.contains("[\"static\"]: 0"), "defaults thunk uses the raw computed key");
+        check(js.contains("Holder$plan = [{ name: \"static\", "
+            + "descriptor: \"int\", optional: false, evaluator: () => 0 }];"),
+            "the synthesized plan list keys the field by the raw name");
         check(js.contains("$rt.setProp($exports, \"test\", test);"),
             "export key stays raw");
     }
@@ -929,10 +931,10 @@ public class JsBackendTest {
         check(js.contains("add = $rt.function(\"(int,int)->int\", "
             + "function add$f(a, b, $file, $line, $column) {"),
             "add wrapper with the exact (int,int)->int descriptor");
-        check(js.contains("$rt.checkInt(a, $file, $line, $column);"),
-            "entry parameter check with the forwarded span");
-        check(js.contains("$rt.checkInt(b, $file, $line, $column);"),
-            "second parameter check in parameter order");
+        check(js.contains("$rt.checkInt(a, \"jstest-wrappers.deal\", 2, 17);"),
+            "entry parameter check carries the parameter's declared type span");
+        check(js.contains("$rt.checkInt(b, \"jstest-wrappers.deal\", 2, 25);"),
+            "second parameter check carries its own declared type span");
         check(js.contains("first = $rt.function(\"([int])->int\""),
             "canonical array descriptor [int] in the wrapper sig "
                 + "(the legacy int[] spelling is gone)");
@@ -1006,10 +1008,10 @@ public class JsBackendTest {
                 + "(duplicate-free strict-mode parameter list)");
         check(!js.contains("function f$f(file, line, column, file, line, column)"),
             "no duplicate bare span parameters in the same parameter list");
-        check(js.contains("$rt.checkString(file, $file, $line, $column);"),
-            "parameter checks forward the $-prefixed span");
-        check(js.contains("$rt.checkInt(line, $file, $line, $column);"),
-            "the line parameter checks with the forwarded span");
+        check(js.contains("$rt.checkString(file, \"jstest-spancollide.deal\", 1, 18);"),
+            "parameter checks carry the parameter's declared type span");
+        check(js.contains("$rt.checkInt(line, \"jstest-spancollide.deal\", 1, 32);"),
+            "the line parameter check carries its own declared type span");
     }
 
     private static void testClassEmissionPins() {
@@ -1031,11 +1033,15 @@ public class JsBackendTest {
         if (res == null || res.hasErrors()) return;
 
         String js = res.source();
+        check(js.contains("Point$plan = [{ name: \"x\", descriptor: \"int\", "
+            + "optional: false, evaluator: () => 10 },{ name: \"nick\", "
+            + "descriptor: \"?string\", optional: true }];"),
+            "Point$plan carries the synthesized plan list (required "
+                + "evaluator, optional entry with no evaluator)");
         check(js.contains("Point$new = (provided, $file, $line, $column) => "
-            + "$rt.makeClass(\"Point\", \"@Main/Point\", "
-            + "() => ({ [\"x\"]: 10, [\"nick\"]: $rt.MISSING }), "
-            + "provided, $file, $line, $column);"),
-            "Point$new with the computed-key defaults thunk (MISSING optionals)");
+            + "$rt.classPlan(\"@Main/Point\", Point$plan, provided, $file, "
+            + "$line, $column);"),
+            "Point$new constructs through $rt.classPlan over the plan list");
         check(js.contains("Point$meta = { $kind: \"class\", "
             + "$classname: \"@Main/Point\" };"),
             "inline META pair with the module-qualified identity");
@@ -1075,8 +1081,8 @@ public class JsBackendTest {
         if (res == null || res.hasErrors()) return;
 
         String js = res.source();
-        check(js.contains("let U$new; let U$meta; let U$fromJson; "
-            + "let U$toJson; let U$fields;"),
+        check(js.contains("let U$new; let U$meta; let U$plan; "
+            + "let U$fromJson; let U$toJson; let U$fields;"),
             "the header predeclares the $-sigil jsonable artifact bindings");
         check(js.contains("U$fromJson = $rt.function(\"(string)->?@Main/U\", "
             + "(s, $file, $line, $column) => $rt.jsonFromJson(\"@Main/U\", "
@@ -1287,11 +1293,15 @@ public class JsBackendTest {
             "the nested class artifacts never predeclare in the module header");
         check(js.contains("let Inner$new; let Inner$meta;"),
             "the scope-local predeclare pair binds the artifact names");
+        check(js.contains("Inner$plan = [{ name: \"v\", descriptor: \"int\", "
+                + "optional: false, evaluator: () => $rt.intAdd(seed, 2, "),
+            "the declaration-site plan list carries the canonical identity "
+                + "and an evaluator closing over seed");
         check(js.contains("Inner$new = (provided, $file, $line, $column) => "
-                + "$rt.makeClass(\"Inner\", \"@Main/Inner\", "
-                + "() => ({ [\"v\"]: $rt.intAdd(seed, 2, "),
-            "the declaration-site construction closure carries the "
-                + "canonical identity and a defaults thunk closing over seed");
+                + "$rt.classPlan(\"@Main/Inner\", Inner$plan, provided, "
+                + "$file, $line, $column);"),
+            "the declaration-site construction closure constructs through "
+                + "$rt.classPlan over the scope-local plan");
         check(js.contains("Inner$meta = { $kind: \"class\", "
                 + "$classname: \"@Main/Inner\" };"),
             "the inline META pair carries the canonical identity text");
@@ -1313,8 +1323,8 @@ public class JsBackendTest {
                 + (func == null ? "<null>" : func.diagnostics()));
         if (func != null && !func.hasErrors()) {
             check(func.source().contains(
-                    "() => ({ [\"v\"]: next.$f("),
-                "the defaults thunk captures the scope-local function "
+                    "evaluator: () => next.$f("),
+                "the plan evaluator captures the scope-local function "
                     + "(call through its wrapper)");
         }
 
@@ -1564,8 +1574,9 @@ public class JsBackendTest {
         if (res == null || res.hasErrors()) return;
 
         String js = res.source();
-        check(js.contains("[\"__proto__\"]: $rt.MISSING"),
-            "defaults thunk spells the __proto__ field as a computed key");
+        check(js.contains("P$plan = [{ name: \"__proto__\", "
+            + "descriptor: \"int\", optional: true }];"),
+            "the synthesized plan spells the __proto__ field as a plan entry");
         check(js.contains("P$new({ [\"__proto__\"]: 7 }, "),
             "provided object literal spells __proto__ as a computed key");
         check(js.contains("$rt.setProp(p, \"__proto__\", "),
@@ -1897,10 +1908,11 @@ public class JsBackendTest {
             check(js.contains("$rt.loadHost($require(" + q + "./hostmod"
                     + q + "), {" + q + "hostFn" + q + ": { $k: " + q
                     + "function" + q + ", $d: " + q + "(int)->int" + q
-                    + " }})"),
+                    + " }}, " + q + "./hostmod" + q
+                    + ", " + q + "jstest-host-abi-fn.deal" + q + ", 1, 1)"),
                 "the host binding renders the loadHost call with the raw "
-                    + "specifier and the canonical function declared map: "
-                    + js);
+                    + "specifier, the canonical function declared map, and "
+                    + "the import-site span: " + js);
             check(js.contains("h.hostFn.$f(1, "),
                 "host member calls route through the wrapper $f");
         }
@@ -2342,9 +2354,10 @@ public class JsBackendTest {
             "export function test(): int { return int(1.0e300); }",
             "int-finite-range");
         check(range.exitCode() == 1 && range.output().contains("DEAL_ERROR_CODE: E8004")
-                && range.output().contains("int out of safe range"),
-            "finite out-of-range → E8004 'int out of safe range', exit 1: "
-                + range.output());
+                && range.output().contains("int out of range"),
+            "finite out-of-range under the legacy profile → E8004 "
+                + "'int out of range' (the legacy branch's pinned "
+                + "template), exit 1: " + range.output());
 
         NodeResult divz = runDealNode(
             "export function test(): int { return 5 / 0; }",
@@ -3109,9 +3122,12 @@ public class JsBackendTest {
                     && js.contains("bytes$new = (provided, $file, $line, $column) =>"),
                 "the user class named bytes emits its bytes$new/bytes$meta "
                     + "artifact pair");
-            check(js.contains("$rt.makeClass(\"bytes\""),
-                "class construction routes through $rt.makeClass with "
-                    + "the user class identity");
+            check(js.contains("bytes$plan = [{ name: \"x\", descriptor: "
+                    + "\"int\", optional: false, evaluator: () => 0 }];")
+                    && js.contains("$rt.classPlan(\"@Main/bytes\", "
+                        + "bytes$plan, provided, $file, $line, $column);"),
+                "class construction routes through $rt.classPlan over the "
+                    + "synthesized plan with the user class identity");
         }
 
         // (b) A module-level user FUNCTION named bytes: checker-accepted,
@@ -3445,10 +3461,12 @@ public class JsBackendTest {
             """, "bytes-closure-deep-negative-d2");
         check(badDepth2.exitCode() == 1
                 && badDepth2.output().contains("DEAL_ERROR_CODE: E8003")
-                && badDepth2.output().contains("expected bytes"),
-            "a wrong inner shape at depth 2 raises the E8003-wrapped "
-                + "element mismatch naming 'expected bytes' (the walker "
-                + "reached the bytes row): " + badDepth2.output());
+                && badDepth2.output().contains(
+                    "array element 1 type mismatch"),
+            "a wrong inner shape at depth 2 raises the E8003 element "
+                + "mismatch at the failing element (the converged message "
+                + "form carries no inner text — the reached descriptor row "
+                + "is the error's expected field): " + badDepth2.output());
 
         NodeResult badDepth3 = runDealNode("""
             export function test(): int {
@@ -3460,10 +3478,12 @@ public class JsBackendTest {
             """, "bytes-closure-deep-negative-d3");
         check(badDepth3.exitCode() == 1
                 && badDepth3.output().contains("DEAL_ERROR_CODE: E8003")
-                && badDepth3.output().contains("expected array"),
-            "a wrong inner shape at depth 3 raises the E8003-wrapped "
-                + "element mismatch naming 'expected array' (the walker "
-                + "reached the second array level): " + badDepth3.output());
+                && badDepth3.output().contains(
+                    "array element 1 type mismatch"),
+            "a wrong inner shape at depth 3 raises the E8003 element "
+                + "mismatch at the failing element (the converged message "
+                + "form carries no inner text — the reached descriptor row "
+                + "is the error's expected field): " + badDepth3.output());
     }
 
     /**
@@ -4037,7 +4057,7 @@ public class JsBackendTest {
               $rt.checkType("[int]", [1, "x", 3], "probe.js", 1, 1);
               $fail = "e8003";
             } catch (e) {
-              if (e.$dealCode !== "E8003" || e.message !== "array element 2 type mismatch: expected int") {
+              if (e.$dealCode !== "E8003" || e.message !== "array element 2 type mismatch") {
                 $fail = "e8003-msg:" + e.$dealCode + ":" + e.message;
               }
             }
@@ -4051,12 +4071,14 @@ public class JsBackendTest {
                 $fail = "e8010-msg:" + e.$dealCode + ":" + e.message;
               }
             }
-            // E8004 pinned int safe-range message routes through checkInt.
+            // E8004 pinned legacy safe-range message routes through checkInt
+            // (the suite's direct probe runs outside any emitted module, so
+            // the runtime keeps the legacy profile's template).
             try {
               $rt.checkType("int", 2 ** 60, "probe.js", 1, 1);
               $fail = "e8004";
             } catch (e) {
-              if (e.$dealCode !== "E8004" || e.message !== "int out of safe range") {
+              if (e.$dealCode !== "E8004" || e.message !== "int out of range") {
                 $fail = "e8004-msg:" + e.$dealCode + ":" + e.message;
               }
             }
@@ -4441,8 +4463,9 @@ public class JsBackendTest {
                 && located.output().contains("DEAL_ERROR_CODE: E8001")
                 && located.output().contains("expected int")
                 && located.output().contains(
-                    " at jstest-span-located.deal:5:10"),
-            "the boundary error reports the call-site location: "
+                    " at jstest-span-located.deal:1:18"),
+            "the parameter boundary error reports the parameter's declared "
+                + "location (the reference's parameter-check span): "
                 + located.output());
     }
 

@@ -42,6 +42,12 @@ import java.util.Set;
  *       byte-exact on luajit ({@code 389/0}), zero luajit gate
  *       failures, and no luajit row in the pinned differential-failure
  *       enumeration;</li>
+ *   <li>the per-backend pin of the js lane (ISSUE-0599, the JS lane
+ *       convergence leaf): every runtime-classified case passes
+ *       byte-exact on js ({@code 389/0}), zero js gate failures, and no
+ *       js row in the pinned differential-failure enumeration (the
+ *       retired pre-flip E8003 first-byte divergence is gone with its
+ *       row);</li>
  *   <li>no {@code SKIP} verdict class appears anywhere (the gate has no
  *       skip branch; {@code Skipped: 0}).</li>
  * </ul>
@@ -154,16 +160,10 @@ public class DifferentialGateLanesCorpusTest {
         "backend-runtime/arrays/index-negative-write.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/arrays/index-oob.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/arrays/index-write-gap.deal | jvm | PROCESS_FAILURE",
-        "backend-runtime/class-runtime-errors/dynamic-bad-class-array-element-e8001.deal | js | TRANSCRIPT_MISMATCH",
-        "backend-runtime/class-runtime-errors/dynamic-bad-class-param-e8001.deal | js | TRANSCRIPT_MISMATCH",
-        "backend-runtime/class-runtime-errors/dynamic-bad-imported-class-param-e8001.deal | js | TRANSCRIPT_MISMATCH",
         "backend-runtime/control-flow-errors/error-inside-for-of.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/control-flow-errors/error-inside-while-loop.deal | jvm | PROCESS_FAILURE",
-        "backend-runtime/defaults/plan-host-discriminator.deal | js | PROCESS_FAILURE",
         "backend-runtime/descriptors/canonical-sig-mismatch-e8010.deal | jvm | PROCESS_FAILURE",
-        "backend-runtime/bytes/bytes-fn-adapter-e8010.deal | js | TRANSCRIPT_MISMATCH",
         "backend-runtime/bytes/bytes-fn-adapter-e8010.deal | jvm | PROCESS_FAILURE",
-        "backend-runtime/host-abi/host-async-bad.deal | js | TRANSCRIPT_MISMATCH",
         "backend-runtime/host-abi/host-async-bad.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/host-abi/host-async-shape-bad.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/host-abi/host-bad-return.deal | jvm | PROCESS_FAILURE",
@@ -172,38 +172,26 @@ public class DifferentialGateLanesCorpusTest {
         "backend-runtime/host-abi/host-nullable-function-return-bad.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/host-abi/host-prewrapped-bad.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/host-abi/host-rest-bad.deal | jvm | PROCESS_FAILURE",
-        "backend-runtime/host-abi/host-class-default-isolation.deal | js | PROCESS_FAILURE",
-        "backend-runtime/host-abi/host-class-export.deal | js | PROCESS_FAILURE",
-        "backend-runtime/host-abi/host-class-extra-field.deal | js | PROCESS_FAILURE",
         "backend-runtime/host-abi/host-empty-return-bad.deal | jvm | PROCESS_FAILURE",
-        "backend-runtime/host-abi/host-export-presence.deal | js | PROCESS_FAILURE",
         "backend-runtime/host-abi/host-invalid-utf8-e8010.deal | jvm | PROCESS_FAILURE",
-        "backend-runtime/host-abi/host-missing-export.deal | js | PROCESS_FAILURE",
         "backend-runtime/host-abi/host-missing-export.deal | jvm | PROCESS_FAILURE",
-        "backend-runtime/host-abi/host-nullable-function-param-bad.deal | js | TRANSCRIPT_MISMATCH",
         "backend-runtime/host-abi/host-nullable-return-bad.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/host-abi/host-null-return-bad.deal | jvm | PROCESS_FAILURE",
-        "backend-runtime/host-abi/host-surrogate-utf8-e8010.deal | js | TRANSCRIPT_MISMATCH",
         "backend-runtime/host-abi/host-surrogate-utf8-e8010.deal | jvm | PROCESS_FAILURE",
-        "backend-runtime/jsonable/jsonable-tojson-rejects-cyclic-table.deal | js | TRANSCRIPT_MISMATCH",
         "backend-runtime/jsonable/jsonable-tojson-rejects-cyclic-table.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/module-failures/imported-function-explicit-error.deal | jvm | PROCESS_FAILURE",
-        "backend-runtime/modules/modid-class-identity.deal | js | TRANSCRIPT_MISMATCH",
         "backend-runtime/modules/modid-class-identity.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/runtime-errors/array-negative-write-e8002.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/runtime-errors/async-error-code-through-module.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/runtime-errors/chained-access-type-error-e8001.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/runtime-errors/int-div-zero-e8005.deal | jvm | PROCESS_FAILURE",
-        "backend-runtime/runtime-errors/json-stringify-function-e8001.deal | js | TRANSCRIPT_MISMATCH",
         "backend-runtime/runtime-errors/nested-array-oob-e8001.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/runtime-errors/rethrow-across-function-boundary.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/runtime-errors/rethrow-preserves-code.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/runtime-errors/rtc-035-remainder-zero-error.deal | jvm | PROCESS_FAILURE",
-        "backend-runtime/runtime-errors/type-mismatch-e8001.deal | js | TRANSCRIPT_MISMATCH",
         "backend-runtime/runtime-errors/type-mismatch-e8001.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/runtime/int-convert-noninteger.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/runtime/int-convert-null.deal | jvm | PROCESS_FAILURE",
-        "backend-runtime/runtime/int-convert-range.deal | js | TRANSCRIPT_MISMATCH",
         "backend-runtime/runtime/int-convert-range.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/runtime/number-convert-null.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/source-location/036-runtime-source-array-oob.deal | jvm | PROCESS_FAILURE",
@@ -212,10 +200,8 @@ public class DifferentialGateLanesCorpusTest {
         "backend-runtime/source-location/async-error-source.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/source-location/int32-overflow-source.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/source-location/int-neg-min-source.deal | jvm | PROCESS_FAILURE",
-        "backend-runtime/source-location/json-error-source.deal | js | TRANSCRIPT_MISMATCH",
         "backend-runtime/source-location/module-error-source.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/source-location/nested-array-oob-source.deal | jvm | PROCESS_FAILURE",
-        "backend-runtime/source-location-precision/class-param-error-source.deal | js | TRANSCRIPT_MISMATCH",
         "backend-runtime/source-location-precision/closure-error-source.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/source-location-precision/imported-async-error-source.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/source-location-precision/loop-error-source.deal | jvm | PROCESS_FAILURE",
@@ -224,42 +210,17 @@ public class DifferentialGateLanesCorpusTest {
         "backend-runtime/stdlib-edge/string-length-dynamic-nonstring.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/stdlib-edge/table-keys-dynamic-nontable.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/stdlib-edge/time-now-millis-positive.deal | jvm | PROCESS_FAILURE",
-        "backend-runtime/stdlib/json/json-stringify-bytes-error.deal | js | TRANSCRIPT_MISMATCH",
         "backend-runtime/stdlib/math/int-abs-min-overflow.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/stdlib/table/keys-nontable-error.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/tables/table-dynamic-read-runtime-error.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/tables/table-missing-read-nonnullable-error.deal | jvm | PROCESS_FAILURE",
-        "backend-runtime/type-system/dynamic-array-element-e8003.deal | js | TRANSCRIPT_MISMATCH",
-        "backend-runtime/bytes/bytes-dynamic-nested-first-element-e8003.deal | js | TRANSCRIPT_MISMATCH",
         "backend-runtime/type-system/dynamic-nonfunction-to-function-e8001.deal | jvm | PROCESS_FAILURE",
         "backend-runtime/type-system/dynamic-return-e8001.deal | jvm | PROCESS_FAILURE",
-        "backend-runtime/type-system/dynamic-to-int-param-e8001.deal | js | TRANSCRIPT_MISMATCH",
         "backend-runtime/type-system/dynamic-to-int-param-e8001.deal | jvm | PROCESS_FAILURE",
-        "backend-runtime/type-system/dynamic-wrong-to-nullable-e8001.deal | jvm | PROCESS_FAILURE",
-        // ISSUE-0551 (the JVM host/module/JSON bytes leaf): the js leg
-        // of the nested JSON fixture fails its transcript (the std/json
-        // bytes arm carries no expected/actual pair) — the jvm legs
-        // raise their pinned codes but the captured JVM DEALRuntimeError
-        // carries no column (ISSUE-0276), so they are tracked in the
-        // registry set above instead. The luajit legs converged at
-        // ISSUE-0598 (the host/stdjson-raised errors now carry the
-        // pinned call-site spans through the converged emission).
-        "backend-runtime/stdlib/json/json-stringify-nested-bytes-error.deal | js | TRANSCRIPT_MISMATCH",
-        // ISSUE-0552 (the JVM bytes integrated-verification lane
-        // state): the new runtime-ok fixture passes the luajit and jvm
-        // lanes; the plan-less JsLane class-default path (the lane
-        // compiles without the published plan machinery, so its
-        // makeClass overlay runs no phase-3 provided-value
-        // validation) accepts the wrong-kind provided value, the
-        // fixture's pinned E8001 never raises, and the TEST_FAIL
-        // transcript diverges.
-        "backend-runtime/bytes/bytes-class-default-integration.deal | js | TRANSCRIPT_MISMATCH");
+        "backend-runtime/type-system/dynamic-wrong-to-nullable-e8001.deal | jvm | PROCESS_FAILURE");
 
     /** Representative pinned first-difference details (the gate's
      * bounded-context reports), asserted verbatim. */
-    private static final String JS_E8003_DIVERGENCE_DETAIL =
-        "stdout differs at byte 100: expected 0x22, got 0x3A; context "
-            + "expected \"mismatch\\\",\\\"sourc\", got \"mismatch: expect\"";
     private static final String JVM_ADD_OVERFLOW_MISSING_COLUMN_PREFIX =
         "the captured DEAL error carries no complete DEALRuntimeError "
             + "field set (code, message, file, line, column are "
@@ -695,6 +656,24 @@ public class DifferentialGateLanesCorpusTest {
                 "the pinned class of " + triplePin
                     + " is a closed mismatch class");
         }
+        // ISSUE-0599 (the JS lane convergence leaf): the js lane passes
+        // every runtime-classified case byte-exact — the per-backend pin
+        // {389, 0}, and the pinned differential-failure enumeration
+        // above carries no js row anymore.
+        int[] jsCounts = run.perBackend().get("js");
+        check(run.runtimeCasesDispatched() == 389
+                && jsCounts[0] == 389 && jsCounts[1] == 0,
+            "the js lane passes every dispatched runtime case "
+                + "byte-exact (389/0), got " + jsCounts[0] + " / "
+                + jsCounts[1] + " over "
+                + run.runtimeCasesDispatched() + " dispatched");
+        check(run.failures().stream().noneMatch(f ->
+                f.subject().startsWith("js ")),
+            "zero js gate failures after the lane convergence, got: "
+                + run.failures().stream()
+                    .filter(f -> f.subject().startsWith("js "))
+                    .map(DifferentialGate.GateFailure::message)
+                    .toList());
 
         // The shared time fixture's js leg passes after the
         // disposition-application unit (ISSUE-0536 remediation): the
@@ -744,19 +723,18 @@ public class DifferentialGateLanesCorpusTest {
                     + "mismatch, got: " + modJs.mismatch());
         }
 
-        // Representative first-difference spot pins (the gate's bounded
-        // reports naming the first differing byte / field).
-        DifferentialGate.GateFailure jsDivergence = run.failures().stream()
-            .filter(f -> f.subject().equals("js "
-                + "backend-runtime/type-system/dynamic-array-element-e8003.deal"))
-            .findFirst().orElse(null);
-        check(jsDivergence != null
-                && jsDivergence.detail().equals(JS_E8003_DIVERGENCE_DETAIL),
-            "the js E8003 divergence pins the exact first differing byte, "
-                + "got: " + jsDivergence);
         // ISSUE-0598: the luajit lane converged — int-add-overflow
         // passes byte-exact (the pinned pre-flip divergence detail is
-        // gone with its row).
+        // gone with its row). ISSUE-0599: the js lane converged the same
+        // way — the dynamic-array-element E8003 divergence (the retired
+        // "stdout differs at byte 100" report) is gone with its row and
+        // the lane carries zero gate failures.
+        DifferentialGate.GateFailure jsDivergence = run.failures().stream()
+            .filter(f -> f.subject().startsWith("js "))
+            .findFirst().orElse(null);
+        check(jsDivergence == null,
+            "no js divergence remains after the lane convergence, got: "
+                + jsDivergence);
         check(run.failures().stream().noneMatch(f ->
                 f.subject().startsWith("luajit ")),
             "zero luajit gate failures after the lane convergence, got: "

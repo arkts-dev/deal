@@ -401,8 +401,8 @@ test("an array parameter checks elements against the element descriptor", functi
   }, { join: fnDecl("([string])->string") });
   assertError(function() {
     surface.join.$f(["a", 7], "probe.js", 1, 1);
-  }, "E8010", "parameter 1 type mismatch: array element 2 type mismatch: expected string",
-    "an element mismatch reports E8010 at the parameter position with the 1-based index");
+  }, "E8010", "parameter 1 type mismatch: array element 2 type mismatch",
+    "an element mismatch reports E8010 at the parameter position with the 1-based index (the reference's exact E8003 message form, no inner-message suffix)");
 });
 
 test("a valid array parameter and return cross the boundary", function() {
@@ -433,8 +433,8 @@ test("an array return checks the carrier and its elements", function() {
   }, { split: fnDecl("()->[string]") });
   assertError(function() {
     badElement.split.$f("probe.js", 1, 1);
-  }, "E8010", "return value 1 type mismatch: array element 1 type mismatch: expected string",
-    "an element mismatch on the return is E8010");
+  }, "E8010", "return value 1 type mismatch: array element 1 type mismatch",
+    "an element mismatch on the return is E8010 (the reference's exact E8003 message form)");
 });
 
 // =========================================================================
@@ -820,7 +820,7 @@ test("a foreign-identity value at a class-typed parameter raises the pinned E801
   }, "E8010", "parameter 1 type mismatch: expected instance of " + CFG_IDENTITY + ", got @other/Thing",
     "nominal identity mismatch at the parameter is E8010 with the pinned expected/got");
   assertEqual(err.expected, CFG_IDENTITY, "expected carries the declared identity");
-  assertEqual(err.actual, "class", "actual carries the value kind (the identity texts live in the message)");
+  assertEqual(err.actual, "table", "actual carries the reference's Lua-side type() projection (the DEAL value carriers are tables; the identity texts live in the message)");
 });
 
 test("a foreign-identity value at a class-typed return raises the pinned E8010", function() {

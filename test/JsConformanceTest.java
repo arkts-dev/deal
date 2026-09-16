@@ -346,7 +346,7 @@ const $rt = require("../deal/runtime");
 module.exports = {
   Endpoint: {
     $kind: "class",
-    $classname: "@$external/host/cfg/Endpoint",
+    $classname: "@$external/host.cfg/Endpoint",
   },
 
   Endpoint_defaults: {
@@ -355,7 +355,7 @@ module.exports = {
 
   ServerConfig: {
     $kind: "class",
-    $classname: "@$external/host/cfg/ServerConfig",
+    $classname: "@$external/host.cfg/ServerConfig",
   },
 
   ServerConfig_defaults: {
@@ -535,7 +535,7 @@ module.exports = {
 
   Config: {
     $kind: "class",
-    $classname: "@$external/host/presence/Config",
+    $classname: "@$external/host.presence/Config",
   },
 
   Config_defaults: {
@@ -2023,8 +2023,26 @@ module.exports = {
                 dealJson.append("    \"host/").append(hostName)
                     .append("\": { \"declaration\": \"")
                     .append(declRel).append("\" }");
-                externals.put("host/" + hostName,
-                    declTarget.toAbsolutePath().normalize().toString());
+                // ISSUE-0599 (the conformance externals-identity
+                // convention): the corpus host triplets, the sidecar
+                // pins, and the three differential lanes project a host
+                // module's class identities through its dotted typing
+                // name (@$external/host.presence/Config — the raw
+                // specifier with '/' -> '.'), while the import
+                // resolution keys on the raw specifier. The
+                // isolated-phase context is fabricated, and its
+                // documented rule takes the first entry whose
+                // declaration path matches the source
+                // (ModuleIdentityResolver.externalKeyOf: "for a
+                // fabricated context with duplicates the first in
+                // member order wins deterministically") — so the dotted
+                // identity key is inserted first and the raw resolution
+                // key second, both naming the same declaration file.
+                // The manifest keeps the single valid raw-key entry.
+                String declPath = declTarget.toAbsolutePath()
+                    .normalize().toString();
+                externals.put("host." + hostName, declPath);
+                externals.put("host/" + hostName, declPath);
             }
             for (String raw : ffiImports) {
                 if (!first) {

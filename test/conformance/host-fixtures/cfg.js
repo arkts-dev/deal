@@ -16,7 +16,7 @@ const $rt = require("../deal/runtime");
 module.exports = {
   Endpoint: {
     $kind: "class",
-    $classname: "@$external/host/cfg/Endpoint",
+    $classname: "@$external/host.cfg/Endpoint",
   },
 
   Endpoint_defaults: {
@@ -25,7 +25,7 @@ module.exports = {
 
   ServerConfig: {
     $kind: "class",
-    $classname: "@$external/host/cfg/ServerConfig",
+    $classname: "@$external/host.cfg/ServerConfig",
   },
 
   ServerConfig_defaults: {

@@ -818,10 +818,14 @@ public class SourceMapTest {
         String[] clsArtifact = clsRes.source().split("\n", -1);
         List<SourceMapGenerator.Mapping> clsMappings = clsSmg.mappings();
         checkSiblingGroup(clsMappings, clsArtifact, 2, cWrap1, cRet1,
-            "first class default wrapper", "[\"a\"]: $rt.function",
+            "first class default wrapper",
+            "name: \"a\", descriptor: \"()->int\", optional: false, "
+                + "evaluator: () => $rt.function",
             "checkInt(1", "$rt.function(\"()->int\"");
         checkSiblingGroup(clsMappings, clsArtifact, 3, cWrap2, cRet2,
-            "second class default wrapper", "[\"b\"]: $rt.function",
+            "second class default wrapper",
+            "name: \"b\", descriptor: \"()->int\", optional: false, "
+                + "evaluator: () => $rt.function",
             "checkInt(2", "$rt.function(\"()->int\"");
         int cWrap1Gen = generatedLineOf(clsMappings, 2, cWrap1);
         int cRet1Gen = generatedLineOf(clsMappings, 2, cRet1);

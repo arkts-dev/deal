@@ -17,7 +17,7 @@ module.exports = {
 
   Config: {
     $kind: "class",
-    $classname: "@$external/host/presence/Config",
+    $classname: "@$external/host.presence/Config",
   },
 
   Config_defaults: {

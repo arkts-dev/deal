@@ -345,11 +345,10 @@ public class JsLaneTest {
     }
 
     private static void hostSurrogateUtf8E8010CodeProbe() throws Exception {
-        // The surrogate host fixture produces the same E8010 code the
-        // Lua lane pins; the message diverges pre-flip (JS renders
-        // "invalid UTF-8 encoding" vs the pinned "UTF-16 surrogate code
-        // point") — the gate reports the divergence as a real
-        // differential failure naming the backend, never a skip.
+        // The converged surrogate boundary (ISSUE-0599): the host
+        // returns one lone surrogate code unit, the runtime's pinned
+        // "UTF-16 surrogate code point" split fires, and the real
+        // sidecar comparison passes byte-exact on the js lane.
         String corpusPath =
             "backend-runtime/host-abi/host-surrogate-utf8-e8010.deal";
         JsLane lane = new JsLane(CORPUS_ROOT);
@@ -360,28 +359,56 @@ public class JsLaneTest {
         if (execution instanceof LaneExecution.Executed executed) {
             Optional<ErrorSnapshot.Framed> framed =
                 ErrorSnapshot.parseFraming(executed.stdout());
-            check(framed.isPresent() && framed.get().code().equals("E8010"),
-                "the surrogate host boundary raises the pinned E8010 code "
-                    + "via host-fixtures/bad_string.js, got: "
-                    + (framed.isPresent() ? framed.get().code()
+            check(framed.isPresent() && framed.get().code().equals("E8010")
+                    && framed.get().fields().message().equals(
+                        "return value 1 type mismatch: expected string, "
+                            + "got UTF-16 surrogate code point"),
+                "the surrogate host boundary raises the pinned E8010 "
+                    + "surrogate message via "
+                    + "host-fixtures/bad_string.js, got: "
+                    + (framed.isPresent() ? framed.get().fields()
                         : "<no framing>"));
         }
-        GateDispatcher.LaneOutcome outcome = dispatch(lane, laneCase);
-        check(!outcome.passed(), "the pre-flip JS message divergence is a "
-            + "real differential failure, never a skip");
-        check(outcome.mismatch().isPresent()
-                && outcome.mismatch().get().subject().equals("js"),
-            "the divergence names the js backend, got: " + outcome.mismatch());
+        assertPassed("converged surrogate host-boundary message "
+            + "(host-surrogate-utf8-e8010)", lane, laneCase);
+
+        // Anti-hollow: the probe is not vacuous — the message comparison
+        // is what carries the convergence, so a double rendering the
+        // retired general message fails the case naming the js backend.
+        GateDispatcher.LaneOutcome diverging = dispatch(
+            new JsLane(CORPUS_ROOT) {
+                @Override
+                public LaneExecution execute(LaneCase dispatched)
+                        throws Exception {
+                    LaneExecution base = super.execute(dispatched);
+                    if (base instanceof LaneExecution.Executed executed) {
+                        byte[] stdout = new String(executed.stdout(),
+                            StandardCharsets.UTF_8)
+                            .replace("UTF-16 surrogate code point",
+                                "invalid UTF-8 encoding")
+                            .getBytes(StandardCharsets.UTF_8);
+                        return new LaneExecution.Executed(stdout,
+                            executed.stderr(), executed.exitCode());
+                    }
+                    return base;
+                }
+            }, laneCase);
+        check(!diverging.passed(),
+            "a lane rendering the retired general message fails the case");
+        check(diverging.mismatch().isPresent()
+                && diverging.mismatch().get().clazz()
+                    == MismatchClass.TRANSCRIPT_MISMATCH
+                && diverging.mismatch().get().subject().equals("js"),
+            "the perturbation is TRANSCRIPT_MISMATCH naming the js "
+                + "backend, got: " + diverging.mismatch());
     }
 
     private static void typeMismatchE8001DivergenceProbe()
             throws Exception {
-        // The plain runtime type mismatch: JS produces the same E8001
-        // code, message, and expected/actual pair, but pre-flip the
-        // location diverges (the JS emitter reports the call-site span,
-        // the sidecar pins the Lua lane's parameter span) — the gate
-        // reports the divergence as a real differential failure naming
-        // the backend, never a skip (ISSUE-0277 owns the divergence).
+        // The converged runtime type mismatch (ISSUE-0599): JS produces
+        // the same E8001 code, message, expected/actual pair, and the
+        // reference's parameter-declaration span the sidecar pins, so
+        // the real sidecar comparison passes byte-exact on the js lane.
         String corpusPath =
             "backend-runtime/runtime-errors/type-mismatch-e8001.deal";
         JsLane lane = new JsLane(CORPUS_ROOT);
@@ -394,23 +421,53 @@ public class JsLaneTest {
                 ErrorSnapshot.parseFraming(executed.stdout());
             check(framed.isPresent() && framed.get().code().equals("E8001")
                     && framed.get().fields().message().equals("expected int")
+                    && framed.get().fields().line() == 6
+                    && framed.get().fields().column() == 21
                     && framed.get().fields().expected().isPresent()
                     && framed.get().fields().expected().get()
                         .equals("int")
                     && framed.get().fields().actual().isPresent()
                     && framed.get().fields().actual().get().equals("string"),
-                "JS produces the same E8001 code/message/expected/actual "
-                    + "pair the sidecar pins, got: "
+                "JS produces the E8001 code/message/expected/actual pair "
+                    + "and the parameter-declaration span the sidecar "
+                    + "pins, got: "
                     + (framed.isPresent() ? framed.get().fields()
                         : "<no framing>"));
         }
-        GateDispatcher.LaneOutcome outcome = dispatch(lane, laneCase);
-        check(!outcome.passed(), "the pre-flip JS location divergence is "
-            + "a real differential failure, never a skip");
-        check(outcome.mismatch().isPresent()
-                && outcome.mismatch().get().subject().equals("js"),
-            "the divergence names the js backend, got: "
-                + outcome.mismatch());
+        assertPassed("converged parameter-declaration span "
+            + "(type-mismatch-e8001)", lane, laneCase);
+
+        // Anti-hollow: the span comparison is what carries the
+        // convergence — a double reporting the retired call-site span
+        // fails the case as ERROR_SNAPSHOT_MISMATCH naming the field.
+        GateDispatcher.LaneOutcome diverging = dispatch(
+            new JsLane(CORPUS_ROOT) {
+                @Override
+                public LaneExecution execute(LaneCase dispatched)
+                        throws Exception {
+                    LaneExecution base = super.execute(dispatched);
+                    if (base instanceof LaneExecution.Executed executed) {
+                        byte[] stdout = new String(executed.stdout(),
+                            StandardCharsets.UTF_8)
+                            .replace("\"line\":6", "\"line\":10")
+                            .getBytes(StandardCharsets.UTF_8);
+                        return new LaneExecution.Executed(stdout,
+                            executed.stderr(), executed.exitCode());
+                    }
+                    return base;
+                }
+            }, laneCase);
+        check(!diverging.passed(),
+            "a lane reporting the retired call-site span fails the case");
+        check(diverging.mismatch().isPresent()
+                && diverging.mismatch().get().clazz()
+                    == MismatchClass.TRANSCRIPT_MISMATCH
+                && diverging.mismatch().get().subject().equals("js")
+                && diverging.mismatch().get().detail()
+                    .contains("stdout differs at byte"),
+            "the perturbation is TRANSCRIPT_MISMATCH naming the js "
+                + "backend and the first differing byte, got: "
+                + diverging.mismatch());
     }
 
     private static void companionThrowSourceFile() throws Exception {

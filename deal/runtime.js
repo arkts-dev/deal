@@ -97,6 +97,22 @@ function $kindOf($v) {
   return typeof $v;
 }
 
+// $luaKindOf: the Lua type() projection of a value — the "actual" label
+// of the checks whose messages are composed from a value's Lua-side
+// carrier kind rather than the runtime's own value form (the host
+// boundary's parameter/return arms, deal/runtime.lua:983/1025, and the
+// std/json unsupported-type arm, std/json.lua:136): every table-carried
+// value is a Lua table — the DEAL-null sentinel, Maps, Arrays, the bytes
+// carrier, class instances, and the function/class wrappers included —
+// a raw JS function stays "function", and primitives keep their names.
+function $luaKindOf($v) {
+  if ($v === $undefined) return "nil";
+  if (typeof $v === "object" || typeof $v === "function") {
+    return typeof $v === "function" ? "function" : "table";
+  }
+  return typeof $v;
+}
+
 // ===== Canonical descriptor parser (js-v12-completion-architecture D3) =====
 // $parse: the module-private canonical descriptor parser — the runtime
 // realization of CanonicalRuntimeTypeDescriptor.parse (the strict
@@ -306,6 +322,24 @@ function $parseClass($d, $cps, $st) {
   }
 }
 
+// $stringBoundaryMessage: the reason split of the string boundary
+// message — the JS analog of the reference's byte-walk reason split
+// (__rt.utf8_status, deal/runtime.lua:239-296, ISSUE-0598). JS strings
+// are UTF-16, so an unpaired surrogate code unit is the only malformed
+// content the walk can see: a string whose entire content is one lone
+// surrogate code unit is the analog of the reference's CESU-style
+// surrogate-code-point encoding ("expected string, got UTF-16 surrogate
+// code point", the host-surrogate-utf8-e8010 sidecar); an unpaired
+// surrogate embedded in a longer string is the analog of a malformed
+// encoding and keeps the general message ("expected string, got invalid
+// UTF-8 encoding", the host-invalid-utf8-e8010 sidecar).
+function $stringBoundaryMessage($v) {
+  if ($v.length === 1) {
+    return "expected string, got UTF-16 surrogate code point";
+  }
+  return "expected string, got invalid UTF-8 encoding";
+}
+
 // The pinned component alphabet: forbidden scalars end the maximal run.
 function $forbiddenInComponent($cp) {
   if ($cp < 0x20 || $cp === 0x7F) return true; // U+0000, C0/DEL controls
@@ -506,8 +540,10 @@ function $arrayFormIndex($key) {
 // encode_value. $path is the cycle-check stack: the Maps, Arrays, and
 // class instances currently being walked (push before recursing, pop
 // after — the finally arms), so a value already on the path raises E8001
-// "circular reference in JSON encoding" while shared (non-cyclic)
-// subgraphs serialize by duplication. Steps 1-9:
+// with the walk's cyclic message ($cyclic — the std/json needle by
+// default, the @jsonable toJson needle when that entry point installs
+// it) while shared (non-cyclic) subgraphs serialize by duplication.
+// Steps 1-9:
 //   1. null -> JSON null;
 //   2. string -> $scanStringValidity first, then pass through (escaped
 //      later by native $JSON.stringify);
@@ -549,7 +585,7 @@ function $arrayFormIndex($key) {
 //      JSON encoding: function";
 //  10. a standalone $rt.MISSING, $undefined, or any other object ->
 //      E8001 "unsupported type for JSON encoding".
-function $encodeConvert($v, $path, $file, $line, $column) {
+function $encodeConvert($v, $path, $file, $line, $column, $cyclic) {
   if ($v === null) {
     return null;
   }
@@ -581,7 +617,7 @@ function $encodeConvert($v, $path, $file, $line, $column) {
       return null;
     }
     if ($path.includes($v)) {
-      $rt.fail("E8001", "circular reference in JSON encoding", $file, $line, $column);
+      $rt.fail("E8001", $cyclic, $file, $line, $column);
     }
     $path.push($v);
     try {
@@ -602,7 +638,7 @@ function $encodeConvert($v, $path, $file, $line, $column) {
           const $arr = [];
           for (let $i = 1; $i <= $max; $i++) {
             const $element = $v.get(String($i));
-            $arr.push($element === $undefined ? null : $encodeConvert($element, $path, $file, $line, $column));
+            $arr.push($element === $undefined ? null : $encodeConvert($element, $path, $file, $line, $column, $cyclic));
           }
           return $arr;
         }
@@ -612,7 +648,7 @@ function $encodeConvert($v, $path, $file, $line, $column) {
         if (typeof $key === "string") {
           $scanStringValidity($key, $file, $line, $column);
         }
-        $rt.setProp($obj, $key, $encodeConvert($v.get($key), $path, $file, $line, $column));
+        $rt.setProp($obj, $key, $encodeConvert($v.get($key), $path, $file, $line, $column, $cyclic));
       }
       return $obj;
     } finally {
@@ -621,14 +657,14 @@ function $encodeConvert($v, $path, $file, $line, $column) {
   }
   if ($Array.isArray($v)) {
     if ($path.includes($v)) {
-      $rt.fail("E8001", "circular reference in JSON encoding", $file, $line, $column);
+      $rt.fail("E8001", $cyclic, $file, $line, $column);
     }
     $path.push($v);
     try {
       const $arr = [];
       for (let $i = 0; $i < $v.length; $i++) {
         const $element = $v[$i];
-        $arr.push($element === $undefined ? null : $encodeConvert($element, $path, $file, $line, $column));
+        $arr.push($element === $undefined ? null : $encodeConvert($element, $path, $file, $line, $column, $cyclic));
       }
       return $arr;
     } finally {
@@ -637,7 +673,7 @@ function $encodeConvert($v, $path, $file, $line, $column) {
   }
   if ($type === "object" && $v.$kind === "class") {
     if ($path.includes($v)) {
-      $rt.fail("E8001", "circular reference in JSON encoding", $file, $line, $column);
+      $rt.fail("E8001", $cyclic, $file, $line, $column);
     }
     $path.push($v);
     try {
@@ -657,7 +693,7 @@ function $encodeConvert($v, $path, $file, $line, $column) {
         if ($value === $rt.MISSING) {
           continue; // absent optional omitted
         }
-        $rt.setProp($obj, $key, $encodeConvert($value, $path, $file, $line, $column));
+        $rt.setProp($obj, $key, $encodeConvert($value, $path, $file, $line, $column, $cyclic));
       }
       return $obj;
     } finally {
@@ -670,12 +706,12 @@ function $encodeConvert($v, $path, $file, $line, $column) {
   // "bytes" kind text. $rt.isBytes is the single detection seam; the
   // runtime's $Uint8Array capture stays module-private.
   if ($rt.isBytes($v)) {
-    $rt.fail("E8001", "unsupported type for JSON encoding: bytes", $file, $line, $column);
+    $rt.fail("E8001", "unsupported type for JSON encoding: bytes", $file, $line, $column, "string, number, boolean, or table", "bytes");
   }
   if ($type === "object" && $v.$kind === "function") {
-    $rt.fail("E8001", "unsupported type for JSON encoding: function", $file, $line, $column);
+    $rt.fail("E8001", "unsupported type for JSON encoding: function", $file, $line, $column, "string, number, boolean, or table", "function");
   }
-  $rt.fail("E8001", "unsupported type for JSON encoding", $file, $line, $column);
+  $rt.fail("E8001", "unsupported type for JSON encoding: " + $luaKindOf($v), $file, $line, $column, "string, number, boolean, or table", $luaKindOf($v));
 }
 
 // ===== @jsonable runtime walkers (js-v12-jsonable-completion D2-D5) =====
@@ -963,7 +999,11 @@ function $jsonToValue($entry, $value, $path, $file, $line, $column) {
       }
       return $value;
     case "table":
-      return $rt.jsonEncodeValue($value, $path, $file, $line, $column);
+      // The pinned @jsonable needle for a cyclic datum (the reference's
+      // _json_table_shape reason arm, deal/runtime.lua:2309): the shared
+      // encode walk raises the walk's default std/json needle, so the
+      // jsonable entry installs its own message here.
+      return $rt.jsonEncodeValue($value, $path, $file, $line, $column, "cyclic value cannot be encoded as JSON");
     case "class":
       if (typeof $value !== "object" || $value === null || $value.$kind !== "class") {
         $rt.fail("E8001", "expected class instance", $file, $line, $column, "class", $kindOf($value));
@@ -975,7 +1015,7 @@ function $jsonToValue($entry, $value, $path, $file, $line, $column) {
         $rt.fail("E8001", "expected instance of " + $entry.className + ", got " + $value.$classname, $file, $line, $column, $entry.className, $value.$classname);
       }
       if ($path.includes($value)) {
-        $rt.fail("E8001", "circular reference in JSON encoding", $file, $line, $column);
+        $rt.fail("E8001", "cyclic value cannot be encoded as JSON", $file, $line, $column);
       }
       $path.push($value);
       try {
@@ -991,7 +1031,7 @@ function $jsonToValue($entry, $value, $path, $file, $line, $column) {
         $rt.fail("E8001", "malformed field descriptors", $file, $line, $column);
       }
       if ($path.includes($value)) {
-        $rt.fail("E8001", "circular reference in JSON encoding", $file, $line, $column);
+        $rt.fail("E8001", "cyclic value cannot be encoded as JSON", $file, $line, $column);
       }
       $path.push($value);
       try {
@@ -1122,8 +1162,17 @@ const $rt = {
   // E8001 for NaN/±Infinity, unpaired surrogates, cyclic graphs,
   // function values, and any other non-JSON-shaped value. Pure: fresh
   // objects/arrays only, no input mutation.
-  jsonEncodeValue: function $jsonEncodeValue(v, path, file, line, column) {
-    return $encodeConvert(v, path, file, line, column);
+  //
+  // The optional sixth argument is the walk's cyclic-graph message: the
+  // std/json needle by default ("circular reference in JSON encoding",
+  // the landed std/json message pinned by the stdlib suite), the pinned
+  // @jsonable toJson needle ("cyclic value cannot be encoded as JSON",
+  // the corpus sidecar / deal/runtime.lua:2309 form) when the jsonable
+  // walkers install it.
+  jsonEncodeValue: function $jsonEncodeValue(v, path, file, line, column, cyclic) {
+    return $encodeConvert(v, path, file, line, column,
+      cyclic === $undefined
+        ? "circular reference in JSON encoding" : cyclic);
   },
 
   // ===== Error spine members (js-backend-runtime-artifact D8) =====
@@ -1247,7 +1296,12 @@ const $rt = {
     if ($int32
         ? (v < -2147483648 || v > 2147483647)
         : (v < -9007199254740991 || v > 9007199254740991)) {
-      $rt.fail("E8004", "int out of safe range", file, line, column);
+      // The E8004 message is the profile's pinned template (the mirror
+      // of deal/runtime.lua:99-107): the v1.2 int32 branch emits the
+      // retained "int out of safe range", the legacy branch its
+      // byte-identical landed "int out of range".
+      $rt.fail("E8004", $int32
+        ? "int out of safe range" : "int out of range", file, line, column);
     }
     return v;
   },
@@ -1263,8 +1317,12 @@ const $rt = {
   // checkString: boundary validation rejects unpaired UTF-16 surrogates —
   // a high surrogate (U+D800..U+DBFF) not followed by a low surrogate
   // (U+DC00..U+DFFF), or a lone low surrogate — with the reference's
-  // boundary message (deal/runtime.lua:204-215). Valid supplementary pairs
-  // pass; the string is returned unchanged.
+  // boundary message split (deal/runtime.lua:288-296, ISSUE-0598): a
+  // string that is exactly one lone surrogate code unit is the JS analog
+  // of the reference's CESU-style surrogate-code-point encoding ("got
+  // UTF-16 surrogate code point"); every other lone-surrogate defect is
+  // the JS analog of a malformed encoding and keeps the general message.
+  // Valid supplementary pairs pass; the string is returned unchanged.
   checkString: function $checkString(v, file, line, column) {
     if (typeof v !== "string") {
       $rt.fail("E8001", "expected string", file, line, column, "string", $kindOf(v));
@@ -1274,11 +1332,11 @@ const $rt = {
       if ($c >= 0xd800 && $c <= 0xdbff) {
         const $next = $i + 1 < v.length ? v.charCodeAt($i + 1) : -1;
         if ($next < 0xdc00 || $next > 0xdfff) {
-          $rt.fail("E8001", "expected string, got invalid UTF-8 encoding", file, line, column, "string", "invalid UTF-8 string");
+          $rt.fail("E8001", $stringBoundaryMessage(v), file, line, column, "string", "invalid UTF-8 string");
         }
         $i++; // skip the low surrogate of a valid pair
       } else if ($c >= 0xdc00 && $c <= 0xdfff) {
-        $rt.fail("E8001", "expected string, got invalid UTF-8 encoding", file, line, column, "string", "invalid UTF-8 string");
+        $rt.fail("E8001", $stringBoundaryMessage(v), file, line, column, "string", "invalid UTF-8 string");
       }
     }
     return v;
@@ -1406,10 +1464,11 @@ const $rt = {
   // crossing an array boundary checks its elements exactly like a real
   // Array. The real-Array walk is 0-based, mirroring the reference's
   // 1..#v walk (deal/runtime.lua:256-285) with the 1-based message
-  // index; any element failure is wrapped in E8003 with the inner
-  // DEALError's message embedded (the deliberate stabilization of the
-  // reference's tostring(err) of a Lua table — non-portable address
-  // text). Success returns the value unchanged.
+  // index; any element failure is wrapped in E8003 with the per-element
+  // descriptor as expected and the element kind as actual, carrying the
+  // reference's exact message form ("array element N type mismatch",
+  // deal/runtime.lua:788 — no inner-message text is embedded). Success
+  // returns the value unchanged.
   checkArray: function $checkArray(descriptor, v, file, line, column) {
     const $isJsonArrayMap = !$Array.isArray(v) && $rt.isJsonArrayTable(v);
     if (!$Array.isArray(v) && !$isJsonArrayMap) {
@@ -1429,8 +1488,7 @@ const $rt = {
         try {
           $rt.checkType($element, $value, file, line, column);
         } catch ($e) {
-          const $innerMessage = $e instanceof $DEALError ? $e.message : String($e);
-          $rt.fail("E8003", "array element " + $i + " type mismatch: " + $innerMessage, file, line, column, $element, $kindOf($value));
+          $rt.fail("E8003", "array element " + $i + " type mismatch", file, line, column, $element, $kindOf($value));
         }
       }
       return v;
@@ -1439,8 +1497,7 @@ const $rt = {
       try {
         $rt.checkType($element, v[$i], file, line, column);
       } catch ($e) {
-        const $innerMessage = $e instanceof $DEALError ? $e.message : String($e);
-        $rt.fail("E8003", "array element " + ($i + 1) + " type mismatch: " + $innerMessage, file, line, column, $element, $kindOf(v[$i]));
+        $rt.fail("E8003", "array element " + ($i + 1) + " type mismatch", file, line, column, $element, $kindOf(v[$i]));
       }
     }
     return v;
@@ -1975,7 +2032,7 @@ const $rt = {
             if (!($e instanceof $DEALError)) {
               throw $e;
             }
-            $rt.fail("E8010", "parameter " + ($i + 1) + " type mismatch: " + $e.message, $file, $line, $column, $paramDescs[$i], $kindOf(args[$i]));
+            $rt.fail("E8010", "parameter " + ($i + 1) + " type mismatch: " + $e.message, $file, $line, $column, $paramDescs[$i], $luaKindOf(args[$i]));
           }
         }
         const $r = f(...args.slice(0, $nargs));
@@ -1989,7 +2046,7 @@ const $rt = {
             if (!($e instanceof $DEALError)) {
               throw $e;
             }
-            $rt.fail("E8010", "return value 1 type mismatch: " + $e.message, $file, $line, $column, "null", $kindOf($r));
+            $rt.fail("E8010", "return value 1 type mismatch: " + $e.message, $file, $line, $column, "null", $luaKindOf($r));
           }
         }
         if ($r === $undefined) {
@@ -2001,7 +2058,7 @@ const $rt = {
           if (!($e instanceof $DEALError)) {
             throw $e;
           }
-          $rt.fail("E8010", "return value 1 type mismatch: " + $e.message, $file, $line, $column, $retDesc, $kindOf($r));
+          $rt.fail("E8010", "return value 1 type mismatch: " + $e.message, $file, $line, $column, $retDesc, $luaKindOf($r));
         }
       },
     };
@@ -2019,6 +2076,17 @@ const $rt = {
   // value, host-async-ok). A rejected operation propagates natively at
   // the await site. Source code can only observe the operation through
   // await (spec-v1.2:1765-1767).
+  //
+  // Converged awaited-call span (ISSUE-0599): an awaited emitted call
+  // appends a second trailing span triplet — the await expression's
+  // own span — after the call-site triplet, so the shape/arity/parameter
+  // checks report the call site (host-async-shape-bad/value) while the
+  // completion check reports the await site (host-async-bad), exactly
+  // the reference's split (deal/runtime.lua host wrapper shape checks
+  // with the call span; the caller's awaited-completion check with the
+  // await span). The two forms are told apart by the declared arity:
+  // six trailing values are the call span plus the completion span,
+  // three are a lone span used for both.
   hostAsyncFunction: function $hostAsyncFunction(descriptor, f) {
     if (typeof f !== "function") {
       $rt.fail("E8001", "expected function, got " + $kindOf(f), $undefined, $undefined, $undefined, "function", $kindOf(f));
@@ -2034,10 +2102,19 @@ const $rt = {
       $sig: descriptor,
       $f: async function(...args) {
         const $n = args.length;
-        const $file = $n >= 3 ? args[$n - 3] : $undefined;
-        const $line = $n >= 3 ? args[$n - 2] : $undefined;
-        const $column = $n >= 3 ? args[$n - 1] : $undefined;
-        const $nargs = $n >= 3 ? $n - 3 : $n;
+        // The declared arity decides the trailing span group: a call
+        // carrying exactly arity+6 values is the awaited form (call
+        // span then completion span); every other call carrying at
+        // least three trailing values is the lone call span.
+        const $trailing = $n - $paramDescs.length === 6 ? 6
+            : ($n >= 3 ? 3 : 0);
+        const $file = $trailing > 0 ? args[$n - $trailing] : $undefined;
+        const $line = $trailing > 0 ? args[$n - $trailing + 1] : $undefined;
+        const $column = $trailing > 0 ? args[$n - $trailing + 2] : $undefined;
+        const $completionFile = $trailing === 6 ? args[$n - 3] : $file;
+        const $completionLine = $trailing === 6 ? args[$n - 2] : $line;
+        const $completionColumn = $trailing === 6 ? args[$n - 1] : $column;
+        const $nargs = $n - $trailing;
         if ($nargs < $paramDescs.length) {
           $rt.fail("E8010", "expected at least " + $paramDescs.length + " arguments, got " + $nargs, $file, $line, $column);
         }
@@ -2051,7 +2128,7 @@ const $rt = {
             if (!($e instanceof $DEALError)) {
               throw $e;
             }
-            $rt.fail("E8010", "parameter " + ($i + 1) + " type mismatch: " + $e.message, $file, $line, $column, $paramDescs[$i], $kindOf(args[$i]));
+            $rt.fail("E8010", "parameter " + ($i + 1) + " type mismatch: " + $e.message, $file, $line, $column, $paramDescs[$i], $luaKindOf(args[$i]));
           }
         }
         const $op = f(...args.slice(0, $nargs));
@@ -2060,7 +2137,7 @@ const $rt = {
           $rt.fail("E8010", "host async function must return an async operation, got " + $got, $file, $line, $column, "async operation", $got);
         }
         const $v = await $op;
-        return $rt.checkType($retDesc, $v, $file, $line, $column);
+        return $rt.checkType($retDesc, $v, $completionFile, $completionLine, $completionColumn);
       },
     };
   },
@@ -2104,7 +2181,19 @@ const $rt = {
   // object is never mutated. The loader never validates stdlib
   // modules (assumption a — stdlib imports keep their trusted raw
   // require path) and never invents a JS sig-table mechanism (D5).
-  loadHost: function $loadHost(rawExports, declaredMap) {
+  //
+  // Converged lane contract (ISSUE-0599): the loader receives the raw
+  // import specifier and the import statement's span after the declared
+  // map (the emitter's call shape), so every E8011 load-time rejection
+  // reports the import site and names the module — the pinned corpus
+  // sidecar shape (host-missing-export), the reference's load_host
+  // signature and message forms (deal/runtime.lua:1064-1135, the
+  // ISSUE-0598 convergence). A caller that passes no module path keeps
+  // the landed message forms without the module clause (the direct
+  // runtime suite).
+  loadHost: function $loadHost(rawExports, declaredMap, $modulePath, file, line, column) {
+    const $inModule = typeof $modulePath === "string"
+      ? " in module '" + $modulePath + "'" : "";
     if (declaredMap === null || typeof declaredMap !== "object") {
       $rt.fail("E8011", "host module declarations must be a table", $undefined, $undefined, $undefined, "table", $kindOf(declaredMap));
     }
@@ -2118,17 +2207,17 @@ const $rt = {
       const $entry = declaredMap[$name];
       const $v = rawExports[$name];
       if ($v === $undefined) {
-        $rt.fail("E8011", "missing host export '" + $name + "'");
+        $rt.fail("E8011", "missing host export '" + $name + "'" + $inModule, file, line, column);
       }
       if ($entry === null || typeof $entry !== "object"
           || typeof $entry.$d !== "string") {
-        $rt.fail("E8011", "host export '" + $name + "' has an unsupported declared descriptor: " + String($entry === null ? null : $entry.$d));
+        $rt.fail("E8011", "host export '" + $name + "'" + $inModule + " has an unsupported declared descriptor: " + String($entry === null ? null : $entry.$d), file, line, column);
       }
       const $desc = $entry.$d;
       const $parsed = $parse($desc);
       if ($entry.$k === "function") {
         if ($parsed === null || $parsed.$t !== "function") {
-          $rt.fail("E8011", "host export '" + $name + "' has an unsupported declared descriptor: " + $desc);
+          $rt.fail("E8011", "host export '" + $name + "'" + $inModule + " has an unsupported declared descriptor: " + $desc, file, line, column);
         }
         let $f;
         if (typeof $v === "function") {
@@ -2136,37 +2225,37 @@ const $rt = {
         } else if ($v !== null && typeof $v === "object"
             && $v.$kind === "function") {
           if ($v.$sig !== $desc) {
-            $rt.fail("E8011", "host export '" + $name + "' has signature mismatch: expected " + $desc + ", got " + String($v.$sig), $undefined, $undefined, $undefined, $desc, $v.$sig);
+            $rt.fail("E8011", "host export '" + $name + "'" + $inModule + " has signature mismatch: expected " + $desc + ", got " + String($v.$sig), file, line, column, $desc, $v.$sig);
           }
           if (typeof $v.$f !== "function") {
-            $rt.fail("E8011", "host export '" + $name + "' has non-function $f", $undefined, $undefined, $undefined, "function", $kindOf($v.$f));
+            $rt.fail("E8011", "host export '" + $name + "'" + $inModule + " has non-function $f", file, line, column, "function", $kindOf($v.$f));
           }
           $f = $v.$f;
         } else {
-          $rt.fail("E8011", "host export '" + $name + "' is not a function", $undefined, $undefined, $undefined, "function", $kindOf($v));
+          $rt.fail("E8011", "host export '" + $name + "'" + $inModule + " is not a function", file, line, column, "function", $kindOf($v));
         }
         $surface[$name] = $parsed.$async
             ? $rt.hostAsyncFunction($desc, $f)
             : $rt.hostFunction($desc, $f);
       } else if ($entry.$k === "class") {
         if ($parsed === null || $parsed.$t !== "class") {
-          $rt.fail("E8011", "host export '" + $name + "' has an unsupported declared descriptor: " + $desc);
+          $rt.fail("E8011", "host export '" + $name + "'" + $inModule + " has an unsupported declared descriptor: " + $desc, file, line, column);
         }
         if ($v === null || typeof $v !== "object" || $v.$kind !== "class") {
-          $rt.fail("E8011", "host export '" + $name + "' is not a class meta", $undefined, $undefined, $undefined, "class", $kindOf($v));
+          $rt.fail("E8011", "host export '" + $name + "'" + $inModule + " is not a class meta", file, line, column, "class", $kindOf($v));
         }
         if ($v.$classname !== $desc) {
-          $rt.fail("E8011", "host class export '" + $name + "' has identity mismatch: expected " + $desc + ", got " + String($v.$classname), $undefined, $undefined, $undefined, $desc, $v.$classname);
+          $rt.fail("E8011", "host class export '" + $name + "'" + $inModule + " has identity mismatch: expected " + $desc + ", got " + String($v.$classname), file, line, column, $desc, $v.$classname);
         }
         const $fields = $entry.$fields;
         if (!$Array.isArray($fields)) {
-          $rt.fail("E8011", "host class '" + $name + "' has malformed field metadata");
+          $rt.fail("E8011", "host class '" + $name + "'" + $inModule + " has malformed field metadata", file, line, column);
         }
         for (let $j = 0; $j < $fields.length; $j++) {
           const $field = $fields[$j];
           if ($field === null || typeof $field !== "object"
               || typeof $field.name !== "string") {
-            $rt.fail("E8011", "host class '" + $name + "' has malformed field metadata");
+            $rt.fail("E8011", "host class '" + $name + "'" + $inModule + " has malformed field metadata", file, line, column);
           }
         }
         let $hostDefaults = rawExports[$name + "$defaults"];
@@ -2176,7 +2265,7 @@ const $rt = {
         if ($hostDefaults === $undefined
             || !(typeof $hostDefaults === "function"
                 || $isPlainObject($hostDefaults))) {
-          $rt.fail("E8011", "host class '" + $name + "' is missing its defaults", $undefined, $undefined, $undefined, "table", $kindOf($hostDefaults));
+          $rt.fail("E8011", "host class '" + $name + "'" + $inModule + " is missing its defaults", file, line, column, "table", $kindOf($hostDefaults));
         }
         // The preserved defaults-map seam (host-module-abi D2, ISSUE-0331
         // gate closure): the host defaults — the plain object, or the
@@ -2205,7 +2294,7 @@ const $rt = {
         };
         $surface[$name + "$fields"] = $fields.slice();
       } else {
-        $rt.fail("E8011", "host export '" + $name + "' has an unsupported declared descriptor: " + $desc);
+        $rt.fail("E8011", "host export '" + $name + "'" + $inModule + " has an unsupported declared descriptor: " + $desc, file, line, column);
       }
     }
     return $surface;

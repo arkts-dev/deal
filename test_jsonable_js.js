@@ -413,7 +413,7 @@ test("jsonToJson raises E8001 for cyclic class graphs", function() {
   const n = rt.makeClass("Node", "@m/Node", () => ({ next: null }), null, ...LOC);
   rt.setProp(n, "next", n);
   assertError(() => rt.jsonToJson("@m/Node", n, selfFields, ...LOC), "E8001",
-    "circular reference in JSON encoding", "class self-cycle");
+    "cyclic value cannot be encoded as JSON", "class self-cycle");
 });
 
 test("jsonToJson raises E8001 for cyclic table fields", function() {
@@ -422,7 +422,7 @@ test("jsonToJson raises E8001 for cyclic table fields", function() {
   const data = u.data;
   data.set("self", data);
   assertError(() => rt.jsonToJson("@m/W", u, fields, ...LOC), "E8001",
-    "circular reference in JSON encoding", "table self-cycle");
+    "cyclic value cannot be encoded as JSON", "table self-cycle");
 });
 
 test("jsonToJson raises E8001 for NaN/Infinity number fields", function() {
@@ -457,7 +457,7 @@ test("jsonToJson int fields enforce the boundary (E8004 range)", function() {
   const u = rt.makeClass("User", "@m/User", () => ({ age: 0 }), null, ...LOC);
   rt.setProp(u, "age", 9007199254740992);
   assertError(() => rt.jsonToJson("@m/User", u, fields, ...LOC), "E8004",
-    "int out of safe range", "out-of-range int field");
+    "int out of range", "out-of-range int field (the legacy profile's pinned template)");
 });
 
 // =========================================================================
