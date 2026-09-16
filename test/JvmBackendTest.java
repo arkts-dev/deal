@@ -13956,12 +13956,14 @@ public class JvmBackendTest {
                     "the wrapped E8003 dynamic-element re-raise propagates "
                         + "the origin and the element projection");
                 check(java.contains(
-                        "throw new DealError(\"E8010\", \"parameter \" + i + \" type mismatch: \" + inner.getMessage(), oFile, oLine, oCol);"),
+                        "throw new DealError(\"E8010\", \"parameter \" + i + \" type mismatch: \" + __hostInnerMessage(d, v, inner), oFile, oLine, oCol, desc, __hostKind(v));"),
                     "the wrapped E8010 host-parameter re-raise propagates "
-                        + "the origin");
+                        + "the origin with the closed inner reason text "
+                        + "and the expected/actual projections");
                 check(java.contains(
-                        "throw new DealError(\"E8011\", \"host export '\" + name + \"' in module '\" + module + \"' missing or has signature mismatch: expected \" + desc, oFile, oLine, oCol);"),
-                    "the host load-time E8011 raise propagates the origin");
+                        "throw new DealError(\"E8011\", \"missing host export '\" + name + \"' in module '\" + module + \"'\", oFile, oLine, oCol);"),
+                    "the host load-time E8011 raise propagates the origin "
+                        + "with the pinned canonical message");
                 check(java.contains(
                         "new DealError(\"E1\", \"boom\", null, -1, -1)"),
                     "the user-throw raise statement passes the explicit "

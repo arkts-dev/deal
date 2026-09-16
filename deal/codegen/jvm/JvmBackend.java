@@ -7435,24 +7435,6 @@ public final class JvmBackend {
         return "__host$" + javaName(alias) + "$" + javaName(exportName);
     }
 
-    /**
-     * The DEAL-source origin arguments (file literal, line, column) of
-     * one raise site: compile-time literals read from the authoritative
-     * node's span. An absent span emits the explicit absent sentinel
-     * (empty file, -1, -1). The file literal is this module's DEAL
-     * source path — the lane normalizes it to the corpus-relative form
-     * through its deployment map.
-     */
-    private String originArgs(Span span) {
-        if (span == null) {
-            // The explicit absent sentinel: file null, line/column -1.
-            return "(java.lang.String) null, -1, -1";
-        }
-        String file = quoteJavaString(sourcePath == null
-            ? "" : sourcePath);
-        return file + ", " + span.startLine() + ", " + span.startColumn();
-    }
-
     /** The forwarded parameter references {@code p0, p1, …} of a shape
      * wrapper's dispatch methods (the read-only invoke ABI). */
     private static String forwardedShapeArgs(int count) {
@@ -18680,10 +18662,19 @@ public final class JvmBackend {
      * the class (jvm-canonical-error-snapshot-convergence D3), emitted
      * as compile-time literals. The caller passes them unchanged into
      * the raising helper, which propagates them into every raise it
-     * performs — no thread-local state, no stack-frame derivation. */
+     * performs — no thread-local state, no stack-frame derivation. An
+     * absent span emits the explicit absent sentinel (null, -1, -1),
+     * and a span carrying no file falls back to this module's DEAL
+     * source path — the lane normalizes the value to the corpus-relative
+     * form through its deployment map. */
     private String originArgs(Span span) {
-        return quoteJavaString(span.file()) + ", " + span.startLine()
-            + ", " + span.startColumn();
+        if (span == null) {
+            // The explicit absent sentinel: file null, line/column -1.
+            return "(java.lang.String) null, -1, -1";
+        }
+        String file = span.file() != null ? span.file() : sourcePath;
+        return quoteJavaString(file == null ? "" : file) + ", "
+            + span.startLine() + ", " + span.startColumn();
     }
 
     /** Renders a DEAL string as a Java string literal (UTF-8 source). */
