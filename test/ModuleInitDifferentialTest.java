@@ -4,6 +4,7 @@ import deal.checker.CheckResult;
 import deal.checker.NameResolver;
 import deal.checker.SymbolTable;
 import deal.checker.TypeChecker;
+import deal.codegen.lua.LuaSemanticEmitter;
 import deal.lexer.Lexer;
 import deal.parser.Parser;
 import deal.semantic.CapabilityRegistry;
@@ -18,14 +19,19 @@ import deal.semantic.RequirementManifestResult;
 import deal.semantic.SemanticLowerer;
 import deal.semantic.SemanticRuntimeModel;
 import deal.semantic.ir.ConstructKind;
+import deal.semantic.ir.CapabilityRequirementCatalog;
 import deal.semantic.ir.ExternalModuleInterface;
 import deal.semantic.ir.LoweredModuleUnit;
 import deal.semantic.ir.ModuleId;
+import deal.semantic.ir.OpId;
 import deal.semantic.ir.ReleaseState;
 import deal.semantic.ir.SemanticIdAllocator;
 import deal.semantic.ir.SemanticOp;
 import deal.semantic.ir.SemanticOpKind;
 import deal.semantic.ir.SemanticProfile;
+import deal.semantic.ir.SemanticCapability;
+import deal.semantic.ir.SemanticIrValidator;
+import deal.semantic.ir.SourceOrigin;
 import deal.semantic.ir.StructuredBodyTable;
 
 import java.nio.file.Path;
@@ -37,29 +43,40 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * The module-init differential corpus and the shared-emitter totality gate
- * (sequencing step 9, E1/E3/E8; ISSUE-0590).
+ * The module-init differential corpus, the shared-emitter totality gate, and
+ * the module-init negative controls (sequencing step 9, E1/E3/E8; ISSUE-0590).
  *
  * <p><b>Module-init seeds.</b> The lowerer-produced {@code MODULE_INIT}
- * envelope executes three-way over the production lowering pipeline: a
- * successful init publishes the op's SUCCESS with the walk's events
- * nested under it; a failing init publishes the op's single FAILURE
- * before the run's terminal (no export publication); a hand-built unit
- * without the op (the synthetic-unit surface) keeps the bare init-block
- * behavior.</p>
+ * envelope executes three-way over the production lowering pipelines: a
+ * successful init publishes the op's SUCCESS with the walk's events nested
+ * under it; a failing init publishes the op's single FAILURE before the run's
+ * terminal (no export publication); the full-program carrier carries the
+ * resolved import/export ops ({@code MODULE_IMPORT}/{@code EXPORT_READ}/
+ * {@code EXPORT_PUBLISH}/{@code ENTRY_INVOKE}) nested under the envelope, so
+ * every MODULES R-CAPABILITY required operation is produced and a
+ * MODULES-claiming unit validates (the claim was unsatisfiable before this
+ * task); a hand-built unit without the op (the synthetic-unit surface) keeps
+ * the bare init-block behavior.</p>
  *
  * <p><b>Totality gate.</b> Both emitters' {@code emitOp} switches carry
  * exactly one arm per closed {@code SemanticOpKind} value and retain the
  * default throw (the plain-javac toolchain does not compile-check
- * statement-switch exhaustiveness, so the assertion is a real
- * source-level gate over the closed enum), and a lowered feature corpus
- * is emitted and executed on both real targets ({@code luajit};
+ * statement-switch exhaustiveness, so the assertion is a real source-level
+ * gate over the closed enum), and a lowered feature corpus is emitted and
+ * executed on both real targets ({@code luajit};
  * {@code javac --release 25 -proc:none} + {@code java}) with the three
- * consumers compared event-for-event. The lowerer's own decomposition
- * split does not admit one source unit carrying all 55 kinds (the class
- * pipeline rejects exported function declarations while the full-program
- * pipeline carries no class arm), so the behavioral exercise is the
- * corpus below and the per-kind coverage is the arm gate above.</p>
+ * consumers compared event-for-event. No single unit carries all 55 kinds —
+ * the lowerer decomposes by family (each family's suite landed its own
+ * three-way corpus) and the class-channel carrier and the full-program
+ * carrier split the surface — so the per-kind coverage is the arm gate over
+ * the closed enum plus the family corpora this suite and the step 1–8 suites
+ * execute on the real toolchains.</p>
+ *
+ * <p><b>Negative controls.</b> A unit whose {@code MODULE_INIT} op records a
+ * structural parent (the envelope is parentless) is rejected by the
+ * consumers; a defect-injected artifact that publishes the envelope's
+ * INITIALIZED state on the FAILURE path fails the failure-path rule the
+ * failing seed pins — neither passes on coincidental output.</p>
  */
 public class ModuleInitDifferentialTest {
 
@@ -144,6 +161,102 @@ public class ModuleInitDifferentialTest {
     }
 
     private record Lowered(LoweredModuleUnit unit, StructuredBodyTable table) {
+    }
+
+    /**
+     * The full-program lowering of one slice (the MODULES arm's carrier: a
+     * module with resolved imports and exports produces {@code MODULE_IMPORT}/
+     * {@code EXPORT_*}/{@code ENTRY_INVOKE} ops nested under the
+     * {@code MODULE_INIT} envelope).
+     */
+    private static Lowered lowerProgram(String source, String what) {
+        CheckedSlice slice = checkSlice(source);
+        if (slice == null) {
+            return null;
+        }
+        CheckedModuleInput input = new CheckedModuleInput(MODULE, SOURCE_ID,
+            Path.of(SOURCE_ID), slice.program(), slice.checks(),
+            importsOf(slice.program()), exportsOf(slice.program()),
+            CheckedModuleKind.IMPLEMENTATION);
+        CompilerInvocation invocation = CompilerProfileProvider.resolveCommonShadow(
+            SemanticProfile.DEAL_V1_2_INT32, ReleaseState.V1_2_ACTIVE,
+            CapabilityRegistry.releaseRegistry());
+        ModuleFact fact = new ModuleFact(SOURCE_ID, MODULE, false, false, slice.program(),
+            sliceExports(slice, slice.symbols()), slice.symbols(), slice.checks(), List.of());
+        deal.semantic.CheckedProjectBuildResult built = CheckedProjectBuilder.build(
+            invocation, MODULE, List.of(fact));
+        check(built != null && !built.hasErrors() && built.input() != null
+                && built.index() != null,
+            what + ": the checked project builds cleanly: "
+                + (built == null ? "null" : built.diagnostics()));
+        if (built == null || built.hasErrors() || built.input() == null
+                || built.index() == null) {
+            return null;
+        }
+        RequirementManifestResult manifests = LoweringSupport.computeManifests(invocation,
+            built.input(), built.index());
+        check(manifests != null && manifests.diagnostics().isEmpty()
+                && manifests.manifests().size() == 1,
+            what + ": the foundation detector produces exactly one manifest: "
+                + (manifests == null ? "null" : manifests.diagnostics()));
+        if (manifests == null || !manifests.diagnostics().isEmpty()
+                || manifests.manifests().size() != 1) {
+            return null;
+        }
+        Map<ConstructKind, List<SemanticOpKind>> coverage =
+            manifests.manifests().get(0).constructCoverage();
+        SemanticLowerer.FullProgramE7Result carrier =
+            SemanticLowerer.lowerModuleFullProgramE7(
+                input, SemanticProfile.DEAL_V1_2_INT32, coverage,
+                built.index().interfaceIndexDigest(), REGISTRY_HASH,
+                SemanticIdAllocator.over(List.of(MODULE)), Map.of(), Map.of(), Set.of());
+        SemanticLowerer.LoweringResult lowering =
+            carrier == null ? null : carrier.lowering();
+        check(lowering != null && !lowering.hasErrors() && lowering.unit() != null,
+            what + " lowers to a validated unit through the full-program carrier: "
+                + (lowering == null ? "null" : lowering.diagnostics()));
+        if (lowering == null || lowering.hasErrors() || lowering.unit() == null) {
+            return null;
+        }
+        return new Lowered(lowering.unit(), lowering.table());
+    }
+
+    /** The resolved import facts of the slice (the production resolved ids). */
+    private static List<deal.semantic.ir.ResolvedImport> importsOf(
+            deal.ast.ProgramNode program) {
+        List<deal.semantic.ir.ResolvedImport> imports = new ArrayList<>();
+        for (deal.ast.StatementNode statement : program.statements()) {
+            if (statement instanceof deal.ast.ImportDeclaration imported) {
+                String resolved = switch (imported.modulePath()) {
+                    case "std/console" -> "std.console";
+                    case "std/string" -> "std.string";
+                    case "std/table" -> "std.table";
+                    case "std/json" -> "std.json";
+                    case "std/math" -> "std.math";
+                    case "std/time" -> "std.time";
+                    default -> imported.modulePath();
+                };
+                imports.add(new deal.semantic.ir.ResolvedImport(imported.alias(),
+                    imported.modulePath(), new ModuleId(resolved),
+                    deal.semantic.ir.ExternalModuleKind.STDLIB));
+            }
+        }
+        return imports;
+    }
+
+    /** The checked export facts of the slice (the E7 terminal carrier's input). */
+    private static List<deal.semantic.ir.ExportInterface> exportsOf(
+            deal.ast.ProgramNode program) {
+        List<deal.semantic.ir.ExportInterface> exports = new ArrayList<>();
+        for (deal.ast.StatementNode statement : program.statements()) {
+            if (statement instanceof deal.ast.ExportDeclaration exported
+                    && exported.declaration()
+                        instanceof deal.ast.FunctionDeclaration function) {
+                exports.add(new deal.semantic.ir.ExportInterface(function.name(),
+                    "function"));
+            }
+        }
+        return exports;
     }
 
     private static Lowered lower(String source, String what) {
@@ -517,6 +630,295 @@ public class ModuleInitDifferentialTest {
     }
 
     // =========================================================================
+    // 5b. The MODULES carrier seed (resolved imports/exports under the envelope)
+    // =========================================================================
+
+    /**
+     * The MODULES carrier seed: the full-program unit carries resolved
+     * imports and exports ({@code MODULE_IMPORT}/{@code EXPORT_READ}/
+     * {@code EXPORT_PUBLISH}/{@code ENTRY_INVOKE}) nested under the
+     * {@code MODULE_INIT} envelope, every MODULES required operation is
+     * produced (the R-CAPABILITY claim is satisfiable — never a dead schema
+     * row), and the corpus runs green three-way with real artifacts.
+     */
+    static void testModuleImportEnvelopeSeed() {
+        System.out.println("-- Modules: resolved imports/exports nest under the MODULE_INIT "
+            + "envelope and the MODULES claim is satisfiable --");
+        Lowered lowered = lowerProgram("""
+            import * as console from "std/console"
+            export function main(): null {
+              console.log("m")
+              return null
+            }
+            """, "modules carrier seed");
+        if (lowered == null) {
+            return;
+        }
+        Set<SemanticOpKind> produced = EnumSet.noneOf(SemanticOpKind.class);
+        for (SemanticOp op : lowered.unit().ops()) {
+            produced.add(op.kind());
+        }
+        for (CapabilityRequirementCatalog.RequiredOperation row
+                : CapabilityRequirementCatalog.requiredOperations(
+                    SemanticCapability.MODULES)) {
+            boolean satisfied = false;
+            for (SemanticOpKind kind : row.kinds()) {
+                if (produced.contains(kind)) {
+                    satisfied = true;
+                    break;
+                }
+            }
+            check(satisfied, "the MODULES required operation " + row.verbatim()
+                + " is produced by the unit (the claim is satisfiable; no dead schema row)");
+        }
+        LoweredModuleUnit claimed = withCapabilities(lowered.unit(),
+            SemanticCapability.MODULES);
+        java.util.Optional<deal.diagnostics.CompilerDiagnostic> validation =
+            SemanticIrValidator.validate(claimed, new SemanticIrValidator.ComparisonFacts(
+                lowered.unit().interfaceHash(), SemanticProfile.DEAL_V1_2_INT32,
+                REGISTRY_HASH));
+        check(validation.isEmpty(), "the same unit claiming MODULES passes the closed "
+            + "validator (R-CAPABILITY satisfied by the produced MODULE_INIT family; "
+            + "before ISSUE-0590 the claim was unsatisfiable): " + validation);
+        SemanticDifferentialHarness.Verdict verdict = SemanticDifferentialHarness.run(
+            lowered.unit(), lowered.table(),
+            new SemanticDifferentialHarness.Expectation(List.of("m"),
+                new SemanticDifferentialHarness.TerminalExpectation.SuccessWith("null"),
+                "modules carrier seed"),
+            WORKSPACE);
+        check(verdict.pass(), "the MODULES carrier seed runs green three-way "
+            + "(semantic oracle + shared LuaJIT + shared JVM, real artifacts):\n"
+            + verdict.report());
+        if (!verdict.pass()) {
+            return;
+        }
+        for (SemanticRuntimeModel.ConsumerRun consumerRun : verdict.runs()) {
+            int initStart = -1;
+            int initTerminal = -1;
+            int importStart = -1;
+            int publishTerminal = -1;
+            for (int index = 0; index < consumerRun.trace().size(); index++) {
+                SemanticRuntimeModel.TraceEvent event = consumerRun.trace().get(index);
+                if (event.kind() == SemanticOpKind.MODULE_INIT) {
+                    if (event.phase() == SemanticRuntimeModel.Phase.START) {
+                        initStart = index;
+                    } else {
+                        initTerminal = index;
+                    }
+                } else if (event.kind() == SemanticOpKind.MODULE_IMPORT
+                        && event.phase() == SemanticRuntimeModel.Phase.START) {
+                    importStart = index;
+                } else if (event.kind() == SemanticOpKind.EXPORT_PUBLISH
+                        && event.phase() == SemanticRuntimeModel.Phase.SUCCESS) {
+                    publishTerminal = index;
+                }
+            }
+            check(initStart >= 0 && initTerminal > initStart && importStart > initStart
+                    && publishTerminal > importStart && initTerminal > publishTerminal,
+                consumerRun.consumer() + " nests the MODULE_IMPORT/EXPORT_PUBLISH ops "
+                    + "under the MODULE_INIT envelope (START before the nested ops, the "
+                    + "single terminal after them); got initStart=" + initStart
+                    + " importStart=" + importStart + " publishTerminal=" + publishTerminal
+                    + " initTerminal=" + initTerminal);
+        }
+    }
+
+    /** One copy of the unit with the given capability added to its claims. */
+    private static LoweredModuleUnit withCapabilities(LoweredModuleUnit unit,
+                                                      SemanticCapability capability) {
+        Set<SemanticCapability> claims = unit.requiredCapabilities().isEmpty()
+            ? EnumSet.noneOf(SemanticCapability.class)
+            : EnumSet.copyOf(unit.requiredCapabilities());
+        claims.add(capability);
+        return new LoweredModuleUnit(unit.formatVersion(), unit.semanticProfile(),
+            unit.moduleId(), unit.interfaceHash(), unit.loweringContextHash(), claims,
+            unit.constructCoverage(), unit.classLayouts(), unit.functions(),
+            unit.moduleInit(), unit.exportPlan(), unit.functionBindings(), unit.ops());
+    }
+
+    // =========================================================================
+    // 6. Negative controls (never a coincidental pass)
+    // =========================================================================
+
+    /**
+     * The wrong-parent negative: the module-level envelope op is parentless,
+     * so a unit whose MODULE_INIT op records a structural parent is rejected
+     * by the consumers (the oracle fails closed, the harness verdict fails) —
+     * never a coincidental pass on the identical output.
+     */
+    static void testWrongParentNegative() {
+        System.out.println("-- Negative: a parented MODULE_INIT envelope fails (never a "
+            + "coincidental pass) --");
+        Lowered lowered = lower("let x: int = 1", "wrong parent negative");
+        if (lowered == null) {
+            return;
+        }
+        List<SemanticOp> initOps = ofKind(lowered.unit(), SemanticOpKind.MODULE_INIT);
+        check(initOps.size() == 1, "the negative seed carries exactly one MODULE_INIT op");
+        if (initOps.size() != 1) {
+            return;
+        }
+        SemanticOp bodyOp = null;
+        for (SemanticOp op : lowered.unit().ops()) {
+            if (op.kind() != SemanticOpKind.MODULE_INIT) {
+                bodyOp = op;
+                break;
+            }
+        }
+        check(bodyOp != null, "the negative seed carries a body op to name as the wrong "
+            + "parent");
+        if (bodyOp == null) {
+            return;
+        }
+        SemanticOp initOp = initOps.get(0);
+        SemanticOp parented = new SemanticOp(initOp.opId(), initOp.kind(),
+            new SourceOrigin(initOp.origin().sourceId(), initOp.origin().span(),
+                initOp.origin().kind(), initOp.origin().anchorId(), bodyOp.opId()),
+            initOp.result(), initOp.resultType(), initOp.operands(), initOp.operandTypes(),
+            initOp.payload(), initOp.failurePolicy(), initOp.contract());
+        LoweredModuleUnit mutated = withOps(lowered.unit(), initOp.opId(), parented);
+        boolean failing;
+        try {
+            SemanticDifferentialHarness.Verdict verdict = SemanticDifferentialHarness.run(
+                mutated, lowered.table(),
+                new SemanticDifferentialHarness.Expectation(List.of(),
+                    new SemanticDifferentialHarness.TerminalExpectation.SuccessWith("null"),
+                    "wrong parent negative"),
+                WORKSPACE);
+            failing = !verdict.pass();
+            check(!verdict.pass(), "a parented MODULE_INIT fails the differential verdict "
+                + "(never a coincidental pass):\n" + verdict.report());
+        } catch (RuntimeException exception) {
+            failing = true;
+            check(true, "a parented MODULE_INIT fails the consumers closed ("
+                + exception.getClass().getSimpleName() + ": " + exception.getMessage()
+                + ")");
+        }
+        check(failing, "the wrong-parent negative control produced a failing outcome");
+    }
+
+    /**
+     * The failure-path publication negative: an artifact that publishes the
+     * envelope's INITIALIZED state (and an export entry) on the MODULE_INIT
+     * FAILURE path is a defect; the failure-path rule the failing-init seed
+     * pins — exactly one START, one FAILURE terminal, no SUCCESS — must reject
+     * it. The defect is injected into the emitted artifact text, so the
+     * control proves the rule is discriminating and not satisfied by
+     * coincidence.
+     */
+    static void testFailurePathPublicationNegative() {
+        System.out.println("-- Negative: an artifact publishing on the MODULE_INIT FAILURE "
+            + "path fails the failure-path rule --");
+        Lowered lowered = lower("""
+            export class Person {
+              name: string = "anon";
+            }
+            let broken: int = 1 / 0
+            let p: Person = {}
+            """, "failure path negative");
+        if (lowered == null) {
+            return;
+        }
+        String artifact = LuaSemanticEmitter.emitModule(lowered.unit(), lowered.table());
+        int failureAt = artifact.indexOf("\"FAILURE\", \"MODULE_INIT\"");
+        int successAt = artifact.indexOf("\"SUCCESS\", \"MODULE_INIT\"", failureAt);
+        int errorAt = artifact.indexOf("error(__initErr, 0)", failureAt);
+        check(failureAt >= 0 && successAt > failureAt && errorAt > failureAt,
+            "the emitted envelope carries the failure branch (FAILURE event, the "
+                + "success-path state publication, and the error rethrow)");
+        if (failureAt < 0 || successAt <= failureAt || errorAt <= failureAt) {
+            return;
+        }
+        int successLineStart = artifact.lastIndexOf('\n', successAt) + 1;
+        int successLineEnd = artifact.indexOf('\n', successLineStart);
+        String successLine = artifact.substring(successLineStart, successLineEnd);
+        String defective = artifact.substring(0, errorAt)
+            + successLine + "\n"
+            + "__exports[\"__defect__\"] = true\n"
+            + artifact.substring(errorAt);
+        List<String> real = runLuaArtifact(artifact, "module-init-failure-real.lua");
+        List<String> injected = runLuaArtifact(defective, "module-init-failure-injected.lua");
+        check(moduleInitFailureRuleHolds(real),
+            "the real artifact passes the failure-path rule (one MODULE_INIT START, one "
+                + "FAILURE, no SUCCESS — no export publication on the FAILURE path)");
+        check(!moduleInitFailureRuleHolds(injected),
+            "the defect-injected artifact fails the failure-path rule (never a "
+                + "coincidental pass): the FAILURE path published the INITIALIZED state");
+    }
+
+    /** The module-init failure-path rule: one START, one FAILURE, no SUCCESS. */
+    private static boolean moduleInitFailureRuleHolds(List<String> protocolLines) {
+        if (protocolLines == null) {
+            return false;
+        }
+        int starts = 0;
+        int failures = 0;
+        int successes = 0;
+        for (String line : protocolLines) {
+            if (line.isEmpty()) {
+                continue;
+            }
+            Object decoded;
+            try {
+                decoded = deal.semantic.SemanticTraceProtocol.decode(line);
+            } catch (RuntimeException exception) {
+                continue;
+            }
+            if (decoded instanceof SemanticRuntimeModel.TraceEvent event
+                    && event.kind() == SemanticOpKind.MODULE_INIT) {
+                switch (event.phase()) {
+                    case START -> starts++;
+                    case FAILURE -> failures++;
+                    case SUCCESS -> successes++;
+                }
+            }
+        }
+        return starts == 1 && failures == 1 && successes == 0;
+    }
+
+    /** Writes one emitted Lua artifact and runs it under real luajit. */
+    private static List<String> runLuaArtifact(String text, String name) {
+        Path directory = WORKSPACE.resolve("negative");
+        try {
+            java.nio.file.Files.createDirectories(directory);
+            Path script = directory.resolve(name);
+            java.nio.file.Files.writeString(script, text,
+                java.nio.charset.StandardCharsets.UTF_8);
+            Path stdout = directory.resolve(name + ".out");
+            Path stderr = directory.resolve(name + ".err");
+            ProcessBuilder builder = new ProcessBuilder("luajit",
+                script.toAbsolutePath().toString());
+            builder.redirectOutput(stdout.toFile());
+            builder.redirectError(stderr.toFile());
+            Process process = builder.start();
+            int exit = process.waitFor();
+            List<String> lines = java.nio.file.Files.readAllLines(stderr,
+                java.nio.charset.StandardCharsets.UTF_8);
+            check(exit == 0, "the " + name + " artifact exits 0 (the trace-mode wrapper "
+                + "publishes the failure terminal without changing the exit code); got "
+                + exit + ": " + lines);
+            return exit == 0 ? lines : null;
+        } catch (java.io.IOException | InterruptedException exception) {
+            check(false, "the " + name + " artifact run failed: " + exception.getMessage());
+            return null;
+        }
+    }
+
+    /** One copy of the unit with the given op replaced (the negative surfaces). */
+    private static LoweredModuleUnit withOps(LoweredModuleUnit unit, OpId replaced,
+                                             SemanticOp replacement) {
+        List<SemanticOp> ops = new ArrayList<>();
+        for (SemanticOp op : unit.ops()) {
+            ops.add(op.opId().equals(replaced) ? replacement : op);
+        }
+        return new LoweredModuleUnit(unit.formatVersion(), unit.semanticProfile(),
+            unit.moduleId(), unit.interfaceHash(), unit.loweringContextHash(),
+            unit.requiredCapabilities(), unit.constructCoverage(), unit.classLayouts(),
+            unit.functions(), unit.moduleInit(), unit.exportPlan(), unit.functionBindings(),
+            ops);
+    }
+
+    // =========================================================================
 
     public static void main(String[] args) {
         System.out.println("=== Module Init Differential Test + Shared-Emitter Totality "
@@ -527,6 +929,9 @@ public class ModuleInitDifferentialTest {
         testHandBuiltUnitWithoutOp();
         testTotalityGate();
         testFeatureCorpus();
+        testModuleImportEnvelopeSeed();
+        testWrongParentNegative();
+        testFailurePathPublicationNegative();
         System.out.println();
         System.out.println("ModuleInitDifferentialTest passed=" + passed + " failed="
             + failed);

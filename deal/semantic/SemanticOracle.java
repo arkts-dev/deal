@@ -4819,6 +4819,12 @@ public final class SemanticOracle {
         private String executeModuleInit(SemanticOp op) {
             KindPayload.ModuleInitPayload payload =
                 (KindPayload.ModuleInitPayload) op.payload();
+            if (op.origin().parentOpId() != null) {
+                throw new IllegalStateException("MODULE_INIT " + op.opId()
+                    + " records the structural parent " + op.origin().parentOpId()
+                    + " (the module-level envelope op is parentless — a wrong parent is a "
+                    + "producer defect, never a silent re-parenting)");
+            }
             ModuleInitLifecycle lifecycle = moduleInitLifecycles.get(payload.module());
             if (lifecycle == ModuleInitLifecycle.INITIALIZING) {
                 throw new IllegalStateException("re-entrant MODULE_INIT of module "

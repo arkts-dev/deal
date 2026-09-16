@@ -3543,6 +3543,7 @@ public final class LuaSemanticEmitter {
         private void emitModuleInit(SemanticOp op) {
             KindPayload.ModuleInitPayload payload =
                 (KindPayload.ModuleInitPayload) op.payload();
+            requireParentlessModuleInit(op);
             String stateKey = "__moduleStates[" + luaString(payload.module().path()) + "]";
             out.append("if ").append(stateKey).append(" == nil then\n");
             out.append(stateKey).append(" = \"INITIALIZING\"\n");
@@ -3674,6 +3675,22 @@ public final class LuaSemanticEmitter {
             out.append(slot((ValueId) op.result())).append(" = __jresT\n");
             emitResultSuccess(op, slot((ValueId) op.result()),
                 (RuntimeDescriptor) op.resultType());
+        }
+
+        /**
+         * The MODULE_INIT structural-parent contract: the module-level
+         * envelope op is parentless (its trace parent is the absent
+         * structural parent). A recorded parent is a producer defect —
+         * the orchestrator's fail-closed gate converts the throw into
+         * E6005, never a silent re-parenting.
+         */
+        private static void requireParentlessModuleInit(SemanticOp op) {
+            if (op.origin().parentOpId() != null) {
+                throw new IllegalStateException("MODULE_INIT " + op.opId()
+                    + " records the structural parent " + op.origin().parentOpId()
+                    + " (the module-level envelope op is parentless — a wrong parent is a "
+                    + "producer defect, never a silent re-parenting)");
+            }
         }
 
         /** The unit's lowerer-produced MODULE_INIT op, or null (hand-built units). */

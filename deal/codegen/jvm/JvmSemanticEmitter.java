@@ -655,6 +655,7 @@ public final class JvmSemanticEmitter {
         private void emitModuleInit(SemanticOp op, int indent) {
             KindPayload.ModuleInitPayload payload =
                 (KindPayload.ModuleInitPayload) op.payload();
+            requireParentlessModuleInit(op);
             String moduleText = javaString(payload.module().path());
             out.append(indent(indent)).append("if (JvmRuntime.moduleInitNeeded(")
                 .append(moduleText).append(")) {\n");
@@ -689,6 +690,22 @@ public final class JvmSemanticEmitter {
                 .append(javaString(op.contract().canonicalDigest())).append(", ")
                 .append(javaString(parentKey(op.origin().parentOpId())))
                 .append(", List.of(), \"state:INITIALIZED\", null);\n");
+        }
+
+        /**
+         * The MODULE_INIT structural-parent contract: the module-level
+         * envelope op is parentless (its trace parent is the absent
+         * structural parent). A recorded parent is a producer defect —
+         * the orchestrator's fail-closed gate converts the throw into
+         * E6005, never a silent re-parenting.
+         */
+        private static void requireParentlessModuleInit(SemanticOp op) {
+            if (op.origin().parentOpId() != null) {
+                throw new IllegalStateException("MODULE_INIT " + op.opId()
+                    + " records the structural parent " + op.origin().parentOpId()
+                    + " (the module-level envelope op is parentless — a wrong parent is a "
+                    + "producer defect, never a silent re-parenting)");
+            }
         }
 
         /** The unit's lowerer-produced MODULE_INIT op, or null (hand-built units). */
