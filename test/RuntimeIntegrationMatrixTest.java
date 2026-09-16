@@ -1856,6 +1856,37 @@ public class RuntimeIntegrationMatrixTest {
                 List.of(), E8001);
         }
 
+        // (m5) The non-finite number spelling: an infinity carries the
+        // Java canonical hex-float spelling ("Infinity"/"-Infinity"),
+        // never LuaJIT's "inf"/"-inf" — the infinity crosses the
+        // division result, the parameter boundary and the result
+        // boundary, and every trace atom must equal the oracle's and the
+        // shared JVM runtime's numberAtom (Double.toHexString).
+        {
+            String source = CONSOLE + MATH
+                + "function main(): null {\n"
+                + "  let t: number = 1.0 / 0.0\n"
+                + "  let f: number = math.floor(t)\n"
+                + "  if (f === t) { console.log(\"inf-ok\") } else { console.log(\"bad\") }\n"
+                + "}\n";
+            runMatrix(source, "MATH_FLOOR infinite argument (num:Infinity atoms)",
+                List.of("inf-ok"), SUCCESS);
+        }
+
+        // (m6) The SQRT_NEGATIVE actual of a negative infinity argument:
+        // the failure projection's actual is the canonical hex-float
+        // spelling of -Infinity (the single __numHex renderer), identical
+        // across the oracle and both shared artifacts.
+        {
+            String source = CONSOLE + MATH
+                + "function main(): null {\n"
+                + "  let x: number = math.sqrt(-1.0 / 0.0)\n"
+                + "  console.log(\"after\")\n"
+                + "}\n";
+            runMatrix(source, "MATH_SQRT negative infinity (E8001 -Infinity actual)",
+                List.of(), E8001);
+        }
+
         // (n) JSON_PARSE_SYNTAX projections: the defect-classification
         // texts and the 1-based UTF-8 byte offsets (a multi-byte scalar
         // counts its full UTF-8 length).

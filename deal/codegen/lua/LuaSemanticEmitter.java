@@ -4698,7 +4698,7 @@ end
 -- so every container write records the written value's own variant —
 -- the __jn carrier's kind when the value is a runtime carrier, the
 -- written expression's static kind otherwise. A number-variant slot
--- serializes through the closed decimal spelling (__jsonNumText,
+-- serializes through the closed decimal spelling (__sfNumText,
 -- Double.toString parity), an int-variant slot through the integer
 -- spelling. The mark is keyed exactly like the storage key (a table
 -- key or a 1-based element index) and is cleared by a non-number
@@ -4734,6 +4734,24 @@ local function __readVar(t, k, v, wantsNumber)
   if wantsNumber then return {__jn = true, k = "int", d = v} end
   return v
 end
+-- The canonical hex-float spelling (Double.toHexString parity; the
+-- single renderer of the number atoms and of the SQRT_NEGATIVE
+-- actual): NaN, both infinities and negative zero carry their Java
+-- spellings (never LuaJIT's "inf"/"-inf"), every finite nonzero value
+-- its shortest round-trippable hex form. Declared before __atom so the
+-- number branch captures it as an upvalue.
+local function __numHex(v)
+  if v ~= v then return "NaN" end
+  if v == math.huge then return "Infinity" end
+  if v == -math.huge then return "-Infinity" end
+  if v == 0 and 1 / v < 0 then return "-0x0.0p0" end
+  local hex = string.format("%a", v)
+  hex = string.gsub(hex, "p(%+)(%d)", "p%2")
+  if not string.find(hex, ".", 1, true) then
+    hex = string.gsub(hex, "^(%-?0x[0-9a-f]+)p", "%1.0p")
+  end
+  return hex
+end
 local function __atom(kind, v)
   if v == __MISSING then return "missing" end
   if type(v) == "table" and v.__jn then
@@ -4746,13 +4764,7 @@ local function __atom(kind, v)
   if kind == "int" then return "int:"..tostring(v) end
   if kind == "number" then
     if v ~= v then return "num:nan" end
-    if v == 0 and 1 / v < 0 then return "num:-0x0.0p0" end
-    local hex = string.format("%a", v)
-    hex = string.gsub(hex, "p(%+)(%d)", "p%2")
-    if not string.find(hex, ".", 1, true) then
-      hex = string.gsub(hex, "^(%-?0x[0-9a-f]+)p", "%1.0p")
-    end
-    return "num:"..hex
+    return "num:"..__numHex(v)
   end
   if kind == "string" then
     if v == nil then return "str:" end
@@ -5410,18 +5422,6 @@ local function __u8enc(cp)
     128 + math.floor(cp / 4096) % 64, 128 + math.floor(cp / 64) % 64,
     128 + cp % 64)
 end
--- The canonical hex-float spelling (Double.toHexString parity; the
--- single renderer of the SQRT_NEGATIVE actual).
-local function __numHex(v)
-  if v ~= v then return "NaN" end
-  if v == 0 and 1 / v < 0 then return "-0x0.0p0" end
-  local hex = string.format("%a", v)
-  hex = string.gsub(hex, "p(%+)(%d)", "p%2")
-  if not string.find(hex, ".", 1, true) then
-    hex = string.gsub(hex, "^(%-?0x[0-9a-f]+)p", "%1.0p")
-  end
-  return hex
-end
 -- The raw argument/result atom of the STDLIB_CALL surfaces (the op
 -- START and the STDLIB_PARAMETER/STDLIB_RETURN boundary STARTs): the
 -- value's actual kind, exactly the oracle's atomOf — a dynamic argument
@@ -5457,8 +5457,10 @@ end
 -- The Java Double.toString notation of one finite nonzero double: the
 -- shortest round-trippable digit string, plain notation when the
 -- decimal exponent is in [-3, 6], scientific d.dddEx otherwise, and a
--- pinned ".0" suffix on integral plain forms.
-local function __jsonNumText(v)
+-- pinned ".0" suffix on integral plain forms. Named distinctly from
+-- the class-encoder renderer (JSON_PRELUDE's __jsonNumText), so the
+-- emitted chunk carries one name per renderer.
+local function __sfNumText(v)
   local neg = false
   if v < 0 or (v == 0 and 1 / v < 0) then neg = true; v = -v end
   if v == 0 then return neg and "-0.0" or "0.0" end
@@ -5891,7 +5893,7 @@ local function __stdlib(fn, opKey, digest, parent, origin, ...)
         if v ~= v or v == math.huge or v == -math.huge then
           sfFail("number", fieldPath)
         end
-        if isNumber then out[#out + 1] = __jsonNumText(v)
+        if isNumber then out[#out + 1] = __sfNumText(v)
         else out[#out + 1] = tostring(v) end
         return
       end
@@ -5903,7 +5905,7 @@ local function __stdlib(fn, opKey, digest, parent, origin, ...)
             if v.d ~= v.d or v.d == math.huge or v.d == -math.huge then
               sfFail("number", fieldPath)
             end
-            out[#out + 1] = __jsonNumText(v.d)
+            out[#out + 1] = __sfNumText(v.d)
           end
           return
         end
