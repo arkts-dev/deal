@@ -370,6 +370,9 @@ TEST_SOURCES=(
   # ISSUE-0586: the CLASSES family's CLASS_DEFAULT/CLASS_NEW/CLASS_FACTORY
   # differential corpus (sequencing step 8 first slice).
   'test/ClassConstructionDifferentialTest.java'
+  # ISSUE-0590: the MODULES emission corpus (the MODULE_INIT envelope's
+  # state machine) and the shared-emitter 55-kind totality gate.
+  'test/ModuleInitDifferentialTest.java'
 )
 
 # TEST_MAINS: ordered "<class>|<banner>|<command>" records reproducing
@@ -617,4 +620,5 @@ WARNING: luajit not found, skipping async nesting stress tests'
   'fg|=== Running V12 Feature Catalog/Matrix Tests (ISSUE-0165) ===|java -ea -cp build deal.test.feature.V12FeatureGateTest'
   'fg|=== Running the Production V12 Feature/Native Gate (ISSUE-0165) ===|java -ea -cp build deal.test.feature.V12FeatureGate'
   'fg|=== Running Class Construction Integration Tail Tests (ISSUE-0517) ===|java -ea -cp build deal.test.ClassConstructionIntegrationTailTest'
+  'fg|=== Running the Module Init Differential Matrix and the Shared-Emitter Totality Gate (ISSUE-0590) ===|java -ea -cp build deal.test.ModuleInitDifferentialTest'
 )

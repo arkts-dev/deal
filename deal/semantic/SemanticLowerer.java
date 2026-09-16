@@ -8507,6 +8507,25 @@ public final class SemanticLowerer {
                 }
                 coverage.put(entry.getKey(), List.copyOf(entry.getValue()));
             }
+            // The MODULE_INIT envelope op (E3/E8; ISSUE-0590): one
+            // detached module-level op per unit whose payload carries
+            // the module's resolved imports and the init block (the
+            // ModuleInitPlan carrier) — the MODULES R-CAPABILITY
+            // required operation, so no dead schema row remains. The op
+            // is not a member of any block (a module-level kind, the
+            // C-D1 completeness exemption): every consumer executes it
+            // as the envelope around the unit's init-block walk
+            // (UNINITIALIZED -> INITIALIZING -> INITIALIZED, FAILED(error)
+            // on failure, no export publication on failure).
+            AnchorId moduleInitAnchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+            OpId moduleInitOpId = ids.nextOpId(module, nextOrdinal++, 0);
+            SourceOrigin moduleInitOrigin = new SourceOrigin(sourceId,
+                toSourceSpan(moduleInitSpan()), SourceOriginKind.SYNTHETIC,
+                moduleInitAnchor, null);
+            emitUnattached(buildOp(moduleInitOpId, SemanticOpKind.MODULE_INIT,
+                new KindPayload.ModuleInitPayload(module, List.copyOf(imports),
+                    moduleInitBlock),
+                null, null, FailurePolicyId.NO_DEAL_FAILURE, moduleInitOrigin));
             List<SemanticOp> produced = List.copyOf(ops);
             Set<SemanticCapability> claims = ContainerClaimingSeam.deriveClaims(produced,
                 activation);

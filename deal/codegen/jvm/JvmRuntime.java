@@ -970,6 +970,60 @@ public final class JvmRuntime {
     }
 
     // =========================================================================
+    // The MODULE_INIT state machine (E8)
+    // =========================================================================
+
+    /**
+     * The closed module-init lifecycle of one module: unrecorded is
+     * {@code UNINITIALIZED}, {@code INITIALIZING} during the payload
+     * walk, {@code INITIALIZED} after a completed walk, and
+     * {@code FAILED} after a failing walk (no export publication).
+     */
+    public enum ModuleInitState { INITIALIZING, INITIALIZED, FAILED }
+
+    /** The per-module lifecycle records of one run (keyed by module path). */
+    static final Map<String, ModuleInitState> MODULE_STATES = new LinkedHashMap<>();
+
+    /**
+     * The MODULE_INIT envelope's state gate: {@code true} when the module
+     * is still {@code UNINITIALIZED} (the walk runs), {@code false} when
+     * it is already {@code INITIALIZED} (the once-after-dependencies
+     * skip). A re-entrant ({@code INITIALIZING}) or post-failure
+     * ({@code FAILED}) execution is a producer defect, never a silent
+     * re-run.
+     *
+     * @param module the module path; non-null
+     * @return whether the init walk runs
+     */
+    public static boolean moduleInitNeeded(String module) {
+        ModuleInitState state = MODULE_STATES.get(module);
+        if (state == null) {
+            return true;
+        }
+        if (state == ModuleInitState.INITIALIZED) {
+            return false;
+        }
+        throw new IllegalStateException("a second MODULE_INIT of module " + module
+            + " after a re-entrant or failed init (the frontend rejects import "
+            + "cycles with E2005) — a producer defect, never a silent re-run");
+    }
+
+    /** The {@code UNINITIALIZED -> INITIALIZING} transition. */
+    public static void moduleInitBegin(String module) {
+        MODULE_STATES.put(module, ModuleInitState.INITIALIZING);
+    }
+
+    /** The {@code INITIALIZING -> INITIALIZED} transition (completed walk). */
+    public static void moduleInitComplete(String module) {
+        MODULE_STATES.put(module, ModuleInitState.INITIALIZED);
+    }
+
+    /** The {@code INITIALIZING -> FAILED(error)} transition (no export publication). */
+    public static void moduleInitFail(String module) {
+        MODULE_STATES.put(module, ModuleInitState.FAILED);
+    }
+
+    // =========================================================================
     // The closed B-D2 comparison table (native operators)
     // =========================================================================
 

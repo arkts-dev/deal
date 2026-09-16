@@ -461,6 +461,7 @@ public final class JvmSemanticEmitter {
 
         EmissionResult emit() {
             out.append("import deal.codegen.jvm.JvmRuntime;\n");
+            out.append("import deal.codegen.jvm.JvmJson;\n");
             out.append("import java.util.List;\n");
             out.append("\npublic final class ").append(className).append(" {\n");
             // Mutable so the combined walk and the cross-unit factory
@@ -542,6 +543,16 @@ public final class JvmSemanticEmitter {
             // slots plus boolean presence flags, tagged with the
             // canonical class identity.
             emitClassCarriers();
+            // The per-class JSON plans (E7/K-D8/K-D10): one plan per class
+            // layout of the resolution context — declaration-order fields
+            // with descriptor, optionality, static result kind, and the
+            // per-field CLASS_DEFAULT child metadata the JSON_FROM_CLASS
+            // walk consumes (the lowerer's per-site JsonDefaultChildTable
+            // entry, derived from the unit: one CLASS_DEFAULT op per
+            // (classId, field)).
+            for (ClassLayout layout : classLayouts.values()) {
+                emitJsonPlan(layout);
+            }
             // The module-init walk, exposed as the deferred-main entry (the
             // scenario host drives it explicitly for an async-entry
             // invocation or a multi-module drive): setup plus the walk;
@@ -614,8 +625,80 @@ public final class JvmSemanticEmitter {
                 // their events through currentModule(), so a helper-raised
                 // failure in a non-entry module must carry that module.
                 out.append(indent(indent)).append("JvmRuntime.setModule(MODULE);\n");
-                emitBlockOps(moduleUnit.moduleInit().initBlock(), indent);
+                SemanticOp moduleInitOp = moduleInitOpOf(moduleUnit);
+                if (moduleInitOp == null) {
+                    // A hand-built unit without the lowerer-produced op runs
+                    // the bare init block, exactly the pre-envelope behavior.
+                    emitBlockOps(moduleUnit.moduleInit().initBlock(), indent);
+                } else {
+                    emitModuleInit(moduleInitOp, indent);
+                }
             }
+        }
+
+        /**
+         * MODULE_INIT (E8; ISSUE-0590): the emitted module envelope — the
+         * op's START, the payload init block (the {@code MODULE_IMPORT}/
+         * {@code EXPORT_*}/entry-delegation ops nested under it) inside a
+         * try so an uncaught DEAL failure publishes the op's single
+         * FAILURE terminal recording {@code FAILED(error)} (no export
+         * publication) before the error propagates to the retained
+         * terminal, and the SUCCESS terminal publishing
+         * {@code state:INITIALIZED}. The closed
+         * {@code UNINITIALIZED -> INITIALIZING -> INITIALIZED} state
+         * machine runs through {@link JvmRuntime} in both modes (the
+         * production mode's event surface is disabled): a re-execution of
+         * an initialized module publishes the state without re-running
+         * the block; a re-entrant or failed re-execution is a producer
+         * defect, never a silent re-run.
+         */
+        private void emitModuleInit(SemanticOp op, int indent) {
+            KindPayload.ModuleInitPayload payload =
+                (KindPayload.ModuleInitPayload) op.payload();
+            String moduleText = javaString(payload.module().path());
+            out.append(indent(indent)).append("if (JvmRuntime.moduleInitNeeded(")
+                .append(moduleText).append(")) {\n");
+            out.append(indent(indent + 1)).append("JvmRuntime.moduleInitBegin(")
+                .append(moduleText).append(");\n");
+            emitStart(op, indent + 1);
+            out.append(indent(indent + 1)).append("try {\n");
+            emitBlockOps(payload.initBlock(), indent + 2);
+            out.append(indent(indent + 2)).append("JvmRuntime.moduleInitComplete(")
+                .append(moduleText).append(");\n");
+            emitModuleInitSuccess(op, indent + 2);
+            out.append(indent(indent + 1)).append("} catch (JvmRuntime.DealError e) {\n");
+            out.append(indent(indent + 2)).append("JvmRuntime.moduleInitFail(")
+                .append(moduleText).append(");\n");
+            emitFailureEvent(op.opId(), op.kind().name(), op, "JvmRuntime.errtext(e)",
+                indent + 2);
+            out.append(indent(indent + 2)).append("throw e;\n");
+            out.append(indent(indent + 1)).append("}\n");
+            out.append(indent(indent)).append("} else {\n");
+            emitStart(op, indent + 1);
+            emitModuleInitSuccess(op, indent + 1);
+            out.append(indent(indent)).append("}\n");
+        }
+
+        /** The MODULE_INIT SUCCESS terminal (the published {@code INITIALIZED} state). */
+        private void emitModuleInitSuccess(SemanticOp op, int indent) {
+            if (!trace) {
+                return;
+            }
+            out.append(indent(indent)).append("JvmRuntime.ev(MODULE, ")
+                .append(javaString(opKey(op.opId()))).append(", \"SUCCESS\", \"MODULE_INIT\", ")
+                .append(javaString(op.contract().canonicalDigest())).append(", ")
+                .append(javaString(parentKey(op.origin().parentOpId())))
+                .append(", List.of(), \"state:INITIALIZED\", null);\n");
+        }
+
+        /** The unit's lowerer-produced MODULE_INIT op, or null (hand-built units). */
+        private SemanticOp moduleInitOpOf(LoweredModuleUnit moduleUnit) {
+            for (SemanticOp op : moduleUnit.ops()) {
+                if (op.kind() == SemanticOpKind.MODULE_INIT) {
+                    return op;
+                }
+            }
+            return null;
         }
 
         /**
@@ -734,6 +817,134 @@ public final class JvmSemanticEmitter {
                 name.append(Character.isJavaIdentifierPart(c) ? c : '_');
             }
             return name.toString();
+        }
+
+        /** One class plan's static field name. */
+        private String planName(ClassId classId) {
+            return "PLAN_" + Integer.toHexString(classId.name().hashCode() & 0x7fffffff)
+                + "_" + Integer.toHexString(classId.modulePath().hashCode() & 0x7fffffff);
+        }
+
+        /**
+         * Emits one class's JSON plan: the declaration-order fields with
+         * descriptor, optionality, static result kind, and the per-field
+         * CLASS_DEFAULT child metadata (key, digest, thunk) of the
+         * JSON_FROM_CLASS walk; the plan instantiates the generated
+         * carrier.
+         */
+        private void emitJsonPlan(ClassLayout layout) {
+            out.append("  private static final JvmJson.Plan ").append(planName(layout.classId()))
+                .append(" = new JvmJson.Plan(")
+                .append(javaString(layout.classId().text())).append(",\n");
+            out.append("    new JvmJson.Field[]{\n");
+            for (ClassLayout.FieldLayout field : layout.fields()) {
+                SemanticOp defaultOp = classDefaultOpOf(layout.classId(), field.name());
+                out.append("      new JvmJson.Field(").append(javaString(field.name()))
+                    .append(", ").append(javaString(jsonDescriptorText(field.descriptor())))
+                    .append(", ").append(field.required() ? "false" : "true")
+                    .append(", ").append(javaString(staticKind(field.descriptor())));
+                if (defaultOp != null && field.required()) {
+                    out.append(", ").append(javaString(opKey(defaultOp.opId())))
+                        .append(", ")
+                        .append(javaString(defaultOp.contract().canonicalDigest()))
+                        .append(", () -> ").append(defaultFn(defaultOp.opId())).append("()");
+                }
+                out.append("),\n");
+            }
+            out.append("    },\n    () -> new ").append(carrierName(layout.classId()))
+                .append("());\n");
+        }
+
+        /** The class's CLASS_DEFAULT op of one field, or null (no declared default). */
+        private SemanticOp classDefaultOpOf(ClassId classId, String field) {
+            for (SemanticOp candidate : opsById.values()) {
+                if (candidate.kind() != SemanticOpKind.CLASS_DEFAULT) {
+                    continue;
+                }
+                KindPayload.ClassDefaultPayload payload =
+                    (KindPayload.ClassDefaultPayload) candidate.payload();
+                if (payload.classId().equals(classId) && payload.field().equals(field)) {
+                    return candidate;
+                }
+            }
+            return null;
+        }
+
+        /** The JSON plan descriptor text (the walk's closed kind grammar). */
+        private static String jsonDescriptorText(RuntimeDescriptor descriptor) {
+            if (descriptor instanceof RuntimeDescriptor.Nullable nullable) {
+                return "nullable:" + jsonDescriptorText(nullable.inner());
+            }
+            if (descriptor instanceof RuntimeDescriptor.Array array) {
+                return "array(" + jsonDescriptorText(array.element()) + ")";
+            }
+            if (descriptor instanceof RuntimeDescriptor.Class cls) {
+                return cls.classId().text();
+            }
+            return switch (descriptor) {
+                case RuntimeDescriptor.Null ignored -> "null";
+                case RuntimeDescriptor.Boolean ignored -> "boolean";
+                case RuntimeDescriptor.Int ignored -> "int";
+                case RuntimeDescriptor.Number ignored -> "number";
+                case RuntimeDescriptor.String ignored -> "string";
+                case RuntimeDescriptor.Table ignored -> "table";
+                case RuntimeDescriptor.Bytes ignored -> "bytes";
+                case RuntimeDescriptor.Func ignored -> "function";
+                case RuntimeDescriptor.Array ignored -> "array";
+                case RuntimeDescriptor.Nullable ignored -> "nullable";
+                case RuntimeDescriptor.Class ignored -> "class";
+            };
+        }
+
+        /**
+         * JSON_FROM_CLASS (E7/K-D8): the shared walk
+         * ({@link JvmJson#fromClass}) over the class's emitted plan — the
+         * payload's JSON text operand resolves exactly once; the walk runs
+         * the per-site CLASS_DEFAULT children (their own START/terminal
+         * events) for omitted required-present defaulted fields and
+         * publishes the tagged instance, or language null on any
+         * syntax/extra-key/decode/default/validation failure (the
+         * {@code JSON_FROM_NULL} projection).
+         */
+        private void emitJsonFromClass(SemanticOp op, int indent) {
+            KindPayload.JsonFromClassPayload payload =
+                (KindPayload.JsonFromClassPayload) op.payload();
+            emitStart(op, indent);
+            String target = slot((ValueId) op.result());
+            out.append(indent(indent)).append(target).append(" = JvmJson.fromClass(")
+                .append(planName(payload.layout().classId())).append(", (String) ")
+                .append(slot(payload.jsonString())).append(");\n");
+            emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType(), indent);
+        }
+
+        /**
+         * JSON_TO_CLASS (E7/K-D10): the shared walk over the class's
+         * emitted plan — the root identity check, the declaration-order
+         * field serialization, and the first failing position's
+         * {@code JSON_TO_ERROR} projection (E8001
+         * {@code value at {fieldPath} is not JSON serializable: {actual}}
+         * at the op origin, no cause, active frames); success publishes
+         * the deterministic RFC-8259 text.
+         */
+        private void emitJsonToClass(SemanticOp op, int indent) {
+            KindPayload.JsonToClassPayload payload =
+                (KindPayload.JsonToClassPayload) op.payload();
+            emitStart(op, indent);
+            String target = slot((ValueId) op.result());
+            out.append(indent(indent)).append("try {\n");
+            out.append(indent(indent + 1)).append(target).append(" = JvmJson.toClass(")
+                .append(planName(payload.layout().classId())).append(", ")
+                .append(slot(payload.classValue())).append(");\n");
+            out.append(indent(indent)).append("} catch (JvmJson.Projection projection) {\n");
+            out.append(indent(indent + 1)).append("JvmRuntime.DealError __jsonErr = "
+                + "JvmRuntime.fail(\"E8001\", \"value at \" + projection.fieldPath + "
+                + "\" is not JSON serializable: \" + projection.actual, ")
+                .append(javaString(originOf(op))).append(", null, null);\n");
+            emitFailureEvent(op.opId(), op.kind().name(), op,
+                "JvmRuntime.errtext(__jsonErr)", indent + 1);
+            out.append(indent(indent + 1)).append("throw __jsonErr;\n");
+            out.append(indent(indent)).append("}\n");
+            emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType(), indent);
         }
 
         /** One thunk re-executor method name of an adapter op. */
@@ -925,6 +1136,9 @@ public final class JvmSemanticEmitter {
                 case EXPORT_PUBLISH -> emitExportPublish(op, indent);
                 case EXTERNAL_ENTRY -> emitExternalEntryRecord(op, indent);
                 case ENTRY_INVOKE -> emitEntryInvoke(op, indent);
+                case MODULE_INIT -> emitModuleInit(op, indent);
+                case JSON_FROM_CLASS -> emitJsonFromClass(op, indent);
+                case JSON_TO_CLASS -> emitJsonToClass(op, indent);
                 case CLASS_NEW -> emitClassNew(op, indent);
                 case CLASS_DEFAULT -> throw new IllegalStateException("a CLASS_DEFAULT "
                     + "executes only under its triggering CLASS_NEW/CLASS_FACTORY "
