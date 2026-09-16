@@ -1648,12 +1648,23 @@ public class LoweringFoundationTest {
             check(unit.requiredCapabilities().isEmpty(),
                 "the unit claims the empty capability set (the manifest's plan-time "
                     + "claims are routing facts)");
+            // The lowerer appends one detached module-level MODULE_INIT
+            // envelope op per unit (ISSUE-0590 E3/E8); the I3 slice's own
+            // ops stay value-operation kinds. The envelope is asserted
+            // separately, then excluded from the value-kind sweep.
+            check(unit.ops().stream()
+                    .filter(op -> op.kind() == SemanticOpKind.MODULE_INIT).count() == 1,
+                "the unit carries exactly one MODULE_INIT envelope op (the "
+                    + "module-level init op, appended last and never a block member)");
             for (SemanticOp op : unit.ops()) {
+                if (op.kind() == SemanticOpKind.MODULE_INIT) {
+                    continue;
+                }
                 check(op.kind() == SemanticOpKind.CONST
                         || op.kind() == SemanticOpKind.UNARY
                         || op.kind() == SemanticOpKind.BINARY
                         || op.kind() == SemanticOpKind.INTRINSIC_CALL,
-                    "every produced op is a value-operation kind; got " + op.kind());
+                    "every produced value op is a value-operation kind; got " + op.kind());
             }
             boolean sawMinLiteral = unit.ops().stream().anyMatch(op ->
                 op.kind() == SemanticOpKind.CONST

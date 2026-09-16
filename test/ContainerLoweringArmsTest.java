@@ -1693,7 +1693,12 @@ public class ContainerLoweringArmsTest {
                 + "ARRAY_LITERAL_ELEMENT boundary children fully evidence both "
                 + "single-family rows; the other active rows are under-evidenced)");
 
-        List<SemanticOp> ops = unit.ops();
+        // The lowerer appends one detached module-level MODULE_INIT envelope
+        // op per unit (ISSUE-0590 E3/E8); the slice's own ops are the 15
+        // below.
+        List<SemanticOp> ops = unit.ops().stream()
+            .filter(op -> op.kind() != SemanticOpKind.MODULE_INIT)
+            .toList();
         check(ops.size() == 15,
             "the combined slice produces 5 loads + ARRAY_NEW + 5 boundaries + 3 CONSTs + "
                 + "TABLE_NEW = 15 ops; got " + ops.size());
