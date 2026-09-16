@@ -35,13 +35,18 @@ import java.util.OptionalInt;
  *       caller's return expression, the contextual binding annotation,
  *       the typed-binding function annotation, and the stdlib call
  *       expression as origins, with the closed expected/actual
- *       projections. The classes whose origin literals have not landed
- *       yet keep the honest non-fabricated outcome: the real JVM
- *       DealError carries code/message with no origin, so the lane
- *       reports the span-absent capture as a process failure naming the
- *       captured code, message and the missing span — the E8010/E8011
- *       host-boundary fixtures carry the same codes the Lua lane pins,
- *       and the sanctioned span-less time fixture passes byte-exact.</li>
+ *       projections. The user-throw family converges the same way: the
+ *       {@code throw} keyword's DEAL origin rides the thrown object (a
+ *       rethrow re-raises the original site), including throws in
+ *       companion modules and async bodies, whose captured file the
+ *       lane normalizes through the deployment map. The classes whose
+ *       origin literals have not landed yet keep the honest
+ *       non-fabricated outcome: the real JVM DealError carries
+ *       code/message with no origin, so the lane reports the span-absent
+ *       capture as a process failure naming the captured code, message
+ *       and the missing span — the E8010/E8011 host-boundary fixtures
+ *       carry the same codes the Lua lane pins, and the sanctioned
+ *       span-less time fixture passes byte-exact.</li>
  *   <li>Invocation contract: declaration-order auto-invocation of the
  *       non-{@code $} zero-arity exports; return values discarded;
  *       {@code main} runs exactly once (the backend entry contract).</li>
@@ -87,6 +92,7 @@ public class JvmLaneTest {
         realFixtureAsyncSimpleAwait();
         realRuntimeErrorHonestFailure();
         realCompanionThrowCapture();
+        realThrowOriginFixtures();
         hostBoundaryCodeParity();
         realTimeFixtureSpanlessConvergence();
         realJsonFixtureConvergence();
@@ -369,26 +375,70 @@ public class JvmLaneTest {
     }
 
     private static void realCompanionThrowCapture() throws Exception {
-        // The throwing companion's error field surface reaches the
-        // capture (code MODULE_SOURCE_FAIL, message 'module fail'); no
-        // origin exists yet, so the companion's stack-frame file is
-        // never transported (the removed fallback fabricated it).
+        // The companion throw converges end to end: the throwing
+        // module's own artifact carries its source path constant and the
+        // throw keyword's DEAL origin, the lane normalizes the path
+        // through the deployment map and rebases the line onto raw
+        // corpus coordinates, and the canonical snapshot equals the
+        // sidecar byte-exact (MODULE_SOURCE_FAIL in source_module_lib.deal
+        // at 7:3 — the companion's own path, never the importing
+        // fixture's and never a generated-Java stack frame).
         String corpusPath =
             "backend-runtime/source-location/module-error-source.deal";
         JvmLane lane = new JvmLane(CORPUS_ROOT);
-        LaneExecution execution = lane.execute(realLaneCase(corpusPath));
-        check(execution instanceof LaneExecution.Infrastructure infra
-                && infra.clazz() == MismatchClass.PROCESS_FAILURE
-                && infra.detail().contains("no span (file, line, column) "
-                    + "where one is required")
-                && infra.detail().contains("code=MODULE_SOURCE_FAIL")
-                && infra.detail().contains("message=module fail")
-                && infra.detail().contains("file=null")
-                && !infra.detail().contains("Source_module_lib.java"),
-            "the throwing companion's DealError fields reach the capture "
-                + "(code=MODULE_SOURCE_FAIL, message=module fail, "
-                + "file=null) with no fabricated stack-frame file, got: "
+        LaneCase laneCase = realLaneCase(corpusPath);
+        LaneExecution execution = lane.execute(laneCase);
+        check(execution instanceof LaneExecution.Executed,
+            "the companion throw executes on the real lane, got: "
                 + execution);
+        if (execution instanceof LaneExecution.Executed executed) {
+            String stdout = new String(executed.stdout(),
+                StandardCharsets.UTF_8);
+            String expectedSnapshot = "{\"code\":\"MODULE_SOURCE_FAIL\","
+                + "\"message\":\"module fail\",\"sourceFile\":"
+                + "\"backend-runtime/source-location/source_module_lib.deal\","
+                + "\"line\":7,\"column\":3}";
+            check(executed.exitCode() == 1
+                    && stdout.equals("DEAL_ERROR_CODE: MODULE_SOURCE_FAIL\n"
+                        + "DEAL_ERROR_SNAPSHOT: " + expectedSnapshot + "\n"),
+                "the companion throw capture is the passing canonical "
+                    + "snapshot over the real lane (companion sourceFile "
+                    + "through the deployment map, line 7, column 3), "
+                    + "got: " + stdout);
+        }
+        GateDispatcher.LaneOutcome outcome = dispatch(lane, laneCase);
+        check(outcome.passed(),
+            "the companion throw fixture passes the dispatch verdict, "
+                + "got: " + outcome.mismatch().map(
+                    m -> m.clazz() + ": " + m.detail()).orElse("<pass>"));
+    }
+
+    private static void realThrowOriginFixtures() throws Exception {
+        // The user-throw origin convergence (the D3 user-throw row):
+        // the `throw` keyword's DEAL span group rides the thrown
+        // DealError, so a rethrow re-raises the ORIGINAL throw site
+        // across catch and function boundaries, and a throw inside a
+        // companion module or an async body carries the throwing
+        // module's own source path constant — which the lane normalizes
+        // to the corpus-relative path through the deployment map. Every
+        // fixture's jvm leg matches its sidecar byte-exact: the
+        // dispatcher's transcript comparison is the field-exact and
+        // byte-exact check. (module-error-source is covered by
+        // realCompanionThrowCapture with its framed stdout pinned.)
+        String[] corpusPaths = {
+            "backend-runtime/runtime-errors/rethrow-preserves-code.deal",
+            "backend-runtime/runtime-errors/rethrow-across-function-boundary.deal",
+            "backend-runtime/runtime-errors/async-error-code-through-module.deal",
+            "backend-runtime/source-location/async-error-source.deal",
+            "backend-runtime/source-location/038-runtime-source-throw.deal",
+            "backend-runtime/source-location-precision/imported-async-error-source.deal",
+            "backend-runtime/module-failures/imported-function-explicit-error.deal"
+        };
+        JvmLane lane = new JvmLane(CORPUS_ROOT);
+        for (String corpusPath : corpusPaths) {
+            assertPassed("real user-throw origin (" + corpusPath + ")",
+                lane, realLaneCase(corpusPath));
+        }
     }
 
     private static void hostBoundaryCodeParity() throws Exception {

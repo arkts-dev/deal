@@ -504,6 +504,16 @@ public class DifferentialGateLanesCorpusTest {
                     JVM_ADD_OVERFLOW_MISSING_COLUMN_PREFIX),
             "the jvm int-add-overflow infrastructure outcome names the "
                 + "missing field, got: " + jvmColumn);
+        // D10 sidecar-correction authority (recorded with the correction):
+        // the int-add-overflow sidecar pins the raising expression's raw
+        // line 7 (the `2147483647 + 1` site; every sibling arithmetic pin
+        // names raw line 7) — the source-authoritative value under
+        // docs/spec-v1.2.md:2068-2075, "Runtime errors use generated
+        // check metadata to report original `.deal` location" — never
+        // fabricated by the lane. This user-throw leaf edits no sidecar;
+        // the jvm leg still reports the span-absent capture honestly
+        // here, and the arithmetic leaf's origin literals flip it to the
+        // converged byte comparison.
 
         // The gate verdict is FAIL when genuine lane mismatches are present.
         check(!run.ok(),
@@ -872,11 +882,6 @@ public class DifferentialGateLanesCorpusTest {
             + "\"backend-runtime/scratch/frame-probe.deal\", "
             + "\"line\": 7, \"column\": 3 }";
 
-    private static final String JVM_FRAME_PROBE_GAP_PREFIX =
-        "the captured DEAL error carries no span (file, line, column) "
-            + "where one is required — the lane never fabricates a pinned "
-            + "field";
-
     private static void perturbedErrorFieldProbe(int jobs)
             throws IOException {
         System.out.println("-- Experiment 3a: a sidecar perturbing one "
@@ -919,11 +924,14 @@ public class DifferentialGateLanesCorpusTest {
         GateDispatcher.LaneOutcome jvm = outcomeOf(run, corpusPath, "jvm");
         check(jvm != null && !jvm.passed()
                 && jvm.mismatch().get().clazz()
-                    == MismatchClass.PROCESS_FAILURE
-                && jvm.mismatch().get().detail().startsWith(
-                    JVM_FRAME_PROBE_GAP_PREFIX),
-            "the jvm lane reports the documented span-absent capture "
-                + "honestly (never fabricates the span), got: " + jvm);
+                    == MismatchClass.ERROR_SNAPSHOT_MISMATCH
+                && jvm.mismatch().get().subject().equals("jvm")
+                && jvm.mismatch().get().detail().contains(
+                    "error.message must be \"frame probe X\", got "
+                        + "\"frame probe\""),
+            "the perturbed message fails the jvm lane with "
+                + "ERROR_SNAPSHOT_MISMATCH naming the field (the converged "
+                + "user-throw capture), got: " + jvm);
 
         // The "on one backend" form (Verification 5): a flagged lane
         // double rebases exactly the captured line by one on the js
@@ -996,11 +1004,11 @@ public class DifferentialGateLanesCorpusTest {
         GateDispatcher.LaneOutcome jvm = outcomeOf(run, corpusPath, "jvm");
         check(jvm != null && !jvm.passed()
                 && jvm.mismatch().get().clazz()
-                    == MismatchClass.PROCESS_FAILURE
-                && jvm.mismatch().get().detail().startsWith(
-                    JVM_FRAME_PROBE_GAP_PREFIX),
-            "the jvm lane reports the documented span-absent capture "
-                + "honestly, got: " + jvm);
+                    == MismatchClass.TRANSCRIPT_MISMATCH
+                && jvm.mismatch().get().subject().equals("jvm"),
+            "the frames-pinned sidecar fails honestly on the jvm lane "
+                + "(the captured error carries no frames field and the "
+                + "lane never fabricates one), got: " + jvm);
     }
 
     private static void serializationViolationProbe(int jobs)
@@ -1041,11 +1049,13 @@ public class DifferentialGateLanesCorpusTest {
         GateDispatcher.LaneOutcome jvm = outcomeOf(run, corpusPath, "jvm");
         check(jvm != null && !jvm.passed()
                 && jvm.mismatch().get().clazz()
-                    == MismatchClass.PROCESS_FAILURE
-                && jvm.mismatch().get().detail().startsWith(
-                    JVM_FRAME_PROBE_GAP_PREFIX),
-            "the jvm lane reports the documented span-absent capture "
-                + "honestly, got: " + jvm);
+                    == MismatchClass.TRANSCRIPT_MISMATCH
+                && jvm.mismatch().get().subject().equals("jvm")
+                && jvm.mismatch().get().detail().contains(
+                    "stdout differs at byte"),
+            "the serialization violation fails the jvm lane's byte "
+                + "comparison naming the first differing byte, got: "
+                + jvm);
     }
 
     /** Executes the scratch frame probe on the production luajit lane

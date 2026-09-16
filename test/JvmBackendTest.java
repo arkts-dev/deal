@@ -461,6 +461,7 @@ public class JvmBackendTest {
             new TestCase("testBytesRuntimeLane", () -> testBytesRuntimeLane()),
             new TestCase("testOriginThreadingSurface", () -> testOriginThreadingSurface()),
             new TestCase("testDeclaredBoundaryOrigins", () -> testDeclaredBoundaryOrigins()),
+            new TestCase("testUserThrowOrigins", () -> testUserThrowOrigins()),
             new TestCase("testRecursiveBytesClosureLane", () -> testRecursiveBytesClosureLane()),
             new TestCase("testCommonShadowInvocationPipeline", () -> testCommonShadowInvocationPipeline()),
             new TestCase("testLegacyByteCompat", () -> testLegacyByteCompat()),
@@ -3834,8 +3835,11 @@ public class JvmBackendTest {
                 check(res.source().contains("return __errorCode(e$c[0]);"),
                     "the closure reads the catch variable through the cell");
                 check(res.source().contains(
-                        "e$c[0] = new DealError(\"E2\", \"second\", null, -1, -1);"),
-                    "the DEAL-level reassignment writes the cell");
+                        "e$c[0] = new DealError(\"E2\", \"second\", "
+                            + "__SRC, 6, 9);"),
+                    "the DEAL-level reassignment writes the cell (the "
+                        + "reassigned Error literal carries its own "
+                        + "source span)");
             }
         }
 
@@ -13856,10 +13860,12 @@ public class JvmBackendTest {
      * (file/line/column) parameters and propagates them unchanged into
      * every raise it performs — the wrapped E8003/E8010 re-raises
      * included — and the short overloads pass the explicit absent sentinel
-     * (null, -1, -1). No raise site passes an actual origin at this leaf,
-     * so every emitted raise carries an origin argument whose value is the
-     * received parameter (inside a threaded helper) or the sentinel
-     * literal (the user-throw raise statement).
+     * (null, -1, -1). The user-throw raise statements pass the real origin
+     * (the per-artifact `__SRC` path constant plus compile-time
+     * line/column literals); every other emitted raise carries an origin
+     * argument whose value is the received parameter (inside a threaded
+     * helper) or the sentinel literal (the classes whose per-site origin
+     * literals have not landed yet).
      */
     private static void testOriginThreadingSurface() {
         System.out.println("-- D1 origin-threading surface --");
@@ -13944,9 +13950,11 @@ public class JvmBackendTest {
                         "throw new DealError(\"E8011\", \"host export '\" + name + \"' in module '\" + module + \"' missing or has signature mismatch: expected \" + desc, oFile, oLine, oCol);"),
                     "the host load-time E8011 raise propagates the origin");
                 check(java.contains(
-                        "new DealError(\"E1\", \"boom\", null, -1, -1)"),
-                    "the user-throw raise statement passes the explicit "
-                        + "absent sentinel");
+                        "throw new DealError(\"E1\", \"boom\", __SRC, 8, 5);"),
+                    "the user-throw raise statement passes the throw "
+                        + "keyword's span — the per-artifact source path "
+                        + "constant and the compile-time line/column "
+                        + "literals (the D3 user-throw origin)");
                 check(java.contains("static java.lang.Object __hostCheck(java.lang.String desc, java.lang.Object v, java.lang.String fn, boolean completion) { return __hostCheck(desc, v, fn, completion, null, -1, -1); }"),
                     "the host return check's short overload passes the "
                         + "explicit absent sentinel");
@@ -13962,7 +13970,8 @@ public class JvmBackendTest {
                     int end = java.indexOf(';', idx);
                     String args = end < 0 ? java.substring(idx)
                         : java.substring(idx, end);
-                    if (!args.contains("oFile") && !args.contains("null, -1, -1")) {
+                    if (!args.contains("oFile") && !args.contains("null, -1, -1")
+                            && !args.contains("__SRC")) {
                         originLess++;
                     }
                     idx = java.indexOf("new DealError(", idx + 1);
@@ -13970,8 +13979,9 @@ public class JvmBackendTest {
                 check(raises > 20, "the fixture artifact emits a substantial "
                     + "raise surface: raises = " + raises);
                 check(originLess == 0, "every emitted raise carries an "
-                    + "origin argument (file/line/column parameters or the "
-                    + "explicit absent sentinel): origin-less = " + originLess);
+                    + "origin argument (file/line/column parameters, the "
+                    + "per-artifact source path constant, or the explicit "
+                    + "absent sentinel): origin-less = " + originLess);
             }
         }
 
@@ -14230,6 +14240,130 @@ public class JvmBackendTest {
                         + originsEmitted);
             }
         }
+    }
+
+    /**
+     * The user-throw origin leaf (jvm-canonical-error-snapshot-convergence
+     * D3's user-throw/rethrow row and D5's production-side split): the
+     * emitted Error literal in a throw position carries the `throw`
+     * keyword's DEAL span — the per-artifact source path constant plus the
+     * compile-time start line/column literals — so the thrown object names
+     * the original site; the rethrow re-raises the SAME DealError
+     * (exactly one construction, never a fabricated re-raise site); a
+     * companion module's artifact carries the companion's OWN source path
+     * constant; and the sanctioned span-less raise stays span-less — the
+     * locked time selector's declared-int boundary keeps the explicit
+     * absent-origin entry (no origin literal is ever added at that site)
+     * while the throw site carries one.
+     */
+    private static void testUserThrowOrigins() throws Exception {
+        System.out.println("-- User-throw origins: throw-keyword span, "
+            + "rethrow object preservation, module constant, D5 split --");
+
+        // The throw-keyword span (line 3, column 5 of the fixture source)
+        // and the rethrow's object identity: the literal constructs
+        // exactly one DealError carrying the throw site, and the
+        // catch-side rethrow emits a plain rethrow of the SAME object, so
+        // the original origin survives the catch boundary.
+        String rethrowSource = """
+            export function test_rethrow_preserves_code(): null {
+              try {
+                throw { code: "ORIGIN_PROBE", message: "boom" };
+              } catch (e) {
+                throw e;
+              }
+              return null;
+            }
+            export function main(): null { return null; }
+            """;
+        String rethrowJava = legacyArtifact(rethrowSource, "throw_origin");
+        check(rethrowJava.contains(
+                "throw new DealError(\"ORIGIN_PROBE\", \"boom\", __SRC, 3, 5);"),
+            "the object-literal throw passes the throw keyword's span "
+                + "(line 3, column 5) through the per-artifact path "
+                + "constant: " + rethrowJava.lines()
+                    .filter(l -> l.contains("new DealError"))
+                    .findFirst().orElse("<missing>"));
+        check(rethrowJava.contains(
+                "static final java.lang.String __SRC = "
+                    + "\"jvmtest-throw_origin.deal\";"),
+            "the artifact carries its own DEAL source path constant");
+        check(countOccurrences(rethrowJava,
+                "new DealError(\"ORIGIN_PROBE\", \"boom\", __SRC, 3, 5)") == 1,
+            "exactly one DealError construction exists for the thrown "
+                + "literal (the rethrow re-raises the same object, never "
+                + "a fabricated re-raise site)");
+        check(rethrowJava.contains("throw (e);"),
+            "the rethrow re-raises the caught DealError object unchanged: "
+                + rethrowJava.lines().filter(l -> l.contains("throw ("))
+                    .findFirst().orElse("<missing>"));
+
+        // A companion module's artifact carries the COMPANION's own
+        // source path constant — the same throw shape under a different
+        // module path, so the captured file names the module that
+        // actually raised (the lane normalizes it to the corpus path).
+        Frontend companion = compileFrontend("""
+            export function fail(): null {
+              throw { code: "COMPANION_PROBE", message: "fail" };
+            }
+            """, "companion_lib.deal");
+        check(companion.errors().isEmpty(),
+            "companion fixture frontend clean: " + companion.errors());
+        if (companion.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                companion.program(), companion.checkResult(),
+                "companion_lib.deal", "lib");
+            check(!res.hasErrors(), "companion fixture codegen clean: "
+                + res.diagnostics());
+            if (!res.hasErrors()) {
+                check(res.source().contains(
+                        "static final java.lang.String __SRC = "
+                            + "\"companion_lib.deal\";"),
+                    "the companion artifact carries the companion's own "
+                        + "source path constant, never the importer's");
+                check(res.source().contains(
+                        "throw new DealError(\"COMPANION_PROBE\", \"fail\", "
+                            + "__SRC, 2, 3);"),
+                    "the companion's throw carries the companion file "
+                        + "constant and its own span: " + res.source().lines()
+                            .filter(l -> l.contains("new DealError"))
+                            .findFirst().orElse("<missing>"));
+            }
+        }
+
+        // The D5 split inside one artifact: the locked time selector's
+        // declared-int boundary keeps the explicit absent-origin entry
+        // while the throw site in the same artifact carries the origin
+        // literal.
+        String splitSource = """
+            import * as time from "std/time"
+            export function main(): null { return null; }
+            export function test_split(): null {
+              let t: int = time.nowMillis();
+              throw { code: "SPLIT_PROBE", message: "split" };
+            }
+            """;
+        String splitJava = int32Artifact(splitSource, "throw_split");
+        check(splitJava.contains(
+                "int t = checkInt(" + RETAINED_TIME_EXPRESSION + ");"),
+            "the sanctioned span-less raise takes the explicit "
+                + "absent-origin entry at the declared-int time boundary: "
+                + splitJava.lines().filter(l -> l.contains("checkInt("))
+                    .findFirst().orElse("<missing>"));
+        check(!splitJava.contains(
+                "checkInt(" + RETAINED_TIME_EXPRESSION + ", "),
+            "no origin literal is ever added at the time boundary (the "
+                + "span-less shape is permanent)");
+        check(splitJava.contains(
+                "throw new DealError(\"SPLIT_PROBE\", \"split\", "
+                    + "__SRC, 5, 3);"),
+            "the throw site in the same artifact carries the origin "
+                + "literal: " + splitJava.lines()
+                    .filter(l -> l.contains("new DealError"))
+                    .findFirst().orElse("<missing>"));
+        check(!splitJava.contains("DealError(\"SPLIT_PROBE\", \"split\", null"),
+            "the throw site never falls back to the absent sentinel");
+        System.out.println("  user-throw origins pinned");
     }
 
     private static void testSharedCheckSeamCanonicalParsing()

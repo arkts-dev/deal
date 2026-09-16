@@ -5341,6 +5341,14 @@ public final class JvmBackend {
 
     private void emitRuntimeSupport() {
         emitLine("// ---- DEAL JVM skeleton runtime support ----");
+        // The per-artifact DEAL-source path constant (D1): a same-module
+        // raise site passes it as the origin file value, so the captured
+        // error names the module that actually raised — a companion
+        // module's throw carries the companion's OWN path (the lane
+        // normalizes it back to the companion's corpus path through the
+        // deployment map).
+        emitLine("static final java.lang.String __SRC = "
+            + quoteJavaString(sourcePath == null ? "" : sourcePath) + ";");
         // Every java.lang reference is fully qualified: DEAL identifiers may
         // be named System, Math, Double, String, Void, Integer, Character,
         // RuntimeException, ArithmeticException, … (javaName passes
@@ -5355,9 +5363,11 @@ public final class JvmBackend {
         // expected/actual/frames/cause are populated only from real data,
         // never fabricated. The two-argument constructor is the explicit
         // absent-origin path every raise site whose per-site origin literal
-        // has not landed yet uses; the five-argument constructor threads an
-        // origin (file/line/column) into the emitted error object, and the
-        // nine-argument constructor adds the closed optional fields.
+        // has not landed yet uses — and the permanent, sanctioned shape of
+        // the locked time selector's declared-int boundary raise (D5); the
+        // five-argument constructor threads an origin (file/line/column)
+        // into the emitted error object, and the nine-argument constructor
+        // adds the closed optional fields.
         emitLine("/** DEAL runtime error: the complete DEALRuntimeError field surface. */");
         emitLine("static final class DealError extends java.lang.RuntimeException {");
         emitLine("    final java.lang.String code;");
@@ -11777,7 +11787,12 @@ public final class JvmBackend {
     private void emitThrow(ThrowStatement th) {
         ExpressionNode e = th.expr();
         if (e instanceof ObjectLiteralExpr ol) {
-            String errorCode = emitErrorLiteral(ol);
+            // The authoritative origin of a thrown error literal is the
+            // `throw` keyword start (the D3 user-throw row): the thrown
+            // object is the same DealError a rethrow re-raises, so a
+            // rethrow across catch and function boundaries re-raises the
+            // ORIGINAL origin, message, and fields unchanged.
+            String errorCode = emitErrorLiteral(ol, th.span());
             if (errorCode.equals("null")) {
                 return; // diagnostic recorded by emitErrorLiteral
             }
@@ -12244,7 +12259,7 @@ public final class JvmBackend {
     private String emitObjectLiteral(ObjectLiteralExpr ol) {
         Type t = typeOf(ol);
         if (t instanceof Type.Class cls && isBuiltinErrorType(cls)) {
-            return emitErrorLiteral(ol);
+            return emitErrorLiteral(ol, ol.span());
         }
         if (t instanceof Type.Class cls) {
             // ISSUE-0303 D4: a declared host class constructs the
@@ -12288,7 +12303,7 @@ public final class JvmBackend {
      * {@code message: string = ""}), exactly where the LuaJIT emitter
      * fills the omission from the seeded builtin defaults table
      * (ISSUE-0307 gate closure — the rtc-015 corpus pin). */
-    private String emitErrorLiteral(ObjectLiteralExpr ol) {
+    private String emitErrorLiteral(ObjectLiteralExpr ol, Span originSpan) {
         List<ExpressionNode> values = new ArrayList<>();
         for (Property prop : ol.properties()) {
             values.add(prop.value());
@@ -12306,11 +12321,16 @@ public final class JvmBackend {
         if (codeCode == null) codeCode = "\"\"";
         if (messageCode == null) messageCode = "\"\"";
         // D1: the raise statement carries the origin (file/line/column)
-        // parameters explicitly — the user-throw leaf's per-site origin
-        // literals land here; today every throw site passes the explicit
-        // absent sentinel (null, -1, -1).
+        // arguments explicitly — the per-artifact source path constant
+        // plus the authoritative node's compile-time start line/column
+        // literals, never a thread-local, a stack lookup, or a runtime
+        // parse. The Error literal in a throw position passes the throw
+        // keyword's span; a literal outside a throw passes its own span
+        // (the object it constructs keeps exactly that origin when it is
+        // thrown later or rethrown).
         return "new DealError(" + codeCode + ", " + messageCode
-            + ", null, -1, -1)";
+            + ", __SRC, " + originSpan.startLine() + ", "
+            + originSpan.startColumn() + ")";
     }
 
     private String emitClassConstruction(Type.Class cls, ObjectLiteralExpr obj) {
@@ -14194,6 +14214,13 @@ public final class JvmBackend {
                                     Type target) {
         if (int32Mode && isIntBoundaryTarget(target)
                 && intValueCodeIsWiderOrBoxed(e)) {
+            // The only wider producer reaching this seam is the locked
+            // time selector's retained long nowMillis expression: its
+            // declared-int boundary raise is the ONE sanctioned
+            // span-less raise in the emission (D5). The one-argument
+            // entry is the explicit absent-origin path (file=null,
+            // line=-1, column=-1) — no origin literal is ever added at
+            // this site, permanently.
             return "checkInt(" + code + ")";
         }
         return code;
