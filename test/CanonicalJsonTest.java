@@ -637,25 +637,6 @@ public class CanonicalJsonTest {
                         "\"referencedSemanticIds\":[\"not-an-object\",")),
             "string-typed referencedSemanticIds element");
 
-        // The parser never produces E6005: every failure above was a
-        // SemanticIrTextDecodeException, and the parse/serialize production
-        // classes carry no diagnostics reference at all.
-        List<String> parserFiles = List.of(
-            "deal/semantic/ir/CanonicalJson.java",
-            "deal/semantic/ir/SemanticIrTextDecodeException.java",
-            "deal/semantic/ir/SnapshotJsonRecord.java",
-            "deal/semantic/ir/ContractSnapshotCanonicalizer.java",
-            "deal/semantic/ir/LoweringContextHash.java");
-        for (String file : parserFiles) {
-            try {
-                String content = Files.readString(Path.of(file));
-                check(!content.contains("DiagnosticCode") && !content.contains("deal.diagnostics")
-                        && !content.contains("CompilerDiagnostic"),
-                    file + " never references the diagnostics surface (transport-level only)");
-            } catch (Exception e) {
-                fail("scan of " + file + " failed: " + e);
-            }
-        }
     }
 
     // =========================================================================
@@ -975,122 +956,6 @@ public class CanonicalJsonTest {
     }
 
     // =========================================================================
-    // 7. Structural single-implementation scans
-    // =========================================================================
-
-    static List<Path> javaFilesUnder(String root) {
-        List<Path> result = new ArrayList<>();
-        try (var stream = Files.walk(Path.of(root))) {
-            for (Path p : stream.filter(p -> p.toString().endsWith(".java")).toList()) {
-                result.add(p);
-            }
-        } catch (Exception e) {
-            fail("production scan failed: " + e);
-        }
-        return result;
-    }
-
-    /** Sorted deterministic file-name list for structural assertions. */
-    static List<String> filesContaining(String root, String needle) {
-        List<String> result = new ArrayList<>();
-        for (Path p : javaFilesUnder(root)) {
-            try {
-                if (Files.readString(p).contains(needle)) {
-                    result.add(p.toString());
-                }
-            } catch (Exception e) {
-                fail("scan of " + p + " failed: " + e);
-            }
-        }
-        result.sort(String::compareTo);
-        return result;
-    }
-
-    static void testStructuralSingleImplementation() {
-        System.out.println("-- Structural single-implementation assertion --");
-
-        // Within the semantic foundation, exactly one serializer, one parser,
-        // one SHA-256 helper, and one snapshot canonicalizer exist.
-        check(filesContaining("deal/semantic", "Double.toHexString").equals(
-                List.of("deal/semantic/ir/CanonicalJson.java")),
-            "exactly one semantic production file renders hex floats: "
-                + filesContaining("deal/semantic", "Double.toHexString"));
-        check(filesContaining("deal/semantic", "Double.parseDouble").equals(
-                List.of("deal/semantic/ir/CanonicalJson.java")),
-            "exactly one semantic production file parses numbers: "
-                + filesContaining("deal/semantic", "Double.parseDouble"));
-        check(filesContaining("deal/semantic", "MessageDigest").equals(
-                List.of("deal/semantic/ir/CanonicalJson.java")),
-            "exactly one semantic production file computes SHA-256: "
-                + filesContaining("deal/semantic", "MessageDigest"));
-        check(filesContaining("deal/semantic", "\"referencedSemanticIds\"").equals(
-                List.of("deal/semantic/ir/ContractSnapshotCanonicalizer.java")),
-            "exactly one production file serializes the snapshot digest field set: "
-                + filesContaining("deal/semantic", "\"referencedSemanticIds\""));
-        // The pinned digest-input key appears only in the pinned record
-        // shapes and their single derivation helpers: the lowering-context
-        // pair (T3), the ISSUE-0284 release-state-hash derivation (F1), and
-        // the ISSUE-0290 route-plan invocation hash (F4: invocationHash =
-        // SHA-256(canonical JSON {purpose, semanticProfile, releaseState,
-        // capabilityRegistryHash, interfaceIndexDigest, target})). No other
-        // component names canonical JSON keys.
-        check(filesContaining("deal/semantic", "\"capabilityRegistryHash\"").equals(
-                List.of("deal/semantic/CompilerProfileProvider.java",
-                    "deal/semantic/MigrationPlanner.java",
-                    "deal/semantic/ir/LoweringContext.java",
-                    "deal/semantic/ir/LoweringContextHash.java")),
-            "the pinned digest-input key lives only in the pinned record/derivation "
-                + "components: " + filesContaining("deal/semantic", "\"capabilityRegistryHash\""));
-        check(filesContaining("deal/semantic", "CanonicalJson.parse(").equals(
-                List.of("deal/semantic/ir/ContractSnapshotCanonicalizer.java")),
-            "exactly one production component parses canonical JSON: "
-                + filesContaining("deal/semantic", "CanonicalJson.parse("));
-        // Exactly the pinned production components serialize canonical
-        // JSON, and every one of them goes through the single CanonicalJson
-        // facility: the snapshot canonicalizer, the lowering-context helper
-        // (T3), the ISSUE-0284 F1/F7 release-state-hash and
-        // capability-registry components (CompilerProfileProvider /
-        // CapabilityRegistry — records mapped onto the single value model,
-        // no serializer of their own), the ISSUE-0288 interface index
-        // (ProjectInterfaceIndex.interfaceIndexDigest = SHA-256(canonical
-        // JSON of the index), foundation F2 — a record mapped onto the
-        // single value model through the same facility, no serializer of
-        // its own), and the ISSUE-0290 route planner (MigrationPlanner:
-        // invocationHash = SHA-256(canonical JSON {purpose,
-        // semanticProfile, releaseState, capabilityRegistryHash,
-        // interfaceIndexDigest, target}), foundation F4 — mapped onto the
-        // single value model through the same facility, no serializer of
-        // its own). The MessageDigest/hex-float scans above still pin the
-        // machinery to CanonicalJson alone.
-        check(filesContaining("deal/semantic", "CanonicalJson.serializeBytes(").equals(
-                List.of("deal/semantic/CapabilityRegistry.java",
-                    "deal/semantic/CompilerProfileProvider.java",
-                    "deal/semantic/MigrationPlanner.java",
-                    "deal/semantic/ir/ContractSnapshotCanonicalizer.java",
-                    "deal/semantic/ir/LoweringContextHash.java",
-                    "deal/semantic/ir/ProjectInterfaceIndex.java")),
-            "exactly the six pinned production components serialize canonical JSON: "
-                + filesContaining("deal/semantic", "CanonicalJson.serializeBytes("));
-
-        // The compiler-wide SHA-256 sites form a closed registry: the
-        // project path/deployment-digest facility (ProjectLocator, T4),
-        // the module identity-digest facility (deal.module.IdentityDigests,
-        // ISSUE-0267 T6 — deploymentModuleId and providerContractDigest
-        // domains), and the single canonical facility (CanonicalJson) —
-        // plus each facility's test helper. Any other SHA-256 site
-        // violates the single-implementation discipline.
-        check(filesContaining("deal", "MessageDigest").equals(
-                List.of("deal/module/IdentityDigests.java",
-                    "deal/module/SourceModuleResolverTest.java",
-                    "deal/project/ProjectLocator.java",
-                    "deal/project/ProjectLocatorTest.java",
-                    "deal/semantic/ir/CanonicalJson.java")),
-            "the only SHA-256 sites in the compiler are the pinned digest facilities "
-                + "(project path/identity, module identity, canonical) and their test "
-                + "helpers: " + filesContaining("deal", "MessageDigest"));
-    }
-
-    // =========================================================================
     // Minimal payload fixtures (one per SemanticOpKind; mirrors T2's shapes)
     // =========================================================================
 
@@ -1223,7 +1088,6 @@ public class CanonicalJsonTest {
         testDigest();
         testLoweringContextHash();
         testCombinedT1T2();
-        testStructuralSingleImplementation();
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {

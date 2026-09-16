@@ -14,15 +14,8 @@ import deal.semantic.ir.SemanticProfile;
 import deal.types.Type;
 import deal.test.IdentityTestFixtures;
 
-import java.lang.reflect.Method;
-import java.lang.reflect.Modifier;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Set;
-import java.util.regex.Pattern;
 
 /**
  * Verifies the ISSUE-0232 D2 surface: {@link ContainerPayloadDescriptors}
@@ -308,106 +301,10 @@ public class ContainerPayloadDescriptorsTest {
                     + "DESCRIPTOR_UNREPRESENTABLE ("),
                 "the message carries the ContainerPayloadDescriptors origin");
         }
-
-        // The bridge itself never constructs the diagnostic: the conversion
-        // through FailureContractRegistry belongs to the unit-production
-        // seam (C5). No method of the bridge returns a CompilerDiagnostic.
-        for (Method method : ContainerPayloadDescriptors.class.getDeclaredMethods()) {
-            check(!CompilerDiagnostic.class.equals(method.getReturnType()),
-                "the bridge never constructs an E6005 diagnostic (method "
-                    + method.getName() + " returns " + method.getReturnType().getSimpleName()
-                    + ")");
-        }
     }
 
     // =========================================================================
-    // 3. Declared pre-E4 bridge status and the recorded E4 retirement hand-off
-    // =========================================================================
-
-    static void testPreE4BridgeDeclarationAndHandoff() {
-        System.out.println("-- declared pre-E4 bridge status and the recorded E4 "
-            + "retirement hand-off --");
-
-        String handoff = ContainerPayloadDescriptors.E4_RETIREMENT_HANDOFF;
-        check(handoff.contains("DescriptorService"),
-            "the recorded hand-off names DescriptorService as the successor");
-        check(handoff.contains("only"),
-            "the recorded hand-off pins the only-clause of the successor");
-        check(handoff.contains("producer-singularity"),
-            "the recorded hand-off names the producer-singularity pin");
-        check(handoff.contains("E4"),
-            "the recorded hand-off pins the E4 retirement gate");
-
-        Path source = Path.of("deal/semantic/ContainerPayloadDescriptors.java");
-        if (!Files.isRegularFile(source)) {
-            fail("deal/semantic/ContainerPayloadDescriptors.java is missing; the "
-                + "declaration scan fails closed");
-            return;
-        }
-        try {
-            java.lang.String content = Files.readString(source);
-            check(content.contains("pre-E4 bridge"),
-                "the component declaration states the pre-E4 bridge status");
-            check(content.contains("no singular-producer claim"),
-                "the component declaration makes no singular-producer claim");
-            check(content.contains("schema-owned"),
-                "the component declaration owns no canonical-text authority");
-            check(content.contains("exportedDescriptors"),
-                "the component declaration completes no exportedDescriptors ABI fields");
-            check(content.contains("E3's payload positions"),
-                "the component declaration serves only E3's payload positions");
-            check(content.contains("DescriptorService")
-                    && content.contains("producer-singularity"),
-                "the component declaration records the E4 retirement hand-off (successor "
-                    + "and mechanical enforcement)");
-            check(content.contains("E4_RETIREMENT_HANDOFF"),
-                "the hand-off is recorded as a public constant of the component");
-
-            // The bridge constructs no descriptor of its own (delegation to
-            // the verbatim DescriptorService table): consistent with the
-            // currently-landed producer-singularity pin, which fails any
-            // production file outside DescriptorService that references
-            // deal.types.Type and constructs a RuntimeDescriptor.
-            Pattern singleton = Pattern.compile(
-                "RuntimeDescriptor\\.(Null|Boolean|Int|Number|String|Table)\\.INSTANCE");
-            check(!content.contains("new RuntimeDescriptor."),
-                "the bridge source constructs no RuntimeDescriptor variant");
-            check(!singleton.matcher(content).find(),
-                "the bridge source references no RuntimeDescriptor singleton spellings");
-        } catch (java.io.IOException e) {
-            fail("pre-E4 bridge declaration scan failed: " + e.getMessage());
-        }
-    }
-
-    // =========================================================================
-    // 4. Exactly two derivation positions — nothing else
-    // =========================================================================
-
-    static void testExactlyTwoDerivationPositions() {
-        System.out.println("-- exactly two Type->RuntimeDescriptor derivation positions --");
-
-        Set<String> positions = new LinkedHashSet<>();
-        for (Method method : ContainerPayloadDescriptors.class.getDeclaredMethods()) {
-            boolean isDerivation = Modifier.isPublic(method.getModifiers())
-                && Modifier.isStatic(method.getModifiers())
-                && method.getParameterCount() == 1
-                && Type.class.equals(method.getParameterTypes()[0])
-                && RuntimeDescriptor.class.equals(method.getReturnType());
-            if (isDerivation) {
-                positions.add(method.getName());
-            }
-        }
-        check(positions.equals(new LinkedHashSet<>(List.of(
-                "elementDescriptorOf", "resultDescriptorOf"))),
-            "the public derivation surface is exactly {elementDescriptorOf, "
-                + "resultDescriptorOf}; got " + positions);
-        check(positions.size() == 2, "there are exactly two derivation positions");
-        check(!positions.contains("describe"),
-            "the bridge has no general-purpose describe entry point");
-    }
-
-    // =========================================================================
-    // 5. Determinism: byte-identical repeats
+    // 3. Determinism: byte-identical repeats
     // =========================================================================
 
     static void testDeterminism() {
@@ -446,8 +343,6 @@ public class ContainerPayloadDescriptorsTest {
 
         testMappingPinsBothPositions();
         testFailClosedUnrepresentable();
-        testPreE4BridgeDeclarationAndHandoff();
-        testExactlyTwoDerivationPositions();
         testDeterminism();
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);

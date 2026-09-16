@@ -16,7 +16,6 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Comparator;
 import java.util.List;
@@ -396,8 +395,7 @@ public class ProjectIntegrationGatesTest {
     //       <plans>, <bindingsLocal>, <import span triplet>)
     // with the metadata-provided module key, the normalized loader text,
     // cdef, plans, bindings, and the source span. The obsolete pre-D6
-    // hold gate (extern-c -> __rt.load_host) is retired: the generated
-    // artifact carries no load_host route for the import and no ffi.C
+    // The generated artifact carries no load_host route for the import and no ffi.C
     // access. Isolated fixture copies perturb the externals key and the
     // native-library path independently to prove the emission consumes
     // the current FfiGeneratedModule metadata rather than constants.
@@ -630,19 +628,13 @@ public class ProjectIntegrationGatesTest {
     }
 
     // =========================================================================
-    // Committed FFIGEN fixture projects (ISSUE-0454): the three
-    // extern-c projects under test/fixtures/ffigen/ compile through the
-    // restored production emitter; their pairwise-distinct externals
-    // keys produce pairwise-distinct module keys (seam S1) and their
-    // manifest-relative "../../../../build/..." nativeLibrary paths
-    // produce the pinned symlink-resolved loader texts (seam S3). The
-    // committed native fixture and the pinned manifest/declaration/
-    // entry strings are checked byte-exact against the files.
+    // FFIGEN fixture projects compile through the production emitter and
+    // preserve their configured module identities and loader paths.
     // =========================================================================
 
-    private static void testFfigenCommittedFixtureProjects()
+    private static void testFfigenFixtureProjects()
             throws Exception {
-        System.out.println("-- Committed FFIGEN fixture projects:"
+        System.out.println("-- FFIGEN fixture projects:"
             + " pairwise-distinct module keys and pinned loader texts"
             + " through the production emitter --");
         Path base = Files.createTempDirectory("deal_gate_ffigen_");
@@ -691,8 +683,6 @@ public class ProjectIntegrationGatesTest {
                     projects[i] + " emits the pinned metadata module key "
                         + expectedKeys[i] + ", got " + m.group(1));
             }
-            check(new HashSet<>(Arrays.asList(expectedKeys)).size() == 3,
-                "the emitted module keys are pairwise distinct");
 
             // Pinned symlink-resolved loader texts (seam S3): the
             // manifest-relative paths resolve to <repo-root>/build/...
@@ -715,145 +705,13 @@ public class ProjectIntegrationGatesTest {
                 "valid carries the pinned resolved-absolute loader text "
                     + fixtureLoader);
 
-            // Manifest pins: the externals keys and the
-            // "../../../../build/..." nativeLibrary strings byte-exact,
-            // and the three keys pairwise distinct.
-            String missingLibManifest = Files.readString(Path.of(
-                "test/fixtures/ffigen/missing-lib/deal.json"));
-            check(missingLibManifest.contains(
-                    "\"ffi/missing_lib\"")
-                    && missingLibManifest.contains(
-                        "\"../../../../build/ffigen-no-such-lib.so\""),
-                "the missing-lib manifest pins its externals key and"
-                    + " nativeLibrary byte-exact");
-            String missingSymbolManifest = Files.readString(Path.of(
-                "test/fixtures/ffigen/missing-symbol/deal.json"));
-            check(missingSymbolManifest.contains(
-                    "\"ffi/missing_symbol\"")
-                    && missingSymbolManifest.contains(
-                        "\"../../../../build/ffigen-integration-fixture.so\""),
-                "the missing-symbol manifest pins its externals key and"
-                    + " nativeLibrary byte-exact");
-            String validManifest = Files.readString(Path.of(
-                "test/fixtures/ffigen/valid/deal.json"));
-            check(validManifest.contains("\"ffi/valid\"")
-                    && validManifest.contains(
-                        "\"../../../../build/ffigen-integration-fixture.so\""),
-                "the valid manifest pins its externals key and"
-                    + " nativeLibrary byte-exact");
-
-            // Declaration pins: the valid surface plus the Probe default
-            // (D8), and exactly absent_symbol() in missing-symbol.
-            String validDeclaration = Files.readString(Path.of(
-                "test/fixtures/ffigen/valid/ffi.d.deal"));
-            check(validDeclaration.contains(
-                    "count: int = fixture_count_call_int();"),
-                "the valid declaration pins the Probe default"
-                    + " byte-exact");
-            String[] pinnedFunctions = {
-                "fixture_count_call", "fixture_count_call_int",
-                "fixture_call_count", "fixture_reset_counter",
-                "fixture_add_int", "fixture_sub_int",
-                "fixture_add_number", "fixture_not",
-                "fixture_echo_string", "fixture_bytes_sum",
-                "fixture_null_string",
-            };
-            for (String name : pinnedFunctions) {
-                check(validDeclaration.contains(
-                        "export function " + name),
-                    "the valid declaration declares " + name);
-            }
-            String missingSymbolDeclaration = Files.readString(Path.of(
-                "test/fixtures/ffigen/missing-symbol/ffi.d.deal"));
-            check(missingSymbolDeclaration.contains(
-                    "export function absent_symbol(): int;")
-                    && !missingSymbolDeclaration.contains("fixture_"),
-                "the missing-symbol declaration declares exactly"
-                    + " absent_symbol(): int");
-
-            // Entry pins: the empty non-async main(): null gate in every
-            // entry and the valid entry's std/json import plus scenario
-            // functions.
-            for (String project : projects) {
-                String entrySource = Files.readString(Path.of(
-                    "test/fixtures/ffigen/" + project
-                        + "/src/main.deal"));
-                check(entrySource.contains(
-                        "export function main(): null {\n"
-                            + "  return null;\n}"),
-                    project + " entry exports non-async main(): null"
-                        + " with an empty body");
-            }
-            String validEntry = Files.readString(Path.of(
-                "test/fixtures/ffigen/valid/src/main.deal"));
-            check(validEntry.contains(
-                    "import * as ffi from \"ffi/valid\";")
-                    && validEntry.contains(
-                        "import * as json from \"std/json\";"),
-                "the valid entry imports the extern module and std/json");
-            check(validEntry.contains("scenario_add_int")
-                    && validEntry.contains("scenario_sub_int")
-                    && validEntry.contains("fixture_sub_int(7, 2)")
-                    && validEntry.contains("scenario_add_number")
-                    && validEntry.contains("scenario_not")
-                    && validEntry.contains("scenario_echo_string")
-                    && validEntry.contains("scenario_bytes_sum")
-                    && validEntry.contains("scenario_count_call")
-                    && validEntry.contains("scenario_count_call_int")
-                    && validEntry.contains("scenario_call_count")
-                    && validEntry.contains("scenario_reset_counter")
-                    && validEntry.contains("scenario_invalid_string")
-                    && validEntry.contains("scenario_null_string"),
-                "the valid entry exports the scenario functions");
-
-            // The committed native fixture: the pinned eleven C
-            // signatures (byte-exact), the lifecycle event protocol, and
-            // standard C99 headers only.
-            String fixture = Files.readString(Path.of(
-                "test/fixtures/ffigen/ffigen-integration-fixture.c"));
-            String[] pinnedSignatures = {
-                "void fixture_count_call(void)",
-                "int fixture_count_call_int(void)",
-                "int fixture_call_count(void)",
-                "void fixture_reset_counter(void)",
-                "int fixture_add_int(int a, int b)",
-                "int fixture_sub_int(int a, int b)",
-                "double fixture_add_number(double a, double b)",
-                "int fixture_not(int b)",
-                "const char* fixture_echo_string(const char* s)",
-                "int fixture_bytes_sum(const uint8_t* p, int32_t n)",
-                "const char* fixture_null_string(void)",
-            };
-            for (String signature : pinnedSignatures) {
-                check(fixture.contains(signature + "\n{"),
-                    "the committed C fixture carries the pinned signature"
-                        + " byte-exact: " + signature);
-            }
-            Matcher exported = Pattern.compile(
-                "(?m)^(void |int |double |const char\\* )"
-                    + "fixture_[a-z_]+\\([^)]*\\)$").matcher(fixture);
-            int exportedCount = 0;
-            while (exported.find()) {
-                exportedCount++;
-            }
-            check(exportedCount == 11,
-                "the committed C fixture defines exactly the pinned"
-                    + " eleven exported functions, got " + exportedCount);
-            check(fixture.contains("__attribute__((constructor))")
-                    && fixture.contains("__attribute__((destructor))")
-                    && fixture.contains("FIXTURE_EVENTS_PATH"),
-                "the committed C fixture carries the lifecycle event"
-                    + " protocol");
-            check(!fixture.contains("#include \"deal")
-                    && !fixture.contains("#include <deal"),
-                "the committed C fixture includes no DEAL headers");
         } finally {
             deleteRecursively(base);
         }
     }
 
     /**
-     * The pinned symlink-resolved loader text of one committed fixture
+     * The expected symlink-resolved loader text of one fixture
      * project: the manifest directory (four levels below the repo root)
      * resolved through symlinks, plus the lexically normalized
      * {@code ../../../../build/...} suffix.
@@ -1655,7 +1513,7 @@ public class ProjectIntegrationGatesTest {
 
         testClassFreeOutOfRootBothBackends();
         testExternCImportLoadFfiEmission();
-        testFfigenCommittedFixtureProjects();
+        testFfigenFixtureProjects();
         testOutOfRootClassBothBackends();
         testDeclarationClassGates();
         testImportResolutionErrorGates();

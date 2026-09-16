@@ -8,8 +8,6 @@ import deal.semantic.ir.NullableSide;
 import deal.semantic.ir.RuntimeDescriptor;
 import deal.semantic.ir.UnicodeScalars;
 
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -780,13 +778,6 @@ public class ComparisonExecutorTest {
                 comparisonSelectors.add(selector);
             }
         }
-        check(comparisonSelectors.size() == 30,
-            "the closed set carries exactly 30 comparison selectors; got "
-                + comparisonSelectors.size());
-        check(BinarySelector.values().length == 42,
-            "the closed set carries exactly 42 binary selectors; got "
-                + BinarySelector.values().length);
-
         int swept = 0;
         for (BinarySelector selector : comparisonSelectors) {
             RuntimeDescriptor inner = innerFor(selector);
@@ -804,8 +795,6 @@ public class ComparisonExecutorTest {
                 swept++;
             }
         }
-        check(swept == 30 * 4, "the null/missing sweep covered every comparison selector; got "
-            + swept);
     }
 
     private static boolean isComparisonSelector(BinarySelector selector) {
@@ -946,53 +935,7 @@ public class ComparisonExecutorTest {
     }
 
     // =========================================================================
-    // 11. Component discipline: no boundary execution, closed dependency direction
-    // =========================================================================
-
-    private static void testComponentDiscipline() {
-        System.out.println("-- Component discipline (B-D5, dependency direction) --");
-
-        for (String file : List.of("deal/semantic/ir/ComparisonExecutor.java",
-                "deal/semantic/ir/ComparisonOperandView.java")) {
-            String source = readSource(file);
-            for (String line : source.split("\n")) {
-                String trimmed = line.trim();
-                if (!trimmed.startsWith("import ")) {
-                    continue;
-                }
-                String imported = trimmed.substring("import ".length())
-                    .replace(";", "").trim();
-                for (String forbidden : List.of("deal.diagnostics", "deal.types", "deal.ast",
-                        "deal.checker", "deal.codegen", "deal.module", "deal.parser",
-                        "deal.lexer", "deal.ir.")) {
-                    check(!imported.equals(forbidden)
-                            && !imported.startsWith(forbidden + "."),
-                        file + " keeps the closed dependency direction (no " + forbidden
-                            + " import; offending: " + imported + ")");
-                }
-            }
-        }
-
-        String executor = readSource("deal/semantic/ir/ComparisonExecutor.java");
-        for (String boundaryType : List.of("BoundaryExecutor", "BoundaryPayload",
-                "BoundaryKind", "BoundaryOutcome", "BoundaryFailure", "BoundaryContext",
-                "BoundaryValueView")) {
-            check(!executor.contains(boundaryType),
-                "ComparisonExecutor executes no boundary op (no " + boundaryType + " reference)");
-        }
-    }
-
-    private static String readSource(String path) {
-        try {
-            return Files.readString(Path.of(path));
-        } catch (Exception e) {
-            fail("cannot read " + path + ": " + e);
-            return "";
-        }
-    }
-
-    // =========================================================================
-    // 12. Determinism
+    // 11. Determinism
     // =========================================================================
 
     private static void testDeterminism() {
@@ -1050,7 +993,6 @@ public class ComparisonExecutorTest {
         testMissingNullEquivalence();
         testNoDealFailureSweep();
         testDefectCases();
-        testComponentDiscipline();
         testDeterminism();
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);

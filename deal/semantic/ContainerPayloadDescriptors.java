@@ -62,16 +62,6 @@ import java.util.Objects;
  * the two positions is therefore the verbatim DescriptorService table by
  * construction.</p>
  *
- * <p><b>Declared pre-E4 bridge (D2).</b> This component is <em>not</em>
- * the descriptor service and is explicitly declared a pre-E4 bridge: it
- * makes no singular-producer claim, owns no canonical-text authority
- * (canonical descriptor text is schema-owned — {@link
- * RuntimeDescriptor#canonicalSpecText()}), completes no
- * {@code exportedDescriptors} ABI fields, and serves only
- * E3's payload positions.
- * The recorded E4 retirement hand-off is
- * {@link #E4_RETIREMENT_HANDOFF}.</p>
- *
  * <p><b>Fail closed (D2).</b> {@link Type.Error}
  * — at any depth of a supported variant — has no descriptor member in
  * {@code deal.semantic-ir/1} and must never be represented
@@ -101,21 +91,6 @@ public final class ContainerPayloadDescriptors {
      * ISSUE-0158's bytes descriptor member).
      */
     public static final String DESCRIPTOR_UNREPRESENTABLE = "DESCRIPTOR_UNREPRESENTABLE";
-
-    /**
-     * The recorded E4 retirement hand-off (D2, recorded in this
-     * component's declaration): from E4's gate onward
-     * {@code DescriptorService} is the only {@code Type}→descriptor
-     * producer for common units and this bridge is retired;
-     * E4's producer-singularity test is the mechanical enforcement (the
-     * singularity pin fails while any other {@code Type}→descriptor
-     * call site exists).
-     */
-    public static final String E4_RETIREMENT_HANDOFF =
-        "From E4's gate onward DescriptorService is the only Type->descriptor producer for "
-            + "common units and ContainerPayloadDescriptors is retired; E4's "
-            + "producer-singularity test is the mechanical enforcement (the singularity pin "
-            + "fails while any other Type->descriptor call site exists).";
 
     private ContainerPayloadDescriptors() {
         // Static surface only; no instances and no state.

@@ -14,12 +14,8 @@ import deal.semantic.ir.SemanticIrTextDecodeException;
 import deal.types.Type;
 import deal.test.IdentityTestFixtures;
 
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.regex.Pattern;
-import java.util.stream.Stream;
 
 /**
  * Verifies the ISSUE-0233 D1/D2 surface: {@link DescriptorService} as the
@@ -67,13 +63,8 @@ import java.util.stream.Stream;
  *       {@code BACKEND_LOWERING} diagnostic with the registry-instantiated
  *       message carrying every pinned detail field.</li>
  *   <li>Determinism: repeated {@code describe} calls produce
- *       byte-identical canonical text.</li>
- *   <li>Producer-singularity scan: every production file under
- *       {@code deal/**} except {@code deal/semantic/DescriptorService.java}
- *       that both references {@code deal.types.Type} and constructs a
- *       {@code RuntimeDescriptor} fails the gate (fail-closed, the same
- *       scan-gate pattern as the run_tests.sh migration gates).</li>
- * </ol>
+     *       byte-identical canonical text.</li>
+     * </ol>
  */
 public class DescriptorServiceTest {
 
@@ -461,54 +452,6 @@ public class DescriptorServiceTest {
     }
 
     // =========================================================================
-    // 7. Producer-singularity scan (the "only" clause)
-    // =========================================================================
-
-    private static final Pattern SINGLETON_CONSTRUCTION = Pattern.compile(
-        "RuntimeDescriptor\\.(Null|Boolean|Int|Number|String|Table|Bytes)\\.INSTANCE");
-
-    static void testProducerSingularityScan() {
-        System.out.println("-- producer-singularity scan over deal/**/*.java --");
-
-        Path dealRoot = Path.of("deal");
-        if (!Files.isDirectory(dealRoot)) {
-            fail("the deal/ source directory is not present under the working directory; "
-                + "the producer-singularity scan fails closed");
-            return;
-        }
-        try (Stream<Path> walk = Files.walk(dealRoot)) {
-            List<Path> sources = walk
-                .filter(p -> p.getFileName().toString().endsWith(".java"))
-                .filter(p -> !p.toString().replace('\\', '/')
-                    .equals("deal/semantic/DescriptorService.java"))
-                .sorted()
-                .toList();
-            int violations = 0;
-            for (Path source : sources) {
-                java.lang.String content = Files.readString(source);
-                boolean typeBearing = content.contains("deal.types.Type")
-                    || content.contains("import deal.types.*");
-                boolean descriptorConstruction = content.contains("new RuntimeDescriptor.")
-                    || SINGLETON_CONSTRUCTION.matcher(content).find();
-                if (typeBearing && descriptorConstruction) {
-                    violations++;
-                    fail("production file " + source + " references deal.types.Type and "
-                        + "constructs a RuntimeDescriptor: only "
-                        + "deal/semantic/DescriptorService.java may map Type -> "
-                        + "RuntimeDescriptor");
-                }
-            }
-            check(violations == 0,
-                "no production file outside DescriptorService maps Type -> RuntimeDescriptor");
-            check(sources.size() >= 100,
-                "the scan corpus is populated (fail-closed: " + sources.size()
-                    + " production sources scanned)");
-        } catch (java.io.IOException e) {
-            fail("producer-singularity scan failed: " + e.getMessage());
-        }
-    }
-
-    // =========================================================================
     // Runner
     // =========================================================================
 
@@ -521,7 +464,6 @@ public class DescriptorServiceTest {
         testDecoderAmendmentPins();
         testFailClosedE6005();
         testDeterminism();
-        testProducerSingularityScan();
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {

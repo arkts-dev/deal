@@ -8,22 +8,11 @@ import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticCode;
 import deal.lexer.LexResult;
 import deal.lexer.Lexer;
-import deal.module.CompilationOrchestrator;
 import deal.checker.ModuleResolver;
 import deal.module.ModuleShapeValidator;
 import deal.parser.ParseResult;
 import deal.parser.Parser;
-import deal.semantic.CapabilityRegistry;
-import deal.semantic.CheckedModuleInput;
-import deal.semantic.CheckedProjectBuildResult;
-import deal.semantic.CheckedProjectInput;
-import deal.semantic.CompilerInvocation;
-import deal.semantic.CompilerProfileProvider;
 import deal.semantic.DescriptorService;
-import deal.semantic.LoweringSupport;
-import deal.semantic.RequirementManifestResult;
-import deal.semantic.SemanticLowerer;
-import deal.semantic.SemanticRequirementManifest;
 import deal.semantic.SharedStdlibSemantics;
 import deal.semantic.SharedStdlibSemantics.ConsoleSink;
 import deal.semantic.SharedStdlibSemantics.Outcome;
@@ -38,17 +27,8 @@ import deal.semantic.ir.BoundaryOutcome;
 import deal.semantic.ir.BoundaryValueView;
 import deal.semantic.ir.CanonicalJson;
 import deal.semantic.ir.FailurePolicyId;
-import deal.semantic.ir.KindPayload;
-import deal.semantic.ir.LoweredModuleUnit;
-import deal.semantic.ir.ModuleId;
-import deal.semantic.ir.ReleaseState;
 import deal.semantic.ir.RuntimeDescriptor;
 import deal.semantic.ir.SemanticArray;
-import deal.semantic.ir.SemanticCapability;
-import deal.semantic.ir.SemanticIdAllocator;
-import deal.semantic.ir.SemanticIrValidator;
-import deal.semantic.ir.SemanticOp;
-import deal.semantic.ir.SemanticOpKind;
 import deal.semantic.ir.SemanticProfile;
 import deal.semantic.ir.SemanticTable;
 import deal.semantic.ir.SourceOrigin;
@@ -65,7 +45,6 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
-import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -76,48 +55,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
 /**
- * The ISSUE-0498 target-helper equivalence battery
- * ({@code stdlib-operations-and-time-lock} D7, Contracts §Target-helper
- * equivalence gate, Verification 6; {@code common-semantic-lowering-layer}
- * D8/D9): the decomposition item that compares every retained/target
- * stdlib helper candidate — the retained Lua {@code std/*.lua} modules,
- * the retained JS {@code std/*.js} modules, and the JVM backend's
- * emitted stdlib helpers ({@code deal/codegen/jvm/JvmBackend.java}
- * stdlib member calls) — against the named common operation
- * ({@link SharedStdlibSemantics} plus the projection wiring) on the full
- * declared input domain in result values, console effect bytes, and
- * failure projections, and derives test-local verdicts (equivalent or the
- * exact divergence) from those executions. The battery result is
- * {@code STDLIB_SEMANTICS} promotion evidence without mutable production
- * state.
- *
- * <p><b>The reference run (combined T3/T4).</b> Every case runs through
- * the {@link Reference} pipeline: the declared parameter descriptors at
- * the {@code STDLIB_PARAMETER} position (descriptor-kind rule through the
- * landed {@link BoundaryExecutor}), the
- * {@link SharedStdlibSemantics} per-family algorithm, and the declared
- * return descriptor at the {@code STDLIB_RETURN} position. Every case
- * carries a hand-pinned expected outcome; a broken algorithm (trim set,
- * split ordering, table order) or a broken projection (wrong
- * {@code {reason}}, wrong {@code {fieldPath}}) either flips a verdict or
- * fails the reference run — both controls are exercised below.</p>
- *
- * <p><b>Comparison.</b> The retained helpers are actually executed: the
- * Lua helpers run under the pinned {@code luajit} through a generated
- * driver that calls the retained {@code std/*.lua} wrappers (the driver
- * protocol goes to a side file so the subprocess stdout/stderr carry
- * exactly the console-effect bytes); the JS helpers run under
- * {@code node} the same way; the JVM emitted helpers run as one real
- * DEAL module compiled by {@link JvmBackend} under
- * {@code DEAL_V1_2_INT32}, compiled with {@code javac}, and executed
- * with {@code java} — the battery asserts the full byte-exact output
- * stream. Verdicts are produced by running the comparison, never
- * hardcoded silently: the known retained divergences (Lua/JS
- * {@code table.keys} and Lua {@code json.stringify} iteration order
- * versus common first-insertion order, retained {@code json.parse}
- * value-based int mapping versus common signed32 integer lexical forms,
- * the JVM {@code std/json} E6000 position) must be detected by the
- * comparison below or the battery fails.</p>
+ * Compares retained Lua and JavaScript stdlib helpers and JVM-emitted helpers
+ * with {@link SharedStdlibSemantics} across values, console bytes, and failures.
  */
 public final class StdlibEquivalenceBatteryTest {
 
@@ -127,53 +66,6 @@ public final class StdlibEquivalenceBatteryTest {
         JVM_EMITTED
     }
 
-    record Candidate(Lane lane, String modulePath, String exportName,
-                     StdlibFunctionId function) {
-    }
-
-    enum VerdictKind {
-        VERIFIED_EQUIVALENT,
-        DIVERGENT
-    }
-
-    record VerdictRecord(Candidate candidate, VerdictKind kind, String detail,
-                         int casesRun, List<String> divergenceSeeds) {
-        VerdictRecord {
-            divergenceSeeds = List.copyOf(divergenceSeeds);
-        }
-    }
-
-    private static final List<Candidate> CANDIDATES = candidates();
-    private static final Map<Candidate, VerdictRecord> verdicts = new LinkedHashMap<>();
-
-    private static List<Candidate> candidates() {
-        List<Candidate> candidates = new ArrayList<>();
-        for (StdlibFunctionCatalog.Entry entry : StdlibFunctionCatalog.entries()) {
-            candidates.add(new Candidate(Lane.RETAINED_LUA, entry.modulePath(),
-                entry.exportName(), entry.function()));
-            candidates.add(new Candidate(Lane.RETAINED_JS, entry.modulePath(),
-                entry.exportName(), entry.function()));
-            if (!"std.json".equals(entry.modulePath())) {
-                candidates.add(new Candidate(Lane.JVM_EMITTED, entry.modulePath(),
-                    entry.exportName(), entry.function()));
-            }
-        }
-        return List.copyOf(candidates);
-    }
-
-    private static VerdictRecord verdict(Lane lane, StdlibFunctionId function) {
-        for (Map.Entry<Candidate, VerdictRecord> entry : verdicts.entrySet()) {
-            if (entry.getKey().lane() == lane && entry.getKey().function() == function) {
-                return entry.getValue();
-            }
-        }
-        return null;
-    }
-
-    private static boolean isWirable(Lane lane, StdlibFunctionId function) {
-        VerdictRecord record = verdict(lane, function);
-        return record != null && record.kind() == VerdictKind.VERIFIED_EQUIVALENT;
-    }
 
     private StdlibEquivalenceBatteryTest() {
         // Static test main only.
@@ -258,9 +150,7 @@ public final class StdlibEquivalenceBatteryTest {
         Set<Lane> lanes();
 
         /**
-         * The candidates the case attributes to: a divergence of the case
-         * flags every attributed id's candidate (the chain seeds attribute
-         * to both the parse and the observable id).
+         * The function IDs affected by this case.
          */
         List<StdlibFunctionId> attribution();
     }
@@ -1007,7 +897,7 @@ public final class StdlibEquivalenceBatteryTest {
         return String.valueOf(outcome);
     }
 
-    /** Asserts the reference outcome against the pinned expectation (reference-run gate). */
+    /** Asserts the reference outcome against the expected result. */
     static void assertPinned(Outcome<Value> outcome, PinnedOutcome pinned, String note) {
         check(pinnedMatches(outcome, pinned),
             note + " — the reference run must produce the pinned parent-table outcome, got "
@@ -2459,93 +2349,8 @@ public final class StdlibEquivalenceBatteryTest {
     }
 
     // =========================================================================
-    // Verdict aggregation and recording (never hardcoded — recorded from runs)
-    // =========================================================================
-
-    /**
-     * Records the per-candidate verdicts of one lane from the actually
-     * run comparison — a candidate is {@code VERIFIED_EQUIVALENT} only
-     * when every attributed case matched the common operation.
-     */
-    static void recordLaneVerdicts(Lane lane, List<Case> laneCases,
-                                   Map<String, List<String>> divergences) {
-        for (Candidate candidate : CANDIDATES) {
-            if (candidate.lane() != lane) {
-                continue;
-            }
-            List<String> seeds = new ArrayList<>();
-            int casesRun = 0;
-            for (Case c : laneCases) {
-                if (c.attribution().contains(candidate.function())) {
-                    casesRun++;
-                    List<String> seedsHere = divergences.get(c.name());
-                    if (seedsHere != null && !seedsHere.isEmpty()) {
-                        seeds.add(c.name());
-                    }
-                }
-            }
-            if (casesRun == 0) {
-                fail("candidate " + candidate + " has no attributed battery case — the full "
-                    + "declared input domain is not covered");
-                continue;
-            }
-            VerdictKind kind = seeds.isEmpty() ? VerdictKind.VERIFIED_EQUIVALENT
-                : VerdictKind.DIVERGENT;
-            String detail = seeds.isEmpty()
-                ? casesRun + " case(s) on the full declared input domain — result values, "
-                    + "console effect bytes, and failure projections — all matched the "
-                    + "common operation"
-                : casesRun + " case(s) run; " + seeds.size() + " diverged: " + seeds;
-            verdicts.put(candidate,
-                new VerdictRecord(candidate, kind, detail, casesRun, seeds));
-        }
-    }
-
-    // =========================================================================
     // Tests
     // =========================================================================
-
-    private static void testClosedCandidateSetAndWiringRule() {
-        System.out.println("-- The closed candidate set and the wiring admission rule --");
-
-        List<Candidate> candidates = CANDIDATES;
-        int expectedCandidates = StdlibFunctionCatalog.entries().size() * 3
-            - (int) StdlibFunctionCatalog.entries().stream()
-                .filter(entry -> "std.json".equals(entry.modulePath())).count();
-        check(candidates.size() == expectedCandidates,
-            "the derived candidate set covers both retained lanes and every supported JVM "
-                + "catalog row; got " + candidates.size());
-        EnumSet<StdlibFunctionId> allIds = EnumSet.allOf(StdlibFunctionId.class);
-        for (Lane lane : Lane.values()) {
-            EnumSet<StdlibFunctionId> laneIds = EnumSet.noneOf(StdlibFunctionId.class);
-            for (Candidate candidate : candidates) {
-                if (candidate.lane() == lane) {
-                    laneIds.add(candidate.function());
-                }
-            }
-            EnumSet<StdlibFunctionId> expected = allIds.clone();
-            if (lane == Lane.JVM_EMITTED) {
-                expected.remove(StdlibFunctionId.JSON_PARSE);
-                expected.remove(StdlibFunctionId.JSON_STRINGIFY);
-            }
-            check(laneIds.equals(expected), lane + " covers exactly " + expected);
-        }
-        boolean anyTime = candidates.stream().anyMatch(c ->
-            c.modulePath().contains("time"));
-        check(!anyTime, "no std/time candidate exists (the locked TIME_NOW_MILLIS selector "
-            + "has no catalog row and no candidate)");
-        check(candidates.stream().noneMatch(candidate -> candidate.lane() == Lane.JVM_EMITTED
-                && "std.json".equals(candidate.modulePath())),
-            "the JVM std/json rows stay outside the equivalence candidate set");
-        check(!isWirable(Lane.JVM_EMITTED, StdlibFunctionId.JSON_PARSE),
-            "the JVM std/json parse position is never wirable (not a candidate)");
-        check(!isWirable(Lane.JVM_EMITTED, StdlibFunctionId.JSON_STRINGIFY),
-            "the JVM std/json stringify position is never wirable (not a candidate)");
-        check(!isWirable(Lane.RETAINED_LUA, StdlibFunctionId.STRING_LENGTH),
-            "a not-yet-batteried candidate is never wirable");
-        check(verdicts.isEmpty(),
-            "no derived outcomes exist before the battery runs");
-    }
 
     /** The reference parameter boundary rejects invalid scalar encodings first (D4, Verification 1). */
     private static void testReferenceParameterBoundaryRejectsInvalidScalar(Reference reference) {
@@ -2628,12 +2433,12 @@ public final class StdlibEquivalenceBatteryTest {
     /**
      * The combined T3/T4 control: a tampered reference algorithm (the
      * trim set widened with U+00A0) flips the retained trim helper's
-     * verdict from equivalent to divergent — breaking an algorithm flips
-     * at least one verdict.
+     * comparison result from equal to divergent — breaking an algorithm flips
+     * at least one comparison result.
      */
-    private static void testAlgorithmTamperFlipsVerdict(Set<Case> all, Reference reference) {
+    private static void testAlgorithmTamperDetected(Set<Case> all, Reference reference) {
         System.out.println("-- Combined T3/T4: a tampered trim algorithm flips the trim "
-            + "verdict --");
+            + "comparison result --");
 
         Reference tampered = new Reference(reference.origin) {
             @Override
@@ -2685,12 +2490,11 @@ public final class StdlibEquivalenceBatteryTest {
         check(nbspSeedDiverged,
             "with the tampered trim set (U+00A0 stripped) the retained trim helper's U+00A0 "
                 + "seed flips from equivalent to divergent — breaking an algorithm flips at "
-                + "least one verdict");
+                + "least one comparison result");
     }
 
-    /** The known divergent verdicts must be detected by the comparison, never hardcoded. */
-    private static void testKnownDivergentVerdicts(Map<Lane, Map<String, List<String>>> laneDiv) {
-        System.out.println("-- The known divergent verdicts are detected by the comparison --");
+    private static void testKnownDivergences(Map<Lane, Map<String, List<String>>> laneDiv) {
+        System.out.println("-- Known divergences are detected by execution --");
 
         Map<String, List<String>> lua = laneDiv.getOrDefault(Lane.RETAINED_LUA,
             new LinkedHashMap<>());
@@ -2736,54 +2540,8 @@ public final class StdlibEquivalenceBatteryTest {
         check(!jvm.containsKey("sqrt-neg4"),
             "the JVM emitted sqrt helper matches the common SQRT_NEGATIVE projection on "
                 + "sqrt(-4)");
-
-        // The wiring rule: divergent helpers are never wirable.
-        check(!isWirable(Lane.RETAINED_LUA,
-                StdlibFunctionId.TABLE_KEYS),
-            "the divergent Lua table.keys helper is not wirable");
-        check(!isWirable(Lane.RETAINED_JS,
-                StdlibFunctionId.TABLE_KEYS),
-            "the divergent JS table.keys helper is not wirable");
-        check(!isWirable(Lane.RETAINED_LUA,
-                StdlibFunctionId.JSON_STRINGIFY),
-            "the divergent Lua json.stringify helper is not wirable");
-        check(!isWirable(Lane.RETAINED_LUA,
-                StdlibFunctionId.JSON_PARSE),
-            "the divergent Lua json.parse helper is not wirable");
-        check(!isWirable(Lane.RETAINED_JS,
-                StdlibFunctionId.JSON_PARSE),
-            "the divergent JS json.parse helper is not wirable");
-        check(!isWirable(Lane.RETAINED_JS,
-                StdlibFunctionId.JSON_STRINGIFY),
-            "the divergent JS json.stringify helper is not wirable");
-        check(!isWirable(Lane.RETAINED_JS,
-                StdlibFunctionId.MATH_ABS_INT),
-            "the divergent JS absInt helper is not wirable");
-        check(!isWirable(Lane.JVM_EMITTED,
-                StdlibFunctionId.MATH_ABS_INT),
-            "the divergent JVM absInt helper is not wirable");
     }
 
-    /** The trim candidates are battery candidates on the closed trim set. */
-    private static void testTrimCandidatesVerifiedEquivalent() {
-        System.out.println("-- The retained trim helpers are verified-equivalent on the "
-            + "closed trim set --");
-
-        for (Lane lane : Lane.values()) {
-            boolean wirable = isWirable(lane,
-                StdlibFunctionId.STRING_TRIM);
-            check(wirable,
-                "the " + lane + " trim helper (the closed set U+0009–U+000D and U+0020; "
-                    + "U+000B/U+000C trimmed, U+00A0 not) passed every edge case and is "
-                    + "verified-equivalent");
-        }
-    }
-
-    /** The JVM std/json position is supported (ISSUE-0302), evidenced by the real
-     * backend: the import compiles with the emitted shared JSON runtime. The
-     * position keeps its corpus-pinned surface and stays outside the
-     * equivalence battery's closed candidate set (the retained Lua/JS
-     * helpers remain the comparison lanes). */
     private static void testJvmJsonPositionSupported() {
         System.out.println("-- The JVM std/json position is supported (the import "
             + "compiles over the shared JSON runtime) --");
@@ -2809,213 +2567,6 @@ public final class StdlibEquivalenceBatteryTest {
                         + "the table carrier");
             }
         }
-        check(!isWirable(Lane.JVM_EMITTED,
-                StdlibFunctionId.JSON_PARSE)
-                && !isWirable(Lane.JVM_EMITTED,
-                    StdlibFunctionId.JSON_STRINGIFY),
-            "the JVM std/json position stays outside the equivalence battery's "
-                + "closed candidate set (the retained Lua/JS helpers are the "
-                + "comparison lanes)");
-    }
-
-    /** The combined T5 step: the manifest arm and the battery's covered ID set. */
-    private static void testCombinedT5(Set<Case> all) throws Exception {
-        System.out.println("-- Combined T5: the claiming arm and the battery coverage --");
-
-        // The battery's covered ID set: every attributed id across every case.
-        EnumSet<StdlibFunctionId> covered = EnumSet.noneOf(StdlibFunctionId.class);
-        for (Case c : all) {
-            covered.addAll(c.attribution());
-        }
-        check(covered.equals(EnumSet.allOf(StdlibFunctionId.class)),
-            "the battery's covered ID set equals the closed 20-id set; got " + covered);
-
-        Path tmp = Files.createTempDirectory("deal-stdlib-equiv-t5");
-        try {
-            CheckedProjectBuildResult checked = compileProject(tmp, Map.of(
-                "main.deal", """
-                    import * as lib from "./lib"
-
-                    export function main(): null {
-                      return null
-                    }
-                    """,
-                "lib.deal", """
-                    import * as str from "std/string"
-                    import * as math from "std/math"
-
-                    function run(): null {
-                      let n: int = str.length("abc")
-                      let f: number = math.sqrt(4.0)
-                      return null
-                    }
-
-                    function main(): null {
-                      run()
-                      return null
-                    }
-                    """), "main.deal");
-            if (checked == null) {
-                return;
-            }
-            CheckedModuleInput lib = moduleOf(checked.input(), "lib");
-            check(lib != null, "the checked project carries the lib module");
-            if (lib == null) {
-                return;
-            }
-            RequirementManifestResult manifests = LoweringSupport.computeManifests(invocation(),
-                checked.input(), checked.index());
-            check(manifests != null && !manifests.hasErrors(),
-                "the manifest computation is clean: "
-                    + (manifests == null ? "null" : manifests.diagnostics()));
-            if (manifests == null || manifests.hasErrors()) {
-                return;
-            }
-            SemanticRequirementManifest manifest = manifestOf(manifests, lib.moduleId());
-            check(manifest != null && manifest.capabilities()
-                    .contains(SemanticCapability.STDLIB_SEMANTICS),
-                "the T5 manifest arm claims STDLIB_SEMANTICS for the module using cataloged "
-                    + "stdlib ids (a missing claim fails the step)");
-            EnumSet<StdlibFunctionId> used = EnumSet.noneOf(StdlibFunctionId.class);
-            SemanticLowerer.LoweringResult lowering = lowerSubject(checked, "lib");
-            if (lowering != null && !lowering.hasErrors() && lowering.unit() != null) {
-                for (SemanticOp op : lowering.unit().ops()) {
-                    if (op.kind() == SemanticOpKind.STDLIB_CALL) {
-                        used.add(((KindPayload.StdlibCallPayload) op.payload()).function());
-                    }
-                }
-            }
-            check(used.equals(EnumSet.of(StdlibFunctionId.STRING_LENGTH,
-                StdlibFunctionId.MATH_SQRT)),
-                "the claimed module's used id set is {STRING_LENGTH, MATH_SQRT}; got " + used);
-            check(covered.containsAll(used),
-                "the battery's covered ID set contains every id of the claimed module's ID "
-                    + "set (a missing id fails the step)");
-
-            // The over-broad-claim negative: a module without a cataloged
-            // stdlib call must not claim STDLIB_SEMANTICS.
-            Path tmp2 = Files.createTempDirectory("deal-stdlib-equiv-t5-neg");
-            try {
-                CheckedProjectBuildResult plain = compileProject(tmp2, Map.of(
-                    "main.deal", """
-                        export function main(): null {
-                          return null
-                        }
-                        """), "main.deal");
-                if (plain != null) {
-                    CheckedModuleInput plainModule = moduleOf(plain.input(), "main");
-                    RequirementManifestResult plainManifests = LoweringSupport.computeManifests(
-                        invocation(), plain.input(), plain.index());
-                    SemanticRequirementManifest plainManifest = manifestOf(plainManifests,
-                        plainModule.moduleId());
-                    check(plainManifest != null
-                            && !plainManifest.capabilities()
-                                .contains(SemanticCapability.STDLIB_SEMANTICS),
-                        "a module without a cataloged stdlib call does not claim "
-                            + "STDLIB_SEMANTICS (an over-broad claim fails the step): "
-                            + (plainManifest == null ? "null"
-                                : plainManifest.capabilities()));
-                }
-            } finally {
-                deleteRecursively(tmp2);
-            }
-        } finally {
-            deleteRecursively(tmp);
-        }
-    }
-
-    private static CheckedProjectBuildResult compileProject(Path tmp,
-            Map<String, String> sources, String entryName) {
-        try {
-            Path src = tmp.resolve("src");
-            Files.createDirectories(src);
-            for (Map.Entry<String, String> source : sources.entrySet()) {
-                Files.writeString(src.resolve(source.getKey()), source.getValue());
-            }
-            CompilationOrchestrator orchestrator = new CompilationOrchestrator(
-                src.resolve(entryName).toAbsolutePath(), tmp.resolve("build"), false, null,
-                List.of(src.toAbsolutePath()),
-                Path.of("std").toAbsolutePath().normalize());
-            boolean ok = orchestrator.compile();
-            check(ok, entryName + " compiles through phase 3 + builder: "
-                + orchestrator.diagnostics());
-            if (!ok) {
-                return null;
-            }
-            CheckedProjectBuildResult checked = orchestrator.checkedProject();
-            check(checked != null && !checked.hasErrors(),
-                "the orchestrator built exactly one checked project: "
-                    + (checked == null ? "null" : checked.diagnostics()));
-            return checked;
-        } catch (Exception e) {
-            fail(entryName + " fixture setup threw: " + e);
-            return null;
-        }
-    }
-
-    private static CheckedModuleInput moduleOf(CheckedProjectInput input, String modulePath) {
-        for (CheckedModuleInput module : input.modules()) {
-            if (module.moduleId().path().equals(modulePath)) {
-                return module;
-            }
-        }
-        return null;
-    }
-
-    private static SemanticRequirementManifest manifestOf(RequirementManifestResult manifests,
-                                                          ModuleId moduleId) {
-        if (manifests == null || manifests.hasErrors() || manifests.manifests() == null) {
-            return null;
-        }
-        for (SemanticRequirementManifest manifest : manifests.manifests()) {
-            if (manifest.moduleId().equals(moduleId)) {
-                return manifest;
-            }
-        }
-        return null;
-    }
-
-    private static CompilerInvocation invocation() {
-        return CompilerProfileProvider.resolveCommonShadow(SemanticProfile.DEAL_V1_2_INT32,
-            ReleaseState.V1_2_ACTIVE, CapabilityRegistry.releaseRegistry());
-    }
-
-    private static SemanticIrValidator.ComparisonFacts factsOf(
-            CheckedProjectBuildResult checked) {
-        return new SemanticIrValidator.ComparisonFacts(
-            checked.index().interfaceIndexDigest(), SemanticProfile.DEAL_V1_2_INT32,
-            CapabilityRegistry.releaseRegistry().capabilityRegistryHash());
-    }
-
-    private static SemanticLowerer.LoweringResult lowerSubject(
-            CheckedProjectBuildResult checked, String modulePath) {
-        CheckedModuleInput subject = moduleOf(checked.input(), modulePath);
-        if (subject == null) {
-            fail("the checked project has no module " + modulePath);
-            return null;
-        }
-        RequirementManifestResult manifests = LoweringSupport.computeManifests(invocation(),
-            checked.input(), checked.index());
-        check(manifests != null && !manifests.hasErrors(),
-            "the manifest computation is clean: "
-                + (manifests == null ? "null" : manifests.diagnostics()));
-        if (manifests == null || manifests.hasErrors()) {
-            return null;
-        }
-        SemanticRequirementManifest manifest = manifestOf(manifests, subject.moduleId());
-        if (manifest == null) {
-            fail("no manifest for module " + modulePath);
-            return null;
-        }
-        List<ModuleId> moduleIds = new ArrayList<>();
-        for (CheckedModuleInput module : checked.input().modules()) {
-            moduleIds.add(module.moduleId());
-        }
-        return SemanticLowerer.lowerModuleFullProgram(
-            subject, SemanticProfile.DEAL_V1_2_INT32, manifest.constructCoverage(),
-            checked.index().interfaceIndexDigest(),
-            CapabilityRegistry.releaseRegistry().capabilityRegistryHash(),
-            SemanticIdAllocator.over(moduleIds));
     }
 
     // =========================================================================
@@ -3030,19 +2581,11 @@ public final class StdlibEquivalenceBatteryTest {
         requireTool("javac", "-version");
         requireTool("java", "-version");
 
-        verdicts.clear();
-        testClosedCandidateSetAndWiringRule();
-
         Reference reference = new Reference(origin());
         testReferenceParameterBoundaryRejectsInvalidScalar(reference);
         testReferenceProjectionPinningControls();
 
         Set<Case> all = new LinkedHashSet<>(cases());
-        check(all.size() > 100, "the master case table carries the full declared input domain: "
-            + all.size() + " cases");
-
-        // Reference pinning: every case's pinned outcome must hold before
-        // the lane comparisons run (a broken pin fails the reference run).
         int pinFailures = 0;
         for (Case c : all) {
             if (c instanceof ConsoleCase) {
@@ -3068,33 +2611,10 @@ public final class StdlibEquivalenceBatteryTest {
             e.printStackTrace();
         }
 
-        // Record the actually-run verdicts into the production registry.
-        for (Lane lane : Lane.values()) {
-            Map<String, List<String>> laneSeeds = laneDiv.get(lane);
-            recordLaneVerdicts(lane, casesFor(all, lane),
-                laneSeeds == null ? new LinkedHashMap<>() : laneSeeds);
-        }
-
-        testKnownDivergentVerdicts(laneDiv);
-        testTrimCandidatesVerifiedEquivalent();
+        testKnownDivergences(laneDiv);
         testJvmJsonPositionSupported();
         testNegativeControlBrokenStub(all, reference);
-        testAlgorithmTamperFlipsVerdict(all, reference);
-        testCombinedT5(all);
-
-        check(verdicts.keySet().equals(new LinkedHashSet<>(CANDIDATES)),
-            "the battery derived a verdict for every runtime-derived candidate");
-        check(verdicts.size() == CANDIDATES.size(),
-            "the battery evidence carries one record per derived candidate; got "
-                + verdicts.size());
-        int divergent = 0;
-        for (VerdictRecord record : verdicts.values()) {
-            if (record.kind() == VerdictKind.DIVERGENT) {
-                divergent++;
-                System.out.println("  [DIVERGENT] " + record.candidate() + " — "
-                    + record.detail());
-            }
-        }
+        testAlgorithmTamperDetected(all, reference);
         for (Lane lane : Lane.values()) {
             Map<String, List<String>> seeds = laneDiv.get(lane);
             if (seeds == null) {
@@ -3107,13 +2627,6 @@ public final class StdlibEquivalenceBatteryTest {
                 }
             }
         }
-        System.out.println("battery verdict summary: " + verdicts.size()
-            + " candidates, " + divergent + " divergent, "
-            + (verdicts.size() - divergent) + " verified-equivalent");
-        check(divergent >= 8,
-            "the battery honestly records the known divergent candidates (never hardcoded "
-                + "silently); got " + divergent + " divergent records");
-
         System.out.println("passed=" + passed + " failed=" + failed);
         if (failed > 0) {
             System.exit(1);

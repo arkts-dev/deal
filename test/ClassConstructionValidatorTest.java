@@ -389,10 +389,7 @@ public class ClassConstructionValidatorTest {
 
         // The SHARED_FACTORY positive is the two-module seam's; the
         // single-module seam exercises LOCAL plus the shared shapes'
-        // record invariants. The full-family claim pin: the
-        // representative unit produces every CLASSES family and the
-        // claim seam derived it (see ClassClaimingSeamTest for the
-        // pinned claim states).
+        // record invariants.
     }
 
     private static ExternalModuleInterface ownInterface(SemanticLowerer

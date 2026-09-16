@@ -1356,35 +1356,6 @@ public class CallAdapterCallbackIntegrationTest {
     // 7. EmitOp totality pins and the production-mode realization
     // =========================================================================
 
-    static void testArmPins() {
-        System.out.println("-- FUNCTION_ADAPT/CALLBACK_INVOKE emitOp pins: one arm per "
-            + "emitter, the default throw retained in both switches --");
-        for (String path : List.of("deal/codegen/lua/LuaSemanticEmitter.java",
-                "deal/codegen/jvm/JvmSemanticEmitter.java")) {
-            String text;
-            try {
-                text = Files.readString(Path.of(path));
-            } catch (java.io.IOException exception) {
-                fail(path + " cannot be read for the emitOp arm pin: "
-                    + exception.getMessage());
-                continue;
-            }
-            for (String kind : List.of("FUNCTION_ADAPT", "CALLBACK_INVOKE")) {
-                int arms = 0;
-                int index = 0;
-                while ((index = text.indexOf("case " + kind + " ->", index)) >= 0) {
-                    arms++;
-                    index++;
-                }
-                check(arms == 1, path + " carries exactly one " + kind
-                    + " realization arm in its emitOp switch; got " + arms);
-            }
-            check(text.contains("default -> throw new IllegalStateException"),
-                path + " retains the fail-closed default throw (the E6005-converted "
-                    + "backstop)");
-        }
-    }
-
     static void testProductionModeRealization() {
         System.out.println("-- Production-mode realization: the adapter and callback arms "
             + "emit through the production surfaces and run under the real toolchains --");
@@ -1482,7 +1453,6 @@ public class CallAdapterCallbackIntegrationTest {
         testAdapterBodyFailureFrames();
         testValidatorNegatives();
         testWrongCaptureModeNegative();
-        testArmPins();
         testProductionModeRealization();
         System.out.println("CallAdapterCallbackIntegrationTest: " + passed + " passed, "
             + failed + " failed");

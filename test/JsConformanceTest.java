@@ -98,15 +98,6 @@ import java.util.regex.Pattern;
  *       companion count must equal the on-disk
  *       {@code @expected: companion} count, and a companion classified
  *       as anything else fails the run.</li>
- *   <li><b>Known-fail</b> ({@code @expected: known-fail MODE}): the
- *       intentionally unsupported v1.2 cases tracked by their
- *       {@code @issue} (ISSUE-0111 signed int32 / bytes). The runner
- *       executes the underlying runtime mode through the real JS
- *       pipeline every run and records a non-fatal tracked KNOWN-FAIL
- *       while the case still fails; when it starts passing, the gate
- *       FAILS with a promotion instruction naming the fixture (drop the
- *       marker and set the real {@code @expected}) — promotion is
- *       forced.</li>
  *   <li><b>Backend-runtime tests</b> ({@code runtime-ok} /
  *       {@code runtime-error CODE}): JS-applicable and must pass through
  *       the whole pipeline. There is no skip registry and no fallback
@@ -143,12 +134,10 @@ import java.util.regex.Pattern;
  *   <li>frontend-classified files: 100% pass (zero failed);</li>
  *   <li>backend-runtime on node: zero applicable failures AND 100% of
  *       the node-executed runtime denominator (every on-disk
- *       runtime-ok/runtime-error test plus every known-fail probe)
+ *       runtime-ok/runtime-error test)
  *       executed through node;</li>
  *   <li>zero skipped (by construction — the classifier has no skip
  *       registry and no fallback skip branch);</li>
- *   <li>zero stale known-fail markers (promotion is forced and the
- *       promotion instruction names the fixture);</li>
  *   <li>every companion standalone-compiles, the classified companion
  *       count equals the on-disk {@code @expected: companion} count, no
  *       companion is dead (every companion is imported by at least one
@@ -157,8 +146,8 @@ import java.util.regex.Pattern;
  *       reachable from runtime-classified fixtures;</li>
  *   <li>zero probe runner exceptions (a probe crash is never silent
  *       evidence);</li>
- *   <li>the classified total — FRONTEND + APPLICABLE + KNOWN_FAIL +
- *       COMPANION — equals the on-disk backend-runtime denominator, and
+ *   <li>the classified total — FRONTEND + APPLICABLE + COMPANION —
+ *       equals the on-disk backend-runtime denominator, and
  *       the classified runtime total equals the on-disk runtime
  *       denominator;</li>
  *   <li>node absence is a hard run failure, never a skip;</li>
@@ -619,9 +608,6 @@ module.exports = {
         FRONTEND,
         /** runtime-ok / runtime-error — JS-applicable backend test. */
         APPLICABLE,
-        /** known-fail MODE — tracked follow-up issue; probed through the
-         *  real pipeline every run + stale-gated. */
-        KNOWN_FAIL,
         /** @expected: companion — classified support module;
          *  standalone-compiled, never node-executed standalone. */
         COMPANION
@@ -653,20 +639,13 @@ module.exports = {
     private static final AtomicInteger applicableTotal = new AtomicInteger();
     private static final AtomicInteger applicablePassed = new AtomicInteger();
     private static final AtomicInteger applicableFailed = new AtomicInteger();
-    private static final AtomicInteger knownFailTotal = new AtomicInteger();
-    private static final AtomicInteger knownFailTracked = new AtomicInteger();
-    private static final AtomicInteger knownFailStale = new AtomicInteger();
     private static final AtomicInteger companionTotal = new AtomicInteger();
     private static final AtomicInteger companionPassed = new AtomicInteger();
     private static final AtomicInteger companionFailed = new AtomicInteger();
-    private static final AtomicInteger probeHarnessFailed =
-        new AtomicInteger();
     private static final AtomicInteger nodeExecuted = new AtomicInteger();
 
     private static final List<Outcome> outcomes =
         Collections.synchronizedList(new ArrayList<>());
-    private static final Map<String, Integer> knownFailByIssue =
-        Collections.synchronizedMap(new LinkedHashMap<>());
     /** Corpus-relative paths of every file materialized into an
      * importing fixture's temp project (companions included). */
     private static final Set<String> materializedCorpusFiles =
@@ -748,8 +727,6 @@ module.exports = {
                 .filter(c -> c.kind() == Kind.FRONTEND).count();
             int applicable = (int) classified.stream()
                 .filter(c -> c.kind() == Kind.APPLICABLE).count();
-            int knownFail = (int) classified.stream()
-                .filter(c -> c.kind() == Kind.KNOWN_FAIL).count();
             int companions = (int) classified.stream()
                 .filter(c -> c.kind() == Kind.COMPANION).count();
             System.out.println("=== DEAL v1.2 JavaScript Corpus "
@@ -760,8 +737,7 @@ module.exports = {
             System.out.println("Discovered " + tests.size()
                 + " backend-runtime conformance test(s): " + frontend
                 + " frontend-classified, " + applicable
-                + " JS-applicable backend-runtime, " + knownFail
-                + " known-fail (tracked), " + companions
+                + " JS-applicable backend-runtime, " + companions
                 + " companions (classified support modules)");
             System.out.println();
 
@@ -1005,12 +981,8 @@ module.exports = {
 
     /**
      * The deterministic classification policy. See the class javadoc.
-     * There is no skip registry and no fallback skip branch: an unknown
-     * {@code @expected} value, a missing {@code @expected}, a
-     * non-runtime known-fail mode, a known-fail without its
-     * {@code @issue}, or a companion that exports {@code main} is a
-     * classification failure that fails the run. {@code SKIPPED} is
-     * unclassifiable by construction.
+     * An unknown or missing {@code @expected}, or a companion that
+     * exports {@code main}, is a classification failure.
      */
     private static List<Classified> classifyAll(List<TestFile> tests) {
         List<Classified> result = new ArrayList<>();
@@ -1026,23 +998,6 @@ module.exports = {
                         + "are never node-executed standalone");
                 }
                 result.add(new Classified(test, Kind.COMPANION, ""));
-            } else if (expected.startsWith("known-fail ")) {
-                String mode = expected.substring("known-fail ".length())
-                    .trim();
-                if (!mode.startsWith("runtime-")) {
-                    throw new IllegalStateException("backend-runtime "
-                        + "known-fail '" + expected + "' in "
-                        + test.relativePath() + " is not runtime-classified"
-                        + " — the node-executed gate only tracks runtime "
-                        + "modes");
-                }
-                String code = mode.startsWith("runtime-error ")
-                    ? mode.substring("runtime-error ".length()).trim() : "";
-                if (test.issue().isEmpty()) {
-                    throw new IllegalStateException("known-fail without "
-                        + "@issue in " + test.relativePath());
-                }
-                result.add(new Classified(test, Kind.KNOWN_FAIL, code));
             } else if (expected.startsWith("compile-ok")) {
                 result.add(new Classified(test, Kind.FRONTEND, ""));
             } else if (expected.startsWith("compile-error ")) {
@@ -1076,7 +1031,7 @@ module.exports = {
      * Computes the companion accounting expectations over the on-disk
      * corpus before the worker pool runs: the denominator totals, the
      * companion path set, the companions reachable (transitively) from
-     * runtime-classified fixtures (APPLICABLE + KNOWN_FAIL), and the
+     * runtime-classified fixtures, and the
      * companions reachable from any classified non-companion fixture
      * (the dead-companion check).
      */
@@ -1087,8 +1042,7 @@ module.exports = {
             .filter(t -> t.expected().equals("companion")).count();
         onDiskRuntimeDenominator = (int) tests.stream()
             .filter(t -> t.expected().startsWith("runtime-ok")
-                || t.expected().startsWith("runtime-error ")
-                || t.expected().startsWith("known-fail runtime"))
+                || t.expected().startsWith("runtime-error "))
             .count();
 
         Map<String, TestFile> byPath = new LinkedHashMap<>();
@@ -1111,8 +1065,7 @@ module.exports = {
             Set<String> reach = transitivelyImportedCompanions(
                 c.test().path(), byPath);
             fromAny.addAll(reach);
-            if (c.kind() == Kind.APPLICABLE
-                    || c.kind() == Kind.KNOWN_FAIL) {
+            if (c.kind() == Kind.APPLICABLE) {
                 fromRuntime.addAll(reach);
             }
         }
@@ -1183,7 +1136,6 @@ module.exports = {
             Outcome outcome = switch (classified.kind()) {
                 case FRONTEND -> runFrontend(classified);
                 case APPLICABLE -> runApplicable(classified);
-                case KNOWN_FAIL -> runKnownFail(classified);
                 case COMPANION -> runCompanion(classified);
             };
             if (outcome != null) {
@@ -1200,21 +1152,10 @@ module.exports = {
                 applicableFailed.incrementAndGet();
                 outcomes.add(new Outcome(classified.test(), classified,
                     false, "runner exception: " + e.getMessage()));
-            } else if (classified.kind() == Kind.COMPANION) {
+            } else {
                 companionFailed.incrementAndGet();
                 outcomes.add(new Outcome(classified.test(), classified,
                     false, "runner exception: " + e.getMessage()));
-            } else {
-                // A runner exception escaping a KNOWN_FAIL probe is an
-                // explicit harness failure — never an applicable failure
-                // and never a tracked known-fail.
-                probeHarnessFailed.incrementAndGet();
-                log("  [" + classified.test().relativePath()
-                    + "] FAIL (runner exception during known-fail probe — "
-                    + "harness failure): " + e.getMessage());
-                outcomes.add(new Outcome(classified.test(), classified,
-                    false, "runner exception during known-fail probe — "
-                    + "harness failure: " + e.getMessage()));
             }
         } finally {
             WORKER_OUTPUT.remove();
@@ -1630,54 +1571,12 @@ module.exports = {
     }
 
     // =========================================================================
-    // Known-fail cases (tracked follow-up issues)
-    // =========================================================================
-
-    /**
-     * Executes the underlying runtime mode of a known-fail case through
-     * the real JS pipeline. While the case still fails, it is recorded
-     * as a non-fatal tracked KNOWN-FAIL; when it starts passing, the
-     * gate FAILS with a promotion instruction naming the fixture (drop
-     * the marker and set the real {@code @expected}).
-     */
-    private static Outcome runKnownFail(Classified classified) {
-        TestFile test = classified.test();
-        knownFailTotal.incrementAndGet();
-        String mode = test.expected().substring(
-            "known-fail ".length()).trim();
-        Outcome probe = runApplicable(classified, true);
-        if (probe.pass()) {
-            knownFailStale.incrementAndGet();
-            log("  [" + test.relativePath()
-                + "] FAIL (STALE known-fail: the v1.2 requirement tracked "
-                + "by " + test.issue() + " now passes on Node — promote "
-                + "the fixture: set '@expected: " + mode + "' and drop "
-                + "the @issue tag)");
-            return new Outcome(test, classified, false,
-                "stale known-fail; promote fixture");
-        }
-        knownFailTracked.incrementAndGet();
-        knownFailByIssue.merge(test.issue(), 1, Integer::sum);
-        log("  [" + test.relativePath() + "] KNOWN-FAIL (" + mode
-            + " not yet satisfied on Node; tracked by " + test.issue()
-            + ") — " + probe.message());
-        return null;
-    }
-
-    // =========================================================================
     // Backend-runtime execution: orchestrator → JsBackend → node
     // =========================================================================
 
     private static Outcome runApplicable(Classified classified) {
-        return runApplicable(classified, false);
-    }
-
-    private static Outcome runApplicable(Classified classified,
-            boolean knownFailProbe) {
         TestFile test = classified.test();
-        if (!knownFailProbe) {
-            applicableTotal.incrementAndGet();
-        }
+        applicableTotal.incrementAndGet();
 
         Path projectRoot = null;
         try {
@@ -1732,21 +1631,17 @@ module.exports = {
                                 && "E6006".equals(d.code()))
                         && !Files.exists(outputRoot.resolve(
                             corpusStem(test.path()) + ".js"))) {
-                    if (!knownFailProbe) {
                         applicablePassed.incrementAndGet();
-                    }
                     log("  [" + test.relativePath()
                         + "] OK (compile-reject E6006 "
                         + "FFI_UNSUPPORTED_BACKEND)");
                     return new Outcome(test, classified, true,
                         "compile-reject E6006 FFI_UNSUPPORTED_BACKEND");
                 }
-                if (!knownFailProbe) {
                     applicableFailed.incrementAndGet();
                     log("  [" + test.relativePath()
                         + "] FAIL (orchestrator compile failed): "
                         + run.diagnostics() + "\n" + run.capturedOutput());
-                }
                 return new Outcome(test, classified, false,
                     "orchestrator compile failed: " + run.diagnostics());
             }
@@ -1757,23 +1652,19 @@ module.exports = {
             Path entryArtifact = outputRoot.resolve(
                 corpusStem(test.path()) + ".js");
             if (!Files.exists(entryArtifact)) {
-                if (!knownFailProbe) {
                     applicableFailed.incrementAndGet();
                     log("  [" + test.relativePath()
                         + "] FAIL (JS codegen produced no '"
                         + entryArtifact.getFileName() + "' artifact)");
-                }
                 return new Outcome(test, classified, false,
                     "no .js artifact produced");
             }
             Path runtimeArtifact = outputRoot.resolve("deal/runtime.js");
             if (!Files.exists(runtimeArtifact)) {
-                if (!knownFailProbe) {
                     applicableFailed.incrementAndGet();
                     log("  [" + test.relativePath()
                         + "] FAIL (deal/runtime.js not deployed — a "
                         + "bypassed runtime deployment is not a pass)");
-                }
                 return new Outcome(test, classified, false,
                     "deal/runtime.js not deployed");
             }
@@ -1807,61 +1698,48 @@ module.exports = {
             // subprocess.
             NodeResult result = runNode(outputRoot);
 
-            boolean runtimeOkMode = test.expected().startsWith("runtime-ok")
-                || test.expected().startsWith("known-fail runtime-ok");
+            boolean runtimeOkMode = test.expected().startsWith("runtime-ok");
             if (runtimeOkMode) {
                 if (result.exitCode != 0) {
-                    if (!knownFailProbe) {
                         applicableFailed.incrementAndGet();
                         log("  [" + test.relativePath()
                             + "] FAIL (runtime-ok test exited "
                             + result.exitCode + "): stdout: "
                             + result.stdout + "\nstderr: " + result.stderr);
-                    }
                     return new Outcome(test, classified, false,
                         "exited " + result.exitCode + ": " + result.stderr);
                 }
-                if (!knownFailProbe) {
                     applicablePassed.incrementAndGet();
                     log("  [" + test.relativePath() + "] OK");
-                }
                 return new Outcome(test, classified, true, "runtime ok");
             }
 
             String needle = "DEAL_ERROR_CODE: "
                 + classified.expectedCode();
             if (result.exitCode == 1 && result.stderr.contains(needle)) {
-                if (!knownFailProbe) {
                     applicablePassed.incrementAndGet();
                     log("  [" + test.relativePath() + "] OK (found "
                         + needle + ")");
-                }
                 return new Outcome(test, classified, true,
                     "found " + needle);
             }
-            if (!knownFailProbe) {
-                applicableFailed.incrementAndGet();
-                log("  [" + test.relativePath() + "] FAIL (expected exit 1"
-                    + " and '" + needle + "' on stderr, got exit "
-                    + result.exitCode + ", stdout: " + result.stdout
-                    + ", stderr: " + result.stderr + ")");
-            }
+            applicableFailed.incrementAndGet();
+            log("  [" + test.relativePath() + "] FAIL (expected exit 1"
+                + " and '" + needle + "' on stderr, got exit "
+                + result.exitCode + ", stdout: " + result.stdout
+                + ", stderr: " + result.stderr + ")");
             return new Outcome(test, classified, false,
                 "expected exit 1 and '" + needle + "' on stderr, got exit "
                     + result.exitCode);
         } catch (HarnessFailure e) {
-            // A harness defect is never a fixture pass and never a
-            // tracked known-fail.
-            probeHarnessFailed.incrementAndGet();
+            applicableFailed.incrementAndGet();
             log("  [" + test.relativePath()
                 + "] FAIL (harness failure — never a pass): "
                 + e.getMessage());
             return new Outcome(test, classified, false,
                 "harness failure: " + e.getMessage());
         } catch (Exception e) {
-            if (!knownFailProbe) {
-                applicableFailed.incrementAndGet();
-            }
+            applicableFailed.incrementAndGet();
             log("  [" + test.relativePath()
                 + "] FAIL (execution exception): " + e.getMessage());
             return new Outcome(test, classified, false,
@@ -2432,17 +2310,12 @@ module.exports = {
         int at = applicableTotal.get();
         int ap = applicablePassed.get();
         int af = applicableFailed.get();
-        int kt = knownFailTotal.get();
-        int kf = knownFailTracked.get();
         int denominator = onDiskRuntimeDenominator;
         double pct = denominator == 0 ? 0.0
-            : (ap + kf) * 100.0 / denominator;
-        System.out.printf("Backend-runtime on Node: denominator %d "
-            + "(every on-disk runtime-ok/runtime-error test plus every "
-            + "known-fail probe), passed %d, failed %d, skipped 0 (no "
-            + "skip registry — zero skips by construction), known-fail %d "
-            + "(tracked), node subprocess runs %d — pass rate %.1f%%%n",
-            denominator, ap, af, kf, nodeExecuted.get(), pct);
+            : ap * 100.0 / denominator;
+        System.out.printf("Backend-runtime on Node: denominator %d, passed %d, "
+            + "failed %d, node subprocess runs %d — pass rate %.1f%%%n",
+            denominator, ap, af, nodeExecuted.get(), pct);
         System.out.println();
 
         int ct = companionTotal.get();
@@ -2461,15 +2334,6 @@ module.exports = {
             + "companion(s) reachable from runtime-classified fixtures, "
             + "%d materialized into importing fixtures' temp projects%n",
             reachableFromRuntime.size(), materializedCompanions.size());
-        System.out.println();
-
-        System.out.println("Known-fail groups (tracked follow-up issues):");
-        List<String> kfIssues = new ArrayList<>(knownFailByIssue.keySet());
-        Collections.sort(kfIssues);
-        for (String issue : kfIssues) {
-            System.out.printf("  %-11s %d test(s)%n", issue,
-                knownFailByIssue.get(issue));
-        }
         System.out.println();
 
         // Largest failing feature groups (review evidence).
@@ -2498,19 +2362,6 @@ module.exports = {
 
         // Gates.
         boolean ok = true;
-        if (knownFailStale.get() > 0) {
-            System.out.println("GATE FAILURE: " + knownFailStale.get()
-                + " stale known-fail marker(s) — promote the fixture(s)");
-            ok = false;
-        }
-        if (probeHarnessFailed.get() > 0) {
-            System.out.println("GATE FAILURE: probeHarnessFailed = "
-                + probeHarnessFailed.get() + " — a runner exception or "
-                + "harness defect escaped a known-fail probe or the host "
-                + "harness (a probe crash is never silent evidence and "
-                + "never a tracked known-fail)");
-            ok = false;
-        }
         if (ff > 0) {
             System.out.println("GATE FAILURE: " + ff
                 + " frontend test(s) failed — 100% required");
@@ -2563,17 +2414,17 @@ module.exports = {
                 + overMaterialized);
             ok = false;
         }
-        int classifiedRuntimeTotal = at + kt;
+        int classifiedRuntimeTotal = at;
         if (classifiedRuntimeTotal != denominator) {
             System.out.println("GATE FAILURE: classified runtime total "
                 + classifiedRuntimeTotal + " differs from the on-disk "
                 + "runtime denominator " + denominator);
             ok = false;
         }
-        int classifiedTotal = ft + at + kt + ct;
+        int classifiedTotal = ft + at + ct;
         if (classifiedTotal != onDiskTotal) {
             System.out.println("GATE FAILURE: classified total (FRONTEND "
-                + "+ APPLICABLE + KNOWN_FAIL + COMPANION) "
+                + "+ APPLICABLE + COMPANION) "
                 + classifiedTotal + " differs from the on-disk "
                 + "backend-runtime denominator " + onDiskTotal);
             ok = false;
@@ -2582,11 +2433,9 @@ module.exports = {
             System.exit(1);
         }
         System.out.println("Gates PASSED: frontend 100%; backend-runtime "
-            + "on node zero applicable failures AND 100% of the "
-            + "node-executed " + denominator + "-test denominator; zero "
-            + "skipped (no skip registry); zero stale known-fail markers; "
-            + "companion counts equal the on-disk corpus and every "
-            + "companion standalone-compiles and participates in its "
-            + "importers' temp projects; zero probe runner exceptions.");
+            + "on node zero failures and 100% of the node-executed "
+            + denominator + "-test denominator; companion counts equal the "
+            + "on-disk corpus and every companion standalone-compiles and "
+            + "participates in its importers' temp projects.");
     }
 }

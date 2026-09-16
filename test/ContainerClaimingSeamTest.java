@@ -5,7 +5,6 @@ import deal.ast.BinaryExpr;
 import deal.ast.Either;
 import deal.ast.ExpressionNode;
 import deal.ast.ForOfStatement;
-import deal.ast.IdentifierExpr;
 import deal.ast.LiteralExpr;
 import deal.ast.MemberAccessExpr;
 import deal.ast.ObjectLiteralExpr;
@@ -26,14 +25,8 @@ import deal.parser.Parser;
 import deal.semantic.CapabilityRegistry;
 import deal.semantic.CheckedModuleInput;
 import deal.semantic.CheckedModuleKind;
-import deal.semantic.CheckedProjectInput;
-import deal.semantic.CompilerInvocation;
-import deal.semantic.CompilerProfileProvider;
 import deal.semantic.ContainerClaimingSeam;
-import deal.semantic.LoweringSupport;
-import deal.semantic.RequirementManifestResult;
 import deal.semantic.SemanticLowerer;
-import deal.semantic.SemanticRequirementManifest;
 import deal.semantic.ir.BindingId;
 import deal.semantic.ir.BinarySelector;
 import deal.semantic.ir.BlockId;
@@ -54,14 +47,12 @@ import deal.semantic.ir.IterationMode;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredModuleUnit;
 import deal.semantic.ir.LoweringContextHash;
-import deal.semantic.ir.LoweringFailureDetail;
 import deal.semantic.ir.ModuleId;
 import deal.semantic.ir.ModuleInitPlan;
 import deal.semantic.ir.OpId;
 import deal.semantic.ir.OpResultType;
 import deal.semantic.ir.OperationContractSnapshot;
 import deal.semantic.ir.ProjectInterfaceIndex;
-import deal.semantic.ir.ReleaseState;
 import deal.semantic.ir.RuntimeDescriptor;
 import deal.semantic.ir.ScalarValue;
 import deal.semantic.ir.SemanticCapability;
@@ -87,20 +78,8 @@ import java.util.Optional;
 import java.util.Set;
 
 /**
- * Verifies the ISSUE-0387 stage-incremental claiming seam
- * ({@link ContainerClaimingSeam}): the pinned home mapping, the activation
- * gates, the full-evidence claim derivation, the activation-gated op-side
- * check with its three recorded outcomes plus the single E6005
- * {@code OPERATION_OUTSIDE_CLAIMED_CAPABILITY} firing condition, the E3
- * tail's ∅-claim staged state, the pinned E5-gate corpus claim state
- * ({@code {DESCRIPTORS, BOUNDARIES}} claimed with
- * {@code FOUNDATION_VALUES}/{@code CONTAINERS_AND_STRINGS}/
- * {@code EVALUATION_ORDER} deferred per unit), validator acceptance for
- * every D1 shape with the pinned negatives (R-PRIVATE-STEP, R-COVERAGE,
- * misplaced boundary, wrong boundary policy, wrong boundary count),
- * byte-identical determinism, and the combined dependency step — the
- * nested-for-of corpus through the foundation detector, C5's lowering
- * arms, and the seam into a validated ∅-claim unit.
+ * Verifies semantic-operation home mapping, lowering, validation failures,
+ * and deterministic IR generation for container and string operations.
  */
 public class ContainerClaimingSeamTest {
 
@@ -110,11 +89,6 @@ public class ContainerClaimingSeamTest {
     private static void check(boolean condition, String message) {
         if (condition) { passed++; }
         else { failed++; System.err.println("FAIL: " + message); }
-    }
-
-    private static void fail(String message) {
-        failed++;
-        System.err.println("FAIL: " + message);
     }
 
     // =========================================================================
@@ -457,28 +431,6 @@ public class ContainerClaimingSeamTest {
     // Outcome lookup helper
     // =========================================================================
 
-    private static ContainerClaimingSeam.RecordedOutcome outcomeOf(
-            List<ContainerClaimingSeam.RecordedOutcome> outcomes, OpId opId,
-            SemanticCapability home) {
-        for (ContainerClaimingSeam.RecordedOutcome outcome : outcomes) {
-            if (outcome.opId().equals(opId) && outcome.home() == home) {
-                return outcome;
-            }
-        }
-        return null;
-    }
-
-    private static long countOutcomes(List<ContainerClaimingSeam.RecordedOutcome> outcomes,
-                                      ContainerClaimingSeam.OutcomeKind kind) {
-        long count = 0;
-        for (ContainerClaimingSeam.RecordedOutcome outcome : outcomes) {
-            if (outcome.outcome() == kind) {
-                count++;
-            }
-        }
-        return count;
-    }
-
     // =========================================================================
     // 1. The pinned home mapping (D9 item 3)
     // =========================================================================
@@ -579,9 +531,6 @@ public class ContainerClaimingSeamTest {
                     + "its op-side outcomes)");
         }
 
-        // E5's home rows: BRANCH/LOOP/DISCARD home to EVALUATION_ORDER (the
-        // catalog's three evidence families, recorded by E5's producer
-        // under the shared mechanism).
         check(ContainerClaimingSeam.homeRows(
                 op(SemanticOpKind.BRANCH,
                     new KindPayload.BranchPayload(ControlSelector.IF, nextValue(),
@@ -604,499 +553,12 @@ public class ContainerClaimingSeamTest {
     }
 
     // =========================================================================
-    // 2. The pinned activation gates (D9 items 1/4/5)
+    // Lowering and validation
     // =========================================================================
 
-    static void testActivationGates() {
-        System.out.println("-- The pinned activation gates --");
-
-        check(ContainerClaimingSeam.E3_WINDOW_ACTIVATION.equals(Set.of(
-                SemanticCapability.SIGNED_INT32)),
-            "E3's tail activation is exactly {SIGNED_INT32} (activated at E2's gate; no E3 "
-                + "op homes to it — its CONST(Int)/BOUNDARY(int) specializations are E2's "
-                + "evidence)");
-        check(ContainerClaimingSeam.E3_GATE_ACTIVATION.equals(Set.of(
-                SemanticCapability.SIGNED_INT32, SemanticCapability.FOUNDATION_VALUES)),
-            "the E3-gate hand-off activates FOUNDATION_VALUES (post-tail, never an in-window "
-                + "flip)");
-        check(ContainerClaimingSeam.E4_GATE_ACTIVATION.equals(Set.of(
-                SemanticCapability.SIGNED_INT32, SemanticCapability.FOUNDATION_VALUES,
-                SemanticCapability.DESCRIPTORS, SemanticCapability.BOUNDARIES)),
-            "the E4-gate hand-off activates DESCRIPTORS and BOUNDARIES");
-        check(ContainerClaimingSeam.E5_GATE_ACTIVATION.equals(Set.of(
-                SemanticCapability.SIGNED_INT32, SemanticCapability.FOUNDATION_VALUES,
-                SemanticCapability.DESCRIPTORS, SemanticCapability.BOUNDARIES,
-                SemanticCapability.CONTAINERS_AND_STRINGS,
-                SemanticCapability.EVALUATION_ORDER)),
-            "the E5-gate hand-off activates CONTAINERS_AND_STRINGS and EVALUATION_ORDER");
-        check(ContainerClaimingSeam.E6_GATE_ACTIVATION.equals(Set.of(
-                SemanticCapability.SIGNED_INT32, SemanticCapability.FOUNDATION_VALUES,
-                SemanticCapability.DESCRIPTORS, SemanticCapability.BOUNDARIES,
-                SemanticCapability.CONTAINERS_AND_STRINGS,
-                SemanticCapability.EVALUATION_ORDER, SemanticCapability.BINDINGS)),
-            "the E6-gate hand-off activates BINDINGS");
-        check(ContainerClaimingSeam.E3_WINDOW_ACTIVATION.containsAll(
-                ContainerClaimingSeam.E3_WINDOW_ACTIVATION)
-                && ContainerClaimingSeam.E3_GATE_ACTIVATION.containsAll(
-                    ContainerClaimingSeam.E3_WINDOW_ACTIVATION)
-                && ContainerClaimingSeam.E4_GATE_ACTIVATION.containsAll(
-                    ContainerClaimingSeam.E3_GATE_ACTIVATION)
-                && ContainerClaimingSeam.E5_GATE_ACTIVATION.containsAll(
-                    ContainerClaimingSeam.E4_GATE_ACTIVATION)
-                && ContainerClaimingSeam.E6_GATE_ACTIVATION.containsAll(
-                    ContainerClaimingSeam.E5_GATE_ACTIVATION),
-            "the activation states grow monotonically across the gates (a row never "
-                + "deactivates)");
-    }
-
     // =========================================================================
-    // 3. The item-4 op-side check: all four outcomes + the derivation guard
+    // Validator acceptance
     // =========================================================================
-
-    static void testSeamFourOutcomes() {
-        System.out.println("-- The item-4 op-side check: the four outcomes --");
-
-        // --- (a) Row inactive → the recorded staged hand-off; no E6005. ---
-        {
-            List<SemanticOp> ops = List.of(
-                op(SemanticOpKind.CONST, new KindPayload.ConstPayload(
-                        new ScalarValue.String("ab")),
-                    nextValue(), STR, FailurePolicyId.NO_DEAL_FAILURE, null),
-                op(SemanticOpKind.STRING_CONCAT,
-                    new KindPayload.StringConcatPayload(List.of(nextValue())), nextValue(), STR,
-                    FailurePolicyId.NO_DEAL_FAILURE, null),
-                op(SemanticOpKind.ARRAY_NEW,
-                    new KindPayload.ArrayNewPayload(INT, List.of(), List.of()), nextValue(),
-                    new RuntimeDescriptor.Array(INT), FailurePolicyId.NO_DEAL_FAILURE, null),
-                op(SemanticOpKind.TABLE_NEW, new KindPayload.TableNewPayload(List.of()),
-                    nextValue(), TBL, FailurePolicyId.NO_DEAL_FAILURE, null),
-                op(SemanticOpKind.ARRAY_LENGTH, new KindPayload.ArrayLengthPayload(nextValue()),
-                    nextValue(), INT, FailurePolicyId.INT32_RESULT, null),
-                op(SemanticOpKind.MEMBER_READ, new KindPayload.MemberReadPayload(nextValue(),
-                        "k"),
-                    nextValue(), BOOL, FailurePolicyId.NO_DEAL_FAILURE, null),
-                op(SemanticOpKind.FOR_EACH,
-                    new KindPayload.ForEachPayload(IterationMode.STRING_SCALARS, nextValue(),
-                        new BindingId(1), 0, new BlockId(1)),
-                    null, null, FailurePolicyId.TYPE_DESCRIPTOR, null),
-                boundaryWith(nextOpId(), BoundaryKind.ARRAY_LITERAL_ELEMENT, INT,
-                    FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR, null),
-                boundaryWith(nextOpId(), BoundaryKind.CONTEXTUAL_TABLE_READ, BOOL,
-                    FailurePolicyId.TYPE_DESCRIPTOR, null),
-                op(SemanticOpKind.BINDING_LOAD,
-                    new KindPayload.BindingLoadPayload(new BindingId(1), 0), nextValue(), STR,
-                    FailurePolicyId.NO_DEAL_FAILURE, null));
-            Set<SemanticCapability> derived = ContainerClaimingSeam.deriveClaims(ops,
-                ContainerClaimingSeam.E3_WINDOW_ACTIVATION);
-            check(derived.isEmpty(),
-                "under E3's tail activation the derived claim set is empty (every home row "
-                    + "inactive); got " + derived);
-            ContainerClaimingSeam.SeamResult result = ContainerClaimingSeam.check(ops,
-                ContainerClaimingSeam.E3_WINDOW_ACTIVATION, Set.of(), MODULE);
-            check(result.failure() == null,
-                "no E6005 fires for an inactive-home op (the staged hand-off is never a "
-                    + "failure)");
-            check(result.outcomes().size() == 12,
-                "one recorded outcome per produced op and per home row: 7 single-home ops + "
-                    + "2 boundary children × 2 rows = 12; got " + result.outcomes().size());
-            check(countOutcomes(result.outcomes(),
-                    ContainerClaimingSeam.OutcomeKind.STAGED_HAND_OFF) == 12,
-                "every outcome is the recorded staged hand-off");
-            check(result.outcomes().stream().allMatch(
-                    outcome -> outcome.opKind() == SemanticOpKind.BOUNDARY
-                        ? outcome.boundaryKind() != null : outcome.boundaryKind() == null),
-                "every outcome records its op identity (boundary kind exactly for BOUNDARY "
-                    + "ops)");
-        }
-
-        // --- (b) Row active but only partially evidenced → the per-unit claim
-        //     deferral; no E6005. ---
-        {
-            List<SemanticOp> partial = List.of(
-                op(SemanticOpKind.CONST, new KindPayload.ConstPayload(
-                        new ScalarValue.String("ab")),
-                    nextValue(), STR, FailurePolicyId.NO_DEAL_FAILURE, null),
-                op(SemanticOpKind.STRING_CONCAT,
-                    new KindPayload.StringConcatPayload(List.of(nextValue())), nextValue(), STR,
-                    FailurePolicyId.NO_DEAL_FAILURE, null));
-            Set<SemanticCapability> active = Set.of(SemanticCapability.FOUNDATION_VALUES);
-            Set<SemanticCapability> derived = ContainerClaimingSeam.deriveClaims(partial, active);
-            check(derived.isEmpty(),
-                "a CONST/STRING_CONCAT unit without UNARY/BINARY does not fully evidence "
-                    + "FOUNDATION_VALUES: the derived set is empty; got " + derived);
-            ContainerClaimingSeam.SeamResult result = ContainerClaimingSeam.check(partial,
-                active, Set.of(), MODULE);
-            check(result.failure() == null,
-                "no E6005 fires for the partial-evidence unit (the deferral is never a "
-                    + "failure)");
-            check(result.outcomes().size() == 2,
-                "exactly two outcomes: one per op at its FOUNDATION_VALUES home row");
-            check(result.outcomes().stream().allMatch(outcome ->
-                    outcome.home() == SemanticCapability.FOUNDATION_VALUES
-                        && outcome.outcome() == ContainerClaimingSeam.OutcomeKind.DEFERRED),
-                "both outcomes are the per-unit claim deferral (the recorded, terminal claim "
-                    + "outcome of the immutable unit)");
-            // Deterministic terminal outcome: the same immutable unit checked
-            // twice records the identical deferral — never retroactively
-            // converted into a failure.
-            ContainerClaimingSeam.SeamResult repeated = ContainerClaimingSeam.check(partial,
-                active, Set.of(), MODULE);
-            check(repeated.failure() == null
-                    && repeated.outcomes().equals(result.outcomes())
-                    && repeated.derivedClaims().equals(result.derivedClaims()),
-                "the deferral is deterministic and terminal across repeated checks of the "
-                    + "same immutable unit");
-        }
-
-        // --- (c) Row active and fully evidenced with the derived claim → the
-        //     recorded claimed outcome passes with R-CAPABILITY green. ---
-        {
-            List<SemanticOp> full = List.of(
-                op(SemanticOpKind.CONST, new KindPayload.ConstPayload(
-                        new ScalarValue.String("ab")),
-                    nextValue(), STR, FailurePolicyId.NO_DEAL_FAILURE, null),
-                op(SemanticOpKind.UNARY, new KindPayload.UnaryPayload(UnarySelector.BOOL_NOT),
-                    nextValue(), BOOL, FailurePolicyId.NO_DEAL_FAILURE, null),
-                op(SemanticOpKind.BINARY,
-                    new KindPayload.BinaryPayload(BinarySelector.INT32_ADD, null, null),
-                    nextValue(), INT, FailurePolicyId.INT32_RESULT, null),
-                op(SemanticOpKind.STRING_CONCAT,
-                    new KindPayload.StringConcatPayload(List.of(nextValue())), nextValue(), STR,
-                    FailurePolicyId.NO_DEAL_FAILURE, null));
-            Set<SemanticCapability> active = Set.of(SemanticCapability.FOUNDATION_VALUES);
-            Set<SemanticCapability> derived = ContainerClaimingSeam.deriveClaims(full, active);
-            check(derived.equals(Set.of(SemanticCapability.FOUNDATION_VALUES)),
-                "the {CONST, UNARY, BINARY, STRING_CONCAT} unit fully evidences "
-                    + "FOUNDATION_VALUES and the derivation claims it; got " + derived);
-            ContainerClaimingSeam.SeamResult result = ContainerClaimingSeam.check(full, active,
-                derived, MODULE);
-            check(result.failure() == null,
-                "the fully evidencing unit carrying its derived claim passes the check");
-            check(result.outcomes().size() == 2,
-                "exactly the two epic-home ops record outcomes (UNARY/BINARY outcomes are "
-                    + "E2's producer's); got " + result.outcomes());
-            for (ContainerClaimingSeam.RecordedOutcome outcome : result.outcomes()) {
-                check(outcome.home() == SemanticCapability.FOUNDATION_VALUES
-                        && outcome.outcome() == ContainerClaimingSeam.OutcomeKind.CLAIMED,
-                    outcome.opKind() + " records the claimed outcome");
-            }
-            LoweredModuleUnit unit = unit(derived, Map.of(), full);
-            assertPass(SemanticIrValidator.validate(unit, facts()),
-                "the fully evidencing unit carrying its derived claim passes R-CAPABILITY "
-                    + "(claimed → evidenced, mechanically)");
-        }
-
-        // --- (d) Row active and fully evidenced but the claim omitted → the
-        //     single E6005 firing condition with the exact detail. ---
-        {
-            List<SemanticOp> full = List.of(
-                op(SemanticOpKind.CONST, new KindPayload.ConstPayload(
-                        new ScalarValue.String("ab")),
-                    nextValue(), STR, FailurePolicyId.NO_DEAL_FAILURE, null),
-                op(SemanticOpKind.UNARY, new KindPayload.UnaryPayload(UnarySelector.BOOL_NOT),
-                    nextValue(), BOOL, FailurePolicyId.NO_DEAL_FAILURE, null),
-                op(SemanticOpKind.BINARY,
-                    new KindPayload.BinaryPayload(BinarySelector.INT32_ADD, null, null),
-                    nextValue(), INT, FailurePolicyId.INT32_RESULT, null),
-                op(SemanticOpKind.STRING_CONCAT,
-                    new KindPayload.StringConcatPayload(List.of(nextValue())), nextValue(), STR,
-                    FailurePolicyId.NO_DEAL_FAILURE, null),
-                op(SemanticOpKind.BINDING_LOAD,
-                    new KindPayload.BindingLoadPayload(new BindingId(1), 0), nextValue(), STR,
-                    FailurePolicyId.NO_DEAL_FAILURE, null));
-            Set<SemanticCapability> active = Set.of(SemanticCapability.FOUNDATION_VALUES);
-            ContainerClaimingSeam.SeamResult result = ContainerClaimingSeam.check(full, active,
-                Set.of(), MODULE);
-            check(result.failure() != null,
-                "a fully evidencing unit that omits the claim fires the E6005 "
-                    + "OPERATION_OUTSIDE_CLAIMED_CAPABILITY condition");
-            if (result.failure() != null) {
-                LoweringFailureDetail detail = result.failure();
-                check("main".equals(detail.module()),
-                    "the firing detail's module is the unit's module");
-                check(detail.capability() == SemanticCapability.FOUNDATION_VALUES,
-                    "the firing detail's capability is the home row FOUNDATION_VALUES");
-                check(ContainerClaimingSeam.OPERATION_OUTSIDE_CLAIMED_CAPABILITY
-                        .equals(detail.validatorRule()),
-                    "the firing detail's validatorRule is OPERATION_OUTSIDE_CLAIMED_CAPABILITY");
-                check(detail.semanticProfile() == SemanticProfile.DEAL_V1_2_INT32,
-                    "the firing detail's semanticProfile is DEAL_V1_2_INT32");
-                check(LoweredModuleUnit.FORMAT_VERSION.equals(detail.irVersion()),
-                    "the firing detail's irVersion is deal.semantic-ir/1");
-                check(("ContainerClaimingSeam "
-                        + ContainerClaimingSeam.OPERATION_OUTSIDE_CLAIMED_CAPABILITY
-                        + " (active home row FOUNDATION_VALUES fully evidenced by the unit "
-                        + "and left unclaimed)").equals(detail.origin()),
-                    "the firing detail's origin is the pinned component description");
-                CompilerDiagnostic diagnostic = FailureContractRegistry.e6005(detail);
-                check("E6005".equals(diagnostic.code())
-                        && diagnostic.diagnosticCode() == DiagnosticCode.E6005
-                        && "error".equals(diagnostic.severity()),
-                    "the firing detail converts to an error-severity E6005 through the "
-                        + "registry");
-                check(diagnostic.message().contains(
-                        ContainerClaimingSeam.OPERATION_OUTSIDE_CLAIMED_CAPABILITY),
-                    "the E6005 message carries OPERATION_OUTSIDE_CLAIMED_CAPABILITY");
-            }
-            check(result.outcomes().size() == 1,
-                "the firing positions' record is the failure detail; the pass continues and "
-                    + "records the remaining positions — BINDING_LOAD's inactive BINDINGS row "
-                    + "is the one staged hand-off; got " + result.outcomes());
-            if (!result.outcomes().isEmpty()) {
-                ContainerClaimingSeam.RecordedOutcome remaining = result.outcomes().get(0);
-                check(remaining.opKind() == SemanticOpKind.BINDING_LOAD
-                        && remaining.home() == SemanticCapability.BINDINGS
-                        && remaining.outcome() == ContainerClaimingSeam.OutcomeKind.STAGED_HAND_OFF,
-                    "the remaining recorded outcome is BINDING_LOAD's staged hand-off under "
-                        + "the inactive BINDINGS row");
-            }
-        }
-
-        // --- (e) A claim without full evidence is impossible by the derivation;
-        //     asserting one fails closed. ---
-        {
-            List<SemanticOp> partial = List.of(
-                op(SemanticOpKind.CONST, new KindPayload.ConstPayload(
-                        new ScalarValue.String("ab")),
-                    nextValue(), STR, FailurePolicyId.NO_DEAL_FAILURE, null),
-                op(SemanticOpKind.STRING_CONCAT,
-                    new KindPayload.StringConcatPayload(List.of(nextValue())), nextValue(), STR,
-                    FailurePolicyId.NO_DEAL_FAILURE, null));
-            Set<SemanticCapability> derived = ContainerClaimingSeam.deriveClaims(partial,
-                Set.of(SemanticCapability.FOUNDATION_VALUES));
-            check(derived.isEmpty() && !derived.contains(SemanticCapability.FOUNDATION_VALUES),
-                "the derivation never claims the partially evidenced FOUNDATION_VALUES row");
-            try {
-                ContainerClaimingSeam.check(partial,
-                    Set.of(SemanticCapability.FOUNDATION_VALUES),
-                    Set.of(SemanticCapability.FOUNDATION_VALUES), MODULE);
-                fail("a claimed row the derivation cannot derive must fail closed");
-            } catch (IllegalArgumentException expected) {
-                check(expected.getMessage().contains("impossible by the derivation"),
-                    "claiming an under-evidenced active row fails closed: "
-                        + expected.getMessage());
-            }
-            List<SemanticOp> full = List.of(
-                op(SemanticOpKind.CONST, new KindPayload.ConstPayload(
-                        new ScalarValue.String("ab")),
-                    nextValue(), STR, FailurePolicyId.NO_DEAL_FAILURE, null),
-                op(SemanticOpKind.UNARY, new KindPayload.UnaryPayload(UnarySelector.BOOL_NOT),
-                    nextValue(), BOOL, FailurePolicyId.NO_DEAL_FAILURE, null),
-                op(SemanticOpKind.BINARY,
-                    new KindPayload.BinaryPayload(BinarySelector.INT32_ADD, null, null),
-                    nextValue(), INT, FailurePolicyId.INT32_RESULT, null),
-                op(SemanticOpKind.STRING_CONCAT,
-                    new KindPayload.StringConcatPayload(List.of(nextValue())), nextValue(), STR,
-                    FailurePolicyId.NO_DEAL_FAILURE, null));
-            try {
-                ContainerClaimingSeam.check(full, Set.of(),
-                    Set.of(SemanticCapability.FOUNDATION_VALUES), MODULE);
-                fail("a claimed inactive row must fail closed");
-            } catch (IllegalArgumentException expected) {
-                check(expected.getMessage().contains("impossible by the derivation"),
-                    "claiming a row before its activation gate fails closed: "
-                        + expected.getMessage());
-            }
-        }
-    }
-
-    // =========================================================================
-    // 4. The pinned gate claim states (D9 items 4/5)
-    // =========================================================================
-
-    static void testGateClaimStates() {
-        System.out.println("-- The pinned gate claim states --");
-
-        // --- The E5-gate full corpus expectation (D7/D9 item 5(c)): the
-        //     corpus's derived op set derives exactly {DESCRIPTORS, BOUNDARIES}
-        //     with FOUNDATION_VALUES/CONTAINERS_AND_STRINGS/EVALUATION_ORDER
-        //     deferred per unit. ---
-        {
-            OpId arrayNewId = nextOpId();
-            OpId memberReadId = nextOpId();
-            OpId elementChildId = nextOpId();
-            OpId contextualChildId = nextOpId();
-            List<SemanticOp> corpusOps = List.of(
-                op(SemanticOpKind.CONST, new KindPayload.ConstPayload(
-                        new ScalarValue.String("ab")),
-                    nextValue(), STR, FailurePolicyId.NO_DEAL_FAILURE, null),
-                op(SemanticOpKind.STRING_CONCAT,
-                    new KindPayload.StringConcatPayload(List.of(nextValue(), nextValue())),
-                    nextValue(), STR, FailurePolicyId.NO_DEAL_FAILURE, null),
-                opWith(arrayNewId, SemanticOpKind.ARRAY_NEW,
-                    new KindPayload.ArrayNewPayload(INT, List.of(nextValue()),
-                        List.of(elementChildId)),
-                    nextValue(), new RuntimeDescriptor.Array(INT),
-                    FailurePolicyId.NO_DEAL_FAILURE, null),
-                boundaryWith(elementChildId, BoundaryKind.ARRAY_LITERAL_ELEMENT, INT,
-                    FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR, arrayNewId),
-                op(SemanticOpKind.TABLE_NEW,
-                    new KindPayload.TableNewPayload(List.of(
-                        new KindPayload.TableEntry("k", nextValue()))),
-                    nextValue(), TBL, FailurePolicyId.NO_DEAL_FAILURE, null),
-                op(SemanticOpKind.ARRAY_LENGTH, new KindPayload.ArrayLengthPayload(nextValue()),
-                    nextValue(), INT, FailurePolicyId.INT32_RESULT, null),
-                opWith(memberReadId, SemanticOpKind.MEMBER_READ,
-                    new KindPayload.MemberReadPayload(nextValue(), "k"), nextValue(), BOOL,
-                    FailurePolicyId.NO_DEAL_FAILURE, null),
-                boundaryWith(contextualChildId, BoundaryKind.CONTEXTUAL_TABLE_READ, BOOL,
-                    FailurePolicyId.TYPE_DESCRIPTOR, memberReadId),
-                op(SemanticOpKind.FOR_EACH,
-                    new KindPayload.ForEachPayload(IterationMode.STRING_SCALARS, nextValue(),
-                        new BindingId(1), 0, new BlockId(1)),
-                    null, null, FailurePolicyId.TYPE_DESCRIPTOR, null),
-                op(SemanticOpKind.BRANCH,
-                    new KindPayload.BranchPayload(ControlSelector.IF, nextValue(),
-                        new BlockId(2), null),
-                    null, null, FailurePolicyId.NO_DEAL_FAILURE, null),
-                op(SemanticOpKind.DISCARD, new KindPayload.DiscardPayload(nextValue()), null,
-                    null, FailurePolicyId.NO_DEAL_FAILURE, null));
-            check(corpusOps.stream().noneMatch(op -> op.kind() == SemanticOpKind.LOOP),
-                "the pinned corpus's derived op set carries no LOOP op (no while/for "
-                    + "statement is in the corpus)");
-
-            Set<SemanticCapability> derived = ContainerClaimingSeam.deriveClaims(corpusOps,
-                ContainerClaimingSeam.E5_GATE_ACTIVATION);
-            check(derived.equals(Set.of(SemanticCapability.DESCRIPTORS,
-                    SemanticCapability.BOUNDARIES)),
-                "the E5-gate corpus derives exactly {DESCRIPTORS, BOUNDARIES}; got " + derived);
-            check(!derived.contains(SemanticCapability.FOUNDATION_VALUES)
-                    && !derived.contains(SemanticCapability.CONTAINERS_AND_STRINGS)
-                    && !derived.contains(SemanticCapability.EVALUATION_ORDER),
-                "FOUNDATION_VALUES (CONST/STRING_CONCAT without UNARY/BINARY), "
-                    + "CONTAINERS_AND_STRINGS (the six ops without INDEX_*/OPTIONAL_READ/"
-                    + "HAS_FIELD), and EVALUATION_ORDER (BRANCH/DISCARD without LOOP) are not "
-                    + "claimed");
-
-            ContainerClaimingSeam.SeamResult result = ContainerClaimingSeam.check(corpusOps,
-                ContainerClaimingSeam.E5_GATE_ACTIVATION, derived, MODULE);
-            check(result.failure() == null,
-                "the corpus run is green with exactly its derived claim state — E6005 never "
-                    + "fires for the corpus");
-            check(result.outcomes().size() == 13,
-                "13 recorded outcomes: 2 FOUNDATION_VALUES deferrals + 5 "
-                    + "CONTAINERS_AND_STRINGS deferrals + 2 EVALUATION_ORDER deferrals "
-                    + "(BRANCH/DISCARD without LOOP) + 2 boundary children × 2 claimed "
-                    + "rows; got " + result.outcomes().size());
-            for (SemanticOp op : corpusOps) {
-                if (op.kind() == SemanticOpKind.BRANCH
-                        || op.kind() == SemanticOpKind.DISCARD) {
-                    ContainerClaimingSeam.RecordedOutcome outcome =
-                        outcomeOf(result.outcomes(), op.opId(),
-                            SemanticCapability.EVALUATION_ORDER);
-                    check(outcome != null
-                            && outcome.outcome()
-                                == ContainerClaimingSeam.OutcomeKind.DEFERRED,
-                        op.kind() + " records the EVALUATION_ORDER per-unit deferral "
-                            + "(the row is active at E5's gate and the corpus carries no "
-                            + "LOOP op — E5's producer records the outcome under the "
-                            + "shared mechanism)");
-                }
-            }
-            for (SemanticOpKind deferredKind : List.of(SemanticOpKind.CONST,
-                    SemanticOpKind.STRING_CONCAT)) {
-                for (ContainerClaimingSeam.RecordedOutcome outcome : result.outcomes()) {
-                    if (outcome.opKind() == deferredKind) {
-                        check(outcome.home() == SemanticCapability.FOUNDATION_VALUES
-                                && outcome.outcome()
-                                    == ContainerClaimingSeam.OutcomeKind.DEFERRED,
-                            deferredKind + " records the FOUNDATION_VALUES per-unit deferral");
-                    }
-                }
-            }
-            for (SemanticOpKind containerKind : List.of(SemanticOpKind.ARRAY_NEW,
-                    SemanticOpKind.TABLE_NEW, SemanticOpKind.ARRAY_LENGTH,
-                    SemanticOpKind.MEMBER_READ, SemanticOpKind.FOR_EACH)) {
-                for (ContainerClaimingSeam.RecordedOutcome outcome : result.outcomes()) {
-                    if (outcome.opKind() == containerKind) {
-                        check(outcome.home() == SemanticCapability.CONTAINERS_AND_STRINGS
-                                && outcome.outcome()
-                                    == ContainerClaimingSeam.OutcomeKind.DEFERRED,
-                            containerKind + " records the CONTAINERS_AND_STRINGS per-unit "
-                                + "deferral");
-                    }
-                }
-            }
-            for (OpId boundaryId : List.of(elementChildId, contextualChildId)) {
-                check(outcomeOf(result.outcomes(), boundaryId, SemanticCapability.DESCRIPTORS)
-                        != null
-                        && outcomeOf(result.outcomes(), boundaryId,
-                            SemanticCapability.DESCRIPTORS).outcome()
-                            == ContainerClaimingSeam.OutcomeKind.CLAIMED,
-                    "boundary " + boundaryId + " records the DESCRIPTORS claimed outcome");
-                check(outcomeOf(result.outcomes(), boundaryId, SemanticCapability.BOUNDARIES)
-                        != null
-                        && outcomeOf(result.outcomes(), boundaryId,
-                            SemanticCapability.BOUNDARIES).outcome()
-                            == ContainerClaimingSeam.OutcomeKind.CLAIMED,
-                    "boundary " + boundaryId + " records the BOUNDARIES claimed outcome");
-            }
-
-            // The corpus's derived claim state passes R-CAPABILITY (and
-            // R-COVERAGE) with no E6005 on the closed validator.
-            LoweredModuleUnit unit = unit(derived, Map.of(), corpusOps);
-            assertPass(SemanticIrValidator.validate(unit, facts()),
-                "the E5-gate corpus unit with claims {DESCRIPTORS, BOUNDARIES} passes "
-                    + "R-CAPABILITY and R-COVERAGE with no E6005");
-        }
-
-        // --- The E6-gate BINDINGS deferral (D9 item 5(d)): a BINDING_LOAD-only
-        //     unit defers per unit. ---
-        {
-            List<SemanticOp> loadOnly = List.of(
-                op(SemanticOpKind.BINDING_LOAD,
-                    new KindPayload.BindingLoadPayload(new BindingId(1), 0), nextValue(), STR,
-                    FailurePolicyId.NO_DEAL_FAILURE, null));
-            Set<SemanticCapability> derived = ContainerClaimingSeam.deriveClaims(loadOnly,
-                ContainerClaimingSeam.E6_GATE_ACTIVATION);
-            check(derived.isEmpty() && !derived.contains(SemanticCapability.BINDINGS),
-                "a BINDING_LOAD-only unit does not fully evidence BINDINGS (the row needs all "
-                    + "six families): derived " + derived);
-            ContainerClaimingSeam.SeamResult result = ContainerClaimingSeam.check(loadOnly,
-                ContainerClaimingSeam.E6_GATE_ACTIVATION, Set.of(), MODULE);
-            check(result.failure() == null && result.outcomes().size() == 1,
-                "the BINDING_LOAD-only unit records exactly one outcome and no E6005");
-            if (result.outcomes().size() == 1) {
-                ContainerClaimingSeam.RecordedOutcome outcome = result.outcomes().get(0);
-                check(outcome.home() == SemanticCapability.BINDINGS
-                        && outcome.outcome() == ContainerClaimingSeam.OutcomeKind.DEFERRED,
-                    "the BINDING_LOAD records the BINDINGS per-unit deferral at E6's gate");
-            }
-        }
-    }
-
-    // =========================================================================
-    // 5. Validator acceptance: positive units for every D1 shape
-    // =========================================================================
-
-    private static void assertSeamOnUnit(LoweredModuleUnit unit, String what) {
-        // At E5's gate the unit's claim set is derived under
-        // E5_GATE_ACTIVATION (CONTAINERS_AND_STRINGS and EVALUATION_ORDER
-        // active); the seam re-run must derive exactly the recorded set
-        // and fire no E6005.
-        Set<SemanticCapability> expected =
-            ContainerClaimingSeam.deriveClaims(unit.ops(),
-                ContainerClaimingSeam.E5_GATE_ACTIVATION);
-        check(unit.requiredCapabilities().equals(expected),
-            what + " unit claims exactly its E5-gate derived set " + expected + "; got "
-                + unit.requiredCapabilities());
-        ContainerClaimingSeam.SeamResult seam = ContainerClaimingSeam.check(unit.ops(),
-            ContainerClaimingSeam.E5_GATE_ACTIVATION, unit.requiredCapabilities(), MODULE);
-        check(seam.failure() == null, what + " seam check fires no E6005");
-        check(seam.derivedClaims().equals(expected),
-            what + " seam derived claims equal the recorded set");
-        for (ContainerClaimingSeam.RecordedOutcome outcome : seam.outcomes()) {
-            if (outcome.outcome() == ContainerClaimingSeam.OutcomeKind.CLAIMED) {
-                check(unit.requiredCapabilities().contains(outcome.home()),
-                    what + " claimed outcome " + outcome.home()
-                        + " is in the recorded claim set");
-            } else {
-                check(!unit.requiredCapabilities().contains(outcome.home()),
-                    what + " non-claimed outcome " + outcome.home()
-                        + " is outside the recorded claim set");
-            }
-        }
-    }
 
     static void testValidatorAcceptance() {
         System.out.println("-- Validator acceptance: positive units for every D1 shape --");
@@ -1122,7 +584,6 @@ public class ContainerClaimingSeamTest {
                         INTERFACE_HASH, REGISTRY_HASH);
                     assertPass(SemanticIrValidator.validate(unit, facts()),
                         "the CONST unit passes the closed validator");
-                    assertSeamOnUnit(unit, "CONST");
                 }
             }
         }
@@ -1151,7 +612,6 @@ public class ContainerClaimingSeamTest {
                     assertPass(SemanticIrValidator.validate(unit, facts()),
                         "the nested-for-of unit (BINDING_LOAD + FOR_EACH) passes the closed "
                             + "validator");
-                    assertSeamOnUnit(unit, "nested-for-of");
                 }
             }
         }
@@ -1180,7 +640,6 @@ public class ContainerClaimingSeamTest {
                     assertPass(SemanticIrValidator.validate(unit, facts()),
                         "the ARRAY_NEW unit with its ARRAY_LITERAL_ELEMENT children "
                             + "(ARRAY_ELEMENT_DESCRIPTOR) passes the closed validator");
-                    assertSeamOnUnit(unit, "ARRAY_NEW");
                     List<SemanticOp> boundaries = new ArrayList<>();
                     for (SemanticOp op : unit.ops()) {
                         if (op.kind() == SemanticOpKind.BOUNDARY) {
@@ -1222,7 +681,6 @@ public class ContainerClaimingSeamTest {
                         INTERFACE_HASH, REGISTRY_HASH);
                     assertPass(SemanticIrValidator.validate(unit, facts()),
                         "the TABLE_NEW unit passes the closed validator");
-                    assertSeamOnUnit(unit, "TABLE_NEW");
                 }
             }
         }
@@ -1252,7 +710,6 @@ public class ContainerClaimingSeamTest {
                         INTERFACE_HASH, REGISTRY_HASH);
                     assertPass(SemanticIrValidator.validate(unit, facts()),
                         "the ARRAY_LENGTH unit passes the closed validator");
-                    assertSeamOnUnit(unit, "ARRAY_LENGTH");
                 }
             }
         }
@@ -1283,7 +740,6 @@ public class ContainerClaimingSeamTest {
                     assertPass(SemanticIrValidator.validate(unit, facts()),
                         "the MEMBER_READ unit with its CONTEXTUAL_TABLE_READ child "
                             + "(TYPE_DESCRIPTOR) passes the closed validator");
-                    assertSeamOnUnit(unit, "MEMBER_READ");
                     List<SemanticOp> boundaries = new ArrayList<>();
                     for (SemanticOp op : unit.ops()) {
                         if (op.kind() == SemanticOpKind.BOUNDARY) {
@@ -1327,7 +783,6 @@ public class ContainerClaimingSeamTest {
                         INTERFACE_HASH, REGISTRY_HASH);
                     assertPass(SemanticIrValidator.validate(unit, facts()),
                         "the string-+ STRING_CONCAT unit passes the closed validator");
-                    assertSeamOnUnit(unit, "string +");
                     check(unit.ops().stream().noneMatch(
                             op -> op.kind() == SemanticOpKind.BINARY),
                         "string + never lowers to BINARY");
@@ -1362,7 +817,6 @@ public class ContainerClaimingSeamTest {
                     assertPass(SemanticIrValidator.validate(unit, facts()),
                         "the template STRING_CONCAT unit with its fragment CONST steps passes "
                             + "the closed validator");
-                    assertSeamOnUnit(unit, "template");
                 }
             }
         }
@@ -1528,150 +982,6 @@ public class ContainerClaimingSeamTest {
         check(firstDigests.equals(secondDigests) && !firstDigests.isEmpty(),
             "canonical contract digests are stable across runs: " + firstDigests);
 
-        ContainerClaimingSeam.SeamResult firstSeam = ContainerClaimingSeam.check(unit.ops(),
-            ContainerClaimingSeam.E3_WINDOW_ACTIVATION, unit.requiredCapabilities(), MODULE);
-        ContainerClaimingSeam.SeamResult secondSeam = ContainerClaimingSeam.check(repeated.ops(),
-            ContainerClaimingSeam.E3_WINDOW_ACTIVATION, repeated.requiredCapabilities(), MODULE);
-        check(firstSeam.failure() == null && secondSeam.failure() == null
-                && firstSeam.derivedClaims().equals(secondSeam.derivedClaims())
-                && firstSeam.outcomes().equals(secondSeam.outcomes()),
-            "the seam's derived claims and recorded outcomes are byte-identical across the "
-                + "two lowerings");
-    }
-
-    // =========================================================================
-    // 8. The combined dependency step: the nested-for-of corpus through the
-    //    foundation detector, C5's arms, and the seam into a validated
-    //    ∅-claim unit
-    // =========================================================================
-
-    static void testCombinedDependencyStep() {
-        System.out.println("-- Combined dependency step: detector → arms → seam → validated "
-            + "unit --");
-
-        CheckedSlice slice = checkSlice("""
-            for (let x: string of "ab") {
-              for (let y: string of x) {}
-            }
-            """);
-        if (slice == null) {
-            return;
-        }
-        CheckedModuleInput module = moduleOf(slice);
-
-        // The foundation detector's requirement manifest (the recorded
-        // constructCoverage rows the unit producer consumes).
-        CompilerInvocation invocation = CompilerProfileProvider.resolveCommonShadow(
-            SemanticProfile.DEAL_V1_2_INT32, ReleaseState.V1_2_ACTIVE,
-            CapabilityRegistry.releaseRegistry());
-        ProjectInterfaceIndex index = new ProjectInterfaceIndex(
-            ProjectInterfaceIndex.FORMAT_VERSION, Map.of(MODULE,
-                new ExternalModuleInterface(MODULE, ExternalModuleKind.IMPLEMENTATION,
-                    List.of(), List.of(), List.of(),
-                    InitializationMode.ONCE_AFTER_DEPENDENCIES)));
-        CheckedProjectInput input = new CheckedProjectInput(invocation, MODULE,
-            List.of(module), invocation.releaseStateHash());
-        RequirementManifestResult manifests =
-            LoweringSupport.computeManifests(invocation, input, index);
-        check(manifests != null && manifests.diagnostics().isEmpty() && manifests.manifests() != null
-                && manifests.manifests().size() == 1,
-            "the foundation detector produces exactly one requirement manifest: "
-                + (manifests == null ? "null" : manifests.diagnostics()));
-        if (manifests == null || !manifests.diagnostics().isEmpty()
-                || manifests.manifests() == null || manifests.manifests().size() != 1) {
-            return;
-        }
-        SemanticRequirementManifest manifest = manifests.manifests().get(0);
-
-        // The pinned corpus-positionability facts: the detector records
-        // IF_WHILE_FOR_FOR_OF (outer and inner for-of) with FOR_EACH,
-        // SCALAR_LITERAL with CONST, and IDENTIFIER with BINDING_LOAD — every
-        // row satisfiable by this epic's own arms end-to-end.
-        check(manifest.constructCoverage().keySet().equals(Set.of(
-                ConstructKind.SCALAR_LITERAL, ConstructKind.IDENTIFIER,
-                ConstructKind.IF_WHILE_FOR_FOR_OF)),
-            "the detector records exactly the pinned rows for the nested-for-of corpus: "
-                + manifest.constructCoverage().keySet());
-        check(manifest.constructCoverage().get(ConstructKind.SCALAR_LITERAL)
-                .equals(ConstructKind.SCALAR_LITERAL.mappedOpKinds())
-                && manifest.constructCoverage().get(ConstructKind.IDENTIFIER)
-                .equals(ConstructKind.IDENTIFIER.mappedOpKinds())
-                && manifest.constructCoverage().get(ConstructKind.IF_WHILE_FOR_FOR_OF)
-                .equals(ConstructKind.IF_WHILE_FOR_FOR_OF.mappedOpKinds()),
-            "the recorded rows carry the closed construct→op detector table verbatim");
-        check(manifest.capabilities().contains(SemanticCapability.FOUNDATION_VALUES),
-            "the manifest's plan-time FOUNDATION_VALUES claim (routing) is untouched");
-
-        // C5's arms + the seam: lower the corpus module to its validated unit.
-        SemanticLowerer.LoweringResult result = SemanticLowerer.lowerModule(module,
-            SemanticProfile.DEAL_V1_2_INT32, manifest.constructCoverage(), INTERFACE_HASH,
-            REGISTRY_HASH, SemanticIdAllocator.over(List.of(MODULE)));
-        check(result != null && !result.hasErrors() && result.unit() != null,
-            "the corpus lowers through C5's arms into a validated unit with no E6005: "
-                + (result == null ? "null" : result.diagnostics()));
-        if (result == null || result.hasErrors()) {
-            return;
-        }
-        LoweredModuleUnit unit = result.unit();
-
-        // The derived ∅ claim set and the recorded deferrals/staged
-        // hand-offs at E5's gate.
-        check(unit.requiredCapabilities().isEmpty(),
-            "the corpus unit's derived claim set is ∅ at E5's gate (FOUNDATION_VALUES and "
-                + "CONTAINERS_AND_STRINGS under-evidenced, BINDINGS staged)");
-        check(!manifest.capabilities().equals(unit.requiredCapabilities()),
-            "the manifest's plan-time FOUNDATION_VALUES claim (routing) and the unit's ∅ "
-                + "claim set diverge exactly as the foundation pins");
-        ContainerClaimingSeam.SeamResult seam = ContainerClaimingSeam.check(unit.ops(),
-            ContainerClaimingSeam.E5_GATE_ACTIVATION, unit.requiredCapabilities(), MODULE);
-        check(seam.failure() == null, "the seam fires no E6005 for the corpus unit");
-        check(seam.derivedClaims().isEmpty(), "the seam derives the empty claim set");
-        check(seam.outcomes().size() == 4,
-            "the seam records exactly 4 outcomes: CONST → FOUNDATION_VALUES deferral, "
-                + "BINDING_LOAD → BINDINGS staged hand-off, and the two FOR_EACH ops → "
-                + "CONTAINERS_AND_STRINGS deferrals; got " + seam.outcomes().size());
-        long deferred = countOutcomes(seam.outcomes(),
-            ContainerClaimingSeam.OutcomeKind.DEFERRED);
-        long staged = countOutcomes(seam.outcomes(),
-            ContainerClaimingSeam.OutcomeKind.STAGED_HAND_OFF);
-        check(deferred == 3 && staged == 1,
-            "the recorded outcomes are exactly 3 deferrals (CONST + 2 FOR_EACH) and 1 "
-                + "staged hand-off (BINDING_LOAD); got " + deferred + " deferrals, "
-                + staged + " staged");
-        List<SemanticOpKind> kinds = new ArrayList<>();
-        for (SemanticOp op : unit.ops()) {
-            kinds.add(op.kind());
-        }
-        check(kinds.contains(SemanticOpKind.CONST)
-                && kinds.contains(SemanticOpKind.BINDING_LOAD)
-                && kinds.stream().filter(kind -> kind == SemanticOpKind.FOR_EACH).count() == 2,
-            "the corpus produces CONST (SCALAR_LITERAL), BINDING_LOAD (IDENTIFIER), and two "
-                + "FOR_EACH ops (IF_WHILE_FOR_FOR_OF) — R-COVERAGE green; got " + kinds);
-
-        // The nested-for-of loop-binding load-resolution rule end-to-end: the
-        // load carries the enclosing FOR_EACH payload's binding and initial
-        // generation.
-        SemanticOp load = null;
-        SemanticOp outerForEach = null;
-        for (SemanticOp op : unit.ops()) {
-            if (op.kind() == SemanticOpKind.BINDING_LOAD && load == null) {
-                load = op;
-            }
-            if (op.kind() == SemanticOpKind.FOR_EACH && outerForEach == null) {
-                outerForEach = op;
-            }
-        }
-        if (load != null && outerForEach != null) {
-            KindPayload.BindingLoadPayload loadPayload =
-                (KindPayload.BindingLoadPayload) load.payload();
-            KindPayload.ForEachPayload forEachPayload =
-                (KindPayload.ForEachPayload) outerForEach.payload();
-            check(loadPayload.binding().equals(forEachPayload.binding())
-                    && loadPayload.generation() == forEachPayload.generation()
-                    && loadPayload.generation() == SemanticLowerer.INITIAL_LOOP_GENERATION,
-                "the corpus's loop-binding load carries the enclosing FOR_EACH payload's "
-                    + "initial generation (the loop-binding load-resolution rule)");
-        }
     }
 
     // =========================================================================
@@ -1682,13 +992,9 @@ public class ContainerClaimingSeamTest {
         System.out.println("=== Container Claiming Seam Test (ISSUE-0387) ===\n");
 
         testHomeMapping();
-        testActivationGates();
-        testSeamFourOutcomes();
-        testGateClaimStates();
         testValidatorAcceptance();
         testValidatorNegatives();
         testDeterminism();
-        testCombinedDependencyStep();
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {

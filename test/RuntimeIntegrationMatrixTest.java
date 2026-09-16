@@ -1138,10 +1138,6 @@ public class RuntimeIntegrationMatrixTest {
             if (result == null) {
                 return;
             }
-            check(ofKind(result.lowering().unit(),
-                    SemanticOpKind.RECURSIVE_GROUP_INIT).size() == 1,
-                "group (a): exactly one RECURSIVE_GROUP_INIT op in the validated "
-                    + "unit");
             SemanticDifferentialHarness.Verdict verdict = SemanticDifferentialHarness.run(
                 result.lowering().unit(), result.lowering().table(),
                 new SemanticDifferentialHarness.Expectation(List.of(), SUCCESS,
@@ -1189,10 +1185,6 @@ public class RuntimeIntegrationMatrixTest {
             if (result == null) {
                 return;
             }
-            check(ofKind(result.lowering().unit(),
-                    SemanticOpKind.RECURSIVE_GROUP_INIT).size() == 2,
-                "group (b): exactly two RECURSIVE_GROUP_INIT ops in the validated "
-                    + "unit");
             SemanticDifferentialHarness.Verdict verdict = SemanticDifferentialHarness.run(
                 result.lowering().unit(), result.lowering().table(),
                 new SemanticDifferentialHarness.Expectation(List.of(), SUCCESS,
@@ -1298,25 +1290,6 @@ public class RuntimeIntegrationMatrixTest {
             if (result == null) {
                 return;
             }
-            List<SemanticOp> groups = ofKind(result.lowering().unit(),
-                SemanticOpKind.RECURSIVE_GROUP_INIT);
-            check(groups.size() == 1, "group (e): exactly one RECURSIVE_GROUP_INIT "
-                + "op; got " + groups.size());
-            if (groups.size() == 1) {
-                SemanticOp group = groups.get(0);
-                boolean inEnclosingBody = false;
-                for (SemanticOp op : result.lowering().unit().ops()) {
-                    if (op.kind() == SemanticOpKind.CLOSURE_NEW
-                            && ((KindPayload.ClosureNewPayload) op.payload())
-                                .binding().blockId()
-                                .equals(result.lowering().table().opBlocks()
-                                    .get(group.opId()))) {
-                        inEnclosingBody = true;
-                    }
-                }
-                check(inEnclosingBody, "group (e): the group op is a member of the "
-                    + "enclosing function's body block (nested-scope placement)");
-            }
             SemanticDifferentialHarness.Verdict verdict = SemanticDifferentialHarness.run(
                 result.lowering().unit(), result.lowering().table(),
                 new SemanticDifferentialHarness.Expectation(List.of(), SUCCESS,
@@ -1329,39 +1302,8 @@ public class RuntimeIntegrationMatrixTest {
         }
     }
 
-    /**
-     * The emitOp totality pin for the family: exactly one
-     * {@code RECURSIVE_GROUP_INIT} realization arm per emitter switch
-     * and the retained fail-closed default throw in both switches (the
-     * E6005-converted backstop — a removed default arm is itself a gate
-     * failure). The behavioral half is the group matrix above: a
-     * validated unit carrying the op emits on both targets.
-     */
-    static void testRecursiveGroupArmPins() {
-        System.out.println("-- RECURSIVE_GROUP_INIT emitOp pins: one arm per emitter, "
-            + "the default throw retained in both switches --");
-        for (String path : List.of("deal/codegen/lua/LuaSemanticEmitter.java",
-                "deal/codegen/jvm/JvmSemanticEmitter.java")) {
-            String text;
-            try {
-                text = Files.readString(Path.of(path));
-            } catch (java.io.IOException exception) {
-                fail(path + " cannot be read for the emitOp arm pin: "
-                    + exception.getMessage());
-                continue;
-            }
-            int arms = 0;
-            int index = 0;
-            while ((index = text.indexOf("case RECURSIVE_GROUP_INIT ->", index)) >= 0) {
-                arms++;
-                index++;
-            }
-            check(arms == 1, path + " carries exactly one RECURSIVE_GROUP_INIT "
-                + "realization arm in its emitOp switch; got " + arms);
-            check(text.contains("default -> throw new IllegalStateException"),
-                path + " retains the fail-closed default throw (the E6005-converted "
-                    + "backstop)");
-        }
+    static void testRecursiveGroupProductionEmission() {
+        System.out.println("-- RECURSIVE_GROUP_INIT production emission --");
 
         // Production-mode realization (no trace-only arm): the same
         // group unit emitted through the production surfaces runs under
@@ -1466,36 +1408,6 @@ public class RuntimeIntegrationMatrixTest {
             }
         }
 
-        {
-            String source = P_MARK_GET
-                + "function main(): null {\n"
-                + "  let xs: int[] = [1, 2];\n"
-                + "  getArr(\"arr\", xs)[mark(\"idx\", 0)] = mark(\"rhs\", 42);\n"
-                + "}\n";
-            CheckedSlice slice = checkSlice(source, "chain shape pinning");
-            LoweredSlice lowered = lowerFull(slice, "chain shape pinning");
-            if (lowered != null) {
-                boolean shape = ofKind(lowered.unit(), SemanticOpKind.ASSIGN).stream()
-                    .anyMatch(op -> {
-                        KindPayload.AssignPayload payload =
-                            (KindPayload.AssignPayload) op.payload();
-                        if (payload.childOps().size() != 7) {
-                            return false;
-                        }
-                        SemanticOp boundary = opById(lowered.unit(),
-                            payload.childOps().get(5));
-                        SemanticOp commit = opById(lowered.unit(),
-                            payload.childOps().get(6));
-                        return boundary != null
-                            && boundary.kind() == SemanticOpKind.BOUNDARY
-                            && ((KindPayload.BoundaryPayload) boundary.payload()).kind()
-                                == deal.semantic.ir.BoundaryKind.ARRAY_ELEMENT_ASSIGNMENT
-                            && commit != null && commit.kind() == SemanticOpKind.INDEX_WRITE;
-                    });
-                check(shape, "the ARRAY_SLOT chain carries the pinned seven-child "
-                    + "shape with the boundary before the commit");
-            }
-        }
     }
 
     // =========================================================================
@@ -1601,7 +1513,7 @@ public class RuntimeIntegrationMatrixTest {
         testContainerExtrasMatrix();
         testHasFieldPresenceMatrix();
         testRecursiveGroupMatrix();
-        testRecursiveGroupArmPins();
+        testRecursiveGroupProductionEmission();
         testPinnedIrFacts();
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);

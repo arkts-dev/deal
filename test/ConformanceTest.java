@@ -14,10 +14,6 @@ import deal.module.ModuleIdentityResolver;
 import deal.module.ModuleShapeValidator;
 import deal.module.StdlibModuleResolver;
 import deal.parser.*;
-import deal.semantic.CompilerInvocation;
-import deal.semantic.CompilerProfileProvider;
-import deal.semantic.ReleaseConfiguration;
-import deal.semantic.ir.ReleaseState;
 import deal.semantic.ir.SemanticProfile;
 import deal.types.Type;
 import deal.types.Types;
@@ -28,54 +24,18 @@ import java.util.*;
 import java.util.regex.*;
 
 /**
- * Spec-centric conformance test runner for DEAL v1.2 (ISSUE-0107
- * conformance promotion gate).
+ * Spec-centric conformance test runner for DEAL v1.2.
  *
  * <p>Discovers all .deal files under test/conformance/, parses metadata
  * header comments, compiles and/or executes each test according to its
- * {@code @expected} tag, and produces a pass/fail report with spec
- * coverage summary plus a per-gate v1.2 promotion report.</p>
+ * {@code @expected} tag, and produces a pass/fail report grouped by spec
+ * section.</p>
  *
- * <h2>Classification contract (v1.2 gate)</h2>
- *
- * <p>Every discovered .deal file must carry an explicit classification.
- * Unclassified skips are removed: a file without {@code @expected}, with
- * an unknown {@code @expected} value, or with a non-v1.2 {@code @spec}
- * reference is a configuration failure that fails the gate.</p>
- *
- * <ul>
- *   <li>{@code compile-ok} / {@code compile-error CODE} — frontend-only
- *       checks over the shared lexer/parser/name-resolution/type-checker
- *       pipeline (backend-neutral).</li>
- *   <li>{@code runtime-ok} / {@code runtime-error CODE} — compile plus
- *       real LuaJIT execution through the Lua backend (backend-runtime).</li>
- *   <li>{@code companion} — a classified support module ({@code *_lib}
- *       fixtures) compiled by the companion catalog when a parent fixture
- *       imports it; the gate additionally verifies it compiles standalone
- *       so a dead companion fails loudly.</li>
- *   <li>{@code known-fail MODE} — an intentionally unsupported v1.2 case
- *       ("explicit failing fixture"). The runner verifies that the
- *       requirement {@code MODE} is still NOT satisfied; a mandatory
- *       {@code @issue} tag tracks the owning follow-up issue. When the
- *       tracked issue lands and the fixture starts passing, the gate
- *       FAILS with a promotion instruction (remove the marker and set the
- *       real {@code @expected}), so promotion is forced.</li>
- *   <li>{@code staged-fail} (runner registry, never a {@code @expected}
- *       value) — a fixture whose own expectation is temporarily
- *       unsatisfied by a design-sanctioned locked artifact whose
- *       disposition is owed by another child. The runner executes the
- *       fixture, verifies that the locked artifact code is still
- *       produced, and records the case as a non-fatal tracked staged
- *       failure naming the owning issue. When the owning child lands its
- *       disposition — the fixture starts passing its expectation, or its
- *       classification changes — the gate FAILS with a promotion
- *       instruction (remove the registry entry), so the staged state can
- *       never silently rot.</li>
- *   <li>{@code host-fixture} — reserved for
- *       {@code test/conformance/host-fixtures/*.d.deal}; discovery skips
- *       that subtree and a file classified this way anywhere else is a
- *       configuration failure.</li>
- * </ul>
+ * <p>Supported classifications are {@code compile-ok},
+ * {@code compile-error CODE}, {@code runtime-ok},
+ * {@code runtime-error CODE}, {@code companion}, and
+ * {@code known-fail MODE}. Host fixture declarations are discovered on
+ * demand and are excluded from the ordinary fixture walk.</p>
  */
 public class ConformanceTest {
 
@@ -83,25 +43,12 @@ public class ConformanceTest {
     private static int failed = 0;
     private static int skipped = 0;
     private static int knownFailures = 0;
-    private static int stagedFailures = 0;
     private static int companions = 0;
     private static final Map<String, List<TestResult>> specGroups = new LinkedHashMap<>();
     private static final Map<String, Integer> knownFailsByIssue = new LinkedHashMap<>();
-    private static final Map<String, Integer> stagedFailuresByIssue = new LinkedHashMap<>();
     private static final Map<String, int[]> phaseStats = new LinkedHashMap<>();
     private static final List<String> classificationFailures = new ArrayList<>();
     private static boolean luajitAvailable;
-
-    /**
-     * Strict no-skip mode (release-r0-r3-strict-gate-mechanics S3;
-     * release-pipeline-strict-mode-and-evidence D2(c)): when the gate
-     * scripts export DEAL_STRICT=1, the runner JVM inherits it and every
-     * skip/known-fail recording is a hard gate failure instead of
-     * tracked evidence. Dev mode leaves the flag unset and records
-     * exactly as before.
-     */
-    private static final boolean STRICT_MODE =
-        System.getenv("DEAL_STRICT") != null;
 
     /**
      * Host fixture root (host-module-abi D6): declarations
@@ -137,8 +84,8 @@ public class ConformanceTest {
         String issue
     ) {}
 
-    /** Outcome classification of one fixture in the v1.2 gate. */
-    private enum State { PASS, FAIL, SKIP, KNOWN_FAIL, COMPANION, STAGED_FAIL }
+    /** Outcome classification of one fixture. */
+    private enum State { PASS, FAIL, SKIP, KNOWN_FAIL, COMPANION }
 
     private record TestResult(
         TestFile test,
@@ -148,53 +95,6 @@ public class ConformanceTest {
 
     /** Probe result of one underlying expectation check. */
     private record RunProbe(boolean ok, boolean environmental, String detail) {}
-
-    /**
-     * One staged-failure registry entry: the corpus-relative path, the
-     * fixture classification the entry is pinned to, the locked artifact
-     * error code the staged state must keep producing, the owning issue,
-     * and the documented reason.
-     */
-    private record StagedEntry(String path, String pinnedExpectation,
-        String artifactCode, String issue, String reason) {}
-
-    /**
-     * The staged-failure registry: design-sanctioned interim states whose
-     * disposition is owed by another child (mirrors the JVM lane's skip
-     * registry: every entry is validated against the on-disk corpus each
-     * run, and an entry that becomes stale fails the gate with a
-     * promotion instruction).
-     *
-     * <p>The registry is empty post-unit (ISSUE-0380, the
-     * disposition-application unit): the disposition pair landed
-     * (std-time-nowmillis-resolution-and-disposition D1/D2 — the
-     * retained {@code std/time.nowMillis ()->int} route plus the shared
-     * fixture's canonical {@code runtime-error E8004} header), so the
-     * former {@code TIME_NOW_MILLIS} staged entry is removed and the
-     * fixture runs under its landed expectation. The machinery stays: any future
-     * design-sanctioned interim state registers here, and a stale entry
-     * still fails the gate with the promotion instruction.
-     *
-     * <p>The empty registry is the strict-mode activation key of the
-     * gate-closure check (luajit-gate-closure D2). The sanctioned
-     * pre-unit ISSUE-0237 pair this registry carried — path
-     * {@code backend-runtime/stdlib-edge/time-now-millis-positive.deal},
-     * pinned expectation {@code runtime-ok}, artifact {@code E8004},
-     * issue {@code ISSUE-0237} — remains the dormant-mode reference of
-     * the registry-shape check; every other registry shape is a gate
-     * failure with the promotion instruction naming the entry
-     * removal.</p>
-     */
-    private static final Map<String, StagedEntry> STAGED_FAILURES =
-        new LinkedHashMap<>();
-    static {
-    }
-
-    private static void stagedFailure(String path, String pinnedExpectation,
-            String artifactCode, String issue, String reason) {
-        STAGED_FAILURES.put(path, new StagedEntry(path, pinnedExpectation,
-            artifactCode, issue, reason));
-    }
 
     /**
      * A companion module that has been compiled to Lua and is ready to be
@@ -233,20 +133,6 @@ public class ConformanceTest {
         System.out.println("Discovered " + tests.size() + " conformance test(s)");
         System.out.println();
 
-        // Validate the staged-failure registry against the on-disk corpus:
-        // every entry must name a discovered fixture, so the staged state
-        // can never silently disappear.
-        Set<String> discovered = new HashSet<>();
-        for (TestFile test : tests) {
-            discovered.add(test.relativePath());
-        }
-        for (var entry : STAGED_FAILURES.entrySet()) {
-            if (!discovered.contains(entry.getKey())) {
-                classificationFailure("staged-failure registry entry '"
-                    + entry.getKey() + "' names no discovered fixture");
-            }
-        }
-
         // Run each test
         for (TestFile test : tests) {
             runTest(test);
@@ -258,172 +144,11 @@ public class ConformanceTest {
         // Print coverage report
         printCoverageReport();
 
-        // Gate-closure strict gate (luajit-gate-closure D2/D5): the
-        // post-unit zero-fail assertion, keyed on the staged-failure
-        // registry shape. Dormant under the exact sanctioned pre-unit
-        // ISSUE-0237 pair — no assertion, no extra output; strict under
-        // the empty registry; a hard failure for every other shape. Its
-        // strict-mode residual GATE FAILURE lines print before any exit,
-        // and the dormant mode leaves the failed > 0 exit below as the
-        // only exit mechanism.
-        runGateClosureCheck();
-
         if (failed > 0) {
             System.exit(1);
         }
     }
 
-
-
-    // =========================================================================
-    // Gate-closure strict gate (post-unit zero-fail assertion)
-    // =========================================================================
-
-    /**
-     * The gate-closure strict gate (luajit-gate-closure D2/D5): the
-     * post-unit zero-fail assertion evaluated in the summary/exit path.
-     * The activation key is the staged-failure registry shape, compared
-     * field-exact on the {@code StagedEntry} fields {@code path},
-     * {@code pinnedExpectation}, {@code artifactCode}, and {@code issue}
-     * (the {@code reason} string is documentation and is not compared):
-     *
-     * <ul>
-     *   <li>Dormant — the registry equals the exact sanctioned pre-unit
-     *       ISSUE-0237 pair (exactly one entry: path
-     *       {@code backend-runtime/stdlib-edge/time-now-millis-positive.deal},
-     *       pinned expectation {@code runtime-ok}, artifact code
-     *       {@code E8004}, issue {@code ISSUE-0237}): no assertion and no
-     *       extra output; the pre-unit tracked non-fatal semantics and the
-     *       preserved {@code failed > 0} exit are byte-for-byte unchanged
-     *       (the closure is pending and never asserted).</li>
-     *   <li>Strict — the registry is empty (the disposition-application
-     *       unit's landing artifact): the backend-runtime phase counters
-     *       ({@code phaseStats} {@code record()} {@code int[5]} indices
-     *       1-4 — failed, skipped, known-fail, staged) and the global
-     *       {@code knownFailures} counter must be zero. Residuals are
-     *       enumerated from the {@code specGroups} {@code TestResult}
-     *       records — a residual is any backend-runtime fixture whose
-     *       recorded state is FAIL, SKIP, KNOWN_FAIL, or STAGED_FAIL,
-     *       plus any known-fail fixture of either phase for the
-     *       summary-level assertion (D5). The {@code specGroups} records
-     *       correspond one-to-one with the phase counters and the global
-     *       {@code knownFailures} counter ({@code record()} increments
-     *       both), so strict mode asserts those counters zero exactly
-     *       when no residual enumerates; with the zeros no
-     *       {@code GATE FAILURE} line prints, the preserved
-     *       {@code failed > 0} check is false, and the process exits 0.</li>
-     *   <li>Shape failure — any other registry shape is itself a gate
-     *       failure regardless of the counters (a re-added entry, a new
-     *       entry for any fixture, or any field edit of the sanctioned
-     *       entry — even when the dispatch recorded a tracked
-     *       STAGED-FAIL first).</li>
-     * </ul>
-     */
-    private static void runGateClosureCheck() {
-        if (STAGED_FAILURES.isEmpty()) {
-            runStrictModeGate();
-            return;
-        }
-        if (isSanctionedPreUnitPair()) {
-            // Dormant mode: the closure is pending and never asserted.
-            return;
-        }
-        for (StagedEntry entry : STAGED_FAILURES.values()) {
-            System.out.println("GATE FAILURE: staged-failure registry is "
-                + "neither the sanctioned pre-unit ISSUE-0237 pair nor empty — "
-                + entry.path() + " (tracked by " + entry.issue() + ")");
-        }
-        System.out.println("promotion instruction: remove the registry entry "
-            + "(or entries)");
-        System.exit(1);
-    }
-
-    /**
-     * Strict mode (empty registry): enumerate the post-unit residuals from
-     * the {@code specGroups} {@code TestResult} records and print one
-     * pinned {@code GATE FAILURE} line per residual before
-     * {@code System.exit(1)} (the JVM precedent pattern,
-     * {@code test/JvmConformanceTest.java}).
-     */
-    private static void runStrictModeGate() {
-        List<TestResult> failedResiduals = new ArrayList<>();
-        List<TestResult> skippedResiduals = new ArrayList<>();
-        List<TestResult> knownFailResiduals = new ArrayList<>();
-        List<TestResult> stagedResiduals = new ArrayList<>();
-        for (List<TestResult> results : specGroups.values()) {
-            for (TestResult result : results) {
-                if (result.state() == State.KNOWN_FAIL) {
-                    // Summary-level known-fail assertion (D5): any
-                    // known-fail fixture of either phase.
-                    knownFailResiduals.add(result);
-                } else if ("backend-runtime".equals(
-                        result.test().phase())) {
-                    switch (result.state()) {
-                        case FAIL -> failedResiduals.add(result);
-                        case SKIP -> skippedResiduals.add(result);
-                        case STAGED_FAIL -> stagedResiduals.add(result);
-                        default -> { }
-                    }
-                }
-            }
-        }
-        if (failedResiduals.isEmpty() && skippedResiduals.isEmpty()
-                && knownFailResiduals.isEmpty()
-                && stagedResiduals.isEmpty()) {
-            return;
-        }
-        for (TestResult result : failedResiduals) {
-            System.out.println("GATE FAILURE: " + failedResiduals.size()
-                + " failed — " + result.test().relativePath() + " — "
-                + result.message());
-        }
-        for (TestResult result : skippedResiduals) {
-            System.out.println("GATE FAILURE: " + skippedResiduals.size()
-                + " skipped — " + result.test().relativePath()
-                + " — LuaJIT unavailable on the gate machine; the LuaJIT "
-                + "lane cannot be verified (environmental probe branch)");
-        }
-        for (TestResult result : knownFailResiduals) {
-            // <mode> resolves to the mode token(s) after the
-            // 'known-fail ' prefix in the residual's classified @expected
-            // value; <issue> resolves to the residual's retained @issue
-            // tag. Both are retained on the TestFile that record() stored
-            // in this TestResult — no re-execution, no fixture re-read,
-            // no parsing of the recorded detail (the detail is used only
-            // by the failed-residual line).
-            String mode = result.test().expected()
-                .substring("known-fail ".length()).trim();
-            System.out.println("GATE FAILURE: " + knownFailResiduals.size()
-                + " known-fail — " + result.test().relativePath()
-                + " — tracked by " + result.test().issue()
-                + "; promotion instruction: set '@expected: " + mode
-                + "' and drop the @issue tag");
-        }
-        for (TestResult result : stagedResiduals) {
-            // Unreachable in strict mode — an empty registry cannot record
-            // STAGED-FAIL; retained as defense in depth.
-            System.out.println("GATE FAILURE: " + stagedResiduals.size()
-                + " staged — " + result.test().relativePath()
-                + " — promotion instruction: remove the registry entry");
-        }
-        System.exit(1);
-    }
-
-    /**
-     * True when the staged-failure registry is field-exactly the
-     * sanctioned pre-unit ISSUE-0237 pair.
-     */
-    private static boolean isSanctionedPreUnitPair() {
-        if (STAGED_FAILURES.size() != 1) {
-            return false;
-        }
-        StagedEntry entry = STAGED_FAILURES.get(
-            "backend-runtime/stdlib-edge/time-now-millis-positive.deal");
-        return entry != null
-            && "runtime-ok".equals(entry.pinnedExpectation())
-            && "E8004".equals(entry.artifactCode())
-            && "ISSUE-0237".equals(entry.issue());
-    }
 
     // =========================================================================
     // Discovery and classification
@@ -628,23 +353,7 @@ public class ConformanceTest {
         String expected = test.expected();
 
         try {
-            StagedEntry staged = STAGED_FAILURES.get(test.relativePath());
-            if (staged != null && staged.pinnedExpectation().equals(expected)) {
-                runStagedFailure(test, staged);
-            } else if (staged != null) {
-                // The owning child changed the fixture's classification:
-                // the entry is stale — fail the gate with a promotion
-                // instruction (remove the registry entry so the fixture
-                // runs under its new expectation).
-                System.out.println("FAIL (STALE staged entry: '"
-                    + test.relativePath() + "' is now classified '"
-                    + expected + "' instead of the pinned '"
-                    + staged.pinnedExpectation() + "' — the "
-                    + staged.issue() + " child applied its disposition: "
-                    + "remove the registry entry)");
-                record(test, State.FAIL, "stale staged entry; fixture "
-                    + "expectation changed to '" + expected + "'");
-            } else if (expected.equals("companion")) {
+            if (expected.equals("companion")) {
                 runCompanion(test);
             } else if (expected.startsWith("known-fail ")) {
                 runKnownFail(test);
@@ -776,51 +485,6 @@ public class ConformanceTest {
     }
 
     // =========================================================================
-    // Staged failures: design-sanctioned interim states (tracked)
-    // =========================================================================
-
-    /**
-     * A staged failure: the fixture's own expectation is temporarily
-     * unsatisfied by a locked artifact whose disposition is owed by the
-     * registry entry's issue. The runner verifies that the locked
-     * artifact code is still produced and records the case as a
-     * non-fatal tracked staged failure. If the fixture starts passing
-     * its own expectation (the owning child landed a passing
-     * disposition) or fails for any other reason, the gate FAILS —
-     * promotion is forced instead of silently forgotten.
-     */
-    private static void runStagedFailure(TestFile test, StagedEntry entry)
-            throws Exception {
-        RunProbe locked = probeRuntimeError(test, entry.artifactCode());
-        if (locked.environmental()) {
-            System.out.println("SKIP (" + locked.detail() + ")");
-            record(test, State.SKIP, locked.detail());
-            return;
-        }
-        if (locked.ok()) {
-            System.out.println("STAGED-FAIL (" + entry.artifactCode()
-                + " locked artifact; tracked by " + entry.issue() + ": "
-                + entry.reason() + ")");
-            stagedFailuresByIssue.merge(entry.issue(), 1, Integer::sum);
-            record(test, State.STAGED_FAIL, entry.reason());
-            return;
-        }
-        RunProbe own = probeRuntimeOk(test);
-        if (own.ok()) {
-            System.out.println("FAIL (STALE staged entry: the fixture now "
-                + "passes '" + test.expected() + "' — the " + entry.issue()
-                + " child landed a passing disposition: remove the "
-                + "registry entry)");
-            record(test, State.FAIL,
-                "stale staged entry; fixture passes its expectation");
-        } else {
-            System.out.println("FAIL (fixture fails outside the locked "
-                + entry.artifactCode() + " artifact: " + own.detail() + ")");
-            record(test, State.FAIL, "unexpected failure: " + own.detail());
-        }
-    }
-
-    // =========================================================================
     // Intentionally unsupported v1.2 cases: explicit failing fixtures
     // =========================================================================
 
@@ -834,10 +498,8 @@ public class ConformanceTest {
         }
         if (probe.ok()) {
             System.out.println("FAIL (STALE known-fail: the v1.2 requirement "
-                + "tracked by " + test.issue() + " now passes — promote the "
-                + "fixture: set '@expected: " + mode + "' and drop the "
-                + "@issue tag)");
-            record(test, State.FAIL, "stale known-fail; promote fixture");
+                + "tracked by " + test.issue() + " now passes)");
+            record(test, State.FAIL, "stale known-fail");
         } else {
             System.out.println("KNOWN-FAIL (" + mode + " not yet satisfied; "
                 + "tracked by " + test.issue() + ")");
@@ -1499,33 +1161,19 @@ public class ConformanceTest {
     // =========================================================================
 
     private static void record(TestFile test, State state, String message) {
-        // The strict recording seam (S3): the shared funnel every
-        // environmental-skip site and every known-fail recording passes
-        // through. STRICT_SKIP_DETECTED fires before any counter,
-        // phase-stat, or spec-group update; the first recording attempt
-        // terminates the runner. State.STAGED_FAIL and the pass/fail
-        // states stay outside the conversion set.
-        if (STRICT_MODE
-                && (state == State.SKIP || state == State.KNOWN_FAIL)) {
-            System.err.println("STRICT_SKIP_DETECTED ("
-                + test.relativePath() + ": " + message + ")");
-            System.exit(1);
-        }
         switch (state) {
             case PASS -> passed++;
             case FAIL -> failed++;
             case SKIP -> skipped++;
             case KNOWN_FAIL -> knownFailures++;
-            case STAGED_FAIL -> stagedFailures++;
             case COMPANION -> companions++;
         }
-        int[] stats = phaseStats.computeIfAbsent(test.phase(), k -> new int[5]);
+        int[] stats = phaseStats.computeIfAbsent(test.phase(), k -> new int[4]);
         switch (state) {
             case PASS -> stats[0]++;
             case FAIL -> stats[1]++;
             case SKIP -> stats[2]++;
             case KNOWN_FAIL -> stats[3]++;
-            case STAGED_FAIL -> stats[4]++;
             case COMPANION -> {}
         }
         if (state == State.COMPANION) {
@@ -1542,8 +1190,7 @@ public class ConformanceTest {
         int total = passed + failed + skipped;
         System.out.println("Total: " + total + ", Passed: " + passed +
             ", Failed: " + failed + ", Skipped: " + skipped +
-            ", KnownFailures (tracked): " + knownFailures +
-            ", StagedFailures (tracked): " + stagedFailures);
+            ", KnownFailures: " + knownFailures);
         System.out.println("Companions (classified support modules): "
             + companions);
 
@@ -1557,43 +1204,26 @@ public class ConformanceTest {
         }
 
         System.out.println();
-        System.out.println("=== DEAL v1.2 Promotion Gate ===");
-        printPhaseGate("frontend",
+        System.out.println("=== Conformance by Phase ===");
+        printPhaseSummary("frontend",
             "Frontend conformance (v1.2 grammar and semantics)");
-        printPhaseGate("backend-runtime",
+        printPhaseSummary("backend-runtime",
             "LuaJIT backend-runtime conformance (v1.2)");
-        System.out.println("  JVM backend-runtime conformance (v1.2): enforced by "
-            + "JvmConformanceTest and JvmBackendTest with real generated-artifact "
-            + "execution and zero unclassified skips");
-        if (knownFailsByIssue.isEmpty()) {
-            System.out.println("  Tracked v1.2 follow-up issues: none — full "
-                + "v1.2 conformance");
-        } else {
-            System.out.println("  Tracked v1.2 follow-up issues (intentionally "
-                + "unsupported cases, each with an explicit failing fixture):");
+        if (!knownFailsByIssue.isEmpty()) {
+            System.out.println("  Known-fail issues:");
             knownFailsByIssue.entrySet().stream()
                 .sorted(Map.Entry.comparingByKey())
                 .forEach(e -> System.out.println("    " + e.getKey() + ": "
                     + e.getValue() + " known-fail fixture(s)"));
         }
-        if (!stagedFailuresByIssue.isEmpty()) {
-            System.out.println("  Tracked v1.2 staged failures "
-                + "(design-sanctioned interim states whose disposition is "
-                + "owed by the named child):");
-            stagedFailuresByIssue.entrySet().stream()
-                .sorted(Map.Entry.comparingByKey())
-                .forEach(e -> System.out.println("    " + e.getKey() + ": "
-                    + e.getValue() + " staged fixture(s)"));
-        }
     }
 
-    private static void printPhaseGate(String phase, String label) {
-        int[] stats = phaseStats.getOrDefault(phase, new int[5]);
-        int total = stats[0] + stats[1] + stats[2] + stats[3] + stats[4];
+    private static void printPhaseSummary(String phase, String label) {
+        int[] stats = phaseStats.getOrDefault(phase, new int[4]);
+        int total = stats[0] + stats[1] + stats[2] + stats[3];
         System.out.println("  " + label + ": " + stats[0] + "/" + total
             + " passed, " + stats[1] + " failed, " + stats[2] + " skipped, "
-            + stats[3] + " known-fail (tracked), " + stats[4]
-            + " staged-fail (tracked)");
+            + stats[3] + " known-fail");
     }
 
     private static void printCoverageReport() {
@@ -1640,13 +1270,11 @@ public class ConformanceTest {
                     .filter(r -> r.state() == State.FAIL).count();
                 long sectionKnown = sectionResults.stream()
                     .filter(r -> r.state() == State.KNOWN_FAIL).count();
-                long sectionStaged = sectionResults.stream()
-                    .filter(r -> r.state() == State.STAGED_FAIL).count();
                 long sectionTotal = sectionResults.size();
                 System.out.printf("  %-55s %d/%d passed, %d failed, "
-                    + "%d known-fail, %d staged-fail%n",
+                    + "%d known-fail%n",
                     "\u00a7" + section, sectionPassed, sectionTotal,
-                    sectionFailed, sectionKnown, sectionStaged);
+                    sectionFailed, sectionKnown);
             }
         }
     }

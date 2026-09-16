@@ -29,179 +29,20 @@ import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * JVM conformance promotion gate (ISSUE-0102), running the activated
- * DEAL v1.2 signed-int32 route (ISSUE-0378 D1).
+ * Runs DEAL v1.2 conformance fixtures against the JVM backend.
  *
- * <p>Runs every existing backend-runtime conformance test
- * ({@code test/conformance/backend-runtime/}) against the JVM backend
- * with a deterministic applicability policy and a real whole-project
- * pipeline: module discovery → parsing → signature extraction →
- * dependency ordering → name resolution → type checking → per-module
- * {@link JvmBackend} codegen (via {@link CompilationOrchestrator} with
- * {@link Backend#JVM}) → {@code javac} over every emitted artifact →
- * {@code java} execution of the emitted classes. A bypassed
- * parser/checker/module-discovery yields no orchestrator success; a
- * bypassed codegen leaves no {@code .java} artifact (asserted before
- * javac); a bypassed JVM execution produces no output and no exit code
- * (asserted against the captured subprocess output).
- *
- * <h2>The lane-wide activated invocation (ISSUE-0378 D1)</h2>
- *
- * <p>Every on-disk backend-runtime fixture compiles through the single
- * lane-wide activated invocation {@link #LANE_INVOCATION} — the
- * explicit
- * {@code CompilerProfileProvider.resolve(ReleaseState.V1_2_ACTIVE,
- * CapabilityRegistry.releaseRegistry())} invocation (PUBLIC_BUILD +
- * {@code DEAL_V1_2_INT32}, release state {@code V1_2_ACTIVE}) —
- * passed through the full {@link CompilationOrchestrator} constructor.
- * The lane carries zero per-fixture catalog-seam call sites and
- * zero legacy-authority labeling: the profile-authority accounting is
- * pinned at 0 legacy-authority fixtures, and the per-fixture catalog
- * seam stays where it belongs — the untouched legacy harness
- * {@code deal.test.legacy JSON conformance harness} (this lane only validates
- * the catalog at startup; it never routes a fixture through it).
- *
- * <h2>Closed gate state (ISSUE-0307: zero skips, 100% denominator)</h2>
- *
- * <p>The completion gate is closed: every applicable backend-runtime
- * fixture passes the real pipeline and the skip registry is RETIRED —
- * removed, never retained as empty machinery
- * (jvm-v12-completion-architecture D3). The last four gap families
- * closed with their dispositions: the Error literal default filling
- * (the builtin {@code code}/{@code message} defaults to {@code ""},
- * spec-v1.2 §Error type — rtc-015-error-default-code passes), the
- * Error-typed nullable catch-probe local and catch-block assignment
- * (plan-phase-order-provided-before-defaults passes), the host export
- * used as a first-class function value (the per-export shared wrapper
- * carrier keeps the identical E8010/E8001 boundary checks —
- * host-async-shape-value passes as its pinned runtime-error E8010),
- * and the eight ISSUE-0504 host-boundary fixtures (the boxed int/
- * Integer carrier class literals match the declared host shapes under
- * DEAL_V1_2_INT32 — every host-boundary fixture passes). ISSUE-0548
- * (the sync bytes-function shape closure) then lands the six sync
- * bytes-function fixtures plus their companion (bytes-sync-fn-shapes,
- * bytes-fn-adapters, bytes-fn-adapter-e8010, bytes-identity-equality,
- * bytes-nested-fn-shapes, bytes-fn-xmod): the wrapper shapes, the
- * prefix adapters, the E8010 check position, the reference-identity
- * equality, and the bytes-bearing class-field function slots all pass
- * the real pipeline on the closed gate — zero skips, zero entries. The
- * adapter live-rebinding criterion splits by surface: the module-level
- * binding reassignment stays a LuaJIT-only reference pin
- * ({@code jvm-bytes-lua-ref-reassigned-adapter} in
- * {@code jvm-bytes-slice} — the adapter re-reads the chunk local
- * live, so {@code id = stamp} retargets it) because the JVM backend
- * retains the reason-bearing E6000 for that reassignment, never a
- * bytes reason (pinned in {@code JvmBackendTest
- * .testRecursiveBytesClosureLane}), while the reachable class-field
- * re-read surface ({@code box.cb = picker(); box.cb(...)}) passes the
- * real pipeline in bytes-nested-fn-shapes.deal. The
- * lane runs directly from {@code run_tests.sh} on every gate run.</p>
- *
- * <h2>Classification policy (deterministic, documented)</h2>
- *
- * <ol>
- *   <li><b>Frontend-classified files</b> ({@code compile-ok} /
- *       {@code compile-error CODE} anywhere under the corpus): run the
- *       shared frontend pipeline (lexer → parser → name resolver → type
- *       checker) and must pass 100% — they are backend-neutral and never
- *       counted in the JVM backend-runtime denominator (the same
- *       classification the LuaJIT harness applies).</li>
- *   <li><b>Companions</b> ({@code @expected: companion}): classified
- *       support modules. They are compiled as part of the transitive
- *       module graph of every test that imports them (never counted
- *       separately); their standalone compilation stays enforced by the
- *       shared {@code deal.test.ConformanceTest} gate.</li>
- *   <li><b>Known-fail</b> ({@code @expected: known-fail MODE}): the
- *       intentionally unsupported v1.2 cases tracked by their
- *       {@code @issue}. The runner executes the underlying mode
- *       through the real JVM pipeline and records a non-fatal tracked
- *       KNOWN-FAIL while the case still fails; when it starts passing,
- *       the gate FAILS with a promotion instruction (drop the marker)
- *       — promotion is forced. The corpus carries zero known-fail
- *       markers on the JVM lane today (the int32/bytes promotions
- *       landed with their lanes).</li>
- *   <li><b>Backend-runtime tests</b> ({@code runtime-ok} /
- *       {@code runtime-error CODE}): every on-disk runtime-classified
- *       fixture is JVM-applicable and must pass through the whole
- *       pipeline. There is NO skip classification: the classifier has
- *       no registry and no fallback skip branch, so a SKIPPED outcome
- *       is impossible by construction — the gate asserts the zero count
- *       and the gate's evidence owner pins the registry-less source.
- *       Zero skips by construction, never empty skip machinery.</li>
- * </ol>
- *
- * <h2>Gates</h2>
- * <ul>
- *   <li>frontend-classified files: 100% pass (zero failed);</li>
- *   <li>backend-runtime: zero applicable failures AND 100% of the
- *       on-disk backend-runtime denominator (the per-run
- *       {@code runtimeDenominator()} count — 389: the closed 354
- *       plus the six ISSUE-0548 sync bytes-function fixtures
- *       (bytes-sync-fn-shapes, bytes-fn-adapters,
- *       bytes-fn-adapter-e8010, bytes-identity-equality,
- *       bytes-nested-fn-shapes, bytes-fn-xmod) plus the six
- *       ISSUE-0550 dynamic bytes-boundary fixtures:
- *       bytes-dynamic-boundary-ok, bytes-dynamic-wrong-kind-e8001,
- *       bytes-dynamic-nested-first-element-e8003,
- *       bytes-dynamic-function-mismatch-e8010,
- *       bytes-dynamic-nullable-function-ok, and
- *       bytes-dynamic-async-function-mismatch-e8010 — plus the
- *       fifteen runtime-classified FFI fixtures ISSUE-0507 landed,
- *       every one passing as the sanctioned compile-reject E6006
- *       FFI_UNSUPPORTED_BACKEND divergence — plus the seven
- *       ISSUE-0551 host/module/JSON bytes fixtures:
- *       host-bytes-roundtrip, host-bytes-nullable-roundtrip,
- *       host-bytes-no-call-on-failure,
- *       host-bytes-param-mismatch-e8010,
- *       host-bytes-return-mismatch-e8010, bytes-module-identity, and
- *       stdlib/json/json-stringify-nested-bytes-error — plus the
- *       ISSUE-0552 integrated-verification fixture
- *       (bytes-class-default-integration: nested bytes[] and
- *       bytes[][] defaults, sync/async first-class function defaults,
- *       once-per-attempt evaluation with zero load-time runs, fresh
- *       isolated buffers, retained host-returned identity,
- *       validation failure, and JSON rejection)) passing through
- *       the frontend → CompilationOrchestrator → JVM codegen → javac →
- *       JVM pipeline — zero skipped, zero stale known-fail markers;</li>
- *   <li>the classified runtime total equals the on-disk denominator
- *       (a missing or deferred runtime fixture fails the gate);</li>
- *   <li>zero probe runner exceptions (a probe crash is never silent
- *       evidence — retained while the known-fail mechanism exists);</li>
- *   <li>the runner exits non-zero when any gate fails.</li>
- * </ul>
+ * <p>Runtime fixtures use the whole-project pipeline through
+ * {@link CompilationOrchestrator}, {@link JvmBackend}, {@code javac}, and
+ * {@code java}. Frontend fixtures use the shared lexer, parser, name resolver,
+ * and type checker. Companion modules are compiled transitively.</p>
  */
 public class JvmConformanceTest {
 
     private static final int DEFAULT_JOBS = 1;
 
-    // =========================================================================
-    // The lane-wide activated invocation (ISSUE-0378 D1)
-    // =========================================================================
-
-    /**
-     * The single lane-wide activated invocation: every on-disk
-     * backend-runtime fixture compiles through this exact invocation
-     * via the full {@link CompilationOrchestrator} constructor. The
-     * public release-state derivation (PUBLIC_BUILD +
-     * {@code DEAL_V1_2_INT32}, release state {@code V1_2_ACTIVE}) is
-     * the activated backend's sanctioned harness surface until the
-     * release-owned public cutover; no per-fixture catalog seam and no
-     * legacy-authority routing exist in this lane (the untouched
-     * {@code deal.test.legacy JSON conformance harness} owns that seam).
-     */
     private static final CompilerInvocation LANE_INVOCATION =
         CompilerProfileProvider.resolve(ReleaseState.V1_2_ACTIVE,
             CapabilityRegistry.releaseRegistry());
-
-    // =========================================================================
-    // Applicability policy (ISSUE-0307 gate closure): no skip registry
-    // =========================================================================
-    // The skip registry is RETIRED — removed, never retained as empty
-    // machinery (jvm-v12-completion-architecture D3). The classifier has
-    // no registry and no fallback skip branch, so a SKIPPED outcome is
-    // impossible by construction: every runtime-classified on-disk
-    // fixture is APPLICABLE and must pass the real pipeline. The gate
-    // report asserts the zero skip count.
 
     // =========================================================================
     // Host modules for the JVM-applicable host-ABI corpus tests
@@ -414,20 +255,13 @@ public class JvmConformanceTest {
             String issue) {}
 
     private enum Kind {
-        /** compile-ok / compile-error — backend-neutral frontend gate. */
+        /** compile-ok / compile-error — backend-neutral frontend tests. */
         FRONTEND,
-        /** runtime-ok / runtime-error — JVM-applicable backend test.
-         *  ISSUE-0307 gate closure: the skip classification no longer
-         *  exists — the registry was retired and the classifier has no
-         *  fallback skip branch, so every runtime-classified on-disk
-         *  fixture is APPLICABLE (zero skips by construction). */
-        APPLICABLE,
-        /** known-fail MODE — tracked follow-up issue; run + stale-checked. */
-        KNOWN_FAIL
+        /** runtime-ok / runtime-error — JVM-applicable backend test. */
+        APPLICABLE
     }
 
-    private record Classified(TestFile test, Kind kind, String expectedCode,
-            String knownFailIssue) {}
+    private record Classified(TestFile test, Kind kind, String expectedCode) {}
 
     private record Outcome(TestFile test, Classified classified,
             boolean pass, String message) {}
@@ -439,16 +273,9 @@ public class JvmConformanceTest {
     private static final AtomicInteger applicablePassed = new AtomicInteger();
 
     private static final AtomicInteger applicableFailed = new AtomicInteger();
-    private static final AtomicInteger knownFailTotal = new AtomicInteger();
-    private static final AtomicInteger knownFailTracked = new AtomicInteger();
-    private static final AtomicInteger knownFailStale = new AtomicInteger();
-    private static final AtomicInteger probeHarnessFailed =
-        new AtomicInteger();
 
     private static final List<Outcome> outcomes =
         Collections.synchronizedList(new ArrayList<>());
-    private static final Map<String, Integer> knownFailByIssue =
-        Collections.synchronizedMap(new LinkedHashMap<>());
 
     private static final ThreadLocal<StringBuilder> WORKER_OUTPUT =
         new ThreadLocal<>();
@@ -456,18 +283,6 @@ public class JvmConformanceTest {
 
     private static boolean jvmAvailable;
 
-    /**
-     * Strict no-skip mode (release-r0-r3-strict-gate-mechanics S3;
-     * release-pipeline-strict-mode-and-evidence D2(c)): when the gate
-     * scripts export DEAL_STRICT=1, the runner JVM inherits it and the
-     * known-fail recording statement below is a hard gate failure
-     * instead of tracked evidence. Dev mode leaves the flag unset and
-     * records exactly as before. (The skip-recording seam was retired
-     * with the registry — ISSUE-0307: the classifier has no skip
-     * branch at all.)
-     */
-    private static final boolean STRICT_MODE =
-        System.getenv("DEAL_STRICT") != null;
     private static Path conformanceRoot = Path.of("test/conformance/")
         .toAbsolutePath().normalize();
     private static Path hostFixturesRoot =
@@ -515,12 +330,9 @@ public class JvmConformanceTest {
             .filter(c -> c.kind() == Kind.FRONTEND).count();
         int applicable = (int) tests.stream()
             .filter(c -> c.kind() == Kind.APPLICABLE).count();
-        int knownFail = (int) tests.stream()
-            .filter(c -> c.kind() == Kind.KNOWN_FAIL).count();
         System.out.println("Discovered " + tests.size() + " conformance "
             + "test(s): " + frontend + " frontend-classified, "
-            + applicable + " JVM-applicable backend-runtime, "
-            + knownFail + " known-fail (tracked)");
+            + applicable + " JVM-applicable backend-runtime");
         System.out.println();
 
         // Deterministic execution order: sorted by corpus-relative path.
@@ -545,11 +357,10 @@ public class JvmConformanceTest {
 
         List<Outcome> sorted = new ArrayList<>(outcomes);
         sorted.sort(Comparator.comparing(o -> o.test().relativePath()));
-        printReport(sorted, applicable + knownFail);
+        printReport(sorted, applicable);
     }
 
-    /** Probes that both {@code javac} and {@code java} are invocable and
-     * functional — the same gate legacy JSON conformance harness uses. */
+    /** Probes that both {@code javac} and {@code java} are functional. */
     private static boolean probeJvm() {
         try {
             Process javac = new ProcessBuilder("javac", "-version")
@@ -612,7 +423,7 @@ public class JvmConformanceTest {
 
             if (expected.isEmpty()) {
                 throw new IllegalStateException("no @expected tag in "
-                    + file + " — the v1.2 gate has no unclassified files");
+                    + file + " — every fixture must be classified");
             }
 
             Path rel = conformanceRoot.relativize(file);
@@ -624,13 +435,7 @@ public class JvmConformanceTest {
         }
     }
 
-    /**
-     * The deterministic applicability policy. See the class javadoc.
-     * ISSUE-0307 gate closure: there is no skip classification — the
-     * registry was retired and no fallback skip branch exists, so every
-     * runtime-classified on-disk fixture is APPLICABLE (zero skips by
-     * construction, never empty skip machinery).
-     */
+    /** The deterministic applicability policy. */
     private static List<Classified> classifyAll(List<TestFile> tests) {
         List<Classified> result = new ArrayList<>();
         for (TestFile test : tests) {
@@ -638,30 +443,17 @@ public class JvmConformanceTest {
             if (expected.equals("companion")) {
                 continue; // classified support module; compiled transitively
             }
-            if (expected.startsWith("known-fail ")) {
-                String mode = expected.substring("known-fail ".length())
-                    .trim();
-                String code = mode.startsWith("runtime-error ")
-                    ? mode.substring("runtime-error ".length()).trim() : "";
-                if (test.issue().isEmpty()) {
-                    throw new IllegalStateException("known-fail without "
-                        + "@issue in " + test.relativePath());
-                }
-                result.add(new Classified(test, Kind.KNOWN_FAIL, code,
-                    test.issue()));
-            } else if (expected.startsWith("compile-ok")) {
-                result.add(new Classified(test, Kind.FRONTEND, "", null));
+            if (expected.startsWith("compile-ok")) {
+                result.add(new Classified(test, Kind.FRONTEND, ""));
             } else if (expected.startsWith("compile-error ")) {
                 result.add(new Classified(test, Kind.FRONTEND,
-                    expected.substring("compile-error ".length()).trim(),
-                    null));
+                    expected.substring("compile-error ".length()).trim()));
             } else if (expected.startsWith("runtime-ok")
                     || expected.startsWith("runtime-error ")) {
                 String code = expected.startsWith("runtime-error ")
                     ? expected.substring("runtime-error ".length()).trim()
                     : "";
-                result.add(new Classified(test, Kind.APPLICABLE, code,
-                    null));
+                result.add(new Classified(test, Kind.APPLICABLE, code));
             } else {
                 // Unknown @expected is a harness failure, never a skip.
                 throw new IllegalStateException("unknown @expected '"
@@ -682,7 +474,6 @@ public class JvmConformanceTest {
             Outcome outcome = switch (classified.kind()) {
                 case FRONTEND -> runFrontend(classified);
                 case APPLICABLE -> runApplicable(classified);
-                case KNOWN_FAIL -> runKnownFail(classified);
             };
             if (outcome != null) {
                 outcomes.add(outcome);
@@ -692,26 +483,11 @@ public class JvmConformanceTest {
                 + "] FAIL: runner exception: " + e.getMessage());
             if (classified.kind() == Kind.FRONTEND) {
                 frontendFailed.incrementAndGet();
-                outcomes.add(new Outcome(classified.test(), classified,
-                    false, "runner exception: " + e.getMessage()));
-            } else if (classified.kind() == Kind.APPLICABLE) {
-                applicableFailed.incrementAndGet();
-                outcomes.add(new Outcome(classified.test(), classified,
-                    false, "runner exception: " + e.getMessage()));
             } else {
-                // A runner exception (an Error, or anything thrown
-                // before runApplicable's internal Exception catch)
-                // escaping a KNOWN_FAIL probe is an explicit
-                // harness failure — never an applicable failure, never
-                // a tracked result.
-                probeHarnessFailed.incrementAndGet();
-                log("  [" + classified.test().relativePath()
-                    + "] FAIL (runner exception during known-fail "
-                    + "probe — harness failure): " + e.getMessage());
-                outcomes.add(new Outcome(classified.test(), classified,
-                    false, "runner exception during known-fail "
-                    + "probe — harness failure: " + e.getMessage()));
+                applicableFailed.incrementAndGet();
             }
+            outcomes.add(new Outcome(classified.test(), classified,
+                false, "runner exception: " + e.getMessage()));
         } finally {
             WORKER_OUTPUT.remove();
             synchronized (CONSOLE_LOCK) {
@@ -721,7 +497,7 @@ public class JvmConformanceTest {
     }
 
     // =========================================================================
-    // Frontend gate (backend-neutral compile-ok / compile-error)
+    // Frontend execution (backend-neutral compile-ok / compile-error)
     // =========================================================================
 
     private static Outcome runFrontend(Classified classified) {
@@ -848,7 +624,7 @@ public class JvmConformanceTest {
         }
     }
 
-    /** Module resolver for the frontend gate: spec-listed stdlib exports
+    /** Module resolver for frontend tests: spec-listed stdlib exports
      * and relative {@code ./} / {@code ../} imports resolved through
      * {@link ExportExtractor} with synthesized class symbols — the same
      * resolution surface the LuaJIT conformance harness uses for
@@ -970,7 +746,7 @@ public class JvmConformanceTest {
         }
 
         /** The companion files whose synthesized identity equals the
-         * carried module identity (frontend-gate routing only). */
+         * carried module identity (frontend routing only). */
         private java.util.List<java.nio.file.Path> companionPaths(
                 deal.identity.CanonicalModuleIdentity declaringModule) {
             java.util.List<java.nio.file.Path> result =
@@ -991,7 +767,7 @@ public class JvmConformanceTest {
                     }
                 }
             } catch (IOException ignored) {
-                // frontend-gate best effort
+                // frontend best effort
             }
             return result;
         }
@@ -1083,78 +859,17 @@ public class JvmConformanceTest {
     }
 
     // =========================================================================
-    // Known-fail cases (tracked follow-up issues)
-    // =========================================================================
-
-    /**
-     * Executes the underlying runtime mode of a known-fail case through
-     * the real JVM pipeline. While the case still fails, it is recorded
-     * as a non-fatal tracked KNOWN-FAIL; when it starts passing, the
-     * gate FAILS with a promotion instruction (drop the marker).
-     */
-    private static Outcome runKnownFail(Classified classified) {
-        TestFile test = classified.test();
-        knownFailTotal.incrementAndGet();
-        String mode = test.expected().substring(
-            "known-fail ".length()).trim();
-        Outcome probe = runApplicable(classified, true);
-        if (probe.pass()) {
-            knownFailStale.incrementAndGet();
-            log("  [" + test.relativePath()
-                + "] FAIL (STALE known-fail: the v1.2 requirement tracked "
-                + "by " + test.issue() + " now passes on JVM — promote the "
-                + "fixture: set '@expected: " + mode + "' and drop the "
-                + "@issue tag)");
-            return new Outcome(test, classified, false,
-                "stale known-fail; promote fixture");
-        }
-        // The strict recording seam (S3): the first known-fail recording
-        // attempt terminates the runner before knownFailTracked or
-        // knownFailByIssue is touched.
-        if (STRICT_MODE) {
-            System.err.println("STRICT_SKIP_DETECTED ("
-                + test.relativePath() + ": known-fail tracked by "
-                + test.issue() + ")");
-            System.exit(1);
-        }
-        knownFailTracked.incrementAndGet();
-        knownFailByIssue.merge(test.issue(), 1, Integer::sum);
-        log("  [" + test.relativePath() + "] KNOWN-FAIL (" + mode
-            + " not yet satisfied on JVM; tracked by " + test.issue()
-            + ") — " + probe.message());
-        return null;
-    }
-
-    // =========================================================================
     // Backend-runtime execution: orchestrator → javac → java
     // =========================================================================
 
     private static Outcome runApplicable(Classified classified) {
-        return runApplicable(classified, false);
-    }
-
-    private static Outcome runApplicable(Classified classified,
-            boolean knownFailProbe) {
-        // ISSUE-0378 D1: every fixture — applicable, known-fail probe,
-        // or skip probe — compiles through the single lane-wide
-        // activated invocation; no legacy-authority labeling exists in
-        // this lane, so the profile-authority accounting stays at zero.
-        return runApplicableImpl(classified, knownFailProbe);
-    }
-
-    private static Outcome runApplicableImpl(Classified classified,
-            boolean knownFailProbe) {
         TestFile test = classified.test();
-        if (!knownFailProbe) {
-            applicableTotal.incrementAndGet();
-        }
+        applicableTotal.incrementAndGet();
         if (!jvmAvailable) {
-            if (!knownFailProbe) {
-                applicableFailed.incrementAndGet();
+            applicableFailed.incrementAndGet();
                 log("  [" + test.relativePath()
                     + "] FAIL (javac/java unavailable — the JVM "
                     + "execution stage cannot be bypassed)");
-            }
             return new Outcome(test, classified, false,
                 "javac/java unavailable");
         }
@@ -1245,21 +960,12 @@ public class JvmConformanceTest {
             // 3. The real whole-project pipeline: module discovery,
             // signature extraction, dependency ordering, name resolution,
             // type checking, per-module JvmBackend codegen — driven by
-            // the published immutable ProjectContext. Every on-disk
-            // backend-runtime fixture compiles through the single
-            // lane-wide activated invocation (ISSUE-0378 D1): the
-            // explicit CompilerProfileProvider.resolve(V1_2_ACTIVE,
-            // releaseRegistry()) PUBLIC_BUILD + DEAL_V1_2_INT32 record;
-            // no per-fixture catalog seam and no legacy-authority
-            // routing exist in this lane.
+            // the published immutable ProjectContext and the shared
+            // lane invocation.
             CompilerInvocation invocation = LANE_INVOCATION;
             OrchestratorRun run = runOrchestrator(entryFile,
                 located.context(), invocation);
             if (!run.success()) {
-                if (knownFailProbe) {
-                    return new Outcome(test, classified, false,
-                        "orchestrator compile failed: " + run.diagnostics());
-                }
                 // Corpus C6 (ISSUE-0507): the sanctioned FFI
                 // divergence — when the fixture's sidecar pins the jvm
                 // leg as compile-reject E6006 FFI_UNSUPPORTED_BACKEND
@@ -1301,7 +1007,7 @@ public class JvmConformanceTest {
             String entryClass = entryClassName(entryRel);
             Path entryJava = outputRoot.resolve(entryClass + ".java");
             if (!Files.exists(entryJava)) {
-                if (!knownFailProbe) applicableFailed.incrementAndGet();
+                applicableFailed.incrementAndGet();
                 log("  [" + test.relativePath()
                     + "] FAIL (JVM codegen produced no '"
                     + entryJava.getFileName() + "' artifact)");
@@ -1348,10 +1054,6 @@ public class JvmConformanceTest {
             boolean javacOk = StubModuleResolver.compileWithJavac(
                 outputRoot, javaFiles, javacErr);
             if (!javacOk) {
-                if (knownFailProbe) {
-                    return new Outcome(test, classified, false,
-                        "javac failed: " + javacErr);
-                }
                 applicableFailed.incrementAndGet();
                 log("  [" + test.relativePath() + "] FAIL (javac failed):\n"
                     + javacErr);
@@ -1361,7 +1063,7 @@ public class JvmConformanceTest {
             if (!Files.exists(outputRoot.resolve(entryClass + ".class"))
                     || !Files.exists(outputRoot.resolve(
                         "JvmConformanceRunner.class"))) {
-                if (!knownFailProbe) applicableFailed.incrementAndGet();
+                applicableFailed.incrementAndGet();
                 log("  [" + test.relativePath()
                     + "] FAIL (javac exited 0 but no .class artifacts "
                     + "were produced — JVM compilation bypassed)");
@@ -1379,19 +1081,16 @@ public class JvmConformanceTest {
                 p.getInputStream().readAllBytes()).trim();
             int exitCode = p.waitFor();
 
-            if (test.expected().startsWith("runtime-ok")
-                    || test.expected().startsWith("known-fail runtime-ok")) {
+            if (test.expected().startsWith("runtime-ok")) {
                 if (exitCode != 0) {
-                    if (!knownFailProbe) {
                         applicableFailed.incrementAndGet();
                         log("  [" + test.relativePath()
                             + "] FAIL (runtime-ok test exited " + exitCode
                             + "): " + output);
-                    }
                     return new Outcome(test, classified, false,
                         "exited " + exitCode + ": " + output);
                 }
-                if (!knownFailProbe) applicablePassed.incrementAndGet();
+                applicablePassed.incrementAndGet();
                 log("  [" + test.relativePath() + "] OK");
                 return new Outcome(test, classified, true, "runtime ok");
             }
@@ -1399,22 +1098,20 @@ public class JvmConformanceTest {
             String needle = "DEAL_ERROR_CODE: "
                 + classified.expectedCode();
             if (output.contains(needle)) {
-                if (!knownFailProbe) applicablePassed.incrementAndGet();
+                applicablePassed.incrementAndGet();
                 log("  [" + test.relativePath() + "] OK (found " + needle
                     + ")");
                 return new Outcome(test, classified, true,
                     "found " + needle);
             }
-            if (!knownFailProbe) {
-                applicableFailed.incrementAndGet();
-                log("  [" + test.relativePath() + "] FAIL (expected "
-                    + needle + ", got: "
-                    + output.replace("\n", "\\n") + ")");
-            }
+            applicableFailed.incrementAndGet();
+            log("  [" + test.relativePath() + "] FAIL (expected "
+                + needle + ", got: "
+                + output.replace("\n", "\\n") + ")");
             return new Outcome(test, classified, false,
                 "expected " + needle + ", got: " + output);
         } catch (Exception e) {
-            if (!knownFailProbe) applicableFailed.incrementAndGet();
+            applicableFailed.incrementAndGet();
             log("  [" + test.relativePath() + "] FAIL (execution exception): "
                 + e.getMessage());
             return new Outcome(test, classified, false,
@@ -1845,10 +1542,7 @@ public class JvmConformanceTest {
     // Report
     // =========================================================================
 
-    /** The on-disk backend-runtime denominator: every runtime-ok /
-     * runtime-error (including known-fail) corpus test. The gate
-     * measures the pass rate against this UNCHANGED denominator — skips
-     * never shrink it. */
+    /** The on-disk backend-runtime denominator. */
     private static int runtimeDenominator() throws IOException {
         int n = 0;
         try (var stream = Files.walk(
@@ -1858,8 +1552,7 @@ public class JvmConformanceTest {
                 TestFile tf = parseMetadata(p);
                 if (tf == null) continue;
                 if (tf.expected().startsWith("runtime-ok")
-                        || tf.expected().startsWith("runtime-error ")
-                        || tf.expected().startsWith("known-fail runtime")) {
+                        || tf.expected().startsWith("runtime-error ")) {
                     n++;
                 }
             }
@@ -1870,7 +1563,7 @@ public class JvmConformanceTest {
     private static void printReport(List<Outcome> sorted, int runtimeTotal)
             throws IOException {
         System.out.println();
-        System.out.println("=== JVM Conformance Summary (ISSUE-0102 origin — ISSUE-0168 capability accounting) ===");
+        System.out.println("=== JVM Conformance Summary ===");
 
         int ft = frontendTotal.get();
         int fp = frontendPassed.get();
@@ -1881,28 +1574,15 @@ public class JvmConformanceTest {
 
         int ap = applicablePassed.get();
         int af = applicableFailed.get();
-        int kf = knownFailTracked.get();
         int denominator = runtimeDenominator();
         double pct = denominator == 0 ? 0.0
             : (ap * 100.0 / denominator);
-        System.out.printf("Backend-runtime on JVM: denominator %d "
-            + "(every on-disk runtime test, unchanged), passed %d, "
-            + "failed %d, skipped 0 (no registry — zero skips by "
-            + "construction), known-fail %d "
-            + "(tracked) — pass rate %.1f%%%n",
-            denominator, ap, af, kf, pct);
+        System.out.printf("Backend-runtime on JVM: denominator %d, passed %d, "
+            + "failed %d — pass rate %.1f%%%n",
+            denominator, ap, af, pct);
         System.out.println();
 
-        System.out.println("Known-fail groups (tracked follow-up issues):");
-        List<String> kfIssues = new ArrayList<>(knownFailByIssue.keySet());
-        Collections.sort(kfIssues);
-        for (String issue : kfIssues) {
-            System.out.printf("  %-11s %d test(s)%n", issue,
-                knownFailByIssue.get(issue));
-        }
-        System.out.println();
-
-        // Largest failing feature groups (review evidence).
+        // Largest failing feature groups.
         Map<String, Integer> failingGroups = new LinkedHashMap<>();
         for (Outcome o : sorted) {
             if (o.classified().kind() != Kind.APPLICABLE || o.pass()) {
@@ -1926,41 +1606,27 @@ public class JvmConformanceTest {
             System.out.println();
         }
 
-        // Gates.
+        // Overall result.
         boolean ok = true;
-        if (knownFailStale.get() > 0) {
-            System.out.println("GATE FAILURE: " + knownFailStale.get()
-                + " stale known-fail marker(s) — promote the fixture(s)");
-            ok = false;
-        }
-        if (probeHarnessFailed.get() > 0) {
-            System.out.println("GATE FAILURE: probeHarnessFailed = "
-                + probeHarnessFailed.get() + " — a runner exception "
-                + "escaped a known-fail probe (harness failure; a "
-                + "probe crash is never silent evidence and never a "
-                + "tracked result)");
-            ok = false;
-        }
         if (ff > 0) {
-            System.out.println("GATE FAILURE: " + ff
-                + " frontend test(s) failed — 100% required");
+            System.out.println("FAILURE: " + ff
+                + " frontend test(s) failed");
             ok = false;
         }
         if (af > 0) {
-            System.out.println("GATE FAILURE: " + af
-                + " applicable backend-runtime test(s) failed — zero "
-                + "applicable failures required");
+            System.out.println("FAILURE: " + af
+                + " backend-runtime test(s) failed");
             ok = false;
         }
         if (pct < 100.0) {
-            System.out.println("GATE FAILURE: backend-runtime pass rate "
+            System.out.println("FAILURE: backend-runtime pass rate "
                 + pct + "% below the 100% threshold (denominator "
                 + denominator + " — every on-disk applicable runtime "
                 + "test must pass through codegen, javac, and java)");
             ok = false;
         }
         if (runtimeTotal != denominator) {
-            System.out.println("GATE FAILURE: classified runtime total "
+            System.out.println("FAILURE: classified runtime total "
                 + runtimeTotal + " differs from the on-disk denominator "
                 + denominator);
             ok = false;
@@ -1968,12 +1634,7 @@ public class JvmConformanceTest {
         if (!ok) {
             System.exit(1);
         }
-        System.out.println("Gates PASSED: frontend 100%; backend-runtime "
-            + "zero applicable failures AND 100% of the unchanged "
-            + denominator
-            + "-test denominator through codegen, javac, and java; "
-            + "zero skips (no registry — zero by construction); zero "
-            + "stale known-fail markers; zero probe runner "
-            + "exceptions.");
+        System.out.println("All frontend and backend-runtime conformance "
+            + "tests passed.");
     }
 }

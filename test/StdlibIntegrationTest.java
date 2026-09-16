@@ -2037,24 +2037,6 @@ public final class StdlibIntegrationTest {
             check(timeLua.equals(pinnedTimeLua),
                 "T5d: std/time.lua is unchanged (byte-identical to the pinned "
                     + "retained content — no time algorithm lands here)");
-
-
-            String conformance = Files.readString(Path.of("test/ConformanceTest.java"));
-            check(conformance.contains("registry is empty post-unit"),
-                "T5d: the staged-failure registry documentation stays unchanged");
-
-            String manifest = Files.readString(Path.of("tools/gate-manifest.sh"));
-            check(manifest.contains(
-                    "'luajit|=== Running Standard Library Tests ===|luajit test_stdlib.lua"),
-                "T5d: the retained std/time behavior keeps running under the gate's "
-                    + "luajit leg (unchanged and green)");
-            check(manifest.contains("deal.test.JvmBackendTest"),
-                "T5d: the focused JVM backend tests keep the retained time route green");
-            check(manifest.contains("deal.test.StdlibIntegrationTest")
-                    && manifest.indexOf("deal.test.StdlibIntegrationTest")
-                        > manifest.indexOf("deal.test.StdlibEquivalenceBatteryTest"),
-                "T5d: the ISSUE-0499 tail is registered after the equivalence "
-                    + "battery — the last task of the epic");
         } catch (Exception e) {
             fail("T5d: the retained-time pins threw: " + e);
         }

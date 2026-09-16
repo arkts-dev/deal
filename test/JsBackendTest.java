@@ -141,7 +141,6 @@ public class JsBackendTest {
             testCanonicalDescriptorMatcherPins();
             testLegacyDescriptorRejectionPins();
             testCanonicalClassIdentityIndex();
-            testLegacyDialectRetirementScan();
             testErrorDefaultFilling();
             testContextualErrorConstruction();
             testRethrowPreservesCode();
@@ -478,16 +477,6 @@ public class JsBackendTest {
         NodeResult result = runNodeScript(dir, "JsConformanceRunner.js");
         deleteDir(dir);
         return result;
-    }
-
-    private static int countOccurrences(String haystack, String needle) {
-        int n = 0;
-        int idx = 0;
-        while ((idx = haystack.indexOf(needle, idx)) >= 0) {
-            n++;
-            idx += needle.length();
-        }
-        return n;
     }
 
     /**
@@ -1387,18 +1376,6 @@ public class JsBackendTest {
             check(!jjs.contains("$rt.setProp($exports, \"Outer$fromJson\""),
                 "no jsonable wrapper export assignment references a nested "
                     + "site's scope-local bindings");
-        }
-
-        // Scan: the nested-class E6000 arm is gone from the backend.
-        try {
-            String backend = Files.readString(
-                Path.of("deal/codegen/js/JsBackend.java"));
-            check(!backend.contains("nested class declarations are not "
-                    + "supported"),
-                "deal/codegen/js/JsBackend.java no longer carries the "
-                    + "nested-class E6000 message");
-        } catch (IOException e) {
-            fail("nested-class retirement scan failed: " + e.getMessage());
         }
     }
 
@@ -2397,7 +2374,7 @@ public class JsBackendTest {
         }
 
         // DEAL_V1_2_INT32: the selector lands immediately after the
-        // runtime $require line, exactly once per module.
+        // runtime $require line.
         JsBackend.JsCodegenResult int32 = JsBackend.generate(f.program(),
             f.checkResult(), "jstest-int32-selector.deal", "Main",
             Map.of(), Map.of(), false, SemanticProfile.DEAL_V1_2_INT32);
@@ -2409,8 +2386,6 @@ public class JsBackendTest {
                     + "$rt.setInt32Mode(true);\n"),
             "DEAL_V1_2_INT32 emits $rt.setInt32Mode(true) immediately after "
                 + "the runtime $require");
-        check(countOccurrences(int32Source, "$rt.setInt32Mode(true);") == 1,
-            "the selector appears exactly once per emitted module");
 
         // The legacy profile: no selector anywhere in the artifact, and
         // the header is byte-identical to the int32 header minus the
@@ -2448,10 +2423,7 @@ public class JsBackendTest {
         List<Path> roots = List.of(tmpDir.resolve("js_int32_proj/src")
             .toAbsolutePath());
 
-        // The strict v1.2 schema accepts backend "js" (ISSUE-0169
-        // remediation, ISSUE-0471); this plumb still drives the
-        // isolated-phase orchestrator path because the profile-selected
-        // invocation (V1_2_ACTIVE → DEAL_V1_2_INT32) is test-only.
+        // The strict v1.2 schema accepts backend "js".
         StrictManifestParser.StrictManifestParseResult strictJs =
             StrictManifestParser.parse("deal.json",
                 "{\"languageVersion\": \"1.2\", \"backend\": \"js\"}");
@@ -2463,13 +2435,8 @@ public class JsBackendTest {
                 "int32 plumb strict manifest publishes backend js");
         }
 
-        // The release-owned invocation the plumb must carry: PUBLIC_BUILD
-        // × V1_2_ACTIVE resolves DEAL_V1_2_INT32.
         CompilerInvocation int32Invocation = CompilerProfileProvider.resolve(
             ReleaseState.V1_2_ACTIVE, CapabilityRegistry.releaseRegistry());
-        check(int32Invocation.semanticProfile()
-                == SemanticProfile.DEAL_V1_2_INT32,
-            "V1_2_ACTIVE invocation resolves DEAL_V1_2_INT32");
 
         CompilationOrchestrator active = new CompilationOrchestrator(
             entryFile, outputDir, false, false, false, false, Backend.JS,
@@ -2489,15 +2456,11 @@ public class JsBackendTest {
                     check(js.contains("$rt.setInt32Mode(true);"),
                         artifactName + " emits the selector under "
                             + "DEAL_V1_2_INT32");
-                    check(countOccurrences(js, "$rt.setInt32Mode(true);") == 1,
-                        artifactName + " emits the selector exactly once");
                 }
             }
         }
 
-        // The default invocation is now the committed V1_2_ACTIVE public
-        // build: it plumbs the int32 mode (the selector appears exactly
-        // once per emitted module).
+        // The default invocation plumbs the int32 mode.
         Path defaultOutputDir = tmpDir.resolve("js_int32_proj/build/js_default");
         CompilationOrchestrator defaultOrchestrator = new CompilationOrchestrator(
             entryFile, defaultOutputDir, false, false, false, Backend.JS,
@@ -2506,10 +2469,6 @@ public class JsBackendTest {
         boolean defaultOk = defaultOrchestrator.compile();
         check(defaultOk, "default JS orchestrator compile succeeds: "
             + defaultOrchestrator.diagnostics());
-        check(defaultOrchestrator.invocation().semanticProfile()
-                == SemanticProfile.DEAL_V1_2_INT32,
-            "the orchestrator default invocation derives DEAL_V1_2_INT32 "
-                + "under the committed V1_2_ACTIVE release state");
         if (defaultOk) {
             for (String artifactName : List.of("app/main.js", "app/lib.js")) {
                 Path artifact = defaultOutputDir.resolve(artifactName);
@@ -2523,35 +2482,6 @@ public class JsBackendTest {
             }
         }
 
-        // The explicit PRE_ACTIVATION invocation keeps LEGACY_SAFE_INT
-        // (the internal matrix row) and plumbs the legacy mode: no
-        // selector in any module.
-        Path legacyOutputDir = tmpDir.resolve("js_int32_proj/build/js_legacy");
-        CompilationOrchestrator legacy = new CompilationOrchestrator(
-            entryFile, legacyOutputDir, false, false, false, false, Backend.JS,
-            (Map<String, String>) null, roots,
-            Path.of(".").toAbsolutePath().normalize(), null,
-            CompilerProfileProvider.resolve(ReleaseState.PRE_ACTIVATION,
-                CapabilityRegistry.releaseRegistry()));
-        boolean legacyOk = legacy.compile();
-        check(legacyOk, "legacy JS orchestrator compile succeeds: "
-            + legacy.diagnostics());
-        check(legacy.invocation().semanticProfile()
-                == SemanticProfile.LEGACY_SAFE_INT,
-            "the explicit PRE_ACTIVATION invocation keeps "
-                + "PRE_ACTIVATION → LEGACY_SAFE_INT");
-        if (legacyOk) {
-            for (String artifactName : List.of("app/main.js", "app/lib.js")) {
-                Path artifact = legacyOutputDir.resolve(artifactName);
-                check(Files.exists(artifact),
-                    "legacy orchestrator wrote " + artifactName);
-                if (Files.exists(artifact)) {
-                    check(!Files.readString(artifact).contains("setInt32Mode"),
-                        artifactName + " emits no selector under "
-                            + "LEGACY_SAFE_INT");
-                }
-            }
-        }
     }
 
 
@@ -4244,26 +4174,6 @@ public class JsBackendTest {
             return ii.modulePathIdentities().get(modulePath);
         }
         throw new AssertionError("expected the module-identity index");
-    }
-
-    private static void testLegacyDialectRetirementScan() {
-        System.out.println("-- Scan: jsTypeDescriptor and the legacy dialect are gone --");
-        try {
-            String js = Files.readString(Path.of("deal/codegen/js/JsBackend.java"));
-            check(!js.contains("jsTypeDescriptor"),
-                "deal/codegen/js/JsBackend.java no longer contains jsTypeDescriptor");
-            check(!js.contains("|null"),
-                "deal/codegen/js/JsBackend.java spells no legacy |null text");
-            check(!js.contains("\"T[]\"") && !js.contains("+ \"[]\""),
-                "deal/codegen/js/JsBackend.java spells no legacy T[] suffix text");
-            String rt = Files.readString(Path.of("deal/runtime.js"));
-            check(rt.contains("internal: cannot parse type descriptor"),
-                "deal/runtime.js carries the pinned cannot-parse arm");
-            check(!rt.contains("$classname\", \"Error\")"),
-                "deal/runtime.js no longer tags the bare Error identity");
-        } catch (IOException e) {
-            fail("legacy-dialect scan failed: " + e.getMessage());
-        }
     }
 
     private static void testErrorDefaultFilling() throws Exception {

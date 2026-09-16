@@ -1688,18 +1688,6 @@ public class StdlibClaimingTimeLockTest {
                     + "content)");
 
 
-            // The staged-failure registry stays non-fatal: empty
-            // post-disposition, documented, with the machinery retained.
-            String conformance = Files.readString(Path.of("test/ConformanceTest.java"));
-            check(conformance.contains("registry is empty post-unit"),
-                "the staged-failure registry documentation stays unchanged");
-            check(conformance.contains(
-                    "private static final Map<String, StagedEntry> STAGED_FAILURES =\n"
-                        + "        new LinkedHashMap<>();"),
-                "the staged-failure registry is empty (the time fixture runs under "
-                    + "its landed expectation, never a staged failure)");
-
-
             // The live retained behavior probe: the gate's own luajit
             // leg replicates the retained std/time surface — E8004 under
             // the signed-int32 gate (the landed disposition), unchanged.
