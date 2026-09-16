@@ -90,6 +90,7 @@ public class JvmLaneTest {
         hostBoundaryCodeParity();
         realTimeFixtureSpanlessConvergence();
         realJsonFixtureConvergence();
+        hostClassIdentityConvention();
         invocationDeclarationOrderProbe();
         discardedReturnValuesProbe();
         printReturnValueDivergenceProbe();
@@ -507,6 +508,50 @@ public class JvmLaneTest {
             assertPassed("the JSON rejection fixture " + corpusPath
                 + " passes the production lane byte-exact against its "
                 + "sidecar", lane, realLaneCase(corpusPath));
+        }
+    }
+
+    /** The corpus conformance externals-identity convention through the
+     * real lane (the host-module-abi D4/D6 typing rule the Lua lane, the
+     * JS lane, and every sidecar pin share): a host module's class
+     * identities project through its dotted typing name
+     * ({@code @$external/host.presence/Config} — the raw external
+     * specifier with '/' -> '.'), so the E8007 extra-field rejection at
+     * the declared host class's construction carries that identity
+     * field-exact. The fixture passes byte-exact against its sidecar and
+     * the framing pins code/message/sourceFile/line/column. */
+    private static void hostClassIdentityConvention() throws Exception {
+        String corpusPath =
+            "backend-runtime/host-abi/host-class-extra-field.deal";
+        JvmLane lane = new JvmLane(CORPUS_ROOT);
+        assertPassed("the host-class extra-field fixture passes its"
+            + " pinned canonical snapshot byte-exact (the dotted"
+            + " externals identity)", lane, realLaneCase(corpusPath));
+
+        LaneExecution execution = lane.execute(realLaneCase(corpusPath));
+        check(execution instanceof LaneExecution.Executed,
+            "the host-class extra-field run is a real execution, got: "
+                + execution);
+        if (execution instanceof LaneExecution.Executed executed) {
+            Optional<ErrorSnapshot.Framed> framed =
+                ErrorSnapshot.parseFraming(executed.stdout());
+            check(framed.isPresent(),
+                "the E8007 snapshot is a canonical framing, got: "
+                    + new String(executed.stdout(), StandardCharsets.UTF_8));
+            if (framed.isPresent()) {
+                SidecarExpectations.ErrorExpectation fields =
+                    framed.get().fields();
+                check(fields.code().equals("E8007")
+                        && fields.message().equals("extra field 'fallback'"
+                            + " in class '@$external/host.presence/Config'")
+                        && fields.sourceFile().equals(
+                            "backend-runtime/host-abi/"
+                                + "host-class-extra-field.deal")
+                        && fields.line() == 9 && fields.column() == 28,
+                    "the E8007 snapshot pins code/message/sourceFile/"
+                        + "line/column field-exact (the dotted externals "
+                        + "identity), got: " + fields);
+            }
         }
     }
 

@@ -11,6 +11,7 @@ import deal.lexer.Lexer;
 import deal.module.CompilationOrchestrator;
 import deal.parser.ParseResult;
 import deal.parser.Parser;
+import deal.project.ExternalEntry;
 import deal.project.ProjectContext;
 import deal.project.ProjectLocator;
 import deal.semantic.CompilerInvocation;
@@ -795,6 +796,57 @@ public class JvmLane implements Lane {
                             + located.e2010());
                 }
 
+                // The corpus conformance externals-identity convention
+                // (host-module-abi D4/D6; the Lua lane, the JS lane, the
+                // JS conformance gate, and every sidecar pin share it):
+                // a host module's class identities project through its
+                // dotted typing name (@$external/host.presence/Config —
+                // the raw specifier with '/' -> '.'), while import
+                // resolution keys on the raw specifier. The located
+                // manifest carries the single valid raw-key entry; the
+                // compilation context is derived with the dotted
+                // identity entry inserted first — the documented
+                // first-entry rule of ModuleIdentityResolver's
+                // file-keyed externals classification (a fabricated
+                // context may carry both keys for one declaration).
+                ProjectContext compileContext = located.context();
+                if (!hostNames.isEmpty()) {
+                    Map<String, ExternalEntry> externals =
+                        new LinkedHashMap<>();
+                    for (String hostName : hostNames) {
+                        String rawKey = "host/" + hostName;
+                        ExternalEntry rawEntry =
+                            compileContext.externals().get(rawKey);
+                        if (rawEntry == null) {
+                            continue;
+                        }
+                        String dottedKey = "host." + hostName;
+                        externals.put(dottedKey, new ExternalEntry(
+                            dottedKey, rawEntry.declarationPath(),
+                            rawEntry.nativeLibrary(),
+                            rawEntry.sourceRange()));
+                        externals.put(rawKey, rawEntry);
+                    }
+                    for (Map.Entry<String, ExternalEntry> entry
+                            : compileContext.externals().entrySet()) {
+                        externals.putIfAbsent(entry.getKey(),
+                            entry.getValue());
+                    }
+                    compileContext = new ProjectContext(
+                        compileContext.manifestPath(),
+                        compileContext.projectRoot(),
+                        compileContext.manifestDirectory(),
+                        compileContext.languageVersion(),
+                        compileContext.configuredModuleRoots(),
+                        compileContext.outputPath(),
+                        compileContext.backend(),
+                        externals,
+                        compileContext.stdlibVersion(),
+                        compileContext.stdlibSurfacePath(),
+                        compileContext.stdlibDeclarationFiles(),
+                        compileContext.projectDeploymentIdentity());
+                }
+
                 // 4. The real whole-project pipeline: module discovery,
                 // signature extraction, dependency ordering, name
                 // resolution, type checking, per-module JvmBackend
@@ -805,7 +857,7 @@ public class JvmLane implements Lane {
                         ConformanceHarnessMetadata.profileFromFile(
                             laneCase.fixtureFile(), laneCase.fixturePath()));
                 OrchestratorRun run = runOrchestrator(entryFile,
-                    located.context(), invocation);
+                    compileContext, invocation);
                 if (!run.success()) {
                     orchestratorErrors = run.diagnostics();
                     return CompilationOutcome.failure(

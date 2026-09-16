@@ -3024,6 +3024,18 @@ public final class CompilationOrchestrator {
                 hostClassDeclarations,
             Map<String, JvmBackend.ImportedModuleSurface> importedSurfaces) {}
 
+    /** The externals identity specifier of a declaration module (the
+     * module-identity layer's classification raw import specifier), or
+     * null when the module carries no externals classification. */
+    private static String externalsSpecifierOf(ModuleInfo info) {
+        if (info.location == null) {
+            return null;
+        }
+        return info.location.moduleClassification()
+            instanceof CanonicalModuleIdentity.ExternalModule ext
+            ? ext.rawImportSpecifier() : null;
+    }
+
     /** Builds the per-module JVM import context for {@code info}. */
     private JvmImportContext jvmImportContextOf(ModuleInfo info) {
         // Import resolutions (ISSUE-0096): raw import path → module
@@ -3064,10 +3076,37 @@ public final class CompilationOrchestrator {
                         if (!isSpecStdlibModuleInfo(imported)) {
                             HostModuleDeclarations declared =
                                 hostDeclarationsOf(imported);
+                            // Host-module wiring (ISSUE-0100/ISSUE-0303):
+                            // the alias-keyed export map keeps the raw
+                            // import specifier (the emitted load-time
+                            // presence check and the wrapper ABI key on
+                            // it), while the declared class-field records
+                            // key on the declaration module's externals
+                            // identity specifier — the compilation's
+                            // typing/class-identity name the synthesized
+                            // records, their canonical identity text, and
+                            // every class-typed lookup project. The two
+                            // spellings coincide for an exact-key
+                            // externals entry; a derived conformance
+                            // context may carry the dotted typing name
+                            // first (the corpus externals-identity
+                            // convention), and the export map stays
+                            // reachable under both spellings.
+                            String identitySpecifier =
+                                externalsSpecifierOf(imported);
                             hostModules.put(imp.modulePath(),
                                 declared.exports());
-                            hostClassDeclarations.put(imp.modulePath(),
+                            hostClassDeclarations.put(
+                                identitySpecifier == null
+                                    ? imp.modulePath()
+                                    : identitySpecifier,
                                 declared.classFields());
+                            if (identitySpecifier != null
+                                    && !identitySpecifier.equals(
+                                        imp.modulePath())) {
+                                hostModules.put(identitySpecifier,
+                                    declared.exports());
+                            }
                         }
                     } else {
                         importResolutions.put(imp.modulePath(),

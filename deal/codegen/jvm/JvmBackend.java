@@ -8219,17 +8219,23 @@ public final class JvmBackend {
      * for one declared host class (ISSUE-0303 D4: deterministic from
      * the externals specifier and the class name — single emission
      * point in the shared scope, never bound to the Java host's own
-     * classes). */
-    static String hostRecordSimpleName(String rawSpecifier,
+     * classes). The name derives from the raw (slash) spelling of the
+     * externals specifier, so the host triplets' hand-written
+     * {@code $DealRt.$Host$...} references and every emitted reference
+     * — including the class-identity specifier's dotted typing-name
+     * projection of the corpus externals-identity convention —
+     * resolve to the one synthesized record class. */
+    static String hostRecordSimpleName(String specifier,
                                        String className) {
-        return "$Host$" + escapedIdentifier(rawSpecifier) + "$"
+        return "$Host$" + escapedIdentifier(
+                specifier.replace('.', '/')) + "$"
             + javaName(className);
     }
 
     /** The fully qualified shared record reference for one declared
      * host class ({@code $DealRt.$Host$...}). */
-    private String hostRecordJavaRef(String rawSpecifier, String className) {
-        return "$DealRt." + hostRecordSimpleName(rawSpecifier, className);
+    private String hostRecordJavaRef(String specifier, String className) {
+        return "$DealRt." + hostRecordSimpleName(specifier, className);
     }
 
     /** The fully qualified shared record reference for a host-class
