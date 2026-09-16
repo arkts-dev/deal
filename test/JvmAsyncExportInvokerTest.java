@@ -536,8 +536,10 @@ public class JvmAsyncExportInvokerTest {
         assertEquals("the matcher's E8001 code propagates",
             "E8001", ((EnvelopeJson.StringValue)
                 obj.fields().get("code")).text());
-        assertEquals("the matcher's pinned mismatch message propagates",
-            "expected int, got String",
+        assertEquals("the matcher's canonical mismatch message propagates"
+            + " (the closed projection carries the declared kind in the"
+            + " message and the actual kind in DealError.actual)",
+            "expected int",
             ((EnvelopeJson.StringValue) obj.fields().get("message")).text());
         assertNull("a matcher mismatch at the host boundary carries no"
             + " location", obj.fields().get("file"));
