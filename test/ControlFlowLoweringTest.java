@@ -1138,6 +1138,18 @@ public class ControlFlowLoweringTest {
     // 6. DISCARD
     // =========================================================================
 
+    /**
+     * The five module-level kinds outside the block-membership table (the
+     * C-D1/C-D2 completeness exemption of {@code ControlFlowValidator};
+     * ISSUE-0590 adds the lowerer-produced {@code MODULE_INIT} envelope).
+     */
+    private static final Set<SemanticOpKind> MODULE_LEVEL_KINDS = Set.of(
+        SemanticOpKind.MODULE_INIT,
+        SemanticOpKind.EXTERNAL_ENTRY,
+        SemanticOpKind.CLASS_FACTORY,
+        SemanticOpKind.CALLBACK_INVOKE,
+        SemanticOpKind.ENTRY_INVOKE);
+
     static void testDiscardArm() {
         System.out.println("-- DISCARD: expression statements, SYNTHETIC, audited --");
 
@@ -1152,7 +1164,12 @@ public class ControlFlowLoweringTest {
         if (result == null || result.hasErrors()) {
             return;
         }
-        List<SemanticOp> ops = result.unit().ops();
+        // The lowerer appends one detached module-level MODULE_INIT
+        // envelope op per unit (ISSUE-0590 E3/E8); the statement's own ops
+        // are the CONST + DISCARD pair.
+        List<SemanticOp> ops = result.unit().ops().stream()
+            .filter(op -> !MODULE_LEVEL_KINDS.contains(op.kind()))
+            .toList();
         check(ops.size() == 2 && ops.get(0).kind() == SemanticOpKind.CONST
                 && ops.get(1).kind() == SemanticOpKind.DISCARD,
             "the slice produces exactly CONST + DISCARD; got " + ops.size());
@@ -1204,15 +1221,23 @@ public class ControlFlowLoweringTest {
         check(validation.isEmpty(),
             "the produced table passes ControlFlowValidator: " + validation);
 
-        // C-D1: every op of the unit is a member of exactly one block and
-        // the root block is the module-init block.
+        // C-D1: every op of the unit whose kind is not one of the five
+        // module-level kinds (the validator's completeness exemption) is a
+        // member of exactly one block, and the root block is the
+        // module-init block.
         Map<OpId, BlockId> opBlocks = table.opBlocks();
+        long functionOps = unit.ops().stream()
+            .filter(op -> !MODULE_LEVEL_KINDS.contains(op.kind()))
+            .count();
         for (SemanticOp op : unit.ops()) {
+            if (MODULE_LEVEL_KINDS.contains(op.kind())) {
+                continue;
+            }
             check(opBlocks.get(op.opId()) != null,
                 "op " + op.opId() + " (" + op.kind() + ") is a member of exactly one block");
         }
-        check(opBlocks.size() == unit.ops().size(),
-            "the inverse membership covers every produced op exactly once");
+        check(opBlocks.size() == functionOps,
+            "the inverse membership covers every produced function op exactly once");
         check(table.blockOps().containsKey(unit.moduleInit().initBlock()),
             "the module-init block (the root) is a block of the table");
         check(opBlocks.get(result.unit().ops().stream()

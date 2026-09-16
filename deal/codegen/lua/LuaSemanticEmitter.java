@@ -496,6 +496,7 @@ public final class LuaSemanticEmitter {
             out.append("__allocIds = __allocIds or {}\n");
             out.append("__allocNext = __allocNext or 1\n");
             out.append(PRELUDE);
+            out.append(JSON_PRELUDE);
             if (!trace) {
                 // Production: the event helpers are no-ops.
                 out.append("__ev = function() end\n");
@@ -533,6 +534,11 @@ public final class LuaSemanticEmitter {
             // export keyed by module#export; shared across chunks in a
             // multi-module drive (never wiped by a later chunk).
             out.append("__asyncEntries = __asyncEntries or {}\n");
+            // The per-module MODULE_INIT lifecycle records (E8): chunk-
+            // global like the rest of the run state (a multi-module drive
+            // runs several artifacts in one process and each module
+            // initializes once after its dependencies).
+            out.append("__moduleStates = __moduleStates or {}\n");
             out.append("\n__module = ").append(luaString(unit.moduleId().path()))
                 .append("\n");
             // One env table carries every slot and cell (LuaJIT's upvalue
@@ -542,7 +548,7 @@ public final class LuaSemanticEmitter {
             // scope; every check/return temp is a top-level assignment).
             out.append("local __chk, __rvT, __rvcT, __okT, __resT, __terrT, "
                 + "__cerrT, __wrappedT, __itT, __itnT, __elemT, __okB, __chkB, "
-                + "__instT, __fT, __eT\n");
+                + "__instT, __fT, __eT, __jokT, __jresT, __jpathT, __jactT\n");
 
             // Function factories first (capture cells are factory
             // arguments); the local names are pre-declared so bodies can
@@ -595,22 +601,45 @@ public final class LuaSemanticEmitter {
                 }
             }
 
+            // The per-class JSON plans (E7/K-D8/K-D10): one plan per
+            // class layout of the resolution context — declaration-order
+            // fields with descriptor, optionality, static result kind,
+            // and the per-field CLASS_DEFAULT child metadata the
+            // JSON_FROM_CLASS walk consumes (the lowerer's per-site
+            // JsonDefaultChildTable entry, derived from the unit: one
+            // CLASS_DEFAULT op per (classId, field)).
+            for (ClassLayout layout : classLayouts.values()) {
+                emitJsonPlan(layout);
+            }
+
             // The module-init blocks (the entry delegation included) in
             // dependency order inside one deferred-main wrapper so uncaught
-            // DEAL failures publish the single R|failure terminal. The walk
-            // is exposed as the deferred-main entry (the scenario host
-            // drives it explicitly under the defer flag — module
-            // initialization before an async-entry invocation, or the entry
-            // module's walk in a multi-module drive); the conformance
-            // artifact skips the walk under the callback-only drive flag
-            // (the semantic oracle's invokeCallback surface never runs the
-            // module-init block).
+            // DEAL failures publish the single R|failure terminal. Each
+            // module's walk runs inside its MODULE_INIT envelope when the
+            // unit carries the lowerer-produced op (E8: the op's START,
+            // the payload init block nested under it, the SUCCESS terminal
+            // publishing state:INITIALIZED, or the FAILURE terminal
+            // recording FAILED(error) with no export publication); a
+            // hand-built unit without the op runs the bare init block,
+            // exactly the pre-envelope behavior. The walk is exposed as
+            // the deferred-main entry (the scenario host drives it
+            // explicitly under the defer flag — module initialization
+            // before an async-entry invocation, or the entry module's walk
+            // in a multi-module drive); the conformance artifact skips the
+            // walk under the callback-only drive flag (the semantic
+            // oracle's invokeCallback surface never runs the module-init
+            // block).
             out.append("__dealMain = function()\n");
             out.append("  local __mainOk, __mainErr = pcall(function()\n");
             for (LoweredModuleUnit moduleUnit : units.values()) {
                 out.append("  __module = ")
                     .append(luaString(moduleUnit.moduleId().path())).append("\n");
-                emitBlockOps(moduleUnit.moduleInit().initBlock());
+                SemanticOp moduleInitOp = moduleInitOpOf(moduleUnit);
+                if (moduleInitOp == null) {
+                    emitBlockOps(moduleUnit.moduleInit().initBlock());
+                } else {
+                    emitModuleInit(moduleInitOp);
+                }
             }
             out.append("  end)\n");
             out.append("  if __mainOk then return true, nil end\n");
@@ -888,6 +917,9 @@ public final class LuaSemanticEmitter {
                 case EXPORT_PUBLISH -> emitExportPublish(op);
                 case EXTERNAL_ENTRY -> emitExternalEntryRecord(op);
                 case ENTRY_INVOKE -> emitEntryInvoke(op);
+                case MODULE_INIT -> emitModuleInit(op);
+                case JSON_FROM_CLASS -> emitJsonFromClass(op);
+                case JSON_TO_CLASS -> emitJsonToClass(op);
                 case CLASS_NEW -> emitClassNew(op);
                 case CLASS_DEFAULT -> throw new IllegalStateException("a CLASS_DEFAULT "
                     + "executes only under its triggering CLASS_NEW/CLASS_FACTORY "
@@ -3492,6 +3524,185 @@ public final class LuaSemanticEmitter {
             emitPlainSuccess(op);
         }
 
+        /**
+         * MODULE_INIT (E8; ISSUE-0590): the emitted module envelope.
+         * The op's START precedes the payload init block (the
+         * {@code MODULE_IMPORT}/{@code EXPORT_*}/entry-delegation ops
+         * nested under it); the block runs inside a pcall so an
+         * uncaught DEAL failure publishes the op's single FAILURE
+         * terminal recording {@code FAILED(error)} (no export
+         * publication) before the error propagates to the deferred-main
+         * wrapper's terminal. The closed
+         * {@code UNINITIALIZED -> INITIALIZING -> INITIALIZED} state
+         * machine runs in both modes (the production mode's event
+         * helpers are no-ops): a re-execution of an initialized module
+         * publishes the state without re-running the block; a
+         * re-entrant or failed re-execution is a producer defect, never
+         * a silent re-run.
+         */
+        private void emitModuleInit(SemanticOp op) {
+            KindPayload.ModuleInitPayload payload =
+                (KindPayload.ModuleInitPayload) op.payload();
+            requireParentlessModuleInit(op);
+            String stateKey = "__moduleStates[" + luaString(payload.module().path()) + "]";
+            out.append("if ").append(stateKey).append(" == nil then\n");
+            out.append(stateKey).append(" = \"INITIALIZING\"\n");
+            emitStart(op);
+            out.append("local __initOk, __initErr = pcall(function()\n");
+            emitBlockOps(payload.initBlock());
+            out.append("end)\n");
+            out.append("if not __initOk then\n");
+            out.append(stateKey).append(" = \"FAILED\"\n");
+            emitFailureEvent(op.opId(), op.kind().name(), op, "__errtext(__initErr)");
+            out.append("error(__initErr, 0)\n");
+            out.append("end\n");
+            out.append(stateKey).append(" = \"INITIALIZED\"\n");
+            out.append("__ev(").append(luaString(opKey(op.opId())))
+                .append(", \"SUCCESS\", \"MODULE_INIT\", ")
+                .append(luaString(op.contract().canonicalDigest())).append(", ")
+                .append(luaString(parentKey(op.origin().parentOpId())))
+                .append(", {}, \"state:INITIALIZED\", nil)\n");
+            out.append("elseif ").append(stateKey).append(" == \"INITIALIZED\" then\n");
+            emitStart(op);
+            out.append("__ev(").append(luaString(opKey(op.opId())))
+                .append(", \"SUCCESS\", \"MODULE_INIT\", ")
+                .append(luaString(op.contract().canonicalDigest())).append(", ")
+                .append(luaString(parentKey(op.origin().parentOpId())))
+                .append(", {}, \"state:INITIALIZED\", nil)\n");
+            out.append("else\n");
+            out.append("error(\"a second MODULE_INIT of module ")
+                .append(payload.module().path())
+                .append(" after a re-entrant or failed init (producer defect)\", 0)\n");
+            out.append("end\n");
+        }
+
+        private void emitJsonPlan(ClassLayout layout) {
+            out.append("__plans[").append(luaString(layout.classId().text()))
+                .append("] = {classId = ").append(luaString(layout.classId().text()))
+                .append(", fields = {\n");
+            for (ClassLayout.FieldLayout field : layout.fields()) {
+                out.append("  {name = ").append(luaString(field.name()))
+                    .append(", desc = ").append(luaString(jsonDescriptorText(field.descriptor())))
+                    .append(", optional = ").append(field.required() ? "false" : "true")
+                    .append(", k = ").append(luaString(staticKind(field.descriptor())));
+                SemanticOp defaultOp = classDefaultOpOf(layout.classId(), field.name());
+                if (defaultOp != null && field.required()) {
+                    out.append(", dk = ").append(luaString(opKey(defaultOp.opId())))
+                        .append(", dd = ")
+                        .append(luaString(defaultOp.contract().canonicalDigest()))
+                        .append(", dfn = ").append(defaultFn(defaultOp.opId()));
+                }
+                out.append("},\n");
+            }
+            out.append("}}\n");
+        }
+
+        /** The class's CLASS_DEFAULT op of one field, or null (no declared default). */
+        private SemanticOp classDefaultOpOf(ClassId classId, String field) {
+            for (SemanticOp candidate : opsById.values()) {
+                if (candidate.kind() != SemanticOpKind.CLASS_DEFAULT) {
+                    continue;
+                }
+                KindPayload.ClassDefaultPayload payload =
+                    (KindPayload.ClassDefaultPayload) candidate.payload();
+                if (payload.classId().equals(classId) && payload.field().equals(field)) {
+                    return candidate;
+                }
+            }
+            return null;
+        }
+
+        /**
+         * The JSON plan descriptor text: the boundary descriptor text with
+         * the JSON walk's {@code nullable:INNER} spelling (the walk's
+         * closed kind grammar).
+         */
+        private static String jsonDescriptorText(RuntimeDescriptor descriptor) {
+            if (descriptor instanceof RuntimeDescriptor.Nullable nullable) {
+                return "nullable:" + jsonDescriptorText(nullable.inner());
+            }
+            if (descriptor instanceof RuntimeDescriptor.Array array) {
+                return "array(" + jsonDescriptorText(array.element()) + ")";
+            }
+            return descriptorText(descriptor);
+        }
+
+        /**
+         * JSON_FROM_CLASS (E7/K-D8): the shared walk ({@code __jsonFromClassOp})
+         * over the class's emitted plan — the payload's JSON text operand
+         * resolves exactly once; the walk runs the per-site CLASS_DEFAULT
+         * children (their own START/terminal events) for omitted
+         * required-present defaulted fields and publishes the tagged
+         * instance, or language null on any syntax/extra-key/decode/
+         * default/validation failure (the {@code JSON_FROM_NULL}
+         * projection; a failing default child keeps its completed
+         * effects).
+         */
+        private void emitJsonFromClass(SemanticOp op) {
+            KindPayload.JsonFromClassPayload payload =
+                (KindPayload.JsonFromClassPayload) op.payload();
+            emitStart(op);
+            String target = slot((ValueId) op.result());
+            out.append(target).append(" = __jsonFromClassOp(")
+                .append(luaString(payload.layout().classId().text())).append(", ")
+                .append(slot(payload.jsonString())).append(")\n");
+            emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
+        }
+
+        /**
+         * JSON_TO_CLASS (E7/K-D10): the shared walk over the class's
+         * emitted plan — the root identity check, the declaration-order
+         * field serialization, and the first failing position's
+         * {@code JSON_TO_ERROR} projection (E8001
+         * {@code value at {fieldPath} is not JSON serializable: {actual}}
+         * at the op origin, no cause, active frames); success publishes
+         * the deterministic RFC-8259 text.
+         */
+        private void emitJsonToClass(SemanticOp op) {
+            KindPayload.JsonToClassPayload payload =
+                (KindPayload.JsonToClassPayload) op.payload();
+            emitStart(op);
+            out.append("__jokT, __jresT, __jpathT, __jactT = __jsonToClassOp(")
+                .append(luaString(payload.layout().classId().text())).append(", ")
+                .append(slot(payload.classValue())).append(")\n");
+            out.append("if not __jokT then\n");
+            out.append("__eT = __failExpr(\"E8001\", \"value at \"..__jpathT..\" is "
+                + "not JSON serializable: \"..__jactT, ")
+                .append(luaString(originOf(op))).append(", nil, nil)\n");
+            emitFailureEvent(op.opId(), op.kind().name(), op, "__errtext(__eT)");
+            out.append("error(__eT, 0)\n");
+            out.append("end\n");
+            out.append(slot((ValueId) op.result())).append(" = __jresT\n");
+            emitResultSuccess(op, slot((ValueId) op.result()),
+                (RuntimeDescriptor) op.resultType());
+        }
+
+        /**
+         * The MODULE_INIT structural-parent contract: the module-level
+         * envelope op is parentless (its trace parent is the absent
+         * structural parent). A recorded parent is a producer defect —
+         * the orchestrator's fail-closed gate converts the throw into
+         * E6005, never a silent re-parenting.
+         */
+        private static void requireParentlessModuleInit(SemanticOp op) {
+            if (op.origin().parentOpId() != null) {
+                throw new IllegalStateException("MODULE_INIT " + op.opId()
+                    + " records the structural parent " + op.origin().parentOpId()
+                    + " (the module-level envelope op is parentless — a wrong parent is a "
+                    + "producer defect, never a silent re-parenting)");
+            }
+        }
+
+        /** The unit's lowerer-produced MODULE_INIT op, or null (hand-built units). */
+        private SemanticOp moduleInitOpOf(LoweredModuleUnit moduleUnit) {
+            for (SemanticOp op : moduleUnit.ops()) {
+                if (op.kind() == SemanticOpKind.MODULE_INIT) {
+                    return op;
+                }
+            }
+            return null;
+        }
+
         private void emitExportRead(SemanticOp op) {
             emitStart(op);
             out.append(slot((ValueId) op.result())).append(" = __intrinsicFn()\n");
@@ -3503,6 +3714,721 @@ public final class LuaSemanticEmitter {
     // =========================================================================
     // The Lua runtime prelude (byte-identical protocol output)
     // =========================================================================
+
+    /**
+     * The shared JSON algorithm realization (E7/K-D8/K-D10) of the
+     * {@code JSON_FROM_CLASS}/{@code JSON_TO_CLASS} arms: the closed E8
+     * RFC-8259 parse and canonical text algorithms plus the class walk
+     * over the per-class plans the session records in {@code __plans}
+     * (classId → plan: declaration-order fields with descriptor,
+     * optionality, default-child metadata, and the owner factory
+     * metadata of the nested-decode seam). The walk runs zero boundary
+     * children; the class-default/class-factory events carry the plan's
+     * recorded keys and digests. All syntax/decode/shape failures return
+     * language null (the {@code JSON_FROM_NULL} projection); the
+     * to-json walk returns the first declaration-order failure
+     * {@code (fieldPath, actual)} for the arm's {@code JSON_TO_ERROR}
+     * projection.
+     */
+    private static final String JSON_PRELUDE = """
+-- ==== shared JSON algorithm (E7/K-D8/K-D10 realization) ====
+-- The closed E8 RFC-8259 parse and canonical text algorithms plus the
+-- flat-layout class walk of the JSON_FROM_CLASS/JSON_TO_CLASS arms. The
+-- walk consumes the per-class plans the emitter records in __plans
+-- (classId -> plan: declaration-order fields with descriptor,
+-- optionality, and the per-field CLASS_DEFAULT child metadata).
+-- Nested @jsonable class fields fail closed at emit time (a producer
+-- defect naming the nested shape), never silently.
+-- Byte-exactness: no backslash escapes appear in this source; quote and
+-- backslash bytes are emitted through string.char.
+local __JSONSYNTAX = setmetatable({}, {__tostring = function() return "json-syntax" end})
+local __JNULL = setmetatable({}, {__tostring = function() return "json-null" end})
+local __JSON_MAX_DEPTH = 512
+local __jsonIntCarriers = {}
+local __plans = {}
+local __BS = string.char(92)
+local __QT = string.char(34)
+local function __jsonIsObject(v)
+  return type(v) == "table" and v.__jo == true
+end
+local function __jsonIsArray(v)
+  return type(v) == "table" and v.__ja == true
+end
+local function __jsonEmptyObject()
+  return {__jo = true, __jkeys = {}}
+end
+local function __jsonUtf8(cp)
+  if cp < 0x80 then return string.char(cp) end
+  if cp < 0x800 then
+    return string.char(0xC0 + math.floor(cp / 0x40), 0x80 + cp % 0x40)
+  end
+  if cp < 0x10000 then
+    return string.char(0xE0 + math.floor(cp / 0x1000),
+      0x80 + math.floor(cp / 0x40) % 0x40, 0x80 + cp % 0x40)
+  end
+  return string.char(0xF0 + math.floor(cp / 0x40000),
+    0x80 + math.floor(cp / 0x1000) % 0x40,
+    0x80 + math.floor(cp / 0x40) % 0x40, 0x80 + cp % 0x40)
+end
+local function __jsonValidUtf8(s)
+  local i = 1
+  local n = #s
+  while i <= n do
+    local b = string.byte(s, i)
+    local len
+    if b < 0x80 then len = 1
+    elseif b >= 0xC2 and b <= 0xDF then len = 2
+    elseif b >= 0xE0 and b <= 0xEF then len = 3
+    elseif b >= 0xF0 and b <= 0xF4 then len = 4
+    else return false end
+    if i + len - 1 > n then return false end
+    local cp
+    if len == 1 then cp = b
+    elseif len == 2 then cp = b - 0xC0
+    elseif len == 3 then cp = b - 0xE0
+    else cp = b - 0xF0 end
+    for k = 1, len - 1 do
+      local c = string.byte(s, i + k)
+      if c < 0x80 or c > 0xBF then return false end
+      cp = cp * 0x40 + (c - 0x80)
+    end
+    if len == 2 and cp < 0x80 then return false end
+    if len == 3 and cp < 0x800 then return false end
+    if len == 4 and cp < 0x10000 then return false end
+    if cp > 0x10FFFF then return false end
+    if cp >= 0xD800 and cp <= 0xDFFF then return false end
+    i = i + len
+  end
+  return true
+end
+-- The E8 parse: a digits-only in-range integer lexical form is recorded
+-- in __jsonIntCarriers (the int-carrier mapping); duplicate keys keep the
+-- last value and the first position; any syntax defect returns
+-- __JSONSYNTAX.
+local function __jsonParse(s)
+  local pos = 1
+  local len = #s
+  local function skipws()
+    while pos <= len do
+      local b = string.byte(s, pos)
+      if b == 32 or b == 9 or b == 10 or b == 13 then pos = pos + 1
+      else break end
+    end
+  end
+  local parseValue
+  local function parseString()
+    pos = pos + 1
+    local out = {}
+    while true do
+      if pos > len then return nil end
+      local c = string.sub(s, pos, pos)
+      if c == __QT then
+        pos = pos + 1
+        return table.concat(out)
+      elseif c == __BS then
+        local e = string.sub(s, pos + 1, pos + 1)
+        pos = pos + 2
+        if e == __QT then out[#out + 1] = __QT
+        elseif e == __BS then out[#out + 1] = __BS
+        elseif e == "/" then out[#out + 1] = "/"
+        elseif e == "b" then out[#out + 1] = string.char(8)
+        elseif e == "f" then out[#out + 1] = string.char(12)
+        elseif e == "n" then out[#out + 1] = string.char(10)
+        elseif e == "r" then out[#out + 1] = string.char(13)
+        elseif e == "t" then out[#out + 1] = string.char(9)
+        elseif e == "u" then
+          local hex = string.sub(s, pos, pos + 3)
+          if #hex < 4 or not string.match(hex, "^%x%x%x%x$") then return nil end
+          local cp = tonumber(hex, 16)
+          pos = pos + 4
+          if cp >= 0xD800 and cp <= 0xDBFF then
+            if string.sub(s, pos, pos + 1) == __BS .. "u" then
+              local hex2 = string.sub(s, pos + 2, pos + 5)
+              if #hex2 == 4 and string.match(hex2, "^%x%x%x%x$") then
+                local lo = tonumber(hex2, 16)
+                if lo >= 0xDC00 and lo <= 0xDFFF then
+                  pos = pos + 6
+                  cp = 0x10000 + (cp - 0xD800) * 0x400 + (lo - 0xDC00)
+                end
+              end
+            end
+            if cp >= 0xD800 and cp <= 0xDFFF then return nil end
+          elseif cp >= 0xDC00 and cp <= 0xDFFF then
+            return nil
+          end
+          out[#out + 1] = __jsonUtf8(cp)
+        else
+          return nil
+        end
+      else
+        local b = string.byte(c)
+        if b < 32 then return nil end
+        out[#out + 1] = c
+        pos = pos + 1
+      end
+    end
+  end
+  local function parseNumber()
+    local start = pos
+    if string.sub(s, pos, pos) == "-" then pos = pos + 1 end
+    if pos > len then return nil end
+    local c = string.sub(s, pos, pos)
+    if c == "0" then
+      pos = pos + 1
+      if pos <= len and string.match(string.sub(s, pos, pos), "%d") then
+        return nil
+      end
+    elseif string.match(c, "[1-9]") then
+      while pos <= len and string.match(string.sub(s, pos, pos), "%d") do
+        pos = pos + 1
+      end
+    else
+      return nil
+    end
+    local integral = true
+    if pos <= len and string.sub(s, pos, pos) == "." then
+      integral = false
+      pos = pos + 1
+      if pos > len or not string.match(string.sub(s, pos, pos), "%d") then
+        return nil
+      end
+      while pos <= len and string.match(string.sub(s, pos, pos), "%d") do
+        pos = pos + 1
+      end
+    end
+    if pos <= len then
+      local e = string.sub(s, pos, pos)
+      if e == "e" or e == "E" then
+        integral = false
+        pos = pos + 1
+        local sg = string.sub(s, pos, pos)
+        if sg == "+" or sg == "-" then pos = pos + 1 end
+        if pos > len or not string.match(string.sub(s, pos, pos), "%d") then
+          return nil
+        end
+        while pos <= len and string.match(string.sub(s, pos, pos), "%d") do
+          pos = pos + 1
+        end
+      end
+    end
+    local text = string.sub(s, start, pos - 1)
+    local value = tonumber(text)
+    if value == nil then return nil end
+    if integral and value >= -2147483648 and value <= 2147483647 then
+      __jsonIntCarriers[value] = true
+    end
+    return value
+  end
+  parseValue = function(depth)
+    if depth > __JSON_MAX_DEPTH then return nil end
+    skipws()
+    if pos > len then return nil end
+    local c = string.sub(s, pos, pos)
+    if c == "{" then
+      pos = pos + 1
+      local obj = {__jo = true, __jkeys = {}}
+      skipws()
+      if pos <= len and string.sub(s, pos, pos) == "}" then
+        pos = pos + 1
+        return obj
+      end
+      while true do
+        skipws()
+        if pos > len or string.sub(s, pos, pos) ~= __QT then return nil end
+        local key = parseString()
+        if key == nil then return nil end
+        skipws()
+        if pos > len or string.sub(s, pos, pos) ~= ":" then return nil end
+        pos = pos + 1
+        local value = parseValue(depth + 1)
+        if value == nil then return nil end
+        if obj[key] == nil then obj.__jkeys[#obj.__jkeys + 1] = key end
+        obj[key] = value
+        skipws()
+        if pos > len then return nil end
+        c = string.sub(s, pos, pos)
+        if c == "," then pos = pos + 1
+        elseif c == "}" then pos = pos + 1; return obj
+        else return nil end
+      end
+    elseif c == "[" then
+      pos = pos + 1
+      local arr = {__ja = true, __n = 0}
+      skipws()
+      if pos <= len and string.sub(s, pos, pos) == "]" then
+        pos = pos + 1
+        return arr
+      end
+      while true do
+        local value = parseValue(depth + 1)
+        if value == nil then return nil end
+        arr.__n = arr.__n + 1
+        arr[arr.__n] = value
+        skipws()
+        if pos > len then return nil end
+        c = string.sub(s, pos, pos)
+        if c == "," then pos = pos + 1
+        elseif c == "]" then pos = pos + 1; return arr
+        else return nil end
+      end
+    elseif c == __QT then
+      local str = parseString()
+      if str == nil then return nil end
+      return str
+    elseif c == "t" then
+      if string.sub(s, pos, pos + 3) == "true" then pos = pos + 4; return true end
+      return nil
+    elseif c == "f" then
+      if string.sub(s, pos, pos + 4) == "false" then pos = pos + 5; return false end
+      return nil
+    elseif c == "n" then
+      if string.sub(s, pos, pos + 3) == "null" then pos = pos + 4; return __JNULL end
+      return nil
+    elseif c == "-" or string.match(c, "%d") then
+      return parseNumber()
+    end
+    return nil
+  end
+  local value = parseValue(0)
+  if value == nil then return __JSONSYNTAX end
+  skipws()
+  if pos <= len then return __JSONSYNTAX end
+  return value
+end
+-- The Java-Double.toString-compatible canonical number text (shortest
+-- round-trippable digits, always one fractional digit, E-notation
+-- outside [1e-3, 1e7)).
+local function __jsonNumText(v)
+  if v ~= v or v == math.huge or v == -math.huge then return nil end
+  if v == 0 then
+    if 1 / v < 0 then return "-0.0" end
+    return "0.0"
+  end
+  local sign = ""
+  if v < 0 then sign = "-"; v = -v end
+  local digits = nil
+  local exp = nil
+  for p = 1, 17 do
+    local text = string.format("%." .. (p - 1) .. "e", v)
+    if tonumber(text) == v then
+      local lead, rest, e = string.match(text, "^(%d)%.?(%d*)e([%+%-]?%d+)$")
+      if lead ~= nil then
+        digits = lead .. rest
+        exp = tonumber(e)
+        break
+      end
+    end
+  end
+  if digits == nil then
+    return nil
+  end
+  digits = string.gsub(digits, "0+$", "")
+  if digits == "" then digits = "0" end
+  local text
+  if exp >= -3 and exp < 7 then
+    if exp >= 0 then
+      if #digits > exp + 1 then
+        text = string.sub(digits, 1, exp + 1) .. "." .. string.sub(digits, exp + 2)
+      else
+        text = digits .. string.rep("0", exp + 1 - #digits) .. ".0"
+      end
+    else
+      text = "0." .. string.rep("0", -exp - 1) .. digits
+    end
+  else
+    local mantissa
+    if #digits > 1 then
+      mantissa = string.sub(digits, 1, 1) .. "." .. string.sub(digits, 2)
+    else
+      mantissa = string.sub(digits, 1, 1) .. ".0"
+    end
+    text = mantissa .. "E" .. tostring(exp)
+  end
+  return sign .. text
+end
+local function __jsonEscapeString(s)
+  local out = {}
+  for i = 1, #s do
+    local b = string.byte(s, i)
+    if b == 34 then out[#out + 1] = __BS .. __QT
+    elseif b == 92 then out[#out + 1] = __BS .. __BS
+    elseif b == 8 then out[#out + 1] = __BS .. "b"
+    elseif b == 12 then out[#out + 1] = __BS .. "f"
+    elseif b == 10 then out[#out + 1] = __BS .. "n"
+    elseif b == 13 then out[#out + 1] = __BS .. "r"
+    elseif b == 9 then out[#out + 1] = __BS .. "t"
+    elseif b < 32 then out[#out + 1] = __BS .. "u" .. string.format("%04x", b)
+    else out[#out + 1] = string.sub(s, i, i) end
+  end
+  return table.concat(out)
+end
+local function __jsonKindOf(desc)
+  if string.sub(desc, 1, 6) == "array(" then return "array", string.sub(desc, 7, -2) end
+  if string.sub(desc, 1, 9) == "nullable:" then return "nullable", string.sub(desc, 10) end
+  if string.sub(desc, 1, 1) == "@" then return "class", desc end
+  return desc, nil
+end
+local function __jsonKnownField(plan, name)
+  local fields = plan.fields
+  for i = 1, #fields do
+    if fields[i].name == name then return true end
+  end
+  return false
+end
+-- One CLASS_DEFAULT child execution with its own START/terminal events
+-- (the detached default op's recorded key/digest, parent "-").
+local function __jsonDefaultRun(f)
+  __ev(f.dk, "START", "CLASS_DEFAULT", f.dd, "-", {}, nil, nil)
+  local ok, produced = pcall(f.dfn)
+  if not ok then
+    __ev(f.dk, "FAILURE", "CLASS_DEFAULT", f.dd, "-", {}, nil, __errtext(produced))
+    return false
+  end
+  __ev(f.dk, "SUCCESS", "CLASS_DEFAULT", f.dd, "-", {}, __atom(f.k, produced), nil)
+  return true, produced
+end
+local function __jsonToLanguage(v)
+  if __jsonIsArray(v) then
+    local out = {__a = true, __n = v.__n}
+    for i = 1, v.__n do
+      local element = v[i]
+      if element == __JNULL then out[i] = __NULL
+      elseif __jsonIsObject(element) or __jsonIsArray(element) then
+        out[i] = __jsonToLanguage(element)
+      else out[i] = element end
+    end
+    return out
+  end
+  local out = {__t = true, __keys = {}}
+  for i = 1, #v.__jkeys do
+    local key = v.__jkeys[i]
+    local element = v[key]
+    out.__keys[key] = true
+    if element == __JNULL then out[key] = __NULL
+    elseif __jsonIsObject(element) or __jsonIsArray(element) then
+      out[key] = __jsonToLanguage(element)
+    else out[key] = element end
+  end
+  return out
+end
+-- The final descriptor conformance check of the walk (K-D8 step 7).
+local function __jsonConforms(desc, v)
+  local kind, inner = __jsonKindOf(desc)
+  if kind == "null" then return v == nil end
+  if kind == "boolean" then return type(v) == "boolean" end
+  if kind == "int" then
+    return type(v) == "number" and v == math.floor(v)
+      and v >= -2147483648 and v <= 2147483647
+  end
+  if kind == "number" then return type(v) == "number" end
+  if kind == "string" then return type(v) == "string" and __jsonValidUtf8(v) end
+  if kind == "table" then return type(v) == "table" and v.__t == true end
+  if kind == "array" then
+    if type(v) ~= "table" or v.__a ~= true then return false end
+    for i = 1, v.__n do
+      local element = v[i]
+      if element == __NULL then element = nil end
+      if element == nil then return false end
+      if not __jsonConforms(inner, element) then return false end
+    end
+    return true
+  end
+  if kind == "nullable" then
+    if v == nil then return true end
+    return __jsonConforms(inner, v)
+  end
+  return kind ~= "class"
+end
+-- The provided-field decode of one declared descriptor (K-D8 step 4).
+local function __jsonDecodeRaw(desc, v, depth)
+  if depth > __JSON_MAX_DEPTH then return false end
+  local kind, inner = __jsonKindOf(desc)
+  if kind == "null" then
+    if v == __JNULL then return true, nil end
+    return false
+  elseif kind == "boolean" then
+    if type(v) == "boolean" then return true, v end
+    return false
+  elseif kind == "int" then
+    if type(v) == "number" and v == math.floor(v)
+        and v >= -2147483648 and v <= 2147483647
+        and __jsonIntCarriers[v] == true then
+      return true, v
+    end
+    return false
+  elseif kind == "number" then
+    if type(v) == "number" then return true, v end
+    return false
+  elseif kind == "string" then
+    if type(v) == "string" and __jsonValidUtf8(v) then return true, v end
+    return false
+  elseif kind == "table" then
+    if __jsonIsObject(v) then return true, __jsonToLanguage(v) end
+    if __jsonIsArray(v) and v.__n == 0 then return true, {__t = true, __keys = {}} end
+    return false
+  elseif kind == "array" then
+    if not __jsonIsArray(v) then return false end
+    local out = {__a = true, __n = v.__n}
+    for i = 1, v.__n do
+      local ok, element = __jsonDecodeRaw(inner, v[i], depth + 1)
+      if not ok then return false end
+      out[i] = (element == nil) and __NULL or element
+    end
+    return true, out
+  elseif kind == "nullable" then
+    if v == __JNULL then return true, nil end
+    return __jsonDecodeRaw(inner, v, depth)
+  elseif kind == "class" then
+    error("a nested @jsonable class field (" .. desc .. ") has no shared JSON walk "
+      .. "in this slice (producer defect, the nested shape is not emitted)", 0)
+  end
+  return false
+end
+local function __jsonInstanceOf(plan, fields, present, values)
+  local inst = {__c = true, __id = plan.classId, __f = {}, __p = {}}
+  for i = 1, #fields do
+    local f = fields[i]
+    if present[f.name] then
+      local value = values[f.name]
+      inst.__f[f.name] = (value == nil) and __NULL or value
+      inst.__p[f.name] = true
+    end
+  end
+  return inst
+end
+-- The JSON_FROM_CLASS walk: the tagged instance, or language null on
+-- every listed failure (the JSON_FROM_NULL projection).
+local function __jsonFromClassOp(planName, text)
+  local plan = __plans[planName]
+  if plan == nil then
+    error("JSON_FROM_CLASS has no plan " .. planName .. " (producer defect)", 0)
+  end
+  local doc = __jsonParse(text)
+  if doc == __JSONSYNTAX or doc == __JNULL then return nil end
+  if __jsonIsArray(doc) and doc.__n == 0 then doc = __jsonEmptyObject() end
+  if not __jsonIsObject(doc) then return nil end
+  local fields = plan.fields
+  for i = 1, #doc.__jkeys do
+    if not __jsonKnownField(plan, doc.__jkeys[i]) then return nil end
+  end
+  local values = {}
+  local provided = {}
+  for i = 1, #fields do
+    local f = fields[i]
+    if doc[f.name] ~= nil then
+      local ok, decoded = __jsonDecodeRaw(f.desc, doc[f.name], 0)
+      if not ok then return nil end
+      values[f.name] = decoded
+      provided[f.name] = true
+    end
+  end
+  for i = 1, #fields do
+    local f = fields[i]
+    if not provided[f.name] and not f.optional then
+      if f.dfn == nil then return nil end
+      local ok, produced = __jsonDefaultRun(f)
+      if not ok then return nil end
+      values[f.name] = produced
+      provided[f.name] = true
+    end
+  end
+  for i = 1, #fields do
+    local f = fields[i]
+    if provided[f.name] and not __jsonConforms(f.desc, values[f.name]) then
+      return nil
+    end
+  end
+  return __jsonInstanceOf(plan, fields, provided, values)
+end
+-- The JSON_TO_CLASS walk: (true, text) or (false, nil, fieldPath,
+-- actual) for the JSON_TO_ERROR projection. Table fields serialize
+-- their present keys in ascending key order (the shared Lua table
+-- carrier records key presence, not insertion order).
+local function __jsonToClassOp(planName, root)
+  local plan = __plans[planName]
+  if plan == nil then
+    error("JSON_TO_CLASS has no plan " .. planName .. " (producer defect)", 0)
+  end
+  local failurePath = nil
+  local failureActual = nil
+  local function fail(path, actual)
+    failurePath = path
+    failureActual = actual
+    return nil
+  end
+  local encodeField
+  local encodeTableValue
+  local encodeArrayValue
+  local function actualOf(v)
+    if v == nil then return "null" end
+    local t = type(v)
+    if t == "boolean" then return "boolean" end
+    if t == "number" then return "number" end
+    if t == "string" then
+      if not __jsonValidUtf8(v) then return "invalid-unicode" end
+      return "string"
+    end
+    if t == "table" then
+      if v.__a then return "array" end
+      if v.__c then return "class:" .. v.__id end
+      return "table"
+    end
+    return t
+  end
+  encodeTableValue = function(tv, tpath, visited)
+    if visited[tv] then return fail(tpath, "table") end
+    visited[tv] = true
+    local keys = {}
+    for k, _ in pairs(tv.__keys) do keys[#keys + 1] = k end
+    table.sort(keys)
+    local out = {"{"}
+    for i = 1, #keys do
+      local key = keys[i]
+      local element = tv[key]
+      if element == __NULL then element = nil end
+      if i > 1 then out[#out + 1] = "," end
+      out[#out + 1] = __QT .. __jsonEscapeString(key) .. __QT .. ":"
+      local elementPath = (tpath == "") and key or (tpath .. "." .. key)
+      if element == nil then out[#out + 1] = "null"
+      elseif type(element) == "boolean" then out[#out + 1] = tostring(element)
+      elseif type(element) == "number" then
+        local text = __jsonNumText(element)
+        if text == nil then return fail(elementPath, "number") end
+        out[#out + 1] = text
+      elseif type(element) == "string" then
+        if not __jsonValidUtf8(element) then
+          return fail(elementPath, "invalid-unicode")
+        end
+        out[#out + 1] = __QT .. __jsonEscapeString(element) .. __QT
+      elseif type(element) == "table" then
+        if element.__a then
+          local nested = encodeArrayValue(element, elementPath, visited)
+          if nested == nil then return nil end
+          out[#out + 1] = nested
+        elseif element.__t then
+          local nested = encodeTableValue(element, elementPath, visited)
+          if nested == nil then return nil end
+          out[#out + 1] = nested
+        else
+          return fail(elementPath, actualOf(element))
+        end
+      else
+        return fail(elementPath, actualOf(element))
+      end
+    end
+    visited[tv] = nil
+    out[#out + 1] = "}"
+    return table.concat(out)
+  end
+  encodeArrayValue = function(av, apath, visited)
+    if visited[av] then return fail(apath, "array") end
+    visited[av] = true
+    local out = {"["}
+    for i = 1, av.__n do
+      local element = av[i]
+      if element == __NULL then element = nil end
+      local elementPath = apath .. "[" .. (i - 1) .. "]"
+      if i > 1 then out[#out + 1] = "," end
+      if element == nil then out[#out + 1] = "null"
+      elseif type(element) == "boolean" then out[#out + 1] = tostring(element)
+      elseif type(element) == "number" then
+        local text = __jsonNumText(element)
+        if text == nil then return fail(elementPath, "number") end
+        out[#out + 1] = text
+      elseif type(element) == "string" then
+        if not __jsonValidUtf8(element) then
+          return fail(elementPath, "invalid-unicode")
+        end
+        out[#out + 1] = __QT .. __jsonEscapeString(element) .. __QT
+      elseif type(element) == "table" then
+        if element.__a then
+          local nested = encodeArrayValue(element, elementPath, visited)
+          if nested == nil then return nil end
+          out[#out + 1] = nested
+        elseif element.__t then
+          local nested = encodeTableValue(element, elementPath, visited)
+          if nested == nil then return nil end
+          out[#out + 1] = nested
+        else
+          return fail(elementPath, actualOf(element))
+        end
+      else
+        return fail(elementPath, actualOf(element))
+      end
+    end
+    visited[av] = nil
+    out[#out + 1] = "]"
+    return table.concat(out)
+  end
+  encodeField = function(desc, v, path, visited)
+    local kind, inner = __jsonKindOf(desc)
+    if kind == "null" then
+      if v == nil then return "null" end
+      return fail(path, actualOf(v))
+    elseif kind == "boolean" then
+      if type(v) == "boolean" then return tostring(v) end
+      return fail(path, actualOf(v))
+    elseif kind == "int" then
+      if type(v) == "number" and v == math.floor(v) then return tostring(v) end
+      return fail(path, actualOf(v))
+    elseif kind == "number" then
+      if type(v) == "number" then
+        local text = __jsonNumText(v)
+        if text == nil then return fail(path, "number") end
+        return text
+      end
+      return fail(path, actualOf(v))
+    elseif kind == "string" then
+      if type(v) ~= "string" then return fail(path, actualOf(v)) end
+      if not __jsonValidUtf8(v) then return fail(path, "invalid-unicode") end
+      return __QT .. __jsonEscapeString(v) .. __QT
+    elseif kind == "nullable" then
+      if v == nil then return "null" end
+      return encodeField(inner, v, path, visited)
+    elseif kind == "table" then
+      if type(v) ~= "table" or v.__t ~= true then return fail(path, actualOf(v)) end
+      return encodeTableValue(v, path, visited)
+    elseif kind == "array" then
+      if type(v) ~= "table" or v.__a ~= true then return fail(path, actualOf(v)) end
+      return encodeArrayValue(v, path, visited)
+    elseif kind == "class" then
+      error("a nested @jsonable class field (" .. desc .. ") has no shared JSON walk "
+        .. "in this slice (producer defect, the nested shape is not emitted)", 0)
+    end
+    return fail(path, actualOf(v))
+  end
+  if root == nil or type(root) ~= "table" or root.__c ~= true
+      or root.__id ~= plan.classId then
+    return false, nil, "", "shape"
+  end
+  local visited = {[root] = true}
+  local fields = plan.fields
+  local out = {"{"}
+  local first = true
+  for i = 1, #fields do
+    local f = fields[i]
+    if not root.__p[f.name] then
+      if not f.optional then
+        local path = f.name
+        return false, nil, path, "missing"
+      end
+    else
+      local raw = root.__f[f.name]
+      local value = (raw == __NULL) and nil or raw
+      local encoded = encodeField(f.desc, value, f.name, visited)
+      if encoded == nil then
+        return false, nil, failurePath, failureActual
+      end
+      if not first then out[#out + 1] = "," end
+      first = false
+      out[#out + 1] = __QT .. __jsonEscapeString(f.name) .. __QT .. ":"
+      out[#out + 1] = encoded
+    end
+  end
+  out[#out + 1] = "}"
+  return true, table.concat(out), nil, nil
+end
+""";
 
     private static final String PRELUDE = """
 -- ==== shared runtime prelude ====

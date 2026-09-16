@@ -186,7 +186,7 @@ public final class SemanticOracle {
         Execution state = new Execution(unit, table, responder);
         state.stateStack.push(state.units.get(unit.moduleId()));
         try {
-            state.runBlock(unit.moduleInit().initBlock());
+            state.runModuleInit(unit);
         } catch (DealFailure failure) {
             return state.report(new SemanticRuntimeModel.Terminal.DealFailure(
                 state.snapshot(failure)));
@@ -370,7 +370,7 @@ public final class SemanticOracle {
             // (bindings, imports, the inert entry delegation) runs once
             // before the async entry task executes.
             try {
-                state.runBlock(unit.moduleInit().initBlock());
+                state.runModuleInit(unit);
             } catch (ReturnSignal | LoopSignal signal) {
                 // The module-init block never transfers.
             }
@@ -461,6 +461,17 @@ public final class SemanticOracle {
         default SyncOutcome completeAsync(String operationLabel) {
             return new SyncOutcome.Returned(Value.NullValue.INSTANCE);
         }
+    }
+
+    /**
+     * The closed module-initialization lifecycle of the {@code MODULE_INIT}
+     * op execution (E8): {@code INITIALIZING} during the payload walk,
+     * {@code INITIALIZED} after a completed walk, {@code FAILED} after a
+     * failing walk (no export publication). An unrecorded module is
+     * {@code UNINITIALIZED}.
+     */
+    private enum ModuleInitLifecycle {
+        INITIALIZING, INITIALIZED, FAILED
     }
 
     // =========================================================================
@@ -727,6 +738,13 @@ public final class SemanticOracle {
         final List<FunctionId> frames = new ArrayList<>();
         long sequence = 0;
         String entryResultAtom = null;
+        /**
+         * The per-module MODULE_INIT lifecycle records (E8): exactly one
+         * {@code UNINITIALIZED -> INITIALIZING -> INITIALIZED} transition
+         * per module per run, {@code FAILED} recorded by a failing walk.
+         */
+        final Map<ModuleId, ModuleInitLifecycle> moduleInitLifecycles =
+            new LinkedHashMap<>();
 
         Execution(LoweredModuleUnit unit, StructuredBodyTable table, HostResponder responder) {
             this.unit = unit;
@@ -1168,10 +1186,37 @@ public final class SemanticOracle {
             }
             stateStack.push(moduleState);
             try {
-                runBlock(moduleUnit.moduleInit().initBlock());
+                runModuleInit(moduleUnit);
             } finally {
                 stateStack.pop();
             }
+        }
+
+        /**
+         * Runs one module's init walk (the E8 envelope contract): when
+         * the unit carries the lowerer-produced {@code MODULE_INIT} op
+         * (a module-level kind, never a member of any block), the op
+         * executes as the envelope — its START, the payload init block's
+         * ops nested under it, and its single terminal
+         * ({@code UNINITIALIZED -> INITIALIZING -> INITIALIZED} on
+         * success, {@code FAILED(error)} with no export publication on
+         * failure). A hand-built unit without the op (the synthetic-unit
+         * convenience surface) runs the bare init block, exactly the
+         * pre-envelope behavior.
+         */
+        void runModuleInit(LoweredModuleUnit moduleUnit) {
+            SemanticOp initOp = null;
+            for (SemanticOp op : moduleUnit.ops()) {
+                if (op.kind() == SemanticOpKind.MODULE_INIT) {
+                    initOp = op;
+                    break;
+                }
+            }
+            if (initOp == null) {
+                runBlock(moduleUnit.moduleInit().initBlock());
+                return;
+            }
+            execute(initOp);
         }
 
         // -- control flow ------------------------------------------------------------
@@ -1281,6 +1326,9 @@ public final class SemanticOracle {
                 case DISCARD -> executeDiscard(op);
                 case MODULE_IMPORT -> executeModuleImport(op);
                 case EXPORT_READ -> executeExportRead(op);
+                case MODULE_INIT -> executeModuleInit(op);
+                case JSON_FROM_CLASS -> executeJsonFromClass(op);
+                case JSON_TO_CLASS -> executeJsonToClass(op);
                 case CLASS_DEFAULT -> executeClassDefaultArm(op);
                 case CLASS_NEW -> executeClassNew(op);
                 case CLASS_FACTORY -> throw new IllegalStateException(
@@ -1655,6 +1703,182 @@ public final class SemanticOracle {
                 + "triggering CLASS_NEW/CLASS_FACTORY (the default op is a member of "
                 + "exactly its own detached default block — the block walk never "
                 + "runs it); reaching executeClassDefaultArm is a producer defect");
+        }
+
+        /**
+         * JSON_FROM_CLASS — the generated {@code C$fromJson} walk (E7/K-D8),
+         * delegating to the closed {@link ClassOpsExecutor} with the
+         * production algorithm seam ({@link JsonClassAlgorithmAdapter}) and
+         * the op's per-site {@code CLASS_DEFAULT} children. The per-site
+         * children are the layout's required-present defaulted fields'
+         * {@code CLASS_DEFAULT} ops in declaration order — the same list
+         * the lowerer records in the produced {@code JsonDefaultChildTable}
+         * (the record is a lowering-result fact, so the closed set is
+         * derived from the unit here: one {@code CLASS_DEFAULT} op per
+         * {@code (classId, field)}). The walk returns language null on
+         * every listed failure — never a DEAL failure, never a partial
+         * instance.
+         */
+        private String executeJsonFromClass(SemanticOp op) {
+            KindPayload.JsonFromClassPayload payload =
+                (KindPayload.JsonFromClassPayload) op.payload();
+            UnitState state = stateOf(op.opId());
+            Map<ValueId, ClassOpsExecutor.Value> priorValues = new LinkedHashMap<>();
+            priorValues.put(payload.jsonString(),
+                executorValueOf(valueOf(payload.jsonString())));
+            Map<OpId, SemanticOp> defaultOps = new LinkedHashMap<>();
+            for (SemanticOp candidate : state.unit.ops()) {
+                if (candidate.kind() == SemanticOpKind.CLASS_DEFAULT) {
+                    defaultOps.put(candidate.opId(), candidate);
+                }
+            }
+            List<OpId> defaultChildIds = jsonDefaultChildrenOf(state,
+                payload.layout());
+            Value produced = oracleValueOf(ClassOpsExecutor.executeJsonFromClass(op,
+                priorValues, defaultChildIds, defaultOps, classLayouts,
+                JsonClassAlgorithmAdapter.parser(), nestedClassFactory(op),
+                bodyRunner(op)));
+            return publish(op, produced);
+        }
+
+        /**
+         * JSON_TO_CLASS — the generated {@code C$toJson} walk (E7/K-D10),
+         * delegating to the closed {@link ClassOpsExecutor} with the
+         * production stringify seam. The first declaration-order failure
+         * projects {@code JSON_TO_ERROR} (E8001
+         * {@code value at {fieldPath} is not JSON serializable: {actual}})
+         * at the op's origin; success publishes the deterministic
+         * RFC-8259 text.
+         */
+        private String executeJsonToClass(SemanticOp op) {
+            KindPayload.JsonToClassPayload payload =
+                (KindPayload.JsonToClassPayload) op.payload();
+            Map<ValueId, ClassOpsExecutor.Value> priorValues = new LinkedHashMap<>();
+            priorValues.put(payload.classValue(),
+                executorValueOf(valueOf(payload.classValue())));
+            ClassOpsExecutor.Outcome<ClassOpsExecutor.Value> outcome =
+                ClassOpsExecutor.executeJsonToClass(op, priorValues, classLayouts,
+                    JsonClassAlgorithmAdapter.stringifier(), op.origin());
+            return switch (outcome) {
+                case ClassOpsExecutor.Outcome.Success<ClassOpsExecutor.Value> success ->
+                    publish(op, oracleValueOf(success.value()));
+                case ClassOpsExecutor.Outcome.Failure<ClassOpsExecutor.Value> failure ->
+                    throw DealFailure.of(failure.failure().failure(),
+                        failure.failure().origin(), List.copyOf(frames));
+            };
+        }
+
+        /**
+         * The per-site {@code CLASS_DEFAULT} children of one
+         * {@code JSON_FROM_CLASS} op in declaration order: for every
+         * required-present layout field that carries a declared default
+         * (exactly one {@code CLASS_DEFAULT} op per
+         * {@code (classId, field)}) the op id; optional fields' never-run
+         * defaults are excluded (K-D8 step 5).
+         */
+        private List<OpId> jsonDefaultChildrenOf(UnitState state, ClassLayout layout) {
+            List<OpId> children = new ArrayList<>();
+            for (ClassLayout.FieldLayout field : layout.fields()) {
+                if (!field.required()) {
+                    continue;
+                }
+                for (SemanticOp candidate : state.unit.ops()) {
+                    if (candidate.kind() != SemanticOpKind.CLASS_DEFAULT) {
+                        continue;
+                    }
+                    KindPayload.ClassDefaultPayload defaultPayload =
+                        (KindPayload.ClassDefaultPayload) candidate.payload();
+                    if (defaultPayload.classId().equals(layout.classId())
+                            && defaultPayload.field().equals(field.name())) {
+                        children.add(candidate.opId());
+                        break;
+                    }
+                }
+            }
+            return children;
+        }
+
+        /**
+         * The nested-class defaults seam of the JSON_FROM_CLASS walk
+         * (K-D5 trigger (b)): the nested class's {@code CLASS_FACTORY}
+         * entry resolves in the closure (one factory per exported class;
+         * a non-exported class carries no factory and a nested decode of
+         * it is a producer defect, never executed), its default children
+         * run in the declaring module's scope with their own events, and
+         * the factory's events parent to the triggering JSON op (the
+         * cross-unit K-D12 parent).
+         */
+        private ClassOpsExecutor.NestedClassFactory nestedClassFactory(SemanticOp triggering) {
+            return (classId, providedFields) -> {
+                SemanticOp factoryOp = null;
+                for (UnitState candidateState : units.values()) {
+                    for (SemanticOp candidate : candidateState.unit.ops()) {
+                        if (candidate.kind() != SemanticOpKind.CLASS_FACTORY) {
+                            continue;
+                        }
+                        if (((KindPayload.ClassFactoryPayload) candidate.payload())
+                                .classId().equals(classId)) {
+                            factoryOp = candidate;
+                            break;
+                        }
+                    }
+                    if (factoryOp != null) {
+                        break;
+                    }
+                }
+                if (factoryOp == null) {
+                    throw new IllegalStateException("a nested JSON decode of " + classId
+                        + " resolves no CLASS_FACTORY entry in the closure (the nested "
+                        + "defaults seam requires the owner factory — producer defect, "
+                        + "never executed)");
+                }
+                UnitState ownerState = stateOf(factoryOp.opId());
+                Map<OpId, SemanticOp> ownerDefaultOps = new LinkedHashMap<>();
+                for (SemanticOp candidate : ownerState.unit.ops()) {
+                    if (candidate.kind() == SemanticOpKind.CLASS_DEFAULT) {
+                        ownerDefaultOps.put(candidate.opId(), candidate);
+                    }
+                }
+                ClassOpsExecutor.BodyRunner runner = defaultOp -> {
+                    emitStart(defaultOp, List.of());
+                    Value oracleProduced;
+                    try {
+                        oracleProduced = executeDefaultBlockValue(defaultOp);
+                    } catch (DealFailure failure) {
+                        emitFailure(defaultOp, failure);
+                        throw failure;
+                    }
+                    ClassOpsExecutor.Value produced = executorValueOf(oracleProduced);
+                    publish(defaultOp, oracleProduced);
+                    emitSuccess(defaultOp, atomOf(oracleProduced));
+                    return produced;
+                };
+                emitStartParented(factoryOp, triggering.opId(), List.of());
+                ClassOpsExecutor.Outcome<ClassOpsExecutor.Value> outcome;
+                try {
+                    outcome = ClassOpsExecutor.executeClassFactory(factoryOp, triggering,
+                        ownerDefaultOps, classLayouts, providedFields, runner);
+                } catch (DealFailure failure) {
+                    emitFailureParented(factoryOp, triggering.opId(), failure);
+                    throw failure;
+                }
+                if (!(outcome instanceof ClassOpsExecutor.Outcome.Success
+                        <ClassOpsExecutor.Value> success
+                        && success.value() instanceof ClassOpsExecutor.Value.Class)) {
+                    throw new IllegalStateException("CLASS_FACTORY " + factoryOp.opId()
+                        + " produced " + outcome + " — the pinned factory returns "
+                        + "exactly its internal default-filled transfer instance "
+                        + "(producer defect)");
+                }
+                ClassOpsExecutor.Value.Class transferInstance =
+                    (ClassOpsExecutor.Value.Class) success.value();
+                Value transferValue = oracleValueOf(transferInstance);
+                if (factoryOp.result() instanceof ValueId factoryResult) {
+                    putValue(factoryResult, transferValue);
+                }
+                emitSuccessParented(factoryOp, triggering.opId(), atomOf(transferValue));
+                return transferInstance;
+            };
         }
 
         /**
@@ -4574,6 +4798,59 @@ public final class SemanticOracle {
             KindPayload.ModuleImportPayload payload =
                 (KindPayload.ModuleImportPayload) op.payload();
             return null;
+        }
+
+        /**
+         * MODULE_INIT — the E8 module-init state machine: the op runs
+         * its payload init block (the {@code MODULE_IMPORT}/
+         * {@code EXPORT_*}/entry-delegation ops nested under it) exactly
+         * once per run, under the closed
+         * {@code UNINITIALIZED -> INITIALIZING -> INITIALIZED}
+         * transition. The op START precedes the walk (the block's own
+         * events follow), the SUCCESS terminal publishes
+         * {@code state:INITIALIZED} on completion; a DEAL failure inside
+         * the walk records {@code FAILED(error)} (no export publication)
+         * and the generic op failure path publishes the op's single
+         * FAILURE terminal with the identical error snapshot. A second
+         * execution of an already-INITIALIZED module is a skip (once
+         * after dependencies); a re-entrant or failed re-execution is a
+         * producer defect, never a silent re-run.
+         */
+        private String executeModuleInit(SemanticOp op) {
+            KindPayload.ModuleInitPayload payload =
+                (KindPayload.ModuleInitPayload) op.payload();
+            if (op.origin().parentOpId() != null) {
+                throw new IllegalStateException("MODULE_INIT " + op.opId()
+                    + " records the structural parent " + op.origin().parentOpId()
+                    + " (the module-level envelope op is parentless — a wrong parent is a "
+                    + "producer defect, never a silent re-parenting)");
+            }
+            ModuleInitLifecycle lifecycle = moduleInitLifecycles.get(payload.module());
+            if (lifecycle == ModuleInitLifecycle.INITIALIZING) {
+                throw new IllegalStateException("re-entrant MODULE_INIT of module "
+                    + payload.module() + " (producer defect: the frontend rejects "
+                    + "import cycles with E2005)");
+            }
+            if (lifecycle == ModuleInitLifecycle.INITIALIZED) {
+                return "state:INITIALIZED";
+            }
+            if (lifecycle == ModuleInitLifecycle.FAILED) {
+                throw new IllegalStateException("a second MODULE_INIT after a failed "
+                    + "module init of " + payload.module()
+                    + " (producer defect: the run's failure is terminal)");
+            }
+            moduleInitLifecycles.put(payload.module(), ModuleInitLifecycle.INITIALIZING);
+            try {
+                runBlock(payload.initBlock());
+            } catch (DealFailure failure) {
+                moduleInitLifecycles.put(payload.module(), ModuleInitLifecycle.FAILED);
+                throw failure;
+            } catch (ReturnSignal | LoopSignal signal) {
+                moduleInitLifecycles.put(payload.module(), ModuleInitLifecycle.INITIALIZED);
+                throw signal; // the module-init block never transfers
+            }
+            moduleInitLifecycles.put(payload.module(), ModuleInitLifecycle.INITIALIZED);
+            return "state:INITIALIZED";
         }
 
         private String executeDiscard(SemanticOp op) {

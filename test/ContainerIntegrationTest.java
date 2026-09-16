@@ -638,14 +638,22 @@ public class ContainerIntegrationTest {
         // Every recorded row is produced (R-COVERAGE green on the real
         // produced op set — a real-output assertion, not existence-only).
         List<SemanticOp> ops = unit.ops();
-        check(countKinds(ops, SemanticOpKind.CONST) == 7
-                && countKinds(ops, SemanticOpKind.STRING_CONCAT) == 5
-                && countKinds(ops, SemanticOpKind.BINDING_LOAD) == 2
-                && countKinds(ops, SemanticOpKind.FOR_EACH) == 2
-                && ops.size() == 16,
+        List<SemanticOp> bodyOps = ops.stream()
+            .filter(op -> op.kind() != SemanticOpKind.MODULE_INIT)
+            .toList();
+        check(countKinds(ops, SemanticOpKind.MODULE_INIT) == 1,
+            "the unit carries exactly one MODULE_INIT envelope op (the module-level "
+                + "init op, appended last and never a block member); got "
+                + countKinds(ops, SemanticOpKind.MODULE_INIT));
+        check(countKinds(bodyOps, SemanticOpKind.CONST) == 7
+                && countKinds(bodyOps, SemanticOpKind.STRING_CONCAT) == 5
+                && countKinds(bodyOps, SemanticOpKind.BINDING_LOAD) == 2
+                && countKinds(bodyOps, SemanticOpKind.FOR_EACH) == 2
+                && bodyOps.size() == 16,
             "the corpus produces exactly CONST ×7, STRING_CONCAT ×5, BINDING_LOAD ×2, "
                 + "FOR_EACH ×2 (16 ops — every recorded row's mapped kind); got "
-                + ops.size() + ": " + ops.stream().map(op -> op.kind().name()).toList());
+                + bodyOps.size() + ": "
+                + bodyOps.stream().map(op -> op.kind().name()).toList());
         check(countKinds(ops, SemanticOpKind.BINARY) == 0,
             "string + never emits BINARY (the detector's STRING_CONCAT_TEMPLATE row maps to "
                 + "STRING_CONCAT)");
@@ -1794,7 +1802,9 @@ public class ContainerIntegrationTest {
             return;
         }
         LoweredModuleUnit unit = result.unit();
-        List<SemanticOp> ops = unit.ops();
+        List<SemanticOp> ops = unit.ops().stream()
+            .filter(op -> op.kind() != SemanticOpKind.MODULE_INIT)
+            .toList();
 
         // The exact pinned op multiset (no LOOP, no RETURN, no BINARY, no
         // BINDING_*, no array for-of, no numeric literal).

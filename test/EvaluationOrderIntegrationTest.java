@@ -2045,7 +2045,9 @@ public class EvaluationOrderIntegrationTest {
                 "the discard seed lowers: "
                     + (result == null ? "null" : result.diagnostics()));
             if (result == null || result.hasErrors()) { return; }
-            List<SemanticOp> ops = result.unit().ops();
+            List<SemanticOp> ops = result.unit().ops().stream()
+                .filter(op -> op.kind() != SemanticOpKind.MODULE_INIT)
+                .toList();
             check(ops.size() == 2 && ops.get(0).kind() == SemanticOpKind.CONST
                     && ops.get(1).kind() == SemanticOpKind.DISCARD,
                 "the expression statement lowers to CONST + DISCARD");
@@ -2084,10 +2086,12 @@ public class EvaluationOrderIntegrationTest {
                 "the corpus passes the control-flow validator");
             Map<OpId, BlockId> opBlocks = result.table().opBlocks();
             boolean everyOpInOneBlock = result.unit().ops().stream()
-                .allMatch(op -> opBlocks.get(op.opId()) != null);
+                .allMatch(op -> opBlocks.get(op.opId()) != null
+                    || op.kind() == SemanticOpKind.MODULE_INIT);
             check(everyOpInOneBlock,
                 "every op of the corpus is a member of exactly one block "
-                    + "(StructuredBodyTable completeness)");
+                    + "(StructuredBodyTable completeness; the module-level "
+                    + "MODULE_INIT envelope op is the pinned exemption)");
         }
     }
 
