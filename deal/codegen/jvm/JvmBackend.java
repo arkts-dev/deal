@@ -8926,8 +8926,11 @@ public final class JvmBackend {
     private void emitJsonableToJsonValue(ClassDeclaration cd, String gen,
                                          List<Type> types) {
         emitLine("// @jsonable toJson field serialization (declared-field order).");
+        emitLine("// The caller's toJson call-expression origin (D3) threads");
+        emitLine("// unchanged through the walk, so a rejection at any depth");
+        emitLine("// reports the call-site span.");
         emitLine("static java.util.LinkedHashMap<java.lang.String, java.lang.Object> $toJsonValue("
-            + gen + " v) {");
+            + gen + " v, java.lang.String oFile, int oLine, int oCol) {");
         indent++;
         // Fresh conversion-level suffixes past the field-index namespace
         // (arr{}/e{} names of the field serializers).
@@ -8975,16 +8978,18 @@ public final class JvmBackend {
             case Type.Null ignored ->
                 emitLine("out.put(" + name + ", null);");
             case Type.Table ignored ->
-                emitLine("out.put(" + name + ", __jsonShape(" + valueCode + "));");
+                emitLine("out.put(" + name + ", __jsonShape(" + valueCode
+                    + ", oFile, oLine, oCol));");
             case Type.Class c -> {
                 String ref = jsonClassRef(c, cf.span());
                 if (optional) {
                     emitLine("out.put(" + name + ", " + valueCode
                         + " == null ? null : " + ref + ".$toJsonValue(("
-                        + ref + ") " + valueCode + "));");
+                        + ref + ") " + valueCode
+                        + ", oFile, oLine, oCol));");
                 } else {
                     emitLine("out.put(" + name + ", " + ref + ".$toJsonValue("
-                        + valueCode + "));");
+                        + valueCode + ", oFile, oLine, oCol));");
                 }
             }
             case Type.Nullable nn -> {
@@ -8996,7 +9001,8 @@ public final class JvmBackend {
                     String ref = jsonClassRef(c, cf.span());
                     emitLine("out.put(" + name + ", " + valueCode
                         + " == null ? null : " + ref + ".$toJsonValue(("
-                        + ref + ") " + valueCode + "));");
+                        + ref + ") " + valueCode
+                        + ", oFile, oLine, oCol));");
                 } else {
                     // Boxed primitive / string / table reference: put
                     // directly (a table value encodes through
@@ -9099,7 +9105,8 @@ public final class JvmBackend {
                 if (ne.inner() instanceof Type.Class c) {
                     String ref = jsonClassRefSynthetic(c);
                     emitLine(arrVar + ".add(" + eVar + " == null ? null : "
-                        + ref + ".$toJsonValue((" + ref + ") " + eVar + "));");
+                        + ref + ".$toJsonValue((" + ref + ") " + eVar
+                        + ", oFile, oLine, oCol));");
                 } else {
                     emitLine(arrVar + ".add(" + eVar + ");");
                 }
@@ -9107,7 +9114,7 @@ public final class JvmBackend {
             case Type.Class c -> {
                 String ref = jsonClassRefSynthetic(c);
                 emitLine(arrVar + ".add(" + ref + ".$toJsonValue((" + ref
-                    + ") " + eVar + "));");
+                    + ") " + eVar + ", oFile, oLine, oCol));");
             }
             case Type.Array innerArr -> {
                 // ISSUE-0302 recursive array serialization (toJson side):
@@ -9542,10 +9549,13 @@ public final class JvmBackend {
         indent--;
         emitLine("}");
         emitLine("// " + cd.name() + "$toJson(v) — serialize to a JSON string.");
+        emitLine("// The caller passes its call-expression origin (D3); the walk");
+        emitLine("// threads it unchanged into the shape check and the stringifier.");
         emitLine("public static java.lang.String " + toJson + "(" + gen
-            + " v) {");
+            + " v, java.lang.String oFile, int oLine, int oCol) {");
         indent++;
-        emitLine("return __jsonStringify(" + gen + ".$toJsonValue(v));");
+        emitLine("return __jsonStringify(" + gen
+            + ".$toJsonValue(v, oFile, oLine, oCol), oFile, oLine, oCol);");
         indent--;
         emitLine("}");
     }
@@ -10033,8 +10043,21 @@ public final class JvmBackend {
         emitLine("// std/json.lua encode_value parity (ISSUE-0302): a value");
         emitLine("// outside the JSON-shaped set — a function, a bytes");
         emitLine("// carrier, an unknown object — raises the unsupported-");
-        emitLine("// type E8001 with the Lua type name.");
-        emitLine("throw new DealError(\"E8001\", \"unsupported type for JSON encoding: \" + (v instanceof $DealRt.FnValue ? \"function\" : v instanceof $DealRt.Bytes ? \"bytes\" : v.getClass().getSimpleName()), oFile, oLine, oCol);");
+        emitLine("// type E8001 with the Lua type name and the closed D4");
+        emitLine("// expected/actual projection, threaded unchanged through");
+        emitLine("// the recursive walk (a rejection at any nesting depth");
+        emitLine("// reports the call expression's origin).");
+        emitLine("throw new DealError(\"E8001\", \"unsupported type for JSON encoding: \" + __jsonKind(v), oFile, oLine, oCol, \"string, number, boolean, or table\", __jsonKind(v), null, null);");
+        indent--;
+        emitLine("}");
+        emitLine("// The closed runtime-kind projection of the unsupported-type");
+        emitLine("// rejection (D4): the DEAL kind name the message tail renders");
+        emitLine("// — never a fabricated field.");
+        emitLine("static java.lang.String __jsonKind(java.lang.Object v) {");
+        indent++;
+        emitLine("if (v instanceof $DealRt.FnValue) return \"function\";");
+        emitLine("if (v instanceof $DealRt.Bytes) return \"bytes\";");
+        emitLine("return v.getClass().getSimpleName();");
         indent--;
         emitLine("}");
         emitLine("// ---- @jsonable table-field shape validation (ISSUE-0160 D6) ----");
@@ -14818,6 +14841,15 @@ public final class JvmBackend {
                 sb.append(boundaryArgCode(call.args().get(i),
                     argCodes.get(i), paramDeclaredType(id.name(), i)));
             }
+            // A module-local @jsonable C$toJson helper (the
+            // compiler-generated name; a FunctionSymbol outside
+            // moduleFunctions, and no user identifier contains '$')
+            // additionally receives the call-expression origin so the
+            // callee's shape/encode walk reports this call site (D3).
+            if (!moduleFunctions.containsKey(id.name())
+                    && id.name().endsWith("$toJson")) {
+                sb.append(", ").append(originArgs(call.span()));
+            }
             return sb.append(')').toString();
         }
         // Any other function-typed callee expression (a call or
@@ -15140,11 +15172,19 @@ public final class JvmBackend {
             // types, cycles).
             if ("parse".equals(mae.field())) {
                 List<String> argCodes = emitOperandsInOrder(call.args());
-                return "$jsonParse(" + argCodes.get(0) + ")";
+                // The call-expression origin (D3): a parse rejection
+                // carries the json.parse call-site span.
+                return "$jsonParse(" + argCodes.get(0) + ", "
+                    + originArgs(call.span()) + ")";
             }
             if ("stringify".equals(mae.field())) {
                 List<String> argCodes = emitOperandsInOrder(call.args());
-                return "__jsonStringify(" + argCodes.get(0) + ")";
+                // The call-expression origin (D3) threads unchanged
+                // through the recursive encode walk, so an
+                // unsupported-type rejection at any nesting depth
+                // reports the json.stringify call-site span.
+                return "__jsonStringify(" + argCodes.get(0) + ", "
+                    + originArgs(call.span()) + ")";
             }
             unsupported("export '" + mae.field() + "' of std/json",
                 mae.span());
@@ -15190,6 +15230,13 @@ public final class JvmBackend {
                 && i < argTargets.size() ? argTargets.get(i) : null;
             sb.append(boundaryArgCode(call.args().get(i),
                 argCodes.get(i), paramType));
+        }
+        // A cross-module @jsonable C$toJson helper (the
+        // compiler-generated name; no user identifier contains '$')
+        // additionally receives the call-expression origin so the
+        // callee's shape/encode walk reports this call site (D3).
+        if (mae.field().endsWith("$toJson")) {
+            sb.append(", ").append(originArgs(call.span()));
         }
         return sb.append(')').toString();
     }
@@ -18147,6 +18194,17 @@ public final class JvmBackend {
         if (v == Double.POSITIVE_INFINITY) return "java.lang.Double.POSITIVE_INFINITY";
         if (v == Double.NEGATIVE_INFINITY) return "java.lang.Double.NEGATIVE_INFINITY";
         return Double.toString(v);
+    }
+
+    /** The emitted origin argument list (file, line, column) of one
+     * authoritative raise-site node: the span start the sidecar pins for
+     * the class (jvm-canonical-error-snapshot-convergence D3), emitted
+     * as compile-time literals. The caller passes them unchanged into
+     * the raising helper, which propagates them into every raise it
+     * performs — no thread-local state, no stack-frame derivation. */
+    private String originArgs(Span span) {
+        return quoteJavaString(span.file()) + ", " + span.startLine()
+            + ", " + span.startColumn();
     }
 
     /** Renders a DEAL string as a Java string literal (UTF-8 source). */

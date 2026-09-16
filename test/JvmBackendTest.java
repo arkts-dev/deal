@@ -421,6 +421,7 @@ public class JvmBackendTest {
             new TestCase("testNullableSlice", () -> testNullableSlice()),
             new TestCase("testAsyncSlice", () -> testAsyncSlice()),
             new TestCase("testJsonableSlice", () -> testJsonableSlice()),
+            new TestCase("testJsonOriginLiterals", () -> testJsonOriginLiterals()),
             new TestCase("testJsonStdlibBoundary", () -> testJsonStdlibBoundary()),
             new TestCase("testImportedClassValues", () -> testImportedClassValues()),
             new TestCase("testFunctionValues", () -> testFunctionValues()),
@@ -12322,8 +12323,11 @@ public class JvmBackendTest {
                     "the field descriptor rows carry {name, jtype, optional, nullable}");
                 check(java.contains("public static $C_User User$dfromJson(java.lang.String s)"),
                     "the generated fromJson export uses the javaName translation");
-                check(java.contains("return __jsonStringify($C_User.$toJsonValue(v));"),
-                    "the generated toJson export stringifies the field serializer");
+                check(java.contains("return __jsonStringify("
+                        + "$C_User.$toJsonValue(v, oFile, oLine, oCol), "
+                        + "oFile, oLine, oCol);"),
+                    "the generated toJson export stringifies the field "
+                        + "serializer and threads the call-site origin");
                 check(java.contains("static java.lang.Object __jsonParse("),
                     "the JSON parser is emitted for a module with @jsonable classes");
                 check(java.contains("static final java.lang.String[][] $jsonFields"),
@@ -12871,6 +12875,139 @@ public class JvmBackendTest {
         check(mod.errors().stream().anyMatch(d -> "E1049".equals(d.code())),
             "the v1.2 module top level rejects a load-time call of the "
             + "generated helper with E1049: " + mod.errors());
+    }
+
+    /**
+     * The std/json + @jsonable encode/decode raise-site origins
+     * (jvm-canonical-error-snapshot-convergence D3/D4, the std/json leaf,
+     * ISSUE-0608): every JSON encode/decode rejection passes the
+     * json.stringify / json.parse call expression's span, threaded
+     * unchanged through the recursive encode walk; the unsupported-type
+     * raises populate the closed expected/actual projection; the cyclic
+     * rejection fabricates neither; and the @jsonable toJson call site
+     * hands its own call-expression origin to the generated helper.
+     */
+    private static void testJsonOriginLiterals() {
+        System.out.println("-- std/json + @jsonable origin literals "
+            + "(ISSUE-0608) --");
+        String source = """
+            import * as json from "std/json"
+
+            // @jsonable
+            export class Wrapper {
+              data: table = {};
+            }
+
+            export function run(t: table, s: string): string {
+              let a: table = json.parse(s);
+              let b: string = json.stringify(t);
+              let w: Wrapper = { data: {} };
+              return Wrapper$toJson(w);
+            }
+
+            export function main(): null {
+              return null;
+            }
+            """;
+        String file = "jvmtest-json-origin-literals.deal";
+        String[] lines = source.split("\n", -1);
+        int parseLine = 0, parseCol = 0, stringifyLine = 0, stringifyCol = 0,
+            toJsonLine = 0, toJsonCol = 0;
+        for (int i = 0; i < lines.length; i++) {
+            if (parseLine == 0) {
+                int at = lines[i].indexOf("json.parse(");
+                if (at >= 0) { parseLine = i + 1; parseCol = at + 1; }
+            }
+            if (stringifyLine == 0) {
+                int at = lines[i].indexOf("json.stringify(");
+                if (at >= 0) { stringifyLine = i + 1; stringifyCol = at + 1; }
+            }
+            if (toJsonLine == 0) {
+                int at = lines[i].indexOf("Wrapper$toJson(");
+                if (at >= 0) { toJsonLine = i + 1; toJsonCol = at + 1; }
+            }
+        }
+        check(parseLine > 0 && stringifyLine > 0 && toJsonLine > 0,
+            "the probe source carries the three call sites");
+        Frontend f = compileFrontend(source, file);
+        check(f.errors().isEmpty(), "json origin frontend clean: "
+            + f.errors());
+        if (!f.errors().isEmpty()) {
+            return;
+        }
+        JvmBackend.JvmCodegenResult res = JvmBackend.generate(f.program(),
+            f.checkResult(), file, "Main");
+        check(!res.hasErrors(), "json origin codegen clean: "
+            + res.diagnostics());
+        if (res.hasErrors()) {
+            return;
+        }
+        String java = res.source();
+        check(java.contains("__jsonStringify(t, \"" + file + "\", "
+                + stringifyLine + ", " + stringifyCol + ")"),
+            "the json.stringify call site passes its call-expression "
+                + "origin (D3)");
+        check(java.contains("$jsonParse(s, \"" + file + "\", "
+                + parseLine + ", " + parseCol + ")"),
+            "the json.parse call site passes its call-expression "
+                + "origin (D3)");
+        check(java.contains("Wrapper$dtoJson(w, \"" + file + "\", "
+                + toJsonLine + ", " + toJsonCol + ")"),
+            "the @jsonable toJson call site passes its call-expression "
+                + "origin (D3)");
+        check(java.contains("public static java.lang.String Wrapper$dtoJson("
+                + "$C_Wrapper v, java.lang.String oFile, int oLine, "
+                + "int oCol) {"),
+            "the generated toJson helper receives the origin parameters");
+        check(java.contains("static void __jsonAppend(java.lang.StringBuilder"
+                + " sb, java.lang.Object v, java.util.Set<java.lang.Object>"
+                + " stack, java.lang.String oFile, int oLine, int oCol) {"),
+            "the recursive encode walk receives the origin parameters (D1)");
+        check(java.contains("__jsonAppend(sb, e, stack, oFile, oLine, "
+                + "oCol);"),
+            "the recursive encode walk threads the origin unchanged (D3)");
+        check(java.contains("throw new DealError(\"E8001\", \"unsupported "
+                + "type for JSON encoding: \" + __jsonKind(v), oFile, oLine, "
+                + "oCol, \"string, number, boolean, or table\", "
+                + "__jsonKind(v), null, null);"),
+            "the unsupported-type encode rejection carries the threaded "
+                + "origin and the closed expected/actual projection (D4)");
+        check(!java.contains("unsupported type for JSON encoding: \" + "
+                + "(v instanceof"),
+            "the kind projection is the closed helper, not an inline arm");
+        check(java.contains("static java.lang.String __jsonKind("
+                + "java.lang.Object v) {"),
+            "the closed kind projection helper is emitted");
+        check(java.contains("$toJsonValue($C_Wrapper v, java.lang.String "
+                + "oFile, int oLine, int oCol) {"),
+            "the @jsonable field serializer receives the threaded origin");
+        check(java.contains("__jsonShape(v.data, oFile, oLine, oCol))"),
+            "a table field's shape validation receives the threaded origin");
+        check(java.contains("__jsonShapeWalk(v, seen, 0, oFile, oLine, "
+                + "oCol);"),
+            "the shape walk threads the origin through the recursion");
+        check(java.contains("if (!seen.add(v)) throw new DealError(\"E8001\", "
+                + "\"cyclic value cannot be encoded as JSON\", oFile, oLine, "
+                + "oCol);"),
+            "the cyclic rejection carries the threaded origin and no "
+                + "expected/actual pair (never fabricated)");
+        check(java.contains("static java.lang.String __jsonQuote("
+                + "java.lang.String s, java.lang.String oFile, int oLine, "
+                + "int oCol) {"),
+            "the string quoter receives the origin parameters so every "
+                + "encode rejection carries the call-site span (D3)");
+        check(java.contains("sb.append(__jsonQuote(s, oFile, oLine, "
+                + "oCol)); return; }"),
+            "the string-value encode branch threads the origin into the "
+                + "quoter");
+        check(java.contains("if (__hasUnpairedSurrogate(s)) throw new "
+                + "DealError(\"E8001\", \"cannot encode invalid UTF-8 as "
+                + "JSON\", oFile, oLine, oCol);"),
+            "the unpaired-surrogate encode rejection carries the threaded "
+                + "call-site origin");
+        check(java.contains("static $DealRt.Table __jsonShape($DealRt.Table "
+                + "v, java.lang.String oFile, int oLine, int oCol) {"),
+            "the shape helper receives the origin parameters (D1)");
     }
 
     /**

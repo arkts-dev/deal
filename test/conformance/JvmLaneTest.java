@@ -83,6 +83,7 @@ public class JvmLaneTest {
         realCompanionThrowCapture();
         hostBoundaryCodeParity();
         realTimeFixtureSpanlessConvergence();
+        realJsonFixtureConvergence();
         invocationDeclarationOrderProbe();
         discardedReturnValuesProbe();
         printReturnValueDivergenceProbe();
@@ -432,6 +433,30 @@ public class JvmLaneTest {
                 + execution);
         assertPassed("the sanctioned span-less time fixture passes the "
             + "differential verdict byte-exact", lane, laneCase);
+    }
+
+    private static void realJsonFixtureConvergence() throws Exception {
+        // The std/json + @jsonable encode/decode origin leaf (ISSUE-0608):
+        // every JSON rejection fixture passes the production lane
+        // byte-exact against its sidecar — the json.stringify/json.parse
+        // call-expression origin threads unchanged through the recursive
+        // encode walk (the nested fixture's pinned 25:10 proves the
+        // depth-independence), the unsupported-type raises carry the
+        // closed expected/actual projection, and the cyclic-table
+        // rejection carries neither optional field (never fabricated).
+        String[] cases = {
+            "backend-runtime/runtime-errors/json-stringify-function-e8001.deal",
+            "backend-runtime/source-location/json-error-source.deal",
+            "backend-runtime/stdlib/json/json-stringify-bytes-error.deal",
+            "backend-runtime/stdlib/json/json-stringify-nested-bytes-error.deal",
+            "backend-runtime/jsonable/jsonable-tojson-rejects-cyclic-table.deal"
+        };
+        JvmLane lane = new JvmLane(CORPUS_ROOT);
+        for (String corpusPath : cases) {
+            assertPassed("the JSON rejection fixture " + corpusPath
+                + " passes the production lane byte-exact against its "
+                + "sidecar", lane, realLaneCase(corpusPath));
+        }
     }
 
     // =========================================================================
