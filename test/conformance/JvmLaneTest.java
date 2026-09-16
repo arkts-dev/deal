@@ -28,14 +28,20 @@ import java.util.OptionalInt;
  *   <li>Real fixtures (runtime-ok transcripts byte-exact with discarded
  *       results; the host triplet {@code nullreturn_ok.java}; async
  *       exports awaited to completion) produce matching verdicts.</li>
- *   <li>Real runtime-error fixtures produce the honest non-fabricated
- *       outcome: the real JVM DealError carries code/message with no
- *       origin yet (the per-class origin literals land with the epic's
- *       class leaves), so the lane reports the span-absent capture as a
- *       process failure naming the captured code, message and the
- *       missing span — the E8010/E8011 host-boundary fixtures carry the
- *       same codes the Lua lane pins, and the sanctioned span-less time
- *       fixture passes byte-exact.</li>
+ *   <li>Real runtime-error fixtures: the converged declared-boundary
+ *       classes (type-mismatch-e8001 and the sibling class/E8010/E8003
+ *       rows) emit the exact pinned canonical snapshot over the real
+ *       lane — the callee's declared parameter-type annotation, the
+ *       caller's return expression, the contextual binding annotation,
+ *       the typed-binding function annotation, and the stdlib call
+ *       expression as origins, with the closed expected/actual
+ *       projections. The classes whose origin literals have not landed
+ *       yet keep the honest non-fabricated outcome: the real JVM
+ *       DealError carries code/message with no origin, so the lane
+ *       reports the span-absent capture as a process failure naming the
+ *       captured code, message and the missing span — the E8010/E8011
+ *       host-boundary fixtures carry the same codes the Lua lane pins,
+ *       and the sanctioned span-less time fixture passes byte-exact.</li>
  *   <li>Invocation contract: declaration-order auto-invocation of the
  *       non-{@code $} zero-arity exports; return values discarded;
  *       {@code main} runs exactly once (the backend entry contract).</li>
@@ -327,33 +333,38 @@ public class JvmLaneTest {
     }
 
     private static void realRuntimeErrorHonestFailure() throws Exception {
-        // The real JVM DealError carries code/message and no span: the
-        // lane reports the span-absent capture as a process failure
-        // naming the captured code, message and the missing span — never
-        // a stack-frame file/line (the removed fallback fabricated a
-        // generated-Java location the raise site never carried).
+        // The declared-boundary classes have converged: the real lane
+        // emits the exact pinned framing for type-mismatch-e8001 — the
+        // callee's declared parameter-type annotation as the origin
+        // (line 6, column 21), the closed projections (expected int,
+        // actual string), the header-line rebase, and the canonical
+        // serialization, as one chain over the production pipeline.
         String corpusPath = "backend-runtime/runtime-errors/type-mismatch-e8001.deal";
         JvmLane lane = new JvmLane(CORPUS_ROOT);
         LaneCase laneCase = realLaneCase(corpusPath);
         LaneExecution execution = lane.execute(laneCase);
-        check(execution instanceof LaneExecution.Infrastructure infra
-                && infra.clazz() == MismatchClass.PROCESS_FAILURE
-                && infra.detail().startsWith("the captured DEAL error "
-                    + "carries no span (file, line, column) where one is "
-                    + "required")
-                && infra.detail().contains("code=E8001")
-                && infra.detail().contains("message=expected int")
-                && infra.detail().contains("file=null")
-                && !infra.detail().contains("Type_mismatch_e8001.java"),
-            "a real JVM runtime error yields the honest span-absent "
-                + "process failure naming code E8001 and message "
-                + "'expected int' (never a fabricated stack-frame file), "
-                + "got: " + execution);
+        String pinnedFraming = "DEAL_ERROR_CODE: E8001\n"
+            + "DEAL_ERROR_SNAPSHOT: {\"code\":\"E8001\","
+            + "\"message\":\"expected int\","
+            + "\"sourceFile\":\"backend-runtime/runtime-errors/"
+            + "type-mismatch-e8001.deal\","
+            + "\"line\":6,\"column\":21,\"expected\":\"int\","
+            + "\"actual\":\"string\"}\n";
+        check(execution instanceof LaneExecution.Executed executed
+                && executed.exitCode() == 1
+                && new String(executed.stdout(), StandardCharsets.UTF_8)
+                    .equals(pinnedFraming)
+                && executed.stderr().length == 0,
+            "the real JVM runtime error emits the exact pinned canonical "
+                + "snapshot (callee's declared parameter annotation as the "
+                + "origin, expected int / actual string), got: "
+                + execution);
         GateDispatcher.LaneOutcome outcome = dispatch(lane, laneCase);
-        check(!outcome.passed() && outcome.mismatch().isPresent()
-                && outcome.mismatch().get().subject().equals("jvm"),
-            "the non-converged runtime-error fixture fails the verdict "
-                + "naming the jvm backend, got: " + outcome.mismatch());
+        check(outcome.passed(),
+            "the converged declared-boundary fixture passes the verdict "
+                + "byte-exact, got: "
+                + outcome.mismatch().map(m -> m.clazz() + ": " + m.detail())
+                    .orElse("<pass>"));
     }
 
     private static void realCompanionThrowCapture() throws Exception {

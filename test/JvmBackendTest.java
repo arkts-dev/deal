@@ -459,6 +459,7 @@ public class JvmBackendTest {
             new TestCase("testInt32ArrayAndFieldBoundaries", () -> testInt32ArrayAndFieldBoundaries()),
             new TestCase("testBytesRuntimeLane", () -> testBytesRuntimeLane()),
             new TestCase("testOriginThreadingSurface", () -> testOriginThreadingSurface()),
+            new TestCase("testDeclaredBoundaryOrigins", () -> testDeclaredBoundaryOrigins()),
             new TestCase("testRecursiveBytesClosureLane", () -> testRecursiveBytesClosureLane()),
             new TestCase("testCommonShadowInvocationPipeline", () -> testCommonShadowInvocationPipeline()),
             new TestCase("testLegacyByteCompat", () -> testLegacyByteCompat()),
@@ -4671,9 +4672,9 @@ public class JvmBackendTest {
             "construction fills declaration-order defaults around provided fields");
         check(java.contains("new $DealRt.Table().put(\"item\", p)"),
             "table literal chains put calls");
-        check(java.contains("$check(\"@Main/Point\", (holder).get(\"item\"))"),
+        check(java.contains("$check(\"@Main/Point\", (holder).get(\"item\")"),
             "class-typed table read runs the shared seam with the spec "
-            + "class descriptor");
+            + "class descriptor and the inherited origin arguments");
         check(java.contains("return intAdd((q).x, (q).y);"),
             "class field reads flow into arithmetic");
 
@@ -4844,7 +4845,7 @@ public class JvmBackendTest {
                     "the class Table's nominal-check branch is declared "
                     + "exactly once inside the seam");
                 check(tableJava.contains(
-                        "$check(\"@Main/Table\", (holder).get(\"item\"))"),
+                        "$check(\"@Main/Table\", (holder).get(\"item\")"),
                     "the Table-typed read dispatches on the spec class "
                     + "descriptor: " + tableJava);
                 check(!tableJava.contains("static $T $check$Table(")
@@ -6267,9 +6268,10 @@ public class JvmBackendTest {
             """, "carrier-dynarray-objmode");
         check(objMode.exitCode() == 1
                 && objMode.output().contains("DEAL_ERROR_CODE: E8001")
-                && objMode.output().contains("expected array, got table"),
-            "an object-mode table raises E8001 \"expected array, got "
-                + "table\": " + objMode.output());
+                && objMode.output().contains("expected array"),
+            "an object-mode table raises E8001 \"expected array\" (the "
+                + "element descriptor and the kind projection ride the "
+                + "error fields): " + objMode.output());
 
         // A function-typed table read byte-compares the carried
         // descriptor; a non-wrapper raises E8001 "expected function".
@@ -9702,9 +9704,10 @@ public class JvmBackendTest {
         String tableOutJava = int32Artifact(tableOutSrc,
             "boundary_tableread_out_artifact");
         check(tableOutJava.contains(
-                "int v = ((java.lang.Integer) $check(\"int\", (t).get(\"x\"))).intValue();"),
+                "int v = ((java.lang.Integer) $check(\"int\", (t).get(\"x\"),"),
             "the table-read int target routes through the shared $check "
-                + "seam's int branch");
+                + "seam's int branch with the binding's declared "
+                + "annotation as its origin");
         check(tableOutJava.contains(
                 "if (v instanceof java.lang.Integer i) return checkInt(i, oFile, oLine, oCol);"),
             "the $check int branch routes through the signed32 checkInt "
@@ -9975,7 +9978,7 @@ public class JvmBackendTest {
         String tableInJava = int32Artifact(tableInSrc,
             "boundary_tableread_in_artifact");
         check(tableInJava.contains(
-                "int v = ((java.lang.Integer) $check(\"int\", (t).get(\"x\"))).intValue();"),
+                "int v = ((java.lang.Integer) $check(\"int\", (t).get(\"x\"),"),
             "the in-range table read routes through the same $check int "
                 + "branch");
 
@@ -11458,11 +11461,11 @@ public class JvmBackendTest {
         check(tableBytesBad.exitCode() == 1
                 && tableBytesBad.output().contains(
                     "DEAL_ERROR_CODE: E8001")
-                && tableBytesBad.output().contains(
-                    "expected bytes, got "),
-            "the bytes-typed table read raises E8001 with the pinned "
-                + "\"expected bytes, got {actual}\" message for a "
-                + "wrong-kind value: " + tableBytesBad.output());
+                && tableBytesBad.output().contains("expected bytes"),
+            "the bytes-typed table read raises E8001 with the closed "
+                + "\"expected bytes\" message (the kind rides the error "
+                + "field) for a wrong-kind value: "
+                + tableBytesBad.output());
         ExecResult tableBytesBadNullable = runInt32Project("""
             export function main(): null { return null; }
             export function test(): int {
@@ -11477,9 +11480,8 @@ public class JvmBackendTest {
         check(tableBytesBadNullable.exitCode() == 1
                 && tableBytesBadNullable.output().contains(
                     "DEAL_ERROR_CODE: E8001")
-                && tableBytesBadNullable.output().contains(
-                    "expected bytes, got "),
-            "the ?bytes table read raises E8001 with the pinned message "
+                && tableBytesBadNullable.output().contains("expected bytes"),
+            "the ?bytes table read raises E8001 with the closed message "
                 + "for a wrong-kind value: "
                 + tableBytesBadNullable.output());
 
@@ -13790,13 +13792,13 @@ public class JvmBackendTest {
                     "the host-boundary array seam carries the origin "
                         + "parameters");
                 check(java.contains(
-                        "static $DealRt.__IntArray $dynamicIntArray(java.lang.Object v, java.lang.String oFile, int oLine, int oCol)"),
+                        "static $DealRt.__IntArray $dynamicIntArray(java.lang.Object v, java.lang.String arrayText, java.lang.String elemText, java.lang.String oFile, int oLine, int oCol)"),
                     "the dynamic array conversion carries the origin "
-                        + "parameters");
+                        + "parameters and the closed element projections");
                 check(java.contains(
-                        "throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\", oFile, oLine, oCol);"),
+                        "throw new DealError(\"E8003\", \"array element \" + (i + 1) + \" type mismatch\", oFile, oLine, oCol, elemText, $kindOf(a.get(i)), null, null);"),
                     "the wrapped E8003 dynamic-element re-raise propagates "
-                        + "the origin");
+                        + "the origin and the element projection");
                 check(java.contains(
                         "throw new DealError(\"E8010\", \"parameter \" + i + \" type mismatch: \" + inner.getMessage(), oFile, oLine, oCol);"),
                     "the wrapped E8010 host-parameter re-raise propagates "
@@ -13872,6 +13874,225 @@ public class JvmBackendTest {
             }
         }
         System.out.println("  origin-threading helper surface pinned");
+    }
+
+    /**
+     * ISSUE-0606 declared-boundary origin emission
+     * (jvm-canonical-error-snapshot-convergence D3/D4/D6): the emitted
+     * artifacts carry the authoritative declared-boundary origin
+     * literals — the callee's declared parameter-type annotation for a
+     * call argument, the caller's return expression for a return
+     * boundary, the binding's declared contextual annotation for a
+     * typed binding (the E8003 wrap included), the caller's declared
+     * function-type annotation for the typed-binding E8010 shape, the
+     * callee's declared parameter annotation for the call-argument
+     * E8010 shape, the call expression for a stdlib parameter
+     * boundary, and the declaring module's parameter annotation across
+     * the D6 import seam — with the closed expected/actual projections
+     * (the runtime-kind vocabulary, the descriptor texts). The
+     * sanctioned span-less time raise keeps the 2-argument checkInt
+     * route.
+     */
+    private static void testDeclaredBoundaryOrigins() throws Exception {
+        System.out.println("-- Declared-boundary origin emission (ISSUE-0606) --");
+
+        Frontend f = compileFrontend("""
+            import * as console from "std/console"
+            import * as json from "std/json"
+            import * as time from "std/time"
+
+            class Box { value: int = 0; }
+
+            function needInt(x: int): int { return x; }
+
+            export function test_origins(): int {
+              let t: table = { value: "bad" };
+              console.log(t.value);
+              let g: (x: int) => int = t.f;
+              let n: int = time.nowMillis();
+              return needInt(t.value);
+            }
+
+            export function test_return(): Box {
+              let holder: table = { item: 1 };
+              return holder.item;
+            }
+
+            export function test_arr(): int {
+              let t: table = json.parse("{\\"values\\":[1,\\"bad\\"]}");
+              let xs: int[] = t.values;
+              return xs[0];
+            }
+            """, "jvmtest-declared-boundaries.deal");
+        check(f.errors().isEmpty(),
+            "declared-boundaries fixture frontend clean: " + f.errors());
+        if (f.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult res = JvmBackend.generate(
+                f.program(), f.checkResult(),
+                "jvmtest-declared-boundaries.deal", "Main",
+                SemanticProfile.DEAL_V1_2_INT32);
+            check(!res.hasErrors(),
+                "declared-boundaries fixture codegen clean: "
+                    + res.diagnostics());
+            if (!res.hasErrors()) {
+                String java = res.source();
+                // D2: the complete DEALRuntimeError field surface.
+                check(java.contains("final java.lang.String file;")
+                        && java.contains("final int line;")
+                        && java.contains("final int column;")
+                        && java.contains("final java.lang.String expected;")
+                        && java.contains("final java.lang.String actual;")
+                        && java.contains("final java.lang.Integer frames;")
+                        && java.contains("final java.lang.String cause;"),
+                    "the emitted DealError carries the closed "
+                        + "DEALRuntimeError field surface");
+                // D3: the callee's declared parameter annotation is the
+                // call-argument boundary origin (needInt's `int` at
+                // 7:21).
+                check(java.contains("$check(\"int\", (t).get(\"value\"), "
+                        + "\"Main.java\", 7, 21)"),
+                    "the callee's declared parameter annotation is the "
+                        + "call-argument boundary origin: " + java);
+                // D3: the caller's return expression is the class-return
+                // boundary origin (`holder.item` at 19:10).
+                check(java.contains("$check(\"@Main/Box\", "
+                        + "(holder).get(\"item\"), \"Main.java\", 19, "
+                        + "10)"),
+                    "the caller's return expression is the class-return "
+                        + "boundary origin: " + java);
+                // D3: the caller's declared function-type annotation is
+                // the typed-binding E8010 origin (`(x: int) => int` at
+                // 12:10).
+                check(java.contains("$check(\"(int)->int\", "
+                        + "(t).get(\"f\"), \"Main.java\", 12, 10)"),
+                    "the caller's declared function-type annotation is "
+                        + "the typed-binding E8010 origin: " + java);
+                // D3: the binding's declared contextual array annotation
+                // is the E8003 wrap origin (`int[]` at 24:11).
+                check(java.contains("$check(\"[int]\", __t0, "
+                        + "\"Main.java\", 24, 11)"),
+                    "the declared contextual array annotation is the "
+                        + "E8003 wrap origin: " + java);
+                // D3: the stdlib call expression is the declared-
+                // parameter boundary origin (`console.log(...)` at
+                // 11:3).
+                check(java.contains("$check(\"string\", "
+                        + "(t).get(\"value\"), \"Main.java\", 11, 3)"),
+                    "the stdlib call expression is the declared-"
+                        + "parameter boundary origin: " + java);
+                // D5: the locked time selector's declared-int boundary
+                // stays span-less (the 2-argument checkInt route).
+                check(java.contains("checkInt((java.lang.System"
+                        + ".currentTimeMillis() / 1000L) * 1000L)"),
+                    "the sanctioned time raise keeps the span-less "
+                        + "checkInt route: " + java);
+                // D4: the closed projections and the runtime-kind
+                // vocabulary.
+                check(java.contains("throw new DealError(\"E8001\", "
+                        + "\"expected int\", oFile, oLine, oCol, \"int\", "
+                        + "$kindOf(v), null, null);")
+                        && java.contains("if (v == null) return \"nil\";")
+                        && java.contains("if (v instanceof "
+                            + "java.lang.String) return \"string\";")
+                        && java.contains("if (v instanceof "
+                            + "java.lang.Double) return \"number\";"),
+                    "the shared seam carries the closed expected/actual "
+                        + "projections and the runtime-kind vocabulary");
+                check(java.contains("throw new DealError(\"E8003\", "
+                        + "\"array element \" + (i + 1) + \" type "
+                        + "mismatch\", oFile, oLine, oCol, elemText, "
+                        + "$kindOf(a.get(i)), null, null);"),
+                    "the array-element wrap carries the origin and the "
+                        + "element descriptor/kind projections");
+            }
+        }
+
+        // D3 (call-argument E8010 shape): a function-typed argument
+        // whose static signature is narrower than the callee's declared
+        // parameter annotation raises E8010 in the checking wrapper,
+        // carrying the declared annotation's origin (line 3, column 20)
+        // and the closed descriptor projections.
+        Frontend e8010F = compileFrontend("""
+            function inc(x: int): int { return x; }
+
+            function apply2(f: (a: int, b: string) => int, v: int): int { return f(v, "s"); }
+
+            export function test(): int {
+              return apply2(inc, 1);
+            }
+            """, "jvmtest-e8010-callarg.deal");
+        check(e8010F.errors().isEmpty(),
+            "E8010 call-argument fixture frontend clean: "
+                + e8010F.errors());
+        if (e8010F.errors().isEmpty()) {
+            JvmBackend.JvmCodegenResult e8010Res = JvmBackend.generate(
+                e8010F.program(), e8010F.checkResult(),
+                "jvmtest-e8010-callarg.deal", "Main",
+                SemanticProfile.DEAL_V1_2_INT32);
+            check(!e8010Res.hasErrors(),
+                "E8010 call-argument fixture codegen clean: "
+                    + e8010Res.diagnostics());
+            if (!e8010Res.hasErrors()) {
+                check(e8010Res.source().contains(
+                        "if (!checkSig(\"(int,string)->int\", "
+                            + "\"(int)->int\")) { throw new DealError("
+                            + "\"E8010\", \"function signature mismatch: "
+                            + "expected (int,string)->int, got (int)->int\", "
+                            + "\"Main.java\", 3, 20, \"(int,string)->int\", "
+                            + "\"(int)->int\", null, null); }"),
+                    "the E8010 call-argument shape carries the callee's "
+                        + "declared parameter annotation origin and the "
+                        + "closed descriptor projections: "
+                        + e8010Res.source());
+            }
+        }
+
+        // D6: an imported companion's declared parameter annotation is
+        // the cross-module boundary origin — the declaring module's
+        // artifact file, never the caller's. The two-module project
+        // flows through the production orchestrator, so the assertion
+        // also proves the import-context seam carries the companion's
+        // function declarations into the importing module's codegen.
+        writeFile("src/lib_origins.deal", """
+            export class Box { value: int = 0; }
+            export function needBox(b: Box): int { return b.value; }
+            """);
+        writeFile("src/entry_origins.deal", """
+            import * as Lib from "./lib_origins"
+            export function main(): null { return null; }
+            export function run(): int {
+              let holder: table = { item: 1 };
+              return Lib.needBox(holder.item);
+            }
+            """);
+        Path originsEntry = tmpDir.get().resolve("src/entry_origins.deal")
+            .toAbsolutePath();
+        Path originsOut = tmpDir.get().resolve("build/canonical_origins");
+        List<Path> originsRoots = List.of(
+            tmpDir.get().resolve("src").toAbsolutePath());
+        CompilationOrchestrator originsOrchestrator =
+            new CompilationOrchestrator(originsEntry, originsOut, false,
+                false, false, Backend.JVM, null, originsRoots,
+                Path.of(".").toAbsolutePath().normalize());
+        boolean originsOk = originsOrchestrator.compile();
+        check(originsOk, "canonical-origins project compiles: "
+            + originsOrchestrator.diagnostics());
+        if (originsOk) {
+            Path originsArtifact = originsOut.resolve("Entry_origins.java");
+            check(Files.exists(originsArtifact),
+                "the importing module's artifact exists");
+            if (Files.exists(originsArtifact)) {
+                String originsEmitted = Files.readString(originsArtifact);
+                check(originsEmitted.contains(
+                        "Lib_origins.$check(\"@src/Box\", "
+                            + "(holder).get(\"item\"), "
+                            + "\"Lib_origins.java\", 2, 28)"),
+                    "the imported companion's declared parameter "
+                        + "annotation is the cross-module boundary origin "
+                        + "(the declaring module's artifact): "
+                        + originsEmitted);
+            }
+        }
     }
 
     private static void testSharedCheckSeamCanonicalParsing()
@@ -14001,10 +14222,11 @@ public class JvmBackendTest {
                     + " parse message: " + out);
             String astralAtom = "@" + new String(Character.toChars(0x1F600))
                 + "/User";
-            check(out.contains("ASTRAL_CHECK: E8001 | expected " + astralAtom
-                    + ", got null"),
+            check(out.contains("ASTRAL_CHECK: E8001 | expected " + astralAtom),
                 "canonical astral atom passes parsing and reaches the"
-                    + " matcher fallback: " + out);
+                    + " matcher fallback (the closed boundary message"
+                    + " names the expected descriptor; the actual kind"
+                    + " rides the error field): " + out);
         } catch (IOException e) {
             fail("seam-canonical javac/java I/O: " + e);
         } finally {

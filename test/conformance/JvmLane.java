@@ -432,6 +432,22 @@ public class JvmLane implements Lane {
          * deployment entry. */
         private final Map<String, DeploymentEntry> deploymentMap =
             new LinkedHashMap<>();
+        /** Module path (temp-src-relative, extensionless) → canonical
+         * corpus-relative path: the module-identity normalization input
+         * for captured class-descriptor texts (the emitted identity
+         * spells the temp project's module root; the corpus vocabulary
+         * is the corpus-relative path — the same normalization the
+         * {@code sourceFile} field receives). */
+        private final Map<String, String> modulePathToCorpus =
+            new LinkedHashMap<>();
+        /** Module directory (temp-src-relative, extensionless) → the
+         * directory's module's canonical corpus-relative path: an
+         * emitted class-descriptor text names the declaring module's
+         * DIRECTORY components (the class name follows), so a
+         * directory holding several corpus modules keeps the first
+         * module's path and an unmappable one stays verbatim. */
+        private final Map<String, String> moduleDirToCorpus =
+            new LinkedHashMap<>();
         private final Set<String> hostNames = new LinkedHashSet<>();
 
         private Path projectRoot;
@@ -481,6 +497,43 @@ public class JvmLane implements Lane {
          */
         Map<String, DeploymentEntry> deploymentMap() {
             return deploymentMap;
+        }
+
+        /** Module path (temp-src-relative, extensionless) → the
+         * module's canonical corpus-relative path (see
+         * {@link #canonicalIdentities}). */
+        Map<String, String> modulePathToCorpus() {
+            return modulePathToCorpus;
+        }
+
+        /** Module directory (temp-src-relative, extensionless) → the
+         * directory's module's canonical corpus-relative path. */
+        Map<String, String> moduleDirToCorpus() {
+            return moduleDirToCorpus;
+        }
+
+        /** Records a module path in both the slash and the dotted
+         * spelling (the orchestrator names nested modules with dots
+         * and the emitted identity with slashes). */
+        private void recordModulePath(String modulePath, String corpusPath) {
+            modulePathToCorpus.put(modulePath, corpusPath);
+            if (modulePath.indexOf('/') >= 0) {
+                modulePathToCorpus.put(modulePath.replace('/', '.'),
+                    corpusPath);
+            }
+            int slash = modulePath.lastIndexOf('/');
+            moduleDirToCorpus.putIfAbsent(slash < 0 ? ""
+                : modulePath.substring(0, slash), corpusPath);
+        }
+
+        /** The temp-src-relative module path of one materialized module
+         * (the orchestrator's module naming: relative path minus the
+         * .deal suffix). */
+        private String modulePathOf(Path target) {
+            String rel = CorpusDiscovery.slash(srcRoot.relativize(target));
+            return rel.endsWith(".deal")
+                ? rel.substring(0, rel.length() - ".deal".length())
+                : rel;
         }
 
         CompilationOutcome compileCase() {
@@ -561,6 +614,8 @@ public class JvmLane implements Lane {
                     deploymentMap.put(artifactNameFor(target),
                         new DeploymentEntry(module.corpusPath(),
                             headerLinesStripped));
+                    recordModulePath(modulePathOf(target),
+                        module.corpusPath());
                 }
 
                 // Explicit-.deal alias copies (the absorbed
@@ -607,6 +662,8 @@ public class JvmLane implements Lane {
                         deploymentMap.put(artifactNameFor(aliasTarget),
                             new DeploymentEntry(companionCorpus,
                                 companionHeaderLinesStripped));
+                        recordModulePath(modulePathOf(aliasTarget),
+                            companionCorpus);
                     }
                 }
 
@@ -1439,12 +1496,19 @@ public class JvmLane implements Lane {
             column = captured.column();
         }
 
+        final String canonicalSourceFile = sourceFile;
         SidecarExpectations.ErrorExpectation snapshot =
             new SidecarExpectations.ErrorExpectation(
-                captured.code(), captured.message(), sourceFile, line,
-                column,
-                optionalField(pinned, "expected", captured.expected()),
-                optionalField(pinned, "actual", captured.actual()),
+                captured.code(),
+                canonicalIdentities(captured.message(), canonicalSourceFile,
+                    compilation),
+                sourceFile, line, column,
+                optionalField(pinned, "expected", captured.expected())
+                    .map(v -> canonicalIdentities(v, canonicalSourceFile,
+                        compilation)),
+                optionalField(pinned, "actual", captured.actual())
+                    .map(v -> canonicalIdentities(v, canonicalSourceFile,
+                        compilation)),
                 optionalField(pinned, "frames", captured.frames()),
                 optionalField(pinned, "cause", captured.cause()));
 
@@ -1453,6 +1517,85 @@ public class JvmLane implements Lane {
             framing.getBytes(StandardCharsets.UTF_8));
         return new LaneExecution.Executed(framedStdout, subprocess.stderr(),
             subprocess.exitCode());
+    }
+
+    /**
+     * Rewrites the temp project's module-qualified class-descriptor
+     * texts inside one captured field to the canonical corpus
+     * vocabulary (corpus C2, the {@code sourceFile} normalization's
+     * sibling): an {@code @<module-root>/<Class>} local identity
+     * (e.g. {@code @src/Box}) becomes {@code @conformance/<corpus path
+     * of the raising module>/<Class>} and a
+     * {@code @<module-root>/<module path>/<Class>} imported identity
+     * resolves the module path through the deployment map. A token the
+     * corpus vocabulary already spells (an {@code @conformance/...}
+     * path, an externals identity, a builtin) passes through
+     * unchanged, and an unmappable module path is emitted verbatim so
+     * the byte comparison fails and surfaces the defect — the lane
+     * never fabricates a canonical identity.
+     */
+    private String canonicalIdentities(String text, String sourceFile,
+            JvmCompilation compilation) {
+        if (text == null || text.indexOf('@') < 0) {
+            return text;
+        }
+        StringBuilder out = new StringBuilder();
+        int i = 0;
+        while (i < text.length()) {
+            char c = text.charAt(i);
+            if (c != '@') {
+                out.append(c);
+                i++;
+                continue;
+            }
+            int end = i + 1;
+            while (end < text.length()
+                    && (Character.isLetterOrDigit(text.charAt(end))
+                        || text.charAt(end) == '/'
+                        || text.charAt(end) == '_'
+                        || text.charAt(end) == '$'
+                        || text.charAt(end) == '-'
+                        || text.charAt(end) == '.')) {
+                end++;
+            }
+            out.append(canonicalIdentity(text.substring(i, end),
+                sourceFile, compilation));
+            i = end;
+        }
+        return out.toString();
+    }
+
+    /** One identity token of {@link #canonicalIdentities}. */
+    private String canonicalIdentity(String token, String sourceFile,
+            JvmCompilation compilation) {
+        String prefix = "@" + SRC_DIRECTORY + "/";
+        if (!token.startsWith(prefix)) {
+            return token;
+        }
+        String rest = token.substring(prefix.length());
+        int slash = rest.lastIndexOf('/');
+        String corpus;
+        String className;
+        if (slash < 0) {
+            // A class declared in the raising module itself: the module
+            // is the one the captured span names.
+            corpus = sourceFile;
+            className = rest;
+        } else {
+            String modulePath = rest.substring(0, slash);
+            corpus = compilation.modulePathToCorpus().get(modulePath);
+            if (corpus == null) {
+                // The emitted descriptor names the declaring module's
+                // DIRECTORY (the class name follows it), not the file —
+                // resolve the directory spelling too.
+                corpus = compilation.moduleDirToCorpus().get(modulePath);
+            }
+            className = rest.substring(slash + 1);
+        }
+        if (corpus == null || className.isEmpty()) {
+            return token;
+        }
+        return "@conformance/" + corpus + "/" + className;
     }
 
     /**
