@@ -50,7 +50,10 @@ import java.util.Set;
  * envelope executes three-way over the production lowering pipelines: a
  * successful init publishes the op's SUCCESS with the walk's events nested
  * under it; a failing init publishes the op's single FAILURE before the run's
- * terminal (no export publication); the full-program carrier carries the
+ * terminal and publishes zero {@code EXPORT_PUBLISH} events although its
+ * block carries the publication ops (the full-program carrier's exported
+ * function), so the failure-path evidence is never a hollow empty-set
+ * assertion; the full-program carrier carries the
  * resolved import/export ops ({@code MODULE_IMPORT}/{@code EXPORT_READ}/
  * {@code EXPORT_PUBLISH}/{@code ENTRY_INVOKE}) nested under the envelope, so
  * every MODULES R-CAPABILITY required operation is produced and a
@@ -74,9 +77,12 @@ import java.util.Set;
  *
  * <p><b>Negative controls.</b> A unit whose {@code MODULE_INIT} op records a
  * structural parent (the envelope is parentless) is rejected by the
- * consumers; a defect-injected artifact that publishes the envelope's
- * INITIALIZED state on the FAILURE path fails the failure-path rule the
- * failing seed pins — neither passes on coincidental output.</p>
+ * consumers; two defect-injected artifacts fail the failure-path rule the
+ * failing seed pins — one publishes the envelope's INITIALIZED state on the
+ * FAILURE path, the other publishes an export (with its own
+ * {@code EXPORT_PUBLISH} trace event) on the FAILURE path while keeping the
+ * state-event shape (one START, one FAILURE, no SUCCESS), so the rule's
+ * publication census, not a coincidental state event, is what rejects it.</p>
  */
 public class ModuleInitDifferentialTest {
 
@@ -97,6 +103,25 @@ public class ModuleInitDifferentialTest {
     private static final String REGISTRY_HASH =
         CapabilityRegistry.releaseRegistry().capabilityRegistryHash();
     private static final Path WORKSPACE = Path.of("build/module-init-diff");
+
+    /**
+     * The failing-init seed (the E8 failure path): the full-program carrier
+     * gives the unit a resolved import ({@code MODULE_IMPORT}) and an
+     * exported function ({@code EXPORT_PUBLISH}/{@code ENTRY_INVOKE} in the
+     * module-init block's trailing E7 terminals), so the failing walk's
+     * "no export publication" evidence covers a unit whose block really
+     * carries publication ops — never a hollow empty-set assertion. The
+     * module-level statement at line 6 fails before the block reaches the
+     * terminals.
+     */
+    private static final String FAILING_INIT_SOURCE = """
+        import * as console from "std/console"
+        export function main(): null {
+          console.log("m")
+          return null
+        }
+        let broken: int = 1 / 0
+        """;
 
     // =========================================================================
     // The single-module class pipeline (the ISSUE-0516/ISSUE-0586 pattern)
@@ -410,19 +435,28 @@ public class ModuleInitDifferentialTest {
     static void testFailingInit() {
         System.out.println("-- Module init: a failing walk publishes the envelope's "
             + "FAILURE and no export publication --");
-        Lowered lowered = lower("""
-            export class Person {
-              name: string = "anon";
-            }
-            let broken: int = 1 / 0
-            let p: Person = {}
-            """, "failing init");
+        Lowered lowered = lowerProgram(FAILING_INIT_SOURCE, "failing init");
         if (lowered == null) {
             return;
         }
+        int publishOps = ofKind(lowered.unit(), SemanticOpKind.EXPORT_PUBLISH).size();
+        int importOps = ofKind(lowered.unit(), SemanticOpKind.MODULE_IMPORT).size();
+        check(publishOps >= 1 && importOps >= 1,
+            "the failing-init seed carries the nested MODULE_IMPORT/EXPORT_PUBLISH ops "
+                + "(the failing walk's zero-publication assertion is not hollow); got "
+                + importOps + " import(s), " + publishOps + " publication(s)");
+        for (SemanticOp op : lowered.unit().ops()) {
+            if (op.kind() == SemanticOpKind.MODULE_IMPORT
+                    || op.kind() == SemanticOpKind.EXPORT_PUBLISH) {
+                check(lowered.unit().moduleInit().initBlock()
+                        .equals(lowered.table().opBlocks().get(op.opId())),
+                    "the failing seed's " + op.kind() + " op is a member of the "
+                        + "module-init block (nested under the MODULE_INIT envelope)");
+            }
+        }
         SemanticDifferentialHarness.Verdict verdict = run(lowered,
             new SemanticDifferentialHarness.TerminalExpectation.FailureWith("E8005",
-                "main.deal:4:19"),
+                "main.deal:6:19"),
             "failing init");
         if (verdict == null) {
             return;
@@ -431,7 +465,11 @@ public class ModuleInitDifferentialTest {
             int starts = 0;
             int failures = 0;
             int successes = 0;
+            int publications = 0;
             for (SemanticRuntimeModel.TraceEvent event : consumerRun.trace()) {
+                if (event.kind() == SemanticOpKind.EXPORT_PUBLISH) {
+                    publications++;
+                }
                 if (event.kind() != SemanticOpKind.MODULE_INIT) {
                     continue;
                 }
@@ -445,21 +483,10 @@ public class ModuleInitDifferentialTest {
                 consumerRun.consumer() + " publishes one MODULE_INIT START and exactly "
                     + "one FAILURE (no SUCCESS) for the failing walk; got starts="
                     + starts + " failures=" + failures + " successes=" + successes);
-            boolean publishedAfterFailure = false;
-            boolean failedWalk = false;
-            for (SemanticRuntimeModel.TraceEvent event : consumerRun.trace()) {
-                if (event.kind() == SemanticOpKind.MODULE_INIT
-                        && event.phase() == SemanticRuntimeModel.Phase.FAILURE) {
-                    failedWalk = true;
-                }
-                if (failedWalk && event.kind() == SemanticOpKind.EXPORT_PUBLISH
-                        && event.phase() == SemanticRuntimeModel.Phase.SUCCESS) {
-                    publishedAfterFailure = true;
-                }
-            }
-            check(!publishedAfterFailure,
-                consumerRun.consumer() + " publishes no export after the MODULE_INIT "
-                    + "FAILURE");
+            check(publications == 0,
+                consumerRun.consumer() + " publishes zero EXPORT_PUBLISH events for the "
+                    + "failing walk (the failing init publishes no export at all, never "
+                    + "merely none after the FAILURE); got " + publications);
         }
     }
 
@@ -798,27 +825,29 @@ public class ModuleInitDifferentialTest {
     }
 
     /**
-     * The failure-path publication negative: an artifact that publishes the
-     * envelope's INITIALIZED state (and an export entry) on the MODULE_INIT
-     * FAILURE path is a defect; the failure-path rule the failing-init seed
-     * pins — exactly one START, one FAILURE terminal, no SUCCESS — must reject
-     * it. The defect is injected into the emitted artifact text, so the
-     * control proves the rule is discriminating and not satisfied by
-     * coincidence.
+     * The failure-path publication negative: an artifact that publishes on
+     * the MODULE_INIT FAILURE path is a defect; the failure-path rule the
+     * failing-init seed pins — exactly one START, one FAILURE terminal, no
+     * SUCCESS, and zero {@code EXPORT_PUBLISH} events — must reject it. Two
+     * defects are injected into the emitted artifact text: the state
+     * publication (INITIALIZED with its state SUCCESS event), and the export
+     * publication without any state event (an export entry plus its own
+     * {@code EXPORT_PUBLISH} trace event) — the second is invisible to the
+     * state-event census alone, so the rule's publication count is what
+     * rejects it. Both controls prove the rule is discriminating and never
+     * satisfied by coincidence.
      */
     static void testFailurePathPublicationNegative() {
         System.out.println("-- Negative: an artifact publishing on the MODULE_INIT FAILURE "
             + "path fails the failure-path rule --");
-        Lowered lowered = lower("""
-            export class Person {
-              name: string = "anon";
-            }
-            let broken: int = 1 / 0
-            let p: Person = {}
-            """, "failure path negative");
+        Lowered lowered = lowerProgram(FAILING_INIT_SOURCE, "failure path negative");
         if (lowered == null) {
             return;
         }
+        int publishOps = ofKind(lowered.unit(), SemanticOpKind.EXPORT_PUBLISH).size();
+        check(publishOps >= 1,
+            "the failure-path negative seed carries EXPORT_PUBLISH ops (the rule is "
+                + "not hollow); got " + publishOps);
         String artifact = LuaSemanticEmitter.emitModule(lowered.unit(), lowered.table());
         int failureAt = artifact.indexOf("\"FAILURE\", \"MODULE_INIT\"");
         int successAt = artifact.indexOf("\"SUCCESS\", \"MODULE_INIT\"", failureAt);
@@ -829,31 +858,89 @@ public class ModuleInitDifferentialTest {
         if (failureAt < 0 || successAt <= failureAt || errorAt <= failureAt) {
             return;
         }
+        int publicationAt = artifact.indexOf("\"SUCCESS\", \"EXPORT_PUBLISH\"");
+        check(publicationAt >= 0,
+            "the emitted artifact carries the EXPORT_PUBLISH publication the envelope "
+                + "would run on the success path");
+        if (publicationAt < 0) {
+            return;
+        }
         int successLineStart = artifact.lastIndexOf('\n', successAt) + 1;
         int successLineEnd = artifact.indexOf('\n', successLineStart);
         String successLine = artifact.substring(successLineStart, successLineEnd);
-        String defective = artifact.substring(0, errorAt)
+        int publicationLineStart = artifact.lastIndexOf('\n', publicationAt) + 1;
+        int publicationLineEnd = artifact.indexOf('\n', publicationLineStart);
+        String publicationLine = artifact.substring(publicationLineStart,
+            publicationLineEnd);
+        // The state-publication defect: the FAILURE path publishes the
+        // INITIALIZED state (and an export entry) with a state SUCCESS event.
+        String stateInjected = artifact.substring(0, errorAt)
             + successLine + "\n"
             + "__exports[\"__defect__\"] = true\n"
             + artifact.substring(errorAt);
+        // The export-publication defect without any state event: the FAILURE
+        // path publishes an export with its own EXPORT_PUBLISH trace event —
+        // the state-event census alone cannot reject it, so the rule must
+        // count the publication events in the artifact's trace.
+        String exportInjected = artifact.substring(0, errorAt)
+            + "__exports[\"__defect__\"] = {__kind = \"function\", sig = \"():null\", "
+            + "f = function() return nil end}\n"
+            + publicationLine + "\n"
+            + artifact.substring(errorAt);
         List<String> real = runLuaArtifact(artifact, "module-init-failure-real.lua");
-        List<String> injected = runLuaArtifact(defective, "module-init-failure-injected.lua");
-        check(moduleInitFailureRuleHolds(real),
+        List<String> stateInjectionRun = runLuaArtifact(stateInjected,
+            "module-init-failure-state-injected.lua");
+        List<String> exportInjectionRun = runLuaArtifact(exportInjected,
+            "module-init-failure-export-injected.lua");
+        FailurePathCensus realCensus = failurePathCensus(real);
+        check(realCensus.ruleHolds(),
             "the real artifact passes the failure-path rule (one MODULE_INIT START, one "
-                + "FAILURE, no SUCCESS — no export publication on the FAILURE path)");
-        check(!moduleInitFailureRuleHolds(injected),
-            "the defect-injected artifact fails the failure-path rule (never a "
-                + "coincidental pass): the FAILURE path published the INITIALIZED state");
+                + "FAILURE, no SUCCESS, zero EXPORT_PUBLISH events — the failing init "
+                + "publishes no export at all): " + realCensus);
+        FailurePathCensus stateCensus = failurePathCensus(stateInjectionRun);
+        check(!stateCensus.ruleHolds(),
+            "the state-injected artifact fails the failure-path rule (never a "
+                + "coincidental pass): the FAILURE path published the INITIALIZED state: "
+                + stateCensus);
+        FailurePathCensus exportCensus = failurePathCensus(exportInjectionRun);
+        check(exportCensus.publications() >= 1,
+            "the export-injected artifact publishes an EXPORT_PUBLISH event on the "
+                + "FAILURE path (the injection is effective): " + exportCensus);
+        check(exportCensus.starts() == 1 && exportCensus.failures() == 1
+                && exportCensus.successes() == 0,
+            "the export-injected artifact keeps the state-event shape (one START, one "
+                + "FAILURE, no SUCCESS), so the rejection is caused by the published "
+                + "export, never by a coincidental state event: " + exportCensus);
+        check(!exportCensus.ruleHolds(),
+            "the export-injected artifact fails the failure-path rule: an export "
+                + "published on the FAILURE path is rejected even without a state "
+                + "event: " + exportCensus);
     }
 
-    /** The module-init failure-path rule: one START, one FAILURE, no SUCCESS. */
-    private static boolean moduleInitFailureRuleHolds(List<String> protocolLines) {
+    /** The failure-path rule census over one artifact's protocol lines. */
+    private record FailurePathCensus(int starts, int failures, int successes,
+                                     int publications) {
+
+        /** One START, one FAILURE, no SUCCESS, and zero export publications. */
+        boolean ruleHolds() {
+            return starts == 1 && failures == 1 && successes == 0 && publications == 0;
+        }
+    }
+
+    /**
+     * The module-init failure-path rule: one START, one FAILURE, no SUCCESS,
+     * and zero EXPORT_PUBLISH events. The publication count rejects an
+     * artifact that publishes an export on the FAILURE path without any
+     * state event — the state-event census alone would pass such a defect.
+     */
+    private static FailurePathCensus failurePathCensus(List<String> protocolLines) {
         if (protocolLines == null) {
-            return false;
+            return new FailurePathCensus(-1, -1, -1, -1);
         }
         int starts = 0;
         int failures = 0;
         int successes = 0;
+        int publications = 0;
         for (String line : protocolLines) {
             if (line.isEmpty()) {
                 continue;
@@ -864,16 +951,20 @@ public class ModuleInitDifferentialTest {
             } catch (RuntimeException exception) {
                 continue;
             }
-            if (decoded instanceof SemanticRuntimeModel.TraceEvent event
-                    && event.kind() == SemanticOpKind.MODULE_INIT) {
-                switch (event.phase()) {
-                    case START -> starts++;
-                    case FAILURE -> failures++;
-                    case SUCCESS -> successes++;
+            if (decoded instanceof SemanticRuntimeModel.TraceEvent event) {
+                if (event.kind() == SemanticOpKind.EXPORT_PUBLISH) {
+                    publications++;
+                }
+                if (event.kind() == SemanticOpKind.MODULE_INIT) {
+                    switch (event.phase()) {
+                        case START -> starts++;
+                        case FAILURE -> failures++;
+                        case SUCCESS -> successes++;
+                    }
                 }
             }
         }
-        return starts == 1 && failures == 1 && successes == 0;
+        return new FailurePathCensus(starts, failures, successes, publications);
     }
 
     /** Writes one emitted Lua artifact and runs it under real luajit. */
