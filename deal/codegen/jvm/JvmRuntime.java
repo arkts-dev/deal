@@ -307,6 +307,21 @@ public final class JvmRuntime {
         if (kind == null) {
             return "missing";
         }
+        // The value's own variant wins over the declared kind: the closed
+        // value model keeps the int/number variant through every typed
+        // boundary (an int value admitted at a number-typed position stays
+        // a Long, a number value admitted at an int-typed position stays a
+        // Double) — exactly the oracle's atomOf.
+        if (v instanceof Long longValue) {
+            return "int:" + longValue.longValue();
+        }
+        if (v instanceof Double doubleValue) {
+            double d = doubleValue.doubleValue();
+            if (Double.isNaN(d)) {
+                return "num:nan";
+            }
+            return "num:" + Double.toHexString(d);
+        }
         switch (kind) {
             case "null" -> {
                 return "null";
@@ -460,23 +475,27 @@ public final class JvmRuntime {
             return;
         }
         PrintStream err = new PrintStream(System.err, true, StandardCharsets.UTF_8);
-        err.println("F|CONSOLE_WRITE|" + esc(text));
+        err.println("F|CONSOLE_WRITE|STDOUT|" + esc(text));
         err.flush();
     }
 
     /**
-     * Records one console error effect (real stderr bytes + the protocol
-     * record): {@code CONSOLE_ERROR} appends the exact scalar bytes plus
-     * one {@code \n} to {@code STDERR} — the channel identity is part of
-     * the closed one-effect contract.
+     * Records one console error effect. {@code CONSOLE_ERROR} appends the
+     * exact scalar bytes plus one {@code \n} to {@code STDERR} — the
+     * channel identity is part of the closed one-effect contract. The
+     * STDERR channel shares the trace stream, so the trace protocol stays
+     * decode-clean: trace mode publishes only the protocol record (the
+     * effect's exact scalar text plus its channel), production mode (no
+     * protocol) publishes the exact effect bytes.
      */
     public static void consoleError(String text) {
         PrintStream err = new PrintStream(System.err, true, StandardCharsets.UTF_8);
-        err.println(text);
         if (!traceEnabled) {
+            err.println(text);
+            err.flush();
             return;
         }
-        err.println("F|CONSOLE_WRITE|" + esc(text));
+        err.println("F|CONSOLE_WRITE|STDERR|" + esc(text));
         err.flush();
     }
 
@@ -967,7 +986,7 @@ public final class JvmRuntime {
             return;
         }
         PrintStream err = new PrintStream(System.err, true, StandardCharsets.UTF_8);
-        err.println("F|" + kind + "|" + esc(text));
+        err.println("F|" + kind + "|-|" + esc(text));
     }
 
     /**
@@ -1504,6 +1523,16 @@ public final class JvmRuntime {
             return longValue.longValue();
         }
         return ((Double) value).longValue();
+    }
+
+    /**
+     * The normalized index/length view of one runtime value: a Long or an
+     * integral Double (the closed value model's variant tolerance — an
+     * index value admitted at an int-typed position keeps its boxed
+     * Double, so the normalized slot never casts it blind).
+     */
+    public static long indexOf(Object value) {
+        return longOf(value);
     }
 
     /** A number parameter carrier: a Double or a Long (int → double is exact). */

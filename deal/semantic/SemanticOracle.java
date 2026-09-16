@@ -4508,7 +4508,8 @@ public final class SemanticOracle {
                     String text = new String(bytes, 0, bytes.length - 1,
                         StandardCharsets.UTF_8);
                     effects.add(new SemanticRuntimeModel.EffectEvent(
-                        SemanticRuntimeModel.EffectEvent.Kind.CONSOLE_WRITE, text));
+                        SemanticRuntimeModel.EffectEvent.Kind.CONSOLE_WRITE, channel,
+                        text));
                 }
             };
         }

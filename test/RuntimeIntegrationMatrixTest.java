@@ -284,6 +284,36 @@ public class RuntimeIntegrationMatrixTest {
     private static final SemanticDifferentialHarness.TerminalExpectation E8002 =
         new SemanticDifferentialHarness.TerminalExpectation.FailureWith("E8002", null);
 
+    static void testScratchVariants() {
+        runMatrix(JSON + CONSOLE
+            + "function main(): null {\n"
+            + "  let d: table = json.parse(\"{\\\"i\\\": 2}\")\n"
+            + "  let n: number = d.i\n"
+            + "  let t: table = { v: n }\n"
+            + "  let s: string = json.stringify(t)\n"
+            + "  console.log(`A:${s}`)\n"
+            + "}\n",
+            "scratch A (parsed int under number)", List.of("A:{\"v\":2}"), SUCCESS);
+        runMatrix(JSON + CONSOLE
+            + "function main(): null {\n"
+            + "  let d: table = { i: 2 }\n"
+            + "  let n: number = d.i\n"
+            + "  let t: table = { v: n }\n"
+            + "  let s: string = json.stringify(t)\n"
+            + "  console.log(`B:${s}`)\n"
+            + "}\n",
+            "scratch B (dynamic int read under number)", List.of("B:{\"v\":2}"), SUCCESS);
+        runMatrix(JSON + CONSOLE
+            + "function main(): null {\n"
+            + "  let d: table = { n: 2.0 }\n"
+            + "  let i: int = d.n\n"
+            + "  let t: table = { v: i }\n"
+            + "  let s: string = json.stringify(t)\n"
+            + "  console.log(`C:${s}`)\n"
+            + "}\n",
+            "scratch C (dynamic number read under int)", List.of("C:{\"v\":2.0}"), SUCCESS);
+    }
+
     // =========================================================================
     // 1. The chain matrix
     // =========================================================================
@@ -1665,6 +1695,77 @@ public class RuntimeIntegrationMatrixTest {
                 List.of("parse-read-ok"), SUCCESS);
         }
 
+        // (i4) The admitted-variant class: the closed value model keeps
+        // the int/number variant through every typed boundary, so an int
+        // value read from a parsed container and admitted at a
+        // number-typed position keeps the integer spelling, and a number
+        // value admitted at an int-typed position keeps the decimal
+        // spelling — the parsed carriers and the plain dynamic reads
+        // alike. A shared Lua realization that follows the static kind
+        // instead of the admitted variant fails these seeds.
+        {
+            String source = CONSOLE + JSON
+                + "function main(): null {\n"
+                + "  let d: table = json.parse(\"{\\\"i\\\": 2, \\\"n\\\": 2.0}\")\n"
+                + "  let a: number = d.i\n"
+                + "  let b: int = d.n\n"
+                + "  let t: table = { a: a, b: b }\n"
+                + "  let s: string = json.stringify(t)\n"
+                + "  if (s === \"{\\\"a\\\":2,\\\"b\\\":2.0}\") "
+                + "{ console.log(\"parsed-var-ok\") } else { console.log(\"bad\") }\n"
+                + "}\n";
+            runMatrix(source, "JSON_STRINGIFY admitted variants (parsed int under "
+                + "number, parsed number under int)", List.of("parsed-var-ok"), SUCCESS);
+        }
+        {
+            String source = CONSOLE + JSON
+                + "function main(): null {\n"
+                + "  let d: table = { i: 2, n: 2.0 }\n"
+                + "  let a: number = d.i\n"
+                + "  let b: int = d.n\n"
+                + "  let t: table = { a: a, b: b }\n"
+                + "  let s: string = json.stringify(t)\n"
+                + "  if (s === \"{\\\"a\\\":2,\\\"b\\\":2.0}\") "
+                + "{ console.log(\"dyn-var-ok\") } else { console.log(\"bad\") }\n"
+                + "}\n";
+            runMatrix(source, "JSON_STRINGIFY admitted variants (dynamic int read "
+                + "under number, dynamic number read under int)",
+                List.of("dyn-var-ok"), SUCCESS);
+        }
+        {
+            String source = CONSOLE + JSON
+                + "function main(): null {\n"
+                + "  let d: table = json.parse(\"{\\\"xs\\\": [1, 2]}\")\n"
+                + "  let xs: number[] = d.xs\n"
+                + "  let first: number = xs[0]\n"
+                + "  let a: string = json.stringify({ a: first })\n"
+                + "  let ns: number[] = [5.0, 6.0]\n"
+                + "  let f: number = ns[0]\n"
+                + "  let b: string = json.stringify({ b: f })\n"
+                + "  if (a === \"{\\\"a\\\":1}\" && b === \"{\\\"b\\\":5.0}\") "
+                + "{ console.log(\"arr-var-ok\") } else { console.log(\"bad\") }\n"
+                + "}\n";
+            runMatrix(source, "JSON_STRINGIFY admitted variants (parsed int array "
+                + "element, number array element)", List.of("arr-var-ok"), SUCCESS);
+        }
+
+        // (r) CONSOLE_ERROR: the STDERR channel of the closed effect
+        // contract. Trace mode publishes the protocol record (the exact
+        // scalar text plus its channel) while the trace stream stays
+        // decode-clean — the harness decodes every stderr line, so a raw
+        // effect byte would fail the run; the production-mode pins check
+        // the real STDERR program bytes.
+        {
+            String source = CONSOLE
+                + "function main(): null {\n"
+                + "  console.log(\"out\")\n"
+                + "  console.error(\"oops\")\n"
+                + "  console.log(\"after\")\n"
+                + "}\n";
+            runMatrix(source, "CONSOLE_ERROR STDERR channel + ordered console effects",
+                List.of("out", "oops", "after"), SUCCESS);
+        }
+
         // (j) The math family: IEEE floor/ceil/sqrt, signed32 abs, and
         // the min/max selectors.
         {
@@ -1929,6 +2030,86 @@ public class RuntimeIntegrationMatrixTest {
                 } catch (java.io.IOException | InterruptedException exception) {
                     fail("production-mode stdlib failure projection: "
                         + "infrastructure failure: " + exception.getMessage());
+                }
+            }
+        }
+        {
+            // The CONSOLE_ERROR production channel: the same program as
+            // the trace-mode CONSOLE_ERROR seed, so the real program bytes
+            // cross-check the recorded effects — the CONSOLE_LOG effects
+            // ("out", "after") are exactly the stdout lines in order and
+            // the CONSOLE_ERROR effect ("oops") is exactly the stderr line
+            // with the closed scalar bytes plus one '\n'.
+            String source = CONSOLE
+                + "function main(): null {\n"
+                + "  console.log(\"out\")\n"
+                + "  console.error(\"oops\")\n"
+                + "  console.log(\"after\")\n"
+                + "}\n";
+            CheckedSlice slice = checkSlice(source, "production-mode console channels");
+            LoweredSlice lowered = lowerFull(slice, "production-mode console channels");
+            if (lowered != null) {
+                try {
+                    String lua = deal.codegen.lua.LuaSemanticEmitter
+                        .emitProductionModule(lowered.unit(), lowered.table(), true);
+                    Path script = WORKSPACE.resolve("console-prod.lua");
+                    Files.writeString(script, lua);
+                    Path luaOut = WORKSPACE.resolve("console-prod-lua-out.txt");
+                    Path luaErr = WORKSPACE.resolve("console-prod-lua-err.txt");
+                    Process luaRun = new ProcessBuilder("luajit",
+                        script.toAbsolutePath().toString())
+                        .redirectOutput(luaOut.toFile()).redirectError(luaErr.toFile())
+                        .start();
+                    int luaExit = luaRun.waitFor();
+                    String luaOutText = Files.readString(luaOut);
+                    String luaErrText = Files.readString(luaErr);
+                    check(luaExit == 0 && luaOutText.equals("out\nafter\n")
+                            && luaErrText.equals("oops\n"),
+                        "the production shared-LuaJIT console artifact writes the "
+                            + "CONSOLE_LOG effect bytes to stdout and the CONSOLE_ERROR "
+                            + "effect bytes to stderr (exit " + luaExit + ", stdout "
+                            + luaOutText.trim() + ", stderr " + luaErrText.trim() + ")");
+
+                    deal.codegen.jvm.JvmSemanticEmitter.EmissionResult emission =
+                        deal.codegen.jvm.JvmSemanticEmitter.emitProductionModule(
+                            lowered.unit(), lowered.table(), true, "ConsoleProdMain");
+                    Path sourceFile = WORKSPACE.resolve("ConsoleProdMain.java");
+                    Files.writeString(sourceFile, emission.source());
+                    Path classes = WORKSPACE.resolve("console-prod-classes");
+                    Files.createDirectories(classes);
+                    String classpath = System.getProperty("java.class.path", "");
+                    Process compile = new ProcessBuilder("javac", "--release", "25",
+                        "-proc:none", "-cp", classpath, "-d", classes.toString(),
+                        sourceFile.toAbsolutePath().toString())
+                        .redirectErrorStream(true).start();
+                    String compileOutput = new String(
+                        compile.getInputStream().readAllBytes());
+                    int compileExit = compile.waitFor();
+                    check(compileExit == 0, "the production shared-JVM console "
+                        + "artifact compiles (exit " + compileExit + ": "
+                        + compileOutput.trim() + ")");
+                    if (compileExit == 0) {
+                        Path jvmOut = WORKSPACE.resolve("console-prod-jvm-out.txt");
+                        Path jvmErr = WORKSPACE.resolve("console-prod-jvm-err.txt");
+                        Process javaRun = new ProcessBuilder("java", "-cp",
+                            classpath + java.io.File.pathSeparator + classes,
+                            "ConsoleProdMain")
+                            .redirectOutput(jvmOut.toFile())
+                            .redirectError(jvmErr.toFile()).start();
+                        int javaExit = javaRun.waitFor();
+                        String jvmOutText = Files.readString(jvmOut);
+                        String jvmErrText = Files.readString(jvmErr);
+                        check(javaExit == 0 && jvmOutText.equals("out\nafter\n")
+                                && jvmErrText.equals("oops\n"),
+                            "the production shared-JVM console artifact writes the "
+                                + "CONSOLE_LOG effect bytes to stdout and the "
+                                + "CONSOLE_ERROR effect bytes to stderr (exit " + javaExit
+                                + ", stdout " + jvmOutText.trim() + ", stderr "
+                                + jvmErrText.trim() + ")");
+                    }
+                } catch (java.io.IOException | InterruptedException exception) {
+                    fail("production-mode console channels: infrastructure failure: "
+                        + exception.getMessage());
                 }
             }
         }

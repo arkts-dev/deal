@@ -223,7 +223,16 @@ public final class SemanticRuntimeModel {
     }
 
     /** One ordered external effect of the closed effect protocol. */
-    public record EffectEvent(Kind kind, String text) {
+    public record EffectEvent(Kind kind, SharedStdlibSemantics.Channel channel,
+                              String text) {
+
+        /**
+         * The console effect with its named channel; every other effect
+         * kind is channel-less (a null channel).
+         */
+        public EffectEvent(Kind kind, String text) {
+            this(kind, null, text);
+        }
 
         public enum Kind {
             /** A console write (the stdlib console algorithm's ordered effect). */
@@ -245,6 +254,9 @@ public final class SemanticRuntimeModel {
         public EffectEvent {
             Objects.requireNonNull(kind, "kind must not be null");
             Objects.requireNonNull(text, "text must not be null");
+            if (kind == Kind.CONSOLE_WRITE) {
+                Objects.requireNonNull(channel, "a console effect carries its channel");
+            }
         }
 
         /** The canonical one-line text of this effect. */

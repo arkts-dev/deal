@@ -1934,10 +1934,13 @@ public final class JvmSemanticEmitter {
             switch (payload.mode()) {
                 case ARRAY_READ, ARRAY_WRITE -> {
                     boolean write = payload.mode() == deal.semantic.ir.IndexMode.ARRAY_WRITE;
+                    // The normalized index/length are numeric views: a
+                    // runtime number carrier (the value model's variant
+                    // representation) unwraps, a plain Long passes through.
                     out.append(indent(indent)).append(target)
-                        .append(" = new long[]{((Long) ").append(slot(payload.rawKey()))
-                        .append(").longValue(), ((Long) ")
-                        .append(slot(payload.currentLength())).append(").longValue(), ")
+                        .append(" = new long[]{JvmRuntime.indexOf(")
+                        .append(slot(payload.rawKey())).append("), JvmRuntime.indexOf(")
+                        .append(slot(payload.currentLength())).append("), ")
                         .append(write ? "1L" : "0L").append("};\n");
                 }
                 case TABLE_READ, TABLE_WRITE ->
@@ -2381,8 +2384,8 @@ public final class JvmSemanticEmitter {
                             .append(", ")
                             .append(javaString(parentKey(boundary.origin().parentOpId())))
                             .append(", (long[]) ").append(chainSlotExpr(chain))
-                            .append(", ((Long) ").append(chainLengthExpr(chain))
-                            .append(").longValue(), ")
+                            .append(", JvmRuntime.indexOf(").append(chainLengthExpr(chain))
+                            .append("), ")
                             .append(javaString(originOf(boundary))).append(");\n");
                     } else {
                     out.append(indent(indent)).append("JvmRuntime.arrayBounds(")
@@ -2391,8 +2394,8 @@ public final class JvmSemanticEmitter {
                         .append(", ")
                         .append(javaString(parentKey(boundary.origin().parentOpId())))
                         .append(", ").append(input).append(", ((long[]) ")
-                        .append(chainSlotExpr(chain)).append(")[0], ((Long) ")
-                        .append(chainLengthExpr(chain)).append(").longValue(), ")
+                        .append(chainSlotExpr(chain)).append(")[0], JvmRuntime.indexOf(")
+                        .append(chainLengthExpr(chain)).append("), ")
                         .append(javaString(descriptorText(payload.descriptor())))
                         .append(", ")
                         .append(javaString(staticKind(payload.descriptor())))

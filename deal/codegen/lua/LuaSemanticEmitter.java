@@ -1221,10 +1221,10 @@ public final class LuaSemanticEmitter {
                     .append(", ").append(slot(input)).append(")\n");
                 out.append(target).append("[").append(i + 1)
                     .append("] = __chk == nil and __NULL or __chk\n");
-                if (isNumberKind(producerKind(input))) {
-                    out.append("__numKey(").append(target).append(", ")
-                        .append(i + 1).append(", true)\n");
-                }
+                out.append("__numKey(").append(target).append(", ")
+                    .append(i + 1).append(", ").append(slot(input)).append(", ")
+                    .append(isNumberKind(producerKind(input)) ? "true" : "false")
+                    .append(")\n");
                 emitBoundarySuccess(boundary, "__chk", payload.elementDescriptor());
             }
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
@@ -1240,10 +1240,11 @@ public final class LuaSemanticEmitter {
                     .append("] = ").append(slot(entry.value())).append("\n");
                 out.append("__orderAdd(").append(target).append(", ")
                     .append(luaString(entry.key())).append(")\n");
-                if (isNumberKind(producerKind(entry.value()))) {
-                    out.append("__numKey(").append(target).append(", ")
-                        .append(luaString(entry.key())).append(", true)\n");
-                }
+                out.append("__numKey(").append(target).append(", ")
+                    .append(luaString(entry.key())).append(", ")
+                    .append(slot(entry.value())).append(", ")
+                    .append(isNumberKind(producerKind(entry.value())) ? "true" : "false")
+                    .append(")\n");
             }
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
         }
@@ -1265,6 +1266,21 @@ public final class LuaSemanticEmitter {
             out.append(target).append(" = __member(").append(slot(payload.table()))
                 .append(", ").append(luaString(payload.key())).append(")\n");
             SemanticOp boundary = boundaryChildOf(op);
+            // The read-side variant materialization: the raw read's
+            // declared descriptor decides whether an int-variant slot
+            // value becomes a carrier (a number-typed read position) and
+            // a number-variant slot value becomes a carrier (its slot
+            // mark) — the closed value model's admitted variant.
+            RuntimeDescriptor readDescriptor = boundary != null
+                ? ((KindPayload.BoundaryPayload) boundary.payload()).descriptor()
+                : (op.resultType() instanceof RuntimeDescriptor descriptor
+                    ? descriptor : null);
+            out.append(target).append(" = __readVar(").append(slot(payload.table()))
+                .append(", ").append(luaString(payload.key())).append(", ")
+                .append(target).append(", ")
+                .append(readDescriptor != null
+                    && isNumberKind(staticKind(readDescriptor)) ? "true" : "false")
+                .append(")\n");
             if (boundary != null) {
                 KindPayload.BoundaryPayload boundaryPayload =
                     (KindPayload.BoundaryPayload) boundary.payload();
@@ -1581,6 +1597,7 @@ public final class LuaSemanticEmitter {
                 .append(luaString(payload.key())).append(")\n");
             out.append("__numKey(").append(slot(payload.table())).append(", ")
                 .append(luaString(payload.key())).append(", ")
+                .append(slot(payload.value())).append(", ")
                 .append(isNumberKind(producerKind(payload.value())) ? "true" : "false")
                 .append(")\n");
             emitPlainSuccess(op);
@@ -1605,14 +1622,18 @@ public final class LuaSemanticEmitter {
             switch (payload.mode()) {
                 case ARRAY_READ, ARRAY_WRITE -> {
                     boolean write = payload.mode() == deal.semantic.ir.IndexMode.ARRAY_WRITE;
-                    out.append(target).append(" = {slot = \"a\", i = ")
-                        .append(slot(payload.rawKey())).append(", n = ")
-                        .append(slot(payload.currentLength())).append(", a = ")
+                    // The normalized index/length are numeric views: a
+                    // runtime number carrier (the value model's variant
+                    // representation) unwraps, a plain number passes
+                    // through.
+                    out.append(target).append(" = {slot = \"a\", i = __num(")
+                        .append(slot(payload.rawKey())).append("), n = __num(")
+                        .append(slot(payload.currentLength())).append("), a = ")
                         .append(write).append("}\n");
                 }
                 case TABLE_READ, TABLE_WRITE ->
-                    out.append(target).append(" = {slot = \"t\", k = ")
-                        .append(slot(payload.rawKey())).append("}\n");
+                    out.append(target).append(" = {slot = \"t\", k = __num(")
+                        .append(slot(payload.rawKey())).append(")}\n");
             }
             out.append("__normalizeEvent(")
                 .append(luaString(opKey(op.opId()))).append(", ")
@@ -1643,6 +1664,8 @@ public final class LuaSemanticEmitter {
                 .append(slot(payload.container())).append(", ")
                 .append(slot(payload.slot())).append(", ")
                 .append(nullable ? "true" : "false").append(", ")
+                .append(isNumberKind(staticKind(inner)) ? "true" : "false")
+                .append(", ")
                 .append(luaString(originOf(op))).append(")\n");
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
         }
@@ -1666,14 +1689,16 @@ public final class LuaSemanticEmitter {
                 .append(".i + 1] = ").append(value)
                 .append(" == nil and __NULL or ").append(value).append("\n");
             out.append("  __numKey(").append(container).append(", ").append(slotName)
-                .append(".i + 1, ").append(numberWriteFlag).append(")\n");
+                .append(".i + 1, ").append(value).append(", ").append(numberWriteFlag)
+                .append(")\n");
             out.append("else\n");
             out.append("  ").append(container).append("[").append(slotName)
                 .append(".k] = ").append(value).append("\n");
             out.append("  __orderAdd(").append(container).append(", ").append(slotName)
                 .append(".k)\n");
             out.append("  __numKey(").append(container).append(", ").append(slotName)
-                .append(".k, ").append(numberWriteFlag).append(")\n");
+                .append(".k, ").append(value).append(", ").append(numberWriteFlag)
+                .append(")\n");
             out.append("end\n");
             emitPlainSuccess(op);
         }
@@ -2328,17 +2353,31 @@ public final class LuaSemanticEmitter {
                     textExpr.append("\"\"");
                 }
                 if (payload.function() == deal.semantic.ir.StdlibFunctionId.CONSOLE_LOG) {
+                    // The STDOUT channel: the real effect bytes on stdout
+                    // plus, in trace mode, the protocol record on the
+                    // dedicated trace stream — the two never collide.
                     out.append("io.write(").append(textExpr).append("..\"\\n\")\n");
                     out.append("io.stdout:flush()\n");
+                    if (trace) {
+                        out.append("io.stderr:write(\"F|CONSOLE_WRITE|STDOUT|\"..__esc(")
+                            .append(textExpr).append(")..\"\\n\")\n");
+                        out.append("io.stderr:flush()\n");
+                    }
                 } else {
-                    out.append("io.stderr:write(").append(textExpr)
-                        .append("..\"\\n\")\n");
-                    out.append("io.stderr:flush()\n");
-                }
-                if (trace) {
-                    out.append("io.stderr:write(\"F|CONSOLE_WRITE|\"..__esc(")
-                        .append(textExpr).append(")..\"\\n\")\n");
-                    out.append("io.stderr:flush()\n");
+                    // The STDERR channel shares the trace stream, so the
+                    // trace protocol stays decode-clean: trace mode
+                    // publishes only the protocol record (the effect's
+                    // exact scalar text plus its channel), production mode
+                    // (no protocol) publishes the exact effect bytes.
+                    if (trace) {
+                        out.append("io.stderr:write(\"F|CONSOLE_WRITE|STDERR|\"..__esc(")
+                            .append(textExpr).append(")..\"\\n\")\n");
+                        out.append("io.stderr:flush()\n");
+                    } else {
+                        out.append("io.stderr:write(").append(textExpr)
+                            .append("..\"\\n\")\n");
+                        out.append("io.stderr:flush()\n");
+                    }
                 }
                 out.append(target).append(" = nil\n");
             } else {
@@ -3477,7 +3516,7 @@ public final class LuaSemanticEmitter {
                 (KindPayload.AsyncStartPayload) op.payload();
             String label = payload.hostOperationLabel();
             if (trace) {
-                out.append("io.stderr:write(\"F|ASYNC_START_OP|\"..__esc(")
+                out.append("io.stderr:write(\"F|ASYNC_START_OP|-|\"..__esc(")
                     .append(luaString(label)).append(")..\"\\n\")\n");
                 out.append("io.stderr:flush()\n");
             }
@@ -3540,14 +3579,14 @@ public final class LuaSemanticEmitter {
             out.append("  local __oA = __callbacks.__hostCompleteAsync(__tA.label)\n");
             out.append("  if __oA.ok then\n");
             if (trace) {
-                out.append("    io.stderr:write(\"F|ASYNC_COMPLETE_RETURN|\""
+                out.append("    io.stderr:write(\"F|ASYNC_COMPLETE_RETURN|-|\""
                     + "..__esc(__tA.label..\"=\"..__hostAtom(__oA.v))..\"\\n\")\n");
                 out.append("    io.stderr:flush()\n");
             }
             out.append("    __tA.value = __oA.v\n");
             out.append("  else\n");
             if (trace) {
-                out.append("    io.stderr:write(\"F|ASYNC_COMPLETE_THROW|\""
+                out.append("    io.stderr:write(\"F|ASYNC_COMPLETE_THROW|-|\""
                     + "..__esc(__tA.label..\"!\"..__oA.code)..\"\\n\")\n");
                 out.append("    io.stderr:flush()\n");
             }
@@ -4638,6 +4677,47 @@ local function __num(v)
   if type(v) == "table" and v.__jn then return v.d end
   return v
 end
+-- The number-typed slot mark of the shared JSON_STRINGIFY walker: the
+-- Lua value model carries no int/number distinction for plain numbers,
+-- so every container write records the written value's own variant —
+-- the __jn carrier's kind when the value is a runtime carrier, the
+-- written expression's static kind otherwise. A number-variant slot
+-- serializes through the closed decimal spelling (__jsonNumText,
+-- Double.toString parity), an int-variant slot through the integer
+-- spelling. The mark is keyed exactly like the storage key (a table
+-- key or a 1-based element index) and is cleared by a non-number
+-- rewrite of the same slot, so the walker's decision always mirrors
+-- the stored value's own variant — the oracle's and the shared JVM
+-- runtime's typing rule.
+local function __numKey(t, k, v, isNumber)
+  if type(v) == "table" and v.__jn then isNumber = (v.k == "number") end
+  if isNumber then
+    local marks = t.__nK
+    if type(marks) ~= "table" then marks = {}; t.__nK = marks end
+    marks[k] = true
+  else
+    local marks = t.__nK
+    if type(marks) == "table" then marks[k] = nil end
+  end
+end
+-- The read-side variant materialization: a plain number read from a
+-- container slot whose recorded variant (__numKey) is number, or read
+-- at a number-typed position while the slot's variant is int, becomes
+-- a __jn carrier carrying its own variant; a plain number whose variant
+-- matches the reading position stays plain. This keeps the closed
+-- value model's int/number distinction through every typed boundary
+-- (the oracle keeps the admitted variant and the shared JVM runtime
+-- keeps the boxed Long/Double), so the JSON_STRINGIFY walker, the trace
+-- atoms, and the failure actuals always see the value's own variant.
+local function __readVar(t, k, v, wantsNumber)
+  if type(v) ~= "number" then return v end
+  local marks = t.__nK
+  if type(marks) == "table" and marks[k] == true then
+    return {__jn = true, k = "number", d = v}
+  end
+  if wantsNumber then return {__jn = true, k = "int", d = v} end
+  return v
+end
 local function __atom(kind, v)
   if v == __MISSING then return "missing" end
   if type(v) == "table" and v.__jn then
@@ -4768,12 +4848,13 @@ local function __bcheck(desc, staticKind, v)
     if type(v) == "boolean" then return v end
     return fail("boolean")
   elseif desc == "int" then
-    -- The parsed-number tag of JSON_PARSE: an int carrier passes its
-    -- integral value; a number carrier runs the pinned int ladder
-    -- (NaN → infinity → non-integer → E8004 range) with the exact
-    -- actual tokens.
+    -- The int cell keeps the admitted value's own variant: an int
+    -- carrier returns its carrier, a number carrier runs the pinned
+    -- int ladder (NaN → infinity → non-integer → E8004 range) with
+    -- the exact actual tokens and returns its carrier — the oracle's
+    -- and the shared JVM runtime's variant-preserving admission.
     if type(v) == "table" and v.__jn then
-      if v.k == "int" then return v.d end
+      if v.k == "int" then return v end
       if v.d ~= v.d then
         return error(__failExpr("E8001", "expected int, got NaN", "-", "int",
           "NaN"), 0)
@@ -4790,7 +4871,7 @@ local function __bcheck(desc, staticKind, v)
         return error(__failExpr("E8004", "int out of range", "-", "int",
           "number"), 0)
       end
-      return v.d
+      return v
     end
     if type(v) == "number" then
       if v ~= v then
@@ -4814,7 +4895,7 @@ local function __bcheck(desc, staticKind, v)
     return fail("int")
   elseif desc == "number" then
     if type(v) == "number" then return v end
-    if type(v) == "table" and v.__jn then return v.d end
+    if type(v) == "table" and v.__jn then return v end
     return fail("number")
   elseif desc == "string" then
     if type(v) == "string" then return v end
@@ -5038,7 +5119,7 @@ local function __numConv(v, kind, opKey, digest, parent, origin)
   error(e, 0)
 end
 local function __arrayRead(opKey, digest, parent, bKey, bDigest, bParent, desc, inner,
-                           container, slotName, nullable, origin)
+                           container, slotName, nullable, wantsNumber, origin)
   local index = slotName.i
   local elem = __MISSING
   if index < 0 then
@@ -5054,6 +5135,9 @@ local function __arrayRead(opKey, digest, parent, bKey, bDigest, bParent, desc, 
     if elem == __NULL then elem = nil
     elseif elem == nil then elem = __MISSING end
   end
+  -- The read-side variant materialization (the element's own slot mark
+  -- and the read's declared element descriptor).
+  elem = __readVar(container, index + 1, elem, wantsNumber)
   local elemKind
   if elem == __MISSING then elemKind = "missing"
   elseif elem == nil then elemKind = "null"
@@ -5265,26 +5349,6 @@ local function __orderRemove(t, k)
       table.remove(t.__order, i)
       return
     end
-  end
-end
--- The number-typed slot mark of the shared JSON_STRINGIFY walker: the
--- Lua value model carries no int/number distinction (both are plain
--- numbers), so every container write records the written value's static
--- kind — a number-typed slot serializes through the closed decimal
--- spelling (__jsonNumText, Double.toString parity), an int-typed slot
--- through the integer spelling. The mark is keyed exactly like the
--- storage key (a table key or a 1-based element index) and is cleared
--- by a non-number rewrite of the same slot, so the walker's decision
--- always mirrors the stored value's producing op result type — the
--- oracle's and the shared JVM runtime's own typing rule.
-local function __numKey(t, k, isNumber)
-  if isNumber then
-    local marks = t.__nK
-    if type(marks) ~= "table" then marks = {}; t.__nK = marks end
-    marks[k] = true
-  else
-    local marks = t.__nK
-    if type(marks) == "table" then marks[k] = nil end
   end
 end
 -- ==== stdlib realization (the closed 20-operation table) ====

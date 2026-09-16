@@ -5,6 +5,7 @@ import deal.codegen.lua.LuaSemanticEmitter;
 import deal.semantic.SemanticOracle;
 import deal.semantic.SemanticTraceProtocol;
 import deal.semantic.SemanticRuntimeModel;
+import deal.semantic.SharedStdlibSemantics;
 
 import deal.semantic.ir.BoundaryKind;
 import deal.semantic.ir.ClassFactoryRegistry;
@@ -614,11 +615,17 @@ public final class SemanticDifferentialHarness {
         return null;
     }
 
-    /** The Lua literal of one scripted host argument. */
+    /**
+     * The Lua literal of one scripted host argument (the closed carriers):
+     * a DEAL number value is the runtime's number-variant carrier, an int
+     * value a plain Lua number — exactly the artifact value model's
+     * int/number representation.
+     */
     private static String luaLiteralOf(CallbackArg arg) {
         return switch (arg) {
             case CallbackArg.Int value -> String.valueOf(value.value());
-            case CallbackArg.Number value -> Double.toString(value.value());
+            case CallbackArg.Number value -> "{__jn = true, k = \"number\", d = "
+                + Double.toString(value.value()) + "}";
             case CallbackArg.Str value -> quoteLua(value.value());
             case CallbackArg.Null ignored -> "nil";
         };
@@ -1461,19 +1468,27 @@ public final class SemanticDifferentialHarness {
                 + " effects");
     }
 
-    /** Cross-checks the real stdout effect bytes against the recorded console effects. */
+    /**
+     * Cross-checks the real program-output bytes against the recorded
+     * console effects: the STDOUT-channel effect texts are exactly the
+     * artifact's stdout lines. The STDERR channel shares the trace stream,
+     * so trace mode publishes only the protocol record (whose channel
+     * field is compared with the other consumers' records); the real
+     * STDERR effect bytes are pinned by the production-mode checks.
+     */
     private static void crossCheckStdout(SemanticRuntimeModel.ConsumerRun run,
                                          List<String> stdoutLines, String consumer,
                                          List<String> failures) {
         List<String> recorded = new ArrayList<>();
         for (SemanticRuntimeModel.EffectEvent effect : run.effects()) {
-            if (effect.kind() == SemanticRuntimeModel.EffectEvent.Kind.CONSOLE_WRITE) {
+            if (effect.kind() == SemanticRuntimeModel.EffectEvent.Kind.CONSOLE_WRITE
+                    && effect.channel() == SharedStdlibSemantics.Channel.STDOUT) {
                 recorded.add(effect.text());
             }
         }
         if (!recorded.equals(stdoutLines)) {
             failures.add(consumer + " stdout effect bytes " + stdoutLines
-                + " do not equal its recorded console effects " + recorded);
+                + " do not equal its recorded STDOUT console effects " + recorded);
         }
     }
 

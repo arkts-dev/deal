@@ -24,7 +24,7 @@ import java.util.Objects;
  * <pre>{@code
  * T|&lt;seq&gt;|&lt;module&gt;|&lt;opIdText&gt;|&lt;phase&gt;|&lt;kind&gt;|&lt;digest&gt;|&lt;parentText&gt;
  *   |&lt;input&gt;...|=&gt;&lt;output&gt;|!&lt;error&gt;
- * F|CONSOLE_WRITE|&lt;escaped text&gt;
+ * F|CONSOLE_WRITE|&lt;channel&gt;|&lt;escaped text&gt;
  * R|success|&lt;resultAtom&gt;      or   R|failure|&lt;error&gt;
  * }</pre>
  *
@@ -56,10 +56,11 @@ public final class SemanticTraceProtocol {
         return EVENT_PREFIX + event.text();
     }
 
-    /** Encodes one effect line. */
+    /** Encodes one effect line (kind, named channel, exact scalar text). */
     public static String encodeEffect(SemanticRuntimeModel.EffectEvent effect) {
-        return EFFECT_PREFIX + effect.kind() + "|" + SemanticRuntimeModel.escapeString(
-            effect.text());
+        String channel = effect.channel() == null ? "-" : effect.channel().name();
+        return EFFECT_PREFIX + effect.kind() + "|" + channel + "|"
+            + SemanticRuntimeModel.escapeString(effect.text());
     }
 
     /** Encodes the terminal line. */
@@ -121,12 +122,14 @@ public final class SemanticTraceProtocol {
     /** Decodes one effect line. */
     public static SemanticRuntimeModel.EffectEvent decodeEffect(String body) {
         String[] parts = body.split("\\|", -1);
-        if (parts.length != 2) {
+        if (parts.length != 3) {
             throw new IllegalArgumentException("malformed effect line: " + body);
         }
         return new SemanticRuntimeModel.EffectEvent(
             SemanticRuntimeModel.EffectEvent.Kind.valueOf(parts[0]),
-            SemanticRuntimeModel.unescapeString(parts[1]));
+            "-".equals(parts[1]) ? null
+                : SharedStdlibSemantics.Channel.valueOf(parts[1]),
+            SemanticRuntimeModel.unescapeString(parts[2]));
     }
 
     /** Decodes the terminal line. */
