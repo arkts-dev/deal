@@ -4737,20 +4737,37 @@ end
 -- The canonical hex-float spelling (Double.toHexString parity; the
 -- single renderer of the number atoms and of the SQRT_NEGATIVE
 -- actual): NaN, both infinities and negative zero carry their Java
--- spellings (never LuaJIT's "inf"/"-inf"), every finite nonzero value
+-- spellings (never LuaJIT's "inf"/"-inf"), a subnormal its
+-- fixed-exponent denormal spelling, every other finite nonzero value
 -- its shortest round-trippable hex form. Declared before __atom so the
 -- number branch captures it as an upvalue.
 local function __numHex(v)
   if v ~= v then return "NaN" end
   if v == math.huge then return "Infinity" end
   if v == -math.huge then return "-Infinity" end
-  if v == 0 and 1 / v < 0 then return "-0x0.0p0" end
-  local hex = string.format("%a", v)
-  hex = string.gsub(hex, "p(%+)(%d)", "p%2")
-  if not string.find(hex, ".", 1, true) then
-    hex = string.gsub(hex, "^(%-?0x[0-9a-f]+)p", "%1.0p")
+  local neg = v < 0 or (v == 0 and 1 / v < 0)
+  if v == 0 then return neg and "-0x0.0p0" or "0x0.0p0" end
+  local m = neg and -v or v
+  local sign = neg and "-" or ""
+  -- A subnormal (|v| < 2^-1022) keeps Java's fixed-exponent denormal
+  -- spelling: the fraction as 13 hex digits with its trailing zeros
+  -- stripped and the pinned -1022 exponent ("0x0.0000000000001p-1022"),
+  -- never LuaJIT's normalized "0x1p-1074". The two exact scalings
+  -- recover the subnormal's integer significand (m * 2^1074, exact —
+  -- every intermediate is a normal power-of-two scaling).
+  if m < 2 ^ -1022 then
+    local k = m * 2 ^ 537 * 2 ^ 537
+    local hex = string.format("%013x", k)
+    hex = string.gsub(hex, "0+$", "")
+    if hex == "" then hex = "0" end
+    return sign.."0x0."..hex.."p-1022"
   end
-  return hex
+  local h = string.format("%a", m)
+  h = string.gsub(h, "p(%+)(%d)", "p%2")
+  if not string.find(h, ".", 1, true) then
+    h = string.gsub(h, "^(0x[0-9a-f]+)p", "%1.0p")
+  end
+  return sign..h
 end
 local function __atom(kind, v)
   if v == __MISSING then return "missing" end
@@ -5455,32 +5472,128 @@ local function __rawArgAtom(kind, v)
   return __atom(kind, v)
 end
 -- The Java Double.toString notation of one finite nonzero double: the
--- shortest round-trippable digit string, plain notation when the
--- decimal exponent is in [-3, 6], scientific d.dddEx otherwise, and a
--- pinned ".0" suffix on integral plain forms. Named distinctly from
--- the class-encoder renderer (JSON_PRELUDE's __jsonNumText), so the
--- emitted chunk carries one name per renderer.
+-- shortest round-tripping digit string (at least two significant
+-- digits — the printed form always carries one fractional digit), the
+-- closest such decimal, and the even last digit when the value is
+-- exactly equidistant between two of them — the JDK's rule, which the
+-- C library's %g rounding (ties away from zero) does not reproduce on
+-- its own. Plain notation when the decimal exponent is in [-3, 6],
+-- scientific d.dddE±dd otherwise, and a pinned ".0" suffix on integral
+-- plain forms. Named distinctly from the class-encoder renderer
+-- (JSON_PRELUDE's __jsonNumText), so the emitted chunk carries one name
+-- per renderer.
+--
+-- The steps below: __sfParts reads a %g rendering as (digit integer,
+-- exponent of its last digit); __sfBump steps that digit integer by one
+-- grid unit; __sfDec renders a (digits, exponent) pair back to a
+-- parseable decimal for the round-trip probe; __sfExpDigits reads the
+-- exact expansion through 40 places (a tie candidate has at most 18
+-- digits); __sfDigits picks the shortest round-tripping digits.
+local function __sfParts(rep)
+  local mant, e = string.match(rep, "^(%d+%.?%d*)e([%+%-]?%d+)$")
+  if mant then
+    local point = string.find(mant, ".", 1, true)
+    local intLen = point and (point - 1) or #mant
+    local digits = string.gsub(mant, "%.", "")
+    return digits, tonumber(e) - (#digits - intLen)
+  end
+  local point = string.find(rep, ".", 1, true)
+  local digits
+  local expo
+  if point then
+    digits = string.gsub(rep, "%.", "")
+    expo = point - #rep
+  else
+    digits = rep
+    expo = 0
+  end
+  digits = string.gsub(digits, "^0+", "")
+  if digits == "" then digits = "0" end
+  return digits, expo
+end
+local function __sfBump(digits, up)
+  local n = #digits
+  local d = {}
+  for i = 1, n do d[i] = tonumber(string.sub(digits, i, i)) end
+  if up then
+    local i = n
+    while i >= 1 and d[i] == 9 do d[i] = 0; i = i - 1 end
+    if i == 0 then return "1" end
+    d[i] = d[i] + 1
+  else
+    local i = n
+    while i >= 1 and d[i] == 0 do d[i] = 9; i = i - 1 end
+    if i == 0 then return "9" end
+    d[i] = d[i] - 1
+  end
+  local s = ""
+  for i = 1, n do s = s..tostring(d[i]) end
+  return s
+end
+local function __sfDec(digits, expo)
+  if #digits == 1 then return digits.."e"..expo end
+  return string.sub(digits, 1, 1).."."..string.sub(digits, 2)
+    .."e"..(expo + #digits - 1)
+end
+local function __sfExpDigits(v)
+  local mant = string.match(string.format("%.40e", v), "^(%d+%.?%d*)e")
+  return (string.gsub(mant or "", "%.", ""))
+end
+local function __sfDigits(v, N)
+  local rep = string.format("%."..N.."g", v)
+  local digits, expo = __sfParts(rep)
+  local pad = N - #digits
+  if pad > 0 then
+    digits = digits..string.rep("0", pad)
+    expo = expo - pad
+  end
+  if tonumber(__sfDec(digits, expo)) ~= v then
+    -- The correctly rounded decimal lies outside the rounding interval:
+    -- the candidate is its in-interval neighbour.
+    local up = __sfBump(digits, true)
+    if tonumber(__sfDec(up, expo)) == v then return up, expo end
+    local dn = __sfBump(digits, false)
+    if tonumber(__sfDec(dn, expo)) == v then return dn, expo end
+    return nil
+  end
+  local exp = __sfExpDigits(v)
+  local dn = __sfBump(digits, false)
+  local dnMid = string.gsub(dn.."5", "^0+", "")
+  if string.sub(exp, 1, #dnMid) == dnMid
+      and string.gsub(string.sub(exp, #dnMid + 1), "0", "") == ""
+      and tonumber(__sfDec(dn, expo)) == v then
+    if tonumber(string.sub(dn, #dn, #dn)) % 2 == 0 then return dn, expo end
+    return digits, expo
+  end
+  local up = __sfBump(digits, true)
+  local upMid = digits.."5"
+  if string.sub(exp, 1, #upMid) == upMid
+      and string.gsub(string.sub(exp, #upMid + 1), "0", "") == ""
+      and tonumber(__sfDec(up, expo)) == v then
+    if tonumber(string.sub(up, #up, #up)) % 2 == 0 then return up, expo end
+    return digits, expo
+  end
+  return digits, expo
+end
 local function __sfNumText(v)
   local neg = false
   if v < 0 or (v == 0 and 1 / v < 0) then neg = true; v = -v end
   if v == 0 then return neg and "-0.0" or "0.0" end
-  local rep = nil
-  for p = 1, 17 do
-    local s = string.format("%."..p.."g", v)
-    if tonumber(s) == v then rep = s; break end
+  local digits, expo = nil, nil
+  for N = 2, 17 do
+    digits, expo = __sfDigits(v, N)
+    if digits ~= nil then break end
   end
-  if rep == nil then rep = string.format("%.17g", v) end
-  local mant = rep
-  local epos0 = string.find(rep, "e", 1, true)
-  if epos0 then mant = string.sub(rep, 1, epos0 - 1) end
-  local digits = {}
-  for c in string.gmatch(mant, "%d") do digits[#digits + 1] = c end
-  while digits[1] == "0" do table.remove(digits, 1) end
-  while #digits > 1 and digits[#digits] == "0" do table.remove(digits, #digits) end
-  local es = string.format("%.17e", v)
-  local epos = string.find(es, "e", 1, true)
-  local k = tonumber(string.sub(es, epos + 1))
-  local ds = table.concat(digits)
+  if digits == nil then digits, expo = __sfParts(string.format("%.17g", v)) end
+  digits = string.gsub(digits, "^0+", "")
+  if digits == "" then digits = "0" end
+  local trail = 0
+  while #digits > 1 and string.sub(digits, #digits, #digits) == "0" do
+    digits = string.sub(digits, 1, #digits - 1)
+    trail = trail + 1
+  end
+  local k = expo + trail + #digits - 1
+  local ds = digits
   local text
   if k >= -3 and k <= 6 then
     if k >= 0 then
@@ -5493,9 +5606,9 @@ local function __sfNumText(v)
       text = "0."..string.rep("0", -k - 1)..ds
     end
   else
-    local mant = string.sub(ds, 1, 1)
-    if #ds > 1 then mant = mant.."."..string.sub(ds, 2) else mant = mant..".0" end
-    text = mant.."E"..tostring(k)
+    local tail = string.sub(ds, 1, 1)
+    if #ds > 1 then tail = tail.."."..string.sub(ds, 2) else tail = tail..".0" end
+    text = tail.."E"..tostring(k)
   end
   if neg then text = "-"..text end
   return text

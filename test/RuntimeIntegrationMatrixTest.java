@@ -1887,6 +1887,46 @@ public class RuntimeIntegrationMatrixTest {
                 List.of(), E8001);
         }
 
+        // (m7) The subnormal hex-float spelling: a value below 2^-1022
+        // carries Java's fixed-exponent denormal atom
+        // ("num:0x0.00000000007e8p-1022"), never LuaJIT's normalized
+        // "num:0x1.fap-1064" — the subnormal flows through the literal,
+        // an arithmetic result, the load and every boundary atom.
+        {
+            String source = CONSOLE
+                + "function main(): null {\n"
+                + "  let t: number = 1.0e-320\n"
+                + "  let u: number = t + 0.0\n"
+                + "  if (u === t) { console.log(\"subnormal-ok\") } "
+                + "else { console.log(\"bad\") }\n"
+                + "}\n";
+            runMatrix(source, "subnormal number atom (denormal hex spelling)",
+                List.of("subnormal-ok"), SUCCESS);
+        }
+
+        // (m8) The JSON_STRINGIFY text of the values the C %g path spells
+        // differently from Double.toString: a subnormal (1.0E-320, not
+        // the 1.0E-321 exponent), a shortest-decimal tie
+        // (2.9802322387695312E-8), a closest-decimal-outside-the-
+        // interval case (5.858190679279809E-244), a 17-digit tie
+        // (1.2599473634643432E15) and a value whose shortest decimal
+        // rounds up across the power of ten (1.0E23).
+        {
+            String source = CONSOLE + JSON
+                + "function main(): null {\n"
+                + "  let t: table = { a: 1.0e-320, b: 2.9802322387695312e-8, "
+                + "c: 1.2599473634643432e15, d: 5.858190679279809e-244, e: 1.0e23 }\n"
+                + "  let s: string = json.stringify(t)\n"
+                + "  if (s === \"{\\\"a\\\":1.0E-320,\\\"b\\\":2.9802322387695312E-8,"
+                + "\\\"c\\\":1.2599473634643432E15,\\\"d\\\":5.858190679279809E-244,"
+                + "\\\"e\\\":1.0E23}\") { console.log(\"numtext-ok\") } "
+                + "else { console.log(\"bad\") }\n"
+                + "}\n";
+            runMatrix(source,
+                "JSON_STRINGIFY Double.toString spellings (subnormal, ties, round-up)",
+                List.of("numtext-ok"), SUCCESS);
+        }
+
         // (n) JSON_PARSE_SYNTAX projections: the defect-classification
         // texts and the 1-based UTF-8 byte offsets (a multi-byte scalar
         // counts its full UTF-8 length).
