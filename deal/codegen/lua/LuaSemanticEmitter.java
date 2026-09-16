@@ -1270,11 +1270,19 @@ public final class LuaSemanticEmitter {
             // declared descriptor decides whether an int-variant slot
             // value becomes a carrier (a number-typed read position) and
             // a number-variant slot value becomes a carrier (its slot
-            // mark) — the closed value model's admitted variant.
+            // mark) — the closed value model's admitted variant. A
+            // missing-capable read carries its contextual inner
+            // descriptor on the consuming OPTIONAL_READ (the raw read's
+            // own result type is the internal-missing marker), so the
+            // envelope's present branch keeps the admitted variant too.
+            SemanticOp optionalRead = optionalReadOf((ValueId) op.result());
             RuntimeDescriptor readDescriptor = boundary != null
                 ? ((KindPayload.BoundaryPayload) boundary.payload()).descriptor()
-                : (op.resultType() instanceof RuntimeDescriptor descriptor
-                    ? descriptor : null);
+                : (optionalRead != null
+                    ? ((KindPayload.OptionalReadPayload) optionalRead.payload())
+                        .descriptor()
+                    : (op.resultType() instanceof RuntimeDescriptor descriptor
+                        ? descriptor : null));
             out.append(target).append(" = __readVar(").append(slot(payload.table()))
                 .append(", ").append(luaString(payload.key())).append(", ")
                 .append(target).append(", ")
@@ -1320,10 +1328,9 @@ public final class LuaSemanticEmitter {
             // missing → "missing", null → "null", else the actual-kind
             // atom, exactly the oracle's publish (a wrong-kind present
             // value atomizes as its own kind, never the declared kind).
-            SemanticOp optional = optionalReadOf((ValueId) op.result());
-            RuntimeDescriptor inner = optional == null
+            RuntimeDescriptor inner = optionalRead == null
                 ? null
-                : ((KindPayload.OptionalReadPayload) optional.payload()).descriptor();
+                : ((KindPayload.OptionalReadPayload) optionalRead.payload()).descriptor();
             out.append("__ev(").append(luaString(opKey(op.opId())))
                 .append(", \"SUCCESS\", ").append(luaString(op.kind().name()))
                 .append(", ").append(luaString(op.contract().canonicalDigest()))
@@ -2880,7 +2887,16 @@ public final class LuaSemanticEmitter {
                     out.append("  for __i = 0, __itnT - 1 do\n");
                     out.append("    __elemT = __MISSING\n");
                     out.append("    if __i < __itT.__n then\n");
-                    out.append("      __elemT = __itT[__i + 1]\n");
+                    // The element read is a typed position: the admitted
+                    // int/number variant materializes exactly as at
+                    // __arrayRead (the element's own slot mark and the
+                    // iterable's declared element descriptor), so the
+                    // loop cell carries the value's own variant.
+                    out.append("      __elemT = __readVar(__itT, __i + 1, ")
+                        .append("__itT[__i + 1], ")
+                        .append(isNumberKind(staticKind(elementDescriptorOf(op)))
+                            ? "true" : "false")
+                        .append(")\n");
                     out.append("      if __elemT == __NULL then __elemT = nil\n");
                     out.append("      elseif __elemT == nil then __elemT = __MISSING end\n");
                     out.append("    end\n");

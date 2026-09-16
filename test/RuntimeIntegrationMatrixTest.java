@@ -284,36 +284,6 @@ public class RuntimeIntegrationMatrixTest {
     private static final SemanticDifferentialHarness.TerminalExpectation E8002 =
         new SemanticDifferentialHarness.TerminalExpectation.FailureWith("E8002", null);
 
-    static void testScratchVariants() {
-        runMatrix(JSON + CONSOLE
-            + "function main(): null {\n"
-            + "  let d: table = json.parse(\"{\\\"i\\\": 2}\")\n"
-            + "  let n: number = d.i\n"
-            + "  let t: table = { v: n }\n"
-            + "  let s: string = json.stringify(t)\n"
-            + "  console.log(`A:${s}`)\n"
-            + "}\n",
-            "scratch A (parsed int under number)", List.of("A:{\"v\":2}"), SUCCESS);
-        runMatrix(JSON + CONSOLE
-            + "function main(): null {\n"
-            + "  let d: table = { i: 2 }\n"
-            + "  let n: number = d.i\n"
-            + "  let t: table = { v: n }\n"
-            + "  let s: string = json.stringify(t)\n"
-            + "  console.log(`B:${s}`)\n"
-            + "}\n",
-            "scratch B (dynamic int read under number)", List.of("B:{\"v\":2}"), SUCCESS);
-        runMatrix(JSON + CONSOLE
-            + "function main(): null {\n"
-            + "  let d: table = { n: 2.0 }\n"
-            + "  let i: int = d.n\n"
-            + "  let t: table = { v: i }\n"
-            + "  let s: string = json.stringify(t)\n"
-            + "  console.log(`C:${s}`)\n"
-            + "}\n",
-            "scratch C (dynamic number read under int)", List.of("C:{\"v\":2.0}"), SUCCESS);
-    }
-
     // =========================================================================
     // 1. The chain matrix
     // =========================================================================
@@ -1747,6 +1717,65 @@ public class RuntimeIntegrationMatrixTest {
                 + "}\n";
             runMatrix(source, "JSON_STRINGIFY admitted variants (parsed int array "
                 + "element, number array element)", List.of("arr-var-ok"), SUCCESS);
+        }
+
+        // (i5) The for-of element read is a typed position: the admitted
+        // int/number variant must survive it exactly as it survives the
+        // member read — an int element admitted at a number-typed element
+        // position keeps the integer spelling, a number element admitted
+        // at an int-typed element position keeps the decimal spelling. A
+        // shared Lua realization whose for-of cell holds the raw plain
+        // number (no variant materialization at the element read) spells
+        // the int element through the number-typed binding kind.
+        {
+            String source = CONSOLE + JSON
+                + "function main(): null {\n"
+                + "  let d: table = { xs: [1, 2] }\n"
+                + "  let xs: number[] = d.xs\n"
+                + "  for (let x: number of xs) "
+                + "{ console.log(json.stringify({ v: x })) }\n"
+                + "  let e: table = { ys: [7.0, 8.5] }\n"
+                + "  let ys: number[] = e.ys\n"
+                + "  for (let y: number of ys) "
+                + "{ console.log(json.stringify({ v: y })) }\n"
+                + "  let f: table = { zs: [2.0] }\n"
+                + "  let zs: int[] = f.zs\n"
+                + "  for (let z: int of zs) "
+                + "{ console.log(json.stringify({ v: z })) }\n"
+                + "}\n";
+            runMatrix(source, "JSON_STRINGIFY for-of element variants (int under "
+                + "number, number under number, number under int)",
+                List.of("{\"v\":1}", "{\"v\":2}", "{\"v\":7.0}", "{\"v\":8.5}",
+                    "{\"v\":2.0}"), SUCCESS);
+        }
+
+        // (i6) The OPTIONAL_READ present branch is a typed position: the
+        // present value keeps its admitted variant through the pre-map
+        // and the contextual validation — an int value read at a
+        // number-typed nullable position stays int, a number value read
+        // at an int-typed nullable position stays a number. A shared Lua
+        // realization whose optional present branch copies the raw plain
+        // number spells the int value through the nullable binding kind.
+        {
+            String source = CONSOLE + JSON
+                + "function main(): null {\n"
+                + "  let d: table = json.parse(\"{\\\"i\\\": 2, \\\"n\\\": 2.0}\")\n"
+                + "  let a: number | null = d.i\n"
+                + "  let b: int | null = d.n\n"
+                + "  let t: table = { a: a, b: b }\n"
+                + "  let s: string = json.stringify(t)\n"
+                + "  let e: table = { i: 2, n: 2.0 }\n"
+                + "  let c: number | null = e.i\n"
+                + "  let f: int | null = e.n\n"
+                + "  let u: table = { a: c, b: f }\n"
+                + "  let us: string = json.stringify(u)\n"
+                + "  if (s === \"{\\\"a\\\":2,\\\"b\\\":2.0}\" "
+                + "&& us === \"{\\\"a\\\":2,\\\"b\\\":2.0}\") "
+                + "{ console.log(\"nullable-var-ok\") } else { console.log(\"bad\") }\n"
+                + "}\n";
+            runMatrix(source, "JSON_STRINGIFY nullable-read admitted variants "
+                + "(parsed and dynamic, int under number, number under int)",
+                List.of("nullable-var-ok"), SUCCESS);
         }
 
         // (r) CONSOLE_ERROR: the STDERR channel of the closed effect
