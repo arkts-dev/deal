@@ -452,6 +452,8 @@ public class JvmBackendTest {
             new TestCase("testInt32TimeBoundary", () -> testInt32TimeBoundary()),
             new TestCase("testEmissionSeamFieldSurfaceAndMessageSplit",
                 () -> testEmissionSeamFieldSurfaceAndMessageSplit()),
+            new TestCase("testArithmeticRaiseSiteOrigins",
+                () -> testArithmeticRaiseSiteOrigins()),
             new TestCase("testInt32BoundarySeamSites", () -> testInt32BoundarySeamSites()),
             new TestCase("testInt32DeclaredBoundaryMatrix", () -> testInt32DeclaredBoundaryMatrix()),
             new TestCase("testInt32EdgeMatrix", () -> testInt32EdgeMatrix()),
@@ -1005,10 +1007,12 @@ public class JvmBackendTest {
         // surface exists in the smoke shape.
         check(java.contains("static long add(long a, long b)"),
             "function → static method with mapped types");
-        check(java.contains("return intAdd(a, b);"), "checked int add");
+        check(hasOriginCall(java, "return intAdd(a, b,"),
+            "checked int add carries the compile-time origin literals");
         check(java.contains("else if ("), "else-if chain");
         check(java.contains("java.lang.System.out.println("), "console.log → java.lang.System.out");
-        check(java.contains("intFromNumber(3.0)"), "int() intrinsic");
+        check(hasOriginCall(java, "intFromNumber(3.0,"),
+            "int() intrinsic carries the compile-time origin literals");
         check(java.contains("numberFromInt(7L)"), "number() intrinsic");
         check(java.contains("long x = add(1L, 2L);"), "local with int literals");
         check(java.contains("(\"lit\" + \"eral\")"), "string concatenation");
@@ -2372,9 +2376,7 @@ public class JvmBackendTest {
             if (!res.hasErrors()) {
                 String java = res.source();
                 int leftReadIdx = java.indexOf(
-                    "__intArrayReadBoxed(ys, intNeg(1L), "
-                        + "\"jvmtest-arrboth-order-emission.deal\", "
-                        + "5, 7);");
+                    "__intArrayReadBoxed(ys, intNeg(1L,");
                 int hoistIdx = java.indexOf(
                     "java.lang.System.out.println(\"h\");");
                 int rightReadIdx = java.indexOf(
@@ -2940,15 +2942,13 @@ public class JvmBackendTest {
                 String java = res.source();
                 int markIdx = java.indexOf("long __t0 = mark(\"lhs\", 5L);");
                 int read1Idx = java.indexOf(
-                    "__intArrayReadBoxed(xs, intNeg(1L), "
-                        + "\"jvmtest-arrplainlhs-order-emission.deal\", "
-                        + "5, 26);");
+                    "__intArrayReadBoxed(xs, intNeg(1L,");
                 int addIdx = java.indexOf(
-                    "intAdd(9007199254740991L, 1L);");
-                int read2Idx = java.indexOf(
-                    "__intArrayReadBoxed(xs, intNeg(1L), "
-                        + "\"jvmtest-arrplainlhs-order-emission.deal\", "
-                        + "6, 34);");
+                    "intAdd(9007199254740991L, 1L,");
+                int read2Idx = read1Idx >= 0
+                    ? java.indexOf("__intArrayReadBoxed(xs, intNeg(1L,",
+                        read1Idx + 1)
+                    : -1;
                 check(markIdx >= 0 && read1Idx >= 0 && addIdx >= 0
                         && markIdx < read1Idx && addIdx < read2Idx,
                     "each effectful left operand's materialization lands "
@@ -4628,9 +4628,10 @@ public class JvmBackendTest {
         check(!noFieldRes.hasErrors(), "no-field chain emits without E6000");
         check(noFieldRes.source().contains("static long f(long g)"),
             "no-field chain: parameter keeps its plain name");
-        check(noFieldRes.source().contains("long g$1 = intAdd(g, 10L);"),
-            "no-field chain: body-top let takes g$1 and reads the parameter");
-        check(noFieldRes.source().contains("long g$2 = intAdd(g$1, 1L);"),
+        check(hasOriginCall(noFieldRes.source(), "long g$1 = intAdd(g, 10L,"),
+            "no-field chain: body-top let takes g$1 and reads the "
+                + "parameter");
+        check(hasOriginCall(noFieldRes.source(), "long g$2 = intAdd(g$1, 1L,"),
             "no-field chain: inner-block let never reuses the parameter's "
                 + "name (g$2, not g)");
         check(noFieldRes.source().contains("return g$1;"),
@@ -4723,8 +4724,9 @@ public class JvmBackendTest {
         check(java.contains("$check(\"@Main/Point\", (holder).get(\"item\")"),
             "class-typed table read runs the shared seam with the spec "
             + "class descriptor and the inherited origin arguments");
-        check(java.contains("return intAdd((q).x, (q).y);"),
-            "class field reads flow into arithmetic");
+        check(hasOriginCall(java, "return intAdd((q).x, (q).y,"),
+            "class field reads flow into arithmetic with the origin "
+                + "literals");
 
         // Real artifact: per-construction defaults, a field write, and a
         // nominal-check success through the table boundary.
@@ -8738,14 +8740,14 @@ public class JvmBackendTest {
         "    static long intMod(long a, long b) { return intMod(a, b, null, -1, -1); }",
         "    static long intMod(long a, long b, java.lang.String oFile, int oLine, int oCol) { if (b == 0L) throw new DealError(\"E8005\", \"integer division by zero\", oFile, oLine, oCol); try { return checkInt(a % b, oFile, oLine, oCol); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\", oFile, oLine, oCol); } }",
         "    static long intPow(long a, long b) { return intPow(a, b, null, -1, -1); }",
-        "    static long intPow(long a, long b, java.lang.String oFile, int oLine, int oCol) { if (b < 0L) throw new DealError(\"E8006\", \"integer exponent must be non-negative\", oFile, oLine, oCol); double p = java.lang.Math.pow((double) a, (double) b); if (java.lang.Double.isNaN(p)) throw new DealError(\"E8001\", \"expected int, got NaN\", oFile, oLine, oCol); if (java.lang.Double.isInfinite(p)) throw new DealError(\"E8001\", \"expected int, got infinity\", oFile, oLine, oCol); if (p > 9007199254740991.0 || p < -9007199254740991.0) throw new DealError(\"E8004\", \"int out of safe range\", oFile, oLine, oCol); return (long) p; }",
+        "    static long intPow(long a, long b, java.lang.String oFile, int oLine, int oCol) { if (b < 0L) throw new DealError(\"E8006\", \"integer exponent must be non-negative\", oFile, oLine, oCol); double p = java.lang.Math.pow((double) a, (double) b); if (java.lang.Double.isNaN(p)) throw new DealError(\"E8001\", \"expected int, got NaN\", oFile, oLine, oCol, \"int\", \"NaN\", null, null); if (java.lang.Double.isInfinite(p)) throw new DealError(\"E8001\", \"expected int, got infinity\", oFile, oLine, oCol, \"int\", \"infinity\", null, null); if (p > 9007199254740991.0 || p < -9007199254740991.0) throw new DealError(\"E8004\", \"int out of safe range\", oFile, oLine, oCol); return (long) p; }",
         "    static long intNeg(long a) { return intNeg(a, null, -1, -1); }",
         "    static long intNeg(long a, java.lang.String oFile, int oLine, int oCol) { try { return checkInt(java.lang.Math.negateExact(a), oFile, oLine, oCol); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\", oFile, oLine, oCol); } }",
         "    // number %: Lua-style floored modulo (a - floor(a/b)*b), unlike Java's truncated %.",
         "    static double numMod(double a, double b) { return a - java.lang.Math.floor(a / b) * b; }",
         "    // int(v) / number(v) conversion intrinsics (E8001 bad value, E8004 out of range).",
         "    static long intFromNumber(double v) { return intFromNumber(v, null, -1, -1); }",
-        "    static long intFromNumber(double v, java.lang.String oFile, int oLine, int oCol) { if (java.lang.Double.isNaN(v)) throw new DealError(\"E8001\", \"expected int, got NaN\", oFile, oLine, oCol); if (java.lang.Double.isInfinite(v)) throw new DealError(\"E8001\", \"expected int, got infinity\", oFile, oLine, oCol); if (v != java.lang.Math.floor(v)) throw new DealError(\"E8001\", \"expected int, got non-integer number\", oFile, oLine, oCol); if (v > 9007199254740991.0 || v < -9007199254740991.0) throw new DealError(\"E8004\", \"int out of range\", oFile, oLine, oCol); return (long) v; }",
+        "    static long intFromNumber(double v, java.lang.String oFile, int oLine, int oCol) { if (java.lang.Double.isNaN(v)) throw new DealError(\"E8001\", \"expected int, got NaN\", oFile, oLine, oCol, \"int\", \"NaN\", null, null); if (java.lang.Double.isInfinite(v)) throw new DealError(\"E8001\", \"expected int, got infinity\", oFile, oLine, oCol, \"int\", \"infinity\", null, null); if (v != java.lang.Math.floor(v)) throw new DealError(\"E8001\", \"expected int, got non-integer number\", oFile, oLine, oCol, \"int\", \"number\", null, null); if (v > 9007199254740991.0 || v < -9007199254740991.0) throw new DealError(\"E8004\", \"int out of range\", oFile, oLine, oCol); return (long) v; }",
         "    static double numberFromInt(long v) { return (double) v; }");
 
     /** The pre-tree base emission of {@code emitStdlibTimeMemberCall} —
@@ -9042,6 +9044,44 @@ public class JvmBackendTest {
             java.util.regex.Pattern.quote(needle), -1).length - 1;
     }
 
+    /** The emitted origin argument list of one raise site (ISSUE-0604
+     * D1): a Java string literal (the DEAL source file) followed by the
+     * 1-based start line and start column, or the explicit absent
+     * sentinel. */
+    private static final java.util.regex.Pattern RAISE_ORIGIN_SUFFIX =
+        java.util.regex.Pattern.compile(
+            " \"[^\"]*\", -?\\d+, \\d+\\)");
+
+    /**
+     * True when {@code haystack} contains {@code callPrefix} (which must
+     * end just before the origin argument list's leading space)
+     * immediately followed by a compile-time origin argument list — the
+     * ISSUE-0604 threading shape at every int arithmetic/conversion/
+     * stdlib-int raise site.
+     */
+    private static boolean hasOriginCall(String haystack,
+            String callPrefix) {
+        for (int idx = haystack.indexOf(callPrefix); idx >= 0;
+                idx = haystack.indexOf(callPrefix, idx + 1)) {
+            java.util.regex.Matcher m =
+                RAISE_ORIGIN_SUFFIX.matcher(haystack);
+            m.region(idx + callPrefix.length(), haystack.length());
+            if (m.lookingAt()) return true;
+        }
+        return false;
+    }
+
+    /**
+     * The 1-based column of {@code needle} in the {@code lineNumber}-th
+     * line (1-based) of {@code source} — the expected origin coordinate
+     * of a raise site whose authoritative node starts at that text.
+     */
+    private static int columnOf(String source, int lineNumber,
+            String needle) {
+        String[] lines = source.split("\n", -1);
+        return lines[lineNumber - 1].indexOf(needle) + 1;
+    }
+
     /**
      * The emission seam's field surface and the closed D11 message
      * table (ISSUE-0603 leaf 1; jvm-canonical-error-snapshot-convergence
@@ -9102,12 +9142,13 @@ public class JvmBackendTest {
             "the two-argument constructor is the explicit absent-origin "
                 + "path (file=null, line=-1, column=-1)");
 
-        // The intAdd binding-initializer addition keeps the closed
-        // default site and raises the pinned "int out of safe range"
-        // text (the int32-overflow-source sidecar).
-        check(java.contains("intAdd(max, one)"),
+        // The intAdd binding-initializer addition carries the
+        // authoritative operator expression's origin (ISSUE-0604 D3:
+        // the int32-overflow-source 9:18 convention — the expression
+        // start) and raises the pinned "int out of safe range" text.
+        check(hasOriginCall(java, "intAdd(max, one,"),
             "the declared-int binding-initializer addition emits the "
-                + "two-argument site: "
+                + "origin-threading site: "
                 + java.lines().filter(l -> l.contains("intAdd("))
                     .findFirst().orElse("<missing>"));
         ExecResult initRun = runInt32Project(source, "emission_seam_init");
@@ -9121,9 +9162,9 @@ public class JvmBackendTest {
             export function test(): int { return 2147483647 + 1; }
             """;
         String retJava = int32Artifact(retSource, "emission_seam_return");
-        check(retJava.contains("return intAdd(2147483647, 1);"),
-            "the return-position addition keeps the closed default site "
-                + "(the two-argument entry): "
+        check(hasOriginCall(retJava, "return intAdd(2147483647, 1,"),
+            "the return-position addition carries the operator "
+                + "expression's origin (int-add-overflow 7:10): "
                 + retJava.lines().filter(l -> l.contains("intAdd("))
                     .findFirst().orElse("<missing>"));
         ExecResult retRun = runInt32Project(retSource, "emission_seam_ret");
@@ -9174,11 +9215,10 @@ public class JvmBackendTest {
             export function test(): int { return math.absInt(-2147483648); }
             """;
         String absJava = int32Artifact(absSource, "emission_seam_absint");
-        check(absJava.contains(
-                "checkInt(java.lang.Math.abs((long) -2147483648L))")
-                || absJava.contains("checkInt(java.lang.Math.abs("),
-            "the absInt result gate routes through the absent-origin "
-                + "checkInt entry: "
+        check(hasOriginCall(absJava,
+                "checkInt(java.lang.Math.abs((long) -2147483648),"),
+            "the absInt result gate routes through the origin-threading "
+                + "checkInt entry (int-abs-min-overflow 9:10): "
                 + absJava.lines().filter(l -> l.contains("absInt("))
                     .findFirst().orElse("<missing>"));
         ExecResult absRun = runInt32Project(absSource,
@@ -9208,6 +9248,240 @@ public class JvmBackendTest {
                     "DEAL_ERROR_CODE: E8004 int out of range"),
             "the legacy intFromNumber arm raises the pinned E8004 "
                 + "message: " + legacyIntFrom.output());
+    }
+
+    /** The first emitted line containing {@code needle} (the failure
+     * messages of the origin pins). */
+    private static String emittedLine(String java, String needle) {
+        return java.lines().filter(l -> l.contains(needle)).findFirst()
+            .orElse("<missing>");
+    }
+
+    /**
+     * ISSUE-0604 (jvm-canonical-error-snapshot-convergence D3/D4/D11):
+     * every int arithmetic/conversion/stdlib-int raise site carries the
+     * authoritative node's origin — the operator or intrinsic-call
+     * expression start — as compile-time literals, and the closed
+     * expected/actual projection at the arms whose sidecars pin the
+     * pair. The origins are asserted against the fixture sources'
+     * coordinates (computed from the source text, never guessed), the
+     * message/projection literals at every route, and the sanctioned
+     * time-boundary raise stays span-less (the one-argument
+     * absent-origin {@code checkInt} entry).
+     */
+    private static void testArithmeticRaiseSiteOrigins() throws Exception {
+        System.out.println("-- Arithmetic/conversion/stdlib-int raise-site "
+            + "origins --");
+
+        // 1. The int operators. D3: the authoritative node is the
+        // operator expression start (its left end): int-add-overflow
+        // 7:10, int32-overflow-source 9:18, int-sub-overflow/
+        // int-mul-overflow/int32-pow-overflow 7:10, int-neg-min-source
+        // 8:22.
+        String opsSource = "export function main(): null { return null; }\n"
+            + "export function test(): int {\n"
+            + "  let a: int = 1;\n"
+            + "  let b: int = 2;\n"
+            + "  let c: int = a + b;\n"
+            + "  let d: int = a - b;\n"
+            + "  let e: int = a * b;\n"
+            + "  let f: int = a / b;\n"
+            + "  let g: int = a % b;\n"
+            + "  let h: int = a ** b;\n"
+            + "  let i: int = -a;\n"
+            + "  return c + d + e + f + g + h + i;\n"
+            + "}\n";
+        String opsPath = "jvmtest-arith_origins.deal";
+        String opsJava = int32Artifact(opsSource, "arith_origins");
+        check(opsJava.contains("intAdd(a, b, \"" + opsPath + "\", 5, "
+                + columnOf(opsSource, 5, "a + b") + ")"),
+            "the binding-initializer intAdd carries the operator "
+                + "expression's origin: "
+                + emittedLine(opsJava, "intAdd(a, b,"));
+        check(opsJava.contains("intSub(a, b, \"" + opsPath + "\", 6, "
+                + columnOf(opsSource, 6, "a - b") + ")"),
+            "intSub carries the operator expression's origin: "
+                + emittedLine(opsJava, "intSub(a, b,"));
+        check(opsJava.contains("intMul(a, b, \"" + opsPath + "\", 7, "
+                + columnOf(opsSource, 7, "a * b") + ")"),
+            "intMul carries the operator expression's origin: "
+                + emittedLine(opsJava, "intMul(a, b,"));
+        check(opsJava.contains("intDiv(a, b, \"" + opsPath + "\", 8, "
+                + columnOf(opsSource, 8, "a / b") + ")"),
+            "intDiv carries the operator expression's origin: "
+                + emittedLine(opsJava, "intDiv(a, b,"));
+        check(opsJava.contains("intMod(a, b, \"" + opsPath + "\", 9, "
+                + columnOf(opsSource, 9, "a % b") + ")"),
+            "intMod carries the operator expression's origin: "
+                + emittedLine(opsJava, "intMod(a, b,"));
+        check(opsJava.contains("intPow(a, b, \"" + opsPath + "\", 10, "
+                + columnOf(opsSource, 10, "a ** b") + ")"),
+            "intPow carries the operator expression's origin: "
+                + emittedLine(opsJava, "intPow(a, b,"));
+        check(opsJava.contains("intNeg(a, \"" + opsPath + "\", 11, "
+                + columnOf(opsSource, 11, "-a") + ")"),
+            "the unary int negation carries the unary expression's "
+                + "origin: " + emittedLine(opsJava, "intNeg(a,"));
+
+        // The closed per-branch messages of the same helpers: the
+        // division family is E8005 and the negative exponent E8006
+        // (int-div-zero/int-div-zero-e8005/rtc-035-remainder-zero-error
+        // 7:10, error-inside-for-of/loop-error-source 9:27/8:27,
+        // int-pow-negative 7:10), and intPow's NaN/infinity arms are
+        // E8001 with the pinned expected/actual pair
+        // (int32-pow-infinity 7:10: "int"/"infinity").
+        check(opsJava.contains("throw new DealError(\"E8005\", "
+                + "\"integer division by zero\", oFile, oLine, oCol)"),
+            "intDiv/intMod raise E8005 'integer division by zero'");
+        check(opsJava.contains("throw new DealError(\"E8006\", "
+                + "\"integer exponent must be non-negative\", oFile, "
+                + "oLine, oCol)"),
+            "intPow raises E8006 'integer exponent must be non-negative'");
+        check(opsJava.contains("throw new DealError(\"E8001\", "
+                + "\"expected int, got NaN\", oFile, oLine, oCol, "
+                + "\"int\", \"NaN\", null, null)"),
+            "intPow's NaN arm raises the pinned expected/actual pair");
+        check(opsJava.contains("throw new DealError(\"E8001\", "
+                + "\"expected int, got infinity\", oFile, oLine, oCol, "
+                + "\"int\", \"infinity\", null, null)"),
+            "intPow's infinity arm raises the pinned expected/actual "
+                + "pair");
+        check(opsJava.contains("if (p > 2147483647.0 || p < "
+                + "-2147483648.0) throw new DealError(\"E8004\", "
+                + "\"int out of safe range\", oFile, oLine, oCol)"),
+            "intPow's E8004 arm keeps the pinned \"int out of safe "
+                + "range\" text with no optional pair (int32-pow-overflow)");
+
+        // 2. The conversion intrinsics: the origin is the
+        // intrinsic-call expression start (int-convert-fraction 7:10,
+        // int-convert-infinity/-nan 9:10, int-conversion-out-of-range
+        // 7:10, runtime/int-convert-* 7:10/8:10,
+        // runtime/number-convert-null 8:10).
+        String convSource = "export function main(): null { return null; }\n"
+            + "export function test(): int {\n"
+            + "  let n: number = 1.5;\n"
+            + "  let m: int | null = 3;\n"
+            + "  let x: number | null = 1.0;\n"
+            + "  let a: int = int(n);\n"
+            + "  let b: int = int(m);\n"
+            + "  let c: number = number(x);\n"
+            + "  return a + b;\n"
+            + "}\n";
+        String convPath = "jvmtest-arith_conv_origins.deal";
+        String convJava = int32Artifact(convSource, "arith_conv_origins");
+        check(convJava.contains("intFromNumber(n, \"" + convPath
+                + "\", 6, " + columnOf(convSource, 6, "int(n)") + ")"),
+            "the int(number) intrinsic carries the call expression's "
+                + "origin: " + emittedLine(convJava, "intFromNumber(n,"));
+        check(convJava.contains("intFromNullable(m, \"" + convPath
+                + "\", 7, " + columnOf(convSource, 7, "int(m)") + ")"),
+            "the int(int | null) intrinsic carries the call expression's "
+                + "origin: " + emittedLine(convJava, "intFromNullable(m,"));
+        check(convJava.contains("numberFromNullable(x, \"" + convPath
+                + "\", 8, " + columnOf(convSource, 8, "number(x)") + ")"),
+            "the number(number | null) intrinsic carries the call "
+                + "expression's origin: "
+                + emittedLine(convJava, "numberFromNullable(x,"));
+        check(convJava.contains("throw new DealError(\"E8001\", "
+                + "\"expected int, got NaN\", oFile, oLine, oCol, "
+                + "\"int\", \"NaN\", null, null)")
+                && convJava.contains("throw new DealError(\"E8001\", "
+                    + "\"expected int, got infinity\", oFile, oLine, "
+                    + "oCol, \"int\", \"infinity\", null, null)")
+                && convJava.contains("throw new DealError(\"E8001\", "
+                    + "\"expected int, got non-integer number\", "
+                    + "oFile, oLine, oCol, \"int\", \"number\", null, "
+                    + "null)"),
+            "intFromNumber's NaN/infinity/non-integer arms raise the "
+                + "pinned expected/actual pairs (int-convert-nan/-infinity/"
+                + "fraction, runtime/int-convert-noninteger)");
+        check(convJava.contains("if (v > 2147483647.0 || v < "
+                + "-2147483648.0) throw new DealError(\"E8004\", "
+                + "\"int out of safe range\", oFile, oLine, oCol)"),
+            "the signed-int32 intFromNumber E8004 arm pins \"int out of "
+                + "safe range\" (int-conversion-out-of-range)");
+        check(convJava.contains("throw new DealError(\"E8001\", "
+                + "\"cannot convert null to int\", oFile, oLine, oCol, "
+                + "\"int\", \"null\", null, null)"),
+            "the int(null) arm raises the pinned expected/actual pair "
+                + "(runtime/int-convert-null)");
+        check(convJava.contains("throw new DealError(\"E8001\", "
+                + "\"cannot convert null to number\", oFile, oLine, "
+                + "oCol, \"number\", \"null\", null, null)"),
+            "the number(null) arm raises the pinned expected/actual pair "
+                + "(runtime/number-convert-null)");
+
+        // 3. The legacy-safe-int profile's surviving E8004 split: the
+        // intFromNumber arm keeps "int out of range"
+        // (runtime/int-convert-range) with the same closed E8001 pairs.
+        String legacyConvJava = legacyArtifact(convSource,
+            "arith_conv_origins_legacy");
+        check(legacyConvJava.contains("if (v > 9007199254740991.0 || "
+                + "v < -9007199254740991.0) throw new DealError(\"E8004\", "
+                + "\"int out of range\", oFile, oLine, oCol)"),
+            "the legacy intFromNumber E8004 arm keeps \"int out of "
+                + "range\" (runtime/int-convert-range)");
+        check(hasOriginCall(legacyConvJava, "intFromNumber(n,"),
+            "the legacy conversion site carries the origin literals");
+
+        // 4. The std/math absInt result gate: the intrinsic-call
+        // expression's origin (int-abs-min-overflow 9:10) with the
+        // pinned "int out of safe range" literal.
+        String absSource = "import * as math from \"std/math\";\n"
+            + "export function main(): null { return null; }\n"
+            + "export function test(): int { return math.absInt(-2147483648); }\n";
+        String absPath = "jvmtest-arith_abs_origin.deal";
+        String absJava = int32Artifact(absSource, "arith_abs_origin");
+        check(absJava.contains("return checkInt(java.lang.Math.abs((long) "
+                + "-2147483648), \"" + absPath + "\", 3, "
+                + columnOf(absSource, 3, "math.absInt(") + ")"),
+            "the absInt result gate carries the intrinsic-call "
+                + "expression's origin: "
+                + emittedLine(absJava, "java.lang.Math.abs((long)"));
+
+        // 5. The sanctioned span-less raise (D5): the locked time
+        // selector's declared-int boundary keeps the one-argument
+        // absent-origin checkInt entry — no origin is fabricated there.
+        String timeSource = "import * as time from \"std/time\"\n"
+            + "export function main(): null { return null; }\n"
+            + "export function test(): int {\n"
+            + "  let t: int = time.nowMillis();\n"
+            + "  return t;\n"
+            + "}\n";
+        String timeJava = int32Artifact(timeSource, "arith_time_origin");
+        check(timeJava.contains("int t = checkInt("
+                + RETAINED_TIME_EXPRESSION + ");"),
+            "the time boundary keeps the span-less (absent-origin) "
+                + "checkInt entry: "
+                + emittedLine(timeJava, "int t = checkInt("));
+        check(opsJava.contains("static int intAdd(int a, int b) { return "
+                + "intAdd(a, b, null, -1, -1); }"),
+            "the short int-arithmetic overload keeps the explicit "
+                + "absent-origin sentinel (the internal entries)");
+
+        // The real pipeline observes the projections end to end: the
+        // null-conversion arm raises the pinned E8001 message through
+        // javac + java (the byte-exact sidecar convergence itself is the
+        // differential gate's lane proof).
+        ExecResult nullRun = runInt32Project("export function main(): "
+            + "null { return null; }\n"
+            + "export function test(): int {\n"
+            + "  let x: int | null = null;\n"
+            + "  return int(x);\n"
+            + "}\n", "arith_origins_null");
+        check(nullRun.exitCode() == 1 && nullRun.output().contains(
+                "DEAL_ERROR_CODE: E8001 cannot convert null to int"),
+            "the int(null) arm raises the pinned E8001 message through "
+                + "the real pipeline: " + nullRun.output());
+        ExecResult fracRun = runInt32Project("export function main(): "
+            + "null { return null; }\n"
+            + "export function test(): int { return int(3.5); }\n",
+            "arith_origins_frac");
+        check(fracRun.exitCode() == 1 && fracRun.output().contains(
+                "DEAL_ERROR_CODE: E8001 expected int, got non-integer "
+                    + "number"),
+            "the int(non-integer) arm raises the pinned E8001 message "
+                + "through the real pipeline: " + fracRun.output());
     }
 
     /** The DEAL time-boundary pins (ISSUE-0375 D4 / ISSUE-0377 time pin;
@@ -10195,9 +10469,9 @@ public class JvmBackendTest {
             + "export function test(): int {\n      return -2147483648 - 1;\n"
             + "    }\n";
         String subJava = int32Artifact(subSource, "min_literal_sub_artifact");
-        check(subJava.contains("return intSub(-2147483648, 1);"),
+        check(hasOriginCall(subJava, "return intSub(-2147483648, 1,"),
             "the pinned -2147483648 - 1 edge emits with its literal "
-                + "spelling through intSub: "
+                + "spelling through intSub and the origin literals: "
                 + subJava.lines().filter(l -> l.contains("intSub"))
                 .findFirst().orElse("<missing>"));
         check(!subJava.contains("checkInt(2147483648L)"),
@@ -10303,9 +10577,9 @@ public class JvmBackendTest {
         String minLegacyJava = legacyArtifact("""
             export function test(): int { return -2147483648; }
             """, "legacy_min_literal_artifact");
-        check(minLegacyJava.contains("return intNeg(2147483648L);"),
+        check(hasOriginCall(minLegacyJava, "return intNeg(2147483648L,"),
             "legacy min literal keeps the base emission shape "
-                + "intNeg(2147483648L): "
+                + "intNeg(2147483648L) with the origin literals: "
                 + minLegacyJava.lines().filter(l -> l.contains("intNeg"))
                 .findFirst().orElse("<missing>"));
         check(!minLegacyJava.contains("return -2147483648;"),
@@ -11811,7 +12085,8 @@ public class JvmBackendTest {
                 "artifact declares its class");
             check(java.contains("java.lang.System.out.println(\"jvm-orchestrator\")"),
                 "console.log mapped to java.lang.System.out");
-            check(java.contains("return intAdd(a, b);"), "int arithmetic emitted");
+            check(hasOriginCall(java, "return intAdd(a, b,"),
+                "int arithmetic emitted with the origin literals");
 
             // The production artifact must be real: javac compiles it.
             ProcessBuilder javac = new ProcessBuilder("javac", "-encoding", "UTF-8",
@@ -12152,8 +12427,8 @@ public class JvmBackendTest {
         check(!exprAwaitRes.hasErrors(),
             "awaiting async function expression codegen clean: "
                 + exprAwaitRes.diagnostics());
-        check(exprAwaitRes.source().contains(
-                "return intAdd(checkInt(base()), x$c[0]);"),
+        check(hasOriginCall(exprAwaitRes.source(),
+                "return intAdd(checkInt(base()), x$c[0],"),
             "the expression body's await is a direct blocking call with "
                 + "the completion check, and the captured local routes "
                 + "through its cell: " + exprAwaitRes.source());
@@ -13428,9 +13703,9 @@ public class JvmBackendTest {
             check(java.contains("Lib.$C_C c = Lib.getC();"),
                 "the inferred imported-class value declares the imported "
                 + "module's generated class type: " + java);
-            check(java.contains("return intAdd((c).v, 1);"),
+            check(hasOriginCall(java, "return intAdd((c).v, 1,"),
                 "the imported class field read emits a direct access fed "
-                + "into int arithmetic: " + java);
+                + "into int arithmetic with the origin literals: " + java);
             ExecResult exec = runJvmArtifacts(outputDir,
                 parseProgram("export function run(): int { return 1; }"),
                 "Entry");
@@ -14263,12 +14538,14 @@ public class JvmBackendTest {
         // the read's index-expression origin, exactly like the
         // element-typed read the same site lowers for a typed target
         // (review cycle 2, finding 1 — the sentinel call form is gone).
-        Frontend x = compileFrontend("""
+        String boxedReadSource = """
             export function test(): boolean {
               let xs: int[] = [1];
               return xs[-1] === 5;
             }
-            """, "jvmtest-boxed-read-origin-emission.deal");
+            """;
+        Frontend x = compileFrontend(boxedReadSource,
+            "jvmtest-boxed-read-origin-emission.deal");
         check(x.errors().isEmpty(), "boxed read origin emission frontend "
             + "clean: " + x.errors());
         if (x.errors().isEmpty()) {
@@ -14279,17 +14556,25 @@ public class JvmBackendTest {
                 + "clean: " + res.diagnostics());
             if (!res.hasErrors()) {
                 String java = res.source();
+                // ISSUE-0604 D3 threads the unary minus's own origin
+                // into the index expression, so the boxed call carries
+                // both origins: the read (3:10) for the E8002 raise and
+                // the negation (3:13) for its own checkInt gate.
                 check(java.contains(
-                        "__intArrayReadBoxed(xs, intNeg(1L), "
+                        "__intArrayReadBoxed(xs, intNeg(1L, "
                             + "\"jvmtest-boxed-read-origin-emission.deal\", "
-                            + "3, 10)"),
+                            + "3, " + columnOf(boxedReadSource, 3, "-1")
+                            + "), "
+                            + "\"jvmtest-boxed-read-origin-emission.deal\", "
+                            + "3, " + columnOf(boxedReadSource, 3, "xs")
+                            + ")"),
                     "the comparison-operand read passes the index "
                         + "expression origin (3:10) into the boxed "
                         + "helper call — never the span-absent sentinel: "
-                        + java);
+                        + emittedLine(java, "__intArrayReadBoxed"));
                 check(!java.contains("__intArrayReadBoxed(xs, intNeg(1L));"),
                     "the sentinel two-argument boxed call form is gone: "
-                        + java);
+                        + emittedLine(java, "__intArrayReadBoxed"));
             }
         }
     }

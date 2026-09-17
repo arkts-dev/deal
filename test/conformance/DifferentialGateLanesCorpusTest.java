@@ -8,6 +8,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -30,11 +31,12 @@ import java.util.Objects;
  *       {@code stdlib/string/length-unicode.deal},
  *       {@code error-handling/try-catch.deal} plus two more converged
  *       cases) passes byte-exact on all three lanes;</li>
- *   <li>the failure set is exactly the tracked non-fatal registry set
- *       plus the enumerated differential failures — every one naming
- *       fixture,
- *       backend, and the closed mismatch class with the first differing
- *       byte/field detail;</li>
+ *   <li>the real corpus run converges green: the failure set is empty —
+ *       an honest zero over the dispatched runtime cases on all three
+ *       lanes — and a staged single-lane mismatch over the same corpus
+ *       flips the verdict to FAIL with exactly that failure visible,
+ *       naming fixture, backend, and the closed mismatch class with the
+ *       first differing byte/field detail (never greenwashed);</li>
  *   <li>the per-backend pin of the luajit lane (ISSUE-0598, the LuaJIT
  *       lane convergence leaf): every runtime-classified case passes
  *       byte-exact on luajit ({@code 389/0}), zero luajit gate
@@ -46,6 +48,11 @@ import java.util.Objects;
  *       js row in the pinned differential-failure enumeration (the
  *       retired pre-flip E8003 first-byte divergence is gone with its
  *       row);</li>
+ *   <li>the ISSUE-0604 convergence class (the arithmetic/conversion/
+ *       stdlib-int raise-site origins): every fixture of
+ *       {@link #JVM_ARITHMETIC_CONVERGED} passes the jvm lane
+ *       byte-exact against its on-disk sidecar, and the int-add-overflow
+ *       framing is re-run on the real lane and pinned byte-for-byte;</li>
  *   <li>no {@code SKIP} verdict class appears anywhere (the gate has no
  *       skip branch; {@code Skipped: 0}).</li>
  * </ul>
@@ -106,13 +113,57 @@ public class DifferentialGateLanesCorpusTest {
         "backend-runtime/error-handling/throw-error.deal",
         "backend-runtime/control-flow/continue.deal");
 
-    /** Representative pinned first-difference details (the gate's
-     * bounded-context reports), asserted verbatim. */
-    private static final String JVM_ADD_OVERFLOW_MISSING_COLUMN_PREFIX =
-        "the captured DEAL error carries no span (file, line, column) "
-            + "where one is required — the lane never fabricates a pinned "
-            + "field; captured fields: code=E8004, message=int out of safe "
-            + "range, file=null, line=null, column=null";
+    /** The converged arithmetic-leaf framing of
+     * {@code arithmetic/int-add-overflow.deal} (ISSUE-0604): the retired
+     * missing-column PROCESS_FAILURE prefix's positive replacement. The
+     * jvm leg now emits the exact sidecar-pinned snapshot — E8004 with
+     * the closed message and the operator expression's origin (7:10) —
+     * so the leaf pins the framed bytes instead of the absent-span
+     * report. */
+    private static final String JVM_ADD_OVERFLOW_FRAMING =
+        "DEAL_ERROR_CODE: E8004\n"
+            + "DEAL_ERROR_SNAPSHOT: {\"code\":\"E8004\","
+            + "\"message\":\"int out of safe range\",\"sourceFile\":"
+            + "\"backend-runtime/arithmetic/int-add-overflow.deal\","
+            + "\"line\":7,\"column\":10}\n";
+
+    /**
+     * The ISSUE-0604 convergence class
+     * (jvm-canonical-error-snapshot-convergence D3/D11): every
+     * arithmetic, conversion, and stdlib-int raise site of the retained
+     * JVM emitter now carries the authoritative node's origin (the
+     * operator or intrinsic-call expression start) and the closed
+     * message/projection literals, so each of these fixtures matches its
+     * on-disk sidecar byte-exact on the jvm lane. The jvm-leg pin below
+     * verifies the convergence through the real three-lane run.
+     */
+    private static final List<String> JVM_ARITHMETIC_CONVERGED = List.of(
+        "backend-runtime/arithmetic/int-add-overflow.deal",
+        "backend-runtime/arithmetic/int-sub-overflow.deal",
+        "backend-runtime/arithmetic/int-mul-overflow.deal",
+        "backend-runtime/arithmetic/int-neg-min.deal",
+        "backend-runtime/arithmetic/int-div-zero.deal",
+        "backend-runtime/arithmetic/int-pow-negative.deal",
+        "backend-runtime/arithmetic/int32-pow-overflow.deal",
+        "backend-runtime/arithmetic/int32-pow-infinity.deal",
+        "backend-runtime/arithmetic/int-convert-fraction.deal",
+        "backend-runtime/arithmetic/int-convert-infinity.deal",
+        "backend-runtime/arithmetic/int-convert-nan.deal",
+        "backend-runtime/arithmetic/int-conversion-out-of-range.deal",
+        "backend-runtime/control-flow-errors/error-inside-for-of.deal",
+        "backend-runtime/control-flow-errors/error-inside-while-loop.deal",
+        "backend-runtime/runtime-errors/int-div-zero-e8005.deal",
+        "backend-runtime/runtime-errors/rtc-035-remainder-zero-error.deal",
+        "backend-runtime/runtime/int-convert-noninteger.deal",
+        "backend-runtime/runtime/int-convert-null.deal",
+        "backend-runtime/runtime/int-convert-range.deal",
+        "backend-runtime/runtime/number-convert-null.deal",
+        "backend-runtime/source-location/037-runtime-source-div-zero.deal",
+        "backend-runtime/source-location/int32-overflow-source.deal",
+        "backend-runtime/source-location/int-neg-min-source.deal",
+        "backend-runtime/source-location-precision/closure-error-source.deal",
+        "backend-runtime/source-location-precision/loop-error-source.deal",
+        "backend-runtime/stdlib/math/int-abs-min-overflow.deal");
 
     public static void main(String[] args) throws Exception {
         System.out.println("=== Differential Gate Lanes Corpus Tests "
@@ -254,6 +305,24 @@ public class DifferentialGateLanesCorpusTest {
         return null;
     }
 
+    /** Executes a real corpus fixture on the production jvm lane and
+     * returns the lane execution (used by the arithmetic-leaf
+     * convergence pin to observe the exact framed bytes). */
+    private static LaneExecution jvmLaneExecution(Path root,
+            String corpusPath) throws Exception {
+        CorpusDiscovery.DiscoveryResult discovery =
+            CorpusDiscovery.discover(root);
+        CorpusDiscovery.Fixture fixture =
+            discovery.corpusByPath().get(corpusPath);
+        SidecarGateLoader.LoadResult load = SidecarGateLoader.load(fixture,
+            discovery.corpusByPath(), discovery.corpusModuleIndex(), root);
+        return new JvmLane(root).execute(new LaneCase(corpusPath, "jvm",
+            fixture.file(),
+            CorpusDiscovery.compilationSet(fixture, discovery.corpusByPath(),
+                root),
+            load.runtime().get().expectationFor("jvm")));
+    }
+
     private static String stdoutOf(LaneExecution execution) {
         return execution instanceof LaneExecution.Executed executed
             ? new String(executed.stdout(), StandardCharsets.UTF_8)
@@ -307,7 +376,7 @@ public class DifferentialGateLanesCorpusTest {
     // Full gate run over the real corpus (Verification 1 + 8, G8 accounting)
     // =========================================================================
 
-    private static void fullGateCorpusRun(int jobs) throws IOException {
+    private static void fullGateCorpusRun(int jobs) throws Exception {
         System.out.println("-- Full three-lane gate over the real corpus --");
         long start = System.nanoTime();
         Map<String, Lane> lanes = Map.of(
@@ -495,30 +564,119 @@ public class DifferentialGateLanesCorpusTest {
                     .filter(f -> f.subject().startsWith("luajit "))
                     .map(DifferentialGate.GateFailure::message)
                     .toList());
-        DifferentialGate.GateFailure jvmColumn = run.failures().stream()
+
+        // ISSUE-0604 (the arithmetic/conversion/stdlib-int origin leaf):
+        // the retired missing-column spot-pin is replaced by the positive
+        // convergence proof. The per-site origin literals and the closed
+        // message/projection literals landed for every int arithmetic/
+        // conversion/stdlib-int raise site, so the int-add-overflow jvm
+        // leg converges byte-exact (E8004 "int out of safe range" at the
+        // operator expression's 7:10) and no PROCESS_FAILURE remains to
+        // pin. The replacement assertions re-run the real lane and pin
+        // the exact framed bytes.
+        DifferentialGate.GateFailure jvmAddOverflow = run.failures().stream()
             .filter(f -> f.subject().equals("jvm "
                 + "backend-runtime/arithmetic/int-add-overflow.deal"))
             .findFirst().orElse(null);
-        check(jvmColumn != null
-                && jvmColumn.detail().startsWith(
-                    JVM_ADD_OVERFLOW_MISSING_COLUMN_PREFIX),
-            "the jvm int-add-overflow infrastructure outcome names the "
-                + "missing field, got: " + jvmColumn);
         // D10 sidecar-correction authority (recorded with the correction):
         // the int-add-overflow sidecar pins the raising expression's raw
         // line 7 (the `2147483647 + 1` site; every sibling arithmetic pin
         // names raw line 7) — the source-authoritative value under
         // docs/spec-v1.2.md:2068-2075, "Runtime errors use generated
         // check metadata to report original `.deal` location" — never
-        // fabricated by the lane. This user-throw leaf edits no sidecar;
-        // the jvm leg still reports the span-absent capture honestly
-        // here, and the arithmetic leaf's origin literals flip it to the
-        // converged byte comparison.
+        // fabricated by the lane. The arithmetic leaf's origin literals
+        // flip the jvm leg to the converged byte comparison below.
+        check(jvmAddOverflow == null,
+            "the retired jvm int-add-overflow spot-pin is gone: the "
+                + "fixture converges after the origin literals landed "
+                + "(no gate failure names it), got: " + jvmAddOverflow);
+        GateDispatcher.CaseVerdict addOverflowVerdict = verdictOf(run,
+            "backend-runtime/arithmetic/int-add-overflow.deal");
+        check(addOverflowVerdict != null && addOverflowVerdict.passed(),
+            "the int-add-overflow fixture passes on all three lanes "
+                + "byte-exact against the on-disk 7:10 pin, got: "
+                + addOverflowVerdict);
+        LaneExecution addOverflowExecution = jvmLaneExecution(CORPUS_ROOT,
+            "backend-runtime/arithmetic/int-add-overflow.deal");
+        check(addOverflowExecution instanceof LaneExecution.Executed executed
+                && executed.exitCode() == 1
+                && new String(executed.stdout(), StandardCharsets.UTF_8)
+                    .equals(JVM_ADD_OVERFLOW_FRAMING),
+            "the real jvm lane emits the exact pinned int-add-overflow "
+                + "framing (E8004 at 7:10), got: " + addOverflowExecution);
 
-        // The gate verdict is FAIL when genuine lane mismatches are present.
-        check(!run.ok(),
-            "the pre-flip gate verdict is FAIL (the staged failure set "
-                + "is visible, never greenwashed)");
+        // ISSUE-0604: every fixture of the convergence class matches its
+        // on-disk sidecar byte-exact on the jvm lane through the real
+        // run (the class-wide form of the criterion above).
+        for (String fixturePath : JVM_ARITHMETIC_CONVERGED) {
+            GateDispatcher.LaneOutcome arithmeticJvm = outcomeOf(run,
+                fixturePath, "jvm");
+            check(arithmeticJvm != null && arithmeticJvm.passed(),
+                "the ISSUE-0604 arithmetic/conversion/stdlib-int fixture "
+                    + fixturePath + " passes the jvm lane byte-exact "
+                    + "against its sidecar, got: " + arithmeticJvm);
+        }
+        // ISSUE-0604: the convergence class is visible in the jvm
+        // lane's accounting — every fixture of the class is one of the
+        // lane's passes. The leaf pins no fixed pass/fail population:
+        // the remaining pre-flip jvm rows belong to the not-yet-landed
+        // class leaves (array/bytes/table access), and a fixed
+        // population pin would go stale with every canonical advance
+        // (the engine boundary excludes fixed population pins). The
+        // counters' honesty over the dispatched set is asserted above.
+        int[] jvmCounts = run.perBackend().get("jvm");
+        check(jvmCounts[0] >= JVM_ARITHMETIC_CONVERGED.size(),
+            "the jvm lane's pass count covers the converged arithmetic/"
+                + "conversion/stdlib-int class ("
+                + JVM_ARITHMETIC_CONVERGED.size() + " fixtures), got "
+                + jvmCounts[0] + " / " + jvmCounts[1] + " over "
+                + run.runtimeCasesDispatched() + " dispatched");
+
+        // The pre-flip staging is over: the step-7 cutover and the
+        // per-class origin leaves (this leaf's arithmetic/conversion/
+        // stdlib-int class last) converged the jvm lane, so the real
+        // three-lane corpus run is green. The PASS is asserted as an
+        // honest zero — no failing outcome, no failure row — with the
+        // per-backend counters accounting for every dispatched case (the
+        // assertions above).
+        check(run.ok() && observedFailures == 0 && run.failures().isEmpty(),
+            "the real three-lane corpus run converges green with an "
+                + "honest zero (no failing outcome, no failure row), got "
+                + observedFailures + " failing outcomes and "
+                + run.failures().size() + " failure rows: "
+                + run.failures());
+        // Never greenwashed (the retired pre-flip staging pin's binding
+        // goal, preserved): a genuine single-lane mismatch staged on the
+        // real corpus — one fixture's transcript perturbed on the luajit
+        // leg only — flips the same harness to FAIL with exactly that
+        // failure visible, and shifts no other lane's counters.
+        String stagedPath = "backend-runtime/arithmetic/int-add-overflow.deal";
+        DifferentialGate.GateRun staged = DifferentialGate.run(CORPUS_ROOT,
+            Map.of("luajit",
+                    new SingleCasePerturbingLuaLane(CORPUS_ROOT, stagedPath),
+                "jvm", new JvmLane(CORPUS_ROOT),
+                "js", new JsLane(CORPUS_ROOT)),
+            jobs, FULL_RUN_DEADLINE, capture);
+        int[] stagedLuajit = staged.perBackend().get("luajit");
+        int[] realLuajit = run.perBackend().get("luajit");
+        GateDispatcher.LaneOutcome stagedOutcome = outcomeOf(staged,
+            stagedPath, "luajit");
+        DifferentialGate.GateFailure stagedFailure = staged.failures()
+            .size() == 1 ? staged.failures().get(0) : null;
+        check(!staged.ok() && stagedFailure != null
+                && "lane".equals(stagedFailure.kind())
+                && stagedFailure.subject().equals("luajit " + stagedPath)
+                && stagedOutcome != null && !stagedOutcome.passed()
+                && stagedLuajit[0] == realLuajit[0] - 1
+                && stagedLuajit[1] == realLuajit[1] + 1
+                && Arrays.equals(staged.perBackend().get("jvm"),
+                    run.perBackend().get("jvm"))
+                && Arrays.equals(staged.perBackend().get("js"),
+                    run.perBackend().get("js")),
+            "the staged single-lane mismatch flips the verdict to FAIL "
+                + "with exactly that failure visible and every other "
+                + "lane counter unchanged, got: " + staged.failures()
+                + " / luajit " + stagedLuajit[0] + "/" + stagedLuajit[1]);
         System.out.println("    full run: " + elapsedMillis + " ms, "
             + run.verdicts().size() + " verdicts, "
             + observedFailures + " lane failures");
@@ -543,6 +701,33 @@ public class DifferentialGateLanesCorpusTest {
             if (base instanceof LaneExecution.Executed executed) {
                 byte[] stdout = new String(executed.stdout(),
                     StandardCharsets.UTF_8).replace("beta", "gamma")
+                    .getBytes(StandardCharsets.UTF_8);
+                return new LaneExecution.Executed(stdout, executed.stderr(),
+                    executed.exitCode());
+            }
+            return base;
+        }
+    }
+
+    /** TEST DOUBLE — a real-corpus LuaJIT lane perturbing exactly one
+     * designated fixture's transcript (the staged single-lane mismatch
+     * of the never-greenwashed pin; every other case and lane stays
+     * production). */
+    private static final class SingleCasePerturbingLuaLane extends LuaLane {
+        private final String target;
+
+        SingleCasePerturbingLuaLane(Path conformanceRoot, String target) {
+            super(conformanceRoot);
+            this.target = target;
+        }
+
+        @Override
+        public LaneExecution execute(LaneCase laneCase) throws Exception {
+            LaneExecution base = super.execute(laneCase);
+            if (base instanceof LaneExecution.Executed executed
+                    && laneCase.fixturePath().equals(target)) {
+                byte[] stdout = new String(executed.stdout(),
+                    StandardCharsets.UTF_8).concat("staged-mismatch\n")
                     .getBytes(StandardCharsets.UTF_8);
                 return new LaneExecution.Executed(stdout, executed.stderr(),
                     executed.exitCode());

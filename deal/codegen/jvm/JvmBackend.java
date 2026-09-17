@@ -5483,7 +5483,7 @@ public final class JvmBackend {
             // finite values outside the signed32 range report E8004 (the
             // int32-pow-overflow pin keeps the "int out of safe range" text).
             emitLine("static int intPow(int a, int b) { return intPow(a, b, null, -1, -1); }");
-            emitLine("static int intPow(int a, int b, java.lang.String oFile, int oLine, int oCol) { if (b < 0) throw new DealError(\"E8006\", \"integer exponent must be non-negative\", oFile, oLine, oCol); double p = java.lang.Math.pow((double) a, (double) b); if (java.lang.Double.isNaN(p)) throw new DealError(\"E8001\", \"expected int, got NaN\", oFile, oLine, oCol); if (java.lang.Double.isInfinite(p)) throw new DealError(\"E8001\", \"expected int, got infinity\", oFile, oLine, oCol); if (p > 2147483647.0 || p < -2147483648.0) throw new DealError(\"E8004\", \"int out of safe range\", oFile, oLine, oCol); return (int) p; }");
+            emitLine("static int intPow(int a, int b, java.lang.String oFile, int oLine, int oCol) { if (b < 0) throw new DealError(\"E8006\", \"integer exponent must be non-negative\", oFile, oLine, oCol); double p = java.lang.Math.pow((double) a, (double) b); if (java.lang.Double.isNaN(p)) throw new DealError(\"E8001\", \"expected int, got NaN\", oFile, oLine, oCol, \"int\", \"NaN\", null, null); if (java.lang.Double.isInfinite(p)) throw new DealError(\"E8001\", \"expected int, got infinity\", oFile, oLine, oCol, \"int\", \"infinity\", null, null); if (p > 2147483647.0 || p < -2147483648.0) throw new DealError(\"E8004\", \"int out of safe range\", oFile, oLine, oCol); return (int) p; }");
             emitLine("static int intNeg(int a) { return intNeg(a, null, -1, -1); }");
             emitLine("static int intNeg(int a, java.lang.String oFile, int oLine, int oCol) { try { return java.lang.Math.negateExact(a); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\", oFile, oLine, oCol); } }");
             emitLine("// number %: Lua-style floored modulo (a - floor(a/b)*b), unlike Java's truncated %.");
@@ -5498,7 +5498,7 @@ public final class JvmBackend {
             // while the legacy-safe-int arm keeps "int out of range"
             // (runtime/int-convert-range).
             emitLine("static int intFromNumber(double v) { return intFromNumber(v, null, -1, -1); }");
-            emitLine("static int intFromNumber(double v, java.lang.String oFile, int oLine, int oCol) { if (java.lang.Double.isNaN(v)) throw new DealError(\"E8001\", \"expected int, got NaN\", oFile, oLine, oCol); if (java.lang.Double.isInfinite(v)) throw new DealError(\"E8001\", \"expected int, got infinity\", oFile, oLine, oCol); if (v != java.lang.Math.floor(v)) throw new DealError(\"E8001\", \"expected int, got non-integer number\", oFile, oLine, oCol); if (v > 2147483647.0 || v < -2147483648.0) throw new DealError(\"E8004\", \"int out of safe range\", oFile, oLine, oCol); return (int) v; }");
+            emitLine("static int intFromNumber(double v, java.lang.String oFile, int oLine, int oCol) { if (java.lang.Double.isNaN(v)) throw new DealError(\"E8001\", \"expected int, got NaN\", oFile, oLine, oCol, \"int\", \"NaN\", null, null); if (java.lang.Double.isInfinite(v)) throw new DealError(\"E8001\", \"expected int, got infinity\", oFile, oLine, oCol, \"int\", \"infinity\", null, null); if (v != java.lang.Math.floor(v)) throw new DealError(\"E8001\", \"expected int, got non-integer number\", oFile, oLine, oCol, \"int\", \"number\", null, null); if (v > 2147483647.0 || v < -2147483648.0) throw new DealError(\"E8004\", \"int out of safe range\", oFile, oLine, oCol); return (int) v; }");
             emitLine("static double numberFromInt(int v) { return (double) v; }");
         } else {
             emitLine("// DEAL int safe range: ±(2^53-1), mirroring deal/runtime.lua's");
@@ -5522,7 +5522,7 @@ public final class JvmBackend {
             // "expected int, got infinity" for e.g. `10 ** 400`); only finite
             // values outside the int safe range report E8004.
             emitLine("static long intPow(long a, long b) { return intPow(a, b, null, -1, -1); }");
-            emitLine("static long intPow(long a, long b, java.lang.String oFile, int oLine, int oCol) { if (b < 0L) throw new DealError(\"E8006\", \"integer exponent must be non-negative\", oFile, oLine, oCol); double p = java.lang.Math.pow((double) a, (double) b); if (java.lang.Double.isNaN(p)) throw new DealError(\"E8001\", \"expected int, got NaN\", oFile, oLine, oCol); if (java.lang.Double.isInfinite(p)) throw new DealError(\"E8001\", \"expected int, got infinity\", oFile, oLine, oCol); if (p > 9007199254740991.0 || p < -9007199254740991.0) throw new DealError(\"E8004\", \"int out of safe range\", oFile, oLine, oCol); return (long) p; }");
+            emitLine("static long intPow(long a, long b, java.lang.String oFile, int oLine, int oCol) { if (b < 0L) throw new DealError(\"E8006\", \"integer exponent must be non-negative\", oFile, oLine, oCol); double p = java.lang.Math.pow((double) a, (double) b); if (java.lang.Double.isNaN(p)) throw new DealError(\"E8001\", \"expected int, got NaN\", oFile, oLine, oCol, \"int\", \"NaN\", null, null); if (java.lang.Double.isInfinite(p)) throw new DealError(\"E8001\", \"expected int, got infinity\", oFile, oLine, oCol, \"int\", \"infinity\", null, null); if (p > 9007199254740991.0 || p < -9007199254740991.0) throw new DealError(\"E8004\", \"int out of safe range\", oFile, oLine, oCol); return (long) p; }");
             emitLine("static long intNeg(long a) { return intNeg(a, null, -1, -1); }");
             emitLine("static long intNeg(long a, java.lang.String oFile, int oLine, int oCol) { try { return checkInt(java.lang.Math.negateExact(a), oFile, oLine, oCol); } catch (java.lang.ArithmeticException e) { throw new DealError(\"E8004\", \"int out of safe range\", oFile, oLine, oCol); } }");
             emitLine("// number %: Lua-style floored modulo (a - floor(a/b)*b), unlike Java's truncated %.");
@@ -5532,7 +5532,7 @@ public final class JvmBackend {
             // "int out of range" (runtime/int-convert-range) — the one
             // surviving split of the E8004 family.
             emitLine("static long intFromNumber(double v) { return intFromNumber(v, null, -1, -1); }");
-            emitLine("static long intFromNumber(double v, java.lang.String oFile, int oLine, int oCol) { if (java.lang.Double.isNaN(v)) throw new DealError(\"E8001\", \"expected int, got NaN\", oFile, oLine, oCol); if (java.lang.Double.isInfinite(v)) throw new DealError(\"E8001\", \"expected int, got infinity\", oFile, oLine, oCol); if (v != java.lang.Math.floor(v)) throw new DealError(\"E8001\", \"expected int, got non-integer number\", oFile, oLine, oCol); if (v > 9007199254740991.0 || v < -9007199254740991.0) throw new DealError(\"E8004\", \"int out of range\", oFile, oLine, oCol); return (long) v; }");
+            emitLine("static long intFromNumber(double v, java.lang.String oFile, int oLine, int oCol) { if (java.lang.Double.isNaN(v)) throw new DealError(\"E8001\", \"expected int, got NaN\", oFile, oLine, oCol, \"int\", \"NaN\", null, null); if (java.lang.Double.isInfinite(v)) throw new DealError(\"E8001\", \"expected int, got infinity\", oFile, oLine, oCol, \"int\", \"infinity\", null, null); if (v != java.lang.Math.floor(v)) throw new DealError(\"E8001\", \"expected int, got non-integer number\", oFile, oLine, oCol, \"int\", \"number\", null, null); if (v > 9007199254740991.0 || v < -9007199254740991.0) throw new DealError(\"E8004\", \"int out of range\", oFile, oLine, oCol); return (long) v; }");
             emitLine("static double numberFromInt(long v) { return (double) v; }");
         }
         emitLine("// ---- DEAL v1.2 bytes runtime (ISSUE-0158 int32-bytes lane) ----");
@@ -6143,10 +6143,10 @@ public final class JvmBackend {
             ? "static int intFromNullable(java.lang.Integer v) { return intFromNullable(v, null, -1, -1); }"
             : "static long intFromNullable(java.lang.Long v) { return intFromNullable(v, null, -1, -1); }");
         emitLine(int32Mode
-            ? "static int intFromNullable(java.lang.Integer v, java.lang.String oFile, int oLine, int oCol) { if (v == null) throw new DealError(\"E8001\", \"cannot convert null to int\", oFile, oLine, oCol); return v; }"
-            : "static long intFromNullable(java.lang.Long v, java.lang.String oFile, int oLine, int oCol) { if (v == null) throw new DealError(\"E8001\", \"cannot convert null to int\", oFile, oLine, oCol); return v; }");
+            ? "static int intFromNullable(java.lang.Integer v, java.lang.String oFile, int oLine, int oCol) { if (v == null) throw new DealError(\"E8001\", \"cannot convert null to int\", oFile, oLine, oCol, \"int\", \"null\", null, null); return v; }"
+            : "static long intFromNullable(java.lang.Long v, java.lang.String oFile, int oLine, int oCol) { if (v == null) throw new DealError(\"E8001\", \"cannot convert null to int\", oFile, oLine, oCol, \"int\", \"null\", null, null); return v; }");
         emitLine("static double numberFromNullable(java.lang.Double v) { return numberFromNullable(v, null, -1, -1); }");
-        emitLine("static double numberFromNullable(java.lang.Double v, java.lang.String oFile, int oLine, int oCol) { if (v == null) throw new DealError(\"E8001\", \"cannot convert null to number\", oFile, oLine, oCol); return v; }");
+        emitLine("static double numberFromNullable(java.lang.Double v, java.lang.String oFile, int oLine, int oCol) { if (v == null) throw new DealError(\"E8001\", \"cannot convert null to number\", oFile, oLine, oCol, \"number\", \"null\", null, null); return v; }");
         emitLine();
         emitLine("// ---- DEAL stdlib support (ISSUE-0097, ISSUE-0106 v1.2 scalar strings): std/string, std/math, std/time ----");
         emitLine("// DEAL strings are sequences of Unicode scalar values (spec-v1.2 §String");
@@ -13764,13 +13764,21 @@ public final class JvmBackend {
             // int-parameterized helper/comparison.
             left = adaptIntBoundary(bin.left(), left, Type.Int.INSTANCE);
             right = adaptIntBoundary(bin.right(), right, Type.Int.INSTANCE);
+            // ISSUE-0604 D3: the authoritative origin node of every
+            // raising int operator is the operator expression itself —
+            // the expression start (the left operand), the pinned
+            // convention of int-add-overflow 7:10,
+            // int32-overflow-source 9:18, int-sub-overflow/int-mul-
+            // overflow/int32-pow-overflow 7:10, and the division family
+            // (error-inside-for-of 9:27, closure-error-source 8:12, …).
+            String origin = originArgs(bin.span());
             return switch (op) {
-                case ADD -> "intAdd(" + left + ", " + right + ")";
-                case SUB -> "intSub(" + left + ", " + right + ")";
-                case MUL -> "intMul(" + left + ", " + right + ")";
-                case DIV -> "intDiv(" + left + ", " + right + ")";
-                case MOD -> "intMod(" + left + ", " + right + ")";
-                case POW -> "intPow(" + left + ", " + right + ")";
+                case ADD -> "intAdd(" + left + ", " + right + ", " + origin + ")";
+                case SUB -> "intSub(" + left + ", " + right + ", " + origin + ")";
+                case MUL -> "intMul(" + left + ", " + right + ", " + origin + ")";
+                case DIV -> "intDiv(" + left + ", " + right + ", " + origin + ")";
+                case MOD -> "intMod(" + left + ", " + right + ", " + origin + ")";
+                case POW -> "intPow(" + left + ", " + right + ", " + origin + ")";
                 case EQ -> "(" + left + " == " + right + ")";
                 case NEQ -> "(" + left + " != " + right + ")";
                 case LT -> "(" + left + " < " + right + ")";
@@ -15111,9 +15119,13 @@ public final class JvmBackend {
                             && i.value() == 2147483648L) {
                         yield "-2147483648";
                     }
+                    // ISSUE-0604 D3: the authoritative origin node is the
+                    // unary expression itself (int-neg-min 7:10,
+                    // int-neg-min-source 8:22).
                     yield "intNeg("
                         + adaptIntBoundary(u.expr(), emitExpression(u.expr()),
-                            Type.Int.INSTANCE) + ")";
+                            Type.Int.INSTANCE)
+                        + ", " + originArgs(u.span()) + ")";
                 }
                 if (t instanceof Type.Number) yield "(-" + emitExpression(u.expr()) + ")";
                 unsupported("unary - on " + typeName(t), u.span());
@@ -15844,11 +15856,13 @@ public final class JvmBackend {
             case "absInt" -> int32Mode
                 // D11: the absInt result gate's E8004 arm pins “int out of
                 // safe range” (the stdlib/math/int-abs-min-overflow
-                // sidecar), the same literal as every other checkInt route
-                // — the absent-origin entry carries it, and the origin
-                // literals land with the class leaves.
-                ? "checkInt(java.lang.Math.abs((long) " + a0 + "))"
-                : "checkInt(java.lang.Math.abs(" + a0 + "))";
+                // sidecar), the same literal as every other checkInt route.
+                // ISSUE-0604 D3: the authoritative origin node is the
+                // intrinsic-call expression (int-abs-min-overflow 9:10).
+                ? "checkInt(java.lang.Math.abs((long) " + a0 + "), "
+                    + originArgs(call.span()) + ")"
+                : "checkInt(java.lang.Math.abs(" + a0 + "), "
+                    + originArgs(call.span()) + ")";
             case "absNumber" -> "java.lang.Math.abs(" + a0 + ")";
             case "minInt" -> "java.lang.Math.min("
                 + adaptIntBoundary(call.args().get(0), a0, Type.Int.INSTANCE)
@@ -17051,16 +17065,26 @@ public final class JvmBackend {
         ExpressionNode arg = call.args().get(0);
         Type argType = typeOf(arg);
         String emitted = emitExpression(arg);
+        // ISSUE-0604 D3: the conversion intrinsic's authoritative origin
+        // node is the intrinsic-call expression itself (int-convert-
+        // fraction 7:10, int-convert-infinity/-nan 9:10,
+        // int-conversion-out-of-range 7:10, runtime/int-convert-range
+        // 8:10 under the legacy profile, runtime/int-convert-null 8:10,
+        // runtime/int-convert-noninteger 7:10, runtime/number-convert-
+        // null 8:10).
+        String origin = originArgs(call.span());
         return switch (name) {
             case "int" -> {
-                if (argType instanceof Type.Number) yield "intFromNumber(" + emitted + ")";
+                if (argType instanceof Type.Number) {
+                    yield "intFromNumber(" + emitted + ", " + origin + ")";
+                }
                 if (argType instanceof Type.Int) yield emitted;
                 if (argType instanceof Type.Nullable nn
                         && nn.inner() instanceof Type.Int) {
                     // int(x: int | null) — null fails at runtime with
                     // E8001 (runtime.lua's int_convert "cannot convert
                     // null to int").
-                    yield "intFromNullable(" + emitted + ")";
+                    yield "intFromNullable(" + emitted + ", " + origin + ")";
                 }
                 unsupported("int() on " + typeName(argType), call.span());
                 yield "0L";
@@ -17081,7 +17105,8 @@ public final class JvmBackend {
                 if (argType instanceof Type.Number) yield emitted;
                 if (argType instanceof Type.Nullable nn
                         && nn.inner() instanceof Type.Number) {
-                    yield "numberFromNullable(" + emitted + ")";
+                    yield "numberFromNullable(" + emitted + ", " + origin
+                        + ")";
                 }
                 unsupported("number() on " + typeName(argType), call.span());
                 yield "0.0";
